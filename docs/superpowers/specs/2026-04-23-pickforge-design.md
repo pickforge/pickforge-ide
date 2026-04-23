@@ -68,7 +68,44 @@ A Flutter developer who:
 
 ## 5. Architecture
 
-Pickforge is a Flutter desktop app with five cooperating components. It runs alongside (not inside) the user's normal Flutter dev workflow.
+Pickforge is a Flutter desktop app using a **feature-first source layout** with a thin `core/` layer for feature-agnostic infrastructure. It runs alongside (not inside) the user's normal Flutter dev workflow.
+
+### 5.0 Directory layout
+
+```
+lib/
+  features/
+    connection/              # VM Service URL paste, connect flow, status
+      bloc/
+      models/
+      widgets/
+      view/
+      connection.dart        # barrel export
+    widget_picker/           # widget tree, selection, screenshot, details panel
+    forge/                   # skill + agent + terminal picker, launch flow
+    history/                 # recent forges, replay
+    settings/                # agent/terminal defaults, preferences
+  core/                      # technical infrastructure, feature-agnostic
+    vm_service/              # WebSocket + package:vm_service wrapper
+    inspector/               # InspectorCore: service-extension calls, tree decoding
+    drift/                   # DB, DAOs, migrations
+    agent/                   # AgentProfile + registry
+    terminal/                # TerminalProfile + registry
+    skills/                  # skill loader, override logic
+  shared/                    # widgets, theme, motion, typography used by ≥2 features
+    widgets/
+    theme/
+    motion/
+    utils/
+  l10n/                      # ARB files (app_en.arb for MVP)
+  main.dart
+```
+
+**Conventions:**
+- `features/<feature>/` is self-contained. Shared widgets only promote to `shared/widgets/` when used by 2+ features.
+- `core/` is consumed by features, never the reverse. Cross-`core/` imports only when a dependency is genuine.
+- Each feature has a barrel file (`feature.dart`) exposing the public surface; internals stay private.
+- VGV's full **layered architecture** (separate pub packages per layer) is explicitly deferred to post-MVP. This is the right intermediate step for a monolithic single-package app.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -103,13 +140,17 @@ Pickforge is a Flutter desktop app with five cooperating components. It runs alo
 
 ## 6. Components
 
-### 6.1 UI Panel — `lib/ui/`
+### 6.1 UI (feature-first)
 
-Pure Flutter, no I/O. Three main views:
+Each feature owns its view + bloc + local widgets under `lib/features/<name>/`. The five features for MVP:
 
-- **DockView** — the always-on-top main window: widget-tree panel (left), widget-details panel (right), skill picker + "Forge it" button (bottom).
-- **ConnectionView** — "waiting for `flutter run`" state + manual VM Service URL paste.
-- **HistoryView** — recent picks (persisted in Drift).
+- **connection** — `ConnectionView` (URL paste, status banner, manual connect).
+- **widget_picker** — `DockView` hosts the widget-tree panel + screenshot preview + selected-widget details. Primary UI surface.
+- **forge** — skill picker + agent picker + terminal picker + "Forge it" button; modal or footer, depending on layout decisions made in the design phase.
+- **history** — recent forges list, replay action.
+- **settings** — agent/terminal/skill defaults, preferences.
+
+Cross-feature chrome (app shell, command palette, theme, splash/loading) lives in `lib/shared/`. No I/O inside `features/*/view/` or `features/*/widgets/` — everything flows via feature-scoped blocs/cubits.
 
 ### 6.2 InspectorCore — `lib/core/inspector/`
 
@@ -354,11 +395,11 @@ Added to runtime deps: `flutter_animate`, `animations` (official Flutter team), 
 
 ### Runtime
 
-`flutter_bloc`, `bloc`, `equatable`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `go_router`, `drift`, `drift_flutter`, `sqlite3_flutter_libs`, `dio`, `vm_service`, `web_socket_channel`, `window_manager`, `path_provider`, `path`, `yaml`, `shared_preferences`, `flutter_animate`, `animations`, `rive`.
+`flutter_bloc`, `bloc`, `equatable`, `freezed_annotation`, `json_annotation`, `get_it`, `injectable`, `go_router`, `drift`, `drift_flutter`, `sqlite3_flutter_libs`, `dio`, `vm_service`, `web_socket_channel`, `window_manager`, `path_provider`, `path`, `yaml`, `shared_preferences`, `flutter_animate`, `animations`, `rive`, `flutter_localizations` (SDK), `intl`, `lucide_icons_flutter` (primary icon set), `hugeicons` (fallback icon set for gaps Lucide doesn't cover).
 
 ### Dev
 
-`build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `drift_dev`, `mocktail`, `bloc_test`, `very_good_analysis`, `test`, `flutter_test`.
+`build_runner`, `freezed`, `json_serializable`, `injectable_generator`, `drift_dev`, `mocktail`, `bloc_test`, `very_good_analysis`, `test`, `flutter_test`, `intl_utils` (ARB → Dart getter codegen).
 
 ### DI note
 
@@ -368,6 +409,14 @@ GetIt + Injectable own service/repo/bloc registration. `flutter_bloc`'s `BlocPro
 
 Dio is pre-vetted in the stack but has **no confirmed MVP use case** — the VM Service is WebSocket-based, the agent is a local process, skills are local files. First real use case is likely update-check on startup. Revisit when a real HTTP call appears.
 
+### Localization note
+
+`flutter_localizations` + `intl` + `intl_utils` codegen are wired from day one, even though MVP ships English-only (`lib/l10n/app_en.arb`). Every user-facing string goes through `context.l10n.someKey` from commit #1. Adding new locales later is ARB-file-only, no code changes.
+
+### Icon note
+
+Lucide is the primary icon family because it matches our reference aesthetic (Linear, Raycast, Vercel, Supabase, shadcn all use it). Hugeicons is included as a fallback for icons Lucide doesn't cover — both packages coexist cleanly.
+
 ## 12. Deferred to Phase 2 / post-MVP
 
 Tracked explicitly so they're not forgotten after MVP ships.
@@ -376,7 +425,7 @@ Tracked explicitly so they're not forgotten after MVP ships.
 - **Target expansion:** iOS Simulator, Flutter web (Chrome), Flutter desktop.
 - **Agent expansion:** Cursor CLI, Gemini CLI, future CLIs.
 - **Phase 1.5 — Pickforge MCP server** exposing `get_selected_widget`, `list_pickforge_history`, `capture_screenshot` so agents can re-query mid-task.
-- **Pickforge Pro tier:** BridgeSwarm-style multi-agent orchestration, team sync, cloud-synced context, priority support, premium skill packs. Monetization model open (freemium vs paid) until MVP has users.
+- **Pickforge Pro tier:** BridgeSwarm-style multi-agent orchestration, team sync, cloud-synced context, priority support, premium skill packs. Monetization model open (freemium vs paid) until MVP has users. **Backend committed to Supabase** (Postgres + RLS for per-user gating, Auth for Google/GitHub OAuth, Storage for cloud skill packs, Edge Functions for Stripe webhooks, Realtime for swarm agent coordination). Not wired until the paid tier is built.
 - **Dio wiring:** update-check first; later Pro auth and cloud skill packs.
 - **Auto-discovery of VM Service URL:** port scanning and/or `flutter daemon` integration.
 - **Rebuild tracking:** `ext.flutter.inspector.trackRebuildDirtyWidgets` to diff post-hot-reload.
@@ -385,6 +434,8 @@ Tracked explicitly so they're not forgotten after MVP ships.
 - **Auto-updater:** Sparkle (macOS), winget/scoop (Windows), .deb/AppImage refresh (Linux).
 - **Codesigning, notarization, distribution:** macOS notarization, Windows signing + SmartScreen reputation, Linux Flathub/Snap.
 - **Screenshot before/after pair:** auto-capture after hot-reload and re-prompt the agent "did your change look right?".
+- **Localization expansion:** MVP ships English only; pt-BR, es, ja, and others ship later by adding ARB files. Pipeline already wired from day one, no code refactor needed.
+- **VGV multi-package layered architecture:** MVP uses feature-first in a single package. Breaking each feature into its own pub package (VGV's full layered architecture pattern) is a later refactor once the codebase and team grow.
 
 ## 13. Open questions (none blocking)
 

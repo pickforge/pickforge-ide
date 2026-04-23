@@ -40,8 +40,9 @@ These apply to every task. Don't repeat them per-task unless deviating.
 - **Commits:** Conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`). English. No AI/Claude attribution footers.
 - **TDD:** Write failing test → run to see it fail → implement → run to see it pass → commit. Every task follows this cadence.
 - **Branches:** One branch per phase (`phase/00-bootstrap`, `phase/01-shell`, ...) merged via fast-forward to `main` at phase end. Solo dev → no PRs required but keep branches for logical grouping.
-- **Code gen:** Any task that edits `freezed`, `json_serializable`, `drift`, or `injectable` annotations ends with `dart run build_runner build --delete-conflicting-outputs` before the commit step.
-- **Lint / format:** Every commit passes `dart format .` and `flutter analyze` with zero issues.
+- **Code gen:** Any task that edits `freezed`, `json_serializable`, `drift`, or `injectable` annotations ends with `fvm dart run build_runner build --delete-conflicting-outputs` before the commit step.
+- **Lint / format:** Every commit passes `fvm dart format .` and `fvm flutter analyze` with zero issues.
+- **FVM:** This repo pins Flutter with `.fvmrc`; every local Dart/Flutter command uses `fvm dart` or `fvm flutter`. CI uses bare `dart pub global activate fvm` only before FVM exists.
 - **File size:** Aim for ≤200 lines per Dart file. Split when a file outgrows its single responsibility.
 - **Never touch files outside the repo** unless explicitly instructed (e.g., `~/.claude/`).
 
@@ -49,27 +50,43 @@ These apply to every task. Don't repeat them per-task unless deviating.
 
 ## Phase 0 — Project bootstrap
 
-Goal: scaffold the Flutter desktop project, pin toolchain, wire lint/format/CI skeleton. After this phase, `flutter run -d linux` opens an empty window.
+Goal: scaffold the Flutter desktop project, pin toolchain, wire lint/format/CI skeleton. After this phase, `fvm flutter run -d linux` opens an empty window.
 
-### Task 1 — `flutter create` + pubspec + analysis_options
+### Task 1 — `.fvmrc` + `fvm flutter create` + pubspec + analysis_options
 
 **Files:**
-- Create: `pubspec.yaml` (overwrite the `flutter create` default)
+- Create: `pubspec.yaml` (overwrite the `fvm flutter create` default)
 - Create: `analysis_options.yaml`
 - Create: `.fvmrc`
 - Modify: `.gitignore` (add Dart/Flutter entries)
 
-- [ ] **Step 1: Scaffold the Flutter desktop app in-place.**
+- [ ] **Step 1: Create `.fvmrc` and install the pinned Flutter SDK.**
+
+```json
+{
+  "flutter": "3.24.3"
+}
+```
 
 Run:
 ```bash
 cd /home/dev/Development/Personal/vibes/vibe-flutter
-flutter create --org dev.pickforge --project-name pickforge --platforms linux,macos,windows .
+fvm install
+```
+
+Expected: FVM installs or reuses Flutter `3.24.3`.
+
+- [ ] **Step 2: Scaffold the Flutter desktop app in-place.**
+
+Run:
+```bash
+cd /home/dev/Development/Personal/vibes/vibe-flutter
+fvm flutter create --org dev.pickforge --project-name pickforge --platforms linux,macos,windows .
 ```
 
 Expected: scaffolded `lib/`, `linux/`, `macos/`, `windows/`, `test/`, default `pubspec.yaml` and `main.dart`.
 
-- [ ] **Step 2: Replace `pubspec.yaml` with the Pickforge dependency set.**
+- [ ] **Step 3: Replace `pubspec.yaml` with the Pickforge dependency set.**
 
 ```yaml
 name: pickforge
@@ -154,7 +171,7 @@ flutter:
     - assets/animations/
 ```
 
-- [ ] **Step 3: Replace `analysis_options.yaml` with very_good_analysis.**
+- [ ] **Step 4: Replace `analysis_options.yaml` with very_good_analysis.**
 
 ```yaml
 include: package:very_good_analysis/analysis_options.yaml
@@ -168,14 +185,6 @@ analyzer:
 linter:
   rules:
     public_member_api_docs: false
-```
-
-- [ ] **Step 4: Create `.fvmrc` to pin Flutter.**
-
-```json
-{
-  "flutter": "3.24.3"
-}
 ```
 
 - [ ] **Step 5: Extend `.gitignore`.**
@@ -205,8 +214,8 @@ coverage/
 - [ ] **Step 6: Install deps and confirm analyze is clean.**
 
 ```bash
-flutter pub get
-flutter analyze
+fvm flutter pub get
+fvm flutter analyze
 ```
 
 Expected: `No issues found!`
@@ -245,8 +254,8 @@ touch lib/core/.gitkeep lib/features/.gitkeep lib/shared/.gitkeep lib/l10n/.gitk
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-dart run build_runner build --delete-conflicting-outputs
-flutter gen-l10n
+fvm dart run build_runner build --delete-conflicting-outputs
+fvm flutter gen-l10n
 ```
 
 - [ ] **Step 3: Create `scripts/watch.sh` (codegen watcher).**
@@ -254,7 +263,7 @@ flutter gen-l10n
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-dart run build_runner watch --delete-conflicting-outputs
+fvm dart run build_runner watch --delete-conflicting-outputs
 ```
 
 - [ ] **Step 4: Create `scripts/check.sh` (pre-commit gate).**
@@ -262,9 +271,9 @@ dart run build_runner watch --delete-conflicting-outputs
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-dart format --set-exit-if-changed .
-flutter analyze
-flutter test
+fvm dart format --set-exit-if-changed .
+fvm flutter analyze
+fvm flutter test
 ```
 
 - [ ] **Step 5: Make scripts executable.**
@@ -324,21 +333,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.24.3"
-          channel: stable
-          cache: true
+      - uses: dart-lang/setup-dart@v1
+      - name: Install FVM
+        run: dart pub global activate fvm
+      - name: Install Flutter SDK
+        run: fvm install
       - name: Install deps
-        run: flutter pub get
+        run: fvm flutter pub get
       - name: Codegen
-        run: dart run build_runner build --delete-conflicting-outputs
+        run: fvm dart run build_runner build --delete-conflicting-outputs
       - name: Format check
-        run: dart format --set-exit-if-changed .
+        run: fvm dart format --set-exit-if-changed .
       - name: Analyze
-        run: flutter analyze
+        run: fvm flutter analyze
       - name: Test
-        run: flutter test --coverage
+        run: fvm flutter test --coverage
       - name: Upload coverage (ubuntu only)
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4
@@ -360,7 +369,7 @@ Note: CI will fail until the project has at least one test. Resolved in Task 4.
 
 ## Phase 1 — App shell & foundation
 
-Goal: theme, l10n, DI, routing, window management. After this phase, `flutter run -d linux` opens a properly-sized always-on-top Pickforge window with a themed placeholder screen and localized strings.
+Goal: theme, l10n, DI, routing, window management. After this phase, `fvm flutter run -d linux` opens a properly-sized always-on-top Pickforge window with a themed placeholder screen and localized strings.
 
 ### Task 4 — Design tokens + Pickforge ThemeData
 
@@ -405,7 +414,7 @@ void main() {
 - [ ] **Step 2: Run — expect failure.**
 
 ```bash
-flutter test test/shared/theme/pickforge_theme_test.dart
+fvm flutter test test/shared/theme/pickforge_theme_test.dart
 ```
 
 Expected: compile error (files don't exist).
@@ -563,7 +572,7 @@ class PickforgeTheme {
 - [ ] **Step 7: Run tests, expect PASS.**
 
 ```bash
-flutter test test/shared/theme/pickforge_theme_test.dart
+fvm flutter test test/shared/theme/pickforge_theme_test.dart
 ```
 
 - [ ] **Step 8: Commit.**
@@ -614,10 +623,10 @@ nullable-getter: false
 }
 ```
 
-- [ ] **Step 3: Run `flutter gen-l10n` to generate the getters.**
+- [ ] **Step 3: Run `fvm flutter gen-l10n` to generate the getters.**
 
 ```bash
-flutter gen-l10n
+fvm flutter gen-l10n
 ```
 
 Expected: creates `lib/l10n/generated/app_localizations.dart`.
@@ -653,7 +662,7 @@ void main() {
 - [ ] **Step 5: Run tests.**
 
 ```bash
-flutter test test/l10n/l10n_test.dart
+fvm flutter test test/l10n/l10n_test.dart
 ```
 
 Expected: PASS.
@@ -786,7 +795,7 @@ void main() {
 - [ ] **Step 5: Run tests, expect PASS.**
 
 ```bash
-flutter test test/core/di/injection_test.dart
+fvm flutter test test/core/di/injection_test.dart
 ```
 
 - [ ] **Step 6: Wire DI in `main.dart`.**
@@ -994,7 +1003,7 @@ void main() {
 - [ ] **Step 6: Run tests.**
 
 ```bash
-flutter test test/core/router/app_router_test.dart
+fvm flutter test test/core/router/app_router_test.dart
 ```
 
 Expected: PASS.
@@ -1003,7 +1012,7 @@ Expected: PASS.
 
 ```bash
 ./scripts/check.sh
-flutter run -d linux   # verify a 480x720 window opens, always-on-top, showing "Connect"
+fvm flutter run -d linux   # verify a 480x720 window opens, always-on-top, showing "Connect"
 ```
 
 - [ ] **Step 8: Commit.**
@@ -1203,7 +1212,7 @@ export 'models/widget_node.dart';
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/inspector/models
+fvm flutter test test/core/inspector/models
 ```
 
 Expected: PASS.
@@ -1373,7 +1382,7 @@ export 'models/skill_id.dart';
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/agent/models
+fvm flutter test test/core/agent/models
 ```
 
 Expected: PASS.
@@ -1485,7 +1494,7 @@ export 'models/terminal_profile_id.dart';
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/terminal/models
+fvm flutter test test/core/terminal/models
 ```
 
 Expected: PASS.
@@ -1630,7 +1639,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/drift/pickforge_database_test.dart
+fvm flutter test test/core/drift/pickforge_database_test.dart
 ```
 
 Expected: PASS.
@@ -1882,7 +1891,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/drift
+fvm flutter test test/core/drift
 ```
 
 Expected: PASS.
@@ -1985,7 +1994,7 @@ class ProjectSettingsRepository {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/settings
+fvm flutter test test/core/settings
 ```
 
 Expected: PASS.
@@ -2057,7 +2066,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/vm_service/vm_service_connection_state_test.dart
+fvm flutter test test/core/vm_service/vm_service_connection_state_test.dart
 ```
 
 Expected: PASS.
@@ -2186,7 +2195,7 @@ class ExponentialBackoff {
 - [ ] **Step 3: Run policy test.**
 
 ```bash
-flutter test test/core/vm_service/reconnect_policy_test.dart
+fvm flutter test test/core/vm_service/reconnect_policy_test.dart
 ```
 
 Expected: PASS.
@@ -2199,9 +2208,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/vm_service/reconnect_policy.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/core/vm_service/vm_service_connection_state.dart';
-import 'package:vm_service/vm_service.dart';
-
-class _ThrowingVmService extends Fake {}
 
 void main() {
   test('reconnectLoop emits Connecting → Error with incrementing attempts',
@@ -2231,17 +2237,18 @@ void main() {
     await sub.cancel();
 
     expect(calls, 3);
-    final errors = events.whereType<_ErrorLike>().toList();
-    // We expect 3 error events with attempts 1,2,3. Matcher via pattern.
     final errorAttempts = events
-        .map((e) => e.maybeMap(error: (v) => v.attempt, orElse: () => null))
+        .map(
+          (e) => e.maybeWhen(
+            error: (_, attempt) => attempt,
+            orElse: () => null,
+          ),
+        )
         .whereType<int>()
         .toList();
     expect(errorAttempts, [1, 2, 3]);
   });
 }
-
-extension _ErrorLike on VmServiceConnectionState {}
 ```
 
 - [ ] **Step 5: Add `reconnectLoop` to the client.**
@@ -2280,7 +2287,7 @@ Add `import 'reconnect_policy.dart';` at the top.
 - [ ] **Step 6: Run tests.**
 
 ```bash
-flutter test test/core/vm_service/vm_service_client_test.dart
+fvm flutter test test/core/vm_service/vm_service_client_test.dart
 ```
 
 Expected: PASS.
@@ -2314,8 +2321,9 @@ Each `.jsonl` fixture is one JSON object per line with this shape:
 
 - [ ] **Step 2: Write a minimal fixture.**
 
+Write exactly this content to `test/fixtures/vm_service/connect_and_select_button.jsonl`:
+
 ```jsonl
-// test/fixtures/vm_service/connect_and_select_button.jsonl
 {"type":"response","method":"getVM","result":{"type":"VM","name":"flutter","isolates":[{"id":"isolates/1","name":"main"}]}}
 {"type":"response","method":"ext.flutter.inspector.show","result":{"enabled":true}}
 {"type":"response","method":"ext.flutter.inspector.getSelectedWidget","result":{"valueId":"inspector-42","description":"ElevatedButton","creationLocation":{"file":"lib/foo.dart","line":10,"column":3}}}
@@ -2400,10 +2408,10 @@ import 'dart:io';
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
 
-/// Usage: dart run tool/record_vm_service.dart ws://127.0.0.1:PORT/UUID=/ws out.jsonl
+/// Usage: fvm dart run tool/record_vm_service.dart ws://127.0.0.1:PORT/UUID=/ws out.jsonl
 Future<void> main(List<String> args) async {
   if (args.length != 2) {
-    stderr.writeln('Usage: dart run tool/record_vm_service.dart <ws-url> <out.jsonl>');
+    stderr.writeln('Usage: fvm dart run tool/record_vm_service.dart <ws-url> <out.jsonl>');
     exitCode = 64;
     return;
   }
@@ -2437,7 +2445,7 @@ Future<void> main(List<String> args) async {
 - [ ] **Step 6: Run tests.**
 
 ```bash
-flutter test test/core/vm_service/testing
+fvm flutter test test/core/vm_service/testing
 ```
 
 Expected: PASS.
@@ -2507,6 +2515,8 @@ void main() {
 
 ```dart
 // lib/core/vm_service/inspector_extensions.dart
+import 'dart:convert';
+
 import 'package:vm_service/vm_service.dart';
 
 /// Typed helpers around ext.flutter.inspector.* service extensions.
@@ -2557,12 +2567,10 @@ class _Base64 {
 }
 ```
 
-Add the import `import 'dart:convert';` at top so `Base64Decoder` resolves.
-
 - [ ] **Step 3: Run tests.**
 
 ```bash
-flutter test test/core/vm_service/inspector_extensions_test.dart
+fvm flutter test test/core/vm_service/inspector_extensions_test.dart
 ```
 
 Expected: PASS.
@@ -2669,7 +2677,7 @@ class WidgetTreeDecoder {
 - [ ] **Step 3: Run tests.**
 
 ```bash
-flutter test test/core/inspector/widget_tree_decoder_test.dart
+fvm flutter test test/core/inspector/widget_tree_decoder_test.dart
 ```
 
 Expected: PASS.
@@ -2763,7 +2771,7 @@ class SourceSnippetExtractor {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/inspector/source_snippet_extractor_test.dart
+fvm flutter test test/core/inspector/source_snippet_extractor_test.dart
 ```
 
 Expected: PASS.
@@ -2917,7 +2925,7 @@ class InspectorRepository {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/inspector/inspector_repository_test.dart
+fvm flutter test test/core/inspector/inspector_repository_test.dart
 ```
 
 Expected: PASS.
@@ -3056,7 +3064,7 @@ class AgentProfileRegistry {
 - [ ] **Step 4: Run tests.**
 
 ```bash
-flutter test test/core/agent/agent_profile_registry_test.dart
+fvm flutter test test/core/agent/agent_profile_registry_test.dart
 ```
 
 Expected: PASS.
@@ -3189,7 +3197,7 @@ class ClaudeCodeProfile extends AgentProfile {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/agent/profiles/claude_code_profile_test.dart
+fvm flutter test test/core/agent/profiles/claude_code_profile_test.dart
 ```
 
 Expected: PASS.
@@ -3198,7 +3206,7 @@ Expected: PASS.
 
 ```bash
 git add lib/core/agent/profiles/claude_code_profile.dart test/core/agent/profiles/claude_code_profile_test.dart
-git commit -m "feat(agent): add ClaudeCodeProfile"
+git commit -m "feat(agent): add first cli agent profile"
 ```
 
 ---
@@ -3211,7 +3219,113 @@ git commit -m "feat(agent): add ClaudeCodeProfile"
 - Create: `test/core/agent/profiles/codex_profile_test.dart`
 - Create: `test/core/agent/profiles/opencode_profile_test.dart`
 
-- [ ] **Step 1: Implement `CodexProfile`.**
+- [ ] **Step 1: Write failing tests for both profiles.**
+
+```dart
+// test/core/agent/profiles/codex_profile_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:pickforge/core/agent/models.dart';
+import 'package:pickforge/core/agent/profiles/codex_profile.dart';
+
+void main() {
+  const profile = CodexProfile();
+
+  test('identity', () {
+    expect(profile.id, AgentProfileId.codex);
+    expect(profile.displayName, 'Codex');
+    expect(profile.binary, 'codex');
+    expect(profile.projectContextFile, 'AGENTS.md');
+  });
+
+  test('prompt includes context and image filenames', () {
+    final prompt = profile.buildInitialPrompt(
+      pickforgeDirRelative: '.pickforge',
+      skillFilename: 'skill-active.md',
+      widgetContextFilename: 'widget-context.md',
+      screenshotFilename: 'screenshot.png',
+      deviceScreenFilename: 'device-screen.png',
+    );
+
+    expect(prompt, contains('.pickforge/skill-active.md'));
+    expect(prompt, contains('.pickforge/widget-context.md'));
+    expect(prompt, contains('.pickforge/screenshot.png'));
+    expect(prompt, contains('.pickforge/device-screen.png'));
+  });
+
+  test('prompt excludes null image filenames', () {
+    final prompt = profile.buildInitialPrompt(
+      pickforgeDirRelative: '.pickforge',
+      skillFilename: 'skill-active.md',
+      widgetContextFilename: 'widget-context.md',
+      screenshotFilename: null,
+      deviceScreenFilename: null,
+    );
+
+    expect(prompt, contains('.pickforge/skill-active.md'));
+    expect(prompt, contains('.pickforge/widget-context.md'));
+    expect(prompt, isNot(contains('screenshot.png')));
+    expect(prompt, isNot(contains('device-screen.png')));
+  });
+}
+```
+
+```dart
+// test/core/agent/profiles/opencode_profile_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:pickforge/core/agent/models.dart';
+import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
+
+void main() {
+  const profile = OpenCodeProfile();
+
+  test('identity', () {
+    expect(profile.id, AgentProfileId.opencode);
+    expect(profile.displayName, 'OpenCode');
+    expect(profile.binary, 'opencode');
+    expect(profile.projectContextFile, 'AGENTS.md');
+  });
+
+  test('prompt includes context and image filenames', () {
+    final prompt = profile.buildInitialPrompt(
+      pickforgeDirRelative: '.pickforge',
+      skillFilename: 'skill-active.md',
+      widgetContextFilename: 'widget-context.md',
+      screenshotFilename: 'screenshot.png',
+      deviceScreenFilename: 'device-screen.png',
+    );
+
+    expect(prompt, contains('.pickforge/skill-active.md'));
+    expect(prompt, contains('.pickforge/widget-context.md'));
+    expect(prompt, contains('.pickforge/screenshot.png'));
+    expect(prompt, contains('.pickforge/device-screen.png'));
+  });
+
+  test('prompt excludes null image filenames', () {
+    final prompt = profile.buildInitialPrompt(
+      pickforgeDirRelative: '.pickforge',
+      skillFilename: 'skill-active.md',
+      widgetContextFilename: 'widget-context.md',
+      screenshotFilename: null,
+      deviceScreenFilename: null,
+    );
+
+    expect(prompt, contains('.pickforge/skill-active.md'));
+    expect(prompt, contains('.pickforge/widget-context.md'));
+    expect(prompt, isNot(contains('screenshot.png')));
+    expect(prompt, isNot(contains('device-screen.png')));
+  });
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail.**
+
+```bash
+fvm flutter test test/core/agent/profiles
+```
+
+Expected: FAIL with imports for `codex_profile.dart` and `opencode_profile.dart` not found.
+
+- [ ] **Step 3: Implement `CodexProfile`.**
 
 ```dart
 // lib/core/agent/profiles/codex_profile.dart
@@ -3264,7 +3378,7 @@ class CodexProfile extends AgentProfile {
 }
 ```
 
-- [ ] **Step 2: Implement `OpenCodeProfile` (same shape, different id/binary).**
+- [ ] **Step 4: Implement `OpenCodeProfile`.**
 
 ```dart
 // lib/core/agent/profiles/opencode_profile.dart
@@ -3317,51 +3431,16 @@ class OpenCodeProfile extends AgentProfile {
 }
 ```
 
-- [ ] **Step 3: Write identity + prompt tests for both** (structurally identical to the Claude Code test). Each test asserts: `id` matches, `binary` matches, `projectContextFile` matches, prompt contains the filenames, prompt excludes nulls.
-
-Example for Codex:
-
-```dart
-// test/core/agent/profiles/codex_profile_test.dart
-import 'package:flutter_test/flutter_test.dart';
-import 'package:pickforge/core/agent/models.dart';
-import 'package:pickforge/core/agent/profiles/codex_profile.dart';
-
-void main() {
-  const profile = CodexProfile();
-  test('identity', () {
-    expect(profile.id, AgentProfileId.codex);
-    expect(profile.binary, 'codex');
-    expect(profile.projectContextFile, 'AGENTS.md');
-  });
-  test('prompt includes filenames', () {
-    final prompt = profile.buildInitialPrompt(
-      pickforgeDirRelative: '.pickforge',
-      skillFilename: 'skill-active.md',
-      widgetContextFilename: 'widget-context.md',
-      screenshotFilename: 's.png',
-      deviceScreenFilename: 'd.png',
-    );
-    expect(prompt, contains('.pickforge/skill-active.md'));
-    expect(prompt, contains('.pickforge/widget-context.md'));
-    expect(prompt, contains('.pickforge/s.png'));
-    expect(prompt, contains('.pickforge/d.png'));
-  });
-}
-```
-
-Mirror the same structure for `opencode_profile_test.dart`.
-
-- [ ] **Step 4: Codegen + run tests.**
+- [ ] **Step 5: Codegen + run tests.**
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/agent/profiles
+fvm flutter test test/core/agent/profiles
 ```
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
 git add lib/core/agent/profiles test/core/agent/profiles
@@ -3512,7 +3591,7 @@ class TerminalProfileRegistry {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/terminal/terminal_detector_test.dart
+fvm flutter test test/core/terminal/terminal_detector_test.dart
 ```
 
 Expected: PASS.
@@ -3686,7 +3765,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/terminal/profiles
+fvm flutter test test/core/terminal/profiles
 ```
 
 Expected: PASS.
@@ -3872,7 +3951,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/terminal/profiles
+fvm flutter test test/core/terminal/profiles
 ```
 
 Expected: PASS.
@@ -3918,7 +3997,7 @@ You are modifying a single Flutter widget that the user selected via Pickforge.
 1. Read the files listed in the initial prompt.
 2. Before editing, state one short sentence describing what you'll change.
 3. Apply the edit with the smallest possible diff.
-4. Run `flutter analyze` and fix any new issues your edit introduced.
+4. Run the target project's normal analyzer command and fix any new issues your edit introduced.
 5. Tell the user what to hot-reload / hot-restart.
 
 ## Do not
@@ -3944,7 +4023,7 @@ You are extracting the currently selected Flutter widget (see `.pickforge/widget
 4. Place the new class in a sensibly named file under the same `lib/` folder as the original.
 5. Replace the original call-site with an instance of the new widget.
 6. Pass parameters only for the values that actually vary at the call site.
-7. Run `flutter analyze`; fix any new issues.
+7. Run the target project's normal analyzer command; fix any new issues.
 
 ## Do not
 
@@ -4098,7 +4177,7 @@ class SkillStore {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/skills/skill_store_test.dart
+fvm flutter test test/core/skills/skill_store_test.dart
 ```
 
 Expected: PASS.
@@ -4294,7 +4373,7 @@ type "$initialPromptPath" | $agentBinary $args
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/agent/pickforge_dir_manager_test.dart test/core/agent/wrapper_script_generator_test.dart
+fvm flutter test test/core/agent/pickforge_dir_manager_test.dart test/core/agent/wrapper_script_generator_test.dart
 ```
 
 Expected: PASS.
@@ -4669,7 +4748,7 @@ Future<ProcessResult> _realSpawn(
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/agent/agent_launcher_test.dart
+fvm flutter test test/core/agent/agent_launcher_test.dart
 ```
 
 Expected: PASS.
@@ -4704,8 +4783,7 @@ void main() {
   setUp(() => tmp = Directory.systemTemp.createTempSync('pf_adb_'));
   tearDown(() => tmp.deleteSync(recursive: true));
 
-  ProcessResult _ok(List<int> bytes) =>
-      ProcessResult(1, 0, String.fromCharCodes(bytes), '');
+  ProcessResult _ok(List<int> bytes) => ProcessResult(1, 0, bytes, '');
 
   test('capture writes PNG bytes when adb succeeds', () async {
     const pngHeader = [0x89, 0x50, 0x4E, 0x47];
@@ -4714,12 +4792,17 @@ void main() {
     );
     final capturer = AdbScreenshotCapturer(
       detector: detector,
-      runner: (bin, args) async {
+      runner: (bin, args, {stdoutEncoding}) async {
         if (args.contains('devices')) {
-          return ProcessResult(1, 0, 'List of devices attached\nemulator-5554\tdevice', '');
+          return ProcessResult(
+            1,
+            0,
+            'List of devices attached\nemulator-5554\tdevice',
+            '',
+          );
         }
         if (args.contains('screencap')) {
-          return ProcessResult(1, 0, String.fromCharCodes(pngHeader), '');
+          return ProcessResult(1, 0, pngHeader, '');
         }
         return ProcessResult(1, 1, '', '');
       },
@@ -4735,7 +4818,8 @@ void main() {
     );
     final capturer = AdbScreenshotCapturer(
       detector: detector,
-      runner: (_, __) async => throw StateError('must not be called'),
+      runner: (_, __, {stdoutEncoding}) async =>
+          throw StateError('must not be called'),
     );
     expect(await capturer.capture(outputDir: tmp.path), isNull);
   });
@@ -4746,6 +4830,7 @@ void main() {
 
 ```dart
 // lib/core/inspector/adb_screenshot_capturer.dart
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:injectable/injectable.dart';
@@ -4754,15 +4839,21 @@ import 'package:pickforge/core/terminal/terminal_detector.dart';
 
 typedef ProcessRunner = Future<ProcessResult> Function(
   String executable,
-  List<String> arguments,
-);
+  List<String> arguments, {
+  Encoding? stdoutEncoding,
+});
 
 @lazySingleton
 class AdbScreenshotCapturer {
   AdbScreenshotCapturer({
     required this.detector,
     ProcessRunner? runner,
-  }) : _run = runner ?? Process.run;
+  }) : _run = runner ??
+            ((executable, arguments, {stdoutEncoding}) => Process.run(
+                  executable,
+                  arguments,
+                  stdoutEncoding: stdoutEncoding,
+                ));
 
   final TerminalDetector detector;
   final ProcessRunner _run;
@@ -4777,11 +4868,12 @@ class AdbScreenshotCapturer {
     final capResult = await _run(
       'adb',
       ['-s', serial, 'exec-out', 'screencap', '-p'],
+      stdoutEncoding: null,
     );
     if (capResult.exitCode != 0) return null;
 
     final outPath = p.join(outputDir, 'device-screen.png');
-    await File(outPath).writeAsString(capResult.stdout as String);
+    await File(outPath).writeAsBytes(capResult.stdout as List<int>);
     return outPath;
   }
 
@@ -4801,7 +4893,7 @@ class AdbScreenshotCapturer {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/core/inspector/adb_screenshot_capturer_test.dart
+fvm flutter test test/core/inspector/adb_screenshot_capturer_test.dart
 ```
 
 Expected: PASS.
@@ -5009,7 +5101,7 @@ export 'view/connection_view.dart';
 
 ```bash
 ./scripts/gen.sh
-flutter test test/features/connection
+fvm flutter test test/features/connection
 ```
 
 Expected: PASS.
@@ -5066,6 +5158,8 @@ class VmServiceUrlField extends StatelessWidget {
 
 ```dart
 // lib/features/connection/view/connection_view.dart
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/di/injection.dart';
@@ -5076,15 +5170,29 @@ import 'package:pickforge/features/connection/widgets/vm_service_url_field.dart'
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class ConnectionView extends StatelessWidget {
-  const ConnectionView({super.key});
+  const ConnectionView({
+    ConnectionBloc? bloc,
+    this.projectRoot,
+    super.key,
+  }) : _bloc = bloc;
+
+  final ConnectionBloc? _bloc;
+  final String? projectRoot;
 
   @override
   Widget build(BuildContext context) {
+    final providedBloc = _bloc;
+    if (providedBloc != null) {
+      return BlocProvider.value(
+        value: providedBloc,
+        child: const _ConnectionBody(),
+      );
+    }
+
+    final root = projectRoot ?? Directory.current.path;
     return BlocProvider(
       create: (_) => getIt<ConnectionBloc>()
-        // TODO(pickforge): replace '/' with the real project root once we
-        // surface a project picker.
-        ..add(const ConnectionEvent.bootstrap(projectRoot: '/')),
+        ..add(ConnectionEvent.bootstrap(projectRoot: root)),
       child: const _ConnectionBody(),
     );
   }
@@ -5192,20 +5300,18 @@ GoRoute(
 
 ```dart
 // test/features/connection/view/connection_view_test.dart
+import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/features/connection/connection.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 
-class _MockBloc extends MockBloc<ConnectionEvent, ConnectionState>
+class _MockConnectionBloc extends MockBloc<ConnectionEvent, ConnectionState>
     implements ConnectionBloc {}
 
 void main() {
   testWidgets('renders title and hint', (tester) async {
-    final bloc = _MockBloc();
+    final bloc = _MockConnectionBloc();
     whenListen(
       bloc,
       const Stream<ConnectionState>.empty(),
@@ -5215,9 +5321,8 @@ void main() {
       MaterialApp(
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: BlocProvider<ConnectionBloc>.value(
-          value: bloc,
-          child: const _BareConnectionBody(),
+        home: Scaffold(
+          body: ConnectionView(bloc: bloc, projectRoot: '/tmp/pickforge-test'),
         ),
       ),
     );
@@ -5225,21 +5330,13 @@ void main() {
     expect(find.text('Connect to your Flutter app'), findsOneWidget);
   });
 }
-
-class _BareConnectionBody extends StatelessWidget {
-  const _BareConnectionBody();
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(body: ConnectionView());
-  }
-}
 ```
 
 - [ ] **Step 5: Codegen + tests.**
 
 ```bash
 ./scripts/gen.sh
-flutter test
+fvm flutter test
 ```
 
 Expected: PASS across the board.
@@ -5427,16 +5524,13 @@ void main() {
 // lib/features/widget_picker/widget_picker.dart
 export 'cubit/widget_picker_cubit.dart';
 export 'cubit/widget_picker_state.dart';
-export 'view/dock_view.dart';
 ```
-
-(dock_view.dart comes in the next task — reference is fine.)
 
 - [ ] **Step 5: Codegen + tests.**
 
 ```bash
 ./scripts/gen.sh
-flutter test test/features/widget_picker
+fvm flutter test test/features/widget_picker
 ```
 
 Expected: PASS.
@@ -5456,6 +5550,7 @@ git commit -m "feat(widget_picker): cubit + polling selection stream"
 - Create: `lib/features/widget_picker/view/dock_view.dart`
 - Create: `lib/features/widget_picker/widgets/widget_details_panel.dart`
 - Create: `lib/features/widget_picker/widgets/no_selection_placeholder.dart`
+- Modify: `lib/features/widget_picker/widget_picker.dart` (export `DockView`)
 - Modify: `lib/core/router/app_router.dart` (mount `DockView` on `/`)
 - Create: `test/features/widget_picker/view/dock_view_test.dart`
 
@@ -5548,10 +5643,20 @@ import 'package:pickforge/features/widget_picker/widgets/no_selection_placeholde
 import 'package:pickforge/features/widget_picker/widgets/widget_details_panel.dart';
 
 class DockView extends StatelessWidget {
-  const DockView({super.key});
+  const DockView({WidgetPickerCubit? cubit, super.key}) : _cubit = cubit;
+
+  final WidgetPickerCubit? _cubit;
 
   @override
   Widget build(BuildContext context) {
+    final providedCubit = _cubit;
+    if (providedCubit != null) {
+      return BlocProvider.value(
+        value: providedCubit,
+        child: const _DockBody(),
+      );
+    }
+
     return BlocProvider(
       create: (_) => getIt<WidgetPickerCubit>()..startListening(),
       child: const _DockBody(),
@@ -5575,7 +5680,14 @@ class _DockBody extends StatelessWidget {
 }
 ```
 
-- [ ] **Step 4: Wire into the router.**
+- [ ] **Step 4: Update the barrel and wire into the router.**
+
+```dart
+// lib/features/widget_picker/widget_picker.dart
+export 'cubit/widget_picker_cubit.dart';
+export 'cubit/widget_picker_state.dart';
+export 'view/dock_view.dart';
+```
 
 ```dart
 GoRoute(
@@ -5590,7 +5702,6 @@ GoRoute(
 // test/features/widget_picker/view/dock_view_test.dart
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/features/widget_picker/cubit/widget_picker_cubit.dart';
@@ -5606,10 +5717,7 @@ void main() {
     when(() => cubit.state).thenReturn(WidgetPickerState.initial());
     await tester.pumpWidget(
       MaterialApp(
-        home: BlocProvider<WidgetPickerCubit>.value(
-          value: cubit,
-          child: const Scaffold(body: DockView()),
-        ),
+        home: Scaffold(body: DockView(cubit: cubit)),
       ),
     );
     expect(find.text('Tap a widget in the emulator to pick it'), findsOneWidget);
@@ -5621,7 +5729,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/features/widget_picker/view
+fvm flutter test test/features/widget_picker/view
 ```
 
 Expected: PASS.
@@ -5629,7 +5737,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit.**
 
 ```bash
-git add lib/features/widget_picker/view lib/features/widget_picker/widgets lib/core/router/app_router.dart test/features/widget_picker/view
+git add lib/features/widget_picker/view lib/features/widget_picker/widgets lib/features/widget_picker/widget_picker.dart lib/core/router/app_router.dart test/features/widget_picker/view
 git commit -m "feat(widget_picker): DockView with details panel and empty state"
 ```
 
@@ -5700,7 +5808,7 @@ void main() {
 - [ ] **Step 4: Run tests.**
 
 ```bash
-flutter test test/features/widget_picker/widgets
+fvm flutter test test/features/widget_picker/widgets
 ```
 
 Expected: PASS.
@@ -5904,7 +6012,7 @@ dynamic _dummyResult() => null;
 
 ```bash
 ./scripts/gen.sh
-flutter test test/features/forge
+fvm flutter test test/features/forge
 ```
 
 Expected: PASS.
@@ -6102,7 +6210,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/features/forge
+fvm flutter test test/features/forge
 ```
 
 Expected: PASS.
@@ -6235,7 +6343,7 @@ void main() {
 
 ```bash
 ./scripts/gen.sh
-flutter test test/features/history
+fvm flutter test test/features/history
 ```
 
 Expected: PASS.
@@ -6566,7 +6674,7 @@ void main() {
 - [ ] **Step 6: Tests + commit.**
 
 ```bash
-flutter test test/shared/command_palette/command_palette_test.dart
+fvm flutter test test/shared/command_palette/command_palette_test.dart
 git add lib/shared/command_palette lib/shared/widgets/app_shell.dart test/shared/command_palette
 git commit -m "feat(shell): add command palette with ⌘K / Ctrl+K binding"
 ```
@@ -6652,7 +6760,7 @@ void main() {
 
 ```bash
 ./scripts/check.sh
-flutter run -d linux
+fvm flutter run -d linux
 ```
 
 - [ ] **Step 7: Commit.**
@@ -6680,7 +6788,7 @@ Replace the "Codegen" step with:
 
 ```yaml
       - name: Codegen
-        run: dart run build_runner build --delete-conflicting-outputs
+        run: fvm dart run build_runner build --delete-conflicting-outputs
       - name: Assert no uncommitted codegen drift
         run: |
           git diff --exit-code || (
@@ -6708,20 +6816,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.24.3"
-          channel: stable
+      - uses: dart-lang/setup-dart@v1
+      - name: Install FVM
+        run: dart pub global activate fvm
+      - name: Install Flutter SDK
+        run: fvm install
       - name: Install deps
-        run: flutter pub get
+        run: fvm flutter pub get
       - name: Codegen
-        run: dart run build_runner build --delete-conflicting-outputs
+        run: fvm dart run build_runner build --delete-conflicting-outputs
       - name: Build desktop
         run: |
           case "${{ matrix.os }}" in
-            ubuntu-latest)  flutter build linux   --release ;;
-            macos-latest)   flutter build macos   --release ;;
-            windows-latest) flutter build windows --release ;;
+            ubuntu-latest)  fvm flutter build linux   --release ;;
+            macos-latest)   fvm flutter build macos   --release ;;
+            windows-latest) fvm flutter build windows --release ;;
           esac
         shell: bash
       - name: Upload artifact
@@ -6764,7 +6873,7 @@ coverage lives in CI.
 
 ## Connection
 
-- [ ] Start a sample Flutter app with `flutter run` and copy the VM Service URL.
+- [ ] Start a sample Flutter app in an Android emulator and copy the VM Service URL.
 - [ ] Paste into Pickforge → Connect → status turns green.
 - [ ] Disconnect + reconnect → no crash, URL is remembered next launch.
 - [ ] Kill the app mid-session → Pickforge shows Reconnecting, recovers after restart.
@@ -6867,8 +6976,8 @@ new terminal. The agent makes a surgical edit; you hot-reload; repeat.
 
 ## Quick start
 
-1. `flutter run` your app in an Android emulator as normal and copy the VM
-   Service URL printed to the console.
+1. Run your app in an Android emulator as normal and copy the VM Service URL
+   printed to the console.
 2. Launch Pickforge. Paste the URL → Connect.
 3. Tap a widget in the emulator. Pickforge highlights it and shows its
    source.
@@ -6905,9 +7014,9 @@ Or build from source:
 ```bash
 git clone https://github.com/pickforge/pickforge
 cd pickforge
-flutter pub get
-dart run build_runner build --delete-conflicting-outputs
-flutter run -d linux   # or -d macos, -d windows
+fvm flutter pub get
+fvm dart run build_runner build --delete-conflicting-outputs
+fvm flutter run -d linux   # or -d macos, -d windows
 ```
 
 ## Supported stack

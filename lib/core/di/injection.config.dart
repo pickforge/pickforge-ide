@@ -31,6 +31,7 @@ import 'package:pickforge/core/terminal/terminal_profile.dart' as _i681;
 import 'package:pickforge/core/terminal/terminal_profile_registry.dart'
     as _i871;
 import 'package:pickforge/core/vm_service/vm_service_client.dart' as _i292;
+import 'package:pickforge/features/forge/cubit/forge_cubit.dart' as _i888;
 
 extension GetItInjectableX on _i174.GetIt {
 // initializes the registration of main-scope dependencies inside of GetIt
@@ -86,6 +87,10 @@ extension GetItInjectableX on _i174.GetIt {
           gh<_i895.SkillStore>(),
           gh<_i810.WidgetContextRenderer>(),
           gh<_i240.WrapperScriptGenerator>(),
+        ));
+    gh.factory<_i888.ForgeCubit>(() => _i888.ForgeCubit(
+          gh<_i683.AgentLauncher>(),
+          gh<_i704.AdbScreenshotCapturer>(),
         ));
     return this;
   }

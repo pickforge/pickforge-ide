@@ -5,7 +5,7 @@ build/
 .DS_Store
 
 # FVM Version Cache
-.fvm/flutter_sdk
+.fvm/
 
 # Dart / Flutter
 .flutter-plugins
@@ -19,3 +19,4 @@ lib/l10n/generated/
 coverage/
 *.g.dart
 *.freezed.dart
+*.iml

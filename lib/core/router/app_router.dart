@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pickforge/features/connection/view/connection_view.dart';
 import 'package:pickforge/shared/widgets/app_shell.dart';
 
 /// Top-level routes. Features add their pages here as they come online.
@@ -20,7 +21,7 @@ GoRouter buildAppRouter() {
         routes: [
           GoRoute(
             path: AppRoutes.connect,
-            builder: (_, __) => const _PlaceholderPage(title: 'Connect'),
+            builder: (_, __) => const ConnectionView(),
           ),
           GoRoute(
             path: AppRoutes.dock,

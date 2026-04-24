@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:injectable/injectable.dart';
+import 'package:pickforge/core/vm_service/reconnect_policy.dart';
 import 'package:pickforge/core/vm_service/vm_service_connection_state.dart';
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart' as vm_io;
@@ -35,6 +36,31 @@ class VmServiceClient {
         VmServiceConnectionState.error(message: e.toString(), attempt: 1),
       );
       rethrow;
+    }
+  }
+
+  Future<void> reconnectLoop(
+    String url, {
+    required ExponentialBackoff policy,
+    int maxAttempts = 1 << 30,
+  }) async {
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      _controller.add(VmServiceConnectionState.connecting(attempt: attempt));
+      try {
+        _service = await _factory(url);
+        _url = url;
+        _controller.add(VmServiceConnectionState.connected(url: url));
+        return;
+      } on Object catch (e) {
+        _controller.add(
+          VmServiceConnectionState.error(
+            message: e.toString(),
+            attempt: attempt,
+          ),
+        );
+        if (attempt == maxAttempts) return;
+        await Future<void>.delayed(policy.delayFor(attempt + 1));
+      }
     }
   }
 

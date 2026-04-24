@@ -19,4 +19,22 @@ void main() {
     expect(loaded?.vmServiceUrl, 'ws://localhost:8181/ws');
     expect(loaded?.defaultAgentId, 'claude-code');
   });
+
+  test('upsert preserves settings not included in the update', () async {
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/me/app',
+      defaultAgentId: 'claude-code',
+      defaultTerminalId: 'ghostty',
+    );
+
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/me/app',
+      vmServiceUrl: 'ws://localhost:8181/ws',
+    );
+
+    final loaded = await db.projectSettingsDao.loadFor('/me/app');
+    expect(loaded?.vmServiceUrl, 'ws://localhost:8181/ws');
+    expect(loaded?.defaultAgentId, 'claude-code');
+    expect(loaded?.defaultTerminalId, 'ghostty');
+  });
 }

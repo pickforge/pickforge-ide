@@ -21,4 +21,14 @@ void main() {
     await repo.setVmServiceUrl('/me/app', 'ws://localhost:8181/ws');
     expect(await repo.getVmServiceUrl('/me/app'), 'ws://localhost:8181/ws');
   });
+
+  test('setters preserve other saved settings', () async {
+    await repo.setDefaultAgentId('/me/app', 'claude-code');
+    await repo.setDefaultTerminalId('/me/app', 'ghostty');
+    await repo.setVmServiceUrl('/me/app', 'ws://localhost:8181/ws');
+
+    expect(await repo.getVmServiceUrl('/me/app'), 'ws://localhost:8181/ws');
+    expect(await repo.getDefaultAgentId('/me/app'), 'claude-code');
+    expect(await repo.getDefaultTerminalId('/me/app'), 'ghostty');
+  });
 }

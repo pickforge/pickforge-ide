@@ -4,8 +4,7 @@ import 'package:pickforge/core/terminal/models/terminal_profile_id.dart';
 part 'terminal_launch_spec.freezed.dart';
 part 'terminal_launch_spec.g.dart';
 
-class _TerminalIdConverter
-    implements JsonConverter<TerminalProfileId, String> {
+class _TerminalIdConverter implements JsonConverter<TerminalProfileId, String> {
   const _TerminalIdConverter();
   @override
   TerminalProfileId fromJson(String json) => TerminalProfileId.fromValue(json);

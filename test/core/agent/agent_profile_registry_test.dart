@@ -61,8 +61,10 @@ void main() {
       expect(all, hasLength(2));
       expect(all, contains(p1));
       expect(all, contains(p2));
-      expect(() => (all as List).add(_FakeProfile(AgentProfileId.opencode)),
-          throwsA(isA<UnsupportedError>()));
+      expect(
+        () => (all as List).add(const _FakeProfile(AgentProfileId.opencode)),
+        throwsA(isA<UnsupportedError>()),
+      );
     });
   });
 }

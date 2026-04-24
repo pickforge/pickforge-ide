@@ -42,7 +42,6 @@ Future<Process> _fakeSpawner(
   List<String> __, {
   String? workingDirectory,
   Map<String, String>? environment,
-  bool? runInShell,
 }) async =>
     _MockProcess();
 

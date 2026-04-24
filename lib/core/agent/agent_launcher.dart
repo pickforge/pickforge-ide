@@ -15,7 +15,6 @@ typedef ProcessSpawner = Future<Process> Function(
   List<String> arguments, {
   String? workingDirectory,
   Map<String, String>? environment,
-  bool runInShell,
 });
 
 /// Orchestrates launching an AI agent in a terminal with Pickforge context.
@@ -142,7 +141,6 @@ class AgentLauncher {
       invocation.binary,
       invocation.arguments,
       workingDirectory: req.projectRoot,
-      runInShell: true,
     );
   }
 }

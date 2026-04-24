@@ -33,7 +33,8 @@ class WarpProfile extends TerminalProfile {
 
   @override
   LaunchInvocation buildInvocation(TerminalLaunchSpec spec) {
-    final url = 'warp://action/new_tab?path=${Uri.encodeComponent(spec.workingDir)}'
+    final url =
+        'warp://action/new_tab?path=${Uri.encodeComponent(spec.workingDir)}'
         '&command=${Uri.encodeComponent(spec.scriptPath)}';
 
     if (Platform.isMacOS) {

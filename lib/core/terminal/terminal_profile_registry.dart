@@ -1,7 +1,5 @@
-import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/terminal/terminal_profile.dart';
 
-@lazySingleton
 class TerminalProfileRegistry {
   TerminalProfileRegistry(this._profiles);
   final List<TerminalProfile> _profiles;
@@ -15,6 +13,8 @@ class TerminalProfileRegistry {
 
   List<TerminalProfile> availableOnThisOs() {
     final current = currentOs;
-    return _profiles.where((p) => p.supportedPlatforms.contains(current)).toList();
+    return _profiles
+        .where((p) => p.supportedPlatforms.contains(current))
+        .toList();
   }
 }

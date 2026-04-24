@@ -33,6 +33,10 @@ class VmServiceClient {
   VmService? get service => _service;
   String? get currentUrl => _url;
 
+  /// Emits whenever a new [VmService] instance becomes available.
+  Stream<VmService> get serviceStream => _serviceStreamController.stream;
+  final _serviceStreamController = StreamController<VmService>.broadcast();
+
   Future<void> connect(String url) async {
     _closing = false;
     _url = url;
@@ -98,11 +102,13 @@ class VmServiceClient {
   Future<void> close() async {
     await disconnect();
     await _controller.close();
+    await _serviceStreamController.close();
   }
 
   Future<void> _replaceService(VmService nextService) async {
     final previous = _service;
     _service = nextService;
+    _serviceStreamController.add(nextService);
     _attachDoneHandler(nextService);
     if (!identical(previous, nextService)) {
       await previous?.dispose();

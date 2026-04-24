@@ -1,5 +1,4 @@
 import 'package:bloc/bloc.dart';
-import 'package:pickforge/core/inspector/inspector_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/connection/bloc/connection_event.dart';
@@ -12,10 +11,8 @@ import 'package:pickforge/features/connection/bloc/connection_state.dart';
 class ConnectionBloc extends Bloc<ConnectionEvent, ConnectionState> {
   ConnectionBloc(
     this._vmClient,
-    this._settings, {
-    InspectorRepository? inspector,
-  })  : _inspector = inspector,
-        super(const ConnectionState.idle()) {
+    this._settings,
+  ) : super(const ConnectionState.idle()) {
     on<ConnectionEvent>(
       (event, emit) => event.map(
         bootstrap: (e) => _onBootstrap(e.projectRoot, emit),
@@ -27,7 +24,6 @@ class ConnectionBloc extends Bloc<ConnectionEvent, ConnectionState> {
 
   final VmServiceClient _vmClient;
   final ProjectSettingsRepository _settings;
-  final InspectorRepository? _inspector;
   String? _currentProjectRoot;
 
   Future<void> _onBootstrap(
@@ -47,7 +43,6 @@ class ConnectionBloc extends Bloc<ConnectionEvent, ConnectionState> {
     try {
       await _vmClient.connect(url);
       await _settings.setVmServiceUrl(_currentProjectRoot ?? '', url);
-      await _inspector?.enableSelectMode();
       emit(ConnectionState.connected(url: url));
     } on Object catch (e) {
       emit(ConnectionState.error(url: url, message: e.toString()));

@@ -1,7 +1,6 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:pickforge/core/inspector/inspector_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/connection/bloc/connection_bloc.dart';
@@ -12,17 +11,13 @@ class _MockVmServiceClient extends Mock implements VmServiceClient {}
 
 class _MockSettings extends Mock implements ProjectSettingsRepository {}
 
-class _MockInspector extends Mock implements InspectorRepository {}
-
 void main() {
   late VmServiceClient vmClient;
   late ProjectSettingsRepository settings;
-  late InspectorRepository inspector;
 
   setUp(() {
     vmClient = _MockVmServiceClient();
     settings = _MockSettings();
-    inspector = _MockInspector();
     registerFallbackValue(const ConnectionState.idle());
   });
 
@@ -92,28 +87,6 @@ void main() {
           url: 'ws://bad/ws',
           message: 'Bad state: refused',
         ),
-      ],
-    );
-
-    blocTest<ConnectionBloc, ConnectionState>(
-      'calls enableSelectMode when inspector provided',
-      setUp: () {
-        when(() => vmClient.connect('ws://test/ws')).thenAnswer((_) async {});
-        when(() => settings.setVmServiceUrl(any(), any()))
-            .thenAnswer((_) async {});
-        when(() => inspector.enableSelectMode()).thenAnswer((_) async {});
-      },
-      build: () => ConnectionBloc(vmClient, settings, inspector: inspector),
-      seed: () => const ConnectionState.idle(),
-      act: (bloc) => bloc.add(
-        const ConnectionEvent.connectPressed(url: 'ws://test/ws'),
-      ),
-      verify: (_) {
-        verify(() => inspector.enableSelectMode()).called(1);
-      },
-      expect: () => [
-        const ConnectionState.connecting(url: 'ws://test/ws'),
-        const ConnectionState.connected(url: 'ws://test/ws'),
       ],
     );
 

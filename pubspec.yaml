@@ -1,0 +1,61 @@
+name: pickforge
+description: "Pickforge — widget-level AI context for Flutter."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  animations: ^2.2.0
+  bloc: ^9.2.0
+  dio: ^5.9.2
+  drift: ^2.32.1
+  drift_flutter: ^0.3.0
+  equatable: ^2.0.8
+  flutter:
+    sdk: flutter
+  flutter_animate: ^4.5.2
+  flutter_bloc: ^9.1.1
+  flutter_localizations:
+    sdk: flutter
+  freezed_annotation: ^3.1.0
+  get_it: ^9.2.1
+  go_router: ^17.2.2
+  hugeicons: ^1.1.6
+  injectable: ^3.0.0
+  intl: ^0.20.2
+  json_annotation: ^4.11.0
+  lucide_icons_flutter: ^3.1.13
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  rive: ^0.14.5
+  shared_preferences: ^2.5.5
+  sqlite3_flutter_libs: ^0.6.0+eol
+  vm_service: ^15.1.0
+  web_socket_channel: ^3.0.3
+  window_manager: ^0.5.1
+  yaml: ^3.1.3
+
+dev_dependencies:
+  bloc_test: ^10.0.0
+  build_runner: ^2.14.0
+  drift_dev: ^2.32.1
+  flutter_test:
+    sdk: flutter
+  freezed: ^3.2.5
+  injectable_generator: ^3.0.2
+  intl_utils: ^2.8.14
+  json_serializable: ^6.13.1
+  mocktail: ^1.0.5
+  test: ^1.30.0
+  very_good_analysis: ^10.2.0
+
+flutter:
+  uses-material-design: true
+  generate: true
+  assets:
+    - assets/skills/
+    - assets/agents/
+    - assets/animations/

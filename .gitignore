@@ -3,3 +3,19 @@
 .idea/
 build/
 .DS_Store
+
+# FVM Version Cache
+.fvm/flutter_sdk
+
+# Dart / Flutter
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+
+# Generated
+lib/l10n/generated/
+coverage/
+*.g.dart
+*.freezed.dart

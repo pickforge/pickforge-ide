@@ -14,11 +14,13 @@ void main() {
           promptPath: '/tmp/prompt.txt',
         );
 
-        expect(script, contains('cd /path/to/project'));
-        expect(script, contains('claude'));
-        expect(script, contains('--skill'));
-        expect(script, contains('edit-widget'));
-        expect(script, contains('< /tmp/prompt.txt'));
+        expect(script, contains('#!/usr/bin/env bash'));
+        expect(script, contains('set -euo pipefail'));
+        expect(script, contains("cd '/path/to/project'"));
+        expect(
+          script,
+          contains("claude '--skill' 'edit-widget' < '/tmp/prompt.txt'"),
+        );
       });
 
       test('handles empty args list', () {
@@ -29,9 +31,9 @@ void main() {
           promptPath: '/tmp/p.txt',
         );
 
-        expect(script, contains('cd /proj'));
+        expect(script, contains("cd '/proj'"));
         expect(script, contains('codex'));
-        expect(script, contains('< /tmp/p.txt'));
+        expect(script, contains("< '/tmp/p.txt'"));
       });
     });
 
@@ -44,11 +46,11 @@ void main() {
           promptPath: r'C:\tmp\prompt.txt',
         );
 
-        expect(script, contains(r'cd /d C:\path\to\project'));
+        expect(script, contains(r'cd /d "C:\path\to\project"'));
         expect(script, contains('claude.exe'));
         expect(script, contains('--skill'));
         expect(script, contains('edit-widget'));
-        expect(script, contains(r'type C:\tmp\prompt.txt |'));
+        expect(script, contains(r'type "C:\tmp\prompt.txt" |'));
       });
 
       test('handles empty args list', () {
@@ -59,9 +61,9 @@ void main() {
           promptPath: r'C:\tmp\p.txt',
         );
 
-        expect(script, contains(r'cd /d C:\proj'));
+        expect(script, contains(r'cd /d "C:\proj"'));
         expect(script, contains('codex.exe'));
-        expect(script, contains(r'type C:\tmp\p.txt |'));
+        expect(script, contains(r'type "C:\tmp\p.txt" |'));
       });
     });
   });

@@ -1,7 +1,9 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/features/connection/bloc/connection_bloc.dart';
 import 'package:pickforge/features/connection/bloc/connection_event.dart';
 import 'package:pickforge/features/connection/bloc/connection_state.dart'
@@ -82,5 +84,37 @@ void main() {
     final button = tester.widget<FilledButton>(find.byType(FilledButton));
     expect(button.onPressed, isNull);
     expect(find.text('Connecting...'), findsOneWidget);
+  });
+
+  testWidgets('navigates to dock on connected state', (tester) async {
+    final bloc = _MockConnectionBloc();
+    final router = GoRouter(
+      initialLocation: AppRoutes.connect,
+      routes: [
+        GoRoute(
+          path: AppRoutes.connect,
+          builder: (_, __) => ConnectionView(bloc: bloc),
+        ),
+        GoRoute(
+          path: AppRoutes.dock,
+          builder: (_, __) => const Text('Dock'),
+        ),
+      ],
+    );
+
+    whenListen(
+      bloc,
+      Stream.fromIterable([
+        const conn.ConnectionState.idle(),
+        const conn.ConnectionState.connected(url: 'ws://x/ws'),
+      ]),
+      initialState: const conn.ConnectionState.idle(),
+    );
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pump(); // process idle state
+    await tester.pump(); // process connected state → navigation
+
+    expect(find.text('Dock'), findsOneWidget);
   });
 }

@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/connection/bloc/connection_bloc.dart';
@@ -62,6 +64,13 @@ class _ConnectionViewState extends State<ConnectionView> {
       value: _bloc,
       child: BlocConsumer<ConnectionBloc, conn.ConnectionState>(
         listener: (context, state) {
+          state.maybeWhen(
+            connected: (_) => context.go(AppRoutes.dock),
+            error: (_, message) => ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(message)),
+            ),
+            orElse: () {},
+          );
           final url = state.maybeWhen(
             connected: (u) => u,
             error: (u, _) => u,

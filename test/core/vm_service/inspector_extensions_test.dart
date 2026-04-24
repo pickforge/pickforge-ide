@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/vm_service/inspector_extensions.dart';
@@ -42,5 +44,48 @@ void main() {
         args: {'enabled': 'true'},
       ),
     ).called(1);
+  });
+
+  test('getSelectedWidget returns response json', () async {
+    when(
+      () => vm.callServiceExtension(
+        'ext.flutter.inspector.getSelectedWidget',
+        isolateId: 'isolates/1',
+      ),
+    ).thenAnswer((_) async => _FakeResponse({'description': 'Text'}));
+
+    final selected = await ext.getSelectedWidget();
+
+    expect(selected?['description'], 'Text');
+  });
+
+  test('getRootWidgetSummaryTree returns response json', () async {
+    when(
+      () => vm.callServiceExtension(
+        'ext.flutter.inspector.getRootWidgetSummaryTree',
+        isolateId: 'isolates/1',
+      ),
+    ).thenAnswer((_) async => _FakeResponse({'description': 'Root'}));
+
+    final tree = await ext.getRootWidgetSummaryTree();
+
+    expect(tree?['description'], 'Root');
+  });
+
+  test('screenshot decodes base64 bytes', () async {
+    when(
+      () => vm.callServiceExtension(
+        'ext.flutter.inspector.screenshot',
+        isolateId: 'isolates/1',
+      ),
+    ).thenAnswer(
+      (_) async => _FakeResponse({
+        'screenshot': base64.encode([1, 2]),
+      }),
+    );
+
+    final bytes = await ext.screenshot();
+
+    expect(bytes, [1, 2]);
   });
 }

@@ -17,12 +17,13 @@ class FakeVmServiceScript {
   }
 
   Map<String, dynamic> respondTo(String method) {
-    while (_cursor < _entries.length) {
-      final entry = _entries[_cursor++];
-      if (entry['type'] == 'response' && entry['method'] == method) {
-        return (entry['result'] as Map).cast<String, dynamic>();
-      }
+    if (_cursor >= _entries.length) {
+      throw StateError('No scripted response for method "$method"');
     }
-    throw StateError('No scripted response for method "$method"');
+    final entry = _entries[_cursor++];
+    if (entry['type'] != 'response' || entry['method'] != method) {
+      throw StateError('Expected ${entry['method']}, got "$method"');
+    }
+    return (entry['result'] as Map).cast<String, dynamic>();
   }
 }

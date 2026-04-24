@@ -21,4 +21,14 @@ void main() {
     );
     expect(() => script.respondTo('nonexistent'), throwsStateError);
   });
+
+  test('throws when methods are replayed out of order', () async {
+    final script = await FakeVmServiceScript.loadFromFile(
+      'test/fixtures/vm_service/connect_and_select_button.jsonl',
+    );
+    expect(
+      () => script.respondTo('ext.flutter.inspector.show'),
+      throwsStateError,
+    );
+  });
 }

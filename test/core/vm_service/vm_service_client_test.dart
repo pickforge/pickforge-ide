@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/vm_service/reconnect_policy.dart';
@@ -52,6 +54,7 @@ void main() {
 
   test('failed reconnect clears stale service', () async {
     final staleService = _MockVmService();
+    when(() => staleService.onDone).thenAnswer((_) => Completer<void>().future);
     when(staleService.dispose).thenAnswer((_) async {});
     var calls = 0;
     final client = VmServiceClient.forTesting(
@@ -80,6 +83,8 @@ void main() {
   test('successful reconnect disposes and replaces stale service', () async {
     final oldService = _MockVmService();
     final newService = _MockVmService();
+    when(() => oldService.onDone).thenAnswer((_) => Completer<void>().future);
+    when(() => newService.onDone).thenAnswer((_) => Completer<void>().future);
     when(oldService.dispose).thenAnswer((_) async {});
     when(newService.dispose).thenAnswer((_) async {});
     var calls = 0;
@@ -99,5 +104,30 @@ void main() {
     verify(oldService.dispose).called(1);
     await client.close();
     verify(newService.dispose).called(1);
+  });
+
+  test('connect starts reconnect loop when live service closes', () async {
+    final firstService = _MockVmService();
+    final secondService = _MockVmService();
+    final firstDone = Completer<void>();
+    when(() => firstService.onDone).thenAnswer((_) => firstDone.future);
+    when(() => secondService.onDone)
+        .thenAnswer((_) => Completer<void>().future);
+    when(firstService.dispose).thenAnswer((_) async {});
+    when(secondService.dispose).thenAnswer((_) async {});
+    var calls = 0;
+    final client = VmServiceClient.forTesting(
+      factory: (url) async => calls++ == 0 ? firstService : secondService,
+      delay: (_) async {},
+    );
+
+    await client.connect('ws://x/ws');
+    firstDone.complete();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(client.service, same(secondService));
+    expect(calls, 2);
+    await client.close();
   });
 }

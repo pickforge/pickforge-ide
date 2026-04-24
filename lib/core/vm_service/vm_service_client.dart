@@ -27,12 +27,14 @@ class VmServiceClient {
 
   VmService? _service;
   String? _url;
+  bool _closing = false;
 
   Stream<VmServiceConnectionState> get state => _controller.stream;
   VmService? get service => _service;
   String? get currentUrl => _url;
 
   Future<void> connect(String url) async {
+    _closing = false;
     _url = url;
     _controller.add(const VmServiceConnectionState.connecting(attempt: 1));
     try {
@@ -53,6 +55,7 @@ class VmServiceClient {
     required ExponentialBackoff policy,
     int maxAttempts = 1 << 30,
   }) async {
+    _closing = false;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       _controller.add(VmServiceConnectionState.connecting(attempt: attempt));
       try {
@@ -76,6 +79,7 @@ class VmServiceClient {
   }
 
   Future<void> disconnect() async {
+    _closing = true;
     await _clearService();
     _controller.add(const VmServiceConnectionState.idle());
   }
@@ -87,15 +91,28 @@ class VmServiceClient {
 
   Future<void> _replaceService(VmService nextService) async {
     final previous = _service;
+    _service = nextService;
+    _attachDoneHandler(nextService);
     if (!identical(previous, nextService)) {
       await previous?.dispose();
     }
-    _service = nextService;
   }
 
   Future<void> _clearService() async {
     final previous = _service;
     _service = null;
     await previous?.dispose();
+  }
+
+  void _attachDoneHandler(VmService service) {
+    unawaited(
+      service.onDone.then((_) async {
+        if (_closing || !identical(_service, service)) return;
+        await reconnectLoop(
+          _url ?? '',
+          policy: const ExponentialBackoff(),
+        );
+      }),
+    );
   }
 }

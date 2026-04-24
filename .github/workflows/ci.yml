@@ -23,6 +23,12 @@ jobs:
         run: fvm flutter pub get
       - name: Codegen
         run: fvm dart run build_runner build --delete-conflicting-outputs
+      - name: Assert no uncommitted codegen drift
+        run: |
+          git diff --exit-code || (
+            echo "::error::Codegen drift detected. Run scripts/gen.sh locally and commit.";
+            exit 1
+          )
       - name: Format check
         run: fvm dart format --set-exit-if-changed .
       - name: Analyze

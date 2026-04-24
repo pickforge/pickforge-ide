@@ -6,6 +6,7 @@ import 'package:pickforge/core/agent/profiles/claude_code_profile.dart';
 import 'package:pickforge/core/agent/profiles/codex_profile.dart';
 import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
 import 'package:pickforge/core/di/injection.config.dart';
+import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/terminal/profiles/alacritty_profile.dart';
 import 'package:pickforge/core/terminal/profiles/env_fallback_profile.dart';
 import 'package:pickforge/core/terminal/profiles/ghostty_profile.dart';
@@ -69,4 +70,10 @@ abstract class TerminalProfileModule {
     List<TerminalProfile> profiles,
   ) =>
       TerminalProfileRegistry(profiles);
+}
+
+@module
+abstract class SkillsModule {
+  @singleton
+  SkillStore get skillStore => SkillStore();
 }

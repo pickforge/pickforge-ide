@@ -20,6 +20,7 @@ import 'package:pickforge/core/di/injection.dart' as _i74;
 import 'package:pickforge/core/drift/pickforge_database.dart' as _i631;
 import 'package:pickforge/core/settings/project_settings_repository.dart'
     as _i340;
+import 'package:pickforge/core/skills/skill_store.dart' as _i895;
 import 'package:pickforge/core/terminal/terminal_detector.dart' as _i77;
 import 'package:pickforge/core/terminal/terminal_profile.dart' as _i681;
 import 'package:pickforge/core/terminal/terminal_profile_registry.dart'
@@ -39,6 +40,7 @@ extension GetItInjectableX on _i174.GetIt {
     );
     final agentProfileModule = _$AgentProfileModule();
     final terminalProfileModule = _$TerminalProfileModule();
+    final skillsModule = _$SkillsModule();
     gh.singleton<_i14.ClaudeCodeProfile>(
         () => agentProfileModule.claudeCodeProfile);
     gh.singleton<_i454.CodexProfile>(() => agentProfileModule.codexProfile);
@@ -46,6 +48,7 @@ extension GetItInjectableX on _i174.GetIt {
         () => agentProfileModule.opencodeProfile);
     gh.singleton<_i77.TerminalDetector>(
         () => terminalProfileModule.terminalDetector);
+    gh.singleton<_i895.SkillStore>(() => skillsModule.skillStore);
     gh.lazySingleton<_i536.AppBootstrap>(() => _i536.AppBootstrap());
     gh.lazySingleton<_i631.PickforgeDatabase>(() => _i631.PickforgeDatabase());
     gh.lazySingleton<_i292.VmServiceClient>(() => _i292.VmServiceClient());
@@ -68,3 +71,5 @@ extension GetItInjectableX on _i174.GetIt {
 class _$AgentProfileModule extends _i74.AgentProfileModule {}
 
 class _$TerminalProfileModule extends _i74.TerminalProfileModule {}
+
+class _$SkillsModule extends _i74.SkillsModule {}

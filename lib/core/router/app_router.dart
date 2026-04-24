@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pickforge/features/connection/view/connection_view.dart';
+import 'package:pickforge/features/history/view/history_view.dart';
+import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/widget_picker/view/dock_view.dart';
 import 'package:pickforge/shared/widgets/app_shell.dart';
 
@@ -30,26 +31,14 @@ GoRouter buildAppRouter() {
           ),
           GoRoute(
             path: AppRoutes.history,
-            builder: (_, __) => const _PlaceholderPage(title: 'History'),
+            builder: (_, __) => const HistoryView(),
           ),
           GoRoute(
             path: AppRoutes.settings,
-            builder: (_, __) => const _PlaceholderPage(title: 'Settings'),
+            builder: (_, __) => const SettingsView(),
           ),
         ],
       ),
     ],
   );
-}
-
-class _PlaceholderPage extends StatelessWidget {
-  const _PlaceholderPage({required this.title});
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(child: Text(title)),
-    );
-  }
 }

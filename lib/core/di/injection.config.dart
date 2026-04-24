@@ -32,6 +32,8 @@ import 'package:pickforge/core/terminal/terminal_profile_registry.dart'
     as _i871;
 import 'package:pickforge/core/vm_service/vm_service_client.dart' as _i292;
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart' as _i888;
+import 'package:pickforge/features/history/cubit/history_cubit.dart' as _i371;
+import 'package:pickforge/features/settings/cubit/settings_cubit.dart' as _i18;
 
 extension GetItInjectableX on _i174.GetIt {
 // initializes the registration of main-scope dependencies inside of GetIt
@@ -72,6 +74,8 @@ extension GetItInjectableX on _i174.GetIt {
               gh<_i454.CodexProfile>(),
               gh<_i621.OpenCodeProfile>(),
             ));
+    gh.factory<_i371.HistoryCubit>(
+        () => _i371.HistoryCubit(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i340.ProjectSettingsRepository>(
         () => _i340.ProjectSettingsRepository(gh<_i631.PickforgeDatabase>()));
     gh.singleton<List<_i681.TerminalProfile>>(() =>
@@ -80,6 +84,8 @@ extension GetItInjectableX on _i174.GetIt {
         adbScreenshotModule.adbScreenshotCapturer(gh<_i77.TerminalDetector>()));
     gh.singleton<_i871.TerminalProfileRegistry>(() => terminalProfileModule
         .terminalProfileRegistry(gh<List<_i681.TerminalProfile>>()));
+    gh.factory<_i18.SettingsCubit>(
+        () => _i18.SettingsCubit(gh<_i340.ProjectSettingsRepository>()));
     gh.singleton<_i683.AgentLauncher>(() => agentLauncherModule.agentLauncher(
           gh<_i360.AgentProfileRegistry>(),
           gh<_i871.TerminalProfileRegistry>(),

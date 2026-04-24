@@ -45,10 +45,11 @@ class FakeVmServiceScript {
     if (_cursor >= _entries.length) {
       throw StateError('No scripted event for stream "$streamId"');
     }
-    final entry = _entries[_cursor++];
+    final entry = _entries[_cursor];
     if (entry['type'] != 'event' || entry['streamId'] != streamId) {
       throw StateError('Expected ${entry['streamId']}, got "$streamId"');
     }
+    _cursor++;
     return entry;
   }
 }

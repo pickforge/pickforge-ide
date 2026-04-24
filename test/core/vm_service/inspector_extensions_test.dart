@@ -46,11 +46,13 @@ void main() {
     ).called(1);
   });
 
-  test('getSelectedWidget returns response json', () async {
+  test('getSelectedWidget requests an object group and returns response json',
+      () async {
     when(
       () => vm.callServiceExtension(
         'ext.flutter.inspector.getSelectedWidget',
         isolateId: 'isolates/1',
+        args: {'objectGroup': 'pickforge'},
       ),
     ).thenAnswer((_) async => _FakeResponse({'description': 'Text'}));
 
@@ -64,6 +66,7 @@ void main() {
       () => vm.callServiceExtension(
         'ext.flutter.inspector.getRootWidgetSummaryTree',
         isolateId: 'isolates/1',
+        args: {'objectGroup': 'pickforge'},
       ),
     ).thenAnswer((_) async => _FakeResponse({'description': 'Root'}));
 

@@ -59,4 +59,13 @@ void main() {
     expect(script.consumeEvent('Extension')['streamId'], 'Extension');
     expect(script.respondTo('getVM')['name'], 'flutter');
   });
+
+  test('failed event consumption does not advance the script', () {
+    final script = FakeVmServiceScript([
+      {'type': 'event', 'streamId': 'Extension'},
+    ]);
+
+    expect(() => script.consumeEvent('Wrong'), throwsStateError);
+    expect(script.consumeEvent('Extension')['streamId'], 'Extension');
+  });
 }

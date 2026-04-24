@@ -5,6 +5,8 @@ import 'package:vm_service/vm_service.dart';
 class InspectorExtensions {
   InspectorExtensions(this._vm, {required this.isolateId});
 
+  static const objectGroup = 'pickforge';
+
   final VmService _vm;
   final String isolateId;
 
@@ -20,6 +22,7 @@ class InspectorExtensions {
     final response = await _vm.callServiceExtension(
       'ext.flutter.inspector.getSelectedWidget',
       isolateId: isolateId,
+      args: const {'objectGroup': objectGroup},
     );
     return response.json;
   }
@@ -28,6 +31,7 @@ class InspectorExtensions {
     final response = await _vm.callServiceExtension(
       'ext.flutter.inspector.getRootWidgetSummaryTree',
       isolateId: isolateId,
+      args: const {'objectGroup': objectGroup},
     );
     return response.json;
   }

@@ -12,6 +12,7 @@
 import 'package:get_it/get_it.dart' as _i174;
 import 'package:injectable/injectable.dart' as _i526;
 import 'package:pickforge/core/di/app_bootstrap.dart' as _i536;
+import 'package:pickforge/core/drift/pickforge_database.dart' as _i631;
 
 extension GetItInjectableX on _i174.GetIt {
 // initializes the registration of main-scope dependencies inside of GetIt
@@ -25,6 +26,7 @@ extension GetItInjectableX on _i174.GetIt {
       environmentFilter,
     );
     gh.lazySingleton<_i536.AppBootstrap>(() => _i536.AppBootstrap());
+    gh.lazySingleton<_i631.PickforgeDatabase>(() => _i631.PickforgeDatabase());
     return this;
   }
 }

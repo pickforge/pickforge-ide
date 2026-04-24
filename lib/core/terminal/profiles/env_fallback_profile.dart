@@ -12,7 +12,7 @@ class EnvFallbackProfile extends TerminalProfile {
   String get id => TerminalProfileId.envFallback.value;
 
   @override
-  String get displayName => 'System Default (\$TERMINAL)';
+  String get displayName => r'System Default ($TERMINAL)';
 
   @override
   Set<OperatingSystem> get supportedPlatforms => {

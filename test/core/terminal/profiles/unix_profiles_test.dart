@@ -11,7 +11,6 @@ import 'package:pickforge/core/terminal/profiles/kitty_profile.dart';
 import 'package:pickforge/core/terminal/profiles/terminal_app_profile.dart';
 import 'package:pickforge/core/terminal/profiles/wezterm_profile.dart';
 import 'package:pickforge/core/terminal/terminal_detector.dart';
-import 'package:pickforge/core/terminal/terminal_profile.dart';
 
 void main() {
   const spec = TerminalLaunchSpec(
@@ -21,20 +20,20 @@ void main() {
     env: {},
   );
 
-  TerminalDetector _fakeDetector() => TerminalDetector(
+  TerminalDetector fakeDetector() => TerminalDetector(
         processRunner: (_, __) async => io.ProcessResult(0, 0, '', ''),
       );
 
   group('Unix profile buildInvocation', () {
     test('GhosttyProfile produces correct invocation', () {
-      final profile = GhosttyProfile(_fakeDetector());
+      final profile = GhosttyProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'ghostty');
       expect(invocation.arguments, ['-e', '/tmp/run.sh']);
     });
 
     test('WezTermProfile produces correct invocation', () {
-      final profile = WezTermProfile(_fakeDetector());
+      final profile = WezTermProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'wezterm');
       expect(invocation.arguments, [
@@ -47,35 +46,35 @@ void main() {
     });
 
     test('AlacrittyProfile produces correct invocation', () {
-      final profile = AlacrittyProfile(_fakeDetector());
+      final profile = AlacrittyProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'alacritty');
       expect(invocation.arguments, ['-e', '/tmp/run.sh']);
     });
 
     test('KittyProfile produces correct invocation (no -e)', () {
-      final profile = KittyProfile(_fakeDetector());
+      final profile = KittyProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'kitty');
       expect(invocation.arguments, ['/tmp/run.sh']);
     });
 
     test('GnomeTerminalProfile produces correct invocation', () {
-      final profile = GnomeTerminalProfile(_fakeDetector());
+      final profile = GnomeTerminalProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'gnome-terminal');
       expect(invocation.arguments, ['--', '/tmp/run.sh']);
     });
 
     test('ITerm2Profile produces correct invocation', () {
-      final profile = ITerm2Profile(_fakeDetector());
+      final profile = ITerm2Profile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'open');
       expect(invocation.arguments, ['-a', 'iTerm.app', '/tmp/run.sh']);
     });
 
     test('TerminalAppProfile produces correct invocation', () {
-      final profile = TerminalAppProfile(_fakeDetector());
+      final profile = TerminalAppProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'open');
       expect(invocation.arguments, ['-a', 'Terminal.app', '/tmp/run.sh']);
@@ -84,43 +83,43 @@ void main() {
 
   group('Unix profile metadata', () {
     test('GhosttyProfile has correct id and displayName', () {
-      final profile = GhosttyProfile(_fakeDetector());
+      final profile = GhosttyProfile(fakeDetector());
       expect(profile.id, 'ghostty');
       expect(profile.displayName, 'Ghostty');
     });
 
     test('WezTermProfile has correct id and displayName', () {
-      final profile = WezTermProfile(_fakeDetector());
+      final profile = WezTermProfile(fakeDetector());
       expect(profile.id, 'wezterm');
       expect(profile.displayName, 'WezTerm');
     });
 
     test('AlacrittyProfile has correct id and displayName', () {
-      final profile = AlacrittyProfile(_fakeDetector());
+      final profile = AlacrittyProfile(fakeDetector());
       expect(profile.id, 'alacritty');
       expect(profile.displayName, 'Alacritty');
     });
 
     test('KittyProfile has correct id and displayName', () {
-      final profile = KittyProfile(_fakeDetector());
+      final profile = KittyProfile(fakeDetector());
       expect(profile.id, 'kitty');
       expect(profile.displayName, 'Kitty');
     });
 
     test('GnomeTerminalProfile has correct id and displayName', () {
-      final profile = GnomeTerminalProfile(_fakeDetector());
+      final profile = GnomeTerminalProfile(fakeDetector());
       expect(profile.id, 'gnome-terminal');
       expect(profile.displayName, 'GNOME Terminal');
     });
 
     test('ITerm2Profile has correct id and displayName', () {
-      final profile = ITerm2Profile(_fakeDetector());
+      final profile = ITerm2Profile(fakeDetector());
       expect(profile.id, 'iterm2');
       expect(profile.displayName, 'iTerm2');
     });
 
     test('TerminalAppProfile has correct id and displayName', () {
-      final profile = TerminalAppProfile(_fakeDetector());
+      final profile = TerminalAppProfile(fakeDetector());
       expect(profile.id, 'terminal-app');
       expect(profile.displayName, 'Terminal.app');
     });
@@ -132,12 +131,12 @@ void main() {
       if (io.Platform.environment['TERMINAL']?.isNotEmpty ?? false) {
         return;
       }
-      final profile = EnvFallbackProfile(_fakeDetector());
+      final profile = EnvFallbackProfile(fakeDetector());
       expect(() => profile.buildInvocation(spec), throwsA(isA<StateError>()));
     });
 
     test('id and displayName are correct', () {
-      final profile = EnvFallbackProfile(_fakeDetector());
+      final profile = EnvFallbackProfile(fakeDetector());
       expect(profile.id, 'env-fallback');
       expect(profile.displayName, contains('TERMINAL'));
     });

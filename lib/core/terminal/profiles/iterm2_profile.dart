@@ -5,8 +5,9 @@ import 'package:pickforge/core/terminal/terminal_detector.dart';
 import 'package:pickforge/core/terminal/terminal_profile.dart';
 
 class ITerm2Profile extends TerminalProfile {
-  ITerm2Profile(this._detector);
-  final TerminalDetector _detector;
+  // Detector unused: iTerm2 always present on macOS.
+  // ignore: avoid_unused_constructor_parameters
+  ITerm2Profile(TerminalDetector detector);
 
   @override
   String get id => TerminalProfileId.iterm2.value;

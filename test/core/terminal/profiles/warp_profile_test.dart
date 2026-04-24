@@ -14,19 +14,19 @@ void main() {
     env: {},
   );
 
-  TerminalDetector _fakeDetector() => TerminalDetector(
+  TerminalDetector fakeDetector() => TerminalDetector(
         processRunner: (_, __) async => ProcessResult(0, 0, '', ''),
       );
 
   group('WarpProfile', () {
     test('has correct id and displayName', () {
-      final profile = WarpProfile(_fakeDetector());
+      final profile = WarpProfile(fakeDetector());
       expect(profile.id, 'warp');
       expect(profile.displayName, 'Warp');
     });
 
     test('supports Linux and macOS', () {
-      final profile = WarpProfile(_fakeDetector());
+      final profile = WarpProfile(fakeDetector());
       expect(profile.supportedPlatforms, {
         OperatingSystem.linux,
         OperatingSystem.macos,
@@ -35,7 +35,7 @@ void main() {
 
     test('buildInvocation returns open with warp URL on macOS', () {
       // We can't easily mock Platform.isMacOS, so just verify the URL structure
-      final profile = WarpProfile(_fakeDetector());
+      final profile = WarpProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
 
       // On Linux (where tests run), it uses xdg-open

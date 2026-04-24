@@ -5,8 +5,9 @@ import 'package:pickforge/core/terminal/terminal_detector.dart';
 import 'package:pickforge/core/terminal/terminal_profile.dart';
 
 class TerminalAppProfile extends TerminalProfile {
-  TerminalAppProfile(this._detector);
-  final TerminalDetector _detector;
+  // Detector unused: Terminal.app always present on macOS.
+  // ignore: avoid_unused_constructor_parameters
+  TerminalAppProfile(TerminalDetector detector);
 
   @override
   String get id => TerminalProfileId.terminalApp.value;

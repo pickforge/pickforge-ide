@@ -9,37 +9,37 @@ import 'package:pickforge/core/terminal/terminal_profile.dart';
 void main() {
   const spec = TerminalLaunchSpec(
     id: TerminalProfileId.windowsTerminal,
-    scriptPath: 'C:\\tmp\\run.bat',
-    workingDir: 'C:\\Users\\me\\project',
+    scriptPath: r'C:\tmp\run.bat',
+    workingDir: r'C:\Users\me\project',
     env: {},
   );
 
-  TerminalDetector _fakeDetector() => TerminalDetector(
+  TerminalDetector fakeDetector() => TerminalDetector(
         processRunner: (_, __) async => ProcessResult(0, 0, '', ''),
       );
 
   group('WindowsTerminalProfile', () {
     test('has correct id and displayName', () {
-      final profile = WindowsTerminalProfile(_fakeDetector());
+      final profile = WindowsTerminalProfile(fakeDetector());
       expect(profile.id, 'windows-terminal');
       expect(profile.displayName, 'Windows Terminal');
     });
 
     test('supports only Windows', () {
-      final profile = WindowsTerminalProfile(_fakeDetector());
+      final profile = WindowsTerminalProfile(fakeDetector());
       expect(profile.supportedPlatforms, {OperatingSystem.windows});
     });
 
     test('buildInvocation produces correct args', () {
-      final profile = WindowsTerminalProfile(_fakeDetector());
+      final profile = WindowsTerminalProfile(fakeDetector());
       final invocation = profile.buildInvocation(spec);
       expect(invocation.binary, 'wt.exe');
       expect(invocation.arguments, [
         '-d',
-        'C:\\Users\\me\\project',
+        r'C:\Users\me\project',
         'cmd.exe',
         '/c',
-        'C:\\tmp\\run.bat',
+        r'C:\tmp\run.bat',
       ]);
     });
 

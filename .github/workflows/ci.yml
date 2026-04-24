@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  analyze-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+      - name: Install FVM
+        run: dart pub global activate fvm
+      - name: Install Flutter SDK
+        run: fvm install
+      - name: Install deps
+        run: fvm flutter pub get
+      - name: Codegen
+        run: fvm dart run build_runner build --delete-conflicting-outputs
+      - name: Format check
+        run: fvm dart format --set-exit-if-changed .
+      - name: Analyze
+        run: fvm flutter analyze
+      - name: Test
+        run: fvm flutter test --coverage
+      - name: Upload coverage (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false

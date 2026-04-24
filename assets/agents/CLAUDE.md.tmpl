@@ -1,0 +1,14 @@
+# Pickforge session — Claude Code
+
+You are being invoked via Pickforge. The `.pickforge/` directory in this
+project root contains per-session context files.
+
+## Rules
+
+- Follow the skill in `.pickforge/skill-active.md`.
+- Use the widget details in `.pickforge/widget-context.md` as ground truth for
+  which widget the user selected.
+- If the project has its own `CLAUDE.md` (sibling to this), obey that *in
+  addition* — Pickforge never overrides project conventions.
+- Never write to `.pickforge/` yourself. That directory is Pickforge's.
+- Commit on the user's request, not proactively.

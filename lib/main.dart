@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/shared/theme/pickforge_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await configureDependencies();
   runApp(const PickforgeApp());
 }
 

@@ -1,11 +1,16 @@
 import 'package:get_it/get_it.dart';
 import 'package:injectable/injectable.dart';
 
+import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
+import 'package:pickforge/core/agent/pickforge_dir_manager.dart';
 import 'package:pickforge/core/agent/profiles/claude_code_profile.dart';
 import 'package:pickforge/core/agent/profiles/codex_profile.dart';
 import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
+import 'package:pickforge/core/agent/widget_context_renderer.dart';
+import 'package:pickforge/core/agent/wrapper_script_generator.dart';
 import 'package:pickforge/core/di/injection.config.dart';
+import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/terminal/profiles/alacritty_profile.dart';
 import 'package:pickforge/core/terminal/profiles/env_fallback_profile.dart';
@@ -76,4 +81,43 @@ abstract class TerminalProfileModule {
 abstract class SkillsModule {
   @singleton
   SkillStore get skillStore => SkillStore();
+}
+
+@module
+abstract class AgentLauncherModule {
+  @singleton
+  PickforgeDirManager get pickforgeDirManager => PickforgeDirManager();
+
+  @singleton
+  WidgetContextRenderer get widgetContextRenderer =>
+      const WidgetContextRenderer();
+
+  @singleton
+  WrapperScriptGenerator get wrapperScriptGenerator =>
+      const WrapperScriptGenerator();
+
+  @singleton
+  AgentLauncher agentLauncher(
+    AgentProfileRegistry agentRegistry,
+    TerminalProfileRegistry terminalRegistry,
+    PickforgeDirManager dirManager,
+    SkillStore skillStore,
+    WidgetContextRenderer widgetRenderer,
+    WrapperScriptGenerator scriptGenerator,
+  ) =>
+      AgentLauncher(
+        agentRegistry: agentRegistry,
+        terminalRegistry: terminalRegistry,
+        dirManager: dirManager,
+        skillStore: skillStore,
+        widgetRenderer: widgetRenderer,
+        scriptGenerator: scriptGenerator,
+      );
+}
+
+@module
+abstract class AdbScreenshotModule {
+  @singleton
+  AdbScreenshotCapturer adbScreenshotCapturer(TerminalDetector detector) =>
+      AdbScreenshotCapturer(detector);
 }

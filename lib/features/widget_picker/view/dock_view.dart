@@ -11,6 +11,7 @@ import 'package:pickforge/core/vm_service/inspector_extensions.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/forge/forge.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
+import 'package:pickforge/shared/motion/pickforge_motion.dart';
 
 class DockView extends StatefulWidget {
   const DockView({super.key, this.cubit});
@@ -56,9 +57,17 @@ class _DockViewState extends State<DockView> {
           return Column(
             children: [
               Expanded(
-                child: sel == null
-                    ? const NoSelectionPlaceholder()
-                    : WidgetDetailsPanel(selected: sel),
+                child: AnimatedSwitcher(
+                  duration: PickforgeMotion.standard,
+                  switchInCurve: PickforgeMotion.curveOut,
+                  switchOutCurve: PickforgeMotion.curveOut,
+                  child: sel == null
+                      ? const NoSelectionPlaceholder(key: ValueKey('empty'))
+                      : WidgetDetailsPanel(
+                          key: ValueKey(sel.node.id),
+                          selected: sel,
+                        ),
+                ),
               ),
               ForgePanel(
                 selection: sel,

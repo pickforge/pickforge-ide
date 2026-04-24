@@ -16,9 +16,12 @@ class WidgetDetailsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            selected.node.className,
-            style: Theme.of(context).textTheme.titleLarge,
+          Hero(
+            tag: 'widget-${selected.node.id}',
+            child: Text(
+              selected.node.className,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
           ),
           const SizedBox(height: 8),
           if (selected.node.creationLocation != null)

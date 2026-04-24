@@ -33,6 +33,8 @@ void main() {
         home: Scaffold(body: DockView(cubit: cubit)),
       ),
     );
+    // Animation repeats forever; advance past one cycle then cancel timers.
+    await tester.pump(const Duration(seconds: 3));
 
     expect(
       find.text('Tap a widget in the emulator to pick it'),

@@ -1,9 +1,7 @@
 import 'dart:io';
 
-import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/inspector/models.dart';
 
-@lazySingleton
 class SourceSnippetExtractor {
   const SourceSnippetExtractor({this.contextLines = 20});
 

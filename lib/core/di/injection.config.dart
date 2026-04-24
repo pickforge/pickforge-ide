@@ -13,8 +13,6 @@ import 'package:get_it/get_it.dart' as _i174;
 import 'package:injectable/injectable.dart' as _i526;
 import 'package:pickforge/core/di/app_bootstrap.dart' as _i536;
 import 'package:pickforge/core/drift/pickforge_database.dart' as _i631;
-import 'package:pickforge/core/inspector/source_snippet_extractor.dart'
-    as _i1036;
 import 'package:pickforge/core/settings/project_settings_repository.dart'
     as _i340;
 import 'package:pickforge/core/vm_service/vm_service_client.dart' as _i292;
@@ -33,8 +31,6 @@ extension GetItInjectableX on _i174.GetIt {
     gh.lazySingleton<_i536.AppBootstrap>(() => _i536.AppBootstrap());
     gh.lazySingleton<_i631.PickforgeDatabase>(() => _i631.PickforgeDatabase());
     gh.lazySingleton<_i292.VmServiceClient>(() => _i292.VmServiceClient());
-    gh.lazySingleton<_i1036.SourceSnippetExtractor>(
-        () => _i1036.SourceSnippetExtractor(contextLines: gh<int>()));
     gh.lazySingleton<_i340.ProjectSettingsRepository>(
         () => _i340.ProjectSettingsRepository(gh<_i631.PickforgeDatabase>()));
     return this;

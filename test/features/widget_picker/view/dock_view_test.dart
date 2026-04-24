@@ -1,12 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class _MockCubit extends Mock implements WidgetPickerCubit {}
 
 void main() {
+  setUp(() async {
+    await configureDependencies();
+  });
+
+  tearDown(getIt.reset);
+
   testWidgets('shows placeholder when selection is null', (tester) async {
+    tester.view.physicalSize = const Size(1400, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     final cubit = _MockCubit();
     final initialState = WidgetPickerState.initial();
     when(() => cubit.state).thenReturn(initialState);
@@ -15,7 +27,11 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(home: DockView(cubit: cubit)),
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(body: DockView(cubit: cubit)),
+      ),
     );
 
     expect(

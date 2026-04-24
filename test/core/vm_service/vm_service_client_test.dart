@@ -130,4 +130,32 @@ void main() {
     expect(calls, 2);
     await client.close();
   });
+
+  test('close stops reconnect loop during backoff', () async {
+    var calls = 0;
+    final delayStarted = Completer<void>();
+    final releaseDelay = Completer<void>();
+    final client = VmServiceClient.forTesting(
+      factory: (url) async {
+        calls++;
+        throw StateError('boom');
+      },
+      delay: (_) async {
+        delayStarted.complete();
+        await releaseDelay.future;
+      },
+    );
+
+    final reconnect = client.reconnectLoop(
+      'ws://x/ws',
+      policy: const ExponentialBackoff(initial: Duration(milliseconds: 1)),
+      maxAttempts: 2,
+    );
+    await delayStarted.future;
+    await client.close();
+    releaseDelay.complete();
+    await reconnect;
+
+    expect(calls, 1);
+  });
 }

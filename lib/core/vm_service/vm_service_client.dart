@@ -57,15 +57,21 @@ class VmServiceClient {
   }) async {
     _closing = false;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (_closing) return;
       _controller.add(VmServiceConnectionState.connecting(attempt: attempt));
       try {
         final nextService = await _factory(url);
+        if (_closing) {
+          await nextService.dispose();
+          return;
+        }
         _url = url;
         await _replaceService(nextService);
         _controller.add(VmServiceConnectionState.connected(url: url));
         return;
       } on Object catch (e) {
         await _clearService();
+        if (_closing) return;
         _controller.add(
           VmServiceConnectionState.error(
             message: e.toString(),

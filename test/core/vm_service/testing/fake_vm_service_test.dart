@@ -32,9 +32,8 @@ void main() {
     );
   });
 
-  test('supports request and event entries in recorded fixtures', () {
+  test('supports request entries in recorded fixtures', () {
     final script = FakeVmServiceScript([
-      {'type': 'event', 'streamId': 'Extension'},
       {'type': 'request', 'method': 'getVM', 'params': <String, dynamic>{}},
       {
         'type': 'response',
@@ -43,6 +42,21 @@ void main() {
       },
     ]);
 
+    expect(script.respondTo('getVM')['name'], 'flutter');
+  });
+
+  test('requires event entries to be consumed in order', () {
+    final script = FakeVmServiceScript([
+      {'type': 'event', 'streamId': 'Extension'},
+      {
+        'type': 'response',
+        'method': 'getVM',
+        'result': {'name': 'flutter'},
+      },
+    ]);
+
+    expect(() => script.respondTo('getVM'), throwsStateError);
+    expect(script.consumeEvent('Extension')['streamId'], 'Extension');
     expect(script.respondTo('getVM')['name'], 'flutter');
   });
 }

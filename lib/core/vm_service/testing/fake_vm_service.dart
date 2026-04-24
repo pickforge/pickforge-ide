@@ -20,25 +20,35 @@ class FakeVmServiceScript {
     if (_cursor >= _entries.length) {
       throw StateError('No scripted response for method "$method"');
     }
-    while (_cursor < _entries.length && _entries[_cursor]['type'] == 'event') {
-      _cursor++;
-    }
     if (_cursor >= _entries.length) {
       throw StateError('No scripted response for method "$method"');
     }
-    var entry = _entries[_cursor++];
+    var entry = _entries[_cursor];
     if (entry['type'] == 'request') {
       if (entry['method'] != method) {
         throw StateError('Expected ${entry['method']}, got "$method"');
       }
+      _cursor++;
       if (_cursor >= _entries.length) {
         throw StateError('No scripted response for method "$method"');
       }
-      entry = _entries[_cursor++];
+      entry = _entries[_cursor];
     }
     if (entry['type'] != 'response' || entry['method'] != method) {
       throw StateError('Expected ${entry['method']}, got "$method"');
     }
+    _cursor++;
     return (entry['result'] as Map).cast<String, dynamic>();
+  }
+
+  Map<String, dynamic> consumeEvent(String streamId) {
+    if (_cursor >= _entries.length) {
+      throw StateError('No scripted event for stream "$streamId"');
+    }
+    final entry = _entries[_cursor++];
+    if (entry['type'] != 'event' || entry['streamId'] != streamId) {
+      throw StateError('Expected ${entry['streamId']}, got "$streamId"');
+    }
+    return entry;
   }
 }

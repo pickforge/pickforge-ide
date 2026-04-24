@@ -1,28 +1,23 @@
 import 'package:pickforge/core/agent/agent_profile.dart';
 import 'package:pickforge/core/agent/models.dart';
 
-class ClaudeCodeProfile extends AgentProfile {
-  const ClaudeCodeProfile();
+class OpenCodeProfile extends AgentProfile {
+  const OpenCodeProfile();
 
   @override
-  AgentProfileId get id => AgentProfileId.claudeCode;
+  AgentProfileId get id => AgentProfileId.opencode;
 
   @override
-  String get displayName => 'Claude Code';
+  String get displayName => 'OpenCode';
 
   @override
-  String get binary => 'claude';
+  String get binary => 'opencode';
 
   @override
-  String get projectContextFile => 'CLAUDE.md';
+  String get projectContextFile => 'AGENTS.md';
 
   @override
-  List<String> invocationArgs() => [
-        '--allowed-tools',
-        'read',
-        '--allowed-tools',
-        'write',
-      ];
+  List<String> invocationArgs() => ['--yolo'];
 
   @override
   String buildInitialPrompt({

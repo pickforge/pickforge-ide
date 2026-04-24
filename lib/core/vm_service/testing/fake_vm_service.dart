@@ -28,13 +28,26 @@ class FakeVmServiceScript {
       if (entry['method'] != method) {
         throw StateError('Expected ${entry['method']}, got "$method"');
       }
+      final requestId = entry['id'];
       _cursor++;
       if (_cursor >= _entries.length) {
         throw StateError('No scripted response for method "$method"');
       }
       entry = _entries[_cursor];
+      while (entry['type'] == 'event') {
+        _cursor++;
+        if (_cursor >= _entries.length) {
+          throw StateError('No scripted response for method "$method"');
+        }
+        entry = _entries[_cursor];
+      }
+      if (requestId != null && entry['id'] != requestId) {
+        throw StateError('Expected response id $requestId, got ${entry['id']}');
+      }
     }
-    if (entry['type'] != 'response' || entry['method'] != method) {
+    final responseMethod = entry['method'];
+    if (entry['type'] != 'response' ||
+        (responseMethod != null && responseMethod != method)) {
       throw StateError('Expected ${entry['method']}, got "$method"');
     }
     _cursor++;

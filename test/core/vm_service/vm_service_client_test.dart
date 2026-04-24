@@ -158,4 +158,23 @@ void main() {
 
     expect(calls, 1);
   });
+
+  test('close stops pending connect from publishing a late service', () async {
+    final service = _MockVmService();
+    when(() => service.onDone).thenAnswer((_) => Completer<void>().future);
+    when(service.dispose).thenAnswer((_) async {});
+    final factoryResult = Completer<VmService>();
+    final client = VmServiceClient.forTesting(
+      factory: (_) => factoryResult.future,
+      delay: (_) async {},
+    );
+
+    final connect = client.connect('ws://x/ws');
+    await client.close();
+    factoryResult.complete(service);
+    await connect;
+
+    expect(client.service, isNull);
+    verify(service.dispose).called(1);
+  });
 }

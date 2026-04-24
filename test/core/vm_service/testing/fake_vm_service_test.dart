@@ -45,6 +45,43 @@ void main() {
     expect(script.respondTo('getVM')['name'], 'flutter');
   });
 
+  test('matches request and response entries by id', () {
+    final script = FakeVmServiceScript([
+      {
+        'type': 'request',
+        'method': 'getVM',
+        'params': <String, dynamic>{},
+        'id': '1',
+      },
+      {
+        'type': 'response',
+        'id': '1',
+        'result': {'name': 'flutter'},
+      },
+    ]);
+
+    expect(script.respondTo('getVM')['name'], 'flutter');
+  });
+
+  test('allows events between a recorded request and response', () {
+    final script = FakeVmServiceScript([
+      {
+        'type': 'request',
+        'method': 'getVM',
+        'params': <String, dynamic>{},
+        'id': '1',
+      },
+      {'type': 'event', 'streamId': 'Extension'},
+      {
+        'type': 'response',
+        'id': '1',
+        'result': {'name': 'flutter'},
+      },
+    ]);
+
+    expect(script.respondTo('getVM')['name'], 'flutter');
+  });
+
   test('requires event entries to be consumed in order', () {
     final script = FakeVmServiceScript([
       {'type': 'event', 'streamId': 'Extension'},

@@ -39,10 +39,15 @@ class VmServiceClient {
     _controller.add(const VmServiceConnectionState.connecting(attempt: 1));
     try {
       final nextService = await _factory(url);
+      if (_closing) {
+        await nextService.dispose();
+        return;
+      }
       await _replaceService(nextService);
       _controller.add(VmServiceConnectionState.connected(url: url));
     } on Object catch (e) {
       await _clearService();
+      if (_closing) return;
       _controller.add(
         VmServiceConnectionState.error(message: e.toString(), attempt: 1),
       );

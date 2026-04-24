@@ -1,0 +1,14 @@
+{
+  "@@locale": "en",
+  "appName": "Pickforge",
+  "connectTitle": "Connect to your Flutter app",
+  "connectUrlLabel": "VM Service WebSocket URL",
+  "connectPastePlaceholder": "ws://127.0.0.1:PORT/UUID=/ws",
+  "connectButton": "Connect",
+  "connectStatusConnecting": "Connecting…",
+  "connectStatusConnected": "Connected",
+  "connectStatusError": "Couldn't reach VM Service. Is your app running?",
+  "forgeItButton": "Forge it",
+  "historyTitle": "Recent forges",
+  "settingsTitle": "Settings"
+}

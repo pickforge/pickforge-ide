@@ -70,6 +70,7 @@ class _ForgePanelBody extends StatelessWidget {
                     : () => cubit.forge(
                           selection: selection!,
                           projectRoot: projectRoot,
+                          chatId: 'legacy-forge-panel',
                         ),
                 child: Text(l10n.forgeItButton),
               ),

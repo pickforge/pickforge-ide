@@ -3,6 +3,7 @@ import 'package:injectable/injectable.dart';
 
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
+import 'package:pickforge/core/agent/pickforge_context_writer.dart';
 import 'package:pickforge/core/agent/pickforge_dir_manager.dart';
 import 'package:pickforge/core/agent/profiles/claude_code_profile.dart';
 import 'package:pickforge/core/agent/profiles/codex_profile.dart';
@@ -102,19 +103,15 @@ abstract class AgentLauncherModule {
   @singleton
   AgentLauncher agentLauncher(
     AgentProfileRegistry agentRegistry,
-    TerminalProfileRegistry terminalRegistry,
-    PickforgeDirManager dirManager,
+    PickforgeContextWriter contextWriter,
     SkillStore skillStore,
     WidgetContextRenderer widgetRenderer,
-    WrapperScriptGenerator scriptGenerator,
   ) =>
       AgentLauncher(
         agentRegistry: agentRegistry,
-        terminalRegistry: terminalRegistry,
-        dirManager: dirManager,
+        contextWriter: contextWriter,
         skillStore: skillStore,
         widgetRenderer: widgetRenderer,
-        scriptGenerator: scriptGenerator,
       );
 }
 

@@ -49,7 +49,7 @@ class ForgeCubit extends Cubit<ForgeState> {
         projectRoot: projectRoot,
       );
 
-      await _launcher.launch(req);
+      await _launcher.prepareContext(req);
       emit(state.copyWith(launching: false));
     } on Object catch (e) {
       emit(state.copyWith(launching: false, lastError: e.toString()));

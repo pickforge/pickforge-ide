@@ -4,6 +4,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/agent/models/forge_request.dart';
+import 'package:pickforge/core/agent/pickforge_context_writer.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
@@ -17,6 +18,15 @@ class _MockAdb extends Mock implements AdbScreenshotCapturer {}
 class _FakeForgeRequest extends Fake implements ForgeRequest {}
 
 class _FakeSelectedWidget extends Fake implements SelectedWidget {}
+
+PreparedContext _stubContext() => PreparedContext(
+      written: WrittenContext(
+        skillPath: '/tmp/.pickforge/skill-active.md',
+        widgetContextPath: '/tmp/.pickforge/widget-context.md',
+        initialPromptPath: '/tmp/.pickforge/initial-prompt.md',
+      ),
+      initialPrompt: 'do the thing',
+    );
 
 const _sampleWidget = SelectedWidget(
   node: WidgetNode(
@@ -85,7 +95,8 @@ void main() {
         when(
           () => adb.capture(outputDir: any(named: 'outputDir')),
         ).thenAnswer((_) async => null);
-        when(() => launcher.launch(any())).thenAnswer((_) async {});
+        when(() => launcher.prepareContext(any()))
+            .thenAnswer((_) async => _stubContext());
         return ForgeCubit(launcher, adb);
       },
       act: (cubit) => cubit.forge(
@@ -97,7 +108,7 @@ void main() {
         ForgeState.initial().copyWith(launching: false),
       ],
       verify: (_) {
-        verify(() => launcher.launch(any())).called(1);
+        verify(() => launcher.prepareContext(any())).called(1);
       },
     );
 
@@ -107,7 +118,8 @@ void main() {
         when(
           () => adb.capture(outputDir: any(named: 'outputDir')),
         ).thenAnswer((_) async => '/tmp/test/.pickforge/device-screen.png');
-        when(() => launcher.launch(any())).thenAnswer((_) async {});
+        when(() => launcher.prepareContext(any()))
+            .thenAnswer((_) async => _stubContext());
         return ForgeCubit(launcher, adb);
       },
       act: (cubit) => cubit.forge(
@@ -116,7 +128,7 @@ void main() {
       ),
       verify: (_) {
         verify(
-          () => launcher.launch(
+          () => launcher.prepareContext(
             any(
               that: isA<ForgeRequest>().having(
                 (r) => r.widget.adbScreenshotPath,
@@ -136,7 +148,7 @@ void main() {
           () => adb.capture(outputDir: any(named: 'outputDir')),
         ).thenAnswer((_) async => null);
         when(
-          () => launcher.launch(any()),
+          () => launcher.prepareContext(any()),
         ).thenThrow(Exception('launch failed'));
         return ForgeCubit(launcher, adb);
       },

@@ -24,6 +24,7 @@ import 'package:pickforge/core/di/injection.dart' as _i74;
 import 'package:pickforge/core/di/modules/terminal_runtime_module.dart'
     as _i398;
 import 'package:pickforge/core/drift/dao/chats_dao.dart' as _i905;
+import 'package:pickforge/core/drift/dao/project_settings_dao.dart' as _i459;
 import 'package:pickforge/core/drift/dao/projects_dao.dart' as _i1070;
 import 'package:pickforge/core/drift/pickforge_database.dart' as _i631;
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart' as _i704;
@@ -39,8 +40,12 @@ import 'package:pickforge/core/terminal/pty_process.dart' as _i602;
 import 'package:pickforge/core/terminal/pty_session_pool.dart' as _i685;
 import 'package:pickforge/core/vm_service/vm_service_client.dart' as _i292;
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart' as _i888;
-import 'package:pickforge/features/history/cubit/history_cubit.dart' as _i371;
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart' as _i18;
+import 'package:pickforge/features/workbench/cubit/chats_cubit.dart' as _i154;
+import 'package:pickforge/features/workbench/cubit/projects_cubit.dart'
+    as _i882;
+import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart'
+    as _i638;
 import 'package:shared_preferences/shared_preferences.dart' as _i460;
 
 extension GetItInjectableX on _i174.GetIt {
@@ -93,6 +98,8 @@ extension GetItInjectableX on _i174.GetIt {
             ));
     gh.lazySingleton<_i779.ChatsRepository>(
         () => _i779.ChatsRepository(gh<_i905.ChatsDao>()));
+    gh.factory<_i638.WorkbenchLayoutCubit>(
+        () => _i638.WorkbenchLayoutCubit(gh<_i459.ProjectSettingsDao>()));
     gh.singleton<_i683.AgentLauncher>(() => agentLauncherModule.agentLauncher(
           gh<_i360.AgentProfileRegistry>(),
           gh<_i342.PickforgeContextWriter>(),
@@ -100,11 +107,11 @@ extension GetItInjectableX on _i174.GetIt {
           gh<_i810.WidgetContextRenderer>(),
         ));
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
+    gh.factory<_i154.ChatsCubit>(
+        () => _i154.ChatsCubit(gh<_i779.ChatsRepository>()));
     gh.lazySingleton<_i195.EmbeddedTerminalSettingsRepository>(() =>
         _i195.EmbeddedTerminalSettingsRepository(
             gh<_i460.SharedPreferences>()));
-    gh.factory<_i371.HistoryCubit>(
-        () => _i371.HistoryCubit(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i340.ProjectSettingsRepository>(
         () => _i340.ProjectSettingsRepository(gh<_i631.PickforgeDatabase>()));
     gh.singleton<_i704.AdbScreenshotCapturer>(() =>
@@ -118,6 +125,8 @@ extension GetItInjectableX on _i174.GetIt {
         () => _i613.ProjectsRepository(gh<_i1070.ProjectsDao>()));
     gh.factory<_i18.SettingsCubit>(
         () => _i18.SettingsCubit(gh<_i340.ProjectSettingsRepository>()));
+    gh.factory<_i882.ProjectsCubit>(
+        () => _i882.ProjectsCubit(gh<_i613.ProjectsRepository>()));
     return this;
   }
 }

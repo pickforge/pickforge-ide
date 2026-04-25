@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/inspector/models.dart';
-import 'package:pickforge/core/terminal/terminal_profile_registry.dart';
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart';
 import 'package:pickforge/features/forge/cubit/forge_state.dart';
 import 'package:pickforge/features/forge/widgets/agent_picker.dart';
 import 'package:pickforge/features/forge/widgets/skill_picker.dart';
-import 'package:pickforge/features/forge/widgets/terminal_picker.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class ForgePanel extends StatelessWidget {
@@ -41,7 +39,6 @@ class _ForgePanelBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final registry = getIt<TerminalProfileRegistry>();
 
     return BlocBuilder<ForgeCubit, ForgeState>(
       builder: (context, state) {
@@ -57,11 +54,6 @@ class _ForgePanelBody extends StatelessWidget {
               AgentPicker(
                 value: state.agentId,
                 onChanged: cubit.selectAgent,
-              ),
-              TerminalPicker(
-                available: registry.availableOnThisOs(),
-                value: state.terminalId,
-                onChanged: cubit.selectTerminal,
               ),
               const Spacer(),
               FilledButton(

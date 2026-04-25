@@ -4,11 +4,13 @@ import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _MockCubit extends Mock implements WidgetPickerCubit {}
 
 void main() {
   setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     await configureDependencies();
   });
 

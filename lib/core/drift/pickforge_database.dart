@@ -45,6 +45,9 @@ class PickforgeDatabase extends _$PickforgeDatabase {
             await m.addColumn(projectSettings, projectSettings.lastChatId);
             await m.addColumn(projectSettings, projectSettings.paneSizes);
             await m.addColumn(pickHistory, pickHistory.chatId);
+            await customStatement(
+              'ALTER TABLE project_settings DROP COLUMN default_terminal_id;',
+            );
 
             final rows = await customSelect(
               'SELECT project_root, last_used_at FROM project_settings',

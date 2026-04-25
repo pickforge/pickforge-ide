@@ -18,7 +18,6 @@ void main() {
     test('initial state is empty', () {
       final cubit = SettingsCubit(repo);
       expect(cubit.state.defaultAgent, isNull);
-      expect(cubit.state.defaultTerminal, isNull);
     });
 
     blocTest<SettingsCubit, SettingsState>(
@@ -26,16 +25,11 @@ void main() {
       setUp: () {
         when(() => repo.getDefaultAgentId('/root'))
             .thenAnswer((_) async => 'claude-code');
-        when(() => repo.getDefaultTerminalId('/root'))
-            .thenAnswer((_) async => 'ghostty');
       },
       build: () => SettingsCubit(repo),
       act: (cubit) => cubit.load('/root'),
       expect: () => [
-        const SettingsState(
-          defaultAgent: 'claude-code',
-          defaultTerminal: 'ghostty',
-        ),
+        const SettingsState(defaultAgent: 'claude-code'),
       ],
     );
 
@@ -52,22 +46,6 @@ void main() {
       ],
       verify: (_) {
         verify(() => repo.setDefaultAgentId('/root', 'codex')).called(1);
-      },
-    );
-
-    blocTest<SettingsCubit, SettingsState>(
-      'setDefaultTerminal writes to repo and emits',
-      build: () => SettingsCubit(repo),
-      setUp: () {
-        when(() => repo.setDefaultTerminalId('/root', 'kitty'))
-            .thenAnswer((_) async {});
-      },
-      act: (cubit) => cubit.setDefaultTerminal('/root', 'kitty'),
-      expect: () => [
-        const SettingsState(defaultTerminal: 'kitty'),
-      ],
-      verify: (_) {
-        verify(() => repo.setDefaultTerminalId('/root', 'kitty')).called(1);
       },
     );
   });

@@ -19,7 +19,6 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
     required String projectRoot,
     String? vmServiceUrl,
     String? defaultAgentId,
-    String? defaultTerminalId,
     DateTime? now,
   }) {
     final companion = ProjectSettingsCompanion(
@@ -28,9 +27,6 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
           vmServiceUrl == null ? const Value.absent() : Value(vmServiceUrl),
       defaultAgentId:
           defaultAgentId == null ? const Value.absent() : Value(defaultAgentId),
-      defaultTerminalId: defaultTerminalId == null
-          ? const Value.absent()
-          : Value(defaultTerminalId),
       lastUsedAt: Value(now ?? DateTime.now()),
     );
     return into(projectSettings).insertOnConflictUpdate(companion);

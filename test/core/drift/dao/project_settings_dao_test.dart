@@ -13,7 +13,6 @@ void main() {
       projectRoot: '/me/app',
       vmServiceUrl: 'ws://localhost:8181/ws',
       defaultAgentId: 'claude-code',
-      defaultTerminalId: 'ghostty',
     );
     final loaded = await db.projectSettingsDao.loadFor('/me/app');
     expect(loaded?.vmServiceUrl, 'ws://localhost:8181/ws');
@@ -24,7 +23,6 @@ void main() {
     await db.projectSettingsDao.upsert(
       projectRoot: '/me/app',
       defaultAgentId: 'claude-code',
-      defaultTerminalId: 'ghostty',
     );
 
     await db.projectSettingsDao.upsert(
@@ -35,7 +33,6 @@ void main() {
     final loaded = await db.projectSettingsDao.loadFor('/me/app');
     expect(loaded?.vmServiceUrl, 'ws://localhost:8181/ws');
     expect(loaded?.defaultAgentId, 'claude-code');
-    expect(loaded?.defaultTerminalId, 'ghostty');
   });
 
   test('setLastChatId then lastChatId round-trips', () async {

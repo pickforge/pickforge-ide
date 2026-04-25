@@ -9,8 +9,11 @@ typedef ProcessRunner = Future<ProcessResult> Function(
 /// Detects whether binaries are available on PATH.
 ///
 /// Uses `which` on Unix and `where` on Windows.
-class TerminalDetector {
-  TerminalDetector({ProcessRunner? processRunner})
+///
+/// NOT annotated with `@lazySingleton` — wired via `@module` in injection.dart
+/// because of the optional `processRunner` parameter.
+class BinaryDetector {
+  BinaryDetector({ProcessRunner? processRunner})
       : _processRunner = processRunner ?? Process.run;
 
   final ProcessRunner _processRunner;

@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
-import 'package:pickforge/core/agent/pickforge_dir_manager.dart';
 
 void main() {
   late Directory tmp;

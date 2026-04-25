@@ -2,7 +2,16 @@ import 'dart:io';
 
 import 'package:injectable/injectable.dart';
 import 'package:path/path.dart' as p;
-import 'package:pickforge/core/agent/pickforge_dir_manager.dart';
+
+/// Thrown when `.pickforge/` exists but lacks Pickforge's `.gitignore` marker.
+class PickforgeDirConflictException implements Exception {
+  const PickforgeDirConflictException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'PickforgeDirConflictException: $message';
+}
 
 class WrittenContext {
   WrittenContext({

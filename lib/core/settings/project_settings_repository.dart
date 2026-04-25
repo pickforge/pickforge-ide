@@ -29,16 +29,6 @@ class ProjectSettingsRepository {
     );
   }
 
-  Future<String?> getDefaultTerminalId(String projectRoot) async =>
-      (await _db.projectSettingsDao.loadFor(projectRoot))?.defaultTerminalId;
-
-  Future<void> setDefaultTerminalId(String projectRoot, String terminalId) {
-    return _db.projectSettingsDao.upsert(
-      projectRoot: projectRoot,
-      defaultTerminalId: terminalId,
-    );
-  }
-
   Future<String?> getLastChatId(String projectRoot) =>
       _db.projectSettingsDao.lastChatId(projectRoot);
 

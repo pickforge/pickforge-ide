@@ -38,4 +38,22 @@ class ProjectSettingsRepository {
       defaultTerminalId: terminalId,
     );
   }
+
+  Future<String?> getLastChatId(String projectRoot) =>
+      _db.projectSettingsDao.lastChatId(projectRoot);
+
+  Future<void> setLastChatId(String projectRoot, String? chatId) async {
+    await _db.projectSettingsDao
+        .upsert(projectRoot: projectRoot); // ensure row exists
+    await _db.projectSettingsDao.setLastChatId(projectRoot, chatId);
+  }
+
+  Future<String?> getPaneSizes(String projectRoot) =>
+      _db.projectSettingsDao.paneSizes(projectRoot);
+
+  Future<void> setPaneSizes(String projectRoot, String? json) async {
+    await _db.projectSettingsDao
+        .upsert(projectRoot: projectRoot); // ensure row exists
+    await _db.projectSettingsDao.setPaneSizes(projectRoot, json);
+  }
 }

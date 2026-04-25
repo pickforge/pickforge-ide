@@ -37,4 +37,23 @@ void main() {
     expect(loaded?.defaultAgentId, 'claude-code');
     expect(loaded?.defaultTerminalId, 'ghostty');
   });
+
+  test('setLastChatId then lastChatId round-trips', () async {
+    await db.projectSettingsDao.upsert(projectRoot: '/tmp/x');
+    await db.projectSettingsDao.setLastChatId('/tmp/x', 'chat-1');
+    expect(await db.projectSettingsDao.lastChatId('/tmp/x'), 'chat-1');
+  });
+
+  test('setLastChatId(null) clears the value', () async {
+    await db.projectSettingsDao.upsert(projectRoot: '/tmp/x');
+    await db.projectSettingsDao.setLastChatId('/tmp/x', 'chat-1');
+    await db.projectSettingsDao.setLastChatId('/tmp/x', null);
+    expect(await db.projectSettingsDao.lastChatId('/tmp/x'), isNull);
+  });
+
+  test('setPaneSizes then paneSizes round-trips', () async {
+    await db.projectSettingsDao.upsert(projectRoot: '/tmp/x');
+    await db.projectSettingsDao.setPaneSizes('/tmp/x', '[260,300]');
+    expect(await db.projectSettingsDao.paneSizes('/tmp/x'), '[260,300]');
+  });
 }

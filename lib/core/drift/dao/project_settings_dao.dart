@@ -20,6 +20,7 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
     String? vmServiceUrl,
     String? defaultAgentId,
     String? defaultTerminalId,
+    DateTime? now,
   }) {
     final companion = ProjectSettingsCompanion(
       projectRoot: Value(projectRoot),
@@ -30,8 +31,30 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
       defaultTerminalId: defaultTerminalId == null
           ? const Value.absent()
           : Value(defaultTerminalId),
-      lastUsedAt: Value(DateTime.now()),
+      lastUsedAt: Value(now ?? DateTime.now()),
     );
     return into(projectSettings).insertOnConflictUpdate(companion);
+  }
+
+  Future<void> setLastChatId(String projectRoot, String? chatId) {
+    return (update(projectSettings)
+          ..where((t) => t.projectRoot.equals(projectRoot)))
+        .write(ProjectSettingsCompanion(lastChatId: Value(chatId)));
+  }
+
+  Future<String?> lastChatId(String projectRoot) async {
+    final row = await loadFor(projectRoot);
+    return row?.lastChatId;
+  }
+
+  Future<void> setPaneSizes(String projectRoot, String? json) {
+    return (update(projectSettings)
+          ..where((t) => t.projectRoot.equals(projectRoot)))
+        .write(ProjectSettingsCompanion(paneSizes: Value(json)));
+  }
+
+  Future<String?> paneSizes(String projectRoot) async {
+    final row = await loadFor(projectRoot);
+    return row?.paneSizes;
   }
 }

@@ -41,6 +41,22 @@ These apply to every task. Do not repeat per-task unless deviating.
 - **Scope discipline:** do not touch files outside the lists in each task.
 - **Spec is authoritative:** `docs/superpowers/specs/2026-04-25-embedded-terminal-design.md`. If a question arises that the plan doesn't answer, defer to the spec.
 
+## Pre-execution readiness corrections
+
+This plan has been reviewed against the current repo state on 2026-04-25. Do not start implementation until these corrections have been applied inline while executing the affected tasks.
+
+- **Task 10:** `FlutterPtyAdapter` must compile against `flutter_pty 0.4.2`. Add `dart:typed_data` if using `Uint8List`. Pub.dev documents `pty.kill()` with no signal parameter; if the package API does not accept a signal, map `PtyProcess.kill([signal])` to `_pty.kill()` and document that signal-specific termination is handled at the `PtySession` policy layer only when the adapter supports it.
+- **Task 14:** replace invalid Dart string multiplication (`'a' * 30`) with `List.filled(30, 'a').join()`. The sidecar file must match the spec: `transcript.spans.bin` is binary and varint-framed, not CSV text.
+- **Tasks 14, 15, 30, 42:** add the missing live-output recording path. A `TranscriptRecorder` must subscribe to each active `PtySession.output` stream before UI integration; the integration test depends on this.
+- **Task 18:** do not copy logic from `WrapperScriptGenerator`; it only generates wrapper scripts. Extract `.pickforge/` file-writing behavior from `PickforgeDirManager` + `AgentLauncher`, preserving the existing `.pickforge/.gitignore` conflict check from `PickforgeDirManager`.
+- **Task 20:** refactor against current repo APIs: `AgentLauncher` currently depends on `AgentProfileRegistry`, `TerminalProfileRegistry`, `PickforgeDirManager`, `SkillStore`, `WidgetContextRenderer`, and `WrapperScriptGenerator`. Remove terminal-registry/script-generator/process-spawner dependencies only after tests prove `prepareContext` preserves current `.pickforge/` output.
+- **Task 30:** `PtySessionPool.activate(...)` is core behavior, not UI behavior. Add it to `PtySessionPool` with unit tests before wiring `ChatWorkbenchPanel`.
+- **Tasks 25-30, 38:** persist and restore cold-open state. `ProjectSettings.lastChatId` must be written on chat select/new-chat and read when loading `/workbench`. Project selection must default to most-recent `Projects.lastOpenedAt`.
+- **Tasks 2-6:** ensure Drift migration tests exercise a realistic v1 schema and foreign-key behavior. If cascade-delete relies on SQLite FKs, explicitly enable or verify FK enforcement in the test database.
+- **Task 7:** add DI wiring for Drift DAOs/repositories. `@lazySingleton` repositories cannot be generated unless their DAO dependencies are injectable or provided by a module.
+- **Tasks 26-42:** replace shorthand instructions with concrete test code and implementation snippets before assigning those tasks. Current late-phase UI/animation/golden tasks are not agent-ready.
+- **Task 37:** `.riv` asset authoring is not reliably agent-executable. Either provide assets before execution or replace Rive-dependent steps with deterministic placeholder vector/animation widgets, then wire real Rive assets in a follow-up task.
+
 ---
 
 ## Phase 1 — Drift schema + repositories
@@ -272,6 +288,7 @@ void main() {
 
   setUp(() async {
     db = PickforgeDatabase.forTesting(NativeDatabase.memory());
+    await db.customStatement('PRAGMA foreign_keys = ON;');
     dao = ChatsDao(db);
     projectsDao = ProjectsDao(db);
     await projectsDao.upsert(
@@ -588,6 +605,32 @@ void main() {
         last_used_at INTEGER
       );
     ''', []);
+    await raw.runCustom('''
+      CREATE TABLE pick_history (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        project_root TEXT NOT NULL,
+        widget_class TEXT NOT NULL,
+        creation_file TEXT,
+        creation_line INTEGER,
+        skill_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        terminal_id TEXT NOT NULL,
+        picked_at INTEGER NOT NULL,
+        widget_context_json TEXT NOT NULL
+      );
+    ''', []);
+    await raw.runCustom('''
+      CREATE TABLE agent_run_log (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        pick_id INTEGER NOT NULL,
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        exit_code INTEGER,
+        hot_reload_count INTEGER NOT NULL DEFAULT 0,
+        wrapper_script_path TEXT NOT NULL
+      );
+    ''', []);
+    await raw.runCustom('PRAGMA user_version = 1;', []);
     await raw.runCustom(
       "INSERT INTO project_settings (project_root, vm_service_url, default_agent_id, default_terminal_id, last_used_at) VALUES ('/tmp/a', 'ws://x/ws', 'claude-code', 'ghostty', 1714000000000);",
       [],
@@ -698,6 +741,7 @@ git commit -m "feat(drift): bump schema to v2 (Projects, Chats, pane sizes, drop
 **Files:**
 - Create: `lib/core/projects/projects_repository.dart`
 - Create: `lib/core/chats/chats_repository.dart`
+- Modify: `lib/core/di/injection.dart`
 - Create: `test/core/projects/projects_repository_test.dart`
 - Create: `test/core/chats/chats_repository_test.dart`
 
@@ -891,6 +935,19 @@ class ChatsRepository {
 
 - [ ] **Step 5: Regen for injectable.**
 
+Before regenerating, add a DI module in `lib/core/di/injection.dart` that exposes the Drift DAOs from `PickforgeDatabase`; otherwise `@lazySingleton` repository generation cannot resolve `ProjectsDao` and `ChatsDao`.
+
+```dart
+@module
+abstract class DriftDaoModule {
+  @lazySingleton
+  ProjectsDao projectsDao(PickforgeDatabase db) => ProjectsDao(db);
+
+  @lazySingleton
+  ChatsDao chatsDao(PickforgeDatabase db) => ChatsDao(db);
+}
+```
+
 Run: `fvm dart run build_runner build --delete-conflicting-outputs`
 
 - [ ] **Step 6: Run repo tests.**
@@ -905,7 +962,8 @@ fvm dart format .
 fvm flutter analyze
 git add lib/core/projects/ lib/core/chats/ \
         test/core/projects/ test/core/chats/ \
-        lib/core/di/injection.config.dart
+        lib/core/di/injection.config.dart \
+        lib/core/di/injection.dart
 git commit -m "feat(core): add ProjectsRepository and ChatsRepository"
 ```
 
@@ -1027,7 +1085,7 @@ abstract class PtyProcessFactory {
 ```dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' as io;
+import 'dart:typed_data';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
@@ -1051,12 +1109,9 @@ class _FlutterPtyProcess implements PtyProcess {
 
   @override
   void kill([ProcessSignal signal = ProcessSignal.sigterm]) {
-    final native = switch (signal) {
-      ProcessSignal.sigint => io.ProcessSignal.sigint,
-      ProcessSignal.sigterm => io.ProcessSignal.sigterm,
-      ProcessSignal.sigkill => io.ProcessSignal.sigkill,
-    };
-    _pty.kill(native);
+    // flutter_pty 0.4.2 documents kill() with no signal argument.
+    // If a future pinned API supports signals, map [signal] here.
+    _pty.kill();
   }
 }
 
@@ -1084,7 +1139,7 @@ class FlutterPtyAdapter implements PtyProcessFactory {
 }
 ```
 
-(If `Pty.start`'s exact signature differs in 0.4.2, follow the package's published API; the adapter is the single place that touches it.)
+Verify the exact `Pty.start`, `resize`, and `kill` signatures against the pinned `flutter_pty 0.4.2` API while implementing. The adapter is the only file allowed to touch `flutter_pty` directly; tests must mock `PtyProcessFactory`, not `flutter_pty.Pty`.
 
 - [ ] **Step 3: Regen DI.**
 
@@ -1465,6 +1520,67 @@ git add lib/core/terminal/pty_session_pool.dart \
 git commit -m "feat(terminal): add PtySessionPool with prompt injection"
 ```
 
+### Task 12A — `PtySessionPool.activate` + recorder wiring
+
+**Files:**
+- Modify: `lib/core/terminal/pty_session_pool.dart`
+- Modify: `test/core/terminal/pty_session_pool_test.dart`
+
+- [ ] **Step 1: Add a failing unit test for `activate`.**
+
+```dart
+test('activate returns existing session without spawning a duplicate', () async {
+  final pool = PtySessionPool();
+  final existing = _Fake('a');
+  pool.attach(existing);
+
+  final result = await pool.activate(
+    chatId: 'a',
+    create: () => throw StateError('must not spawn'),
+  );
+
+  expect(result, same(existing));
+});
+
+test('activate creates, attaches, starts, and returns new session', () async {
+  final pool = PtySessionPool();
+  final created = _Fake('b');
+  when(() => created.start()).thenAnswer((_) async {});
+
+  final result = await pool.activate(chatId: 'b', create: () => created);
+
+  expect(result, same(created));
+  expect(pool.session('b'), same(created));
+  verify(() => created.start()).called(1);
+});
+```
+
+- [ ] **Step 2: Implement `activate`.**
+
+```dart
+Future<PtySession> activate({
+  required String chatId,
+  required PtySession Function() create,
+}) async {
+  final existing = _sessions[chatId];
+  if (existing != null) return existing;
+  final session = create();
+  attach(session);
+  await session.start();
+  return session;
+}
+```
+
+Do not put agent-profile lookup, transcript replay, or UI state in this method. UI code composes those concerns by passing a fully configured `PtySession` through `create`.
+
+- [ ] **Step 3: Run tests and commit.**
+
+```bash
+fvm flutter test test/core/terminal/pty_session_pool_test.dart
+git add lib/core/terminal/pty_session_pool.dart test/core/terminal/pty_session_pool_test.dart
+git commit -m "feat(terminal): add PtySessionPool activation"
+```
+
 ### Task 13 — ANSI strip + SGR span parser
 
 **Files:**
@@ -1653,7 +1769,7 @@ void main() {
       truncateAt: 24,
     );
     await rec.open();
-    rec.append('a' * 30);
+    rec.append(List.filled(30, 'a').join());
     await rec.flush();
     final log = File(p.join(tmp.path, '.pickforge', 'chats', 'c2', 'transcript.log'));
     expect(log.lengthSync(), lessThanOrEqualTo(16));
@@ -1662,7 +1778,7 @@ void main() {
 }
 ```
 
-(Note: `append` accepts both `String` and `List<int>` — overloads in implementation.)
+(Note: `append` accepts both `String` and `List<int>` by taking `Object` and validating the runtime type. The spans sidecar must be binary, not CSV text, to match the spec.)
 
 - [ ] **Step 2: Run; expect fail.**
 
@@ -1709,8 +1825,32 @@ class TranscriptRecorder {
     final r = parseAnsi(raw);
     _logSink?.add(utf8.encode(r.text));
     for (final s in r.spans) {
-      _spansSink?.add(utf8.encode('${s.start},${s.end},${s.fg ?? -1},${s.bg ?? -1},${s.bold ? 1 : 0},${s.italic ? 1 : 0},${s.underline ? 1 : 0}\n'));
+      _spansSink?.add(_encodeSpan(s));
     }
+  }
+
+  List<int> _encodeSpan(AnsiSpan s) {
+    final style = (s.bold ? 1 : 0) |
+        (s.italic ? 2 : 0) |
+        (s.underline ? 4 : 0);
+    return [
+      ..._varint(s.start),
+      ..._varint(s.end - s.start),
+      ..._varint(s.fg ?? 255),
+      ..._varint(s.bg ?? 255),
+      ..._varint(style),
+    ];
+  }
+
+  List<int> _varint(int value) {
+    final out = <int>[];
+    var v = value;
+    while (v >= 0x80) {
+      out.add((v & 0x7f) | 0x80);
+      v >>= 7;
+    }
+    out.add(v);
+    return out;
   }
 
   Future<void> flush() async {
@@ -1839,6 +1979,56 @@ class TranscriptReplayer {
 fvm flutter test test/core/terminal/transcript_replayer_test.dart
 git add lib/core/terminal/transcript_replayer.dart test/core/terminal/transcript_replayer_test.dart
 git commit -m "feat(terminal): add TranscriptReplayer"
+```
+
+### Task 15A — Attach transcript recording to PTY sessions
+
+**Files:**
+- Modify: `lib/core/terminal/pty_session.dart`
+- Modify: `test/core/terminal/pty_session_test.dart`
+
+- [ ] **Step 1: Add a failing test that passes an `onOutput` callback to `PtySession`, emits process bytes, and verifies the callback receives the same bytes before UI code sees them.**
+
+```dart
+test('output is mirrored to recorder callback', () async {
+  final seen = <List<int>>[];
+  final session = PtySession(
+    chatId: 'c4',
+    executable: 'agent',
+    arguments: const [],
+    workingDirectory: '/tmp',
+    factory: factory,
+    onOutput: seen.add,
+  );
+
+  await session.start();
+  outputCtrl.add([111, 107]);
+  await pumpEventQueue();
+
+  expect(seen.single, [111, 107]);
+});
+```
+
+- [ ] **Step 2: Implement `PtySession.onOutput`.**
+
+Add an optional callback to the constructor and call it inside the process output listener before `_outputCtrl.add(bytes)`.
+
+```dart
+final void Function(List<int> bytes)? onOutput;
+
+// In start():
+_process!.output.listen((bytes) {
+  onOutput?.call(bytes);
+  _outputCtrl.add(bytes);
+});
+```
+
+- [ ] **Step 3: Run terminal tests and commit.**
+
+```bash
+fvm flutter test test/core/terminal/pty_session_test.dart
+git add lib/core/terminal/pty_session.dart test/core/terminal/pty_session_test.dart
+git commit -m "feat(terminal): mirror PTY output for transcript recording"
 ```
 
 ### Task 16 — `EmbeddedTerminalSettings` model + repository
@@ -1996,7 +2186,7 @@ Goal: make `AgentLauncher` produce a *prompt + manifest of files written* instea
 - Create: `lib/core/agent/pickforge_context_writer.dart`
 - Modify: `lib/core/agent/wrapper_script_generator.dart` (becomes a thin facade for now; deleted in Phase 5)
 
-- [ ] **Step 1: Read the existing `wrapper_script_generator.dart` and identify the half that writes `.pickforge/skill-active.md`, `widget-context.md`, `screenshot.png`, `device-screen.png`, `initial-prompt.md`. Copy that logic into `PickforgeContextWriter` as the only responsibility.**
+- [ ] **Step 1: Read the existing `PickforgeDirManager` and `AgentLauncher` write paths. Extract the `.pickforge/` file-writing behavior into `PickforgeContextWriter`. Do not copy from `WrapperScriptGenerator`; it only generates wrapper scripts. Preserve the existing `.pickforge/.gitignore` conflict check from `PickforgeDirManager.ensure`.**
 
 `lib/core/agent/pickforge_context_writer.dart`:
 
@@ -2031,8 +2221,7 @@ class PickforgeContextWriter {
     List<int>? deviceScreenPng,
   }) async {
     final dir = Directory(p.join(projectRoot, '.pickforge'));
-    await dir.create(recursive: true);
-    await _writeGitignore(dir.path);
+    await _ensurePickforgeDir(dir);
 
     final skill = File(p.join(dir.path, 'skill-active.md'));
     final widget = File(p.join(dir.path, 'widget-context.md'));
@@ -2064,16 +2253,26 @@ class PickforgeContextWriter {
     );
   }
 
-  Future<void> _writeGitignore(String dirPath) async {
-    final f = File(p.join(dirPath, '.gitignore'));
-    if (!f.existsSync()) await f.writeAsString('*\n', flush: true);
+  Future<void> _ensurePickforgeDir(Directory dir) async {
+    final gitignore = File(p.join(dir.path, '.gitignore'));
+    if (dir.existsSync()) {
+      if (gitignore.existsSync() && gitignore.readAsStringSync() == '*\n') {
+        return;
+      }
+      throw StateError(
+        '.pickforge/ exists without Pickforge .gitignore marker. '
+        'Remove or rename the directory and try again.',
+      );
+    }
+    await dir.create(recursive: true);
+    await gitignore.writeAsString('*\n', flush: true);
   }
 }
 ```
 
 - [ ] **Step 2: Add a unit test.**
 
-`test/core/agent/pickforge_context_writer_test.dart`: assert all five files are created with the supplied content; assert `.gitignore` is `*`. Use a temp directory.
+`test/core/agent/pickforge_context_writer_test.dart`: assert all five files are created with the supplied content; assert `.gitignore` is `*`; assert an existing `.pickforge/` without that marker throws `StateError`. Use a temp directory.
 
 - [ ] **Step 3: Regen, run tests, commit.**
 
@@ -2161,34 +2360,48 @@ test('prepareContext writes files and returns paths', () async {
 
 - [ ] **Step 2: Refactor `AgentLauncher`.**
 
-Rename `launch` → `prepareContext`. Drop calls to `WrapperScriptGenerator` for terminal launching. Wire to `PickforgeContextWriter`. Return `WrittenContext`.
+Rename `launch` → `prepareContext`. Keep current request/profile APIs intact: resolve the agent through `AgentProfileRegistry`, load skills through `SkillStore.loadSkill(req.skill, projectRoot: req.projectRoot)`, render widget context from `req.widget`, and use `agent.buildInitialPrompt(...)` for the returned prompt body. Drop `TerminalProfileRegistry`, `WrapperScriptGenerator`, `ProcessSpawner`, `_resolveBinaryPath`, wrapper-file creation, chmod, `TerminalLaunchSpec`, and process spawning only after the tests prove `.pickforge/` output is preserved. Wire `.pickforge/` writes to `PickforgeContextWriter`. Return a value that includes `WrittenContext` and `initialPrompt`.
 
 ```dart
 @lazySingleton
 class AgentLauncher {
-  AgentLauncher(this._writer, this._skills, this._renderer);
+  AgentLauncher(this._agentRegistry, this._writer, this._skills, this._renderer);
+  final AgentProfileRegistry _agentRegistry;
   final PickforgeContextWriter _writer;
   final SkillStore _skills;
   final WidgetContextRenderer _renderer;
 
-  Future<WrittenContext> prepareContext(ForgeRequest req) async {
-    final skill = await _skills.load(req.skillId);
-    final widgetMd = _renderer.render(req.selectedWidget, screenshotPath: 'screenshot.png');
-    final initial = _buildInitialPrompt(req);
-
-    return _writer.write(
+  Future<PreparedAgentContext> prepareContext(ForgeRequest req) async {
+    final agent = _agentRegistry.get(req.agentId);
+    final skillMarkdown = await _skills.loadSkill(
+      req.skill,
       projectRoot: req.projectRoot,
-      skillMarkdown: skill.body,
+    );
+    final widgetMd = _renderer.render(req.widget);
+
+    final initial = agent.buildInitialPrompt(
+      pickforgeDirRelative: '.pickforge',
+      skillFilename: '${req.skill.value}.md',
+      widgetContextFilename: 'widget-context.md',
+      screenshotFilename: req.widget.screenshotPath != null ? 'screenshot.png' : null,
+      deviceScreenFilename: req.widget.adbScreenshotPath != null ? 'device-screen.png' : null,
+    );
+
+    final written = await _writer.write(
+      projectRoot: req.projectRoot,
+      skillMarkdown: skillMarkdown,
       widgetContextMarkdown: widgetMd,
       initialPrompt: initial,
-      widgetScreenshotPng: req.widgetScreenshotBytes,
-      deviceScreenPng: req.deviceScreenBytes,
     );
-  }
 
-  String _buildInitialPrompt(ForgeRequest req) {
-    return 'Read .pickforge/skill-active.md and .pickforge/widget-context.md, then proceed.';
+    return PreparedAgentContext(written: written, initialPrompt: initial);
   }
+}
+
+class PreparedAgentContext {
+  const PreparedAgentContext({required this.written, required this.initialPrompt});
+  final WrittenContext written;
+  final String initialPrompt;
 }
 ```
 
@@ -2251,7 +2464,7 @@ Goal: remove every file related to the old "spawn external terminal app" flow no
 - `lib/core/terminal/terminal_detector.dart`
 - `lib/core/terminal/terminal_profile.dart`
 - `lib/core/terminal/terminal_profile_registry.dart`
-- `lib/core/terminal/models/` (whatever lives there)
+- `lib/core/terminal/models/` (only if `git ls-files lib/core/terminal/models` shows tracked files)
 - `lib/core/terminal/models.dart`
 - All matching tests under `test/core/terminal/profiles/`, `test/core/terminal/terminal_*`.
 
@@ -2537,7 +2750,7 @@ blocTest<ProjectsCubit, ProjectsState>(
 );
 ```
 
-- [ ] **Step 2: Implement state (sealed): `ProjectsInitial`, `ProjectsLoading`, `ProjectsReady(projects, active)`, `ProjectsError(message)`.
+- [ ] **Step 2: Implement state (sealed): `ProjectsInitial`, `ProjectsLoading`, `ProjectsReady(projects, active)`, `ProjectsError(message)`.**
 
 - [ ] **Step 3: Implement cubit with methods `load()`, `selectProject(root)`, `add(rawPath)`, `rename(root, name)`, `remove(root)`. On `selectProject`, also `repo.touch(root)`.
 
@@ -2555,9 +2768,9 @@ git commit -m "feat(workbench): add ProjectsCubit"
 - Create: `lib/features/workbench/cubit/chats_cubit.dart` and `chats_state.dart`
 - Create: `test/features/workbench/cubit/chats_cubit_test.dart`
 
-- [ ] **Step 1: Tests cover `load(projectRoot)`, `newChat(agentId, skillId?)`, `selectChat(chatId)`, `rename`, `duplicate`, `remove` (cascades transcript dir delete).
+- [ ] **Step 1: Tests cover `load(projectRoot)`, `newChat(agentId, skillId?)`, `selectChat(chatId)`, `rename`, `duplicate`, `remove` (cascades transcript dir delete).**
 
-- [ ] **Step 2: Implement state (sealed): `ChatsInitial`, `ChatsLoading(projectRoot)`, `ChatsReady(projectRoot, chats, active)`.
+- [ ] **Step 2: Implement state (sealed): `ChatsInitial`, `ChatsLoading(projectRoot)`, `ChatsReady(projectRoot, chats, active)`.**
 
 - [ ] **Step 3: `remove` deletes the on-disk `<projectRoot>/.pickforge/chats/<chatId>/` directory after dao delete; failures are logged and surfaced via a `ChatsError` event without blocking the dao delete.
 
@@ -2614,7 +2827,7 @@ class AppShellView extends StatelessWidget {
           ],
         ),
         onWeightChange: (sizes) {
-          // Persist on drag end (use a debounce in real impl).
+          // Persist on drag end; Task 34 can add debounce if drag spam is measurable.
           context.read<WorkbenchLayoutCubit>().updateSizes(
                 left: sizes[0]!,
                 right: sizes.length > 2 ? sizes[2]! : layout.rightWidth,
@@ -2633,7 +2846,7 @@ class AppShellView extends StatelessWidget {
 
 (If `multi_split_view`'s 3.x API differs, follow the package's current docs — the structure is identical.)
 
-- [ ] **Step 3: Stub `ProjectsChatsPanel`, `ChatWorkbenchPanel`, `InspectorPanel` as empty `Container`s with their keys for now (real implementations come in Tasks 29–31).
+- [ ] **Step 3: Stub `ProjectsChatsPanel`, `ChatWorkbenchPanel`, `InspectorPanel` as empty `Container`s with their keys for now (full panel implementations come in Tasks 29–31).**
 
 - [ ] **Step 4: Run, commit.**
 
@@ -2653,7 +2866,7 @@ git commit -m "feat(workbench): add AppShellView three-pane skeleton"
 
 - [ ] **Step 2: Implement** the projects section (header + list + `+`), the chats section (header + list + `+ New chat`), the empty states ("Add your first project" / "Start your first chat"). Use `flutter_animate` for hover-reveal `⋯` icons. Use `lucide_icons_flutter` for glyphs.
 
-- [ ] **Step 3: All user-visible strings go through `context.l10n.workbenchProjectsHeader` etc. Add ARB entries.
+- [ ] **Step 3: All user-visible strings go through `context.l10n.workbenchProjectsHeader` etc. Add ARB entries.**
 
 - [ ] **Step 4: Run, commit.**
 
@@ -2682,7 +2895,7 @@ chatActivePtySession.output.listen((bytes) => terminal.write(String.fromCharCode
 terminal.onOutput = (data) => chatActivePtySession.write(data.codeUnits);
 ```
 
-(Activate a chat by calling `PtySessionPool.activate(chatId)` — when that pool function doesn't exist yet, add it as the part of this task: `Future<PtySession> activate({required String chatId, required ProjectsCubitState projects, required ChatsCubitState chats, required AgentProfileRegistry agents, required PtyProcessFactory factory});` returns the existing session if any, else spawns a new one with the right `ptyArgsFor`.)
+Activate a chat by calling the `PtySessionPool.activate` method from Task 12A. Build the `PtySession` in `ChatWorkbenchPanel` (or a small local helper) from the active project root, chat row, selected `AgentProfile.ptyArgsFor(resumeSessionId: chat.sessionId)`, `PtyProcessFactory`, and a `TranscriptRecorder.append` callback. Do not add agent/profile/UI state into `PtySessionPool`.
 
 - [ ] **Step 3: Cold-start replay**: on a "freshly attached" session with no live PTY, run `TranscriptReplayer.replay(...)` and feed bytes to xterm before spawning.
 
@@ -2707,7 +2920,7 @@ git commit -m "feat(workbench): add ChatWorkbenchPanel with embedded xterm termi
 
 - [ ] **Step 2: Implement.** Reuse the existing `WidgetDetailsPanel` body (it already exists in `lib/features/widget_picker/widgets/`) — import it directly. Connection pill is a new small widget. Disconnected fallback embeds the existing `DiscoveredDevicesList` from `lib/features/connection/widgets/`.
 
-- [ ] **Step 3: Wire `WidgetPickerCubit` from the existing `lib/features/widget_picker/` directory unchanged.
+- [ ] **Step 3: Wire `WidgetPickerCubit` from the existing `lib/features/widget_picker/` directory unchanged.**
 
 - [ ] **Step 4: Run, commit.**
 
@@ -2724,7 +2937,7 @@ git commit -m "feat(workbench): add InspectorPanel with connection pill"
 - Create: `lib/features/workbench/view/onboarding_view.dart`
 - Create: `test/features/workbench/view/onboarding_view_test.dart`
 
-- [ ] **Step 1: One-screen view: brand mark + heading "Add your first Flutter project" + a single `+ Pick folder` button that opens `file_selector.getDirectoryPath()`. On success, calls `ProjectsCubit.add(path)`. On error, shows an inline message.
+- [ ] **Step 1: One-screen view: brand mark + heading "Add your first Flutter project" + a single `+ Pick folder` button that opens `file_selector.getDirectoryPath()`. On success, calls `ProjectsCubit.add(path)`. On error, shows an inline message.**
 
 - [ ] **Step 2: Failing widget test** — "Pick folder" button visible when projects list is empty; clicking it calls `ProjectsCubit.add` with the path returned by mocked `FileSelectorPlatform`.
 
@@ -2761,7 +2974,7 @@ class ReduceMotion {
 }
 ```
 
-- [ ] **Step 2: Test that `ReduceMotion.duration` returns `Duration.zero` when `disableAnimations` is true.
+- [ ] **Step 2: Test that `ReduceMotion.duration` returns `Duration.zero` when `disableAnimations` is true.**
 
 - [ ] **Step 3: Commit.**
 
@@ -2838,7 +3051,7 @@ git commit -m "feat(workbench): middle-pane animations"
 
 - [ ] **Step 5: Screenshot swap with blur falloff.** `AnimatedSwitcher` cross-fade combined with `ImageFiltered(BackdropFilter)` blur tween 4 → 0 px.
 
-- [ ] **Step 6: Tree expand/collapse via `AnimatedSize`.
+- [ ] **Step 6: Tree expand/collapse via `AnimatedSize`.**
 
 - [ ] **Step 7: Discovered-devices list stagger-fade.** `flutter_animate` per-item 60 ms apart, 240 ms each.
 
@@ -2859,7 +3072,7 @@ git commit -m "feat(workbench): right-pane animations"
 - Create: `assets/rive/folder_pick.riv`
 - Modify: `pubspec.yaml` (`flutter:` → `assets:` already includes `assets/`; add `assets/rive/` if not covered).
 
-- [ ] **Step 1: Author the five `.riv` files in the Rive editor (or commission them) to match the inventory in §6.2 of the spec. Total payload < 200 KB.
+- [ ] **Step 1: Add the five `.riv` files supplied by the project owner to match the inventory in §6.2 of the spec. Total payload < 200 KB. If assets are not supplied, stop and ask before continuing.**
 
 - [ ] **Step 2: Add the directory to pubspec assets** if not already covered.
 
@@ -2956,7 +3169,7 @@ git rm -r lib/features/history \
 
 (`DiscoveredDevicesList` and `device_discovery_cubit` STAY — they're now consumed by `InspectorPanel`. Don't delete those.)
 
-- [ ] **Step 3: Search for any imports of the deleted files; remove or repoint.
+- [ ] **Step 3: Search for any imports of the deleted files; remove or repoint.**
 
 Run: `grep -rn "ConnectionView\|DockView\|HistoryView\|/history" lib/ test/`
 Expected: no matches.
@@ -2986,7 +3199,7 @@ git commit -m "refactor(router): land at workbench/onboarding; drop connect, doc
 - Font size slider 10–18 px.
 - Theme dropdown — `pickforgeEmber`, `draculaDark`, `solarizedDark`.
 
-- [ ] **Step 2: Wire `SettingsCubit` to load on init and save on change.
+- [ ] **Step 2: Wire `SettingsCubit` to load on init and save on change.**
 
 - [ ] **Step 3: Run cubit tests; commit.**
 
@@ -3035,7 +3248,7 @@ git commit -m "test(workbench): add shell layout goldens"
 - Create: `test/golden/inspector_pill_*.png` for each state (`connecting`, `connected`, `error`, `idle`).
 - Create: `test/features/workbench/view/inspector_panel_golden_test.dart`
 
-- [ ] **Step 1: Pump `InspectorPanel` with each state in turn; capture goldens.
+- [ ] **Step 1: Pump `InspectorPanel` with each state in turn; capture goldens.**
 
 - [ ] **Step 2: Generate, verify, commit.**
 
@@ -3086,7 +3299,7 @@ git commit -m "test: integration coverage for embedded PTY happy path"
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Drop terminal-profile detection mention. Reframe to "Pickforge is the terminal." Add a `+ Add project` first-step screenshot if available.
+- [ ] **Step 1: Drop terminal-profile detection mention. Reframe to "Pickforge is the terminal." Add a `+ Add project` first-step screenshot if available.**
 
 - [ ] **Step 2: Commit.**
 
@@ -3126,9 +3339,9 @@ git commit -m "docs: add embedded-terminal architecture overview"
 - [ ] Spec §5 (layout) — Tasks 28–32 ship the panes. ✅
 - [ ] Spec §6 (animations) — Tasks 33–37. ✅
 - [ ] Spec §7 (dependencies) — Tasks 1, 8. ✅
-- [ ] Spec §8 (error handling) — covered inside the relevant cubit/PTY tasks; verify each error path has a test (binary-not-found in Task 11, project-missing in Task 7, transcript corruption in Task 15, drift migration failure in Task 6).
+- [ ] Spec §8 (error handling) — partially covered inside the relevant cubit/PTY tasks. Before execution, add concrete tests for project-missing, transcript corruption, write-to-closed-PTY toast, and Drift migration failure recovery; binary-not-found is covered in Task 11.
 - [ ] Spec §9 (security) — credential isolation is structural (not a code change); covered by the PTY abstraction. No task needed beyond the design choice.
-- [ ] Spec §10 (performance) — `RepaintBoundary` placement covered in Tasks 28–31; recorder isolate / async-map choice deferred to implementation per spec.
+- [ ] Spec §10 (performance) — `RepaintBoundary` placement must be made explicit in Tasks 28–31 before UI execution; recorder isolate / async-map choice remains deferred but must not block PTY reads.
 - [ ] Spec §11 (testing) — every task ends in a test cycle; goldens (Tasks 40–41); integration (Task 42).
 - [ ] Spec §12 (rollout) — 10 phases match the spec's 10 sub-commits.
 - [ ] Spec §13 (documentation) — Tasks 43–44.

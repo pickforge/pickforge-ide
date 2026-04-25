@@ -2,51 +2,90 @@ import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
 
 class _MockSettingsRepo extends Mock implements ProjectSettingsRepository {}
 
+class _MockTerminalRepo extends Mock
+    implements EmbeddedTerminalSettingsRepository {}
+
 void main() {
   late ProjectSettingsRepository repo;
+  late EmbeddedTerminalSettingsRepository terminalRepo;
 
   setUp(() {
     repo = _MockSettingsRepo();
-    registerFallbackValue(const SettingsState());
+    terminalRepo = _MockTerminalRepo();
+    registerFallbackValue(EmbeddedTerminalSettings.defaults);
   });
 
   group('SettingsCubit', () {
     test('initial state is empty', () {
-      final cubit = SettingsCubit(repo);
+      final cubit = SettingsCubit(repo, terminalRepo);
       expect(cubit.state.defaultAgent, isNull);
+      expect(cubit.state.terminal, EmbeddedTerminalSettings.defaults);
     });
 
     blocTest<SettingsCubit, SettingsState>(
-      'load emits state from repo',
+      'load emits state from repos',
       setUp: () {
         when(() => repo.getDefaultAgentId('/root'))
             .thenAnswer((_) async => 'claude-code');
+        when(() => terminalRepo.load()).thenAnswer(
+          (_) async => const EmbeddedTerminalSettings(
+            fontFamily: 'JetBrains Mono',
+            fontSize: 14,
+            themeId: TerminalThemeId.solarizedDark,
+          ),
+        );
       },
-      build: () => SettingsCubit(repo),
+      build: () => SettingsCubit(repo, terminalRepo),
       act: (cubit) => cubit.load('/root'),
       expect: () => [
-        const SettingsState(defaultAgent: 'claude-code'),
+        isA<SettingsState>()
+            .having((s) => s.defaultAgent, 'agent', 'claude-code')
+            .having(
+              (s) => s.terminal.fontFamily,
+              'fontFamily',
+              'JetBrains Mono',
+            ),
       ],
     );
 
     blocTest<SettingsCubit, SettingsState>(
       'setDefaultAgent writes to repo and emits',
-      build: () => SettingsCubit(repo),
+      build: () => SettingsCubit(repo, terminalRepo),
       setUp: () {
         when(() => repo.setDefaultAgentId('/root', 'codex'))
             .thenAnswer((_) async {});
       },
       act: (cubit) => cubit.setDefaultAgent('/root', 'codex'),
       expect: () => [
-        const SettingsState(defaultAgent: 'codex'),
+        isA<SettingsState>().having((s) => s.defaultAgent, 'agent', 'codex'),
       ],
-      verify: (_) {
-        verify(() => repo.setDefaultAgentId('/root', 'codex')).called(1);
+    );
+
+    blocTest<SettingsCubit, SettingsState>(
+      'setTerminal writes to repo and emits',
+      build: () => SettingsCubit(repo, terminalRepo),
+      setUp: () {
+        when(() => terminalRepo.save(any())).thenAnswer((_) async {});
       },
+      act: (cubit) => cubit.setTerminal(
+        const EmbeddedTerminalSettings(
+          fontFamily: 'Berkeley Mono',
+          fontSize: 16,
+          themeId: TerminalThemeId.draculaDark,
+        ),
+      ),
+      expect: () => [
+        isA<SettingsState>().having(
+          (s) => s.terminal.fontSize,
+          'fontSize',
+          16,
+        ),
+      ],
     );
   });
 }

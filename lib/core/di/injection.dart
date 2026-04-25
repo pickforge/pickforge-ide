@@ -10,6 +10,9 @@ import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
 import 'package:pickforge/core/agent/wrapper_script_generator.dart';
 import 'package:pickforge/core/di/injection.config.dart';
+import 'package:pickforge/core/drift/dao/chats_dao.dart';
+import 'package:pickforge/core/drift/dao/projects_dao.dart';
+import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/terminal/profiles/alacritty_profile.dart';
@@ -120,4 +123,13 @@ abstract class AdbScreenshotModule {
   @singleton
   AdbScreenshotCapturer adbScreenshotCapturer(TerminalDetector detector) =>
       AdbScreenshotCapturer(detector);
+}
+
+@module
+abstract class DriftDaoModule {
+  @lazySingleton
+  ProjectsDao projectsDao(PickforgeDatabase db) => ProjectsDao(db);
+
+  @lazySingleton
+  ChatsDao chatsDao(PickforgeDatabase db) => ChatsDao(db);
 }

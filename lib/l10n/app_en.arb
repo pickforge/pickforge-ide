@@ -10,5 +10,13 @@
   "connectStatusError": "Couldn't reach VM Service. Is your app running?",
   "forgeItButton": "Forge it",
   "historyTitle": "Recent forges",
-  "settingsTitle": "Settings"
+  "settingsTitle": "Settings",
+  "workbenchProjectsHeader": "Projects",
+  "workbenchAddProject": "Add project",
+  "workbenchChatsHeader": "Chats",
+  "workbenchNewChat": "New chat",
+  "workbenchNoProjects": "Add your first project",
+  "workbenchNoChats": "Start your first chat",
+  "workbenchPickFolder": "Pick folder",
+  "onboardingHeading": "Add your first Flutter project"
 }

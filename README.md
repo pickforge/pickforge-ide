@@ -14,14 +14,15 @@ new terminal. The agent makes a surgical edit; you hot-reload; repeat.
 
 ## Quick start
 
-1. Run your app in an Android emulator as normal and copy the VM Service URL
-   printed to the console.
-2. Launch Pickforge. Paste the URL → Connect.
-3. Tap a widget in the emulator. Pickforge highlights it and shows its
-   source.
-4. Pick a **skill** (edit / extract / explain), pick an **agent**, pick a
-   **terminal**, click **Forge it**. A new terminal opens with your agent
-   pre-loaded with the widget's context.
+1. Launch Pickforge. On first run it asks you to **Add your first project** —
+   pick the folder of a Flutter project (one that has a `pubspec.yaml`).
+2. Inside the workbench, hit **+ New chat** to spawn a persistent agent CLI
+   session in the embedded terminal pane. Each chat keeps its own scrollback
+   across app restarts.
+3. Run your Flutter app and paste its VM Service URL into the inspector pane
+   to enable widget picking.
+4. Tap a widget in the emulator, then click **Forge it** to dispatch the
+   widget context as a prompt into the active chat.
 
 ## What it writes to your project
 
@@ -63,7 +64,7 @@ fvm flutter run -d linux   # or -d macos, -d windows
 |---|---|
 | Target platforms (for the app under debug) | Android emulator (MVP). iOS Simulator, Flutter web, and Flutter desktop are planned. |
 | Agents | Claude Code, Codex, OpenCode. More planned. |
-| Terminals | Ghostty, iTerm2, Warp, WezTerm, Alacritty, Kitty, Windows Terminal, gnome-terminal, Terminal.app, `$TERMINAL` fallback. |
+| Terminal | Embedded `xterm` + PTY — no external terminal apps required. Per-chat scrollback persists in `.pickforge/chats/<chatId>/transcript.log`. |
 
 ## Contributing
 

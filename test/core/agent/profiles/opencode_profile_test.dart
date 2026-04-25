@@ -26,6 +26,12 @@ void main() {
       expect(profile.invocationArgs(), ['--yolo']);
     });
 
+    test('ptyArgsFor returns opencode invocation', () {
+      final inv = profile.ptyArgsFor();
+      expect(inv.executable, 'opencode');
+      expect(inv.arguments, isEmpty);
+    });
+
     test('buildInitialPrompt with all files', () {
       final prompt = profile.buildInitialPrompt(
         pickforgeDirRelative: '.pickforge',

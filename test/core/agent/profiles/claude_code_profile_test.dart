@@ -29,6 +29,18 @@ void main() {
       );
     });
 
+    test('ptyArgsFor returns claude invocation without resume', () {
+      final inv = profile.ptyArgsFor();
+      expect(inv.executable, 'claude');
+      expect(inv.arguments, isEmpty);
+    });
+
+    test('ptyArgsFor includes --resume <id> when given', () {
+      final inv = profile.ptyArgsFor(resumeSessionId: 'sess-42');
+      expect(inv.executable, 'claude');
+      expect(inv.arguments, ['--resume', 'sess-42']);
+    });
+
     test('buildInitialPrompt with all files', () {
       final prompt = profile.buildInitialPrompt(
         pickforgeDirRelative: '.pickforge',

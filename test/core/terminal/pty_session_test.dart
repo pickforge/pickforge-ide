@@ -74,6 +74,24 @@ void main() {
     expect(states.last, isA<PtyExited>().having((e) => e.code, 'code', 0));
   });
 
+  test('output is mirrored to onOutput callback', () async {
+    final seen = <List<int>>[];
+    final session = PtySession(
+      chatId: 'c4',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+      onOutput: seen.add,
+    );
+
+    await session.start();
+    outputCtrl.add([111, 107]);
+    await pumpEventQueue();
+
+    expect(seen.single, [111, 107]);
+  });
+
   test('factory throw -> failed(BinaryNotFound)', () async {
     when(
       () => factory.start(

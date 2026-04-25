@@ -12,6 +12,7 @@ class PtySession {
     required this.workingDirectory,
     required PtyProcessFactory factory,
     this.environment,
+    this.onOutput,
     Duration spawnTimeout = const Duration(seconds: 8),
   })  : _factory = factory,
         _spawnTimeout = spawnTimeout;
@@ -21,6 +22,7 @@ class PtySession {
   final List<String> arguments;
   final String workingDirectory;
   final Map<String, String>? environment;
+  final void Function(List<int> bytes)? onOutput;
   final PtyProcessFactory _factory;
   final Duration _spawnTimeout;
 
@@ -52,7 +54,10 @@ class PtySession {
             environment: environment,
           )
           .timeout(_spawnTimeout);
-      _process!.output.listen(_outputCtrl.add);
+      _process!.output.listen((bytes) {
+        onOutput?.call(bytes);
+        _outputCtrl.add(bytes);
+      });
       unawaited(_process!.exitCode.then((c) => _emit(PtyExited(c))));
       _emit(const PtyRunning());
     } on TimeoutException {

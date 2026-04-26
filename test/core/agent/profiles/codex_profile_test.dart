@@ -26,6 +26,12 @@ void main() {
       expect(profile.invocationArgs(), ['--dangerously-skip-permissions']);
     });
 
+    test('ptyArgsFor returns codex invocation', () {
+      final inv = profile.ptyArgsFor();
+      expect(inv.executable, 'codex');
+      expect(inv.arguments, isEmpty);
+    });
+
     test('buildInitialPrompt with all files', () {
       final prompt = profile.buildInitialPrompt(
         pickforgeDirRelative: '.pickforge',

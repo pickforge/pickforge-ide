@@ -25,6 +25,13 @@ class ClaudeCodeProfile extends AgentProfile {
       ];
 
   @override
+  PtyInvocation ptyArgsFor({String? resumeSessionId}) => PtyInvocation(
+        executable: 'claude',
+        arguments:
+            resumeSessionId != null ? ['--resume', resumeSessionId] : const [],
+      );
+
+  @override
   String buildInitialPrompt({
     required String pickforgeDirRelative,
     required String skillFilename,

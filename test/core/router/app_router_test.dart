@@ -2,16 +2,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/router/app_router.dart';
+import 'package:pickforge/features/workbench/view/onboarding_view.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  setUp(getIt.reset);
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    return getIt.reset();
+  });
 
-  testWidgets('router renders connect route initially', (tester) async {
+  testWidgets('router has workbench, onboarding, and settings routes',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     await configureDependencies();
+    final router = buildAppRouter()..go(AppRoutes.onboarding);
     await tester.pumpWidget(
-      MaterialApp.router(routerConfig: buildAppRouter()),
+      MaterialApp.router(
+        routerConfig: router,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+      ),
     );
-    await tester.pumpAndSettle();
-    expect(find.text('Connect to VM Service'), findsOneWidget);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(OnboardingView), findsOneWidget);
   });
 }

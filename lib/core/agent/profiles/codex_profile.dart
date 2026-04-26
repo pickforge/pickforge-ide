@@ -20,6 +20,10 @@ class CodexProfile extends AgentProfile {
   List<String> invocationArgs() => ['--dangerously-skip-permissions'];
 
   @override
+  PtyInvocation ptyArgsFor({String? resumeSessionId}) =>
+      const PtyInvocation(executable: 'codex', arguments: <String>[]);
+
+  @override
   String buildInitialPrompt({
     required String pickforgeDirRelative,
     required String skillFilename,

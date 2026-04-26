@@ -1,43 +1,48 @@
 import 'package:go_router/go_router.dart';
-import 'package:pickforge/features/connection/view/connection_view.dart';
-import 'package:pickforge/features/history/view/history_view.dart';
+import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
-import 'package:pickforge/features/widget_picker/view/dock_view.dart';
-import 'package:pickforge/shared/widgets/app_shell.dart';
+import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_state.dart';
+import 'package:pickforge/features/workbench/view/app_shell_view.dart';
+import 'package:pickforge/features/workbench/view/onboarding_view.dart';
 
-/// Top-level routes. Features add their pages here as they come online.
 class AppRoutes {
   const AppRoutes._();
-  static const connect = '/connect';
-  static const dock = '/';
-  static const history = '/history';
+  static const root = '/';
+  static const workbench = '/workbench';
+  static const onboarding = '/onboarding';
   static const settings = '/settings';
 }
 
 GoRouter buildAppRouter() {
   return GoRouter(
-    initialLocation: AppRoutes.connect,
+    initialLocation: AppRoutes.root,
+    redirect: (context, state) async {
+      if (state.matchedLocation != AppRoutes.root) return null;
+      final cubit = getIt<ProjectsCubit>();
+      if (cubit.state is! ProjectsReady) await cubit.load();
+      final ready = cubit.state;
+      if (ready is ProjectsReady && ready.projects.isEmpty) {
+        return AppRoutes.onboarding;
+      }
+      return AppRoutes.workbench;
+    },
     routes: [
-      ShellRoute(
-        builder: (context, state, child) => AppShell(child: child),
-        routes: [
-          GoRoute(
-            path: AppRoutes.connect,
-            builder: (_, __) => const ConnectionView(),
-          ),
-          GoRoute(
-            path: AppRoutes.dock,
-            builder: (_, __) => const DockView(),
-          ),
-          GoRoute(
-            path: AppRoutes.history,
-            builder: (_, __) => const HistoryView(),
-          ),
-          GoRoute(
-            path: AppRoutes.settings,
-            builder: (_, __) => const SettingsView(),
-          ),
-        ],
+      GoRoute(
+        path: AppRoutes.root,
+        builder: (_, __) => const AppShellView(),
+      ),
+      GoRoute(
+        path: AppRoutes.onboarding,
+        builder: (_, __) => const OnboardingView(),
+      ),
+      GoRoute(
+        path: AppRoutes.workbench,
+        builder: (_, __) => const AppShellView(),
+      ),
+      GoRoute(
+        path: AppRoutes.settings,
+        builder: (_, __) => const SettingsView(),
       ),
     ],
   );

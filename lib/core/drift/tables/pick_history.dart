@@ -10,6 +10,7 @@ class PickHistory extends Table {
   TextColumn get skillId => text()();
   TextColumn get agentId => text()();
   TextColumn get terminalId => text()();
+  TextColumn get chatId => text().nullable()();
   DateTimeColumn get pickedAt => dateTime()();
   TextColumn get widgetContextJson => text()();
 }

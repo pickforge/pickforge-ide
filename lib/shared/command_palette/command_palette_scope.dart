@@ -45,22 +45,10 @@ class CommandPaletteScope extends StatelessWidget {
 List<PickforgeCommand> buildNavCommands(BuildContext context) {
   return [
     PickforgeCommand(
-      id: 'nav-dock',
-      title: 'Go to Dock',
-      hint: 'Widget picker',
-      run: () => context.go(AppRoutes.dock),
-    ),
-    PickforgeCommand(
-      id: 'nav-connect',
-      title: 'Go to Connect',
-      hint: 'VM Service connection',
-      run: () => context.go(AppRoutes.connect),
-    ),
-    PickforgeCommand(
-      id: 'nav-history',
-      title: 'Go to History',
-      hint: 'Pick history',
-      run: () => context.go(AppRoutes.history),
+      id: 'nav-workbench',
+      title: 'Go to Workbench',
+      hint: 'Three-pane shell',
+      run: () => context.go(AppRoutes.workbench),
     ),
     PickforgeCommand(
       id: 'nav-settings',

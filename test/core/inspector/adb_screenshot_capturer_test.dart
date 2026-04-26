@@ -2,12 +2,12 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
-import 'package:pickforge/core/terminal/terminal_detector.dart';
+import 'package:pickforge/core/process/binary_detector.dart';
 
 void main() {
   group('AdbScreenshotCapturer', () {
     test('returns null when adb not on PATH', () async {
-      final detector = TerminalDetector(
+      final detector = BinaryDetector(
         processRunner: (_, __) async => ProcessResult(1, 1, '', ''),
       );
       final capturer = AdbScreenshotCapturer(
@@ -38,7 +38,7 @@ void main() {
         return ProcessResult(0, 0, '/usr/bin/adb', '');
       }
 
-      final detector = TerminalDetector(processRunner: runner);
+      final detector = BinaryDetector(processRunner: runner);
       final capturer = AdbScreenshotCapturer(
         detector,
         processRunner: runner,
@@ -72,7 +72,7 @@ void main() {
         return ProcessResult(0, 0, '/usr/bin/adb', '');
       }
 
-      final detector = TerminalDetector(processRunner: runner);
+      final detector = BinaryDetector(processRunner: runner);
       final capturer = AdbScreenshotCapturer(
         detector,
         processRunner: runner,
@@ -110,7 +110,7 @@ void main() {
         return ProcessResult(0, 0, '/usr/bin/adb', '');
       }
 
-      final detector = TerminalDetector(processRunner: runner);
+      final detector = BinaryDetector(processRunner: runner);
       final capturer = AdbScreenshotCapturer(
         detector,
         processRunner: runner,

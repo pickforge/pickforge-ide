@@ -13,7 +13,6 @@ void main() {
       projectRoot: '/me/app',
       vmServiceUrl: 'ws://localhost:8181/ws',
       defaultAgentId: 'claude-code',
-      defaultTerminalId: 'ghostty',
     );
     final loaded = await db.projectSettingsDao.loadFor('/me/app');
     expect(loaded?.vmServiceUrl, 'ws://localhost:8181/ws');
@@ -24,7 +23,6 @@ void main() {
     await db.projectSettingsDao.upsert(
       projectRoot: '/me/app',
       defaultAgentId: 'claude-code',
-      defaultTerminalId: 'ghostty',
     );
 
     await db.projectSettingsDao.upsert(
@@ -35,6 +33,24 @@ void main() {
     final loaded = await db.projectSettingsDao.loadFor('/me/app');
     expect(loaded?.vmServiceUrl, 'ws://localhost:8181/ws');
     expect(loaded?.defaultAgentId, 'claude-code');
-    expect(loaded?.defaultTerminalId, 'ghostty');
+  });
+
+  test('setLastChatId then lastChatId round-trips', () async {
+    await db.projectSettingsDao.upsert(projectRoot: '/tmp/x');
+    await db.projectSettingsDao.setLastChatId('/tmp/x', 'chat-1');
+    expect(await db.projectSettingsDao.lastChatId('/tmp/x'), 'chat-1');
+  });
+
+  test('setLastChatId(null) clears the value', () async {
+    await db.projectSettingsDao.upsert(projectRoot: '/tmp/x');
+    await db.projectSettingsDao.setLastChatId('/tmp/x', 'chat-1');
+    await db.projectSettingsDao.setLastChatId('/tmp/x', null);
+    expect(await db.projectSettingsDao.lastChatId('/tmp/x'), isNull);
+  });
+
+  test('setPaneSizes then paneSizes round-trips', () async {
+    await db.projectSettingsDao.upsert(projectRoot: '/tmp/x');
+    await db.projectSettingsDao.setPaneSizes('/tmp/x', '[260,300]');
+    expect(await db.projectSettingsDao.paneSizes('/tmp/x'), '[260,300]');
   });
 }

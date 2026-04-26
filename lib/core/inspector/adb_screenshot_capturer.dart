@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:pickforge/core/terminal/terminal_detector.dart';
+import 'package:pickforge/core/process/binary_detector.dart';
 
 /// Function type for running a process — abstracted for testing.
 typedef AdbProcessRunner = Future<ProcessResult> Function(
@@ -18,7 +18,7 @@ class AdbScreenshotCapturer {
     AdbProcessRunner? processRunner,
   }) : _processRunner = processRunner ?? Process.run;
 
-  final TerminalDetector _detector;
+  final BinaryDetector _detector;
   final AdbProcessRunner _processRunner;
 
   /// Captures a screenshot from a connected emulator.

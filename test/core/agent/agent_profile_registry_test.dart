@@ -31,6 +31,10 @@ class _FakeProfile extends AgentProfile {
     required String? deviceScreenFilename,
   }) =>
       '';
+
+  @override
+  PtyInvocation ptyArgsFor({String? resumeSessionId}) =>
+      const PtyInvocation(executable: 'fake', arguments: <String>[]);
 }
 
 void main() {

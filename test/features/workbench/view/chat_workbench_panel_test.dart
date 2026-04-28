@@ -16,7 +16,7 @@ void main() {
     when(() => repo.list(any())).thenAnswer((_) async => <ChatRow>[]);
 
     final cubit = ChatsCubit(repo);
-    await cubit.load('/p');
+    await cubit.syncProjects(['/p']);
 
     await tester.pumpWidget(
       MaterialApp(

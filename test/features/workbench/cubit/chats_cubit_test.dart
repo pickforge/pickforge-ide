@@ -23,24 +23,28 @@ void main() {
   setUp(() => repo = _MockRepo());
 
   blocTest<ChatsCubit, ChatsState>(
-    'load emits Loading then Ready with first chat active',
+    'syncProjects emits Loading then Ready with chats grouped by project',
     setUp: () {
       when(() => repo.list('/p'))
           .thenAnswer((_) async => [_row('c1', '/p', 'Chat 1')]);
+      when(() => repo.list('/q')).thenAnswer((_) async => <ChatRow>[]);
     },
     build: () => ChatsCubit(repo),
-    act: (c) => c.load('/p'),
+    act: (c) => c.syncProjects(['/p', '/q'], defaultExpand: '/p'),
     expect: () => [
       isA<ChatsLoading>(),
       isA<ChatsReady>()
-          .having((s) => s.chats.length, 'count', 1)
-          .having((s) => s.activeChatId, 'active', 'c1'),
+          .having((s) => s.chatsByProject.keys.toList(), 'roots', ['/p', '/q'])
+          .having((s) => s.chatsByProject['/p']!.length, 'p count', 1)
+          .having((s) => s.expanded.contains('/p'), 'p expanded', true),
     ],
   );
 
   blocTest<ChatsCubit, ChatsState>(
-    'newChat inserts and selects the new chat',
+    'newChat inserts and selects the new chat under its project',
     setUp: () {
+      when(() => repo.list('/p'))
+          .thenAnswer((_) async => <ChatRow>[]);
       when(
         () => repo.newChat(
           projectRoot: '/p',
@@ -48,14 +52,20 @@ void main() {
           skillId: any(named: 'skillId'),
         ),
       ).thenAnswer((_) async => 'c-new');
-      when(() => repo.list('/p'))
-          .thenAnswer((_) async => [_row('c-new', '/p', 'Chat 1')]);
     },
     build: () => ChatsCubit(repo),
-    act: (c) => c.newChat(projectRoot: '/p', defaultAgentId: 'codex'),
+    act: (c) async {
+      await c.syncProjects(['/p']);
+      when(() => repo.list('/p'))
+          .thenAnswer((_) async => [_row('c-new', '/p', 'Chat 1')]);
+      await c.newChat(projectRoot: '/p', defaultAgentId: 'codex');
+    },
+    skip: 2,
     expect: () => [
-      isA<ChatsLoading>(),
-      isA<ChatsReady>().having((s) => s.activeChatId, 'active', 'c-new'),
+      isA<ChatsReady>()
+          .having((s) => s.activeChatId, 'active', 'c-new')
+          .having((s) => s.chatsByProject['/p']!.length, 'count', 1)
+          .having((s) => s.expanded.contains('/p'), 'expanded', true),
     ],
   );
 
@@ -68,12 +78,32 @@ void main() {
     },
     build: () => ChatsCubit(repo),
     act: (c) async {
-      await c.load('/p');
+      await c.syncProjects(['/p']);
       c.selectChat('c2');
     },
     skip: 2,
     expect: () => [
       isA<ChatsReady>().having((s) => s.activeChatId, 'active', 'c2'),
+    ],
+  );
+
+  blocTest<ChatsCubit, ChatsState>(
+    'toggleExpanded flips the expanded set for a project',
+    setUp: () {
+      when(() => repo.list('/p')).thenAnswer((_) async => <ChatRow>[]);
+    },
+    build: () => ChatsCubit(repo),
+    act: (c) async {
+      await c.syncProjects(['/p']);
+      c.toggleExpanded('/p');
+    },
+    skip: 2,
+    expect: () => [
+      isA<ChatsReady>().having(
+        (s) => s.expanded.contains('/p'),
+        'expanded',
+        true,
+      ),
     ],
   );
 }

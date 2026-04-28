@@ -13,38 +13,45 @@ class ChatsInitial extends ChatsState {
 }
 
 class ChatsLoading extends ChatsState {
-  const ChatsLoading(this.projectRoot);
-
-  final String projectRoot;
-
-  @override
-  List<Object?> get props => [projectRoot];
+  const ChatsLoading();
 }
 
 class ChatsReady extends ChatsState {
   const ChatsReady({
-    required this.projectRoot,
-    required this.chats,
+    required this.chatsByProject,
+    required this.expanded,
     this.activeChatId,
   });
 
-  final String projectRoot;
-  final List<ChatRow> chats;
+  final Map<String, List<ChatRow>> chatsByProject;
+  final Set<String> expanded;
   final String? activeChatId;
 
+  ChatRow? get activeChat {
+    if (activeChatId == null) return null;
+    for (final list in chatsByProject.values) {
+      for (final c in list) {
+        if (c.chatId == activeChatId) return c;
+      }
+    }
+    return null;
+  }
+
   ChatsReady copyWith({
-    String? projectRoot,
-    List<ChatRow>? chats,
-    String? activeChatId,
+    Map<String, List<ChatRow>>? chatsByProject,
+    Set<String>? expanded,
+    Object? activeChatId = _sentinel,
   }) =>
       ChatsReady(
-        projectRoot: projectRoot ?? this.projectRoot,
-        chats: chats ?? this.chats,
-        activeChatId: activeChatId ?? this.activeChatId,
+        chatsByProject: chatsByProject ?? this.chatsByProject,
+        expanded: expanded ?? this.expanded,
+        activeChatId: identical(activeChatId, _sentinel)
+            ? this.activeChatId
+            : activeChatId as String?,
       );
 
   @override
-  List<Object?> get props => [projectRoot, chats, activeChatId];
+  List<Object?> get props => [chatsByProject, expanded, activeChatId];
 }
 
 class ChatsError extends ChatsState {
@@ -55,3 +62,5 @@ class ChatsError extends ChatsState {
   @override
   List<Object?> get props => [message];
 }
+
+const _sentinel = Object();

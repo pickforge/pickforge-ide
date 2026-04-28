@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:injectable/injectable.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/chats/chats_repository.dart';
+import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 
 @injectable
@@ -12,16 +13,56 @@ class ChatsCubit extends Cubit<ChatsState> {
 
   final ChatsRepository _repo;
 
-  Future<void> load(String projectRoot, {String? selectChatId}) async {
-    emit(ChatsLoading(projectRoot));
-    final chats = await _repo.list(projectRoot);
-    final active =
-        selectChatId ?? (chats.isNotEmpty ? chats.first.chatId : null);
+  Future<void> syncProjects(
+    List<String> projectRoots, {
+    String? defaultExpand,
+  }) async {
+    final firstSync = state is! ChatsReady;
+    if (firstSync) emit(const ChatsLoading());
+
+    final priorReady = state is ChatsReady ? state as ChatsReady : null;
+    final priorChats = priorReady?.chatsByProject ?? const {};
+    final priorExpanded = priorReady?.expanded ?? const <String>{};
+
+    final newChats = <String, List<ChatRow>>{};
+    for (final root in projectRoots) {
+      newChats[root] = await _repo.list(root);
+    }
+
+    final expanded = <String>{
+      ...priorExpanded.where(projectRoots.contains),
+    };
+    if (firstSync) {
+      if (defaultExpand != null && projectRoots.contains(defaultExpand)) {
+        expanded.add(defaultExpand);
+      }
+    } else {
+      expanded.addAll(
+        projectRoots.where((r) => !priorChats.containsKey(r)),
+      );
+    }
+
+    final priorActive = priorReady?.activeChatId;
+    final stillExists = priorActive != null &&
+        newChats.values.any((l) => l.any((c) => c.chatId == priorActive));
+    final activeId = stillExists ? priorActive : null;
+
     emit(
       ChatsReady(
-        projectRoot: projectRoot,
-        chats: chats,
-        activeChatId: active,
+        chatsByProject: newChats,
+        expanded: expanded,
+        activeChatId: activeId,
+      ),
+    );
+  }
+
+  Future<void> _refreshProject(String projectRoot) async {
+    final s = state;
+    if (s is! ChatsReady) return;
+    final list = await _repo.list(projectRoot);
+    emit(
+      s.copyWith(
+        chatsByProject: {...s.chatsByProject, projectRoot: list},
       ),
     );
   }
@@ -36,7 +77,17 @@ class ChatsCubit extends Cubit<ChatsState> {
       defaultAgentId: defaultAgentId,
       skillId: skillId,
     );
-    await load(projectRoot, selectChatId: id);
+    final s = state;
+    if (s is ChatsReady) {
+      final list = await _repo.list(projectRoot);
+      emit(
+        s.copyWith(
+          chatsByProject: {...s.chatsByProject, projectRoot: list},
+          expanded: {...s.expanded, projectRoot},
+          activeChatId: id,
+        ),
+      );
+    }
     return id;
   }
 
@@ -46,25 +97,49 @@ class ChatsCubit extends Cubit<ChatsState> {
     emit(s.copyWith(activeChatId: chatId));
   }
 
+  void toggleExpanded(String projectRoot) {
+    final s = state;
+    if (s is! ChatsReady) return;
+    final next = {...s.expanded};
+    if (!next.remove(projectRoot)) next.add(projectRoot);
+    emit(s.copyWith(expanded: next));
+  }
+
   Future<void> rename(String chatId, String title) async {
     final s = state;
     if (s is! ChatsReady) return;
     await _repo.rename(chatId, title);
-    await load(s.projectRoot, selectChatId: s.activeChatId);
+    final root = _projectOfChat(s, chatId);
+    if (root != null) await _refreshProject(root);
   }
 
   Future<void> remove(String chatId) async {
     final s = state;
     if (s is! ChatsReady) return;
+    final root = _projectOfChat(s, chatId);
     await _repo.remove(chatId);
-    final dir = Directory(
-      p.join(s.projectRoot, '.pickforge', 'chats', chatId),
-    );
-    try {
-      if (dir.existsSync()) await dir.delete(recursive: true);
-    } on FileSystemException catch (e) {
-      emit(ChatsError('Failed to delete transcript: ${e.message}'));
+    if (root != null) {
+      final dir = Directory(p.join(root, '.pickforge', 'chats', chatId));
+      try {
+        if (dir.existsSync()) await dir.delete(recursive: true);
+      } on FileSystemException catch (e) {
+        emit(ChatsError('Failed to delete transcript: ${e.message}'));
+        return;
+      }
+      await _refreshProject(root);
+      if (s.activeChatId == chatId) {
+        final after = state;
+        if (after is ChatsReady) {
+          emit(after.copyWith(activeChatId: null));
+        }
+      }
     }
-    await load(s.projectRoot);
+  }
+
+  String? _projectOfChat(ChatsReady s, String chatId) {
+    for (final entry in s.chatsByProject.entries) {
+      if (entry.value.any((c) => c.chatId == chatId)) return entry.key;
+    }
+    return null;
   }
 }

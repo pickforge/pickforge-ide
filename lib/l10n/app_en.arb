@@ -18,5 +18,9 @@
   "workbenchNoProjects": "Add your first project",
   "workbenchNoChats": "Start your first chat",
   "workbenchPickFolder": "Pick folder",
-  "onboardingHeading": "Add your first Flutter project"
+  "onboardingHeading": "Add your first Flutter project",
+  "gitignoreDialogTitle": "Update .gitignore?",
+  "gitignoreDialogMessage": "Pickforge stores chat transcripts and local settings under .pickforge/. Add it to your project's .gitignore?",
+  "gitignoreDialogConfirm": "Add it",
+  "gitignoreDialogSkip": "Skip"
 }

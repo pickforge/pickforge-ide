@@ -6,6 +6,7 @@ import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/process/binary_detector.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
 import 'package:pickforge/core/terminal/pty_session.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
@@ -22,16 +23,13 @@ class ChatWorkbenchPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<ChatsCubit, ChatsState>(
       builder: (context, state) {
-        if (state is! ChatsReady || state.activeChatId == null) {
-          return const _EmptyChat();
-        }
-        final active = state.chats.firstWhere(
-          (c) => c.chatId == state.activeChatId,
-        );
+        if (state is! ChatsReady) return const _EmptyChat();
+        final active = state.activeChat;
+        if (active == null) return const _EmptyChat();
         return _ChatTerminal(
           key: ValueKey(active.chatId),
           chat: active,
-          projectRoot: state.projectRoot,
+          projectRoot: active.projectRoot,
         );
       },
     );
@@ -99,6 +97,18 @@ class _ChatTerminalState extends State<_ChatTerminal> {
     final agentId = AgentProfileId.fromValue(widget.chat.agentId);
     final agent = getIt<AgentProfileRegistry>().get(agentId);
     final invocation = agent.ptyArgsFor(resumeSessionId: widget.chat.sessionId);
+
+    final available =
+        await getIt<BinaryDetector>().isBinaryOnPath(invocation.executable);
+    if (!available) {
+      _terminal.write(
+        '\r\n\x1b[31mCould not start `${invocation.executable}`: '
+        'binary not found on PATH.\x1b[0m\r\n'
+        'Install it and make sure it is reachable from a non-interactive '
+        'shell (e.g. add its directory to ~/.profile or /etc/environment).\r\n',
+      );
+      return;
+    }
 
     _session = await pool.activate(
       chatId: widget.chat.chatId,

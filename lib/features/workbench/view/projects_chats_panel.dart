@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/projects/gitignore_helper.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -9,10 +12,15 @@ import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class ProjectsChatsPanel extends StatelessWidget {
-  const ProjectsChatsPanel({super.key, this.pickFolder});
+  const ProjectsChatsPanel({
+    super.key,
+    this.pickFolder,
+    this.gitignoreHelper,
+  });
 
   /// Override for tests.
   final Future<String?> Function()? pickFolder;
+  final GitignoreHelper? gitignoreHelper;
 
   @override
   Widget build(BuildContext context) {
@@ -27,14 +35,12 @@ class ProjectsChatsPanel extends StatelessWidget {
             tooltip: l10n.workbenchAddProject,
             onAdd: () => _onAddProject(context),
           ),
-          Expanded(child: _ProjectsList(l10n: l10n)),
-          const Divider(height: 1),
-          _SectionHeader(
-            label: l10n.workbenchChatsHeader,
-            tooltip: l10n.workbenchNewChat,
-            onAdd: () => _onAddChat(context),
+          Expanded(
+            child: _ProjectsTree(
+              l10n: l10n,
+              gitignoreHelper: gitignoreHelper ?? const GitignoreHelper(),
+            ),
           ),
-          Expanded(child: _ChatsList(l10n: l10n)),
         ],
       ),
     );
@@ -46,17 +52,6 @@ class ProjectsChatsPanel extends StatelessWidget {
     if (picked == null) return;
     if (!context.mounted) return;
     await context.read<ProjectsCubit>().add(picked);
-  }
-
-  Future<void> _onAddChat(BuildContext context) async {
-    final projects = context.read<ProjectsCubit>().state;
-    if (projects is! ProjectsReady || projects.activeProjectRoot == null) {
-      return;
-    }
-    await context.read<ChatsCubit>().newChat(
-          projectRoot: projects.activeProjectRoot!,
-          defaultAgentId: 'claude-code',
-        );
   }
 }
 
@@ -94,86 +89,204 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _ProjectsList extends StatelessWidget {
-  const _ProjectsList({required this.l10n});
+class _ProjectsTree extends StatelessWidget {
+  const _ProjectsTree({required this.l10n, required this.gitignoreHelper});
 
   final AppLocalizations l10n;
+  final GitignoreHelper gitignoreHelper;
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<ProjectsCubit, ProjectsState>(
-      builder: (context, state) {
-        if (state is ProjectsReady && state.projects.isNotEmpty) {
-          return ListView.builder(
-            itemCount: state.projects.length,
-            itemBuilder: (_, i) {
-              final p = state.projects[i];
-              return _ProjectTile(
-                project: p,
-                isActive: p.projectRoot == state.activeProjectRoot,
+      builder: (context, projectsState) {
+        if (projectsState is ProjectsError) {
+          return _Empty(text: projectsState.message);
+        }
+        if (projectsState is! ProjectsReady ||
+            projectsState.projects.isEmpty) {
+          return _Empty(text: l10n.workbenchNoProjects);
+        }
+        return BlocBuilder<ChatsCubit, ChatsState>(
+          builder: (context, chatsState) {
+            final ready = chatsState is ChatsReady ? chatsState : null;
+            final activeId = ready?.activeChatId;
+            final expanded = ready?.expanded ?? const <String>{};
+            final byProject = ready?.chatsByProject ?? const {};
+
+            final tiles = <Widget>[];
+            for (final project in projectsState.projects) {
+              final isExpanded = expanded.contains(project.projectRoot);
+              tiles.add(
+                _ProjectHeaderTile(
+                  project: project,
+                  expanded: isExpanded,
+                  isActiveProject:
+                      project.projectRoot == projectsState.activeProjectRoot,
+                  onToggle: () => context
+                      .read<ChatsCubit>()
+                      .toggleExpanded(project.projectRoot),
+                  onAddChat: () => unawaited(
+                    _onAddChat(context, project.projectRoot),
+                  ),
+                ),
               );
-            },
-          );
-        }
-        if (state is ProjectsError) {
-          return _Empty(text: state.message);
-        }
-        return _Empty(text: l10n.workbenchNoProjects);
+              if (isExpanded) {
+                final chats = byProject[project.projectRoot] ?? const [];
+                if (chats.isEmpty) {
+                  tiles.add(_EmptyChatHint(text: l10n.workbenchNoChats));
+                } else {
+                  for (final chat in chats) {
+                    tiles.add(
+                      _ChatTile(
+                        chat: chat,
+                        isActive: chat.chatId == activeId,
+                        onTap: () => context
+                            .read<ChatsCubit>()
+                            .selectChat(chat.chatId),
+                      ),
+                    );
+                  }
+                }
+              }
+            }
+            return ListView(children: tiles);
+          },
+        );
       },
+    );
+  }
+
+  Future<void> _onAddChat(BuildContext context, String projectRoot) async {
+    final cubit = context.read<ChatsCubit>();
+    await cubit.newChat(
+      projectRoot: projectRoot,
+      defaultAgentId: 'claude-code',
+    );
+    if (!context.mounted) return;
+    if (await gitignoreHelper.needsEntry(projectRoot)) {
+      if (!context.mounted) return;
+      final confirmed = await _askGitignore(context);
+      if (confirmed == true) {
+        await gitignoreHelper.appendEntry(projectRoot);
+      }
+    }
+  }
+
+  Future<bool?> _askGitignore(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l10n.gitignoreDialogTitle),
+        content: Text(l10n.gitignoreDialogMessage),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l10n.gitignoreDialogSkip),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l10n.gitignoreDialogConfirm),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _ProjectTile extends StatelessWidget {
-  const _ProjectTile({required this.project, required this.isActive});
+class _ProjectHeaderTile extends StatelessWidget {
+  const _ProjectHeaderTile({
+    required this.project,
+    required this.expanded,
+    required this.isActiveProject,
+    required this.onToggle,
+    required this.onAddChat,
+  });
 
   final ProjectRow project;
-  final bool isActive;
+  final bool expanded;
+  final bool isActiveProject;
+  final VoidCallback onToggle;
+  final VoidCallback onAddChat;
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      selected: isActive,
-      title: Text(
-        project.displayName,
-        overflow: TextOverflow.ellipsis,
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () {
+        onToggle();
+        unawaited(
+          context.read<ProjectsCubit>().selectProject(project.projectRoot),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(
+          children: [
+            Icon(
+              expanded ? Icons.expand_more : Icons.chevron_right,
+              size: 18,
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                project.displayName,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight:
+                      isActiveProject ? FontWeight.w600 : FontWeight.normal,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: AppLocalizations.of(context).workbenchNewChat,
+              icon: const Icon(Icons.add, size: 16),
+              onPressed: onAddChat,
+            ),
+          ],
+        ),
       ),
-      onTap: () => context.read<ProjectsCubit>().selectProject(
-            project.projectRoot,
-          ),
     );
   }
 }
 
-class _ChatsList extends StatelessWidget {
-  const _ChatsList({required this.l10n});
+class _ChatTile extends StatelessWidget {
+  const _ChatTile({
+    required this.chat,
+    required this.isActive,
+    required this.onTap,
+  });
 
-  final AppLocalizations l10n;
+  final ChatRow chat;
+  final bool isActive;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<ChatsCubit, ChatsState>(
-      builder: (context, state) {
-        if (state is ChatsReady && state.chats.isNotEmpty) {
-          return ListView.builder(
-            itemCount: state.chats.length,
-            itemBuilder: (_, i) {
-              final c = state.chats[i];
-              return ListTile(
-                dense: true,
-                selected: c.chatId == state.activeChatId,
-                title: Text(c.title, overflow: TextOverflow.ellipsis),
-                onTap: () => context.read<ChatsCubit>().selectChat(c.chatId),
-              );
-            },
-          );
-        }
-        if (state is ChatsError) {
-          return _Empty(text: state.message);
-        }
-        return _Empty(text: l10n.workbenchNoChats);
-      },
+    return Padding(
+      padding: const EdgeInsets.only(left: 22),
+      child: ListTile(
+        dense: true,
+        selected: isActive,
+        title: Text(chat.title, overflow: TextOverflow.ellipsis),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _EmptyChatHint extends StatelessWidget {
+  const _EmptyChatHint({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(30, 4, 12, 8),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
     );
   }
 }

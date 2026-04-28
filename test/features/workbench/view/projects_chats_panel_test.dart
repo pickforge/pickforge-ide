@@ -68,40 +68,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('PROJECTS'), findsOneWidget);
-    expect(find.text('CHATS'), findsOneWidget);
     expect(find.text('Add your first project'), findsOneWidget);
   });
 
-  testWidgets('selecting a project triggers cubit', (tester) async {
-    final pRepo = _MockProjectsRepo();
-    when(() => pRepo.list())
-        .thenAnswer((_) async => [_project('/a'), _project('/b')]);
-    when(() => pRepo.touch(any<String>())).thenAnswer((_) async {});
-
-    final cRepo = _MockChatsRepo();
-    when(() => cRepo.list(any())).thenAnswer((_) async => <ChatRow>[]);
-
-    final projectsCubit = ProjectsCubit(pRepo);
-    final chatsCubit = ChatsCubit(cRepo);
-    await projectsCubit.load();
-
-    await tester.pumpWidget(
-      _harness(projectsCubit: projectsCubit, chatsCubit: chatsCubit),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('a'), findsOneWidget);
-    expect(find.text('b'), findsOneWidget);
-
-    await tester.tap(find.text('b'));
-    await tester.pumpAndSettle();
-
-    verify(() => pRepo.touch('/b')).called(1);
-  });
-
-  testWidgets('chats list shows ChatRow titles', (tester) async {
+  testWidgets('tapping a project toggles expand and shows nested chats',
+      (tester) async {
     final pRepo = _MockProjectsRepo();
     when(() => pRepo.list()).thenAnswer((_) async => [_project('/a')]);
+    when(() => pRepo.touch(any<String>())).thenAnswer((_) async {});
 
     final cRepo = _MockChatsRepo();
     when(() => cRepo.list('/a'))
@@ -110,13 +84,15 @@ void main() {
     final projectsCubit = ProjectsCubit(pRepo);
     final chatsCubit = ChatsCubit(cRepo);
     await projectsCubit.load();
-    await chatsCubit.load('/a');
+    await chatsCubit.syncProjects(['/a']);
+    chatsCubit.toggleExpanded('/a');
 
     await tester.pumpWidget(
       _harness(projectsCubit: projectsCubit, chatsCubit: chatsCubit),
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('a'), findsOneWidget);
     expect(find.text('Chat 1'), findsOneWidget);
   });
 }

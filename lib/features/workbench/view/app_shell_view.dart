@@ -9,8 +9,29 @@ import 'package:pickforge/features/workbench/view/inspector_panel.dart';
 import 'package:pickforge/features/workbench/view/projects_chats_panel.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 
-class AppShellView extends StatelessWidget {
+class AppShellView extends StatefulWidget {
   const AppShellView({super.key});
+
+  @override
+  State<AppShellView> createState() => _AppShellViewState();
+}
+
+class _AppShellViewState extends State<AppShellView> {
+  late final MultiSplitViewController _controller;
+
+  bool _hasRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = MultiSplitViewController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,43 +47,16 @@ class AppShellView extends StatelessWidget {
               );
         }
 
-        final controller = MultiSplitViewController(
-          areas: [
-            Area(
-              size: layout.leftWidth,
-              min: 180,
-              max: 360,
-              builder: (_, __) => animated(
-                const ProjectsChatsPanel(key: Key('workbench-left')),
-                delay: Duration.zero,
-              ),
-            ),
-            Area(
-              min: 320,
-              builder: (_, __) => animated(
-                const ChatWorkbenchPanel(key: Key('workbench-middle')),
-                delay: 60.ms,
-              ),
-            ),
-            if (!layout.rightCollapsed)
-              Area(
-                size: layout.rightWidth,
-                min: 240,
-                max: 480,
-                builder: (_, __) => animated(
-                  const InspectorPanel(key: Key('workbench-right')),
-                  delay: 120.ms,
-                ),
-              ),
-          ],
-        );
+        _syncAreas(layout, animated);
+
         return Scaffold(
           body: MultiSplitView(
-            controller: controller,
+            controller: _controller,
             onDividerDragEnd: (_) {
-              final left = controller.getArea(0).size ?? layout.leftWidth;
-              final right = controller.areasCount > 2
-                  ? (controller.getArea(2).size ?? layout.rightWidth)
+              final left =
+                  _controller.getArea(0).size ?? layout.leftWidth;
+              final right = _controller.areasCount > 2
+                  ? (_controller.getArea(2).size ?? layout.rightWidth)
                   : layout.rightWidth;
               context
                   .read<WorkbenchLayoutCubit>()
@@ -72,5 +66,83 @@ class AppShellView extends StatelessWidget {
         );
       },
     );
+  }
+
+  void _syncAreas(
+    WorkbenchLayoutState layout,
+    Widget Function(Widget, {required Duration delay}) animated,
+  ) {
+    final wantsRight = !layout.rightCollapsed;
+
+    if (_controller.areasCount == 0 || wantsRight != _hasRight) {
+      _recreateAreas(layout, animated);
+      _hasRight = wantsRight;
+      return;
+    }
+
+    _controller.getArea(0)
+      ..size = layout.leftWidth
+      ..min = 180
+      ..max = 360
+      ..builder = (_, __) => animated(
+            const ProjectsChatsPanel(key: Key('workbench-left')),
+            delay: Duration.zero,
+          );
+
+    _controller.getArea(1)
+      ..min = 320
+      ..builder = (_, __) => animated(
+            const ChatWorkbenchPanel(key: Key('workbench-middle')),
+            delay: 60.ms,
+          );
+
+    if (wantsRight) {
+      _controller.getArea(2)
+        ..size = layout.rightWidth
+        ..min = 240
+        ..max = 480
+        ..builder = (_, __) => animated(
+              const InspectorPanel(key: Key('workbench-right')),
+              delay: 120.ms,
+            );
+    }
+  }
+
+  void _recreateAreas(
+    WorkbenchLayoutState layout,
+    Widget Function(Widget, {required Duration delay}) animated,
+  ) {
+    final areas = <Area>[
+      Area(
+        id: 'left',
+        size: layout.leftWidth,
+        min: 180,
+        max: 360,
+        builder: (_, __) => animated(
+          const ProjectsChatsPanel(key: Key('workbench-left')),
+          delay: Duration.zero,
+        ),
+      ),
+      Area(
+        id: 'middle',
+        min: 320,
+        builder: (_, __) => animated(
+          const ChatWorkbenchPanel(key: Key('workbench-middle')),
+          delay: 60.ms,
+        ),
+      ),
+      if (!layout.rightCollapsed)
+        Area(
+          id: 'right',
+          size: layout.rightWidth,
+          min: 240,
+          max: 480,
+          builder: (_, __) => animated(
+            const InspectorPanel(key: Key('workbench-right')),
+            delay: 120.ms,
+          ),
+        ),
+    ];
+    _controller.areas = areas;
   }
 }

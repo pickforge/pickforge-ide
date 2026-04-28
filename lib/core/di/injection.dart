@@ -10,6 +10,7 @@ import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
 import 'package:pickforge/core/di/injection.config.dart';
 import 'package:pickforge/core/drift/dao/chats_dao.dart';
+import 'package:pickforge/core/drift/dao/project_settings_dao.dart';
 import 'package:pickforge/core/drift/dao/projects_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
@@ -88,4 +89,8 @@ abstract class DriftDaoModule {
 
   @lazySingleton
   ChatsDao chatsDao(PickforgeDatabase db) => ChatsDao(db);
+
+  @lazySingleton
+  ProjectSettingsDao projectSettingsDao(PickforgeDatabase db) =>
+      ProjectSettingsDao(db);
 }

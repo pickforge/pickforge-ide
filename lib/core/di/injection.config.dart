@@ -90,6 +90,8 @@ extension GetItInjectableX on _i174.GetIt {
         () => driftDaoModule.projectsDao(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i905.ChatsDao>(
         () => driftDaoModule.chatsDao(gh<_i631.PickforgeDatabase>()));
+    gh.lazySingleton<_i459.ProjectSettingsDao>(
+        () => driftDaoModule.projectSettingsDao(gh<_i631.PickforgeDatabase>()));
     gh.singleton<_i360.AgentProfileRegistry>(
         () => agentProfileModule.agentProfileRegistry(
               gh<_i14.ClaudeCodeProfile>(),
@@ -123,8 +125,10 @@ extension GetItInjectableX on _i174.GetIt {
         ));
     gh.lazySingleton<_i613.ProjectsRepository>(
         () => _i613.ProjectsRepository(gh<_i1070.ProjectsDao>()));
-    gh.factory<_i18.SettingsCubit>(
-        () => _i18.SettingsCubit(gh<_i340.ProjectSettingsRepository>()));
+    gh.factory<_i18.SettingsCubit>(() => _i18.SettingsCubit(
+          gh<_i340.ProjectSettingsRepository>(),
+          gh<_i195.EmbeddedTerminalSettingsRepository>(),
+        ));
     gh.factory<_i882.ProjectsCubit>(
         () => _i882.ProjectsCubit(gh<_i613.ProjectsRepository>()));
     return this;

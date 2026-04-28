@@ -30,10 +30,13 @@ void _installHardwareKeyboardAssertionGuard() {
     if (_isPressedKeysAssertion(details.exception)) return;
     (previousFlutter ?? FlutterError.presentError)(details);
   };
-  final previousPlatform = PlatformDispatcher.instance.onError;
   PlatformDispatcher.instance.onError = (error, stack) {
     if (_isPressedKeysAssertion(error)) return true;
-    return previousPlatform?.call(error, stack) ?? false;
+    // Forward to Flutter's normal error pipeline so async errors are visible.
+    FlutterError.reportError(
+      FlutterErrorDetails(exception: error, stack: stack),
+    );
+    return true;
   };
 }
 

@@ -114,8 +114,17 @@ class _ProjectsTree extends StatelessWidget {
             final byProject = ready?.chatsByProject ?? const {};
 
             final tiles = <Widget>[];
-            for (final project in projectsState.projects) {
+            for (var i = 0; i < projectsState.projects.length; i++) {
+              final project = projectsState.projects[i];
               final isExpanded = expanded.contains(project.projectRoot);
+              if (i > 0) {
+                tiles.add(
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(8, 8, 8, 8),
+                    child: Divider(height: 1, thickness: 1),
+                  ),
+                );
+              }
               tiles.add(
                 _ProjectHeaderTile(
                   project: project,
@@ -211,38 +220,55 @@ class _ProjectHeaderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return InkWell(
-      onTap: () {
-        onToggle();
-        unawaited(
-          context.read<ProjectsCubit>().selectProject(project.projectRoot),
-        );
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        child: Row(
-          children: [
-            Icon(
-              expanded ? Icons.expand_more : Icons.chevron_right,
-              size: 18,
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(
-                project.displayName,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight:
-                      isActiveProject ? FontWeight.w600 : FontWeight.normal,
+    final cs = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 2, 6, 2),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {
+            onToggle();
+            unawaited(
+              context
+                  .read<ProjectsCubit>()
+                  .selectProject(project.projectRoot),
+            );
+          },
+          hoverColor: cs.onSurface.withValues(alpha: 0.06),
+          splashColor: cs.onSurface.withValues(alpha: 0.10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Row(
+              children: [
+                Icon(
+                  expanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 18,
+                  color: cs.onSurfaceVariant,
                 ),
-              ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    project.displayName,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: isActiveProject
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      color: isActiveProject ? cs.primary : cs.onSurface,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: AppLocalizations.of(context).workbenchNewChat,
+                  icon: const Icon(Icons.add, size: 16),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onAddChat,
+                ),
+              ],
             ),
-            IconButton(
-              tooltip: AppLocalizations.of(context).workbenchNewChat,
-              icon: const Icon(Icons.add, size: 16),
-              onPressed: onAddChat,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -262,13 +288,32 @@ class _ChatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(left: 22),
-      child: ListTile(
-        dense: true,
-        selected: isActive,
-        title: Text(chat.title, overflow: TextOverflow.ellipsis),
-        onTap: onTap,
+      padding: const EdgeInsets.fromLTRB(22, 1, 6, 1),
+      child: Material(
+        color: isActive
+            ? cs.primary.withValues(alpha: 0.12)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          hoverColor: cs.onSurface.withValues(alpha: 0.06),
+          splashColor: cs.onSurface.withValues(alpha: 0.10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Text(
+              chat.title,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: isActive ? cs.primary : cs.onSurface,
+                fontWeight: isActive ? FontWeight.w500 : FontWeight.normal,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

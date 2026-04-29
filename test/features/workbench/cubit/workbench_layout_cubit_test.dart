@@ -14,14 +14,15 @@ void main() {
   blocTest<WorkbenchLayoutCubit, WorkbenchLayoutState>(
     'load reads JSON pane sizes',
     setUp: () {
-      when(() => dao.paneSizes('/p')).thenAnswer((_) async => '[200,310]');
+      when(() => dao.paneSizes('/p')).thenAnswer((_) async => '[200,310,180]');
     },
     build: () => WorkbenchLayoutCubit(dao),
     act: (c) => c.load('/p'),
     expect: () => [
       isA<WorkbenchLayoutState>()
           .having((s) => s.leftWidth, 'left', 200)
-          .having((s) => s.rightWidth, 'right', 310),
+          .having((s) => s.rightWidth, 'right', 310)
+          .having((s) => s.runLogsHeight, 'runLogsHeight', 180),
     ],
   );
 
@@ -36,7 +37,8 @@ void main() {
       isA<WorkbenchLayoutState>()
           .having((s) => s.projectRoot, 'projectRoot', '/p')
           .having((s) => s.leftWidth, 'left', 220)
-          .having((s) => s.rightWidth, 'right', 320),
+          .having((s) => s.rightWidth, 'right', 320)
+          .having((s) => s.runLogsHeight, 'runLogsHeight', 220),
     ],
   );
 
@@ -49,11 +51,24 @@ void main() {
     build: () => WorkbenchLayoutCubit(dao),
     act: (c) async {
       await c.load('/p');
-      c.updateSizes(left: 240, right: 320);
+      c.updateSizes(left: 240, right: 320, runLogsHeight: 180);
     },
     verify: (_) {
-      verify(() => dao.setPaneSizes('/p', '[240.0,320.0]')).called(1);
+      verify(() => dao.setPaneSizes('/p', '[240.0,320.0,180.0]')).called(1);
     },
+  );
+
+  blocTest<WorkbenchLayoutCubit, WorkbenchLayoutState>(
+    'toggleRunLogs flips the flag',
+    build: () => WorkbenchLayoutCubit(dao),
+    act: (c) => c.toggleRunLogs(),
+    expect: () => [
+      isA<WorkbenchLayoutState>().having(
+        (s) => s.runLogsCollapsed,
+        'runLogsCollapsed',
+        false,
+      ),
+    ],
   );
 
   blocTest<WorkbenchLayoutCubit, WorkbenchLayoutState>(

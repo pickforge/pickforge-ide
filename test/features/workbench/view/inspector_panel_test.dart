@@ -18,7 +18,7 @@ void main() {
       MaterialApp(home: Scaffold(body: InspectorPanel(cubit: cubit))),
     );
 
-    expect(find.text('Disconnected'), findsOneWidget);
+    expect(find.text('Pick device'), findsOneWidget);
     expect(find.text('No widget selected'), findsOneWidget);
   });
 }

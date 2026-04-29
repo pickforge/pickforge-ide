@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/emulator/device_discovery_service.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
+import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
+import 'package:pickforge/features/settings/view/device_run_settings.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({super.key});
@@ -16,24 +20,36 @@ class SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<SettingsView> {
   late final SettingsCubit _cubit;
+  late final DeviceRunSettingsCubit _deviceRunCubit;
+  late final String _projectRoot;
 
   @override
   void initState() {
     super.initState();
+    _projectRoot = Directory.current.path;
     _cubit = getIt<SettingsCubit>();
-    _cubit.load(Directory.current.path).ignore();
+    _deviceRunCubit = DeviceRunSettingsCubit(
+      settings: getIt<ProjectSettingsRepository>(),
+      discovery: getIt<DeviceDiscoveryService>(),
+    );
+    _cubit.load(_projectRoot).ignore();
+    _deviceRunCubit.load(_projectRoot).ignore();
   }
 
   @override
   void dispose() {
     _cubit.close().ignore();
+    _deviceRunCubit.close().ignore();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider.value(
-      value: _cubit,
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider.value(value: _cubit),
+        BlocProvider.value(value: _deviceRunCubit),
+      ],
       child: BlocBuilder<SettingsCubit, SettingsState>(
         builder: (context, state) {
           return Padding(
@@ -42,6 +58,8 @@ class _SettingsViewState extends State<SettingsView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildAgentDropdown(state, context),
+                const SizedBox(height: 24),
+                DeviceRunSettings(projectRoot: _projectRoot),
                 const SizedBox(height: 24),
                 Text(
                   'Embedded Terminal',
@@ -78,7 +96,7 @@ class _SettingsViewState extends State<SettingsView> {
             if (id != null) {
               context
                   .read<SettingsCubit>()
-                  .setDefaultAgent(Directory.current.path, id.value)
+                  .setDefaultAgent(_projectRoot, id.value)
                   .ignore();
             }
           },

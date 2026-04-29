@@ -1,7 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:multi_split_view/multi_split_view.dart';
+import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/emulator/avd_launcher.dart';
+import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
+import 'package:pickforge/core/emulator/device_discovery_service.dart';
+import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
+import 'package:pickforge/core/emulator/run_session_controller.dart';
+import 'package:pickforge/core/emulator/run_session_log_repository.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/vm_service/vm_service_client.dart';
+import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
+import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
 import 'package:pickforge/features/workbench/view/chat_workbench_panel.dart';
@@ -49,12 +64,11 @@ class _AppShellViewState extends State<AppShellView> {
 
         _syncAreas(layout, animated);
 
-        return Scaffold(
+        final scaffold = Scaffold(
           body: MultiSplitView(
             controller: _controller,
             onDividerDragEnd: (_) {
-              final left =
-                  _controller.getArea(0).size ?? layout.leftWidth;
+              final left = _controller.getArea(0).size ?? layout.leftWidth;
               final right = _controller.areasCount > 2
                   ? (_controller.getArea(2).size ?? layout.rightWidth)
                   : layout.rightWidth;
@@ -63,6 +77,41 @@ class _AppShellViewState extends State<AppShellView> {
                   .updateSizes(left: left, right: right);
             },
           ),
+        );
+        return BlocBuilder<ProjectsCubit, ProjectsState>(
+          buildWhen: (_, current) => current is ProjectsReady,
+          builder: (context, projects) {
+            final projectRoot = switch (projects) {
+              ProjectsReady(:final activeProjectRoot) => activeProjectRoot,
+              _ => null,
+            };
+            if (projectRoot == null) return scaffold;
+            return MultiBlocProvider(
+              key: ValueKey(projectRoot),
+              providers: [
+                BlocProvider(create: (_) => RunLogsCubit()),
+                BlocProvider<EmulatorSessionCubit>(
+                  create: (context) {
+                    final cubit = EmulatorSessionCubit(
+                      projectRoot: projectRoot,
+                      settings: getIt<ProjectSettingsRepository>(),
+                      discovery: getIt<DeviceDiscoveryService>(),
+                      launcher: getIt<AvdLauncher>(),
+                      poller: getIt<BootReadinessPoller>(),
+                      runController: getIt<RunSessionController>(),
+                      logRepo: getIt<RunSessionLogRepository>(),
+                      vmClient: getIt<VmServiceClient>(),
+                      logsCubit: context.read<RunLogsCubit>(),
+                      ipcServer: getIt<EmulatorIpcServer>(),
+                    );
+                    unawaited(cubit.bootstrap());
+                    return cubit;
+                  },
+                ),
+              ],
+              child: scaffold,
+            );
+          },
         );
       },
     );

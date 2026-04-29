@@ -24,12 +24,21 @@ class WorkbenchLayoutCubit extends Cubit<WorkbenchLayoutState> {
         projectRoot: projectRoot,
         leftWidth: (parsed[0] as num).toDouble(),
         rightWidth: (parsed[1] as num).toDouble(),
+        runLogsHeight: parsed.length > 2
+            ? (parsed[2] as num).toDouble()
+            : state.runLogsHeight,
       ),
     );
   }
 
-  void updateSizes({required double left, required double right}) {
-    emit(state.copyWith(leftWidth: left, rightWidth: right));
+  void updateSizes({double? left, double? right, double? runLogsHeight}) {
+    emit(
+      state.copyWith(
+        leftWidth: left,
+        rightWidth: right,
+        runLogsHeight: runLogsHeight,
+      ),
+    );
     unawaited(_persist());
   }
 
@@ -37,9 +46,16 @@ class WorkbenchLayoutCubit extends Cubit<WorkbenchLayoutState> {
     emit(state.copyWith(rightCollapsed: !state.rightCollapsed));
   }
 
+  void toggleRunLogs() {
+    emit(state.copyWith(runLogsCollapsed: !state.runLogsCollapsed));
+  }
+
   Future<void> _persist() async {
     final root = state.projectRoot;
     if (root == null) return;
-    await _dao.setPaneSizes(root, '[${state.leftWidth},${state.rightWidth}]');
+    await _dao.setPaneSizes(
+      root,
+      '[${state.leftWidth},${state.rightWidth},${state.runLogsHeight}]',
+    );
   }
 }

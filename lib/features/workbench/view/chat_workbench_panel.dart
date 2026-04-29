@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:multi_split_view/multi_split_view.dart';
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
@@ -16,24 +17,70 @@ import 'package:pickforge/core/terminal/pty_session_state.dart';
 import 'package:pickforge/core/terminal/terminal_themes.dart';
 import 'package:pickforge/core/terminal/transcript_recorder.dart';
 import 'package:pickforge/core/terminal/transcript_replayer.dart';
+import 'package:pickforge/features/emulator/view/run_logs_pane.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
+import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
 import 'package:xterm/xterm.dart';
 
-class ChatWorkbenchPanel extends StatelessWidget {
+class ChatWorkbenchPanel extends StatefulWidget {
   const ChatWorkbenchPanel({super.key});
 
   @override
+  State<ChatWorkbenchPanel> createState() => _ChatWorkbenchPanelState();
+}
+
+class _ChatWorkbenchPanelState extends State<ChatWorkbenchPanel> {
+  late final MultiSplitViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = MultiSplitViewController();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return BlocBuilder<ChatsCubit, ChatsState>(
-      builder: (context, state) {
-        if (state is! ChatsReady) return const _EmptyChat();
-        final active = state.activeChat;
-        if (active == null) return const _EmptyChat();
-        return _ChatTerminal(
-          key: ValueKey(active.chatId),
-          chat: active,
-          projectRoot: active.projectRoot,
+    return BlocBuilder<WorkbenchLayoutCubit, WorkbenchLayoutState>(
+      builder: (context, layout) {
+        return BlocBuilder<ChatsCubit, ChatsState>(
+          builder: (context, state) {
+            final chatPane = switch (state) {
+              ChatsReady(:final activeChat) when activeChat != null =>
+                _ChatTerminal(
+                  key: ValueKey(activeChat.chatId),
+                  chat: activeChat,
+                  projectRoot: activeChat.projectRoot,
+                ),
+              _ => const _EmptyChat(),
+            };
+            if (layout.runLogsCollapsed) return chatPane;
+            _controller.areas = [
+              Area(builder: (_, __) => chatPane, min: 220),
+              Area(
+                size: layout.runLogsHeight,
+                min: 120,
+                builder: (_, __) => const RunLogsPane(),
+              ),
+            ];
+            return MultiSplitView(
+              axis: Axis.vertical,
+              controller: _controller,
+              onDividerDragEnd: (_) {
+                final height = _controller.getArea(1).size;
+                context
+                    .read<WorkbenchLayoutCubit>()
+                    .updateSizes(runLogsHeight: height);
+              },
+            );
+          },
         );
       },
     );

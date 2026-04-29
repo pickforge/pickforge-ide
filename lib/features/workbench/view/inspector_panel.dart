@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:pickforge/features/emulator/view/connection_pill.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 
 class InspectorPanel extends StatelessWidget {
@@ -34,7 +35,7 @@ class _Inner extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const _ConnectionPill(),
+              const ConnectionPill(),
               const Divider(height: 1),
               Expanded(
                 child: selection == null
@@ -59,33 +60,11 @@ class _DisconnectedPlaceholder extends StatelessWidget {
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ConnectionPill(),
+          ConnectionPill(),
           Divider(height: 1),
           Expanded(
             child: Center(child: Text('No widget picker connected')),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ConnectionPill extends StatelessWidget {
-  const _ConnectionPill();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Icon(
-            Icons.circle,
-            size: 10,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-          const SizedBox(width: 8),
-          const Text('Disconnected'),
         ],
       ),
     );

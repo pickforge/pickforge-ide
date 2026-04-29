@@ -6,18 +6,24 @@ class WorkbenchLayoutState extends Equatable {
     required this.leftWidth,
     required this.rightWidth,
     required this.rightCollapsed,
+    required this.runLogsHeight,
+    required this.runLogsCollapsed,
   });
 
   final String? projectRoot;
   final double leftWidth;
   final double rightWidth;
   final bool rightCollapsed;
+  final double runLogsHeight;
+  final bool runLogsCollapsed;
 
   static const initial = WorkbenchLayoutState(
     projectRoot: null,
     leftWidth: 220,
     rightWidth: 320,
     rightCollapsed: false,
+    runLogsHeight: 220,
+    runLogsCollapsed: true,
   );
 
   WorkbenchLayoutState copyWith({
@@ -25,15 +31,25 @@ class WorkbenchLayoutState extends Equatable {
     double? leftWidth,
     double? rightWidth,
     bool? rightCollapsed,
+    double? runLogsHeight,
+    bool? runLogsCollapsed,
   }) =>
       WorkbenchLayoutState(
         projectRoot: projectRoot ?? this.projectRoot,
         leftWidth: leftWidth ?? this.leftWidth,
         rightWidth: rightWidth ?? this.rightWidth,
         rightCollapsed: rightCollapsed ?? this.rightCollapsed,
+        runLogsHeight: runLogsHeight ?? this.runLogsHeight,
+        runLogsCollapsed: runLogsCollapsed ?? this.runLogsCollapsed,
       );
 
   @override
-  List<Object?> get props =>
-      [projectRoot, leftWidth, rightWidth, rightCollapsed];
+  List<Object?> get props => [
+        projectRoot,
+        leftWidth,
+        rightWidth,
+        rightCollapsed,
+        runLogsHeight,
+        runLogsCollapsed,
+      ];
 }

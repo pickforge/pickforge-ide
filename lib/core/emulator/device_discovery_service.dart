@@ -1,0 +1,115 @@
+import 'dart:convert';
+
+import 'package:injectable/injectable.dart';
+import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/process_runner.dart';
+
+@lazySingleton
+class DeviceDiscoveryService {
+  DeviceDiscoveryService(this._runner);
+
+  final ProcessRunner _runner;
+
+  Future<List<Avd>> listAvds() async {
+    try {
+      final res = await _runner.run('flutter', ['emulators', '--machine']);
+      if (res.exitCode != 0) return const [];
+      return _parseEmulatorsJson(res.stdout.toString());
+    } on ProcessRunnerException {
+      return const [];
+    }
+  }
+
+  Future<List<RunningAndroidDevice>> listRunningDevices() async {
+    try {
+      final res = await _runner.run('adb', ['devices', '-l']);
+      if (res.exitCode != 0) return const [];
+      final devices = _parseAdbDevices(res.stdout.toString());
+      final out = <RunningAndroidDevice>[];
+      for (final device in devices) {
+        if (!device.serial.startsWith('emulator-')) {
+          out.add(device);
+          continue;
+        }
+        out.add(RunningAndroidDevice(
+          serial: device.serial,
+          avdName: await _adbAvdName(device.serial),
+          state: device.state,
+        ));
+      }
+      return out;
+    } on ProcessRunnerException {
+      return const [];
+    }
+  }
+
+  Future<DeviceListSnapshot> snapshot() async {
+    final results = await Future.wait([listAvds(), listRunningDevices()]);
+    return DeviceListSnapshot(
+      avds: results[0] as List<Avd>,
+      running: results[1] as List<RunningAndroidDevice>,
+    );
+  }
+
+  Stream<DeviceListSnapshot> watch({
+    Duration interval = const Duration(seconds: 4),
+  }) async* {
+    yield await snapshot();
+    while (true) {
+      await Future<void>.delayed(interval);
+      yield await snapshot();
+    }
+  }
+
+  Future<String?> _adbAvdName(String serial) async {
+    try {
+      final res =
+          await _runner.run('adb', ['-s', serial, 'emu', 'avd', 'name']);
+      if (res.exitCode != 0) return null;
+      final lines = res.stdout
+          .toString()
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty && line != 'OK')
+          .toList();
+      return lines.isEmpty ? null : lines.first;
+    } on ProcessRunnerException {
+      return null;
+    }
+  }
+
+  List<Avd> _parseEmulatorsJson(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map((json) => Avd(
+                id: json['id'] as String? ?? '',
+                name: (json['name'] as String? ?? json['id'] as String? ?? '')
+                    .trim(),
+                platform: json['platformType'] as String? ?? 'android',
+              ))
+          .where((avd) => avd.id.isNotEmpty)
+          .toList();
+    } on FormatException {
+      return const [];
+    }
+  }
+
+  List<RunningAndroidDevice> _parseAdbDevices(String raw) {
+    final out = <RunningAndroidDevice>[];
+    for (final line in raw.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty || trimmed.startsWith('List of devices')) continue;
+      final tokens = trimmed.split(RegExp(r'\s+'));
+      if (tokens.length < 2) continue;
+      out.add(RunningAndroidDevice(
+        serial: tokens[0],
+        avdName: null,
+        state: tokens[1],
+      ));
+    }
+    return out;
+  }
+}

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:get_it/get_it.dart';
 import 'package:injectable/injectable.dart';
 
@@ -12,15 +14,37 @@ import 'package:pickforge/core/di/injection.config.dart';
 import 'package:pickforge/core/drift/dao/chats_dao.dart';
 import 'package:pickforge/core/drift/dao/project_settings_dao.dart';
 import 'package:pickforge/core/drift/dao/projects_dao.dart';
+import 'package:pickforge/core/drift/dao/run_session_log_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
+import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
-import 'package:pickforge/core/process/binary_detector.dart';
+import 'package:pickforge/core/process/binary_detector.dart' hide ProcessRunner;
 import 'package:pickforge/core/skills/skill_store.dart';
 
 final GetIt getIt = GetIt.instance;
 
 @InjectableInit()
-Future<void> configureDependencies() async => getIt.init();
+Future<void> configureDependencies() async {
+  await getIt.init();
+  if (!getIt.isRegistered<ProcessRunner>()) {
+    getIt.registerSingleton<ProcessRunner>(RealProcessRunner());
+  }
+  if (!getIt.isRegistered<EmulatorIpcServer>()) {
+    final socketPath = await _defaultIpcSocketPath();
+    final server = EmulatorIpcServer(socketPath: socketPath);
+    await server.start();
+    getIt.registerSingleton<EmulatorIpcServer>(server);
+  }
+}
+
+Future<String> _defaultIpcSocketPath() async {
+  final base =
+      Platform.environment['XDG_RUNTIME_DIR'] ?? Directory.systemTemp.path;
+  final dir = Directory('$base/pickforge-${pid}');
+  await dir.create(recursive: true);
+  return '${dir.path}/agent.sock';
+}
 
 @module
 abstract class AgentProfileModule {
@@ -93,4 +117,8 @@ abstract class DriftDaoModule {
   @lazySingleton
   ProjectSettingsDao projectSettingsDao(PickforgeDatabase db) =>
       ProjectSettingsDao(db);
+
+  @lazySingleton
+  RunSessionLogDao runSessionLogDao(PickforgeDatabase db) =>
+      RunSessionLogDao(db);
 }

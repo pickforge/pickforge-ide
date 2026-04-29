@@ -1,5 +1,10 @@
+import 'dart:convert';
+
+import 'package:drift/drift.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/settings/emulator_binding.dart';
+import 'package:pickforge/core/settings/run_args.dart';
 
 @lazySingleton
 class ProjectSettingsRepository {
@@ -46,4 +51,69 @@ class ProjectSettingsRepository {
         .upsert(projectRoot: projectRoot); // ensure row exists
     await _db.projectSettingsDao.setPaneSizes(projectRoot, json);
   }
+
+  Future<EmulatorBinding?> getEmulatorBinding(String projectRoot) async {
+    final row = await _db.projectSettingsDao.loadFor(projectRoot);
+    if (row == null) return null;
+    if (row.connectionMode == 'manual' && row.vmServiceUrl != null) {
+      return EmulatorBinding.manual(vmServiceUrl: row.vmServiceUrl!);
+    }
+    if (row.avdId != null && row.avdName != null) {
+      return EmulatorBinding.avd(
+        avdId: row.avdId!,
+        avdName: row.avdName!,
+        autoBootOnSelect: row.autoBootOnSelect,
+      );
+    }
+    return null;
+  }
+
+  Future<void> setEmulatorBinding(
+    String projectRoot,
+    EmulatorBinding binding,
+  ) async {
+    switch (binding) {
+      case AvdBinding(:final avdId, :final avdName, :final autoBootOnSelect):
+        await _db.projectSettingsDao.upsert(
+          projectRoot: projectRoot,
+          avdId: Value(avdId),
+          avdName: Value(avdName),
+          connectionMode: const Value('auto'),
+          autoBootOnSelect: autoBootOnSelect,
+          vmServiceUrl: const Value<String?>(null),
+        );
+      case ManualBinding(:final vmServiceUrl):
+        await _db.projectSettingsDao.upsert(
+          projectRoot: projectRoot,
+          vmServiceUrl: Value(vmServiceUrl),
+          connectionMode: const Value('manual'),
+          avdId: const Value<String?>(null),
+          avdName: const Value<String?>(null),
+        );
+    }
+  }
+
+  Future<void> clearEmulatorBinding(String projectRoot) =>
+      _db.projectSettingsDao.clearEmulatorBinding(projectRoot);
+
+  Future<RunArgs> getRunArgs(String projectRoot) async {
+    final row = await _db.projectSettingsDao.loadFor(projectRoot);
+    if (row == null) return const RunArgs();
+    final extras = row.flutterRunArgs;
+    final list = extras == null
+        ? const <String>[]
+        : (jsonDecode(extras) as List<dynamic>).cast<String>();
+    return RunArgs(targetFile: row.targetFile, extraArgs: list);
+  }
+
+  Future<void> setRunArgs(String projectRoot, RunArgs args) {
+    return _db.projectSettingsDao.upsert(
+      projectRoot: projectRoot,
+      targetFile: Value(args.targetFile),
+      flutterRunArgs: Value(jsonEncode(args.extraArgs)),
+    );
+  }
+
+  Future<void> markFirstRunCelebrated(String projectRoot) =>
+      _db.projectSettingsDao.markFirstRunCelebrated(projectRoot);
 }

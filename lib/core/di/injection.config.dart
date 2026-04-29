@@ -26,7 +26,15 @@ import 'package:pickforge/core/di/modules/terminal_runtime_module.dart'
 import 'package:pickforge/core/drift/dao/chats_dao.dart' as _i905;
 import 'package:pickforge/core/drift/dao/project_settings_dao.dart' as _i459;
 import 'package:pickforge/core/drift/dao/projects_dao.dart' as _i1070;
+import 'package:pickforge/core/drift/dao/run_session_log_dao.dart' as _i693;
 import 'package:pickforge/core/drift/pickforge_database.dart' as _i631;
+import 'package:pickforge/core/emulator/avd_launcher.dart' as _i276;
+import 'package:pickforge/core/emulator/boot_readiness_poller.dart' as _i210;
+import 'package:pickforge/core/emulator/device_discovery_service.dart' as _i577;
+import 'package:pickforge/core/emulator/process_runner.dart' as _i788;
+import 'package:pickforge/core/emulator/run_session_controller.dart' as _i849;
+import 'package:pickforge/core/emulator/run_session_log_repository.dart'
+    as _i227;
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart' as _i704;
 import 'package:pickforge/core/process/binary_detector.dart' as _i993;
 import 'package:pickforge/core/projects/projects_repository.dart' as _i613;
@@ -39,7 +47,11 @@ import 'package:pickforge/core/terminal/flutter_pty_adapter.dart' as _i93;
 import 'package:pickforge/core/terminal/pty_process.dart' as _i602;
 import 'package:pickforge/core/terminal/pty_session_pool.dart' as _i685;
 import 'package:pickforge/core/vm_service/vm_service_client.dart' as _i292;
+import 'package:pickforge/features/emulator/cubit/device_picker_cubit.dart'
+    as _i132;
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart' as _i888;
+import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart'
+    as _i998;
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart' as _i18;
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart' as _i154;
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart'
@@ -92,6 +104,16 @@ extension GetItInjectableX on _i174.GetIt {
         () => driftDaoModule.chatsDao(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i459.ProjectSettingsDao>(
         () => driftDaoModule.projectSettingsDao(gh<_i631.PickforgeDatabase>()));
+    gh.lazySingleton<_i693.RunSessionLogDao>(
+        () => driftDaoModule.runSessionLogDao(gh<_i631.PickforgeDatabase>()));
+    gh.lazySingleton<_i276.AvdLauncher>(
+        () => _i276.AvdLauncher(gh<_i788.ProcessRunner>()));
+    gh.lazySingleton<_i210.BootReadinessPoller>(
+        () => _i210.BootReadinessPoller(gh<_i788.ProcessRunner>()));
+    gh.lazySingleton<_i577.DeviceDiscoveryService>(
+        () => _i577.DeviceDiscoveryService(gh<_i788.ProcessRunner>()));
+    gh.lazySingleton<_i849.RunSessionController>(
+        () => _i849.RunSessionController(gh<_i788.ProcessRunner>()));
     gh.singleton<_i360.AgentProfileRegistry>(
         () => agentProfileModule.agentProfileRegistry(
               gh<_i14.ClaudeCodeProfile>(),
@@ -114,6 +136,8 @@ extension GetItInjectableX on _i174.GetIt {
     gh.lazySingleton<_i195.EmbeddedTerminalSettingsRepository>(() =>
         _i195.EmbeddedTerminalSettingsRepository(
             gh<_i460.SharedPreferences>()));
+    gh.lazySingleton<_i227.RunSessionLogRepository>(
+        () => _i227.RunSessionLogRepository(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i340.ProjectSettingsRepository>(
         () => _i340.ProjectSettingsRepository(gh<_i631.PickforgeDatabase>()));
     gh.singleton<_i704.AdbScreenshotCapturer>(() =>
@@ -123,11 +147,17 @@ extension GetItInjectableX on _i174.GetIt {
           gh<_i704.AdbScreenshotCapturer>(),
           gh<_i685.PtySessionPool>(),
         ));
+    gh.factory<_i132.DevicePickerCubit>(
+        () => _i132.DevicePickerCubit(gh<_i577.DeviceDiscoveryService>()));
     gh.lazySingleton<_i613.ProjectsRepository>(
         () => _i613.ProjectsRepository(gh<_i1070.ProjectsDao>()));
     gh.factory<_i18.SettingsCubit>(() => _i18.SettingsCubit(
           gh<_i340.ProjectSettingsRepository>(),
           gh<_i195.EmbeddedTerminalSettingsRepository>(),
+        ));
+    gh.factory<_i998.DeviceRunSettingsCubit>(() => _i998.DeviceRunSettingsCubit(
+          settings: gh<_i340.ProjectSettingsRepository>(),
+          discovery: gh<_i577.DeviceDiscoveryService>(),
         ));
     gh.factory<_i882.ProjectsCubit>(
         () => _i882.ProjectsCubit(gh<_i613.ProjectsRepository>()));

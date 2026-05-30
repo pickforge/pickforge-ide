@@ -1,0 +1,24 @@
+# Architecture Rules
+
+- Preserve the current single-package, feature-first structure.
+- Put feature UI and state in `lib/features/<feature>/`:
+  - `cubit/` for Cubits and states.
+  - `view/` for screens/panels.
+  - `widgets/` for feature-local presentation widgets.
+- Put infrastructure and cross-feature runtime code in `lib/core/`, including:
+  - `agent/`
+  - `chats/`
+  - `di/`
+  - `drift/`
+  - `emulator/`
+  - `inspector/`
+  - `process/`
+  - `projects/`
+  - `router/`
+  - `settings/`
+  - `terminal/`
+  - `vm_service/`
+- Put reusable app UI infrastructure in `lib/shared/`, especially theme, motion, and command palette code.
+- Use `package:pickforge/...` imports for application code.
+- Keep widgets focused on presentation and interaction wiring. Put persistence, process execution, VM-service access, and emulator orchestration behind core services/repositories.
+- Do not introduce multi-package, clean-architecture layers, or alternate state management unless the repo explicitly moves that way.

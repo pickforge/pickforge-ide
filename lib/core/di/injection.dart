@@ -34,7 +34,10 @@ Future<void> configureDependencies() async {
     final socketPath = await _defaultIpcSocketPath();
     final server = EmulatorIpcServer(socketPath: socketPath);
     await server.start();
-    getIt.registerSingleton<EmulatorIpcServer>(server);
+    getIt.registerSingleton<EmulatorIpcServer>(
+      server,
+      dispose: (server) => server.stop(),
+    );
   }
 }
 

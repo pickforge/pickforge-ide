@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:injectable/injectable.dart';
@@ -77,7 +75,7 @@ class PickforgeDatabase extends _$PickforgeDatabase {
               final last = lastTs != null
                   ? DateTime.fromMillisecondsSinceEpoch(lastTs)
                   : DateTime.now();
-              final name = root.split(Platform.pathSeparator).last;
+              final name = root.split(RegExp(r'[/\\]')).last;
               await into(projects).insert(
                 ProjectsCompanion(
                   projectRoot: Value(root),

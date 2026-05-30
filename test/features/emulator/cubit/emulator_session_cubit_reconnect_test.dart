@@ -41,28 +41,31 @@ void main() {
   });
   tearDown(() => stateCtrl.close());
   EmulatorSessionCubit build() => EmulatorSessionCubit(
-      projectRoot: '/p',
-      settings: _MS(),
-      discovery: _MD(),
-      launcher: _ML(),
-      poller: _MP(),
-      runController: _MR(),
-      logRepo: _MLog(),
-      vmClient: vm);
+        projectRoot: '/p',
+        settings: _MS(),
+        discovery: _MD(),
+        launcher: _ML(),
+        poller: _MP(),
+        runController: _MR(),
+        logRepo: _MLog(),
+        vmClient: vm,
+      );
   const avd = Avd(id: 'X', name: 'X', platform: 'android');
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'vm error from running -> reconnecting -> running on reconnect',
     build: build,
     seed: () => EmulatorSessionState.running(
-        avd: avd,
-        serial: 'emulator-5554',
-        appId: 'a',
-        vmServiceUri: 'ws://x',
-        stats: RunStats()),
+      avd: avd,
+      serial: 'emulator-5554',
+      appId: 'a',
+      vmServiceUri: 'ws://x',
+      stats: RunStats(),
+    ),
     act: (c) async {
       c.bindVmStateStream();
       stateCtrl.add(
-          const VmServiceConnectionState.error(message: 'drop', attempt: 1));
+        const VmServiceConnectionState.error(message: 'drop', attempt: 1),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 5));
       stateCtrl.add(const VmServiceConnectionState.connected(url: 'ws://x'));
       await Future<void>.delayed(const Duration(milliseconds: 5));

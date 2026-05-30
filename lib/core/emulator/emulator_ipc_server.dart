@@ -15,8 +15,8 @@ class EmulatorIpcServer {
 
   Future<void> start() async {
     final file = File(socketPath);
-    if (await file.exists()) {
-      await file.delete();
+    if (file.existsSync()) {
+      file.deleteSync();
     }
     _server = await ServerSocket.bind(
       InternetAddress(socketPath, type: InternetAddressType.unix),
@@ -29,13 +29,15 @@ class EmulatorIpcServer {
     await _server?.close();
     _server = null;
     final file = File(socketPath);
-    if (await file.exists()) {
-      await file.delete();
+    if (file.existsSync()) {
+      file.deleteSync();
     }
   }
 
+  // ignore: use_setters_to_change_properties, reason: Binds an IPC target.
   void bindActiveRunSession(RunSession? session) => _session = session;
 
+  // ignore: use_setters_to_change_properties, reason: Binds a callback target.
   void bindSelectionProvider(String Function()? provider) {
     _selectionProvider = provider;
   }

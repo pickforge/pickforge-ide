@@ -21,8 +21,7 @@ void main() {
       avdName: 'Pixel_5_API_34',
       state: 'device',
     );
-    final snap =
-        DeviceListSnapshot(avds: const [avd], running: const [running]);
+    const snap = DeviceListSnapshot(avds: [avd], running: [running]);
     expect(snap.runningFor(avd)?.serial, 'emulator-5554');
   });
 
@@ -32,7 +31,7 @@ void main() {
       name: 'Pixel 5 API 34',
       platform: 'android',
     );
-    final snap = DeviceListSnapshot(avds: const [avd], running: const []);
+    const snap = DeviceListSnapshot(avds: [avd], running: []);
     expect(snap.runningFor(avd), isNull);
   });
 }

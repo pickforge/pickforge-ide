@@ -14,18 +14,18 @@ void main() {
   });
 
   test('setFilter filters visible entries', () {
-    final cubit = RunLogsCubit();
-    cubit.append(const RunSessionEvent.log(line: 'a', level: LogLevel.info));
-    cubit.append(const RunSessionEvent.log(line: 'b', level: LogLevel.error));
-    cubit.setFilter(LogFilter.errors);
+    final cubit = RunLogsCubit()
+      ..append(const RunSessionEvent.log(line: 'a', level: LogLevel.info))
+      ..append(const RunSessionEvent.log(line: 'b', level: LogLevel.error))
+      ..setFilter(LogFilter.errors);
     expect(cubit.state.visibleEntries.length, 1);
     expect(cubit.state.visibleEntries.first.line, 'b');
   });
 
   test('clear empties buffer', () {
-    final cubit = RunLogsCubit();
-    cubit.append(const RunSessionEvent.log(line: 'a', level: LogLevel.info));
-    cubit.clear();
+    final cubit = RunLogsCubit()
+      ..append(const RunSessionEvent.log(line: 'a', level: LogLevel.info))
+      ..clear();
     expect(cubit.state.entries, isEmpty);
   });
 }

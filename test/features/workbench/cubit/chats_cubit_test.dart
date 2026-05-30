@@ -43,8 +43,7 @@ void main() {
   blocTest<ChatsCubit, ChatsState>(
     'newChat inserts and selects the new chat under its project',
     setUp: () {
-      when(() => repo.list('/p'))
-          .thenAnswer((_) async => <ChatRow>[]);
+      when(() => repo.list('/p')).thenAnswer((_) async => <ChatRow>[]);
       when(
         () => repo.newChat(
           projectRoot: '/p',

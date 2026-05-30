@@ -57,14 +57,15 @@ void main() {
   });
 
   EmulatorSessionCubit build() => EmulatorSessionCubit(
-      projectRoot: '/p',
-      settings: settings,
-      discovery: disc,
-      launcher: launcher,
-      poller: poller,
-      runController: run,
-      logRepo: log,
-      vmClient: vm);
+        projectRoot: '/p',
+        settings: settings,
+        discovery: disc,
+        launcher: launcher,
+        poller: poller,
+        runController: run,
+        logRepo: log,
+        vmClient: vm,
+      );
   const avd =
       Avd(id: 'Pixel_5_API_34', name: 'Pixel 5 API 34', platform: 'android');
 
@@ -73,19 +74,21 @@ void main() {
     setUp: () {
       when(() => launcher.launch('Pixel_5_API_34'))
           .thenAnswer((_) async => handle);
-      when(() => poller.poll(
-              avdId: any(named: 'avdId'),
-              timeout: any(named: 'timeout'),
-              interval: any(named: 'interval'),
-              cancel: any(named: 'cancel')))
-          .thenAnswer((_) => Stream.value(const BootReady('emulator-5554')));
+      when(
+        () => poller.poll(
+          avdId: any(named: 'avdId'),
+          timeout: any(named: 'timeout'),
+          interval: any(named: 'interval'),
+          cancel: any(named: 'cancel'),
+        ),
+      ).thenAnswer((_) => Stream.value(const BootReady('emulator-5554')));
     },
     build: build,
     seed: () => const EmulatorSessionState.cold(avd: avd),
     act: (c) => c.bootAvd(),
     expect: () => [
       isA<Booting>(),
-      isA<Idle>().having((s) => s.serial, 'serial', 'emulator-5554')
+      isA<Idle>().having((s) => s.serial, 'serial', 'emulator-5554'),
     ],
   );
 
@@ -94,12 +97,14 @@ void main() {
     setUp: () {
       when(() => launcher.launch('Pixel_5_API_34'))
           .thenAnswer((_) async => handle);
-      when(() => poller.poll(
-              avdId: any(named: 'avdId'),
-              timeout: any(named: 'timeout'),
-              interval: any(named: 'interval'),
-              cancel: any(named: 'cancel')))
-          .thenAnswer((_) => Stream.value(const BootTimeout()));
+      when(
+        () => poller.poll(
+          avdId: any(named: 'avdId'),
+          timeout: any(named: 'timeout'),
+          interval: any(named: 'interval'),
+          cancel: any(named: 'cancel'),
+        ),
+      ).thenAnswer((_) => Stream.value(const BootTimeout()));
     },
     build: build,
     seed: () => const EmulatorSessionState.cold(avd: avd),
@@ -113,11 +118,14 @@ void main() {
     setUp: () {
       when(() => launcher.launch('Pixel_5_API_34'))
           .thenAnswer((_) async => handle);
-      when(() => poller.poll(
+      when(
+        () => poller.poll(
           avdId: any(named: 'avdId'),
           timeout: any(named: 'timeout'),
           interval: any(named: 'interval'),
-          cancel: any(named: 'cancel'))).thenAnswer((_) async* {
+          cancel: any(named: 'cancel'),
+        ),
+      ).thenAnswer((_) async* {
         yield const BootPending(Duration(milliseconds: 5));
         await Future<void>.delayed(const Duration(milliseconds: 30));
         yield const BootCancelled();

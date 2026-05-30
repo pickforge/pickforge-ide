@@ -73,7 +73,7 @@ void main() {
     await db.runSessionLogDao.recordStart(
       sessionId: 'old',
       projectRoot: '/tmp/p',
-      startedAt: DateTime.utc(2026, 4, 1),
+      startedAt: DateTime.utc(2026, 4),
       connectionMode: 'auto',
     );
     await db.runSessionLogDao.recordStart(

@@ -119,8 +119,12 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
             return;
           case BootTimeout():
             await handle.cancel();
-            emit(EmulatorSessionState.error(
-                avd: avd, message: 'Boot timed out'));
+            emit(
+              EmulatorSessionState.error(
+                avd: avd,
+                message: 'Boot timed out',
+              ),
+            );
             return;
           case BootCancelled():
             await handle.cancel();
@@ -175,51 +179,60 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     event.when(
       stage: (_) {},
       log: (_, __, ___) {},
-      vmServiceReady: (uri) async {
-        final current = state;
-        final avd = current is Running ? current.avd : _pendingRunAvd;
-        final serial = current is Running ? current.serial : _pendingRunSerial;
-        try {
-          await vmClient.connect(uri);
-        } on Object {
-          // VmServiceClient exposes connection errors through its state stream.
-        }
-        emit(EmulatorSessionState.running(
-          avd: avd,
-          serial: serial,
-          appId: _activeSession?.appId,
-          vmServiceUri: uri,
-          stats: current is Running ? current.stats : RunStats(),
-        ));
-      },
-      stopped: (exitCode, reason) async {
-        final current = state;
-        final session = _activeSession;
-        if (session != null) {
-          await logRepo.recordEnd(
-            sessionId: session.sessionId,
-            endedAt: DateTime.now(),
-            exitReason: reason,
-            exitCode: exitCode,
-          );
-        }
-        _activeSession = null;
-        await _unbindIpc();
-        await _eventsSub?.cancel();
-        _eventsSub = null;
-        if (current is Running &&
-            current.avd != null &&
-            current.serial != null) {
-          emit(EmulatorSessionState.idle(
-              avd: current.avd!, serial: current.serial!));
-        }
-      },
+      vmServiceReady: (uri) => unawaited(_handleVmServiceReady(uri)),
+      stopped: (exitCode, reason) =>
+          unawaited(_handleRunStopped(exitCode, reason)),
       reloadCompleted: (_, __, ___, ____, _____) {
         final current = state;
         if (current is! Running) return;
         emit(current.copyWith(lastReloadAt: DateTime.now()));
       },
     );
+  }
+
+  Future<void> _handleVmServiceReady(String uri) async {
+    final current = state;
+    final avd = current is Running ? current.avd : _pendingRunAvd;
+    final serial = current is Running ? current.serial : _pendingRunSerial;
+    try {
+      await vmClient.connect(uri);
+    } on Object {
+      // VmServiceClient exposes connection errors through its state stream.
+    }
+    emit(
+      EmulatorSessionState.running(
+        avd: avd,
+        serial: serial,
+        appId: _activeSession?.appId,
+        vmServiceUri: uri,
+        stats: current is Running ? current.stats : RunStats(),
+      ),
+    );
+  }
+
+  Future<void> _handleRunStopped(int exitCode, String reason) async {
+    final current = state;
+    final session = _activeSession;
+    if (session != null) {
+      await logRepo.recordEnd(
+        sessionId: session.sessionId,
+        endedAt: DateTime.now(),
+        exitReason: reason,
+        exitCode: exitCode,
+      );
+    }
+    _activeSession = null;
+    await _unbindIpc();
+    await _eventsSub?.cancel();
+    _eventsSub = null;
+    if (current is Running && current.avd != null && current.serial != null) {
+      emit(
+        EmulatorSessionState.idle(
+          avd: current.avd!,
+          serial: current.serial!,
+        ),
+      );
+    }
   }
 
   Future<void> hotReload() async {
@@ -238,13 +251,17 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     _activeSession = null;
     await _unbindIpc();
     if (current is Running && current.avd != null && current.serial != null) {
-      emit(EmulatorSessionState.idle(
-          avd: current.avd!, serial: current.serial!));
+      emit(
+        EmulatorSessionState.idle(
+          avd: current.avd!,
+          serial: current.serial!,
+        ),
+      );
     }
   }
 
   void bindVmStateStream() {
-    _vmSub?.cancel();
+    unawaited(_vmSub?.cancel());
     _vmSub = vmClient.state.listen(_onVmState);
   }
 
@@ -255,13 +272,15 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
       connected: (url) {
         final current = state;
         if (current is Reconnecting) {
-          emit(EmulatorSessionState.running(
-            avd: current.avd,
-            serial: current.serial,
-            appId: current.appId,
-            vmServiceUri: vmClient.currentUrl ?? url,
-            stats: RunStats(),
-          ));
+          emit(
+            EmulatorSessionState.running(
+              avd: current.avd,
+              serial: current.serial,
+              appId: current.appId,
+              vmServiceUri: vmClient.currentUrl ?? url,
+              stats: RunStats(),
+            ),
+          );
         }
       },
       error: (_, __) {
@@ -270,11 +289,13 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
             !current.manual &&
             current.avd != null &&
             current.serial != null) {
-          emit(EmulatorSessionState.reconnecting(
-            avd: current.avd!,
-            serial: current.serial!,
-            appId: current.appId ?? '',
-          ));
+          emit(
+            EmulatorSessionState.reconnecting(
+              avd: current.avd!,
+              serial: current.serial!,
+              appId: current.appId ?? '',
+            ),
+          );
         }
       },
     );
@@ -283,16 +304,20 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   Future<void> _attachManual(String url) async {
     try {
       await vmClient.connect(url);
-      emit(EmulatorSessionState.running(
-        vmServiceUri: url,
-        stats: RunStats(),
-        manual: true,
-      ));
+      emit(
+        EmulatorSessionState.running(
+          vmServiceUri: url,
+          stats: RunStats(),
+          manual: true,
+        ),
+      );
     } on Object catch (e) {
-      emit(EmulatorSessionState.error(
-        message: e.toString(),
-        lastVmServiceUri: url,
-      ));
+      emit(
+        EmulatorSessionState.error(
+          message: e.toString(),
+          lastVmServiceUri: url,
+        ),
+      );
     }
   }
 
@@ -300,9 +325,11 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final server = ipcServer;
     if (server == null) return;
     server.bindActiveRunSession(session);
-    final dir = Directory('$projectRoot/.pickforge');
-    await dir.create(recursive: true);
-    await File('${dir.path}/ipc.sock-path').writeAsString(server.socketPath);
+    final dir = Directory('$projectRoot/.pickforge')
+      ..createSync(
+        recursive: true,
+      );
+    File('${dir.path}/ipc.sock-path').writeAsStringSync(server.socketPath);
   }
 
   Future<void> _unbindIpc() async {
@@ -310,8 +337,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     if (server == null) return;
     server.bindActiveRunSession(null);
     final file = File('$projectRoot/.pickforge/ipc.sock-path');
-    if (await file.exists()) {
-      await file.delete();
+    if (file.existsSync()) {
+      file.deleteSync();
     }
   }
 

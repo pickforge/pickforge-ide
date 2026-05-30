@@ -10,12 +10,14 @@ void main() {
     final cubit = RunLogsCubit()
       ..append(const RunSessionEvent.log(line: 'hello', level: LogLevel.info))
       ..append(const RunSessionEvent.log(line: 'oops', level: LogLevel.error));
-    await tester.pumpWidget(MaterialApp(
-      home: BlocProvider<RunLogsCubit>.value(
-        value: cubit,
-        child: const Scaffold(body: RunLogsPane()),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<RunLogsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: RunLogsPane()),
+        ),
       ),
-    ));
+    );
     expect(find.text('hello'), findsOneWidget);
     expect(find.text('oops'), findsOneWidget);
   });
@@ -24,12 +26,14 @@ void main() {
     final cubit = RunLogsCubit()
       ..append(const RunSessionEvent.log(line: 'hello', level: LogLevel.info))
       ..append(const RunSessionEvent.log(line: 'oops', level: LogLevel.error));
-    await tester.pumpWidget(MaterialApp(
-      home: BlocProvider<RunLogsCubit>.value(
-        value: cubit,
-        child: const Scaffold(body: RunLogsPane()),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<RunLogsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: RunLogsPane()),
+        ),
       ),
-    ));
+    );
     await tester.tap(find.text('Errors'));
     await tester.pumpAndSettle();
     expect(find.text('hello'), findsNothing);

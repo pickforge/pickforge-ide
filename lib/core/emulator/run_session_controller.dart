@@ -13,7 +13,7 @@ class RunSession {
     required this.sessionId,
     required RunningProcess proc,
     required this.events,
-    required Future<void> Function(bool fullRestart) sendReload,
+    required Future<void> Function({required bool fullRestart}) sendReload,
     required Future<void> Function() sendStop,
   })  : _proc = proc,
         _sendReload = sendReload,
@@ -22,7 +22,7 @@ class RunSession {
   final String sessionId;
   final Stream<RunSessionEvent> events;
   final RunningProcess _proc;
-  final Future<void> Function(bool fullRestart) _sendReload;
+  final Future<void> Function({required bool fullRestart}) _sendReload;
   final Future<void> Function() _sendStop;
 
   String? _appId;
@@ -34,12 +34,12 @@ class RunSession {
   Future<int> get exitCode => _proc.exitCode;
 
   Future<bool> hotReload() async {
-    await _sendReload(false);
+    await _sendReload(fullRestart: false);
     return true;
   }
 
   Future<bool> hotRestart() async {
-    await _sendReload(true);
+    await _sendReload(fullRestart: true);
     return true;
   }
 
@@ -68,8 +68,8 @@ class RunSessionController {
   Future<RunSession> start({
     required String projectRoot,
     required String serial,
-    String? targetFile,
     required List<String> extraArgs,
+    String? targetFile,
   }) async {
     final args = <String>[
       'run',
@@ -90,14 +90,18 @@ class RunSessionController {
       final id = nextId++;
       final completer = Completer<DecodedResponse>();
       pendingReplies[id] = completer;
-      proc.writeStdin(utf8.encode('${jsonEncode([
-            {'id': id, 'method': method, 'params': params},
-          ])}\n'));
-      await completer.future.timeout(const Duration(seconds: 30),
-          onTimeout: () {
-        pendingReplies.remove(id);
-        throw TimeoutException('flutter run did not respond to $method');
-      });
+      proc.writeStdin(
+        utf8.encode('${jsonEncode([
+              {'id': id, 'method': method, 'params': params},
+            ])}\n'),
+      );
+      await completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          pendingReplies.remove(id);
+          throw TimeoutException('flutter run did not respond to $method');
+        },
+      );
     }
 
     late final RunSession session;
@@ -105,7 +109,7 @@ class RunSessionController {
       sessionId: const Uuid().v4(),
       proc: proc,
       events: controller.stream,
-      sendReload: (fullRestart) => sendRequest('app.restart', {
+      sendReload: ({required fullRestart}) => sendRequest('app.restart', {
         'appId': appId,
         'fullRestart': fullRestart,
         'pause': false,
@@ -118,52 +122,59 @@ class RunSessionController {
 
     proc.stderr.listen((_) {}); // drain to prevent back-pressure deadlock
 
-    proc.stdout.listen((bytes) {
-      decoder.feed(utf8.decode(bytes), (line) {
-        switch (line) {
-          case DecodedEnvelope(:final event, :final params):
-            switch (event) {
-              case 'app.start':
-                appId = params['appId'] as String?;
-                session._appId = appId;
-                controller
-                    .add(const RunSessionEvent.stage(message: 'Building...'));
-              case 'app.debugPort':
-                final wsUri = params['wsUri'] as String?;
-                if (wsUri != null && session._vmServiceUri == null) {
-                  session._vmServiceUri = wsUri;
-                  controller.add(RunSessionEvent.vmServiceReady(uri: wsUri));
-                }
-              case 'app.started':
-                final vmUri =
-                    params['vmServiceUri'] as String? ?? session._vmServiceUri;
-                if (vmUri != null && session._vmServiceUri == null) {
-                  session._vmServiceUri = vmUri;
-                  controller.add(RunSessionEvent.vmServiceReady(uri: vmUri));
-                }
-              case 'daemon.logMessage':
-                controller.add(RunSessionEvent.log(
-                  line: params['message'] as String? ?? '',
-                  level: _parseLevel(params['level'] as String? ?? 'info'),
-                ));
-            }
-          case DecodedResponse(:final id, :final result, :final error):
-            pendingReplies.remove(id)?.complete(
-                  DecodedResponse(id: id, result: result, error: error),
-                );
-          case DecodedRawLine(:final text):
-            controller
-                .add(RunSessionEvent.log(line: text, level: LogLevel.info));
-        }
-      });
-    }, onDone: () async {
-      final code = await proc.exitCode;
-      controller.add(RunSessionEvent.stopped(
-        exitCode: code,
-        reason: code == 0 ? 'user_stop' : 'crash',
-      ));
-      await controller.close();
-    });
+    proc.stdout.listen(
+      (bytes) {
+        decoder.feed(utf8.decode(bytes), (line) {
+          switch (line) {
+            case DecodedEnvelope(:final event, :final params):
+              switch (event) {
+                case 'app.start':
+                  appId = params['appId'] as String?;
+                  session._appId = appId;
+                  controller
+                      .add(const RunSessionEvent.stage(message: 'Building...'));
+                case 'app.debugPort':
+                  final wsUri = params['wsUri'] as String?;
+                  if (wsUri != null && session._vmServiceUri == null) {
+                    session._vmServiceUri = wsUri;
+                    controller.add(RunSessionEvent.vmServiceReady(uri: wsUri));
+                  }
+                case 'app.started':
+                  final vmUri = params['vmServiceUri'] as String? ??
+                      session._vmServiceUri;
+                  if (vmUri != null && session._vmServiceUri == null) {
+                    session._vmServiceUri = vmUri;
+                    controller.add(RunSessionEvent.vmServiceReady(uri: vmUri));
+                  }
+                case 'daemon.logMessage':
+                  controller.add(
+                    RunSessionEvent.log(
+                      line: params['message'] as String? ?? '',
+                      level: _parseLevel(params['level'] as String? ?? 'info'),
+                    ),
+                  );
+              }
+            case DecodedResponse(:final id, :final result, :final error):
+              pendingReplies.remove(id)?.complete(
+                    DecodedResponse(id: id, result: result, error: error),
+                  );
+            case DecodedRawLine(:final text):
+              controller
+                  .add(RunSessionEvent.log(line: text, level: LogLevel.info));
+          }
+        });
+      },
+      onDone: () async {
+        final code = await proc.exitCode;
+        controller.add(
+          RunSessionEvent.stopped(
+            exitCode: code,
+            reason: code == 0 ? 'user_stop' : 'crash',
+          ),
+        );
+        await controller.close();
+      },
+    );
 
     return session;
   }

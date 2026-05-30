@@ -44,15 +44,17 @@ class RunSessionLogDao extends DatabaseAccessor<PickforgeDatabase>
     String? lastError,
   }) {
     return (update(runSessionLog)..where((t) => t.sessionId.equals(sessionId)))
-        .write(RunSessionLogCompanion(
-      endedAt: Value(endedAt),
-      exitReason: Value(exitReason),
-      exitCode: Value(exitCode),
-      hotReloadCount: Value(hotReloadCount),
-      hotRestartCount: Value(hotRestartCount),
-      errorCount: Value(errorCount),
-      lastError: Value(lastError),
-    ));
+        .write(
+      RunSessionLogCompanion(
+        endedAt: Value(endedAt),
+        exitReason: Value(exitReason),
+        exitCode: Value(exitCode),
+        hotReloadCount: Value(hotReloadCount),
+        hotRestartCount: Value(hotRestartCount),
+        errorCount: Value(errorCount),
+        lastError: Value(lastError),
+      ),
+    );
   }
 
   Future<List<RunSessionLogRow>> recentFor(
@@ -85,7 +87,7 @@ class RunSessionLogDao extends DatabaseAccessor<PickforgeDatabase>
   Future<void> pruneToCap(String projectRoot, {int cap = 100}) {
     return customStatement(
       'DELETE FROM run_session_log '
-      'WHERE project_root = ?1 AND session_id NOT IN ('
+      'WHERE project_root = ?1 AND session_id NOT IN ( '
       'SELECT session_id FROM run_session_log '
       'WHERE project_root = ?1 ORDER BY started_at DESC LIMIT ?2)',
       [projectRoot, cap],

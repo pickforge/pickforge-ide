@@ -36,7 +36,7 @@ void main() {
       );
 
       final session = await run.start(
-        projectRoot: 'test/fixtures/sample_flutter_app',
+        projectRoot: 'fixtures/sample_flutter_app',
         serial: ready.serial,
         extraArgs: const [],
       );

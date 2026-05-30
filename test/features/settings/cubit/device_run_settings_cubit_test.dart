@@ -32,7 +32,9 @@ void main() {
     );
     when(() => repo.getRunArgs('/p')).thenAnswer(
       (_) async => const RunArgs(
-          targetFile: 'lib/main_dev.dart', extraArgs: ['--flavor', 'dev']),
+        targetFile: 'lib/main_dev.dart',
+        extraArgs: ['--flavor', 'dev'],
+      ),
     );
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(
@@ -54,13 +56,17 @@ void main() {
     final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
 
     await cubit.setAvd(
-        '/p', const Avd(id: 'p7', name: 'Pixel 7', platform: 'android'));
+      '/p',
+      const Avd(id: 'p7', name: 'Pixel 7', platform: 'android'),
+    );
 
-    verify(() => repo.setEmulatorBinding(
-          '/p',
-          const EmulatorBinding.avd(avdId: 'p7', avdName: 'Pixel 7'),
-        )).called(1);
-    expect((cubit.state.binding as AvdBinding).avdId, 'p7');
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.avd(avdId: 'p7', avdName: 'Pixel 7'),
+      ),
+    ).called(1);
+    expect((cubit.state.binding! as AvdBinding).avdId, 'p7');
   });
 
   test('setRunArgs persists args', () async {

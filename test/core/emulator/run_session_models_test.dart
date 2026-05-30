@@ -24,13 +24,11 @@ void main() {
         success: true,
         fullRestart: false,
         durationMs: 100,
-        attribution: 'user',
       ),
       const RunSessionEvent.reloadCompleted(
         success: true,
         fullRestart: false,
         durationMs: 100,
-        attribution: 'user',
       ),
     );
   });

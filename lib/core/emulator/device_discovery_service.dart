@@ -31,11 +31,13 @@ class DeviceDiscoveryService {
           out.add(device);
           continue;
         }
-        out.add(RunningAndroidDevice(
-          serial: device.serial,
-          avdName: await _adbAvdName(device.serial),
-          state: device.state,
-        ));
+        out.add(
+          RunningAndroidDevice(
+            serial: device.serial,
+            avdName: await _adbAvdName(device.serial),
+            state: device.state,
+          ),
+        );
       }
       return out;
     } on ProcessRunnerException {
@@ -84,12 +86,14 @@ class DeviceDiscoveryService {
       if (decoded is! List) return const [];
       return decoded
           .whereType<Map<String, dynamic>>()
-          .map((json) => Avd(
-                id: json['id'] as String? ?? '',
-                name: (json['name'] as String? ?? json['id'] as String? ?? '')
-                    .trim(),
-                platform: json['platformType'] as String? ?? 'android',
-              ))
+          .map(
+            (json) => Avd(
+              id: json['id'] as String? ?? '',
+              name: (json['name'] as String? ?? json['id'] as String? ?? '')
+                  .trim(),
+              platform: json['platformType'] as String? ?? 'android',
+            ),
+          )
           .where((avd) => avd.id.isNotEmpty)
           .toList();
     } on FormatException {
@@ -104,11 +108,13 @@ class DeviceDiscoveryService {
       if (trimmed.isEmpty || trimmed.startsWith('List of devices')) continue;
       final tokens = trimmed.split(RegExp(r'\s+'));
       if (tokens.length < 2) continue;
-      out.add(RunningAndroidDevice(
-        serial: tokens[0],
-        avdName: null,
-        state: tokens[1],
-      ));
+      out.add(
+        RunningAndroidDevice(
+          serial: tokens[0],
+          avdName: null,
+          state: tokens[1],
+        ),
+      );
     }
     return out;
   }

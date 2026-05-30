@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/di/injection.dart';
@@ -144,15 +146,15 @@ class _StatusDotState extends State<_StatusDot>
       case Booting():
         _controller
           ..duration = const Duration(milliseconds: 700)
-          ..repeat(reverse: true);
+          ..repeat(reverse: true).ignore();
       case Reconnecting():
         _controller
           ..duration = const Duration(milliseconds: 1500)
-          ..repeat();
+          ..repeat().ignore();
       case Running(:final lastReloadAt) when lastReloadAt != null:
         _controller
           ..duration = const Duration(milliseconds: 200)
-          ..forward(from: 0);
+          ..forward(from: 0).ignore();
       default:
         _controller.stop();
         _controller.value = 0;
@@ -161,12 +163,15 @@ class _StatusDotState extends State<_StatusDot>
 
   @override
   Widget build(BuildContext context) {
-    final dot = const Icon(Icons.circle, size: 10);
+    const dot = Icon(Icons.circle, size: 10);
     if (ReduceMotion.of(context)) return dot;
     return switch (widget.state) {
       Booting() => ScaleTransition(scale: _scale, child: dot),
       Running(:final lastReloadAt) when lastReloadAt != null => ScaleTransition(
-          key: const Key('reload-pulse-dot'), scale: _scale, child: dot),
+          key: const Key('reload-pulse-dot'),
+          scale: _scale,
+          child: dot,
+        ),
       Reconnecting() => RotationTransition(turns: _controller, child: dot),
       _ => dot,
     };
@@ -193,46 +198,67 @@ class _Menu extends StatelessWidget {
       itemBuilder: (context) => switch (state) {
         NoDevicePicked() => const [
             PopupMenuItem(
-                value: _MenuAction.pickDevice, child: Text('Pick device...')),
+              value: _MenuAction.pickDevice,
+              child: Text('Pick device...'),
+            ),
             PopupMenuItem(
-                value: _MenuAction.manualUrl,
-                child: Text('Manual VM Service URL...')),
+              value: _MenuAction.manualUrl,
+              child: Text('Manual VM Service URL...'),
+            ),
           ],
         Cold() || Idle() => const [
             PopupMenuItem(
-                value: _MenuAction.pickDevice,
-                child: Text('Pick different...')),
+              value: _MenuAction.pickDevice,
+              child: Text('Pick different...'),
+            ),
             PopupMenuItem(
-                value: _MenuAction.manualUrl,
-                child: Text('Manual VM Service URL...')),
+              value: _MenuAction.manualUrl,
+              child: Text('Manual VM Service URL...'),
+            ),
             PopupMenuItem(
-                value: _MenuAction.forget, child: Text('Forget device')),
+              value: _MenuAction.forget,
+              child: Text('Forget device'),
+            ),
           ],
         Running(:final manual) => [
             const PopupMenuItem(
-                value: _MenuAction.hotRestart, child: Text('Hot restart')),
+              value: _MenuAction.hotRestart,
+              child: Text('Hot restart'),
+            ),
             const PopupMenuItem(value: _MenuAction.stop, child: Text('Stop')),
             const PopupMenuItem(
-                value: _MenuAction.viewLogs, child: Text('View logs')),
+              value: _MenuAction.viewLogs,
+              child: Text('View logs'),
+            ),
             if (manual)
               const PopupMenuItem(
-                  value: _MenuAction.editUrl, child: Text('Edit URL...')),
+                value: _MenuAction.editUrl,
+                child: Text('Edit URL...'),
+              ),
           ],
         Booting() || Reconnecting() => const [
             PopupMenuItem(
-                value: _MenuAction.viewLogs, child: Text('View logs')),
+              value: _MenuAction.viewLogs,
+              child: Text('View logs'),
+            ),
           ],
         EmulatorError() => const [
             PopupMenuItem(
-                value: _MenuAction.viewLogs, child: Text('View logs')),
+              value: _MenuAction.viewLogs,
+              child: Text('View logs'),
+            ),
             PopupMenuItem(
-                value: _MenuAction.pickDevice,
-                child: Text('Pick different...')),
+              value: _MenuAction.pickDevice,
+              child: Text('Pick different...'),
+            ),
             PopupMenuItem(
-                value: _MenuAction.manualUrl,
-                child: Text('Manual VM Service URL...')),
+              value: _MenuAction.manualUrl,
+              child: Text('Manual VM Service URL...'),
+            ),
             PopupMenuItem(
-                value: _MenuAction.forget, child: Text('Forget device')),
+              value: _MenuAction.forget,
+              child: Text('Forget device'),
+            ),
           ],
       },
     );

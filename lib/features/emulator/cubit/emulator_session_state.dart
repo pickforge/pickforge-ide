@@ -21,11 +21,11 @@ sealed class EmulatorSessionState with _$EmulatorSessionState {
   }) = Idle;
 
   factory EmulatorSessionState.running({
+    required String vmServiceUri,
+    required RunStats stats,
     Avd? avd,
     String? serial,
     String? appId,
-    required String vmServiceUri,
-    required RunStats stats,
     @Default(false) bool manual,
     DateTime? lastReloadAt,
   }) = Running;
@@ -38,9 +38,9 @@ sealed class EmulatorSessionState with _$EmulatorSessionState {
   }) = Reconnecting;
 
   const factory EmulatorSessionState.error({
+    required String message,
     Avd? avd,
     String? serial,
     String? lastVmServiceUri,
-    required String message,
   }) = EmulatorError;
 }

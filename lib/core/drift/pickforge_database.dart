@@ -49,11 +49,13 @@ class PickforgeDatabase extends _$PickforgeDatabase {
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
           await m.createAll();
-          await m.createIndex(Index(
-            'idx_run_session_log_project_started',
-            'CREATE INDEX idx_run_session_log_project_started '
-                'ON run_session_log (project_root, started_at DESC)',
-          ));
+          await m.createIndex(
+            Index(
+              'idx_run_session_log_project_started',
+              'CREATE INDEX idx_run_session_log_project_started '
+                  'ON run_session_log (project_root, started_at DESC)',
+            ),
+          );
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -108,11 +110,13 @@ class PickforgeDatabase extends _$PickforgeDatabase {
               projectSettings.firstRunCelebrated,
             );
             await m.createTable(runSessionLog);
-            await m.createIndex(Index(
-              'idx_run_session_log_project_started',
-              'CREATE INDEX idx_run_session_log_project_started '
-                  'ON run_session_log (project_root, started_at DESC)',
-            ));
+            await m.createIndex(
+              Index(
+                'idx_run_session_log_project_started',
+                'CREATE INDEX idx_run_session_log_project_started '
+                    'ON run_session_log (project_root, started_at DESC)',
+              ),
+            );
             await customStatement(
               "UPDATE project_settings SET connection_mode = 'manual' "
               'WHERE vm_service_url IS NOT NULL',

@@ -4,7 +4,10 @@ import 'package:pickforge/features/emulator/cubit/device_picker_state.dart';
 
 void main() {
   test('initial', () {
-    expect(const DevicePickerState.initial(), const DevicePickerState.initial());
+    expect(
+      const DevicePickerState.initial(),
+      const DevicePickerState.initial(),
+    );
   });
 
   test('loaded equality', () {

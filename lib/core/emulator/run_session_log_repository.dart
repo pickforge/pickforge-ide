@@ -52,8 +52,10 @@ class RunSessionLogRepository {
         lastError: lastError,
       );
 
-  Future<List<RunSessionLogRow>> recentFor(String projectRoot,
-          {int limit = 20}) =>
+  Future<List<RunSessionLogRow>> recentFor(
+    String projectRoot, {
+    int limit = 20,
+  }) =>
       _db.runSessionLogDao.recentFor(projectRoot, limit: limit);
 
   Stream<List<RunSessionLogRow>> watchRecent(

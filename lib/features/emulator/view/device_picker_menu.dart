@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
@@ -17,7 +19,7 @@ class _DevicePickerMenuState extends State<DevicePickerMenu> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<DevicePickerCubit>().refresh();
+      if (mounted) unawaited(context.read<DevicePickerCubit>().refresh());
     });
   }
 
@@ -31,7 +33,8 @@ class _DevicePickerMenuState extends State<DevicePickerMenu> {
               padding: EdgeInsets.all(24),
               child: Center(child: CircularProgressIndicator()),
             ),
-          Loaded(:final avds, :final running) => _DeviceList(avds: avds, running: running),
+          Loaded(:final avds, :final running) =>
+            _DeviceList(avds: avds, running: running),
           PickerError(:final message) => Padding(
               padding: const EdgeInsets.all(24),
               child: Text(message),
@@ -51,13 +54,18 @@ class _DeviceList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = context.read<EmulatorSessionCubit>();
-    final runningAvds = avds.where((avd) => running.any((r) => r.avdName == avd.id)).toList();
-    final coldAvds = avds.where((avd) => !running.any((r) => r.avdName == avd.id)).toList();
+    final runningAvds =
+        avds.where((avd) => running.any((r) => r.avdName == avd.id)).toList();
+    final coldAvds =
+        avds.where((avd) => !running.any((r) => r.avdName == avd.id)).toList();
 
     if (avds.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(24),
-        child: Text('No Android emulators detected.\nOpen Android Studio > Device Manager > Create.'),
+        child: Text(
+          'No Android emulators detected.\n'
+          'Open Android Studio > Device Manager > Create.',
+        ),
       );
     }
 
@@ -66,16 +74,28 @@ class _DeviceList extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (runningAvds.isNotEmpty) const _Header('RUNNING'),
-        for (final avd in runningAvds) _DeviceRow(label: avd.name, onTap: () => _pick(context, session, avd)),
+        for (final avd in runningAvds)
+          _DeviceRow(
+            label: avd.name,
+            onTap: () => unawaited(_pick(context, session, avd)),
+          ),
         if (coldAvds.isNotEmpty) const _Header('AVAILABLE'),
-        for (final avd in coldAvds) _DeviceRow(label: avd.name, onTap: () => _pick(context, session, avd)),
+        for (final avd in coldAvds)
+          _DeviceRow(
+            label: avd.name,
+            onTap: () => unawaited(_pick(context, session, avd)),
+          ),
       ],
     );
   }
 
-  void _pick(BuildContext context, EmulatorSessionCubit session, Avd avd) {
-    Navigator.of(context).maybePop();
-    session.pickAvd(avd);
+  Future<void> _pick(
+    BuildContext context,
+    EmulatorSessionCubit session,
+    Avd avd,
+  ) async {
+    await Navigator.of(context).maybePop();
+    await session.pickAvd(avd);
   }
 }
 
@@ -97,5 +117,6 @@ class _DeviceRow extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => ListTile(title: Text(label), onTap: onTap, dense: true);
+  Widget build(BuildContext context) =>
+      ListTile(title: Text(label), onTap: onTap, dense: true);
 }

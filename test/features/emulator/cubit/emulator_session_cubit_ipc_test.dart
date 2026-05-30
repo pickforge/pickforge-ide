@@ -55,25 +55,29 @@ void main() {
     when(() => session.sessionId).thenReturn('session-1');
     when(() => session.appId).thenReturn('app-1');
     when(() => session.vmServiceUri).thenReturn('ws://x/ws');
-    when(() => session.stop()).thenAnswer((_) async {});
+    when(session.stop).thenAnswer((_) async {});
     when(() => ipc.socketPath).thenReturn('/tmp/pickforge-test.sock');
     when(() => ipc.bindActiveRunSession(any())).thenReturn(null);
-    when(() => run.start(
-          projectRoot: project.path,
-          serial: 'emulator-5554',
-          targetFile: any(named: 'targetFile'),
-          extraArgs: any(named: 'extraArgs'),
-        )).thenAnswer((_) async => session);
-    when(() => logRepo.recordStart(
-          sessionId: any(named: 'sessionId'),
-          projectRoot: any(named: 'projectRoot'),
-          startedAt: any(named: 'startedAt'),
-          connectionMode: any(named: 'connectionMode'),
-          avdId: any(named: 'avdId'),
-          avdName: any(named: 'avdName'),
-          serial: any(named: 'serial'),
-          vmServiceUrl: any(named: 'vmServiceUrl'),
-        )).thenAnswer((_) async {});
+    when(
+      () => run.start(
+        projectRoot: project.path,
+        serial: 'emulator-5554',
+        targetFile: any(named: 'targetFile'),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session);
+    when(
+      () => logRepo.recordStart(
+        sessionId: any(named: 'sessionId'),
+        projectRoot: any(named: 'projectRoot'),
+        startedAt: any(named: 'startedAt'),
+        connectionMode: any(named: 'connectionMode'),
+        avdId: any(named: 'avdId'),
+        avdName: any(named: 'avdName'),
+        serial: any(named: 'serial'),
+        vmServiceUrl: any(named: 'vmServiceUrl'),
+      ),
+    ).thenAnswer((_) async {});
     when(() => vm.connect(any())).thenAnswer((_) async {});
 
     final cubit = EmulatorSessionCubit(
@@ -88,10 +92,12 @@ void main() {
       ipcServer: ipc,
     );
     addTearDown(cubit.close);
-    cubit.emit(const EmulatorSessionState.idle(
-      avd: Avd(id: 'Pixel_5', name: 'Pixel 5', platform: 'android'),
-      serial: 'emulator-5554',
-    ));
+    cubit.emit(
+      const EmulatorSessionState.idle(
+        avd: Avd(id: 'Pixel_5', name: 'Pixel 5', platform: 'android'),
+        serial: 'emulator-5554',
+      ),
+    );
 
     await cubit.runApp();
 

@@ -56,8 +56,13 @@ void main() {
     final lines = fixture.split('\n').where((line) => line.isNotEmpty).toList();
     final runner = _FakeRunner();
     final fake = _FakeProc(lines);
-    when(() => runner.spawn('flutter', any<List<String>>(),
-        cwd: any(named: 'cwd'))).thenAnswer((_) async => fake);
+    when(
+      () => runner.spawn(
+        'flutter',
+        any<List<String>>(),
+        cwd: any(named: 'cwd'),
+      ),
+    ).thenAnswer((_) async => fake);
 
     final controller = RunSessionController(runner);
     final session = await controller.start(
@@ -70,51 +75,78 @@ void main() {
     unawaited(fake.drip());
 
     final vmEvent = await session.events.firstWhere(_isVmReady);
-    expect((vmEvent as dynamic).uri, 'ws://127.0.0.1:51234/UUID=/ws');
+    final vmUri = vmEvent.whenOrNull(vmServiceReady: (uri) => uri);
+    expect(vmUri, 'ws://127.0.0.1:51234/UUID=/ws');
     expect(session.vmServiceUri, 'ws://127.0.0.1:51234/UUID=/ws');
     expect(session.appId, 'abc');
     await sub.cancel();
   });
 
   test(
-      'hotReload sends app.restart with correct id and routes response to completion',
-      () async {
-    final runner = _FakeRunner();
-    final fake = _FakeProc([
-      '[{"event":"app.start","params":{"appId":"abc","deviceId":"emulator-5554"}}]',
-      '[{"event":"app.started","params":{"appId":"abc","vmServiceUri":"ws://x/ws"}}]',
-    ]);
-    when(() => runner.spawn('flutter', any<List<String>>(),
-        cwd: any(named: 'cwd'))).thenAnswer((_) async => fake);
+    'hotReload sends app.restart with correct id and routes response',
+    () async {
+      final runner = _FakeRunner();
+      final fake = _FakeProc([
+        jsonEncode([
+          {
+            'event': 'app.start',
+            'params': {'appId': 'abc', 'deviceId': 'emulator-5554'},
+          },
+        ]),
+        jsonEncode([
+          {
+            'event': 'app.started',
+            'params': {'appId': 'abc', 'vmServiceUri': 'ws://x/ws'},
+          },
+        ]),
+      ]);
+      when(
+        () => runner.spawn(
+          'flutter',
+          any<List<String>>(),
+          cwd: any(named: 'cwd'),
+        ),
+      ).thenAnswer((_) async => fake);
 
-    final controller = RunSessionController(runner);
-    final session = await controller.start(
-      projectRoot: '/p',
-      serial: 'emulator-5554',
-      extraArgs: const [],
-    );
-    unawaited(fake.drip());
-    await session.events.firstWhere((_) => session.vmServiceUri != null);
+      final controller = RunSessionController(runner);
+      final session = await controller.start(
+        projectRoot: '/p',
+        serial: 'emulator-5554',
+        extraArgs: const [],
+      );
+      unawaited(fake.drip());
+      await session.events.firstWhere((_) => session.vmServiceUri != null);
 
-    final reloadFuture = session.hotReload();
-    fake.stdoutCtrl.add(utf8.encode('[{"id":1,"result":{"code":0}}]\n'));
-    final ok = await reloadFuture.timeout(const Duration(seconds: 2));
-    expect(ok, isTrue);
+      final reloadFuture = session.hotReload();
+      fake.stdoutCtrl.add(utf8.encode('[{"id":1,"result":{"code":0}}]\n'));
+      final ok = await reloadFuture.timeout(const Duration(seconds: 2));
+      expect(ok, isTrue);
 
-    final stdinJson =
-        jsonDecode(utf8.decode(fake.stdinCapture.last)) as List<dynamic>;
-    expect((stdinJson.single as Map<String, dynamic>)['method'], 'app.restart');
-    expect((stdinJson.single as Map<String, dynamic>)['params']['fullRestart'],
-        false);
-  });
+      final stdinJson =
+          jsonDecode(utf8.decode(fake.stdinCapture.last)) as List<dynamic>;
+      final restartRequest = stdinJson.single as Map<String, Object?>;
+      expect(restartRequest['method'], 'app.restart');
+      switch (restartRequest['params']) {
+        case final Map<String, Object?> params:
+          expect(params['fullRestart'], false);
+        default:
+          fail('Expected params map');
+      }
+    },
+  );
 
   test('stop sends app.stop and resolves exit', () async {
     final runner = _FakeRunner();
     final fake = _FakeProc([
       '[{"event":"app.start","params":{"appId":"abc","deviceId":"e"}}]',
     ]);
-    when(() => runner.spawn('flutter', any<List<String>>(),
-        cwd: any(named: 'cwd'))).thenAnswer((_) async => fake);
+    when(
+      () => runner.spawn(
+        'flutter',
+        any<List<String>>(),
+        cwd: any(named: 'cwd'),
+      ),
+    ).thenAnswer((_) async => fake);
     final session = await RunSessionController(runner).start(
       projectRoot: '/p',
       serial: 'e',

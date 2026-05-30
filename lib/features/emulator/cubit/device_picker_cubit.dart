@@ -13,10 +13,12 @@ class DevicePickerCubit extends Cubit<DevicePickerState> {
     emit(const DevicePickerState.loading());
     try {
       final snapshot = await _discovery.snapshot();
-      emit(DevicePickerState.loaded(
-        avds: snapshot.avds,
-        running: snapshot.running,
-      ));
+      emit(
+        DevicePickerState.loaded(
+          avds: snapshot.avds,
+          running: snapshot.running,
+        ),
+      );
     } on Object catch (e) {
       emit(DevicePickerState.error(e.toString()));
     }

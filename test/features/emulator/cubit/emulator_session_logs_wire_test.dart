@@ -47,23 +47,27 @@ void main() {
     when(() => session.appId).thenReturn('app-1');
     when(() => session.vmServiceUri).thenReturn('ws://x/ws');
     when(() => session.sessionId).thenReturn('session-1');
-    when(() => session.stop()).thenAnswer((_) async {});
-    when(() => run.start(
-          projectRoot: '/p',
-          serial: 'emulator-5554',
-          targetFile: any(named: 'targetFile'),
-          extraArgs: any(named: 'extraArgs'),
-        )).thenAnswer((_) async => session);
-    when(() => logRepo.recordStart(
-          sessionId: any(named: 'sessionId'),
-          projectRoot: any(named: 'projectRoot'),
-          startedAt: any(named: 'startedAt'),
-          connectionMode: any(named: 'connectionMode'),
-          avdId: any(named: 'avdId'),
-          avdName: any(named: 'avdName'),
-          serial: any(named: 'serial'),
-          vmServiceUrl: any(named: 'vmServiceUrl'),
-        )).thenAnswer((_) async {});
+    when(session.stop).thenAnswer((_) async {});
+    when(
+      () => run.start(
+        projectRoot: '/p',
+        serial: 'emulator-5554',
+        targetFile: any(named: 'targetFile'),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session);
+    when(
+      () => logRepo.recordStart(
+        sessionId: any(named: 'sessionId'),
+        projectRoot: any(named: 'projectRoot'),
+        startedAt: any(named: 'startedAt'),
+        connectionMode: any(named: 'connectionMode'),
+        avdId: any(named: 'avdId'),
+        avdName: any(named: 'avdName'),
+        serial: any(named: 'serial'),
+        vmServiceUrl: any(named: 'vmServiceUrl'),
+      ),
+    ).thenAnswer((_) async {});
     when(() => vm.connect(any())).thenAnswer((_) async {});
 
     final cubit = EmulatorSessionCubit(
@@ -80,10 +84,12 @@ void main() {
     addTearDown(cubit.close);
     addTearDown(events.close);
 
-    cubit.emit(const EmulatorSessionState.idle(
-      avd: Avd(id: 'Pixel_5', name: 'Pixel 5', platform: 'android'),
-      serial: 'emulator-5554',
-    ));
+    cubit.emit(
+      const EmulatorSessionState.idle(
+        avd: Avd(id: 'Pixel_5', name: 'Pixel 5', platform: 'android'),
+        serial: 'emulator-5554',
+      ),
+    );
     await cubit.runApp();
     events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
     await Future<void>.delayed(const Duration(milliseconds: 5));

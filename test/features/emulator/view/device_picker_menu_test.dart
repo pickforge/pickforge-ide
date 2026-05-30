@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_mixin, reason: Cubit test fakes mix in Mock.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,31 +28,39 @@ class _SessionCubit extends Cubit<EmulatorSessionState>
 void main() {
   setUpAll(() {
     registerFallbackValue(
-        const Avd(id: 'fallback', name: 'fallback', platform: 'android'));
+      const Avd(id: 'fallback', name: 'fallback', platform: 'android'),
+    );
   });
 
   testWidgets('shows Running and Available sections', (tester) async {
-    final picker = _PickerCubit(const DevicePickerState.loaded(
-      avds: [
-        Avd(id: 'X', name: 'Pixel 5', platform: 'android'),
-        Avd(id: 'Y', name: 'Pixel 7', platform: 'android'),
-      ],
-      running: [
-        RunningAndroidDevice(
-            serial: 'emulator-5554', avdName: 'X', state: 'device'),
-      ],
-    ));
+    final picker = _PickerCubit(
+      const DevicePickerState.loaded(
+        avds: [
+          Avd(id: 'X', name: 'Pixel 5', platform: 'android'),
+          Avd(id: 'Y', name: 'Pixel 7', platform: 'android'),
+        ],
+        running: [
+          RunningAndroidDevice(
+            serial: 'emulator-5554',
+            avdName: 'X',
+            state: 'device',
+          ),
+        ],
+      ),
+    );
     final session = _SessionCubit();
     when(() => session.pickAvd(any())).thenAnswer((_) async {});
-    await tester.pumpWidget(MaterialApp(
-      home: MultiBlocProvider(
-        providers: [
-          BlocProvider<DevicePickerCubit>.value(value: picker),
-          BlocProvider<EmulatorSessionCubit>.value(value: session),
-        ],
-        child: const Scaffold(body: DevicePickerMenu()),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MultiBlocProvider(
+          providers: [
+            BlocProvider<DevicePickerCubit>.value(value: picker),
+            BlocProvider<EmulatorSessionCubit>.value(value: session),
+          ],
+          child: const Scaffold(body: DevicePickerMenu()),
+        ),
       ),
-    ));
+    );
     expect(find.text('RUNNING'), findsOneWidget);
     expect(find.text('AVAILABLE'), findsOneWidget);
     expect(find.text('Pixel 5'), findsOneWidget);
@@ -62,16 +72,20 @@ void main() {
   testWidgets('empty state shows Android Studio link', (tester) async {
     final picker =
         _PickerCubit(const DevicePickerState.loaded(avds: [], running: []));
-    await tester.pumpWidget(MaterialApp(
-      home: MultiBlocProvider(
-        providers: [
-          BlocProvider<DevicePickerCubit>.value(value: picker),
-          BlocProvider<EmulatorSessionCubit>.value(value: _SessionCubit()),
-        ],
-        child: const Scaffold(body: DevicePickerMenu()),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MultiBlocProvider(
+          providers: [
+            BlocProvider<DevicePickerCubit>.value(value: picker),
+            BlocProvider<EmulatorSessionCubit>.value(value: _SessionCubit()),
+          ],
+          child: const Scaffold(body: DevicePickerMenu()),
+        ),
       ),
-    ));
+    );
     expect(
-        find.textContaining('No Android emulators detected'), findsOneWidget);
+      find.textContaining('No Android emulators detected'),
+      findsOneWidget,
+    );
   });
 }

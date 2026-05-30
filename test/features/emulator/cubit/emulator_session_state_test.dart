@@ -15,8 +15,8 @@ void main() {
       const EmulatorSessionState.cold(avd: avd),
     );
     expect(
-      EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
-      EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
+      const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
+      const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
     );
     expect(
       EmulatorSessionState.running(
@@ -25,7 +25,6 @@ void main() {
         appId: 'a',
         vmServiceUri: 'ws://x',
         stats: RunStats(startedAt: DateTime.utc(2026, 4, 28)),
-        manual: false,
       ),
       isA<EmulatorSessionState>(),
     );

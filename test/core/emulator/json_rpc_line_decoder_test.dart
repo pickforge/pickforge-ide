@@ -30,7 +30,7 @@ void main() {
     final dec = JsonRpcLineDecoder();
     final outs = <DecodedLine>[];
     final body = '${jsonEncode([
-          {'event': 'app.start', 'params': {}},
+          {'event': 'app.start', 'params': <String, Object?>{}},
         ])}\n'
         '${jsonEncode([
           {
@@ -60,6 +60,6 @@ void main() {
     expect(outs.single, isA<DecodedResponse>());
     final r = outs.single as DecodedResponse;
     expect(r.id, 42);
-    expect(r.result, {'code': 0});
+    expect(r.result, <String, Object?>{'code': 0});
   });
 }

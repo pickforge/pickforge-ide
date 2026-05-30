@@ -5,6 +5,7 @@ analyzer:
     - "**/*.g.dart"
     - "**/*.freezed.dart"
     - "lib/l10n/generated/**"
+    - "fixtures/sample_flutter_app/**"
 
 linter:
   rules:

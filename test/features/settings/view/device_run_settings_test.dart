@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_mixin, reason: Cubit test fakes mix in Mock.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,17 +24,21 @@ void main() {
   });
 
   testWidgets('renders AVD list and picking calls cubit', (tester) async {
-    final cubit = _Cubit(const DeviceRunSettingsState(
-      avds: [Avd(id: 'p5', name: 'Pixel 5', platform: 'android')],
-    ));
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(
+        avds: [Avd(id: 'p5', name: 'Pixel 5', platform: 'android')],
+      ),
+    );
     when(() => cubit.setAvd(any(), any())).thenAnswer((_) async {});
 
-    await tester.pumpWidget(MaterialApp(
-      home: BlocProvider<DeviceRunSettingsCubit>.value(
-        value: cubit,
-        child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+        ),
       ),
-    ));
+    );
 
     expect(find.text('Device & Run'), findsOneWidget);
     await tester.tap(find.byType(DropdownButton<Avd>));
@@ -44,16 +50,20 @@ void main() {
   });
 
   testWidgets('manual mode reveals URL field', (tester) async {
-    final cubit = _Cubit(const DeviceRunSettingsState(
-      binding: EmulatorBinding.manual(vmServiceUrl: 'ws://127.0.0.1:5000/ws'),
-    ));
-
-    await tester.pumpWidget(MaterialApp(
-      home: BlocProvider<DeviceRunSettingsCubit>.value(
-        value: cubit,
-        child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(
+        binding: EmulatorBinding.manual(vmServiceUrl: 'ws://127.0.0.1:5000/ws'),
       ),
-    ));
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+        ),
+      ),
+    );
 
     expect(find.text('Manual VM Service URL'), findsOneWidget);
     expect(find.text('ws://127.0.0.1:5000/ws'), findsOneWidget);

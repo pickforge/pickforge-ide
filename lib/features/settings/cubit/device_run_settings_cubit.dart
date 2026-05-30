@@ -19,11 +19,13 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
     final binding = await settings.getEmulatorBinding(projectRoot);
     final runArgs = await settings.getRunArgs(projectRoot);
     final devices = await discovery.snapshot();
-    emit(DeviceRunSettingsState(
-      binding: binding,
-      runArgs: runArgs,
-      avds: devices.avds,
-    ));
+    emit(
+      DeviceRunSettingsState(
+        binding: binding,
+        runArgs: runArgs,
+        avds: devices.avds,
+      ),
+    );
   }
 
   Future<void> setAvd(String projectRoot, Avd avd) async {
@@ -32,13 +34,16 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
     emit(state.copyWith(binding: binding));
   }
 
-  Future<void> setAutoBoot(String projectRoot, bool value) async {
+  Future<void> setAutoBoot(
+    String projectRoot, {
+    required bool enabled,
+  }) async {
     final current = state.binding;
     if (current is! AvdBinding) return;
     final binding = EmulatorBinding.avd(
       avdId: current.avdId,
       avdName: current.avdName,
-      autoBootOnSelect: value,
+      autoBootOnSelect: enabled,
     );
     await settings.setEmulatorBinding(projectRoot, binding);
     emit(state.copyWith(binding: binding));

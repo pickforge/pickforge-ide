@@ -12,17 +12,19 @@ class _FakeCubit extends Cubit<EmulatorSessionState>
   _FakeCubit(super.initialState);
 
   @override
-  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
   Future<void> pump(WidgetTester tester, EmulatorSessionState state) async {
-    await tester.pumpWidget(MaterialApp(
-      home: BlocProvider<EmulatorSessionCubit>.value(
-        value: _FakeCubit(state),
-        child: const Scaffold(body: ConnectionPill()),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<EmulatorSessionCubit>.value(
+          value: _FakeCubit(state),
+          child: const Scaffold(body: ConnectionPill()),
+        ),
       ),
-    ));
+    );
   }
 
   testWidgets('NoDevicePicked shows Pick device', (tester) async {

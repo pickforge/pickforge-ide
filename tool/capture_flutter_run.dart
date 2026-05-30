@@ -25,19 +25,16 @@ Future<void> main(List<String> args) async {
     workingDirectory: projectRoot,
   );
   final sink = output.openWrite();
-  final subscriptions = <StreamSubscription<String>>[];
-  subscriptions.add(
+  final subscriptions = <StreamSubscription<String>>[
     process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen((line) => sink.writeln(_anonymize(line, projectRoot))),
-  );
-  subscriptions.add(
     process.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen((line) => sink.writeln(_anonymize(line, projectRoot))),
-  );
+  ];
 
   stdout
       .writeln('Capturing flutter run --machine. Press q then Enter to stop.');
@@ -57,6 +54,6 @@ Future<void> main(List<String> args) async {
 String _anonymize(String line, String projectRoot) {
   return line
       .replaceAll(projectRoot, '<PROJECT>')
-      .replaceAll(RegExp(r'[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}'), '<UUID>')
+      .replaceAll(RegExp('[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}'), '<UUID>')
       .replaceAll(RegExp(r'file://[^"\s]+'), 'file://<PATH>');
 }

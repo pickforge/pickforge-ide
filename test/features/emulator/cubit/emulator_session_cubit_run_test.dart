@@ -62,7 +62,8 @@ void main() {
     when(() => session.stop()).thenAnswer((_) async {});
     when(() => settings.getRunArgs('/p'))
         .thenAnswer((_) async => const RunArgs());
-    when(() => log.recordStart(
+    when(
+      () => log.recordStart(
         sessionId: any(named: 'sessionId'),
         projectRoot: any(named: 'projectRoot'),
         startedAt: any(named: 'startedAt'),
@@ -70,30 +71,36 @@ void main() {
         avdId: any(named: 'avdId'),
         avdName: any(named: 'avdName'),
         serial: any(named: 'serial'),
-        vmServiceUrl: any(named: 'vmServiceUrl'))).thenAnswer((_) async {});
+        vmServiceUrl: any(named: 'vmServiceUrl'),
+      ),
+    ).thenAnswer((_) async {});
     when(() => vm.connect(any())).thenAnswer((_) async {});
   });
   tearDown(() => events.close());
 
   EmulatorSessionCubit build() => EmulatorSessionCubit(
-      projectRoot: '/p',
-      settings: settings,
-      discovery: disc,
-      launcher: launcher,
-      poller: poller,
-      runController: run,
-      logRepo: log,
-      vmClient: vm);
+        projectRoot: '/p',
+        settings: settings,
+        discovery: disc,
+        launcher: launcher,
+        poller: poller,
+        runController: run,
+        logRepo: log,
+        vmClient: vm,
+      );
   const avd =
       Avd(id: 'Pixel_5_API_34', name: 'Pixel 5 API 34', platform: 'android');
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'runApp from idle attaches inspector on vmServiceReady',
-    setUp: () => when(() => run.start(
+    setUp: () => when(
+      () => run.start(
         projectRoot: '/p',
         serial: 'emulator-5554',
         targetFile: any(named: 'targetFile'),
-        extraArgs: any(named: 'extraArgs'))).thenAnswer((_) async => session),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session),
     build: build,
     seed: () =>
         const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
@@ -108,11 +115,14 @@ void main() {
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'stopRun calls session.stop and goes to idle',
-    setUp: () => when(() => run.start(
+    setUp: () => when(
+      () => run.start(
         projectRoot: '/p',
         serial: any(named: 'serial'),
         targetFile: any(named: 'targetFile'),
-        extraArgs: any(named: 'extraArgs'))).thenAnswer((_) async => session),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session),
     build: build,
     seed: () =>
         const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
@@ -128,12 +138,14 @@ void main() {
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'reloadCompleted records lastReloadAt on running state',
-    setUp: () => when(() => run.start(
-          projectRoot: '/p',
-          serial: any(named: 'serial'),
-          targetFile: any(named: 'targetFile'),
-          extraArgs: any(named: 'extraArgs'),
-        )).thenAnswer((_) async => session),
+    setUp: () => when(
+      () => run.start(
+        projectRoot: '/p',
+        serial: any(named: 'serial'),
+        targetFile: any(named: 'targetFile'),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session),
     build: build,
     seed: () => const EmulatorSessionState.idle(
       avd: avd,
@@ -143,11 +155,13 @@ void main() {
       await c.runApp();
       events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
       await Future<void>.delayed(const Duration(milliseconds: 5));
-      events.add(const RunSessionEvent.reloadCompleted(
-        success: true,
-        fullRestart: false,
-        durationMs: 120,
-      ));
+      events.add(
+        const RunSessionEvent.reloadCompleted(
+          success: true,
+          fullRestart: false,
+          durationMs: 120,
+        ),
+      );
       await Future<void>.delayed(const Duration(milliseconds: 5));
     },
     expect: () => [

@@ -39,7 +39,7 @@ class _ManualUrlFormState extends State<ManualUrlForm> {
       return;
     }
     await context.read<EmulatorSessionCubit>().submitManualUrl(value);
-    if (mounted) Navigator.of(context).maybePop();
+    if (mounted) await Navigator.of(context).maybePop();
   }
 
   @override
@@ -50,7 +50,10 @@ class _ManualUrlFormState extends State<ManualUrlForm> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Manual VM Service URL', style: TextStyle(fontWeight: FontWeight.w600)),
+          const Text(
+            'Manual VM Service URL',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _controller,
@@ -64,7 +67,10 @@ class _ManualUrlFormState extends State<ManualUrlForm> {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              TextButton(onPressed: () => Navigator.of(context).maybePop(), child: const Text('Cancel')),
+              TextButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                child: const Text('Cancel'),
+              ),
               const SizedBox(width: 8),
               FilledButton(onPressed: _submit, child: const Text('Connect')),
             ],

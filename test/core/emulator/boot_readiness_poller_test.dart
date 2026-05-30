@@ -22,20 +22,27 @@ void main() {
   test('emits ready with serial when AVD name matches and pm path succeeds',
       () async {
     when(() => runner.run('adb', ['devices', '-l'])).thenAnswer(
-        (_) async => ok('List of devices attached\nemulator-5554\tdevice\n'));
-    when(() => runner.run('adb', [
-          '-s',
-          'emulator-5554',
-          'shell',
-          'getprop',
-          'sys.boot_completed'
-        ])).thenAnswer((_) async => ok('1\n'));
+      (_) async => ok('List of devices attached\nemulator-5554\tdevice\n'),
+    );
+    when(
+      () => runner.run('adb', [
+        '-s',
+        'emulator-5554',
+        'shell',
+        'getprop',
+        'sys.boot_completed',
+      ]),
+    ).thenAnswer((_) async => ok('1\n'));
     when(() => runner.run('adb', ['-s', 'emulator-5554', 'emu', 'avd', 'name']))
         .thenAnswer((_) async => ok('Pixel_5_API_34\nOK\n'));
-    when(() => runner.run(
-            'adb', ['-s', 'emulator-5554', 'shell', 'pm', 'path', 'android']))
-        .thenAnswer(
-            (_) async => ok('package:/system/framework/framework-res.apk\n'));
+    when(
+      () => runner.run(
+        'adb',
+        ['-s', 'emulator-5554', 'shell', 'pm', 'path', 'android'],
+      ),
+    ).thenAnswer(
+      (_) async => ok('package:/system/framework/framework-res.apk\n'),
+    );
 
     final events = await poller
         .poll(
@@ -51,14 +58,17 @@ void main() {
 
   test('emits timeout when boot never completes', () async {
     when(() => runner.run('adb', ['devices', '-l'])).thenAnswer(
-        (_) async => ok('List of devices attached\nemulator-5554\tdevice\n'));
-    when(() => runner.run('adb', [
-          '-s',
-          'emulator-5554',
-          'shell',
-          'getprop',
-          'sys.boot_completed'
-        ])).thenAnswer((_) async => ok('0\n'));
+      (_) async => ok('List of devices attached\nemulator-5554\tdevice\n'),
+    );
+    when(
+      () => runner.run('adb', [
+        '-s',
+        'emulator-5554',
+        'shell',
+        'getprop',
+        'sys.boot_completed',
+      ]),
+    ).thenAnswer((_) async => ok('0\n'));
 
     final events = await poller
         .poll(
@@ -73,14 +83,17 @@ void main() {
 
   test('emits cancelled when token cancelled mid-flight', () async {
     when(() => runner.run('adb', ['devices', '-l'])).thenAnswer(
-        (_) async => ok('List of devices attached\nemulator-5554\tdevice\n'));
-    when(() => runner.run('adb', [
-          '-s',
-          'emulator-5554',
-          'shell',
-          'getprop',
-          'sys.boot_completed'
-        ])).thenAnswer((_) async => ok('0\n'));
+      (_) async => ok('List of devices attached\nemulator-5554\tdevice\n'),
+    );
+    when(
+      () => runner.run('adb', [
+        '-s',
+        'emulator-5554',
+        'shell',
+        'getprop',
+        'sys.boot_completed',
+      ]),
+    ).thenAnswer((_) async => ok('0\n'));
     final token = CancelToken();
 
     final stream = poller.poll(
@@ -99,30 +112,43 @@ void main() {
   });
 
   test('skips emulator whose AVD name does not match', () async {
-    when(() => runner.run('adb', ['devices', '-l'])).thenAnswer((_) async => ok(
-        'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n'));
-    when(() => runner.run('adb', [
-          '-s',
-          'emulator-5554',
-          'shell',
-          'getprop',
-          'sys.boot_completed'
-        ])).thenAnswer((_) async => ok('1\n'));
+    when(() => runner.run('adb', ['devices', '-l'])).thenAnswer(
+      (_) async => ok(
+        'List of devices attached\n'
+        'emulator-5554\tdevice\n'
+        'emulator-5556\tdevice\n',
+      ),
+    );
+    when(
+      () => runner.run('adb', [
+        '-s',
+        'emulator-5554',
+        'shell',
+        'getprop',
+        'sys.boot_completed',
+      ]),
+    ).thenAnswer((_) async => ok('1\n'));
     when(() => runner.run('adb', ['-s', 'emulator-5554', 'emu', 'avd', 'name']))
         .thenAnswer((_) async => ok('Tablet_API_33\nOK\n'));
-    when(() => runner.run('adb', [
-          '-s',
-          'emulator-5556',
-          'shell',
-          'getprop',
-          'sys.boot_completed'
-        ])).thenAnswer((_) async => ok('1\n'));
+    when(
+      () => runner.run('adb', [
+        '-s',
+        'emulator-5556',
+        'shell',
+        'getprop',
+        'sys.boot_completed',
+      ]),
+    ).thenAnswer((_) async => ok('1\n'));
     when(() => runner.run('adb', ['-s', 'emulator-5556', 'emu', 'avd', 'name']))
         .thenAnswer((_) async => ok('Pixel_5_API_34\nOK\n'));
-    when(() => runner.run(
-            'adb', ['-s', 'emulator-5556', 'shell', 'pm', 'path', 'android']))
-        .thenAnswer(
-            (_) async => ok('package:/system/framework/framework-res.apk\n'));
+    when(
+      () => runner.run(
+        'adb',
+        ['-s', 'emulator-5556', 'shell', 'pm', 'path', 'android'],
+      ),
+    ).thenAnswer(
+      (_) async => ok('package:/system/framework/framework-res.apk\n'),
+    );
 
     final events = await poller
         .poll(

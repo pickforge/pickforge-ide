@@ -30,8 +30,7 @@ class GitignoreHelper {
       return;
     }
     final current = await file.readAsString();
-    final needsLeadingNewline =
-        current.isNotEmpty && !current.endsWith('\n');
+    final needsLeadingNewline = current.isNotEmpty && !current.endsWith('\n');
     final suffix = needsLeadingNewline ? '\n$_entry\n' : '$_entry\n';
     await file.writeAsString(suffix, mode: FileMode.append);
   }

@@ -8,18 +8,17 @@ void main() {
   });
 
   test('cancel flips flag and fires onCancel once', () {
-    final token = CancelToken();
     var fired = 0;
-    token.onCancel(() => fired++);
-    token.cancel();
-    token.cancel();
+    final token = CancelToken()
+      ..onCancel(() => fired++)
+      ..cancel()
+      ..cancel();
     expect(token.isCancelled, isTrue);
     expect(fired, 1);
   });
 
   test('throwIfCancelled throws CancelledException after cancel', () {
-    final token = CancelToken();
-    token.cancel();
+    final token = CancelToken()..cancel();
     expect(token.throwIfCancelled, throwsA(isA<CancelledException>()));
   });
 

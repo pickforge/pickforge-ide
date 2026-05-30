@@ -41,7 +41,7 @@ Future<void> configureDependencies() async {
 Future<String> _defaultIpcSocketPath() async {
   final base =
       Platform.environment['XDG_RUNTIME_DIR'] ?? Directory.systemTemp.path;
-  final dir = Directory('$base/pickforge-${pid}');
+  final dir = Directory('$base/pickforge-$pid');
   await dir.create(recursive: true);
   return '${dir.path}/agent.sock';
 }

@@ -69,19 +69,23 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
   Future<void> clearEmulatorBinding(String projectRoot) {
     return (update(projectSettings)
           ..where((t) => t.projectRoot.equals(projectRoot)))
-        .write(const ProjectSettingsCompanion(
-      avdId: Value(null),
-      avdName: Value(null),
-      vmServiceUrl: Value(null),
-    ));
+        .write(
+      const ProjectSettingsCompanion(
+        avdId: Value(null),
+        avdName: Value(null),
+        vmServiceUrl: Value(null),
+      ),
+    );
   }
 
   Future<void> markFirstRunCelebrated(String projectRoot) {
     return (update(projectSettings)
           ..where((t) => t.projectRoot.equals(projectRoot)))
-        .write(const ProjectSettingsCompanion(
-      firstRunCelebrated: Value(true),
-    ));
+        .write(
+      const ProjectSettingsCompanion(
+        firstRunCelebrated: Value(true),
+      ),
+    );
   }
 
   Value<String?> _nullableTextValue(Object? value) {
@@ -92,6 +96,9 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
     }
     if (value is String?) return Value(value);
     throw ArgumentError.value(
-        value, 'value', 'Expected String? or Value<String?>');
+      value,
+      'value',
+      'Expected String? or Value<String?>',
+    );
   }
 }

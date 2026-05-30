@@ -102,8 +102,7 @@ class _ProjectsTree extends StatelessWidget {
         if (projectsState is ProjectsError) {
           return _Empty(text: projectsState.message);
         }
-        if (projectsState is! ProjectsReady ||
-            projectsState.projects.isEmpty) {
+        if (projectsState is! ProjectsReady || projectsState.projects.isEmpty) {
           return _Empty(text: l10n.workbenchNoProjects);
         }
         return BlocBuilder<ChatsCubit, ChatsState>(
@@ -149,9 +148,8 @@ class _ProjectsTree extends StatelessWidget {
                       _ChatTile(
                         chat: chat,
                         isActive: chat.chatId == activeId,
-                        onTap: () => context
-                            .read<ChatsCubit>()
-                            .selectChat(chat.chatId),
+                        onTap: () =>
+                            context.read<ChatsCubit>().selectChat(chat.chatId),
                       ),
                     );
                   }
@@ -231,9 +229,7 @@ class _ProjectHeaderTile extends StatelessWidget {
           onTap: () {
             onToggle();
             unawaited(
-              context
-                  .read<ProjectsCubit>()
-                  .selectProject(project.projectRoot),
+              context.read<ProjectsCubit>().selectProject(project.projectRoot),
             );
           },
           hoverColor: cs.onSurface.withValues(alpha: 0.06),
@@ -253,9 +249,8 @@ class _ProjectHeaderTile extends StatelessWidget {
                     project.displayName,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: isActiveProject
-                          ? FontWeight.w600
-                          : FontWeight.normal,
+                      fontWeight:
+                          isActiveProject ? FontWeight.w600 : FontWeight.normal,
                       color: isActiveProject ? cs.primary : cs.onSurface,
                     ),
                   ),
@@ -293,9 +288,8 @@ class _ChatTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 1, 6, 1),
       child: Material(
-        color: isActive
-            ? cs.primary.withValues(alpha: 0.12)
-            : Colors.transparent,
+        color:
+            isActive ? cs.primary.withValues(alpha: 0.12) : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
         clipBehavior: Clip.antiAlias,
         child: InkWell(

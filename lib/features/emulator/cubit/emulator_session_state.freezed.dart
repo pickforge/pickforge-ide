@@ -184,19 +184,13 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult Function(Avd avd)? cold,
     TResult Function(Avd avd, int elapsedMs)? booting,
     TResult Function(Avd avd, String serial)? idle,
-    TResult Function(
-            Avd? avd,
-            String? serial,
-            String? appId,
-            String vmServiceUri,
-            RunStats stats,
-            bool manual,
-            DateTime? lastReloadAt)?
+    TResult Function(String vmServiceUri, RunStats stats, Avd? avd,
+            String? serial, String? appId, bool manual, DateTime? lastReloadAt)?
         running,
     TResult Function(Avd avd, String serial, String appId, int attempt)?
         reconnecting,
     TResult Function(
-            Avd? avd, String? serial, String? lastVmServiceUri, String message)?
+            String message, Avd? avd, String? serial, String? lastVmServiceUri)?
         error,
     required TResult orElse(),
   }) {
@@ -211,14 +205,14 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
       case Idle() when idle != null:
         return idle(_that.avd, _that.serial);
       case Running() when running != null:
-        return running(_that.avd, _that.serial, _that.appId, _that.vmServiceUri,
-            _that.stats, _that.manual, _that.lastReloadAt);
+        return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
+            _that.appId, _that.manual, _that.lastReloadAt);
       case Reconnecting() when reconnecting != null:
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
       case EmulatorError() when error != null:
         return error(
-            _that.avd, _that.serial, _that.lastVmServiceUri, _that.message);
+            _that.message, _that.avd, _that.serial, _that.lastVmServiceUri);
       case _:
         return orElse();
     }
@@ -243,19 +237,13 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     required TResult Function(Avd avd) cold,
     required TResult Function(Avd avd, int elapsedMs) booting,
     required TResult Function(Avd avd, String serial) idle,
-    required TResult Function(
-            Avd? avd,
-            String? serial,
-            String? appId,
-            String vmServiceUri,
-            RunStats stats,
-            bool manual,
-            DateTime? lastReloadAt)
+    required TResult Function(String vmServiceUri, RunStats stats, Avd? avd,
+            String? serial, String? appId, bool manual, DateTime? lastReloadAt)
         running,
     required TResult Function(Avd avd, String serial, String appId, int attempt)
         reconnecting,
     required TResult Function(
-            Avd? avd, String? serial, String? lastVmServiceUri, String message)
+            String message, Avd? avd, String? serial, String? lastVmServiceUri)
         error,
   }) {
     final _that = this;
@@ -269,14 +257,14 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
       case Idle():
         return idle(_that.avd, _that.serial);
       case Running():
-        return running(_that.avd, _that.serial, _that.appId, _that.vmServiceUri,
-            _that.stats, _that.manual, _that.lastReloadAt);
+        return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
+            _that.appId, _that.manual, _that.lastReloadAt);
       case Reconnecting():
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
       case EmulatorError():
         return error(
-            _that.avd, _that.serial, _that.lastVmServiceUri, _that.message);
+            _that.message, _that.avd, _that.serial, _that.lastVmServiceUri);
     }
   }
 
@@ -298,19 +286,13 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult? Function(Avd avd)? cold,
     TResult? Function(Avd avd, int elapsedMs)? booting,
     TResult? Function(Avd avd, String serial)? idle,
-    TResult? Function(
-            Avd? avd,
-            String? serial,
-            String? appId,
-            String vmServiceUri,
-            RunStats stats,
-            bool manual,
-            DateTime? lastReloadAt)?
+    TResult? Function(String vmServiceUri, RunStats stats, Avd? avd,
+            String? serial, String? appId, bool manual, DateTime? lastReloadAt)?
         running,
     TResult? Function(Avd avd, String serial, String appId, int attempt)?
         reconnecting,
     TResult? Function(
-            Avd? avd, String? serial, String? lastVmServiceUri, String message)?
+            String message, Avd? avd, String? serial, String? lastVmServiceUri)?
         error,
   }) {
     final _that = this;
@@ -324,14 +306,14 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
       case Idle() when idle != null:
         return idle(_that.avd, _that.serial);
       case Running() when running != null:
-        return running(_that.avd, _that.serial, _that.appId, _that.vmServiceUri,
-            _that.stats, _that.manual, _that.lastReloadAt);
+        return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
+            _that.appId, _that.manual, _that.lastReloadAt);
       case Reconnecting() when reconnecting != null:
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
       case EmulatorError() when error != null:
         return error(
-            _that.avd, _that.serial, _that.lastVmServiceUri, _that.message);
+            _that.message, _that.avd, _that.serial, _that.lastVmServiceUri);
       case _:
         return null;
     }
@@ -564,19 +546,19 @@ class _$IdleCopyWithImpl<$Res> implements $IdleCopyWith<$Res> {
 
 class Running implements EmulatorSessionState {
   Running(
-      {this.avd,
+      {required this.vmServiceUri,
+      required this.stats,
+      this.avd,
       this.serial,
       this.appId,
-      required this.vmServiceUri,
-      required this.stats,
       this.manual = false,
       this.lastReloadAt});
 
+  final String vmServiceUri;
+  final RunStats stats;
   final Avd? avd;
   final String? serial;
   final String? appId;
-  final String vmServiceUri;
-  final RunStats stats;
   @JsonKey()
   final bool manual;
   final DateTime? lastReloadAt;
@@ -593,24 +575,24 @@ class Running implements EmulatorSessionState {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is Running &&
-            (identical(other.avd, avd) || other.avd == avd) &&
-            (identical(other.serial, serial) || other.serial == serial) &&
-            (identical(other.appId, appId) || other.appId == appId) &&
             (identical(other.vmServiceUri, vmServiceUri) ||
                 other.vmServiceUri == vmServiceUri) &&
             (identical(other.stats, stats) || other.stats == stats) &&
+            (identical(other.avd, avd) || other.avd == avd) &&
+            (identical(other.serial, serial) || other.serial == serial) &&
+            (identical(other.appId, appId) || other.appId == appId) &&
             (identical(other.manual, manual) || other.manual == manual) &&
             (identical(other.lastReloadAt, lastReloadAt) ||
                 other.lastReloadAt == lastReloadAt));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, avd, serial, appId, vmServiceUri,
-      stats, manual, lastReloadAt);
+  int get hashCode => Object.hash(runtimeType, vmServiceUri, stats, avd, serial,
+      appId, manual, lastReloadAt);
 
   @override
   String toString() {
-    return 'EmulatorSessionState.running(avd: $avd, serial: $serial, appId: $appId, vmServiceUri: $vmServiceUri, stats: $stats, manual: $manual, lastReloadAt: $lastReloadAt)';
+    return 'EmulatorSessionState.running(vmServiceUri: $vmServiceUri, stats: $stats, avd: $avd, serial: $serial, appId: $appId, manual: $manual, lastReloadAt: $lastReloadAt)';
   }
 }
 
@@ -621,11 +603,11 @@ abstract mixin class $RunningCopyWith<$Res>
       _$RunningCopyWithImpl;
   @useResult
   $Res call(
-      {Avd? avd,
+      {String vmServiceUri,
+      RunStats stats,
+      Avd? avd,
       String? serial,
       String? appId,
-      String vmServiceUri,
-      RunStats stats,
       bool manual,
       DateTime? lastReloadAt});
 }
@@ -641,15 +623,23 @@ class _$RunningCopyWithImpl<$Res> implements $RunningCopyWith<$Res> {
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   $Res call({
+    Object? vmServiceUri = null,
+    Object? stats = null,
     Object? avd = freezed,
     Object? serial = freezed,
     Object? appId = freezed,
-    Object? vmServiceUri = null,
-    Object? stats = null,
     Object? manual = null,
     Object? lastReloadAt = freezed,
   }) {
     return _then(Running(
+      vmServiceUri: null == vmServiceUri
+          ? _self.vmServiceUri
+          : vmServiceUri // ignore: cast_nullable_to_non_nullable
+              as String,
+      stats: null == stats
+          ? _self.stats
+          : stats // ignore: cast_nullable_to_non_nullable
+              as RunStats,
       avd: freezed == avd
           ? _self.avd
           : avd // ignore: cast_nullable_to_non_nullable
@@ -662,14 +652,6 @@ class _$RunningCopyWithImpl<$Res> implements $RunningCopyWith<$Res> {
           ? _self.appId
           : appId // ignore: cast_nullable_to_non_nullable
               as String?,
-      vmServiceUri: null == vmServiceUri
-          ? _self.vmServiceUri
-          : vmServiceUri // ignore: cast_nullable_to_non_nullable
-              as String,
-      stats: null == stats
-          ? _self.stats
-          : stats // ignore: cast_nullable_to_non_nullable
-              as RunStats,
       manual: null == manual
           ? _self.manual
           : manual // ignore: cast_nullable_to_non_nullable
@@ -775,12 +757,12 @@ class _$ReconnectingCopyWithImpl<$Res> implements $ReconnectingCopyWith<$Res> {
 
 class EmulatorError implements EmulatorSessionState {
   const EmulatorError(
-      {this.avd, this.serial, this.lastVmServiceUri, required this.message});
+      {required this.message, this.avd, this.serial, this.lastVmServiceUri});
 
+  final String message;
   final Avd? avd;
   final String? serial;
   final String? lastVmServiceUri;
-  final String message;
 
   /// Create a copy of EmulatorSessionState
   /// with the given fields replaced by the non-null parameter values.
@@ -794,20 +776,20 @@ class EmulatorError implements EmulatorSessionState {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is EmulatorError &&
+            (identical(other.message, message) || other.message == message) &&
             (identical(other.avd, avd) || other.avd == avd) &&
             (identical(other.serial, serial) || other.serial == serial) &&
             (identical(other.lastVmServiceUri, lastVmServiceUri) ||
-                other.lastVmServiceUri == lastVmServiceUri) &&
-            (identical(other.message, message) || other.message == message));
+                other.lastVmServiceUri == lastVmServiceUri));
   }
 
   @override
   int get hashCode =>
-      Object.hash(runtimeType, avd, serial, lastVmServiceUri, message);
+      Object.hash(runtimeType, message, avd, serial, lastVmServiceUri);
 
   @override
   String toString() {
-    return 'EmulatorSessionState.error(avd: $avd, serial: $serial, lastVmServiceUri: $lastVmServiceUri, message: $message)';
+    return 'EmulatorSessionState.error(message: $message, avd: $avd, serial: $serial, lastVmServiceUri: $lastVmServiceUri)';
   }
 }
 
@@ -819,7 +801,7 @@ abstract mixin class $EmulatorErrorCopyWith<$Res>
       _$EmulatorErrorCopyWithImpl;
   @useResult
   $Res call(
-      {Avd? avd, String? serial, String? lastVmServiceUri, String message});
+      {String message, Avd? avd, String? serial, String? lastVmServiceUri});
 }
 
 /// @nodoc
@@ -834,12 +816,16 @@ class _$EmulatorErrorCopyWithImpl<$Res>
   /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   $Res call({
+    Object? message = null,
     Object? avd = freezed,
     Object? serial = freezed,
     Object? lastVmServiceUri = freezed,
-    Object? message = null,
   }) {
     return _then(EmulatorError(
+      message: null == message
+          ? _self.message
+          : message // ignore: cast_nullable_to_non_nullable
+              as String,
       avd: freezed == avd
           ? _self.avd
           : avd // ignore: cast_nullable_to_non_nullable
@@ -852,10 +838,6 @@ class _$EmulatorErrorCopyWithImpl<$Res>
           ? _self.lastVmServiceUri
           : lastVmServiceUri // ignore: cast_nullable_to_non_nullable
               as String?,
-      message: null == message
-          ? _self.message
-          : message // ignore: cast_nullable_to_non_nullable
-              as String,
     ));
   }
 }

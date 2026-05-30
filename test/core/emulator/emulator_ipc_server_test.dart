@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,7 +14,7 @@ void main() {
     final tmp = await Directory.systemTemp.createTemp('pf-ipc-');
     final server = EmulatorIpcServer(socketPath: '${tmp.path}/sock');
     final session = _Session();
-    when(() => session.hotReload()).thenAnswer((_) async => true);
+    when(session.hotReload).thenAnswer((_) async => true);
     when(() => session.appId).thenReturn('app-1');
     when(() => session.vmServiceUri).thenReturn('ws://x/ws');
 
@@ -29,7 +28,7 @@ void main() {
 
     expect(reply['id'], 1);
     expect(reply['result'], {'ok': true});
-    verify(() => session.hotReload()).called(1);
+    verify(session.hotReload).called(1);
   });
 
   test('returns error when no run session bound', () async {
@@ -50,7 +49,9 @@ void main() {
 }
 
 Future<Map<String, dynamic>> _send(
-    String socketPath, Map<String, Object?> request) async {
+  String socketPath,
+  Map<String, Object?> request,
+) async {
   final socket = await Socket.connect(
     InternetAddress(socketPath, type: InternetAddressType.unix),
     0,

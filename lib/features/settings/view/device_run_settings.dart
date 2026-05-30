@@ -19,8 +19,10 @@ class DeviceRunSettings extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Device & Run',
-                style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Device & Run',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             _AvdDropdown(projectRoot: projectRoot, state: state),
             const SizedBox(height: 8),
@@ -31,7 +33,7 @@ class DeviceRunSettings extends StatelessWidget {
                 value: binding.autoBootOnSelect,
                 onChanged: (value) => context
                     .read<DeviceRunSettingsCubit>()
-                    .setAutoBoot(projectRoot, value)
+                    .setAutoBoot(projectRoot, enabled: value)
                     .ignore(),
               ),
             const SizedBox(height: 8),

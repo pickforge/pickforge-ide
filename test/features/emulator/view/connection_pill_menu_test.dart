@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_mixin, reason: Cubit test fakes mix in Mock.
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,15 +18,18 @@ class _FakeCubit extends Cubit<EmulatorSessionState>
 
 void main() {
   Future<void> pump(WidgetTester tester, EmulatorSessionState state) async {
-    await tester.pumpWidget(MaterialApp(
-      home: BlocProvider<EmulatorSessionCubit>.value(
-        value: _FakeCubit(state),
-        child: const Scaffold(body: ConnectionPill()),
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<EmulatorSessionCubit>.value(
+          value: _FakeCubit(state),
+          child: const Scaffold(body: ConnectionPill()),
+        ),
       ),
-    ));
+    );
   }
 
-  testWidgets('dropdown surfaces Pick different when state is Cold', (tester) async {
+  testWidgets('dropdown surfaces Pick different when state is Cold',
+      (tester) async {
     await pump(
       tester,
       const EmulatorSessionState.cold(
@@ -38,7 +43,8 @@ void main() {
     expect(find.text('Forget device'), findsOneWidget);
   });
 
-  testWidgets('Running state surfaces Hot restart, Stop, View logs', (tester) async {
+  testWidgets('Running state surfaces Hot restart, Stop, View logs',
+      (tester) async {
     await pump(
       tester,
       EmulatorSessionState.running(vmServiceUri: 'ws://x', stats: RunStats()),

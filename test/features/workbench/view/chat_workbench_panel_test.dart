@@ -5,6 +5,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/dao/project_settings_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
@@ -14,13 +15,17 @@ class _MockRepo extends Mock implements ChatsRepository {}
 
 class _MockDao extends Mock implements ProjectSettingsDao {}
 
+class _MockSettings extends Mock implements ProjectSettingsRepository {}
+
 void main() {
   testWidgets('renders empty placeholder when no chat is active',
       (tester) async {
     final repo = _MockRepo();
     when(() => repo.list(any())).thenAnswer((_) async => <ChatRow>[]);
+    final settings = _MockSettings();
+    when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
-    final cubit = ChatsCubit(repo);
+    final cubit = ChatsCubit(repo, settings);
     await cubit.syncProjects(['/p']);
 
     await tester.pumpWidget(
@@ -43,8 +48,10 @@ void main() {
   testWidgets('shows run logs pane when expanded', (tester) async {
     final repo = _MockRepo();
     when(() => repo.list(any())).thenAnswer((_) async => <ChatRow>[]);
+    final settings = _MockSettings();
+    when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
-    final cubit = ChatsCubit(repo);
+    final cubit = ChatsCubit(repo, settings);
     await cubit.syncProjects(['/p']);
     final layout = WorkbenchLayoutCubit(_MockDao())..toggleRunLogs();
 

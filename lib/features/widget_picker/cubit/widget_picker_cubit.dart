@@ -25,7 +25,11 @@ class WidgetPickerCubit extends Cubit<WidgetPickerState> {
   @override
   Future<void> close() async {
     await _subscription?.cancel();
-    await _repo.disableSelectMode();
+    try {
+      await _repo.disableSelectMode();
+    } on Object {
+      // The VM service may already be gone while the picker is being disposed.
+    }
     return super.close();
   }
 }

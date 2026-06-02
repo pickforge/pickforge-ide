@@ -9,6 +9,7 @@ import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/dao/project_settings_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -21,6 +22,8 @@ class _MockDao extends Mock implements ProjectSettingsDao {}
 class _MockProjectsRepo extends Mock implements ProjectsRepository {}
 
 class _MockChatsRepo extends Mock implements ChatsRepository {}
+
+class _MockSettings extends Mock implements ProjectSettingsRepository {}
 
 class _MockWidgetPickerCubit extends Mock implements WidgetPickerCubit {}
 
@@ -38,6 +41,8 @@ void main() {
 
     final cRepo = _MockChatsRepo();
     when(() => cRepo.list(any())).thenAnswer((_) async => <ChatRow>[]);
+    final settings = _MockSettings();
+    when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
     final picker = _MockWidgetPickerCubit();
     final pickerState = WidgetPickerState.initial();
@@ -57,7 +62,7 @@ void main() {
             providers: [
               BlocProvider.value(value: layoutCubit),
               BlocProvider.value(value: ProjectsCubit(pRepo)),
-              BlocProvider.value(value: ChatsCubit(cRepo)),
+              BlocProvider.value(value: ChatsCubit(cRepo, settings)),
               BlocProvider<WidgetPickerCubit>.value(value: picker),
             ],
             child: const AppShellView(),

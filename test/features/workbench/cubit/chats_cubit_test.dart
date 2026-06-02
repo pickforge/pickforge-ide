@@ -3,10 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 
 class _MockRepo extends Mock implements ChatsRepository {}
+
+class _MockSettings extends Mock implements ProjectSettingsRepository {}
 
 ChatRow _row(String id, String project, String title) => ChatRow(
       chatId: id,
@@ -20,7 +23,14 @@ ChatRow _row(String id, String project, String title) => ChatRow(
 
 void main() {
   late _MockRepo repo;
-  setUp(() => repo = _MockRepo());
+  late _MockSettings settings;
+
+  setUp(() {
+    repo = _MockRepo();
+    settings = _MockSettings();
+    when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
+    when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
+  });
 
   blocTest<ChatsCubit, ChatsState>(
     'syncProjects emits Loading then Ready with chats grouped by project',
@@ -29,7 +39,7 @@ void main() {
           .thenAnswer((_) async => [_row('c1', '/p', 'Chat 1')]);
       when(() => repo.list('/q')).thenAnswer((_) async => <ChatRow>[]);
     },
-    build: () => ChatsCubit(repo),
+    build: () => ChatsCubit(repo, settings),
     act: (c) => c.syncProjects(['/p', '/q'], defaultExpand: '/p'),
     expect: () => [
       isA<ChatsLoading>(),
@@ -52,7 +62,7 @@ void main() {
         ),
       ).thenAnswer((_) async => 'c-new');
     },
-    build: () => ChatsCubit(repo),
+    build: () => ChatsCubit(repo, settings),
     act: (c) async {
       await c.syncProjects(['/p']);
       when(() => repo.list('/p'))
@@ -66,6 +76,9 @@ void main() {
           .having((s) => s.chatsByProject['/p']!.length, 'count', 1)
           .having((s) => s.expanded.contains('/p'), 'expanded', true),
     ],
+    verify: (_) {
+      verify(() => settings.setLastChatId('/p', 'c-new')).called(1);
+    },
   );
 
   blocTest<ChatsCubit, ChatsState>(
@@ -75,14 +88,57 @@ void main() {
         (_) async => [_row('c1', '/p', 'Chat 1'), _row('c2', '/p', 'Chat 2')],
       );
     },
-    build: () => ChatsCubit(repo),
+    build: () => ChatsCubit(repo, settings),
     act: (c) async {
       await c.syncProjects(['/p']);
-      c.selectChat('c2');
+      await c.selectChat('c2');
     },
     skip: 2,
     expect: () => [
       isA<ChatsReady>().having((s) => s.activeChatId, 'active', 'c2'),
+    ],
+    verify: (_) {
+      verify(() => settings.setLastChatId('/p', 'c2')).called(1);
+    },
+  );
+
+  blocTest<ChatsCubit, ChatsState>(
+    'syncProjects restores saved active chat for active project',
+    setUp: () {
+      when(() => repo.list('/p')).thenAnswer(
+        (_) async => [_row('c1', '/p', 'Chat 1'), _row('c2', '/p', 'Chat 2')],
+      );
+      when(() => settings.getLastChatId('/p')).thenAnswer((_) async => 'c2');
+    },
+    build: () => ChatsCubit(repo, settings),
+    act: (c) => c.syncProjects(['/p'], defaultExpand: '/p'),
+    expect: () => [
+      isA<ChatsLoading>(),
+      isA<ChatsReady>().having((s) => s.activeChatId, 'active', 'c2'),
+    ],
+  );
+
+  blocTest<ChatsCubit, ChatsState>(
+    'syncProjects switches active chat when active project changes',
+    setUp: () {
+      when(() => repo.list('/a'))
+          .thenAnswer((_) async => [_row('a-chat', '/a', 'Chat A')]);
+      when(() => repo.list('/b'))
+          .thenAnswer((_) async => [_row('b-chat', '/b', 'Chat B')]);
+      when(() => settings.getLastChatId('/a'))
+          .thenAnswer((_) async => 'a-chat');
+      when(() => settings.getLastChatId('/b'))
+          .thenAnswer((_) async => 'b-chat');
+    },
+    build: () => ChatsCubit(repo, settings),
+    act: (c) async {
+      await c.syncProjects(['/a', '/b'], defaultExpand: '/a');
+      await c.syncProjects(['/a', '/b'], defaultExpand: '/b');
+    },
+    expect: () => [
+      isA<ChatsLoading>(),
+      isA<ChatsReady>().having((s) => s.activeChatId, 'active', 'a-chat'),
+      isA<ChatsReady>().having((s) => s.activeChatId, 'active', 'b-chat'),
     ],
   );
 
@@ -91,7 +147,7 @@ void main() {
     setUp: () {
       when(() => repo.list('/p')).thenAnswer((_) async => <ChatRow>[]);
     },
-    build: () => ChatsCubit(repo),
+    build: () => ChatsCubit(repo, settings),
     act: (c) async {
       await c.syncProjects(['/p']);
       c.toggleExpanded('/p');

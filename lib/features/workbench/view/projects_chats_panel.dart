@@ -148,8 +148,16 @@ class _ProjectsTree extends StatelessWidget {
                       _ChatTile(
                         chat: chat,
                         isActive: chat.chatId == activeId,
-                        onTap: () =>
+                        onTap: () {
+                          unawaited(
+                            context
+                                .read<ProjectsCubit>()
+                                .selectProject(chat.projectRoot),
+                          );
+                          unawaited(
                             context.read<ChatsCubit>().selectChat(chat.chatId),
+                          );
+                        },
                       ),
                     );
                   }

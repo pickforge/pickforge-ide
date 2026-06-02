@@ -12,18 +12,45 @@ class ForgePanel extends StatelessWidget {
   const ForgePanel({
     required this.selection,
     required this.projectRoot,
+    required this.chatId,
+    this.cubit,
     super.key,
   });
 
   final SelectedWidget? selection;
   final String projectRoot;
+  final String? chatId;
+  final ForgeCubit? cubit;
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => getIt<ForgeCubit>(),
-      child: _ForgePanelBody(selection: selection, projectRoot: projectRoot),
-    );
+    if (cubit != null) {
+      return BlocProvider.value(
+        value: cubit!,
+        child: _ForgePanelBody(
+          selection: selection,
+          projectRoot: projectRoot,
+          chatId: chatId,
+        ),
+      );
+    }
+    try {
+      context.read<ForgeCubit>();
+      return _ForgePanelBody(
+        selection: selection,
+        projectRoot: projectRoot,
+        chatId: chatId,
+      );
+    } on ProviderNotFoundException {
+      return BlocProvider(
+        create: (_) => getIt<ForgeCubit>(),
+        child: _ForgePanelBody(
+          selection: selection,
+          projectRoot: projectRoot,
+          chatId: chatId,
+        ),
+      );
+    }
   }
 }
 
@@ -31,10 +58,12 @@ class _ForgePanelBody extends StatelessWidget {
   const _ForgePanelBody({
     required this.selection,
     required this.projectRoot,
+    required this.chatId,
   });
 
   final SelectedWidget? selection;
   final String projectRoot;
+  final String? chatId;
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +72,7 @@ class _ForgePanelBody extends StatelessWidget {
     return BlocBuilder<ForgeCubit, ForgeState>(
       builder: (context, state) {
         final cubit = context.read<ForgeCubit>();
+        final canForge = selection != null && chatId != null;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
@@ -57,12 +87,12 @@ class _ForgePanelBody extends StatelessWidget {
               ),
               const Spacer(),
               FilledButton(
-                onPressed: (selection == null || state.launching)
+                onPressed: (!canForge || state.launching)
                     ? null
                     : () => cubit.forge(
                           selection: selection!,
                           projectRoot: projectRoot,
-                          chatId: 'legacy-forge-panel',
+                          chatId: chatId!,
                         ),
                 child: Text(l10n.forgeItButton),
               ),

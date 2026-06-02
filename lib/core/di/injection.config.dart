@@ -131,8 +131,6 @@ extension GetItInjectableX on _i174.GetIt {
           gh<_i810.WidgetContextRenderer>(),
         ));
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
-    gh.factory<_i154.ChatsCubit>(
-        () => _i154.ChatsCubit(gh<_i779.ChatsRepository>()));
     gh.lazySingleton<_i195.EmbeddedTerminalSettingsRepository>(() =>
         _i195.EmbeddedTerminalSettingsRepository(
             gh<_i460.SharedPreferences>()));
@@ -146,6 +144,10 @@ extension GetItInjectableX on _i174.GetIt {
           gh<_i683.AgentLauncher>(),
           gh<_i704.AdbScreenshotCapturer>(),
           gh<_i685.PtySessionPool>(),
+        ));
+    gh.factory<_i154.ChatsCubit>(() => _i154.ChatsCubit(
+          gh<_i779.ChatsRepository>(),
+          gh<_i340.ProjectSettingsRepository>(),
         ));
     gh.factory<_i132.DevicePickerCubit>(
         () => _i132.DevicePickerCubit(gh<_i577.DeviceDiscoveryService>()));

@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/features/emulator/view/connection_pill.dart';
+import 'package:pickforge/features/forge/forge.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
+import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/chats_state.dart';
+import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 
 class InspectorPanel extends StatelessWidget {
   const InspectorPanel({super.key, this.cubit});
@@ -27,6 +32,17 @@ class _Inner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final projectRoot = switch (context.watch<ProjectsCubit>().state) {
+      ProjectsReady(:final activeProjectRoot) => activeProjectRoot,
+      _ => null,
+    };
+    final activeChat = switch (context.watch<ChatsCubit>().state) {
+      ChatsReady(:final activeChat) => activeChat,
+      _ => null,
+    };
+    final activeChatId =
+        activeChat?.projectRoot == projectRoot ? activeChat?.chatId : null;
+
     return BlocBuilder<WidgetPickerCubit, WidgetPickerState>(
       builder: (context, state) {
         final selection = state.selection;
@@ -42,6 +58,14 @@ class _Inner extends StatelessWidget {
                     ? const Center(child: Text('No widget selected'))
                     : WidgetDetailsPanel(selected: selection),
               ),
+              if (projectRoot != null) ...[
+                const Divider(height: 1),
+                ForgePanel(
+                  selection: selection,
+                  projectRoot: projectRoot,
+                  chatId: activeChatId,
+                ),
+              ],
             ],
           ),
         );

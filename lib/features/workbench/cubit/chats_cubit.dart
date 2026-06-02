@@ -5,13 +5,15 @@ import 'package:injectable/injectable.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 
 @injectable
 class ChatsCubit extends Cubit<ChatsState> {
-  ChatsCubit(this._repo) : super(const ChatsInitial());
+  ChatsCubit(this._repo, this._settings) : super(const ChatsInitial());
 
   final ChatsRepository _repo;
+  final ProjectSettingsRepository _settings;
 
   Future<void> syncProjects(
     List<String> projectRoots, {
@@ -43,9 +45,22 @@ class ChatsCubit extends Cubit<ChatsState> {
     }
 
     final priorActive = priorReady?.activeChatId;
+    final savedActive =
+        defaultExpand == null || !projectRoots.contains(defaultExpand)
+            ? null
+            : await _settings.getLastChatId(defaultExpand);
     final stillExists = priorActive != null &&
-        newChats.values.any((l) => l.any((c) => c.chatId == priorActive));
-    final activeId = stillExists ? priorActive : null;
+        (defaultExpand == null
+            ? newChats.values.any((l) => l.any((c) => c.chatId == priorActive))
+            : newChats[defaultExpand]?.any((c) => c.chatId == priorActive) ==
+                true);
+    final savedExists = savedActive != null &&
+        newChats[defaultExpand]?.any((c) => c.chatId == savedActive) == true;
+    final activeId = stillExists
+        ? priorActive
+        : savedExists
+            ? savedActive
+            : null;
 
     emit(
       ChatsReady(
@@ -87,14 +102,17 @@ class ChatsCubit extends Cubit<ChatsState> {
           activeChatId: id,
         ),
       );
+      await _settings.setLastChatId(projectRoot, id);
     }
     return id;
   }
 
-  void selectChat(String chatId) {
+  Future<void> selectChat(String chatId) async {
     final s = state;
     if (s is! ChatsReady) return;
+    final root = _projectOfChat(s, chatId);
     emit(s.copyWith(activeChatId: chatId));
+    if (root != null) await _settings.setLastChatId(root, chatId);
   }
 
   void toggleExpanded(String projectRoot) {
@@ -128,6 +146,7 @@ class ChatsCubit extends Cubit<ChatsState> {
       }
       await _refreshProject(root);
       if (s.activeChatId == chatId) {
+        await _settings.setLastChatId(root, null);
         final after = state;
         if (after is ChatsReady) {
           emit(after.copyWith(activeChatId: null));

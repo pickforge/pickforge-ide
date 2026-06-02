@@ -15,6 +15,7 @@ import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
+import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
@@ -109,7 +110,10 @@ class _AppShellViewState extends State<AppShellView> {
                   },
                 ),
               ],
-              child: scaffold,
+              child: WidgetPickerScope(
+                vmClient: getIt<VmServiceClient>(),
+                child: scaffold,
+              ),
             );
           },
         );

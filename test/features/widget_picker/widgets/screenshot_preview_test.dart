@@ -10,4 +10,12 @@ void main() {
 
     expect(find.byType(Image), findsNothing);
   });
+
+  testWidgets('path renders image preview', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: ScreenshotPreview(path: '/tmp/screenshot.png')),
+    );
+
+    expect(find.byType(Image), findsOneWidget);
+  });
 }

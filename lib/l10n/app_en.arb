@@ -9,6 +9,7 @@
   "connectStatusConnected": "Connected",
   "connectStatusError": "Couldn't reach VM Service. Is your app running?",
   "forgeItButton": "Forge it",
+  "forgePickUserCodeHint": "Pick a widget from your app source.",
   "historyTitle": "Recent forges",
   "settingsTitle": "Settings",
   "workbenchProjectsHeader": "Projects",

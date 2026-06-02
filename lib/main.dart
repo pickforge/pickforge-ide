@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/di/injection.dart';
@@ -67,7 +67,7 @@ class PickforgeApp extends StatelessWidget {
         ),
       ],
       child: BlocListener<ProjectsCubit, ProjectsState>(
-        listenWhen: (a, b) => b is ProjectsReady,
+        listenWhen: shouldSyncChatsForProjects,
         listener: (context, state) {
           if (state is! ProjectsReady) return;
           unawaited(
@@ -89,4 +89,13 @@ class PickforgeApp extends StatelessWidget {
       ),
     );
   }
+}
+
+bool shouldSyncChatsForProjects(ProjectsState previous, ProjectsState current) {
+  if (current is! ProjectsReady) return false;
+  if (previous is! ProjectsReady) return true;
+
+  final previousRoots = previous.projects.map((p) => p.projectRoot).toList();
+  final currentRoots = current.projects.map((p) => p.projectRoot).toList();
+  return !listEquals(previousRoots, currentRoots);
 }

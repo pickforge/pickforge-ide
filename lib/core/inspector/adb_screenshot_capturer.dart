@@ -1,6 +1,8 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/process/binary_detector.dart';
+import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 
 /// Function type for running a process — abstracted for testing.
 typedef AdbProcessRunner = Future<ProcessResult> Function(
@@ -59,12 +61,11 @@ class AdbScreenshotCapturer {
     if (pngBytes is! List<int> || pngBytes.isEmpty) return null;
 
     // 4. Write to file
-    final outputDirObj = Directory(outputDir);
-    if (!outputDirObj.existsSync()) {
-      outputDirObj.createSync(recursive: true);
-    }
+    final outputDirObj = p.basename(outputDir) == '.pickforge'
+        ? await PickforgeProjectDirectory.ensureDirectory(Directory(outputDir))
+        : await Directory(outputDir).create(recursive: true);
 
-    final outputPath = '$outputDir/device-screen.png';
+    final outputPath = p.join(outputDirObj.path, 'device-screen.png');
     await File(outputPath).writeAsBytes(pngBytes);
 
     // 5. Return path

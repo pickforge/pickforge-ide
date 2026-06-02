@@ -125,4 +125,44 @@ void main() {
       tempDir.deleteSync(recursive: true);
     }
   });
+
+  test('prepareContext includes inspector and device screenshot filenames',
+      () async {
+    final tempDir = Directory.systemTemp.createTempSync('agent_launcher_test_');
+    try {
+      final req = ForgeRequest(
+        agentId: AgentProfileId.opencode,
+        skill: SkillId.editWidget,
+        widget: SelectedWidget(
+          node: const WidgetNode(
+            id: 'w-1',
+            className: 'MyWidget',
+            children: [],
+            creationLocation: null,
+          ),
+          ancestorClasses: const ['MaterialApp'],
+          sourceSnippet: null,
+          screenshotPath: '${tempDir.path}/.pickforge/screenshot.png',
+          adbScreenshotPath: '${tempDir.path}/.pickforge/device-screen.png',
+          propertiesJson: const {},
+        ),
+        terminalId: 'unused',
+        projectRoot: tempDir.path,
+      );
+
+      await launcher.prepareContext(req);
+
+      verify(
+        () => mockAgent.buildInitialPrompt(
+          pickforgeDirRelative: '.pickforge',
+          skillFilename: 'skill-active.md',
+          widgetContextFilename: 'widget-context.md',
+          screenshotFilename: 'screenshot.png',
+          deviceScreenFilename: 'device-screen.png',
+        ),
+      ).called(1);
+    } finally {
+      tempDir.deleteSync(recursive: true);
+    }
+  });
 }

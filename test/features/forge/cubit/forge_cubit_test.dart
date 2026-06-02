@@ -36,7 +36,29 @@ const _sampleWidget = SelectedWidget(
     id: 'w1',
     className: 'Text',
     children: [],
-    creationLocation: null,
+    creationLocation: CreationLocation(
+      file: '/tmp/test/lib/main.dart',
+      line: 1,
+      column: 1,
+    ),
+  ),
+  ancestorClasses: ['MaterialApp'],
+  sourceSnippet: null,
+  screenshotPath: null,
+  adbScreenshotPath: null,
+  propertiesJson: {},
+);
+
+const _frameworkWidget = SelectedWidget(
+  node: WidgetNode(
+    id: 'w2',
+    className: 'Text',
+    children: [],
+    creationLocation: CreationLocation(
+      file: '/opt/flutter/packages/flutter/lib/src/widgets/text.dart',
+      line: 1,
+      column: 1,
+    ),
   ),
   ancestorClasses: ['MaterialApp'],
   sourceSnippet: null,
@@ -169,6 +191,26 @@ void main() {
       verify: (cubit) {
         expect(cubit.state.launching, isFalse);
         expect(cubit.state.lastError, isNotNull);
+        verifyNever(() => pool.sendPrompt(any(), any()));
+      },
+    );
+
+    blocTest<ForgeCubit, ForgeState>(
+      'forge skips non-user-code widgets',
+      build: () => ForgeCubit(launcher, adb, pool),
+      act: (cubit) => cubit.forge(
+        selection: _frameworkWidget,
+        projectRoot: '/tmp/test',
+        chatId: 'chat-1',
+      ),
+      expect: () => [
+        isA<ForgeState>()
+            .having((s) => s.launching, 'launching', isFalse)
+            .having((s) => s.lastError, 'lastError', isNotNull),
+      ],
+      verify: (_) {
+        verifyNever(() => adb.capture(outputDir: any(named: 'outputDir')));
+        verifyNever(() => launcher.prepareContext(any()));
         verifyNever(() => pool.sendPrompt(any(), any()));
       },
     );

@@ -148,16 +148,7 @@ class _ProjectsTree extends StatelessWidget {
                       _ChatTile(
                         chat: chat,
                         isActive: chat.chatId == activeId,
-                        onTap: () {
-                          unawaited(
-                            context
-                                .read<ProjectsCubit>()
-                                .selectProject(chat.projectRoot),
-                          );
-                          unawaited(
-                            context.read<ChatsCubit>().selectChat(chat.chatId),
-                          );
-                        },
+                        onTap: () => unawaited(_onSelectChat(context, chat)),
                       ),
                     );
                   }
@@ -185,6 +176,12 @@ class _ProjectsTree extends StatelessWidget {
         await gitignoreHelper.appendEntry(projectRoot);
       }
     }
+  }
+
+  Future<void> _onSelectChat(BuildContext context, ChatRow chat) async {
+    await context.read<ProjectsCubit>().selectProject(chat.projectRoot);
+    if (!context.mounted) return;
+    await context.read<ChatsCubit>().selectChat(chat.chatId);
   }
 
   Future<bool?> _askGitignore(BuildContext context) {

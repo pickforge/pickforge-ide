@@ -13,6 +13,10 @@ void main() {
             final l10n = AppLocalizations.of(ctx);
             expect(l10n.appName, 'Pickforge');
             expect(l10n.forgeItButton, 'Forge it');
+            expect(
+              l10n.forgePickUserCodeHint,
+              'Pick a widget from your app source.',
+            );
             return const SizedBox();
           },
         ),

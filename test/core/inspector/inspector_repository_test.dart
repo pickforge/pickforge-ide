@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/inspector/inspector_repository.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/inspector/source_snippet_extractor.dart';
@@ -71,5 +74,56 @@ void main() {
     expect(selected!.node.className, 'ElevatedButton');
     expect(selected.sourceSnippet, contains('ElevatedButton'));
     expect(selected.ancestorClasses, contains('MyApp'));
+  });
+
+  test('fetchSelection writes inspector screenshot under .pickforge', () async {
+    final tmp = await Directory.systemTemp.createTemp('pf_inspector_');
+    addTearDown(() => tmp.delete(recursive: true));
+    repo = InspectorRepository(ext, src, projectRoot: tmp.path);
+
+    when(ext.getSelectedWidget).thenAnswer(
+      (_) async => {
+        'valueId': 'x',
+        'description': 'ElevatedButton',
+        'creationLocation': {
+          'file': p.join(tmp.path, 'lib', 'foo.dart'),
+          'line': 10,
+          'column': 3,
+        },
+        'children': <Map<String, dynamic>>[],
+      },
+    );
+    when(ext.getRootWidgetSummaryTree).thenAnswer((_) async => null);
+    when(() => src.extract(any())).thenAnswer((_) async => null);
+    when(
+      () => ext.screenshot(
+        id: any(named: 'id'),
+        width: any(named: 'width'),
+        height: any(named: 'height'),
+        margin: any(named: 'margin'),
+        maxPixelRatio: any(named: 'maxPixelRatio'),
+      ),
+    ).thenAnswer((_) async => [1, 2, 3]);
+
+    final selected = await repo.fetchSelection();
+
+    expect(
+      selected!.screenshotPath,
+      p.join(tmp.path, '.pickforge', 'screenshot.png'),
+    );
+    expect(File(selected.screenshotPath!).readAsBytesSync(), [1, 2, 3]);
+    expect(
+      File(p.join(tmp.path, '.pickforge', '.gitignore')).readAsStringSync(),
+      '*\n',
+    );
+    verify(
+      () => ext.screenshot(
+        id: 'x',
+        width: 480,
+        height: 480,
+        margin: 16,
+        maxPixelRatio: 2,
+      ),
+    ).called(1);
   });
 }

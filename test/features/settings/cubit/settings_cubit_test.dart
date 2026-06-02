@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -52,6 +54,44 @@ void main() {
             ),
       ],
     );
+
+    test('ignores stale load completions', () async {
+      final first = Completer<String?>();
+      final second = Completer<String?>();
+      when(() => repo.getDefaultAgentId('/first'))
+          .thenAnswer((_) => first.future);
+      when(() => repo.getDefaultAgentId('/second'))
+          .thenAnswer((_) => second.future);
+      when(() => terminalRepo.load())
+          .thenAnswer((_) async => EmbeddedTerminalSettings.defaults);
+
+      final cubit = SettingsCubit(repo, terminalRepo);
+      final firstLoad = cubit.load('/first');
+      final secondLoad = cubit.load('/second');
+
+      second.complete('codex');
+      await secondLoad;
+      expect(cubit.state.defaultAgent, 'codex');
+
+      first.complete('claude-code');
+      await firstLoad;
+      expect(cubit.state.defaultAgent, 'codex');
+    });
+
+    test('load completion after close is ignored', () async {
+      final agent = Completer<String?>();
+      when(() => repo.getDefaultAgentId('/root'))
+          .thenAnswer((_) => agent.future);
+      when(() => terminalRepo.load())
+          .thenAnswer((_) async => EmbeddedTerminalSettings.defaults);
+
+      final cubit = SettingsCubit(repo, terminalRepo);
+      final load = cubit.load('/root');
+      await cubit.close();
+
+      agent.complete('codex');
+      await load;
+    });
 
     blocTest<SettingsCubit, SettingsState>(
       'setDefaultAgent writes to repo and emits',

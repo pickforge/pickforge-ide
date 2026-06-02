@@ -10,6 +10,7 @@ import 'package:pickforge/core/drift/dao/project_settings_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -61,7 +62,7 @@ void main() {
           child: MultiBlocProvider(
             providers: [
               BlocProvider.value(value: layoutCubit),
-              BlocProvider.value(value: ProjectsCubit(pRepo)),
+              BlocProvider.value(value: ProjectsCubit(pRepo, PtySessionPool())),
               BlocProvider.value(value: ChatsCubit(cRepo, settings)),
               BlocProvider<WidgetPickerCubit>.value(value: picker),
             ],

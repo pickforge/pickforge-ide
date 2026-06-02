@@ -111,6 +111,7 @@ class _AppShellViewState extends State<AppShellView> {
                 ),
               ],
               child: WidgetPickerScope(
+                projectRoot: projectRoot,
                 vmClient: getIt<VmServiceClient>(),
                 child: scaffold,
               ),

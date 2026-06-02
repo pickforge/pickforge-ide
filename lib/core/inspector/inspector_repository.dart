@@ -1,13 +1,19 @@
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/inspector/source_snippet_extractor.dart';
 import 'package:pickforge/core/inspector/widget_tree_decoder.dart';
+import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/vm_service/inspector_extensions.dart';
 
 class InspectorRepository {
-  InspectorRepository(this._ext, this._source);
+  InspectorRepository(this._ext, this._source, {String? projectRoot})
+      : _projectRoot = projectRoot;
 
   final InspectorExtensions _ext;
   final SourceSnippetExtractor _source;
+  final String? _projectRoot;
 
   Future<void> enableSelectMode() => _ext.setSelectMode(enabled: true);
   Future<void> disableSelectMode() => _ext.setSelectMode(enabled: false);
@@ -28,15 +34,37 @@ class InspectorRepository {
     final snippet = node.creationLocation == null
         ? null
         : await _source.extract(node.creationLocation!);
+    final screenshotPath = await _captureScreenshot(node.id);
 
     return SelectedWidget(
       node: node,
       ancestorClasses: ancestorClasses,
       sourceSnippet: snippet,
-      screenshotPath: null,
+      screenshotPath: screenshotPath,
       adbScreenshotPath: null,
       propertiesJson: rawSelected,
     );
+  }
+
+  Future<String?> _captureScreenshot(String id) async {
+    final projectRoot = _projectRoot;
+    if (projectRoot == null) return null;
+    try {
+      final bytes = await _ext.screenshot(
+        id: id,
+        width: 480,
+        height: 480,
+        margin: 16,
+        maxPixelRatio: 2,
+      );
+      if (bytes.isEmpty) return null;
+      final dir = await PickforgeProjectDirectory.ensure(projectRoot);
+      final file = File(p.join(dir.path, 'screenshot.png'));
+      await file.writeAsBytes(bytes, flush: true);
+      return file.path;
+    } on Object {
+      return null;
+    }
   }
 
   List<String> _ancestorsOf(WidgetNode root, String targetId) {

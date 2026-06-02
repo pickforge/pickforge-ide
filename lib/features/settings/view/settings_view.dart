@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -10,9 +10,18 @@ import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
 import 'package:pickforge/features/settings/view/device_run_settings.dart';
+import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 
 class SettingsView extends StatefulWidget {
-  const SettingsView({super.key});
+  const SettingsView({
+    super.key,
+    this.settingsCubit,
+    this.deviceRunSettingsCubit,
+  });
+
+  final SettingsCubit? settingsCubit;
+  final DeviceRunSettingsCubit? deviceRunSettingsCubit;
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -21,26 +30,56 @@ class SettingsView extends StatefulWidget {
 class _SettingsViewState extends State<SettingsView> {
   late final SettingsCubit _cubit;
   late final DeviceRunSettingsCubit _deviceRunCubit;
-  late final String _projectRoot;
+  late final bool _ownsSettingsCubit;
+  late final bool _ownsDeviceRunCubit;
+  String? _projectRoot;
 
   @override
   void initState() {
     super.initState();
-    _projectRoot = Directory.current.path;
-    _cubit = getIt<SettingsCubit>();
-    _deviceRunCubit = DeviceRunSettingsCubit(
-      settings: getIt<ProjectSettingsRepository>(),
-      discovery: getIt<DeviceDiscoveryService>(),
-    );
-    _cubit.load(_projectRoot).ignore();
-    _deviceRunCubit.load(_projectRoot).ignore();
+    _ownsSettingsCubit = widget.settingsCubit == null;
+    _ownsDeviceRunCubit = widget.deviceRunSettingsCubit == null;
+    _cubit = widget.settingsCubit ?? getIt<SettingsCubit>();
+    _deviceRunCubit = widget.deviceRunSettingsCubit ??
+        DeviceRunSettingsCubit(
+          settings: getIt<ProjectSettingsRepository>(),
+          discovery: getIt<DeviceDiscoveryService>(),
+        );
   }
 
   @override
   void dispose() {
-    _cubit.close().ignore();
-    _deviceRunCubit.close().ignore();
+    if (_ownsSettingsCubit) _cubit.close().ignore();
+    if (_ownsDeviceRunCubit) _deviceRunCubit.close().ignore();
     super.dispose();
+  }
+
+  void _loadProject(String projectRoot) {
+    if (_projectRoot == projectRoot) return;
+    _projectRoot = projectRoot;
+    unawaited(
+      _cubit
+          .load(projectRoot)
+          .catchError((Object error, StackTrace stackTrace) {
+        _handleLoadError(projectRoot, error, stackTrace);
+      }),
+    );
+    unawaited(
+      _deviceRunCubit
+          .load(projectRoot)
+          .catchError((Object error, StackTrace stackTrace) {
+        _handleLoadError(projectRoot, error, stackTrace);
+      }),
+    );
+  }
+
+  void _handleLoadError(
+    String projectRoot,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    if (!mounted || _projectRoot != projectRoot) return;
+    Zone.current.handleUncaughtError(error, stackTrace);
   }
 
   @override
@@ -50,36 +89,58 @@ class _SettingsViewState extends State<SettingsView> {
         BlocProvider.value(value: _cubit),
         BlocProvider.value(value: _deviceRunCubit),
       ],
-      child: BlocBuilder<SettingsCubit, SettingsState>(
-        builder: (context, state) {
-          return Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildAgentDropdown(state, context),
-                const SizedBox(height: 24),
-                DeviceRunSettings(projectRoot: _projectRoot),
-                const SizedBox(height: 24),
-                Text(
-                  'Embedded Terminal',
-                  style: Theme.of(context).textTheme.titleMedium,
+      child: BlocBuilder<ProjectsCubit, ProjectsState>(
+        builder: (context, projectsState) {
+          final projectRoot = switch (projectsState) {
+            ProjectsReady(:final activeProjectRoot) => activeProjectRoot,
+            _ => null,
+          };
+          if (projectRoot == null) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Select a project to configure project settings.'),
+            );
+          }
+          _loadProject(projectRoot);
+          return BlocBuilder<SettingsCubit, SettingsState>(
+            builder: (context, state) {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildAgentDropdown(state, context, projectRoot),
+                    const SizedBox(height: 24),
+                    DeviceRunSettings(
+                      key: ValueKey(projectRoot),
+                      projectRoot: projectRoot,
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Embedded Terminal',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildFontFamilyDropdown(state, context),
+                    const SizedBox(height: 12),
+                    _buildFontSizeSlider(state, context),
+                    const SizedBox(height: 12),
+                    _buildThemeDropdown(state, context),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                _buildFontFamilyDropdown(state, context),
-                const SizedBox(height: 12),
-                _buildFontSizeSlider(state, context),
-                const SizedBox(height: 12),
-                _buildThemeDropdown(state, context),
-              ],
-            ),
+              );
+            },
           );
         },
       ),
     );
   }
 
-  Widget _buildAgentDropdown(SettingsState state, BuildContext context) {
+  Widget _buildAgentDropdown(
+    SettingsState state,
+    BuildContext context,
+    String projectRoot,
+  ) {
     return Row(
       children: [
         const Text('Default agent: '),
@@ -96,7 +157,7 @@ class _SettingsViewState extends State<SettingsView> {
             if (id != null) {
               context
                   .read<SettingsCubit>()
-                  .setDefaultAgent(_projectRoot, id.value)
+                  .setDefaultAgent(projectRoot, id.value)
                   .ignore();
             }
           },

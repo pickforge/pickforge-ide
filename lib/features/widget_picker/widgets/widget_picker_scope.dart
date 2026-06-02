@@ -15,11 +15,13 @@ import 'package:vm_service/vm_service.dart';
 class WidgetPickerScope extends StatefulWidget {
   const WidgetPickerScope({
     required this.child,
+    this.projectRoot,
     this.vmClient,
     super.key,
   });
 
   final Widget child;
+  final String? projectRoot;
   final VmServiceClient? vmClient;
 
   @override
@@ -43,7 +45,8 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
   @override
   void didUpdateWidget(covariant WidgetPickerScope oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.vmClient, widget.vmClient)) {
+    if (!identical(oldWidget.vmClient, widget.vmClient) ||
+        oldWidget.projectRoot != widget.projectRoot) {
       _generation++;
       unawaited(_serviceSub?.cancel());
       unawaited(_stateSub?.cancel());
@@ -91,6 +94,7 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
       final repo = InspectorRepository(
         InspectorExtensions(service, isolateId: isolateId),
         const SourceSnippetExtractor(),
+        projectRoot: widget.projectRoot,
       );
       final cubit = WidgetPickerCubit(repo, SelectionStream(repo));
       await _replaceCubit(cubit);

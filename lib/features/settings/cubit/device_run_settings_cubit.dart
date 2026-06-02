@@ -14,11 +14,19 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
 
   final ProjectSettingsRepository settings;
   final DeviceDiscoveryService discovery;
+  int _loadGeneration = 0;
 
   Future<void> load(String projectRoot) async {
-    final binding = await settings.getEmulatorBinding(projectRoot);
-    final runArgs = await settings.getRunArgs(projectRoot);
-    final devices = await discovery.snapshot();
+    final generation = ++_loadGeneration;
+    final results = await Future.wait<Object?>([
+      settings.getEmulatorBinding(projectRoot),
+      settings.getRunArgs(projectRoot),
+      discovery.snapshot(),
+    ]);
+    if (isClosed || generation != _loadGeneration) return;
+    final binding = results[0] as EmulatorBinding?;
+    final runArgs = results[1]! as RunArgs;
+    final devices = results[2]! as DeviceListSnapshot;
     emit(
       DeviceRunSettingsState(
         binding: binding,

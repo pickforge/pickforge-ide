@@ -16,7 +16,29 @@ const _sampleWidget = SelectedWidget(
     id: 'w1',
     className: 'Text',
     children: [],
-    creationLocation: null,
+    creationLocation: CreationLocation(
+      file: '/tmp/test/lib/main.dart',
+      line: 1,
+      column: 1,
+    ),
+  ),
+  ancestorClasses: ['MaterialApp'],
+  sourceSnippet: null,
+  screenshotPath: null,
+  adbScreenshotPath: null,
+  propertiesJson: {},
+);
+
+const _frameworkWidget = SelectedWidget(
+  node: WidgetNode(
+    id: 'w2',
+    className: 'Text',
+    children: [],
+    creationLocation: CreationLocation(
+      file: '/opt/flutter/packages/flutter/lib/src/widgets/text.dart',
+      line: 1,
+      column: 1,
+    ),
   ),
   ancestorClasses: ['MaterialApp'],
   sourceSnippet: null,
@@ -139,6 +161,31 @@ void main() {
       ),
     );
 
+    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('ForgePanel button disabled for framework widgets',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _frameworkWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Pick a widget from your app source.'), findsOneWidget);
     final button = tester.widget<FilledButton>(find.byType(FilledButton));
     expect(button.onPressed, isNull);
   });

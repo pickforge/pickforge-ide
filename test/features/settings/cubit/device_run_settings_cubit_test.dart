@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
@@ -49,6 +51,54 @@ void main() {
     expect(cubit.state.binding, isA<AvdBinding>());
     expect(cubit.state.runArgs.targetFile, 'lib/main_dev.dart');
     expect(cubit.state.avds.single.name, 'Pixel 5');
+  });
+
+  test('ignores stale load completions', () async {
+    final first = Completer<EmulatorBinding?>();
+    final second = Completer<EmulatorBinding?>();
+    when(() => repo.getEmulatorBinding('/first'))
+        .thenAnswer((_) => first.future);
+    when(() => repo.getEmulatorBinding('/second'))
+        .thenAnswer((_) => second.future);
+    when(() => repo.getRunArgs(any())).thenAnswer((_) async => const RunArgs());
+    when(discovery.snapshot).thenAnswer(
+      (_) async => const DeviceListSnapshot(
+        avds: [Avd(id: 'p5', name: 'Pixel 5', platform: 'android')],
+        running: [],
+      ),
+    );
+
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+    final firstLoad = cubit.load('/first');
+    final secondLoad = cubit.load('/second');
+
+    second.complete(
+      const EmulatorBinding.avd(avdId: 'second', avdName: 'Second'),
+    );
+    await secondLoad;
+    expect((cubit.state.binding! as AvdBinding).avdId, 'second');
+
+    first.complete(const EmulatorBinding.avd(avdId: 'first', avdName: 'First'));
+    await firstLoad;
+    expect((cubit.state.binding! as AvdBinding).avdId, 'second');
+  });
+
+  test('load completion after close is ignored', () async {
+    final binding = Completer<EmulatorBinding?>();
+    when(() => repo.getEmulatorBinding('/p')).thenAnswer((_) => binding.future);
+    when(() => repo.getRunArgs('/p')).thenAnswer((_) async => const RunArgs());
+    when(discovery.snapshot).thenAnswer(
+      (_) async => const DeviceListSnapshot(avds: [], running: []),
+    );
+
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+    final load = cubit.load('/p');
+    await cubit.close();
+
+    binding.complete(
+      const EmulatorBinding.avd(avdId: 'p5', avdName: 'Pixel 5'),
+    );
+    await load;
   });
 
   test('setAvd persists AVD binding', () async {

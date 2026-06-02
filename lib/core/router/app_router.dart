@@ -1,9 +1,11 @@
+import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/workbench/view/app_shell_view.dart';
 import 'package:pickforge/features/workbench/view/onboarding_view.dart';
+import 'package:pickforge/shared/command_palette/command_palette_scope.dart';
 
 class AppRoutes {
   const AppRoutes._();
@@ -25,20 +27,39 @@ GoRouter buildAppRouter() {
     routes: [
       GoRoute(
         path: AppRoutes.root,
-        builder: (_, __) => const AppShellView(),
+        builder: (context, __) => _withCommandPalette(
+          context,
+          const AppShellView(),
+        ),
       ),
       GoRoute(
         path: AppRoutes.onboarding,
-        builder: (_, __) => const OnboardingView(),
+        builder: (context, __) => _withCommandPalette(
+          context,
+          const OnboardingView(),
+        ),
       ),
       GoRoute(
         path: AppRoutes.workbench,
-        builder: (_, __) => const AppShellView(),
+        builder: (context, __) => _withCommandPalette(
+          context,
+          const AppShellView(),
+        ),
       ),
       GoRoute(
         path: AppRoutes.settings,
-        builder: (_, __) => const SettingsView(),
+        builder: (context, __) => _withCommandPalette(
+          context,
+          const SettingsView(),
+        ),
       ),
     ],
+  );
+}
+
+Widget _withCommandPalette(BuildContext context, Widget child) {
+  return CommandPaletteScope(
+    commands: buildNavCommands(context),
+    child: child,
   );
 }

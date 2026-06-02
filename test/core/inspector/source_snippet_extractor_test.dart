@@ -22,6 +22,18 @@ void main() {
     expect(snippet, isNot(contains('line 4')));
   });
 
+  test('extracts from file URI creation locations', () async {
+    final file = File('${tmp.path}/foo.dart');
+    await file.writeAsString(List.generate(20, (i) => 'line $i').join('\n'));
+    const extractor = SourceSnippetExtractor(contextLines: 1);
+    final snippet = await extractor.extract(
+      CreationLocation(file: file.uri.toString(), line: 2, column: 1),
+    );
+    expect(snippet, contains('line 0'));
+    expect(snippet, contains('line 1'));
+    expect(snippet, contains('line 2'));
+  });
+
   test('returns null when file does not exist', () async {
     const extractor = SourceSnippetExtractor();
     final snippet = await extractor.extract(

@@ -1,6 +1,8 @@
 // mocktail `when(() => x.method())` requires the wrapping closure.
 // ignore_for_file: unnecessary_lambdas
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,10 +11,14 @@ import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/view/projects_chats_panel.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/main.dart' show shouldSyncChatsForProjects;
 
 class _MockProjectsRepo extends Mock implements ProjectsRepository {}
 
@@ -41,6 +47,7 @@ ChatRow _chat(String id, String project, String title) => ChatRow(
 Widget _harness({
   required ProjectsCubit projectsCubit,
   required ChatsCubit chatsCubit,
+  bool withProjectSyncListener = false,
 }) =>
     MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -50,7 +57,25 @@ Widget _harness({
           BlocProvider.value(value: projectsCubit),
           BlocProvider.value(value: chatsCubit),
         ],
-        child: const Scaffold(body: ProjectsChatsPanel()),
+        child: Builder(
+          builder: (context) {
+            const panel = Scaffold(body: ProjectsChatsPanel());
+            if (!withProjectSyncListener) return panel;
+            return BlocListener<ProjectsCubit, ProjectsState>(
+              listenWhen: shouldSyncChatsForProjects,
+              listener: (context, state) {
+                if (state is! ProjectsReady) return;
+                unawaited(
+                  context.read<ChatsCubit>().syncProjects(
+                        state.projects.map((p) => p.projectRoot).toList(),
+                        defaultExpand: state.activeProjectRoot,
+                      ),
+                );
+              },
+              child: panel,
+            );
+          },
+        ),
       ),
     );
 
@@ -63,7 +88,7 @@ void main() {
     final settings = _MockSettings();
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
-    final projectsCubit = ProjectsCubit(pRepo);
+    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
     final chatsCubit = ChatsCubit(cRepo, settings);
     await projectsCubit.load();
 
@@ -89,7 +114,7 @@ void main() {
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
-    final projectsCubit = ProjectsCubit(pRepo);
+    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
     final chatsCubit = ChatsCubit(cRepo, settings);
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a']);
@@ -102,5 +127,85 @@ void main() {
 
     expect(find.text('a'), findsOneWidget);
     expect(find.text('Chat 1'), findsOneWidget);
+  });
+
+  testWidgets('chat tap waits for project switch before selecting chat',
+      (tester) async {
+    final pRepo = _MockProjectsRepo();
+    when(() => pRepo.list()).thenAnswer(
+      (_) async => [_project('/a'), _project('/b')],
+    );
+    final touchCompleter = Completer<void>();
+    when(() => pRepo.touch('/b')).thenAnswer((_) => touchCompleter.future);
+
+    final cRepo = _MockChatsRepo();
+    when(() => cRepo.list('/a')).thenAnswer((_) async => <ChatRow>[]);
+    when(() => cRepo.list('/b'))
+        .thenAnswer((_) async => [_chat('c-b', '/b', 'Chat B')]);
+    final settings = _MockSettings();
+    when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
+    when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
+
+    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final chatsCubit = ChatsCubit(cRepo, settings);
+    await projectsCubit.load();
+    await chatsCubit.syncProjects(['/a', '/b']);
+    chatsCubit.toggleExpanded('/b');
+
+    await tester.pumpWidget(
+      _harness(projectsCubit: projectsCubit, chatsCubit: chatsCubit),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Chat B'));
+    await tester.pump();
+
+    verifyNever(() => settings.setLastChatId('/b', 'c-b'));
+
+    touchCompleter.complete();
+    await tester.pumpAndSettle();
+
+    verify(() => settings.setLastChatId('/b', 'c-b')).called(1);
+  });
+
+  testWidgets('app sync listener skips active-project-only chat taps',
+      (tester) async {
+    final pRepo = _MockProjectsRepo();
+    when(() => pRepo.list()).thenAnswer(
+      (_) async => [_project('/a'), _project('/b')],
+    );
+    when(() => pRepo.touch('/b')).thenAnswer((_) async {});
+
+    final cRepo = _MockChatsRepo();
+    when(() => cRepo.list('/a'))
+        .thenAnswer((_) async => [_chat('c-a', '/a', 'Chat A')]);
+    when(() => cRepo.list('/b'))
+        .thenAnswer((_) async => [_chat('c-b', '/b', 'Chat B')]);
+    final settings = _MockSettings();
+    when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
+    when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
+
+    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final chatsCubit = ChatsCubit(cRepo, settings);
+    await projectsCubit.load();
+    await chatsCubit.syncProjects(['/a', '/b']);
+    chatsCubit.toggleExpanded('/b');
+    clearInteractions(cRepo);
+
+    await tester.pumpWidget(
+      _harness(
+        projectsCubit: projectsCubit,
+        chatsCubit: chatsCubit,
+        withProjectSyncListener: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Chat B'));
+    await tester.pumpAndSettle();
+
+    verifyNever(() => cRepo.list('/a'));
+    verifyNever(() => cRepo.list('/b'));
+    expect((chatsCubit.state as ChatsReady).activeChatId, 'c-b');
   });
 }

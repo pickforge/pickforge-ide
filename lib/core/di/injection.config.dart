@@ -161,8 +161,10 @@ extension GetItInjectableX on _i174.GetIt {
           settings: gh<_i340.ProjectSettingsRepository>(),
           discovery: gh<_i577.DeviceDiscoveryService>(),
         ));
-    gh.factory<_i882.ProjectsCubit>(
-        () => _i882.ProjectsCubit(gh<_i613.ProjectsRepository>()));
+    gh.factory<_i882.ProjectsCubit>(() => _i882.ProjectsCubit(
+          gh<_i613.ProjectsRepository>(),
+          gh<_i685.PtySessionPool>(),
+        ));
     return this;
   }
 }

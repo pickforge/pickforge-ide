@@ -32,10 +32,17 @@ class SettingsCubit extends Cubit<SettingsState> {
 
   final ProjectSettingsRepository _repo;
   final EmbeddedTerminalSettingsRepository _terminalRepo;
+  int _loadGeneration = 0;
 
   Future<void> load(String projectRoot) async {
-    final agent = await _repo.getDefaultAgentId(projectRoot);
-    final terminal = await _terminalRepo.load();
+    final generation = ++_loadGeneration;
+    final results = await Future.wait<Object?>([
+      _repo.getDefaultAgentId(projectRoot),
+      _terminalRepo.load(),
+    ]);
+    if (isClosed || generation != _loadGeneration) return;
+    final agent = results[0] as String?;
+    final terminal = results[1]! as EmbeddedTerminalSettings;
     emit(SettingsState(defaultAgent: agent, terminal: terminal));
   }
 

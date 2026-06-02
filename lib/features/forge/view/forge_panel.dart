@@ -72,7 +72,10 @@ class _ForgePanelBody extends StatelessWidget {
     return BlocBuilder<ForgeCubit, ForgeState>(
       builder: (context, state) {
         final cubit = context.read<ForgeCubit>();
-        final canForge = selection != null && chatId != null;
+        final eligibleSelection = selection != null &&
+            const ForgeEligibilityPolicy().canForge(selection!, projectRoot);
+        final canForge = eligibleSelection && chatId != null;
+        final showUserCodeHint = selection != null && !eligibleSelection;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
@@ -86,6 +89,18 @@ class _ForgePanelBody extends StatelessWidget {
                 onChanged: cubit.selectAgent,
               ),
               const Spacer(),
+              if (showUserCodeHint) ...[
+                Flexible(
+                  child: Text(
+                    l10n.forgePickUserCodeHint,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               FilledButton(
                 onPressed: (!canForge || state.launching)
                     ? null

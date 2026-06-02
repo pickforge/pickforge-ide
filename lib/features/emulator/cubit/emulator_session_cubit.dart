@@ -11,6 +11,7 @@ import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
+import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
@@ -325,10 +326,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final server = ipcServer;
     if (server == null) return;
     server.bindActiveRunSession(session);
-    final dir = Directory('$projectRoot/.pickforge')
-      ..createSync(
-        recursive: true,
-      );
+    final dir = await PickforgeProjectDirectory.ensure(projectRoot);
     File('${dir.path}/ipc.sock-path').writeAsStringSync(server.socketPath);
   }
 

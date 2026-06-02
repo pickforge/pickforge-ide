@@ -61,6 +61,38 @@ void main() {
     expect(selected?['description'], 'Text');
   });
 
+  test('getSelectedWidget unwraps service-extension result envelope', () async {
+    when(
+      () => vm.callServiceExtension(
+        'ext.flutter.inspector.getSelectedWidget',
+        isolateId: 'isolates/1',
+        args: {'objectGroup': 'pickforge'},
+      ),
+    ).thenAnswer(
+      (_) async => _FakeResponse({
+        'result': {'description': 'Text', 'valueId': 'w1'},
+      }),
+    );
+
+    final selected = await ext.getSelectedWidget();
+
+    expect(selected?['valueId'], 'w1');
+  });
+
+  test('getSelectedWidget returns null for empty result envelope', () async {
+    when(
+      () => vm.callServiceExtension(
+        'ext.flutter.inspector.getSelectedWidget',
+        isolateId: 'isolates/1',
+        args: {'objectGroup': 'pickforge'},
+      ),
+    ).thenAnswer((_) async => _FakeResponse({'result': null}));
+
+    final selected = await ext.getSelectedWidget();
+
+    expect(selected, isNull);
+  });
+
   test('getRootWidgetSummaryTree returns response json', () async {
     when(
       () => vm.callServiceExtension(
@@ -80,14 +112,28 @@ void main() {
       () => vm.callServiceExtension(
         'ext.flutter.inspector.screenshot',
         isolateId: 'isolates/1',
+        args: {
+          'id': 'w1',
+          'width': '480.0',
+          'height': '480.0',
+          'margin': '16.0',
+          'maxPixelRatio': '2.0',
+          'debugPaint': 'false',
+        },
       ),
     ).thenAnswer(
       (_) async => _FakeResponse({
-        'screenshot': base64.encode([1, 2]),
+        'result': base64.encode([1, 2]),
       }),
     );
 
-    final bytes = await ext.screenshot();
+    final bytes = await ext.screenshot(
+      id: 'w1',
+      width: 480,
+      height: 480,
+      margin: 16,
+      maxPixelRatio: 2,
+    );
 
     expect(bytes, [1, 2]);
   });

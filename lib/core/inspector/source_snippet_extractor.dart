@@ -1,6 +1,7 @@
 import 'dart:io';
 
-import 'package:pickforge/core/inspector/models.dart';
+import 'package:pickforge/core/inspector/creation_location_paths.dart';
+import 'package:pickforge/core/inspector/models/creation_location.dart';
 
 class SourceSnippetExtractor {
   const SourceSnippetExtractor({this.contextLines = 20});
@@ -8,7 +9,9 @@ class SourceSnippetExtractor {
   final int contextLines;
 
   Future<String?> extract(CreationLocation loc) async {
-    final file = File(loc.file);
+    final path = creationLocationFilePath(loc.file);
+    if (path == null) return null;
+    final file = File(path);
     if (!file.existsSync()) return null;
     final lines = await file.readAsLines();
     final start = (loc.line - contextLines - 1).clamp(0, lines.length);

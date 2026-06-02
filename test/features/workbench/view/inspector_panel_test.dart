@@ -26,7 +26,11 @@ const _sampleWidget = SelectedWidget(
     id: 'w1',
     className: 'Text',
     children: [],
-    creationLocation: null,
+    creationLocation: CreationLocation(
+      file: '/tmp/test/lib/main.dart',
+      line: 1,
+      column: 1,
+    ),
   ),
   ancestorClasses: ['MaterialApp'],
   sourceSnippet: null,

@@ -35,6 +35,16 @@ class ForgeCubit extends Cubit<ForgeState> {
     required String projectRoot,
     required String chatId,
   }) async {
+    if (!const ForgeEligibilityPolicy().canForge(selection, projectRoot)) {
+      emit(
+        state.copyWith(
+          launching: false,
+          lastError: 'Pick a widget from the active project source.',
+        ),
+      );
+      return;
+    }
+
     emit(state.copyWith(launching: true, lastError: null));
     try {
       final adbPath = await _adb.capture(

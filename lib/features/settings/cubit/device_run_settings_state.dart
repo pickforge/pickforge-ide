@@ -8,25 +8,33 @@ class DeviceRunSettingsState extends Equatable {
     this.binding,
     this.runArgs = const RunArgs(),
     this.avds = const [],
+    this.targetFiles = const [],
+    this.flavors = const [],
   });
 
   final EmulatorBinding? binding;
   final RunArgs runArgs;
   final List<Avd> avds;
+  final List<String> targetFiles;
+  final List<String> flavors;
 
   DeviceRunSettingsState copyWith({
     Object? binding = _unset,
     RunArgs? runArgs,
     List<Avd>? avds,
+    List<String>? targetFiles,
+    List<String>? flavors,
   }) =>
       DeviceRunSettingsState(
         binding: binding == _unset ? this.binding : binding as EmulatorBinding?,
         runArgs: runArgs ?? this.runArgs,
         avds: avds ?? this.avds,
+        targetFiles: targetFiles ?? this.targetFiles,
+        flavors: flavors ?? this.flavors,
       );
 
   @override
-  List<Object?> get props => [binding, runArgs, avds];
+  List<Object?> get props => [binding, runArgs, avds, targetFiles, flavors];
 }
 
 const _unset = Object();

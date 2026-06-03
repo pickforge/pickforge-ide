@@ -37,7 +37,12 @@ class DeviceRunSettings extends StatelessWidget {
                     .ignore(),
               ),
             const SizedBox(height: 8),
-            _RunArgsFields(projectRoot: projectRoot, args: state.runArgs),
+            _RunArgsFields(
+              projectRoot: projectRoot,
+              args: state.runArgs,
+              targetFiles: state.targetFiles,
+              flavors: state.flavors,
+            ),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -107,30 +112,123 @@ class _AvdDropdown extends StatelessWidget {
 }
 
 class _RunArgsFields extends StatelessWidget {
-  const _RunArgsFields({required this.projectRoot, required this.args});
+  const _RunArgsFields({
+    required this.projectRoot,
+    required this.args,
+    required this.targetFiles,
+    required this.flavors,
+  });
 
   final String projectRoot;
   final RunArgs args;
+  final List<String> targetFiles;
+  final List<String> flavors;
 
   @override
   Widget build(BuildContext context) {
+    final parsed = args.parsed;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextFormField(
-          initialValue: args.targetFile ?? '',
+        DropdownButtonFormField<String>(
+          key: const Key('run-target-dropdown'),
+          initialValue: _targetValue,
           decoration: const InputDecoration(labelText: 'Target file'),
+          items: _targetOptions
+              .map(
+                (target) => DropdownMenuItem(
+                  value: target,
+                  child: Text(target.isEmpty ? 'Default target' : target),
+                ),
+              )
+              .toList(),
+          onChanged: (value) => context
+              .read<DeviceRunSettingsCubit>()
+              .setRunArgs(projectRoot, args.withTargetFile(value))
+              .ignore(),
+        ),
+        const SizedBox(height: 12),
+        SegmentedButton<FlutterBuildMode>(
+          key: const Key('run-build-mode'),
+          segments: FlutterBuildMode.values
+              .map(
+                (mode) => ButtonSegment(
+                  value: mode,
+                  label: Text(mode.label),
+                ),
+              )
+              .toList(),
+          selected: {parsed.buildMode},
+          onSelectionChanged: (selection) => context
+              .read<DeviceRunSettingsCubit>()
+              .setRunArgs(projectRoot, args.withBuildMode(selection.single))
+              .ignore(),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          key: ValueKey('run-flavor-${parsed.flavor ?? ''}'),
+          initialValue: parsed.flavor ?? '',
+          decoration: InputDecoration(
+            labelText: 'Flavor',
+            helperText:
+                flavors.isEmpty ? null : 'Detected: ${flavors.join(', ')}',
+          ),
+          onFieldSubmitted: (value) => context
+              .read<DeviceRunSettingsCubit>()
+              .setRunArgs(projectRoot, args.withFlavor(value))
+              .ignore(),
+        ),
+        if (flavors.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: flavors
+                .map(
+                  (flavor) => ActionChip(
+                    label: Text(flavor),
+                    onPressed: () => context
+                        .read<DeviceRunSettingsCubit>()
+                        .setRunArgs(projectRoot, args.withFlavor(flavor))
+                        .ignore(),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+        const SizedBox(height: 12),
+        TextFormField(
+          key: ValueKey(
+            'run-extra-${parsed.manualExtraArgs.join('\u0000')}',
+          ),
+          initialValue: formatExtraArgsText(parsed.manualExtraArgs),
+          decoration: const InputDecoration(
+            labelText: 'Extra args',
+            helperText: 'Advanced flutter run arguments',
+          ),
           onFieldSubmitted: (value) => context
               .read<DeviceRunSettingsCubit>()
               .setRunArgs(
                 projectRoot,
-                args.copyWith(targetFile: value.isEmpty ? null : value),
+                args.withManualExtraArgs(parseExtraArgsText(value)),
               )
               .ignore(),
         ),
-        const SizedBox(height: 8),
-        Text('Extra args: ${args.extraArgs.join(' ')}'),
       ],
     );
+  }
+
+  String get _targetValue {
+    final target = args.targetFile;
+    if (target == null || target.isEmpty) return '';
+    return target;
+  }
+
+  List<String> get _targetOptions {
+    final options = ['', ...targetFiles];
+    final target = args.targetFile;
+    if (target != null && target.isNotEmpty && !options.contains(target)) {
+      options.add(target);
+    }
+    return options;
   }
 }

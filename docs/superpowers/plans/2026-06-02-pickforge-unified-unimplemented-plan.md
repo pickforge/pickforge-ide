@@ -258,15 +258,19 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P2.T2 — Build flavor and target picker UI
 
-**Status:** Deferred / Partial
+**Status:** Completed
 **Why:** `RunArgs` supports `targetFile` and extra args, but the UI is text-oriented.
 
 **Tasks**
 
-- [ ] Scan `lib/main*.dart` and parse project metadata where practical.
-- [ ] Surface target file dropdown.
-- [ ] Surface flavor/build mode fields.
-- [ ] Preserve manual extra args for advanced use.
+- [x] Scan `lib/main*.dart` and parse project metadata where practical.
+- [x] Surface target file dropdown.
+- [x] Surface flavor/build mode fields.
+- [x] Preserve manual extra args for advanced use.
+
+**Latest evidence**
+
+- 2026-06-03: Added `FlutterRunTargetScanner` for `lib/main*.dart` and Android Gradle product flavors, structured run-args parsing for build mode/flavor/manual args, and settings UI controls for target dropdown, build mode, flavor, and advanced args; ran focused settings/run-args tests, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (357 passed, 2 skipped without `PICKFORGE_E2E_AVD`), and `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact`, passed.
 
 ### P2.T3 — Power AVD flags
 

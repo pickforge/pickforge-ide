@@ -5,6 +5,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
+import 'package:pickforge/core/settings/flutter_run_target_scanner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
@@ -12,6 +13,15 @@ import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart
 class _SettingsRepo extends Mock implements ProjectSettingsRepository {}
 
 class _Discovery extends Mock implements DeviceDiscoveryService {}
+
+class _Scanner extends FlutterRunTargetScanner {
+  const _Scanner(this.metadata);
+
+  final FlutterRunMetadata metadata;
+
+  @override
+  Future<FlutterRunMetadata> scan(String projectRoot) async => metadata;
+}
 
 void main() {
   late _SettingsRepo repo;
@@ -45,12 +55,23 @@ void main() {
       ),
     );
 
-    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+    final cubit = DeviceRunSettingsCubit(
+      settings: repo,
+      discovery: discovery,
+      targetScanner: const _Scanner(
+        FlutterRunMetadata(
+          targetFiles: ['lib/main.dart', 'lib/main_dev.dart'],
+          flavors: ['dev'],
+        ),
+      ),
+    );
     await cubit.load('/p');
 
     expect(cubit.state.binding, isA<AvdBinding>());
     expect(cubit.state.runArgs.targetFile, 'lib/main_dev.dart');
     expect(cubit.state.avds.single.name, 'Pixel 5');
+    expect(cubit.state.targetFiles, ['lib/main.dart', 'lib/main_dev.dart']);
+    expect(cubit.state.flavors, ['dev']);
   });
 
   test('ignores stale load completions', () async {

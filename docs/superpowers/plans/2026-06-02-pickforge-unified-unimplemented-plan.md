@@ -323,12 +323,18 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P2.T6 — Inspector auto-attach optimization
 
-**Status:** Deferred
+**Status:** Completed
 **Tasks**
 
-- [ ] Skip or pause inspector polling when right pane is collapsed.
-- [ ] Resume cleanly when visible.
-- [ ] Measure CPU savings before making this default.
+- [x] Skip or pause inspector polling when right pane is collapsed.
+- [x] Resume cleanly when visible.
+- [x] Measure CPU savings before making this default.
+
+**Latest evidence**
+
+- 2026-06-03: Added right-pane visibility wiring into `WidgetPickerScope`, pausing inspector select mode and selection polling while collapsed and resuming when visible.
+- 2026-06-03: Added race coverage for hiding while select-mode enable is still in flight, plus a polling-count proxy measurement: active polling produced `fetchSelection` calls, paused polling produced zero calls, and resumed polling produced calls again.
+- 2026-06-03: Verified with `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (405 passed, 2 skipped without `PICKFORGE_E2E_AVD`), `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact`, and `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/widget_pick_e2e_test.dart --reporter=compact`; all passed.
 
 ## 8. Platform expansion
 

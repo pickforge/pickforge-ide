@@ -17,12 +17,14 @@ class WidgetPickerScope extends StatefulWidget {
     required this.child,
     this.projectRoot,
     this.vmClient,
+    this.inspectorVisible = true,
     super.key,
   });
 
   final Widget child;
   final String? projectRoot;
   final VmServiceClient? vmClient;
+  final bool inspectorVisible;
 
   @override
   State<WidgetPickerScope> createState() => _WidgetPickerScopeState();
@@ -52,6 +54,10 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
       unawaited(_stateSub?.cancel());
       unawaited(_replaceCubit(null));
       _listen();
+      return;
+    }
+    if (oldWidget.inspectorVisible != widget.inspectorVisible) {
+      _syncCubitVisibility();
     }
   }
 
@@ -98,12 +104,7 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
       );
       final cubit = WidgetPickerCubit(repo, SelectionStream(repo));
       await _replaceCubit(cubit);
-      unawaited(
-        cubit.startListening().catchError((Object _) async {
-          if (!mounted || !identical(_cubit, cubit)) return;
-          await _replaceCubit(null);
-        }),
-      );
+      _syncCubitVisibility();
     } on Object {
       if (mounted && generation == _generation) {
         await _replaceCubit(null);
@@ -118,6 +119,31 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
       if (id != null) return id;
     }
     return null;
+  }
+
+  void _syncCubitVisibility() {
+    final cubit = _cubit;
+    if (cubit == null) return;
+    final generation = _generation;
+    if (widget.inspectorVisible) {
+      unawaited(_startCubit(cubit, generation));
+    } else {
+      unawaited(cubit.pauseListening());
+    }
+  }
+
+  Future<void> _startCubit(WidgetPickerCubit cubit, int generation) async {
+    if (!mounted || generation != _generation || !widget.inspectorVisible) {
+      return;
+    }
+    try {
+      await cubit.startListening();
+    } on Object {
+      if (!mounted || generation != _generation || !identical(_cubit, cubit)) {
+        return;
+      }
+      await _replaceCubit(null);
+    }
   }
 
   Future<void> _replaceCubit(WidgetPickerCubit? next) async {

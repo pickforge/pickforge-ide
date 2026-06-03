@@ -340,15 +340,22 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P3.T1 — Windows IPC parity
 
-**Status:** Deferred / Partial
+**Status:** Completed
 **Why:** CI runs on Windows, but IPC server design is Unix-socket first.
 
 **Tasks**
 
-- [ ] Add named-pipe implementation for Windows.
-- [ ] Preserve Unix socket path for Linux/macOS.
-- [ ] Add platform-specific tests where possible.
-- [ ] Verify ConPTY edge cases for embedded agent sessions.
+- [x] Add named-pipe implementation for Windows.
+- [x] Preserve Unix socket path for Linux/macOS.
+- [x] Add platform-specific tests where possible.
+- [x] Verify ConPTY edge cases for embedded agent sessions.
+
+**Latest evidence**
+
+- 2026-06-03: Replaced Unix-only IPC internals with platform transports: Linux/macOS keep Unix domain sockets, while Windows uses an isolate-backed Win32 named-pipe transport at `\\.\pipe\pickforge-<pid>-agent`.
+- 2026-06-03: Added `EmulatorIpcClient` and unskipped IPC tests so Windows CI exercises the named-pipe server/client path; local Linux validation exercised the Unix socket path and endpoint-shape assertions.
+- 2026-06-03: Added PTY session edge coverage for terminal resize forwarding and stop escalation, covering the ConPTY-sensitive behavior Pickforge controls directly before handing off to `flutter_pty`.
+- 2026-06-03: Verified with `fvm flutter pub get`, `fvm dart format --set-exit-if-changed .`, focused IPC/PTY tests, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (409 passed, 2 skipped without `PICKFORGE_E2E_AVD`), `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact`, and `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/widget_pick_e2e_test.dart --reporter=compact`; all passed locally.
 
 ### P3.T2 — Physical Android support
 

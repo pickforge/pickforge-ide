@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -9,10 +8,27 @@ import 'package:pickforge/core/emulator/run_session_controller.dart';
 class _Session extends Mock implements RunSession {}
 
 void main() {
+  test('default endpoint uses a Windows named pipe path', () {
+    expect(
+      defaultEmulatorIpcEndpoint(processId: 42, isWindows: true),
+      r'\\.\pipe\pickforge-42-agent',
+    );
+  });
+
+  test('default endpoint preserves Unix socket path shape', () {
+    expect(
+      defaultEmulatorIpcEndpoint(
+        baseDirectory: '/tmp/pickforge-runtime',
+        processId: 42,
+        isWindows: false,
+      ),
+      '/tmp/pickforge-runtime/pickforge-42/agent.sock',
+    );
+  });
+
   test('hotReload route delegates to bound RunSession', () async {
-    if (Platform.isWindows) return;
-    final tmp = await Directory.systemTemp.createTemp('pf-ipc-');
-    final server = EmulatorIpcServer(socketPath: '${tmp.path}/sock');
+    final endpoint = await _createEndpoint();
+    final server = EmulatorIpcServer(socketPath: endpoint.path);
     final session = _Session();
     when(session.hotReload).thenAnswer((_) async => true);
     when(() => session.appId).thenReturn('app-1');
@@ -21,10 +37,12 @@ void main() {
     await server.start();
     server.bindActiveRunSession(session);
     addTearDown(server.stop);
-    addTearDown(() => tmp.delete(recursive: true));
+    addTearDown(endpoint.dispose);
 
-    final reply =
-        await _send(server.socketPath, {'id': 1, 'method': 'hotReload'});
+    final reply = await const EmulatorIpcClient().send(
+      server.socketPath,
+      {'id': 1, 'method': 'hotReload'},
+    );
 
     expect(reply['id'], 1);
     expect(reply['result'], {'ok': true});
@@ -32,37 +50,37 @@ void main() {
   });
 
   test('returns error when no run session bound', () async {
-    if (Platform.isWindows) return;
-    final tmp = await Directory.systemTemp.createTemp('pf-ipc-');
-    final server = EmulatorIpcServer(socketPath: '${tmp.path}/sock');
+    final endpoint = await _createEndpoint();
+    final server = EmulatorIpcServer(socketPath: endpoint.path);
 
     await server.start();
     addTearDown(server.stop);
-    addTearDown(() => tmp.delete(recursive: true));
+    addTearDown(endpoint.dispose);
 
-    final reply =
-        await _send(server.socketPath, {'id': 7, 'method': 'hotReload'});
+    final reply = await const EmulatorIpcClient().send(
+      server.socketPath,
+      {'id': 7, 'method': 'hotReload'},
+    );
 
     expect(reply['id'], 7);
     expect(reply['error'], 'no_active_session');
   });
 }
 
-Future<Map<String, dynamic>> _send(
-  String socketPath,
-  Map<String, Object?> request,
-) async {
-  final socket = await Socket.connect(
-    InternetAddress(socketPath, type: InternetAddressType.unix),
-    0,
-  );
-  socket.write('${jsonEncode(request)}\n');
-  await socket.flush();
-  final reply = await socket
-      .cast<List<int>>()
-      .transform(utf8.decoder)
-      .transform(const LineSplitter())
-      .first;
-  await socket.close();
-  return jsonDecode(reply) as Map<String, dynamic>;
+Future<_IpcEndpoint> _createEndpoint() async {
+  if (Platform.isWindows) {
+    return _IpcEndpoint(
+      r'\\.\pipe\pickforge-test-' '${DateTime.now().microsecondsSinceEpoch}',
+      () async {},
+    );
+  }
+  final tmp = await Directory.systemTemp.createTemp('pf-ipc-');
+  return _IpcEndpoint('${tmp.path}/sock', () => tmp.delete(recursive: true));
+}
+
+final class _IpcEndpoint {
+  const _IpcEndpoint(this.path, this.dispose);
+
+  final String path;
+  final Future<void> Function() dispose;
 }

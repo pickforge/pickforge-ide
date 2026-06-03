@@ -92,6 +92,37 @@ void main() {
     expect(seen.single, [111, 107]);
   });
 
+  test('resize forwards rows and columns after start', () async {
+    final session = PtySession(
+      chatId: 'c5',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+    );
+
+    await session.start();
+    session.resize(40, 120);
+
+    verify(() => process.resize(rows: 40, cols: 120)).called(1);
+  });
+
+  test('stop escalates when process ignores graceful termination', () async {
+    final session = PtySession(
+      chatId: 'c6',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+    );
+
+    await session.start();
+    await session.stop(grace: Duration.zero);
+
+    verify(() => process.kill()).called(1);
+    verify(() => process.kill(PtySignal.sigkill)).called(1);
+  });
+
   test('factory throw -> failed(BinaryNotFound)', () async {
     when(
       () => factory.start(

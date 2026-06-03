@@ -48,11 +48,11 @@ Future<void> configureDependencies() async {
 }
 
 Future<String> _defaultIpcSocketPath() async {
-  final base =
-      Platform.environment['XDG_RUNTIME_DIR'] ?? Directory.systemTemp.path;
-  final dir = Directory('$base/pickforge-$pid');
-  await dir.create(recursive: true);
-  return '${dir.path}/agent.sock';
+  final endpoint = defaultEmulatorIpcEndpoint();
+  if (!Platform.isWindows) {
+    await File(endpoint).parent.create(recursive: true);
+  }
+  return endpoint;
 }
 
 @module

@@ -108,6 +108,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-03: Ran focused Forge/context/PTY tests proving context file writing and prompt delivery to the active session pool; passed.
 - 2026-06-03: Added and ran a `ForgeCubit` regression with real `AgentLauncher`, real `PickforgeContextWriter`, project-local skill override, fake adb, and recording PTY pool; verified `skill-active.md`, `widget-context.md`, `initial-prompt.md`, and prompt delivery to `chat-1`.
 
+**Blocked:** Headless Xvfb launches the Linux app far enough to expose VM Service, but this environment has no lightweight X window manager and `import -window root` captures a blank desktop, so the live desktop click-through for project binding and visible terminal prompt remains unchecked.
+
 ### P1.T2 — Inspector screenshot capture path
 
 **Status:** Completed

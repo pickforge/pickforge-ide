@@ -92,6 +92,10 @@ Pointer mapping:
 6. Emit device coordinates in the scrcpy control position shape:
    `{x, y, screenWidth, screenHeight}`.
 
+The initial `MirrorTransform` implementation covers contained rendering,
+letterbox rejection, and 0/90/180/270 degree inverse rotation. Crop offsets can
+be added when the embedded stream supports cropped capture.
+
 Do not use client-side rotation as a shortcut unless the transform records it.
 scrcpy documents crop values in device natural orientation, applied before
 capture orientation and display angle, so crop and rotation must stay explicit.

@@ -507,10 +507,11 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P5.T2 — True hover-over-live-emulator UX
 
-**Status:** Deferred
+**Status:** Partial / transform complete
+**Why:** Added a tested `MirrorTransform` utility for mapping hover/local mirror coordinates onto device coordinates, including letterbox rejection and inverse 0/90/180/270 degree rotation.
 **Tasks**
 
-- [ ] Overlay hover target mapping onto mirrored emulator coordinates.
+- [x] Overlay hover target mapping onto mirrored emulator coordinates.
 - [ ] Query/preview widget under pointer.
 - [ ] Show highlight without interfering with app input.
 

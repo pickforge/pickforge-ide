@@ -46,6 +46,26 @@ void main() {
     ).called(1);
   });
 
+  test('setTrackRebuildDirtyWidgets calls inspector extension', () async {
+    when(
+      () => vm.callServiceExtension(
+        'ext.flutter.inspector.trackRebuildDirtyWidgets',
+        isolateId: 'isolates/1',
+        args: {'enabled': 'true'},
+      ),
+    ).thenAnswer((_) async => _FakeResponse({'enabled': true}));
+
+    await ext.setTrackRebuildDirtyWidgets(enabled: true);
+
+    verify(
+      () => vm.callServiceExtension(
+        'ext.flutter.inspector.trackRebuildDirtyWidgets',
+        isolateId: 'isolates/1',
+        args: {'enabled': 'true'},
+      ),
+    ).called(1);
+  });
+
   test('getSelectedWidget requests an object group and returns response json',
       () async {
     when(

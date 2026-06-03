@@ -76,6 +76,43 @@ void main() {
     expect(selected.ancestorClasses, contains('MyApp'));
   });
 
+  test('trackRebuildDirtyWidgets delegates to inspector extension', () async {
+    when(
+      () => ext.setTrackRebuildDirtyWidgets(enabled: true),
+    ).thenAnswer((_) async {});
+
+    await repo.trackRebuildDirtyWidgets(enabled: true);
+
+    verify(() => ext.setTrackRebuildDirtyWidgets(enabled: true)).called(1);
+  });
+
+  test('captureWidgetTreeSnapshot decodes summary tree', () async {
+    when(ext.getRootWidgetSummaryTree).thenAnswer(
+      (_) async => {
+        'valueId': 'root',
+        'description': 'MyApp',
+        'creationLocation': <String, dynamic>{
+          'file': 'lib/main.dart',
+          'line': 1,
+          'column': 1,
+        },
+        'children': <Map<String, dynamic>>[
+          {
+            'valueId': 'child',
+            'description': 'Text',
+            'children': <Map<String, dynamic>>[],
+          },
+        ],
+      },
+    );
+
+    final snapshot = await repo.captureWidgetTreeSnapshot();
+
+    expect(snapshot?.id, 'root');
+    expect(snapshot?.className, 'MyApp');
+    expect(snapshot?.children.single.className, 'Text');
+  });
+
   test('fetchSelection writes inspector screenshot under .pickforge', () async {
     final tmp = await Directory.systemTemp.createTemp('pf_inspector_');
     addTearDown(() => tmp.delete(recursive: true));

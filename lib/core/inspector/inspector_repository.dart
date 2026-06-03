@@ -17,6 +17,13 @@ class InspectorRepository {
 
   Future<void> enableSelectMode() => _ext.setSelectMode(enabled: true);
   Future<void> disableSelectMode() => _ext.setSelectMode(enabled: false);
+  Future<void> trackRebuildDirtyWidgets({required bool enabled}) =>
+      _ext.setTrackRebuildDirtyWidgets(enabled: enabled);
+
+  Future<WidgetNode?> captureWidgetTreeSnapshot() async {
+    final rawTree = await _ext.getRootWidgetSummaryTree();
+    return rawTree == null ? null : WidgetTreeDecoder.decode(rawTree);
+  }
 
   /// Fetches the currently selected widget along with ancestor chain and
   /// source snippet. Returns null if nothing is selected on-device.

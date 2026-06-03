@@ -18,6 +18,14 @@ class InspectorExtensions {
     );
   }
 
+  Future<void> setTrackRebuildDirtyWidgets({required bool enabled}) async {
+    await _vm.callServiceExtension(
+      'ext.flutter.inspector.trackRebuildDirtyWidgets',
+      isolateId: isolateId,
+      args: {'enabled': enabled.toString()},
+    );
+  }
+
   Future<Map<String, dynamic>?> getSelectedWidget() async {
     final response = await _vm.callServiceExtension(
       'ext.flutter.inspector.getSelectedWidget',

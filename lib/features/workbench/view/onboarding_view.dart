@@ -23,6 +23,7 @@ class OnboardingView extends StatefulWidget {
     this.diagnosticsService,
     this.openSettings,
     this.dismissOnboarding,
+    this.openDemoWorkspace,
   });
 
   /// Override for tests.
@@ -31,6 +32,7 @@ class OnboardingView extends StatefulWidget {
   final DiagnosticsService? diagnosticsService;
   final VoidCallback? openSettings;
   final Future<void> Function()? dismissOnboarding;
+  final VoidCallback? openDemoWorkspace;
 
   @override
   State<OnboardingView> createState() => _OnboardingViewState();
@@ -90,6 +92,15 @@ class _OnboardingViewState extends State<OnboardingView> {
     context.go(AppRoutes.workbench);
   }
 
+  void _openDemoWorkspace() {
+    final openDemo = widget.openDemoWorkspace;
+    if (openDemo != null) {
+      openDemo();
+      return;
+    }
+    context.go(AppRoutes.demo);
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
@@ -146,7 +157,10 @@ class _OnboardingViewState extends State<OnboardingView> {
                 ],
                 if (_demoMode) ...[
                   const SizedBox(height: 24),
-                  _DemoModeCard(l10n: l10n),
+                  _DemoModeCard(
+                    l10n: l10n,
+                    onOpenDemo: _openDemoWorkspace,
+                  ),
                 ],
                 if (_error != null) ...[
                   const SizedBox(height: 16),
@@ -362,9 +376,10 @@ class _SetupCheckRow extends StatelessWidget {
 }
 
 class _DemoModeCard extends StatelessWidget {
-  const _DemoModeCard({required this.l10n});
+  const _DemoModeCard({required this.l10n, required this.onOpenDemo});
 
   final AppLocalizations l10n;
+  final VoidCallback onOpenDemo;
 
   @override
   Widget build(BuildContext context) {
@@ -390,14 +405,19 @@ class _DemoModeCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(l10n.onboardingDemoDescription),
                     const SizedBox(height: 12),
-                    const Wrap(
+                    Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        Chip(label: Text('sample_flutter_app')),
-                        Chip(label: Text('CounterPage')),
-                        Chip(label: Text('Pixel 10')),
-                        Chip(label: Text('Codex chat')),
+                        const Chip(label: Text('sample_flutter_app')),
+                        const Chip(label: Text('CounterPage')),
+                        const Chip(label: Text('Pixel 10')),
+                        const Chip(label: Text('Codex chat')),
+                        FilledButton.icon(
+                          onPressed: onOpenDemo,
+                          icon: const Icon(Icons.open_in_new),
+                          label: Text(l10n.onboardingOpenDemoWorkspace),
+                        ),
                       ],
                     ),
                   ],

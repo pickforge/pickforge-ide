@@ -5,6 +5,7 @@ import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/onboarding_preferences.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/workbench/view/app_shell_view.dart';
+import 'package:pickforge/features/workbench/view/demo_workspace_view.dart';
 import 'package:pickforge/features/workbench/view/onboarding_view.dart';
 import 'package:pickforge/shared/command_palette/command_palette_scope.dart';
 
@@ -13,12 +14,13 @@ class AppRoutes {
   static const root = '/';
   static const workbench = '/workbench';
   static const onboarding = '/onboarding';
+  static const demo = '/demo';
   static const settings = '/settings';
 }
 
-GoRouter buildAppRouter() {
+GoRouter buildAppRouter({String? initialLocation}) {
   return GoRouter(
-    initialLocation: AppRoutes.root,
+    initialLocation: initialLocation ?? _initialLocationFromEnvironment(),
     redirect: (context, state) async {
       if (state.matchedLocation != AppRoutes.root) return null;
       final projects = await getIt<ProjectsRepository>().list();
@@ -53,6 +55,13 @@ GoRouter buildAppRouter() {
         ),
       ),
       GoRoute(
+        path: AppRoutes.demo,
+        builder: (context, __) => _withCommandPalette(
+          context,
+          const DemoWorkspaceView(),
+        ),
+      ),
+      GoRoute(
         path: AppRoutes.settings,
         builder: (context, __) => _withCommandPalette(
           context,
@@ -60,6 +69,13 @@ GoRouter buildAppRouter() {
         ),
       ),
     ],
+  );
+}
+
+String _initialLocationFromEnvironment() {
+  return const String.fromEnvironment(
+    'PICKFORGE_INITIAL_ROUTE',
+    defaultValue: AppRoutes.root,
   );
 }
 

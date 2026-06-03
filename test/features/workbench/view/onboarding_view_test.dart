@@ -63,6 +63,7 @@ void main() {
       (tester) async {
     final repo = _MockRepo();
     final cubit = ProjectsCubit(repo, PtySessionPool());
+    var openedDemo = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -70,7 +71,10 @@ void main() {
         supportedLocales: AppLocalizations.supportedLocales,
         home: BlocProvider.value(
           value: cubit,
-          child: OnboardingView(pickFolder: () async => null),
+          child: OnboardingView(
+            pickFolder: () async => null,
+            openDemoWorkspace: () => openedDemo = true,
+          ),
         ),
       ),
     );
@@ -81,6 +85,14 @@ void main() {
 
     expect(find.text('Demo workspace'), findsOneWidget);
     expect(find.text('CounterPage'), findsOneWidget);
+    expect(find.text('Open demo workspace'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Open demo workspace'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open demo workspace'));
+    await tester.pumpAndSettle();
+
+    expect(openedDemo, isTrue);
   });
 
   testWidgets('sample app button adds fixture project', (tester) async {

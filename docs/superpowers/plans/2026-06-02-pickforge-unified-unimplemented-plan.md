@@ -584,7 +584,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Tasks**
 
 - [x] Add a first-run checklist: add project, pick device/manual URL, create chat, pick widget, forge.
-- [ ] Add a demo mode backed by fake project/emulator/widget data so the UI can be explored without Android tooling.
+- [x] Add a demo mode backed by fake project/emulator/widget data so the UI can be explored without Android tooling.
 - [x] Add a demo-mode affordance/card explaining fake project/emulator/widget/chat data.
 - [x] Add "Open sample Flutter app" flow using `fixtures/sample_flutter_app`.
 - [x] Add inline setup checks for agent binaries, `adb`, Flutter/FVM, and emulator availability.
@@ -594,8 +594,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Validation**
 
-- Widget tests for empty, partially configured, and fully configured onboarding states.
-- Desktop smoke test can launch into demo mode without external dependencies.
+- [x] Widget tests for empty, partially configured, and fully configured onboarding states.
+- [x] Desktop smoke test can launch into demo mode without external dependencies.
 
 ### P6.T9 — Agent change review and git safety
 

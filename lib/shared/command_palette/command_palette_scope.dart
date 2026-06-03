@@ -57,6 +57,12 @@ List<PickforgeCommand> buildNavCommands(BuildContext context) {
       run: () => context.go(AppRoutes.onboarding),
     ),
     PickforgeCommand(
+      id: 'nav-demo',
+      title: 'Open Demo Workspace',
+      hint: 'Fake project, widget, emulator, and chat',
+      run: () => context.go(AppRoutes.demo),
+    ),
+    PickforgeCommand(
       id: 'nav-settings',
       title: 'Go to Settings',
       hint: 'App settings',

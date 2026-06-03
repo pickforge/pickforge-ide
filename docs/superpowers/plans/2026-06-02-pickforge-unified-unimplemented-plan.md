@@ -494,15 +494,16 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P5.T1 — Embedded emulator mirror
 
-**Status:** Deferred
+**Status:** Partial / strategy documented
 **Goal:** Replace side-by-side external emulator dependence with an embedded live mirror.
+**Why:** Documented a two-phase mirror strategy in `docs/architecture/emulator-mirror.md`: optional detached scrcpy window first, true embedded raw-stream rendering later, with explicit coordinate mapping, rotation, input-forwarding, and non-regression constraints.
 
 **Tasks**
 
-- [ ] Evaluate scrcpy integration strategy.
-- [ ] Solve device pixel ratio, rotation, and input forwarding.
-- [ ] Keep existing VM Service inspector selection as the source of widget identity.
-- [ ] Ensure mirror is optional and does not regress Approach A.
+- [x] Evaluate scrcpy integration strategy.
+- [x] Solve device pixel ratio, rotation, and input forwarding.
+- [x] Keep existing VM Service inspector selection as the source of widget identity.
+- [x] Ensure mirror is optional and does not regress Approach A.
 
 ### P5.T2 — True hover-over-live-emulator UX
 

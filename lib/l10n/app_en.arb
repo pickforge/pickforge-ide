@@ -36,6 +36,10 @@
       "count": {}
     }
   },
+  "forgeSkillSourceTooltip": "Inspect active skill source",
+  "forgeSkillSourceTitle": "Active skill source",
+  "forgeSkillSourceProjectOverride": "Project override",
+  "forgeSkillSourceBundled": "Bundled skill",
   "forgeMoveAttachmentUp": "Move attachment up",
   "forgeMoveAttachmentDown": "Move attachment down",
   "forgeAddCustomNote": "Add note",

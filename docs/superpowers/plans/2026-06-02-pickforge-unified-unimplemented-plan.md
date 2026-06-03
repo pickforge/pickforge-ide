@@ -481,11 +481,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P4.T4 — Skill overrides and community registry
 
-**Status:** Deferred / Partial
+**Status:** Partial / local source UI complete
+**Why:** Project-local `.pickforge/skills/` overrides were already active in `SkillStore`; added a reusable skill-source resolver and Forge-panel source inspector so users can verify whether the active skill comes from a project override or bundled asset.
 **Tasks**
 
-- [ ] Ensure project-local `.pickforge/skills/` overrides bundled skills.
-- [ ] Add UI to inspect active skill source.
+- [x] Ensure project-local `.pickforge/skills/` overrides bundled skills.
+- [x] Add UI to inspect active skill source.
 - [ ] Design community skill registry.
 - [ ] Add trust/safety model for skill packs.
 

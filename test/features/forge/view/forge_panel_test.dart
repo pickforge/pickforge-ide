@@ -252,6 +252,44 @@ void main() {
     expect(button.onPressed, isNull);
   });
 
+  testWidgets('ForgePanel opens active skill source dialog', (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final tempDir = Directory.systemTemp.createTempSync(
+      'forge_panel_skill_source_test_',
+    );
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final overrideDir = Directory(
+      '${tempDir.path}/.pickforge/skills',
+    )..createSync(recursive: true);
+    final overrideFile = File('${overrideDir.path}/edit-widget.md')
+      ..writeAsStringSync('# Override Skill');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: null,
+            projectRoot: tempDir.path,
+            chatId: 'chat-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Inspect active skill source'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Active skill source'), findsOneWidget);
+    expect(find.text('Project override'), findsOneWidget);
+    expect(find.text(overrideFile.path), findsOneWidget);
+  });
+
   testWidgets('ForgePanel sends prompt to active chat', (tester) async {
     tester.view.physicalSize = const Size(1200, 600);
     tester.view.devicePixelRatio = 1.0;

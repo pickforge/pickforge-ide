@@ -8,6 +8,7 @@ import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/projects/git_status_service.dart';
+import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
@@ -110,6 +111,12 @@ class _ForgePanelBody extends StatelessWidget {
                       value: state.skill,
                       onChanged: cubit.selectSkill,
                     ),
+                    _SkillSourceButton(
+                      source: _skillStore().resolveSkillSource(
+                        state.skill,
+                        projectRoot: projectRoot,
+                      ),
+                    ),
                     AgentPicker(
                       value: state.agentId,
                       onChanged: cubit.selectAgent,
@@ -184,6 +191,27 @@ class _ForgePanelBody extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _SkillSourceButton extends StatelessWidget {
+  const _SkillSourceButton({required this.source});
+
+  final SkillSource source;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return IconButton(
+      tooltip: l10n.forgeSkillSourceTooltip,
+      onPressed: () => unawaited(_showSkillSource(context, source)),
+      icon: Icon(
+        source.isProjectOverride
+            ? Icons.folder_special_outlined
+            : Icons.inventory_2_outlined,
+        size: 18,
+      ),
     );
   }
 }
@@ -469,6 +497,42 @@ GitStatusService? _gitStatusServiceOrNull() {
   } on Object {
     return null;
   }
+}
+
+SkillStore _skillStore() {
+  if (getIt.isRegistered<SkillStore>()) return getIt<SkillStore>();
+  return SkillStore();
+}
+
+Future<void> _showSkillSource(
+  BuildContext context,
+  SkillSource source,
+) {
+  final l10n = AppLocalizations.of(context);
+  final label = source.isProjectOverride
+      ? l10n.forgeSkillSourceProjectOverride
+      : l10n.forgeSkillSourceBundled;
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(l10n.forgeSkillSourceTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label),
+          const SizedBox(height: 8),
+          SelectableText(source.location),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+        ),
+      ],
+    ),
+  );
 }
 
 Future<void> _copyGitDiff(

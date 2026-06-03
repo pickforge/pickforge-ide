@@ -70,6 +70,44 @@ void main() {
       });
     });
 
+    group('resolveSkillSource', () {
+      test('returns bundled asset source when no override exists', () {
+        final tempDir = Directory.systemTemp.createTempSync('skillstore_test_');
+        try {
+          final source = store.resolveSkillSource(
+            SkillId.editWidget,
+            projectRoot: tempDir.path,
+          );
+
+          expect(source.type, SkillSourceType.bundledAsset);
+          expect(source.location, 'assets/skills/edit-widget.md');
+        } finally {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+
+      test('returns project override source when override exists', () {
+        final tempDir = Directory.systemTemp.createTempSync('skillstore_test_');
+        try {
+          final overrideDir = Directory(
+            '${tempDir.path}/.pickforge/skills',
+          )..createSync(recursive: true);
+          final overrideFile = File('${overrideDir.path}/edit-widget.md')
+            ..writeAsStringSync('# Override Skill');
+
+          final source = store.resolveSkillSource(
+            SkillId.editWidget,
+            projectRoot: tempDir.path,
+          );
+
+          expect(source.type, SkillSourceType.projectOverride);
+          expect(source.location, overrideFile.path);
+        } finally {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+    });
+
     group('loadAgentTemplate', () {
       test('loads CLAUDE.md.tmpl when forClaude is true', () async {
         final content = await store.loadAgentTemplate(forClaude: true);

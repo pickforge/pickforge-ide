@@ -3,6 +3,20 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:pickforge/core/skills/models.dart';
 
+enum SkillSourceType { projectOverride, bundledAsset }
+
+class SkillSource {
+  const SkillSource({
+    required this.type,
+    required this.location,
+  });
+
+  final SkillSourceType type;
+  final String location;
+
+  bool get isProjectOverride => type == SkillSourceType.projectOverride;
+}
+
 /// Loads skill markdown files and agent templates.
 ///
 /// Prefers project-local overrides in `.pickforge/skills/` before falling back
@@ -22,14 +36,30 @@ class SkillStore {
     SkillId id, {
     required String projectRoot,
   }) async {
-    final overridePath = '$projectRoot/.pickforge/skills/${id.value}.md';
-    final overrideFile = File(overridePath);
-
-    if (overrideFile.existsSync()) {
-      return overrideFile.readAsStringSync();
+    final source = resolveSkillSource(id, projectRoot: projectRoot);
+    if (source.isProjectOverride) {
+      return File(source.location).readAsStringSync();
     }
 
-    return _effectiveBundle.loadString('assets/skills/${id.value}.md');
+    return _effectiveBundle.loadString(source.location);
+  }
+
+  SkillSource resolveSkillSource(
+    SkillId id, {
+    required String projectRoot,
+  }) {
+    final overridePath = '$projectRoot/.pickforge/skills/${id.value}.md';
+    if (File(overridePath).existsSync()) {
+      return SkillSource(
+        type: SkillSourceType.projectOverride,
+        location: overridePath,
+      );
+    }
+
+    return SkillSource(
+      type: SkillSourceType.bundledAsset,
+      location: 'assets/skills/${id.value}.md',
+    );
   }
 
   /// Loads an agent template.

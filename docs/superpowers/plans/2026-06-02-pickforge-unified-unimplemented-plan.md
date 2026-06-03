@@ -891,3 +891,109 @@ Do not execute these historical items unless a new decision revives them:
 8. **P4:** implement MCP server if agent-side re-query becomes the next highest-leverage improvement.
 9. **P5:** attempt the embedded emulator mirror after the core desktop app is stable.
 10. **P3/P7:** expand platforms and distribution only after the MVP loop is proven.
+
+## 17. Completed execution log — workspace navigation and context safety
+
+**Completed commit:** `bfed126 feat: add workspace navigation and context safety`
+
+### Branch/worktree handling
+
+- [x] Continued implementation in the existing repository-root worktree `.worktrees/pickforge-navigation`.
+- [x] Committed the task branch changes on `task/pickforge-navigation`.
+- [x] Fast-forward merged `task/pickforge-navigation` into `main`.
+- [x] Removed the old `.worktrees/pickforge-navigation` worktree after confirming it was clean.
+- [x] Deleted the merged local `task/pickforge-navigation` branch.
+- [x] Confirmed `main` is clean and ahead of `origin/main` by one commit.
+
+### Plan tracking updates
+
+- [x] Marked already-landed MVP core-loop work as completed.
+- [x] Marked completed P1 items for screenshot capture, user-code gating, active-project settings, command palette base wiring, MVP history decision, PTY project switching, and release checklist refresh.
+- [x] Added partial completion checkboxes for the real widget-pick dogfood pass based on emulator E2E evidence.
+- [x] Marked completed and remaining work for P6 left-pane navigation, project file explorer, context attachments, onboarding, git safety, context preview/redaction, and diagnostics.
+
+### Workspace navigation
+
+- [x] Added left-pane list/grid mode support.
+- [x] Added grouping by project, recent activity, pinned/favorites, agent, skill, and custom group.
+- [x] Added project/chat pinning.
+- [x] Added collapsible groups and grid density controls.
+- [x] Persisted sidebar view mode, grouping mode, density, collapsed groups, pinned IDs, and custom chat groups.
+- [x] Added fuzzy filtering and keyboard navigation in the left pane.
+- [x] Added tests for grouping, sorting, pinning, list/grid rendering, empty state, pinned group, and collapse/expand behavior.
+
+### Project file explorer
+
+- [x] Added `ProjectFileExplorerCubit` and state.
+- [x] Added safe project tree scanning with sorting, common excludes, hidden-file toggle, `.gitignore`, and `.pickforge/.gitignore` handling.
+- [x] Avoided symlink recursion and blocked symlink attachment reads.
+- [x] Added expandable folder/file UI in the left pane.
+- [x] Added file search/filter.
+- [x] Added system default open and reveal actions for Linux, macOS, and Windows.
+- [x] Added copy relative path and copy absolute path actions.
+- [x] Added "Attach to next forge prompt" from the explorer.
+- [x] Added debounced filesystem watching and refresh.
+- [x] Added unit/widget/process-runner tests for scanning, ignore rules, symlink handling, sorting, explorer UI, and platform open commands.
+
+### Context attachments and forge prompt safety
+
+- [x] Added context attachment model, Cubit, state, renderer, policy, and redactor.
+- [x] Added file attachment chips in `ForgePanel`.
+- [x] Added selected widget, screenshot, device screenshot, run-log, and custom-note context chips.
+- [x] Added remove and reorder controls for attachments.
+- [x] Added custom notes to the generated context.
+- [x] Added large-context size warnings.
+- [x] Blocked suspicious attachments such as `.env`, private keys, images/binaries, `.pickforge/` context, and symlinks.
+- [x] Redacted common secret assignments, prefixed env-style keys, JSON-style quoted keys, and private keys.
+- [x] Included attachment content and custom notes in generated widget context.
+- [x] Added tests for redaction, blocked files, symlink blocking, custom notes, attachment ordering, and context rendering.
+
+### Context preview
+
+- [x] Added "Preview context" affordance in `ForgePanel`.
+- [x] Preview includes initial prompt, active skill text, and widget context.
+- [x] Preview handles loading and error states.
+- [x] Added widget tests covering preview rendering.
+
+### Git safety and active-chat correctness
+
+- [x] Added git status parsing for staged, unstaged, untracked, and branch state.
+- [x] Warned before forging into dirty repositories.
+- [x] Added project change summary with changed files and diff stat.
+- [x] Added copy-diff action.
+- [x] Prevented stale active chats from being used after project-only switches.
+- [x] Restored or cleared active chat on project switches.
+- [x] Added tests for git parsing, diff summary, copyable diff text, chat activation, and stale-chat filtering.
+
+### Onboarding and setup checks
+
+- [x] Added first-run checklist.
+- [x] Added demo-mode affordance/card.
+- [x] Added "Open sample Flutter app" action for `fixtures/sample_flutter_app`.
+- [x] Added setup checks for Flutter/FVM, `adb`, emulator, Claude Code, Codex, and OpenCode.
+- [x] Added retry and copy-command recovery actions.
+- [x] Added onboarding widget tests for empty/demo/setup/sample-app flows.
+
+### Diagnostics and support bundle
+
+- [x] Added diagnostics service with bounded local log entries.
+- [x] Registered diagnostics as a shared service.
+- [x] Recorded Forge failures into diagnostics.
+- [x] Added diagnostics card for OS, `adb`, `git`, emulator, Flutter/FVM, and agent binary availability.
+- [x] Added copyable support bundle that excludes source files, prompts, screenshots, and secrets by default.
+- [x] Added redaction in diagnostics logs and support bundles.
+- [x] Added diagnostics unit and widget tests.
+
+### CI and validation
+
+- [x] Updated CI action versions.
+- [x] Regenerated build-runner outputs.
+- [x] Regenerated localization outputs.
+- [x] Ran `fvm dart format --set-exit-if-changed .`.
+- [x] Ran `fvm flutter analyze`.
+- [x] Ran `fvm dart run build_runner build --delete-conflicting-outputs`.
+- [x] Ran `fvm flutter test --coverage --reporter=compact`.
+- [x] Ran emulator hot-reload E2E with `PICKFORGE_E2E_AVD=Pixel_10`.
+- [x] Ran widget-pick emulator E2E with `PICKFORGE_E2E_AVD=Pixel_10`.
+- [x] Ran focused tests for forge, attachments, redaction, file explorer, diagnostics, git safety, sidebar, onboarding, and chat switching.
+- [x] Ran final Flutter and GPT review passes.

@@ -157,6 +157,18 @@ void main() {
     kind: AndroidDeviceKind.physical,
     model: 'Pixel 6',
   );
+  const iosAvd = Avd(
+    id: 'A1B2C3D4-0000-1111-2222-333344445555',
+    name: 'iPhone 16',
+    platform: iosSimulatorPlatform,
+  );
+  const iosDevice = RunningAndroidDevice(
+    serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+    avdName: 'iPhone 16',
+    state: 'device',
+    kind: AndroidDeviceKind.iosSimulator,
+    model: 'iPhone 16',
+  );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'bootstrap offers adoption for recoverable orphaned run',
@@ -357,6 +369,59 @@ void main() {
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootstrap restores connected iOS simulator binding',
+    setUp: () {
+      when(() => settings.getEmulatorBinding('/p')).thenAnswer(
+        (_) async => const EmulatorBinding.iosSimulator(
+          simulatorId: 'A1B2C3D4-0000-1111-2222-333344445555',
+          name: 'iPhone 16',
+        ),
+      );
+      when(disc.snapshot).thenAnswer(
+        (_) async => const DeviceListSnapshot(
+          avds: [],
+          running: [iosDevice],
+        ),
+      );
+    },
+    build: build,
+    act: (c) => c.bootstrap(),
+    expect: () => [
+      isA<Idle>().having((s) => s.avd, 'avd', iosAvd).having(
+            (s) => s.serial,
+            'serial',
+            'A1B2C3D4-0000-1111-2222-333344445555',
+          ),
+    ],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'pickIosSimulator persists simulator and enters idle',
+    setUp: () {
+      when(() => settings.setEmulatorBinding('/p', any()))
+          .thenAnswer((_) async {});
+    },
+    build: build,
+    act: (c) => c.pickIosSimulator(iosDevice),
+    expect: () => [
+      isA<Idle>().having((s) => s.avd, 'avd', iosAvd).having(
+            (s) => s.serial,
+            'serial',
+            'A1B2C3D4-0000-1111-2222-333344445555',
+          ),
+    ],
+    verify: (_) => verify(
+      () => settings.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.iosSimulator(
+          simulatorId: 'A1B2C3D4-0000-1111-2222-333344445555',
+          name: 'iPhone 16',
+        ),
+      ),
+    ).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'runApp from idle attaches inspector on vmServiceReady',
     setUp: () => when(
       () => run.start(
@@ -510,6 +575,51 @@ void main() {
           avdId: 'R58M1234567',
           avdName: 'Pixel 6',
           serial: 'R58M1234567',
+          vmServiceUrl: 'ws://x/ws',
+          targetFile: any(named: 'targetFile'),
+        ),
+      ).called(1);
+    },
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'runApp from iOS simulator uses selected simulator id',
+    setUp: () {
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: build,
+    seed: () => const EmulatorSessionState.idle(
+      avd: iosAvd,
+      serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+    ),
+    act: (c) async {
+      await c.runApp();
+    },
+    verify: (_) {
+      verify(
+        () => run.start(
+          projectRoot: '/p',
+          serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+          targetFile: any(named: 'targetFile'),
+          extraArgs: const [],
+        ),
+      ).called(1);
+      verify(
+        () => log.recordStart(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          startedAt: any(named: 'startedAt'),
+          connectionMode: 'auto',
+          avdId: 'A1B2C3D4-0000-1111-2222-333344445555',
+          avdName: 'iPhone 16',
+          serial: 'A1B2C3D4-0000-1111-2222-333344445555',
           vmServiceUrl: 'ws://x/ws',
           targetFile: any(named: 'targetFile'),
         ),

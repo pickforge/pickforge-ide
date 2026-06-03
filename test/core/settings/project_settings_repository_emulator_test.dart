@@ -56,6 +56,23 @@ void main() {
     expect((got as PhysicalDeviceBinding).name, 'Pixel 6');
   });
 
+  test('round-trip iOS simulator binding', () async {
+    await repo.setEmulatorBinding(
+      '/p',
+      const EmulatorBinding.iosSimulator(
+        simulatorId: 'A1B2C3D4-0000-1111-2222-333344445555',
+        name: 'iPhone 16',
+      ),
+    );
+    final got = await repo.getEmulatorBinding('/p');
+    expect(got, isA<IosSimulatorBinding>());
+    expect(
+      (got! as IosSimulatorBinding).simulatorId,
+      'A1B2C3D4-0000-1111-2222-333344445555',
+    );
+    expect((got as IosSimulatorBinding).name, 'iPhone 16');
+  });
+
   test('clearEmulatorBinding returns null', () async {
     await repo.setEmulatorBinding(
       '/p',

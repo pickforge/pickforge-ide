@@ -94,6 +94,43 @@ void main() {
     verify(() => cubit.setPhysicalDevice('/p', device)).called(1);
   });
 
+  testWidgets('renders iOS simulator list and picking calls cubit',
+      (tester) async {
+    const device = RunningAndroidDevice(
+      serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+      avdName: 'iPhone 16',
+      state: 'device',
+      kind: AndroidDeviceKind.iosSimulator,
+      model: 'iPhone 16',
+    );
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(runningDevices: [device]),
+    );
+    when(() => cubit.setIosSimulator(any(), any())).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('device-dropdown')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('iPhone 16 (A1B2C3D4-0000-1111-2222-333344445555)'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.text('iPhone 16 (A1B2C3D4-0000-1111-2222-333344445555)').last,
+    );
+    await tester.pumpAndSettle();
+
+    verify(() => cubit.setIosSimulator('/p', device)).called(1);
+  });
+
   testWidgets('manual mode reveals URL field', (tester) async {
     final cubit = _Cubit(
       const DeviceRunSettingsState(

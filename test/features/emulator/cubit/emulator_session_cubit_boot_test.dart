@@ -85,6 +85,7 @@ void main() {
       when(
         () => poller.poll(
           avdId: any(named: 'avdId'),
+          platform: any(named: 'platform'),
           timeout: any(named: 'timeout'),
           interval: any(named: 'interval'),
           cancel: any(named: 'cancel'),
@@ -118,6 +119,7 @@ void main() {
       when(
         () => poller.poll(
           avdId: any(named: 'avdId'),
+          platform: any(named: 'platform'),
           timeout: any(named: 'timeout'),
           interval: any(named: 'interval'),
           cancel: any(named: 'cancel'),
@@ -155,6 +157,7 @@ void main() {
       when(
         () => poller.poll(
           avdId: any(named: 'avdId'),
+          platform: any(named: 'platform'),
           timeout: any(named: 'timeout'),
           interval: any(named: 'interval'),
           cancel: any(named: 'cancel'),
@@ -180,6 +183,7 @@ void main() {
       when(
         () => poller.poll(
           avdId: any(named: 'avdId'),
+          platform: any(named: 'platform'),
           timeout: any(named: 'timeout'),
           interval: any(named: 'interval'),
           cancel: any(named: 'cancel'),
@@ -199,5 +203,54 @@ void main() {
       await f;
     },
     expect: () => [isA<Booting>(), isA<Cold>()],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootAvd: iOS simulator launch polls simctl platform',
+    setUp: () {
+      when(
+        () => launcher.launch(
+          iosFlutterSimulatorId,
+          options: any(named: 'options'),
+        ),
+      ).thenAnswer((_) async => handle);
+      when(
+        () => poller.poll(
+          avdId: iosFlutterSimulatorId,
+          platform: iosSimulatorPlatform,
+          timeout: any(named: 'timeout'),
+          interval: any(named: 'interval'),
+          cancel: any(named: 'cancel'),
+        ),
+      ).thenAnswer(
+        (_) => Stream.value(
+          const BootReady('A1B2C3D4-0000-1111-2222-333344445555'),
+        ),
+      );
+    },
+    build: build,
+    seed: () => const EmulatorSessionState.cold(
+      avd: Avd(
+        id: iosFlutterSimulatorId,
+        name: 'iOS Simulator',
+        platform: iosSimulatorPlatform,
+      ),
+    ),
+    act: (c) => c.bootAvd(),
+    expect: () => [
+      isA<Booting>(),
+      isA<Idle>().having(
+        (s) => s.serial,
+        'serial',
+        'A1B2C3D4-0000-1111-2222-333344445555',
+      ),
+    ],
+    verify: (_) => verify(
+      () => poller.poll(
+        avdId: iosFlutterSimulatorId,
+        platform: iosSimulatorPlatform,
+        cancel: any(named: 'cancel'),
+      ),
+    ).called(1),
   );
 }

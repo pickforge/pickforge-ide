@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/cancel_token.dart';
+import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 
 class _FakeRunner extends Mock implements ProcessRunner {}
@@ -18,6 +19,20 @@ void main() {
   });
 
   ProcessResult ok(String stdout) => ProcessResult(0, 0, stdout, '');
+  const bootedIosJson = '''
+{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
+      {
+        "udid": "A1B2C3D4-0000-1111-2222-333344445555",
+        "name": "iPhone 16",
+        "state": "Booted",
+        "isAvailable": true
+      }
+    ]
+  }
+}
+''';
 
   test('emits ready with serial when AVD name matches and pm path succeeds',
       () async {
@@ -159,5 +174,29 @@ void main() {
         .toList();
 
     expect((events.last as BootReady).serial, 'emulator-5556');
+  });
+
+  test('emits ready for booted iOS simulator', () async {
+    when(
+      () => runner.run(
+        'xcrun',
+        ['simctl', 'list', 'devices', 'booted', '--json'],
+      ),
+    ).thenAnswer((_) async => ok(bootedIosJson));
+
+    final events = await poller
+        .poll(
+          avdId: iosFlutterSimulatorId,
+          platform: iosSimulatorPlatform,
+          interval: const Duration(milliseconds: 10),
+          timeout: const Duration(seconds: 1),
+        )
+        .toList();
+
+    expect(events.last, isA<BootReady>());
+    expect(
+      (events.last as BootReady).serial,
+      'A1B2C3D4-0000-1111-2222-333344445555',
+    );
   });
 }

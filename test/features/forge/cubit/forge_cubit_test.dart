@@ -31,7 +31,11 @@ class _MockDiagnostics extends Mock implements DiagnosticsService {}
 
 class _NullAdb extends Fake implements AdbScreenshotCapturer {
   @override
-  Future<String?> capture({required String outputDir, String? serial}) async =>
+  Future<String?> capture({
+    required String outputDir,
+    String? serial,
+    String? platform,
+  }) async =>
       null;
 }
 
@@ -160,6 +164,7 @@ void main() {
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
             serial: any(named: 'serial'),
+            platform: any(named: 'platform'),
           ),
         ).thenAnswer((_) async => null);
         when(() => launcher.prepareContext(any()))
@@ -188,6 +193,7 @@ void main() {
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
             serial: any(named: 'serial'),
+            platform: any(named: 'platform'),
           ),
         ).thenAnswer((_) async => '/tmp/test/.pickforge/device-screen.png');
         when(() => launcher.prepareContext(any()))
@@ -286,6 +292,7 @@ void main() {
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
             serial: any(named: 'serial'),
+            platform: any(named: 'platform'),
           ),
         ).thenAnswer((_) async => null);
         when(() => launcher.prepareContext(any()))
@@ -297,12 +304,14 @@ void main() {
         projectRoot: '/tmp/test',
         chatId: 'chat-1',
         deviceSerial: 'R58M1234567',
+        devicePlatform: 'android-physical',
       ),
       verify: (_) {
         verify(
           () => adb.capture(
             outputDir: '/tmp/test/.pickforge',
             serial: 'R58M1234567',
+            platform: 'android-physical',
           ),
         ).called(1);
       },
@@ -315,6 +324,7 @@ void main() {
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
             serial: any(named: 'serial'),
+            platform: any(named: 'platform'),
           ),
         ).thenAnswer((_) async => null);
         when(
@@ -353,6 +363,7 @@ void main() {
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
             serial: any(named: 'serial'),
+            platform: any(named: 'platform'),
           ),
         );
         verifyNever(() => launcher.prepareContext(any()));

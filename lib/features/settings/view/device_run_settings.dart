@@ -258,17 +258,21 @@ class _DeviceDropdown extends StatelessWidget {
     final options = [
       ...state.avds.map(_DeviceOption.avd),
       ...state.runningDevices
-          .where((device) => device.isPhysical && device.state == 'device')
-          .map(_DeviceOption.physical),
+          .where(
+            (device) => device.isConnectedDevice && device.state == 'device',
+          )
+          .map(_DeviceOption.connected),
     ];
     final selected = switch (state.binding) {
       AvdBinding(:final avdId) => _DeviceOption.avdKey(avdId),
       PhysicalDeviceBinding(:final serial) => _DeviceOption.physicalKey(serial),
+      IosSimulatorBinding(:final simulatorId) =>
+        _DeviceOption.iosKey(simulatorId),
       _ => null,
     };
     return DropdownButton<_DeviceOption>(
       key: const Key('device-dropdown'),
-      hint: const Text('Select Android device'),
+      hint: const Text('Select Flutter device'),
       value: options.where((option) => option.key == selected).firstOrNull,
       items: options
           .map(
@@ -286,11 +290,18 @@ class _DeviceDropdown extends StatelessWidget {
                 .read<DeviceRunSettingsCubit>()
                 .setAvd(projectRoot, avd)
                 .ignore();
-          case _PhysicalDeviceOption(:final device):
-            context
-                .read<DeviceRunSettingsCubit>()
-                .setPhysicalDevice(projectRoot, device)
-                .ignore();
+          case _ConnectedDeviceOption(:final device):
+            if (device.isIosSimulator) {
+              context
+                  .read<DeviceRunSettingsCubit>()
+                  .setIosSimulator(projectRoot, device)
+                  .ignore();
+            } else {
+              context
+                  .read<DeviceRunSettingsCubit>()
+                  .setPhysicalDevice(projectRoot, device)
+                  .ignore();
+            }
         }
       },
     );
@@ -301,14 +312,15 @@ sealed class _DeviceOption {
   const _DeviceOption();
 
   factory _DeviceOption.avd(Avd avd) = _AvdOption;
-  factory _DeviceOption.physical(RunningAndroidDevice device) =
-      _PhysicalDeviceOption;
+  factory _DeviceOption.connected(RunningAndroidDevice device) =
+      _ConnectedDeviceOption;
 
   String get key;
   String get label;
 
   static String avdKey(String id) => 'avd:$id';
   static String physicalKey(String serial) => 'physical:$serial';
+  static String iosKey(String simulatorId) => 'ios:$simulatorId';
 }
 
 final class _AvdOption extends _DeviceOption {
@@ -317,19 +329,23 @@ final class _AvdOption extends _DeviceOption {
   final Avd avd;
 
   @override
-  String get key => _DeviceOption.avdKey(avd.id);
+  String get key => avd.platform == iosSimulatorPlatform
+      ? _DeviceOption.iosKey(avd.id)
+      : _DeviceOption.avdKey(avd.id);
 
   @override
   String get label => avd.name;
 }
 
-final class _PhysicalDeviceOption extends _DeviceOption {
-  const _PhysicalDeviceOption(this.device);
+final class _ConnectedDeviceOption extends _DeviceOption {
+  const _ConnectedDeviceOption(this.device);
 
   final RunningAndroidDevice device;
 
   @override
-  String get key => _DeviceOption.physicalKey(device.serial);
+  String get key => device.isIosSimulator
+      ? _DeviceOption.iosKey(device.serial)
+      : _DeviceOption.physicalKey(device.serial);
 
   @override
   String get label => '${device.displayName} (${device.serial})';

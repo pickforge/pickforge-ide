@@ -46,11 +46,31 @@ class DeviceDiscoveryService {
   }
 
   Future<DeviceListSnapshot> snapshot() async {
-    final results = await Future.wait([listAvds(), listRunningDevices()]);
+    final results = await Future.wait([
+      listAvds(),
+      listRunningDevices(),
+      listRunningIosSimulators(),
+    ]);
     return DeviceListSnapshot(
       avds: results[0] as List<Avd>,
-      running: results[1] as List<RunningAndroidDevice>,
+      running: [
+        ...results[1] as List<RunningAndroidDevice>,
+        ...results[2] as List<RunningAndroidDevice>,
+      ],
     );
+  }
+
+  Future<List<RunningAndroidDevice>> listRunningIosSimulators() async {
+    try {
+      final res = await _runner.run(
+        'xcrun',
+        ['simctl', 'list', 'devices', 'booted', '--json'],
+      );
+      if (res.exitCode != 0) return const [];
+      return _parseBootedIosSimulators(res.stdout.toString());
+    } on ProcessRunnerException {
+      return const [];
+    }
   }
 
   Stream<DeviceListSnapshot> watch({
@@ -91,7 +111,8 @@ class DeviceDiscoveryService {
               id: json['id'] as String? ?? '',
               name: (json['name'] as String? ?? json['id'] as String? ?? '')
                   .trim(),
-              platform: json['platformType'] as String? ?? 'android',
+              platform:
+                  json['platformType'] as String? ?? androidEmulatorPlatform,
             ),
           )
           .where((avd) => avd.id.isNotEmpty)
@@ -133,5 +154,38 @@ class DeviceDiscoveryService {
       return value.isEmpty ? null : value;
     }
     return null;
+  }
+
+  List<RunningAndroidDevice> _parseBootedIosSimulators(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return const [];
+      final devices = decoded['devices'];
+      if (devices is! Map<String, dynamic>) return const [];
+      final out = <RunningAndroidDevice>[];
+      for (final runtimeDevices in devices.values) {
+        if (runtimeDevices is! List) continue;
+        for (final item in runtimeDevices.whereType<Map<String, dynamic>>()) {
+          final udid = item['udid'] as String?;
+          final name = item['name'] as String?;
+          final state = item['state'] as String?;
+          final available = item['isAvailable'] as bool? ?? true;
+          if (udid == null || udid.isEmpty || !available) continue;
+          if (state != null && state != 'Booted') continue;
+          out.add(
+            RunningAndroidDevice(
+              serial: udid,
+              avdName: name,
+              state: 'device',
+              kind: AndroidDeviceKind.iosSimulator,
+              model: name,
+            ),
+          );
+        }
+      }
+      return out;
+    } on FormatException {
+      return const [];
+    }
   }
 }

@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/emulator/cancel_token.dart';
+import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 
 sealed class BootReadinessEvent {
@@ -40,6 +43,7 @@ class BootReadinessPoller {
 
   Stream<BootReadinessEvent> poll({
     required String avdId,
+    String platform = androidEmulatorPlatform,
     Duration timeout = const Duration(seconds: 60),
     Duration interval = const Duration(milliseconds: 500),
     CancelToken? cancel,
@@ -57,7 +61,9 @@ class BootReadinessPoller {
         return;
       }
 
-      final serial = await _findReadySerialFor(avdId);
+      final serial = platform == iosSimulatorPlatform
+          ? await _findReadyIosSimulatorFor(avdId)
+          : await _findReadySerialFor(avdId);
       if (serial != null) {
         yield BootReady(serial);
         return;
@@ -109,6 +115,41 @@ class BootReadinessPoller {
         if (pm.exitCode != 0) continue;
         return serial;
       }
+      return null;
+    } on ProcessRunnerException {
+      return null;
+    }
+  }
+
+  Future<String?> _findReadyIosSimulatorFor(String simulatorId) async {
+    try {
+      final list = await _runner.run(
+        'xcrun',
+        ['simctl', 'list', 'devices', 'booted', '--json'],
+      );
+      if (list.exitCode != 0) return null;
+      final decoded = jsonDecode(list.stdout.toString());
+      if (decoded is! Map<String, dynamic>) return null;
+      final devices = decoded['devices'];
+      if (devices is! Map<String, dynamic>) return null;
+      for (final runtimeDevices in devices.values) {
+        if (runtimeDevices is! List) continue;
+        for (final item in runtimeDevices.whereType<Map<String, dynamic>>()) {
+          final udid = item['udid'] as String?;
+          final name = item['name'] as String?;
+          final state = item['state'] as String?;
+          final available = item['isAvailable'] as bool? ?? true;
+          if (udid == null || udid.isEmpty || !available) continue;
+          if (state != null && state != 'Booted') continue;
+          if (simulatorId == iosFlutterSimulatorId ||
+              simulatorId == udid ||
+              simulatorId == name) {
+            return udid;
+          }
+        }
+      }
+      return null;
+    } on FormatException {
       return null;
     } on ProcessRunnerException {
       return null;

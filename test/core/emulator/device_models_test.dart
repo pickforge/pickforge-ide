@@ -51,4 +51,27 @@ void main() {
     expect(avd.platform, androidPhysicalPlatform);
     expect(snap.runningFor(avd), device);
   });
+
+  test('iOS simulator exposes display AVD and matches generic Flutter target',
+      () {
+    const device = RunningAndroidDevice(
+      serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+      avdName: 'iPhone 16',
+      state: 'device',
+      kind: AndroidDeviceKind.iosSimulator,
+      model: 'iPhone 16',
+    );
+    const flutterTarget = Avd(
+      id: iosFlutterSimulatorId,
+      name: 'iOS Simulator',
+      platform: iosSimulatorPlatform,
+    );
+    final avd = device.asDeviceAvd;
+    const snap = DeviceListSnapshot(avds: [flutterTarget], running: [device]);
+
+    expect(device.displayName, 'iPhone 16');
+    expect(device.isConnectedDevice, isTrue);
+    expect(avd.platform, iosSimulatorPlatform);
+    expect(snap.runningFor(flutterTarget), device);
+  });
 }

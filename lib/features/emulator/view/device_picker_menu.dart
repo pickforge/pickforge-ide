@@ -54,20 +54,20 @@ class _DeviceList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = context.read<EmulatorSessionCubit>();
-    final physicalDevices = running
-        .where((device) => device.isPhysical && device.state == 'device')
+    final connectedDevices = running
+        .where((device) => device.isConnectedDevice && device.state == 'device')
         .toList();
     final runningAvds =
-        avds.where((avd) => running.any((r) => r.avdName == avd.id)).toList();
+        avds.where((avd) => running.any((r) => r.matchesAvd(avd))).toList();
     final coldAvds =
-        avds.where((avd) => !running.any((r) => r.avdName == avd.id)).toList();
+        avds.where((avd) => !running.any((r) => r.matchesAvd(avd))).toList();
 
-    if (avds.isEmpty && physicalDevices.isEmpty) {
+    if (avds.isEmpty && connectedDevices.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(24),
         child: Text(
-          'No Android devices detected.\n'
-          'Connect a device or create an emulator in Android Studio.',
+          'No Flutter devices detected.\n'
+          'Connect a device or create an emulator/simulator.',
         ),
       );
     }
@@ -76,11 +76,11 @@ class _DeviceList extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (physicalDevices.isNotEmpty) const _Header('CONNECTED'),
-        for (final device in physicalDevices)
+        if (connectedDevices.isNotEmpty) const _Header('CONNECTED'),
+        for (final device in connectedDevices)
           _DeviceRow(
             label: '${device.displayName} (${device.serial})',
-            onTap: () => unawaited(_pickPhysical(context, session, device)),
+            onTap: () => unawaited(_pickConnected(context, session, device)),
           ),
         if (runningAvds.isNotEmpty) const _Header('RUNNING'),
         for (final avd in runningAvds)
@@ -107,13 +107,17 @@ class _DeviceList extends StatelessWidget {
     await session.pickAvd(avd);
   }
 
-  Future<void> _pickPhysical(
+  Future<void> _pickConnected(
     BuildContext context,
     EmulatorSessionCubit session,
     RunningAndroidDevice device,
   ) async {
     await Navigator.of(context).maybePop();
-    await session.pickPhysicalDevice(device);
+    if (device.isIosSimulator) {
+      await session.pickIosSimulator(device);
+    } else {
+      await session.pickPhysicalDevice(device);
+    }
   }
 }
 

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
 
 class _Probe extends RunProcessProbe {
@@ -58,7 +59,9 @@ void main() {
       p.join(project.path, '.pickforge', 'runs', 'session-1', 'session.json'),
     );
     expect(file.existsSync(), isTrue);
-    expect(await store.findRecoverable(project.path), metadata);
+    final recovered = await store.findRecoverable(project.path);
+    expect(recovered, metadata);
+    expect(recovered?.avdPlatform, androidEmulatorPlatform);
   });
 
   test('findRecoverable deletes stale metadata without terminating PID',
@@ -130,6 +133,7 @@ RunSessionRecoveryMetadata _metadata(String projectRoot) {
     startedAt: DateTime.utc(2026, 6, 3),
     avdId: 'Pixel_10',
     avdName: 'Pixel 10',
+    avdPlatform: androidEmulatorPlatform,
     targetFile: 'lib/main_dev.dart',
     extraArgs: const ['--flavor', 'dev'],
     vmServiceUri: 'ws://127.0.0.1:1234/ws',

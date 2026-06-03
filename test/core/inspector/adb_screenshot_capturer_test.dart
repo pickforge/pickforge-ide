@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/process/binary_detector.dart';
 
@@ -171,6 +172,56 @@ void main() {
           calls,
           contains(
             equals(['-s', 'R58M1234567', 'exec-out', 'screencap', '-p']),
+          ),
+        );
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    test('captures iOS simulator screenshot with simctl', () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      final calls = <({String executable, List<String> args})>[];
+
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        calls.add((executable: executable, args: args));
+        if (executable == 'xcrun' && args.contains('screenshot')) {
+          await File(args.last).writeAsBytes(pngHeader);
+          return ProcessResult(0, 0, '', '');
+        }
+        return ProcessResult(0, 0, '/usr/bin/$executable', '');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(
+        detector,
+        processRunner: runner,
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync('simctl_test_');
+      try {
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+          platform: iosSimulatorPlatform,
+        );
+
+        expect(result, isNotNull);
+        expect(File(result!).readAsBytesSync(), pngHeader);
+        expect(
+          calls.map((call) => call.executable),
+          isNot(contains('adb')),
+        );
+        expect(
+          calls.map((call) => call.args),
+          contains(
+            equals([
+              'simctl',
+              'io',
+              'A1B2C3D4-0000-1111-2222-333344445555',
+              'screenshot',
+              result,
+            ]),
           ),
         );
       } finally {

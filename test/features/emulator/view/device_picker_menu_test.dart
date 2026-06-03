@@ -58,6 +58,7 @@ void main() {
     final session = _SessionCubit();
     when(() => session.pickAvd(any())).thenAnswer((_) async {});
     when(() => session.pickPhysicalDevice(any())).thenAnswer((_) async {});
+    when(() => session.pickIosSimulator(any())).thenAnswer((_) async {});
     await tester.pumpWidget(
       MaterialApp(
         home: MultiBlocProvider(
@@ -112,6 +113,46 @@ void main() {
     verify(() => session.pickPhysicalDevice(any())).called(1);
   });
 
+  testWidgets('shows connected iOS simulators', (tester) async {
+    final picker = _PickerCubit(
+      const DevicePickerState.loaded(
+        avds: [],
+        running: [
+          RunningAndroidDevice(
+            serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+            avdName: 'iPhone 16',
+            state: 'device',
+            kind: AndroidDeviceKind.iosSimulator,
+            model: 'iPhone 16',
+          ),
+        ],
+      ),
+    );
+    final session = _SessionCubit();
+    when(() => session.pickIosSimulator(any())).thenAnswer((_) async {});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MultiBlocProvider(
+          providers: [
+            BlocProvider<DevicePickerCubit>.value(value: picker),
+            BlocProvider<EmulatorSessionCubit>.value(value: session),
+          ],
+          child: const Scaffold(body: DevicePickerMenu()),
+        ),
+      ),
+    );
+
+    expect(find.text('CONNECTED'), findsOneWidget);
+    expect(
+      find.text('iPhone 16 (A1B2C3D4-0000-1111-2222-333344445555)'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.text('iPhone 16 (A1B2C3D4-0000-1111-2222-333344445555)'),
+    );
+    verify(() => session.pickIosSimulator(any())).called(1);
+  });
+
   testWidgets('empty state shows Android Studio link', (tester) async {
     final picker =
         _PickerCubit(const DevicePickerState.loaded(avds: [], running: []));
@@ -127,7 +168,7 @@ void main() {
       ),
     );
     expect(
-      find.textContaining('No Android devices detected'),
+      find.textContaining('No Flutter devices detected'),
       findsOneWidget,
     );
   });

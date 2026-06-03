@@ -65,6 +65,7 @@ class _RecordingForgeCubit extends ForgeCubit {
   String? forgedProjectRoot;
   String? forgedChatId;
   String? forgedDeviceSerial;
+  String? forgedDevicePlatform;
 
   @override
   void selectSkill(SkillId skill) {
@@ -89,11 +90,13 @@ class _RecordingForgeCubit extends ForgeCubit {
     List<String> attachmentPaths = const [],
     String customNote = '',
     String? deviceSerial,
+    String? devicePlatform,
   }) async {
     forgedSelection = selection;
     forgedProjectRoot = projectRoot;
     forgedChatId = chatId;
     forgedDeviceSerial = deviceSerial;
+    forgedDevicePlatform = devicePlatform;
   }
 
   @override
@@ -322,6 +325,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(forgeCubit.forgedDeviceSerial, 'R58M1234567');
+    expect(forgeCubit.forgedDevicePlatform, androidPhysicalPlatform);
   });
 
   testWidgets('ForgePanel preview includes skill and widget context',

@@ -66,6 +66,12 @@ class ProjectSettingsRepository {
         name: row.avdName ?? row.avdId!,
       );
     }
+    if (row.connectionMode == 'ios' && row.avdId != null) {
+      return EmulatorBinding.iosSimulator(
+        simulatorId: row.avdId!,
+        name: row.avdName ?? row.avdId!,
+      );
+    }
     if (row.avdId != null && row.avdName != null) {
       return EmulatorBinding.avd(
         avdId: row.avdId!,
@@ -96,6 +102,15 @@ class ProjectSettingsRepository {
           avdId: Value(serial),
           avdName: Value(name),
           connectionMode: const Value('physical'),
+          autoBootOnSelect: false,
+          vmServiceUrl: const Value<String?>(null),
+        );
+      case IosSimulatorBinding(:final simulatorId, :final name):
+        await _db.projectSettingsDao.upsert(
+          projectRoot: projectRoot,
+          avdId: Value(simulatorId),
+          avdName: Value(name),
+          connectionMode: const Value('ios'),
           autoBootOnSelect: false,
           vmServiceUrl: const Value<String?>(null),
         );

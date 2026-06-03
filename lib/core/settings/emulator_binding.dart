@@ -15,6 +15,11 @@ abstract class EmulatorBinding with _$EmulatorBinding {
     required String name,
   }) = PhysicalDeviceBinding;
 
+  const factory EmulatorBinding.iosSimulator({
+    required String simulatorId,
+    required String name,
+  }) = IosSimulatorBinding;
+
   const factory EmulatorBinding.manual({
     required String vmServiceUrl,
   }) = ManualBinding;

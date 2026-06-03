@@ -55,6 +55,15 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
   }
 
   Future<void> setAvd(String projectRoot, Avd avd) async {
+    if (avd.platform == iosSimulatorPlatform) {
+      final binding = EmulatorBinding.iosSimulator(
+        simulatorId: avd.id,
+        name: avd.name,
+      );
+      await settings.setEmulatorBinding(projectRoot, binding);
+      emit(state.copyWith(binding: binding));
+      return;
+    }
     final binding = EmulatorBinding.avd(avdId: avd.id, avdName: avd.name);
     await settings.setEmulatorBinding(projectRoot, binding);
     emit(state.copyWith(binding: binding));
@@ -66,6 +75,18 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
   ) async {
     final binding = EmulatorBinding.physical(
       serial: device.serial,
+      name: device.displayName,
+    );
+    await settings.setEmulatorBinding(projectRoot, binding);
+    emit(state.copyWith(binding: binding));
+  }
+
+  Future<void> setIosSimulator(
+    String projectRoot,
+    RunningAndroidDevice device,
+  ) async {
+    final binding = EmulatorBinding.iosSimulator(
+      simulatorId: device.serial,
       name: device.displayName,
     );
     await settings.setEmulatorBinding(projectRoot, binding);

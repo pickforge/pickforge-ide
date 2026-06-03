@@ -169,6 +169,34 @@ void main() {
     expect((cubit.state.binding! as AvdBinding).avdId, 'p7');
   });
 
+  test('setAvd persists iOS simulator binding for iOS targets', () async {
+    when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setAvd(
+      '/p',
+      const Avd(
+        id: iosFlutterSimulatorId,
+        name: 'iOS Simulator',
+        platform: iosSimulatorPlatform,
+      ),
+    );
+
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.iosSimulator(
+          simulatorId: iosFlutterSimulatorId,
+          name: 'iOS Simulator',
+        ),
+      ),
+    ).called(1);
+    expect(
+      (cubit.state.binding! as IosSimulatorBinding).simulatorId,
+      iosFlutterSimulatorId,
+    );
+  });
+
   test('setPhysicalDevice persists physical binding', () async {
     when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
     final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
@@ -196,6 +224,36 @@ void main() {
     expect(
       (cubit.state.binding! as PhysicalDeviceBinding).serial,
       'R58M1234567',
+    );
+  });
+
+  test('setIosSimulator persists iOS simulator binding', () async {
+    when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setIosSimulator(
+      '/p',
+      const RunningAndroidDevice(
+        serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+        avdName: 'iPhone 16',
+        state: 'device',
+        kind: AndroidDeviceKind.iosSimulator,
+        model: 'iPhone 16',
+      ),
+    );
+
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.iosSimulator(
+          simulatorId: 'A1B2C3D4-0000-1111-2222-333344445555',
+          name: 'iPhone 16',
+        ),
+      ),
+    ).called(1);
+    expect(
+      (cubit.state.binding! as IosSimulatorBinding).simulatorId,
+      'A1B2C3D4-0000-1111-2222-333344445555',
     );
   });
 

@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/process/binary_detector.dart';
 import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 
@@ -10,7 +12,7 @@ typedef AdbProcessRunner = Future<ProcessResult> Function(
   List<String> arguments,
 );
 
-/// Captures screenshots from Android devices via adb.
+/// Captures screenshots from Android devices and iOS simulators.
 ///
 /// NOT annotated with `@lazySingleton` — wired via `@module` in injection.dart
 /// because of the optional `processRunner` parameter.
@@ -23,14 +25,22 @@ class AdbScreenshotCapturer {
   final BinaryDetector _detector;
   final AdbProcessRunner _processRunner;
 
-  /// Captures a screenshot from a connected Android device.
-  ///
-  /// 1. Check `adb` is on PATH via detector
-  /// 2. Use the provided serial or parse the first connected device
-  /// 3. Run `adb -s <serial> exec-out screencap -p`
-  /// 4. Write PNG bytes to `{outputDir}/device-screen.png`
-  /// 5. Return path or null on failure
-  Future<String?> capture({required String outputDir, String? serial}) async {
+  /// Captures a screenshot from the selected Flutter target.
+  Future<String?> capture({
+    required String outputDir,
+    String? serial,
+    String? platform,
+  }) async {
+    if (platform == iosSimulatorPlatform) {
+      return _captureIosSimulator(outputDir: outputDir, simulatorId: serial);
+    }
+    return _captureAndroid(outputDir: outputDir, serial: serial);
+  }
+
+  Future<String?> _captureAndroid({
+    required String outputDir,
+    String? serial,
+  }) async {
     // 1. Check adb on PATH
     final adbOnPath = await _detector.isBinaryOnPath('adb');
     if (!adbOnPath) return null;
@@ -50,11 +60,7 @@ class AdbScreenshotCapturer {
     if (pngBytes is! List<int> || pngBytes.isEmpty) return null;
 
     // 4. Write to file
-    final outputDirObj = p.basename(outputDir) == '.pickforge'
-        ? await PickforgeProjectDirectory.ensureDirectory(Directory(outputDir))
-        : await Directory(outputDir).create(recursive: true);
-
-    final outputPath = p.join(outputDirObj.path, 'device-screen.png');
+    final outputPath = await _outputPath(outputDir);
     await File(outputPath).writeAsBytes(pngBytes);
 
     // 5. Return path
@@ -72,5 +78,61 @@ class AdbScreenshotCapturer {
       return trimmed.split('\t').first;
     }
     return null;
+  }
+
+  Future<String?> _captureIosSimulator({
+    required String outputDir,
+    String? simulatorId,
+  }) async {
+    final xcrunOnPath = await _detector.isBinaryOnPath('xcrun');
+    if (!xcrunOnPath) return null;
+
+    final id = simulatorId ?? await _firstBootedIosSimulatorId();
+    if (id == null) return null;
+
+    final outputPath = await _outputPath(outputDir);
+    final result = await _processRunner(
+      'xcrun',
+      ['simctl', 'io', id, 'screenshot', outputPath],
+    );
+    if (result.exitCode != 0) return null;
+
+    final file = File(outputPath);
+    if (!file.existsSync() || file.lengthSync() == 0) return null;
+    return outputPath;
+  }
+
+  Future<String?> _firstBootedIosSimulatorId() async {
+    final result = await _processRunner(
+      'xcrun',
+      ['simctl', 'list', 'devices', 'booted', '--json'],
+    );
+    if (result.exitCode != 0) return null;
+    try {
+      final decoded = jsonDecode(result.stdout.toString());
+      if (decoded is! Map<String, dynamic>) return null;
+      final devices = decoded['devices'];
+      if (devices is! Map<String, dynamic>) return null;
+      for (final runtimeDevices in devices.values) {
+        if (runtimeDevices is! List) continue;
+        for (final item in runtimeDevices.whereType<Map<String, dynamic>>()) {
+          final udid = item['udid'] as String?;
+          final state = item['state'] as String?;
+          final available = item['isAvailable'] as bool? ?? true;
+          if (udid == null || udid.isEmpty || !available) continue;
+          if (state == null || state == 'Booted') return udid;
+        }
+      }
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  Future<String> _outputPath(String outputDir) async {
+    final outputDirObj = p.basename(outputDir) == '.pickforge'
+        ? await PickforgeProjectDirectory.ensureDirectory(Directory(outputDir))
+        : await Directory(outputDir).create(recursive: true);
+    return p.join(outputDirObj.path, 'device-screen.png');
   }
 }

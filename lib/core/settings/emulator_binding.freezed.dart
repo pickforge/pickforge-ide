@@ -53,6 +53,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   TResult maybeMap<TResult extends Object?>({
     TResult Function(AvdBinding value)? avd,
     TResult Function(PhysicalDeviceBinding value)? physical,
+    TResult Function(IosSimulatorBinding value)? iosSimulator,
     TResult Function(ManualBinding value)? manual,
     required TResult orElse(),
   }) {
@@ -62,6 +63,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return avd(_that);
       case PhysicalDeviceBinding() when physical != null:
         return physical(_that);
+      case IosSimulatorBinding() when iosSimulator != null:
+        return iosSimulator(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -86,6 +89,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   TResult map<TResult extends Object?>({
     required TResult Function(AvdBinding value) avd,
     required TResult Function(PhysicalDeviceBinding value) physical,
+    required TResult Function(IosSimulatorBinding value) iosSimulator,
     required TResult Function(ManualBinding value) manual,
   }) {
     final _that = this;
@@ -94,6 +98,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return avd(_that);
       case PhysicalDeviceBinding():
         return physical(_that);
+      case IosSimulatorBinding():
+        return iosSimulator(_that);
       case ManualBinding():
         return manual(_that);
       case _:
@@ -117,6 +123,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(AvdBinding value)? avd,
     TResult? Function(PhysicalDeviceBinding value)? physical,
+    TResult? Function(IosSimulatorBinding value)? iosSimulator,
     TResult? Function(ManualBinding value)? manual,
   }) {
     final _that = this;
@@ -125,6 +132,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return avd(_that);
       case PhysicalDeviceBinding() when physical != null:
         return physical(_that);
+      case IosSimulatorBinding() when iosSimulator != null:
+        return iosSimulator(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -148,6 +157,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(String avdId, String avdName, bool autoBootOnSelect)? avd,
     TResult Function(String serial, String name)? physical,
+    TResult Function(String simulatorId, String name)? iosSimulator,
     TResult Function(String vmServiceUrl)? manual,
     required TResult orElse(),
   }) {
@@ -157,6 +167,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return avd(_that.avdId, _that.avdName, _that.autoBootOnSelect);
       case PhysicalDeviceBinding() when physical != null:
         return physical(_that.serial, _that.name);
+      case IosSimulatorBinding() when iosSimulator != null:
+        return iosSimulator(_that.simulatorId, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -183,6 +195,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
             String avdId, String avdName, bool autoBootOnSelect)
         avd,
     required TResult Function(String serial, String name) physical,
+    required TResult Function(String simulatorId, String name) iosSimulator,
     required TResult Function(String vmServiceUrl) manual,
   }) {
     final _that = this;
@@ -191,6 +204,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return avd(_that.avdId, _that.avdName, _that.autoBootOnSelect);
       case PhysicalDeviceBinding():
         return physical(_that.serial, _that.name);
+      case IosSimulatorBinding():
+        return iosSimulator(_that.simulatorId, _that.name);
       case ManualBinding():
         return manual(_that.vmServiceUrl);
       case _:
@@ -214,6 +229,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(String avdId, String avdName, bool autoBootOnSelect)? avd,
     TResult? Function(String serial, String name)? physical,
+    TResult? Function(String simulatorId, String name)? iosSimulator,
     TResult? Function(String vmServiceUrl)? manual,
   }) {
     final _that = this;
@@ -222,6 +238,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return avd(_that.avdId, _that.avdName, _that.autoBootOnSelect);
       case PhysicalDeviceBinding() when physical != null:
         return physical(_that.serial, _that.name);
+      case IosSimulatorBinding() when iosSimulator != null:
+        return iosSimulator(_that.simulatorId, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -376,6 +394,78 @@ class _$PhysicalDeviceBindingCopyWithImpl<$Res>
       serial: null == serial
           ? _self.serial
           : serial // ignore: cast_nullable_to_non_nullable
+              as String,
+      name: null == name
+          ? _self.name
+          : name // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class IosSimulatorBinding implements EmulatorBinding {
+  const IosSimulatorBinding({required this.simulatorId, required this.name});
+
+  final String simulatorId;
+  final String name;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $IosSimulatorBindingCopyWith<IosSimulatorBinding> get copyWith =>
+      _$IosSimulatorBindingCopyWithImpl<IosSimulatorBinding>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is IosSimulatorBinding &&
+            (identical(other.simulatorId, simulatorId) ||
+                other.simulatorId == simulatorId) &&
+            (identical(other.name, name) || other.name == name));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, simulatorId, name);
+
+  @override
+  String toString() {
+    return 'EmulatorBinding.iosSimulator(simulatorId: $simulatorId, name: $name)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $IosSimulatorBindingCopyWith<$Res>
+    implements $EmulatorBindingCopyWith<$Res> {
+  factory $IosSimulatorBindingCopyWith(
+          IosSimulatorBinding value, $Res Function(IosSimulatorBinding) _then) =
+      _$IosSimulatorBindingCopyWithImpl;
+  @useResult
+  $Res call({String simulatorId, String name});
+}
+
+/// @nodoc
+class _$IosSimulatorBindingCopyWithImpl<$Res>
+    implements $IosSimulatorBindingCopyWith<$Res> {
+  _$IosSimulatorBindingCopyWithImpl(this._self, this._then);
+
+  final IosSimulatorBinding _self;
+  final $Res Function(IosSimulatorBinding) _then;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? simulatorId = null,
+    Object? name = null,
+  }) {
+    return _then(IosSimulatorBinding(
+      simulatorId: null == simulatorId
+          ? _self.simulatorId
+          : simulatorId // ignore: cast_nullable_to_non_nullable
               as String,
       name: null == name
           ? _self.name

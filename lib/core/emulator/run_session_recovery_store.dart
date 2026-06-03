@@ -14,6 +14,7 @@ class RunSessionRecoveryMetadata extends Equatable {
     required this.startedAt,
     this.avdId,
     this.avdName,
+    this.avdPlatform,
     this.targetFile,
     this.extraArgs = const [],
     this.vmServiceUri,
@@ -30,6 +31,7 @@ class RunSessionRecoveryMetadata extends Equatable {
       startedAt: DateTime.parse(json['startedAt']! as String),
       avdId: json['avdId'] as String?,
       avdName: json['avdName'] as String?,
+      avdPlatform: json['avdPlatform'] as String?,
       targetFile: json['targetFile'] as String?,
       extraArgs:
           (json['extraArgs'] as List<dynamic>? ?? const []).cast<String>(),
@@ -46,6 +48,7 @@ class RunSessionRecoveryMetadata extends Equatable {
   final DateTime startedAt;
   final String? avdId;
   final String? avdName;
+  final String? avdPlatform;
   final String? targetFile;
   final List<String> extraArgs;
   final String? vmServiceUri;
@@ -62,6 +65,7 @@ class RunSessionRecoveryMetadata extends Equatable {
         'startedAt': startedAt.toUtc().toIso8601String(),
         'avdId': avdId,
         'avdName': avdName,
+        'avdPlatform': avdPlatform,
         'targetFile': targetFile,
         'extraArgs': extraArgs,
         'vmServiceUri': vmServiceUri,
@@ -77,6 +81,7 @@ class RunSessionRecoveryMetadata extends Equatable {
     DateTime? startedAt,
     Object? avdId = _unset,
     Object? avdName = _unset,
+    Object? avdPlatform = _unset,
     Object? targetFile = _unset,
     List<String>? extraArgs,
     Object? vmServiceUri = _unset,
@@ -91,6 +96,8 @@ class RunSessionRecoveryMetadata extends Equatable {
       startedAt: startedAt ?? this.startedAt,
       avdId: avdId == _unset ? this.avdId : avdId as String?,
       avdName: avdName == _unset ? this.avdName : avdName as String?,
+      avdPlatform:
+          avdPlatform == _unset ? this.avdPlatform : avdPlatform as String?,
       targetFile:
           targetFile == _unset ? this.targetFile : targetFile as String?,
       extraArgs: extraArgs ?? this.extraArgs,
@@ -112,6 +119,7 @@ class RunSessionRecoveryMetadata extends Equatable {
         startedAt,
         avdId,
         avdName,
+        avdPlatform,
         targetFile,
         extraArgs,
         vmServiceUri,

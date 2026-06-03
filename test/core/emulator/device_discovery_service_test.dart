@@ -19,6 +19,26 @@ void main() {
 
   ProcessResult ok(String stdout) => ProcessResult(0, 0, stdout, '');
   ProcessResult fail(String stderr) => ProcessResult(0, 1, '', stderr);
+  const bootedIosJson = '''
+{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
+      {
+        "udid": "A1B2C3D4-0000-1111-2222-333344445555",
+        "name": "iPhone 16",
+        "state": "Booted",
+        "isAvailable": true
+      },
+      {
+        "udid": "UNAVAILABLE",
+        "name": "iPhone unavailable",
+        "state": "Booted",
+        "isAvailable": false
+      }
+    ]
+  }
+}
+''';
 
   test('listAvds parses flutter emulators --machine JSON', () async {
     final json =
@@ -80,6 +100,23 @@ emulator-5556	offline
     expect(await service.listRunningDevices(), isEmpty);
   });
 
+  test('listRunningIosSimulators parses booted simctl devices', () async {
+    when(
+      () => runner.run(
+        'xcrun',
+        ['simctl', 'list', 'devices', 'booted', '--json'],
+      ),
+    ).thenAnswer((_) async => ok(bootedIosJson));
+
+    final devices = await service.listRunningIosSimulators();
+
+    expect(devices, hasLength(1));
+    expect(devices.single.serial, 'A1B2C3D4-0000-1111-2222-333344445555');
+    expect(devices.single.displayName, 'iPhone 16');
+    expect(devices.single.kind, AndroidDeviceKind.iosSimulator);
+    expect(devices.single.asDeviceAvd.platform, iosSimulatorPlatform);
+  });
+
   test('snapshot composes both lists', () async {
     final emusJson =
         await File('test/fixtures/flutter_emulators.json').readAsString();
@@ -93,9 +130,16 @@ emulator-5556	offline
         .thenAnswer((_) async => ok('Pixel_5_API_34\nOK\n'));
     when(() => runner.run('adb', ['-s', 'emulator-5556', 'emu', 'avd', 'name']))
         .thenAnswer((_) async => fail(''));
+    when(
+      () => runner.run(
+        'xcrun',
+        ['simctl', 'list', 'devices', 'booted', '--json'],
+      ),
+    ).thenAnswer((_) async => ok(bootedIosJson));
     final snap = await service.snapshot();
     expect(snap.avds, hasLength(2));
-    expect(snap.running, hasLength(2));
+    expect(snap.running, hasLength(3));
     expect(snap.runningFor(snap.avds.first)?.serial, 'emulator-5554');
+    expect(snap.iosSimulators.single.displayName, 'iPhone 16');
   });
 }

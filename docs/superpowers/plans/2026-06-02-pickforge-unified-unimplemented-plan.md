@@ -374,12 +374,21 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P3.T3 — iOS Simulator support
 
-**Status:** Deferred
+**Status:** Partial / host-gated
 **Tasks**
 
-- [ ] Add iOS simulator discovery.
-- [ ] Add `xcrun simctl` screenshot support.
-- [ ] Validate VM Service and inspector extensions against iOS.
+- [x] Add iOS simulator discovery.
+- [x] Add `xcrun simctl` screenshot support.
+- [ ] Validate VM Service and inspector extensions against iOS on a macOS host.
+
+**Latest evidence**
+
+- 2026-06-03: Added booted iOS simulator discovery via `xcrun simctl list devices booted --json`, iOS simulator matching in the device model, `EmulatorBinding.iosSimulator`, and picker/settings/session wiring for connected and launchable iOS targets.
+- 2026-06-03: Added iOS boot polling through `BootReadinessPoller`, preserved target platform in run recovery metadata, and kept idle shutdown Android-emulator-only.
+- 2026-06-03: Added `xcrun simctl io <udid> screenshot <path>` support through the existing device screenshot capture path and threaded selected target platform through Forge.
+- 2026-06-03: Verified with focused iOS discovery/model/settings/session/screenshot/Forge tests, `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (436 passed, 2 skipped without `PICKFORGE_E2E_AVD`), and both Android emulator E2Es using `fvm flutter test --reporter=compact --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart test/integration/widget_pick_e2e_test.dart`; all passed locally.
+
+**Blocked:** Full live iOS VM Service/inspector dogfood requires Xcode/iOS Simulator on macOS; this Linux environment can only validate the command construction, parsing, persistence, run-session serial selection, and Android regression path.
 
 ### P3.T4 — Flutter web target support
 

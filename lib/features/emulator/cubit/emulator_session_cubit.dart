@@ -113,10 +113,37 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
             ),
           );
         }
+      case IosSimulatorBinding(:final simulatorId, :final name):
+        final avd = Avd(
+          id: simulatorId,
+          name: name,
+          platform: iosSimulatorPlatform,
+        );
+        final snap = await discovery.snapshot();
+        final running = snap.runningFor(avd);
+        if (running != null && running.state == 'device') {
+          emit(_idleState(avd, running.serial));
+        } else {
+          emit(EmulatorSessionState.cold(avd: avd));
+        }
     }
   }
 
   Future<void> pickAvd(Avd avd) async {
+    if (avd.platform == iosSimulatorPlatform) {
+      await settings.setEmulatorBinding(
+        projectRoot,
+        EmulatorBinding.iosSimulator(simulatorId: avd.id, name: avd.name),
+      );
+      final snap = await discovery.snapshot();
+      final running = snap.runningFor(avd);
+      if (running != null && running.state == 'device') {
+        emit(_idleState(avd, running.serial));
+      } else {
+        emit(EmulatorSessionState.cold(avd: avd));
+      }
+      return;
+    }
     await settings.setEmulatorBinding(
       projectRoot,
       EmulatorBinding.avd(avdId: avd.id, avdName: avd.name),
@@ -152,6 +179,28 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     }
   }
 
+  Future<void> pickIosSimulator(RunningAndroidDevice device) async {
+    final avd = device.asDeviceAvd;
+    await settings.setEmulatorBinding(
+      projectRoot,
+      EmulatorBinding.iosSimulator(
+        simulatorId: device.serial,
+        name: device.displayName,
+      ),
+    );
+    if (device.state == 'device') {
+      emit(_idleState(avd, device.serial));
+    } else {
+      emit(
+        EmulatorSessionState.error(
+          avd: avd,
+          serial: device.serial,
+          message: 'iOS simulator ${device.serial} is ${device.state}',
+        ),
+      );
+    }
+  }
+
   Future<void> submitManualUrl(String url) async {
     await settings.setEmulatorBinding(
       projectRoot,
@@ -176,7 +225,11 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
       final options = await settings.getEmulatorLaunchOptions(projectRoot);
       final handle = await launcher.launch(avd.id, options: options);
       _bootHandle = handle;
-      await for (final event in poller.poll(avdId: avd.id, cancel: cancel)) {
+      await for (final event in poller.poll(
+        avdId: avd.id,
+        platform: avd.platform,
+        cancel: cancel,
+      )) {
         if (state is! Booting) return;
         switch (event) {
           case BootPending():
@@ -234,6 +287,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         startedAt: startedAt,
         avdId: current.avd.id,
         avdName: current.avd.name,
+        avdPlatform: current.avd.platform,
         targetFile: args.targetFile,
         extraArgs: args.extraArgs,
       );
@@ -567,7 +621,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
 
   Future<void> _emitIdleAfterRun(Avd avd, String serial) async {
     final idle = _idleState(avd, serial);
-    if (avd.platform == androidPhysicalPlatform) {
+    if (avd.platform != androidEmulatorPlatform) {
       emit(idle);
       return;
     }
@@ -586,7 +640,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   }
 
   Future<void> _shutdownIdleDevice(Idle idle) async {
-    if (idle.avd.platform == androidPhysicalPlatform) {
+    if (idle.avd.platform != androidEmulatorPlatform) {
       emit(idle.copyWith(shutdownPrompt: false));
       return;
     }
@@ -628,9 +682,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     return Avd(
       id: id,
       name: name,
-      platform: recovery.serial.startsWith('emulator-')
-          ? androidEmulatorPlatform
-          : androidPhysicalPlatform,
+      platform: recovery.avdPlatform ??
+          (recovery.serial.startsWith('emulator-')
+              ? androidEmulatorPlatform
+              : androidPhysicalPlatform),
     );
   }
 

@@ -93,7 +93,7 @@ class _ForgePanelBody extends StatelessWidget {
         final attachments =
             attachmentState?.attachments ?? const <ContextAttachment>[];
         final runLogCount = _runLogCountFor(context);
-        final deviceSerial = _deviceSerialFor(context);
+        final deviceTarget = _deviceTargetFor(context);
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Column(
@@ -158,7 +158,8 @@ class _ForgePanelBody extends StatelessWidget {
                                   chatId!,
                                   attachments,
                                   attachmentState?.customNote ?? '',
-                                  deviceSerial,
+                                  deviceTarget.serial,
+                                  deviceTarget.platform,
                                 ),
                               ),
                       child: Text(l10n.forgeItButton),
@@ -428,17 +429,29 @@ int _runLogCountFor(BuildContext context) {
   }
 }
 
-String? _deviceSerialFor(BuildContext context) {
+({String? serial, String? platform}) _deviceTargetFor(BuildContext context) {
   try {
     return switch (context.watch<EmulatorSessionCubit>().state) {
-      Idle(:final serial) => serial,
-      Running(:final serial) => serial,
-      Reconnecting(:final serial) => serial,
-      EmulatorError(:final serial) => serial,
-      _ => null,
+      Idle(:final avd, :final serial) => (
+          serial: serial,
+          platform: avd.platform,
+        ),
+      Running(:final avd, :final serial) => (
+          serial: serial,
+          platform: avd?.platform,
+        ),
+      Reconnecting(:final avd, :final serial) => (
+          serial: serial,
+          platform: avd.platform,
+        ),
+      EmulatorError(:final avd, :final serial) => (
+          serial: serial,
+          platform: avd?.platform,
+        ),
+      _ => (serial: null, platform: null),
     };
   } on ProviderNotFoundException {
-    return null;
+    return (serial: null, platform: null);
   }
 }
 
@@ -594,6 +607,7 @@ Future<void> _confirmAndForge(
   List<ContextAttachment> attachments,
   String customNote,
   String? deviceSerial,
+  String? devicePlatform,
 ) async {
   if (!await _confirmDirtyWorktree(context, projectRoot)) return;
   await cubit.forge(
@@ -603,6 +617,7 @@ Future<void> _confirmAndForge(
     attachmentPaths: [for (final attachment in attachments) attachment.path],
     customNote: customNote,
     deviceSerial: deviceSerial,
+    devicePlatform: devicePlatform,
   );
 }
 

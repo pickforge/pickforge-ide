@@ -2,6 +2,8 @@ import 'package:equatable/equatable.dart';
 
 const androidEmulatorPlatform = 'android';
 const androidPhysicalPlatform = 'android-physical';
+const iosSimulatorPlatform = 'ios';
+const iosFlutterSimulatorId = 'apple_ios_simulator';
 
 class Avd extends Equatable {
   const Avd({
@@ -18,7 +20,7 @@ class Avd extends Equatable {
   List<Object?> get props => [id, name, platform];
 }
 
-enum AndroidDeviceKind { emulator, physical }
+enum AndroidDeviceKind { emulator, physical, iosSimulator }
 
 class RunningAndroidDevice extends Equatable {
   const RunningAndroidDevice({
@@ -37,14 +39,33 @@ class RunningAndroidDevice extends Equatable {
 
   bool get isEmulator => kind == AndroidDeviceKind.emulator;
   bool get isPhysical => kind == AndroidDeviceKind.physical;
+  bool get isIosSimulator => kind == AndroidDeviceKind.iosSimulator;
+  bool get isConnectedDevice => isPhysical || isIosSimulator;
   String get displayName => avdName ?? model ?? serial;
 
   Avd get asDeviceAvd => Avd(
         id: serial,
         name: displayName,
-        platform:
-            isPhysical ? androidPhysicalPlatform : androidEmulatorPlatform,
+        platform: switch (kind) {
+          AndroidDeviceKind.physical => androidPhysicalPlatform,
+          AndroidDeviceKind.iosSimulator => iosSimulatorPlatform,
+          AndroidDeviceKind.emulator => androidEmulatorPlatform,
+        },
       );
+
+  bool matchesAvd(Avd avd) {
+    if (avd.platform == androidPhysicalPlatform) {
+      return isPhysical && serial == avd.id;
+    }
+    if (avd.platform == iosSimulatorPlatform) {
+      return isIosSimulator &&
+          (serial == avd.id ||
+              avdName == avd.id ||
+              displayName == avd.name ||
+              avd.id == iosFlutterSimulatorId);
+    }
+    return isEmulator && (avdName == avd.id || avdName == avd.name);
+  }
 
   @override
   List<Object?> get props => [serial, avdName, state, kind, model];
@@ -61,13 +82,7 @@ class DeviceListSnapshot extends Equatable {
 
   RunningAndroidDevice? runningFor(Avd avd) {
     for (final device in running) {
-      if (avd.platform == androidPhysicalPlatform &&
-          device.isPhysical &&
-          device.serial == avd.id) {
-        return device;
-      }
-      if (device.isEmulator &&
-          (device.avdName == avd.id || device.avdName == avd.name)) {
+      if (device.matchesAvd(avd)) {
         return device;
       }
     }
@@ -76,6 +91,10 @@ class DeviceListSnapshot extends Equatable {
 
   List<RunningAndroidDevice> get physicalDevices =>
       running.where((device) => device.isPhysical).toList();
+  List<RunningAndroidDevice> get iosSimulators =>
+      running.where((device) => device.isIosSimulator).toList();
+  List<RunningAndroidDevice> get connectedDevices =>
+      running.where((device) => device.isConnectedDevice).toList();
 
   @override
   List<Object?> get props => [avds, running];

@@ -9,6 +9,7 @@ import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
+import 'package:pickforge/core/emulator/run_session_event_log_writer.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/projects/pickforge_project_directory.dart';
@@ -31,6 +32,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     required this.vmClient,
     this.logsCubit,
     this.ipcServer,
+    this.eventLogWriter = const RunSessionEventLogWriter(),
   }) : super(const EmulatorSessionState.noDevicePicked());
 
   final String projectRoot;
@@ -43,6 +45,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   final VmServiceClient vmClient;
   final RunLogsCubit? logsCubit;
   final EmulatorIpcServer? ipcServer;
+  final RunSessionEventLogWriter eventLogWriter;
 
   CancelToken? _bootCancel;
   AvdLaunchHandle? _bootHandle;
@@ -176,6 +179,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   }
 
   void _onRunEvent(RunSessionEvent event) {
+    final session = _activeSession;
+    if (session != null) {
+      unawaited(_appendEventLog(session, event));
+    }
     logsCubit?.append(event);
     event.when(
       stage: (_) {},
@@ -189,6 +196,21 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         emit(current.copyWith(lastReloadAt: DateTime.now()));
       },
     );
+  }
+
+  Future<void> _appendEventLog(
+    RunSession session,
+    RunSessionEvent event,
+  ) async {
+    try {
+      await eventLogWriter.append(
+        projectRoot: projectRoot,
+        sessionId: session.sessionId,
+        event: event,
+      );
+    } on Object {
+      // In-memory logs and run state must not depend on best-effort disk logs.
+    }
   }
 
   Future<void> _handleVmServiceReady(String uri) async {

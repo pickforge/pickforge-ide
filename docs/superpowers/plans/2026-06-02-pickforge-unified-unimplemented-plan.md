@@ -241,9 +241,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Tasks**
 
 - [ ] Persist run logs under `.pickforge/runs/<sessionId>/log.jsonl`.
-- [ ] Add retention/cap policy.
+- [x] Add retention/cap policy.
 - [ ] Add Run History UI listing past sessions per project.
 - [ ] Link run sessions to errors, hot reload count, VM service URL, target file, and exit reason.
+
+**Latest evidence**
+
+- 2026-06-03: Verified `RunSessionLogDao.pruneToCap` and `RunSessionLogRepository.recordStart(..., cap: 100)` retention behavior; ran `fvm flutter test test/core/drift/dao/run_session_log_dao_test.dart --reporter=compact`, passed.
 
 ### P2.T2 — Build flavor and target picker UI
 

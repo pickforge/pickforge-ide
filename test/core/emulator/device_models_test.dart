@@ -74,4 +74,26 @@ void main() {
     expect(avd.platform, iosSimulatorPlatform);
     expect(snap.runningFor(flutterTarget), device);
   });
+
+  test('web target exposes display AVD and matches by Flutter device id', () {
+    const device = RunningAndroidDevice(
+      serial: flutterWebChromeId,
+      avdName: 'Chrome',
+      state: 'device',
+      kind: AndroidDeviceKind.web,
+      model: 'web-javascript',
+    );
+    const flutterTarget = Avd(
+      id: flutterWebChromeId,
+      name: 'Chrome',
+      platform: flutterWebPlatform,
+    );
+    final avd = device.asDeviceAvd;
+    const snap = DeviceListSnapshot(avds: [flutterTarget], running: [device]);
+
+    expect(device.displayName, 'Chrome');
+    expect(device.isConnectedDevice, isTrue);
+    expect(avd.platform, flutterWebPlatform);
+    expect(snap.runningFor(flutterTarget), device);
+  });
 }

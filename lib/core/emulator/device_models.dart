@@ -4,6 +4,9 @@ const androidEmulatorPlatform = 'android';
 const androidPhysicalPlatform = 'android-physical';
 const iosSimulatorPlatform = 'ios';
 const iosFlutterSimulatorId = 'apple_ios_simulator';
+const flutterWebPlatform = 'web';
+const flutterWebChromeId = 'chrome';
+const flutterWebServerId = 'web-server';
 
 class Avd extends Equatable {
   const Avd({
@@ -20,7 +23,7 @@ class Avd extends Equatable {
   List<Object?> get props => [id, name, platform];
 }
 
-enum AndroidDeviceKind { emulator, physical, iosSimulator }
+enum AndroidDeviceKind { emulator, physical, iosSimulator, web }
 
 class RunningAndroidDevice extends Equatable {
   const RunningAndroidDevice({
@@ -40,7 +43,8 @@ class RunningAndroidDevice extends Equatable {
   bool get isEmulator => kind == AndroidDeviceKind.emulator;
   bool get isPhysical => kind == AndroidDeviceKind.physical;
   bool get isIosSimulator => kind == AndroidDeviceKind.iosSimulator;
-  bool get isConnectedDevice => isPhysical || isIosSimulator;
+  bool get isWebTarget => kind == AndroidDeviceKind.web;
+  bool get isConnectedDevice => isPhysical || isIosSimulator || isWebTarget;
   String get displayName => avdName ?? model ?? serial;
 
   Avd get asDeviceAvd => Avd(
@@ -49,6 +53,7 @@ class RunningAndroidDevice extends Equatable {
         platform: switch (kind) {
           AndroidDeviceKind.physical => androidPhysicalPlatform,
           AndroidDeviceKind.iosSimulator => iosSimulatorPlatform,
+          AndroidDeviceKind.web => flutterWebPlatform,
           AndroidDeviceKind.emulator => androidEmulatorPlatform,
         },
       );
@@ -63,6 +68,10 @@ class RunningAndroidDevice extends Equatable {
               avdName == avd.id ||
               displayName == avd.name ||
               avd.id == iosFlutterSimulatorId);
+    }
+    if (avd.platform == flutterWebPlatform) {
+      return isWebTarget &&
+          (serial == avd.id || avdName == avd.id || displayName == avd.name);
     }
     return isEmulator && (avdName == avd.id || avdName == avd.name);
   }
@@ -93,6 +102,8 @@ class DeviceListSnapshot extends Equatable {
       running.where((device) => device.isPhysical).toList();
   List<RunningAndroidDevice> get iosSimulators =>
       running.where((device) => device.isIosSimulator).toList();
+  List<RunningAndroidDevice> get webTargets =>
+      running.where((device) => device.isWebTarget).toList();
   List<RunningAndroidDevice> get connectedDevices =>
       running.where((device) => device.isConnectedDevice).toList();
 

@@ -169,6 +169,18 @@ void main() {
     kind: AndroidDeviceKind.iosSimulator,
     model: 'iPhone 16',
   );
+  const webAvd = Avd(
+    id: flutterWebChromeId,
+    name: 'Chrome',
+    platform: flutterWebPlatform,
+  );
+  const webDevice = RunningAndroidDevice(
+    serial: flutterWebChromeId,
+    avdName: 'Chrome',
+    state: 'device',
+    kind: AndroidDeviceKind.web,
+    model: 'web-javascript',
+  );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'bootstrap offers adoption for recoverable orphaned run',
@@ -422,6 +434,55 @@ void main() {
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootstrap restores available web target binding',
+    setUp: () {
+      when(() => settings.getEmulatorBinding('/p')).thenAnswer(
+        (_) async => const EmulatorBinding.webTarget(
+          targetId: flutterWebChromeId,
+          name: 'Chrome',
+        ),
+      );
+      when(disc.snapshot).thenAnswer(
+        (_) async => const DeviceListSnapshot(
+          avds: [],
+          running: [webDevice],
+        ),
+      );
+    },
+    build: build,
+    act: (c) => c.bootstrap(),
+    expect: () => [
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', webAvd)
+          .having((s) => s.serial, 'serial', flutterWebChromeId),
+    ],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'pickWebTarget persists target and enters idle',
+    setUp: () {
+      when(() => settings.setEmulatorBinding('/p', any()))
+          .thenAnswer((_) async {});
+    },
+    build: build,
+    act: (c) => c.pickWebTarget(webDevice),
+    expect: () => [
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', webAvd)
+          .having((s) => s.serial, 'serial', flutterWebChromeId),
+    ],
+    verify: (_) => verify(
+      () => settings.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.webTarget(
+          targetId: flutterWebChromeId,
+          name: 'Chrome',
+        ),
+      ),
+    ).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'runApp from idle attaches inspector on vmServiceReady',
     setUp: () => when(
       () => run.start(
@@ -620,6 +681,51 @@ void main() {
           avdId: 'A1B2C3D4-0000-1111-2222-333344445555',
           avdName: 'iPhone 16',
           serial: 'A1B2C3D4-0000-1111-2222-333344445555',
+          vmServiceUrl: 'ws://x/ws',
+          targetFile: any(named: 'targetFile'),
+        ),
+      ).called(1);
+    },
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'runApp from web target uses selected Flutter device id',
+    setUp: () {
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: flutterWebChromeId,
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: build,
+    seed: () => const EmulatorSessionState.idle(
+      avd: webAvd,
+      serial: flutterWebChromeId,
+    ),
+    act: (c) async {
+      await c.runApp();
+    },
+    verify: (_) {
+      verify(
+        () => run.start(
+          projectRoot: '/p',
+          serial: flutterWebChromeId,
+          targetFile: any(named: 'targetFile'),
+          extraArgs: const [],
+        ),
+      ).called(1);
+      verify(
+        () => log.recordStart(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          startedAt: any(named: 'startedAt'),
+          connectionMode: 'auto',
+          avdId: flutterWebChromeId,
+          avdName: 'Chrome',
+          serial: flutterWebChromeId,
           vmServiceUrl: 'ws://x/ws',
           targetFile: any(named: 'targetFile'),
         ),
@@ -829,6 +935,55 @@ void main() {
       isA<Idle>()
           .having((s) => s.avd, 'avd', physicalAvd)
           .having((s) => s.serial, 'serial', 'R58M1234567')
+          .having((s) => s.shutdownPrompt, 'shutdownPrompt', isFalse),
+    ],
+    verify: (_) => verifyNever(() => shutdown.shutdown(any())),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'web target skips automatic idle shutdown',
+    setUp: () {
+      when(() => settings.getEmulatorIdleShutdownSettings('/p')).thenAnswer(
+        (_) async => const EmulatorIdleShutdownSettings(
+          enabled: true,
+          requireConfirmation: false,
+        ),
+      );
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: any(named: 'serial'),
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      shutdownController: shutdown,
+    ),
+    seed: () => const EmulatorSessionState.idle(
+      avd: webAvd,
+      serial: flutterWebChromeId,
+    ),
+    act: (c) async {
+      await c.runApp();
+      events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await c.stopRun();
+    },
+    expect: () => [
+      isA<Running>(),
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', webAvd)
+          .having((s) => s.serial, 'serial', flutterWebChromeId)
           .having((s) => s.shutdownPrompt, 'shutdownPrompt', isFalse),
     ],
     verify: (_) => verifyNever(() => shutdown.shutdown(any())),

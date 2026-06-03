@@ -8,8 +8,16 @@ String? creationLocationFilePath(String file) {
     if (uri.scheme == 'file') {
       return uri.toFilePath();
     }
+    if (uri.scheme == 'org-dartlang-app') {
+      return _relativeUriPath(uri);
+    }
     return null;
   }
 
   return value;
+}
+
+String? _relativeUriPath(Uri uri) {
+  final path = uri.path.replaceFirst(RegExp('^/+'), '');
+  return path.isEmpty ? null : path;
 }

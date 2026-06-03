@@ -34,6 +34,7 @@ class AdbScreenshotCapturer {
     if (platform == iosSimulatorPlatform) {
       return _captureIosSimulator(outputDir: outputDir, simulatorId: serial);
     }
+    if (platform == flutterWebPlatform) return null;
     return _captureAndroid(outputDir: outputDir, serial: serial);
   }
 

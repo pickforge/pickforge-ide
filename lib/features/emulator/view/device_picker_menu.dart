@@ -67,7 +67,7 @@ class _DeviceList extends StatelessWidget {
         padding: EdgeInsets.all(24),
         child: Text(
           'No Flutter devices detected.\n'
-          'Connect a device or create an emulator/simulator.',
+          'Connect a device, enable Chrome, or create an emulator/simulator.',
         ),
       );
     }
@@ -115,6 +115,8 @@ class _DeviceList extends StatelessWidget {
     await Navigator.of(context).maybePop();
     if (device.isIosSimulator) {
       await session.pickIosSimulator(device);
+    } else if (device.isWebTarget) {
+      await session.pickWebTarget(device);
     } else {
       await session.pickPhysicalDevice(device);
     }

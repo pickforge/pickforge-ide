@@ -268,6 +268,7 @@ class _DeviceDropdown extends StatelessWidget {
       PhysicalDeviceBinding(:final serial) => _DeviceOption.physicalKey(serial),
       IosSimulatorBinding(:final simulatorId) =>
         _DeviceOption.iosKey(simulatorId),
+      WebTargetBinding(:final targetId) => _DeviceOption.webKey(targetId),
       _ => null,
     };
     return DropdownButton<_DeviceOption>(
@@ -296,6 +297,11 @@ class _DeviceDropdown extends StatelessWidget {
                   .read<DeviceRunSettingsCubit>()
                   .setIosSimulator(projectRoot, device)
                   .ignore();
+            } else if (device.isWebTarget) {
+              context
+                  .read<DeviceRunSettingsCubit>()
+                  .setWebTarget(projectRoot, device)
+                  .ignore();
             } else {
               context
                   .read<DeviceRunSettingsCubit>()
@@ -321,6 +327,7 @@ sealed class _DeviceOption {
   static String avdKey(String id) => 'avd:$id';
   static String physicalKey(String serial) => 'physical:$serial';
   static String iosKey(String simulatorId) => 'ios:$simulatorId';
+  static String webKey(String targetId) => 'web:$targetId';
 }
 
 final class _AvdOption extends _DeviceOption {
@@ -331,7 +338,9 @@ final class _AvdOption extends _DeviceOption {
   @override
   String get key => avd.platform == iosSimulatorPlatform
       ? _DeviceOption.iosKey(avd.id)
-      : _DeviceOption.avdKey(avd.id);
+      : avd.platform == flutterWebPlatform
+          ? _DeviceOption.webKey(avd.id)
+          : _DeviceOption.avdKey(avd.id);
 
   @override
   String get label => avd.name;
@@ -345,7 +354,9 @@ final class _ConnectedDeviceOption extends _DeviceOption {
   @override
   String get key => device.isIosSimulator
       ? _DeviceOption.iosKey(device.serial)
-      : _DeviceOption.physicalKey(device.serial);
+      : device.isWebTarget
+          ? _DeviceOption.webKey(device.serial)
+          : _DeviceOption.physicalKey(device.serial);
 
   @override
   String get label => '${device.displayName} (${device.serial})';

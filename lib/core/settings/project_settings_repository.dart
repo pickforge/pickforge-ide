@@ -72,6 +72,12 @@ class ProjectSettingsRepository {
         name: row.avdName ?? row.avdId!,
       );
     }
+    if (row.connectionMode == 'web' && row.avdId != null) {
+      return EmulatorBinding.webTarget(
+        targetId: row.avdId!,
+        name: row.avdName ?? row.avdId!,
+      );
+    }
     if (row.avdId != null && row.avdName != null) {
       return EmulatorBinding.avd(
         avdId: row.avdId!,
@@ -111,6 +117,15 @@ class ProjectSettingsRepository {
           avdId: Value(simulatorId),
           avdName: Value(name),
           connectionMode: const Value('ios'),
+          autoBootOnSelect: false,
+          vmServiceUrl: const Value<String?>(null),
+        );
+      case WebTargetBinding(:final targetId, :final name):
+        await _db.projectSettingsDao.upsert(
+          projectRoot: projectRoot,
+          avdId: Value(targetId),
+          avdName: Value(name),
+          connectionMode: const Value('web'),
           autoBootOnSelect: false,
           vmServiceUrl: const Value<String?>(null),
         );

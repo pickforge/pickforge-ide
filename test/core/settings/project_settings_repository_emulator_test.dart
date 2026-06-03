@@ -73,6 +73,20 @@ void main() {
     expect((got as IosSimulatorBinding).name, 'iPhone 16');
   });
 
+  test('round-trip web target binding', () async {
+    await repo.setEmulatorBinding(
+      '/p',
+      const EmulatorBinding.webTarget(
+        targetId: 'chrome',
+        name: 'Chrome',
+      ),
+    );
+    final got = await repo.getEmulatorBinding('/p');
+    expect(got, isA<WebTargetBinding>());
+    expect((got! as WebTargetBinding).targetId, 'chrome');
+    expect((got as WebTargetBinding).name, 'Chrome');
+  });
+
   test('clearEmulatorBinding returns null', () async {
     await repo.setEmulatorBinding(
       '/p',

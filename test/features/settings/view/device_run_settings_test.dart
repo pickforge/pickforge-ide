@@ -131,6 +131,38 @@ void main() {
     verify(() => cubit.setIosSimulator('/p', device)).called(1);
   });
 
+  testWidgets('renders web target list and picking calls cubit',
+      (tester) async {
+    const device = RunningAndroidDevice(
+      serial: flutterWebChromeId,
+      avdName: 'Chrome',
+      state: 'device',
+      kind: AndroidDeviceKind.web,
+      model: 'web-javascript',
+    );
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(runningDevices: [device]),
+    );
+    when(() => cubit.setWebTarget(any(), any())).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('device-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Chrome (chrome)'), findsOneWidget);
+    await tester.tap(find.text('Chrome (chrome)').last);
+    await tester.pumpAndSettle();
+
+    verify(() => cubit.setWebTarget('/p', device)).called(1);
+  });
+
   testWidgets('manual mode reveals URL field', (tester) async {
     final cubit = _Cubit(
       const DeviceRunSettingsState(

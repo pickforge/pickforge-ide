@@ -20,6 +20,11 @@ abstract class EmulatorBinding with _$EmulatorBinding {
     required String name,
   }) = IosSimulatorBinding;
 
+  const factory EmulatorBinding.webTarget({
+    required String targetId,
+    required String name,
+  }) = WebTargetBinding;
+
   const factory EmulatorBinding.manual({
     required String vmServiceUrl,
   }) = ManualBinding;

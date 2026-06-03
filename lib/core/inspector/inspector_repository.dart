@@ -33,7 +33,10 @@ class InspectorRepository {
 
     final snippet = node.creationLocation == null
         ? null
-        : await _source.extract(node.creationLocation!);
+        : await _source.extract(
+            node.creationLocation!,
+            projectRoot: _projectRoot,
+          );
     final screenshotPath = await _captureScreenshot(node.id);
 
     return SelectedWidget(

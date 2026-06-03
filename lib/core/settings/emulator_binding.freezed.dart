@@ -54,6 +54,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult Function(AvdBinding value)? avd,
     TResult Function(PhysicalDeviceBinding value)? physical,
     TResult Function(IosSimulatorBinding value)? iosSimulator,
+    TResult Function(WebTargetBinding value)? webTarget,
     TResult Function(ManualBinding value)? manual,
     required TResult orElse(),
   }) {
@@ -65,6 +66,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return physical(_that);
       case IosSimulatorBinding() when iosSimulator != null:
         return iosSimulator(_that);
+      case WebTargetBinding() when webTarget != null:
+        return webTarget(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -90,6 +93,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     required TResult Function(AvdBinding value) avd,
     required TResult Function(PhysicalDeviceBinding value) physical,
     required TResult Function(IosSimulatorBinding value) iosSimulator,
+    required TResult Function(WebTargetBinding value) webTarget,
     required TResult Function(ManualBinding value) manual,
   }) {
     final _that = this;
@@ -100,6 +104,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return physical(_that);
       case IosSimulatorBinding():
         return iosSimulator(_that);
+      case WebTargetBinding():
+        return webTarget(_that);
       case ManualBinding():
         return manual(_that);
       case _:
@@ -124,6 +130,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult? Function(AvdBinding value)? avd,
     TResult? Function(PhysicalDeviceBinding value)? physical,
     TResult? Function(IosSimulatorBinding value)? iosSimulator,
+    TResult? Function(WebTargetBinding value)? webTarget,
     TResult? Function(ManualBinding value)? manual,
   }) {
     final _that = this;
@@ -134,6 +141,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return physical(_that);
       case IosSimulatorBinding() when iosSimulator != null:
         return iosSimulator(_that);
+      case WebTargetBinding() when webTarget != null:
+        return webTarget(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -158,6 +167,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult Function(String avdId, String avdName, bool autoBootOnSelect)? avd,
     TResult Function(String serial, String name)? physical,
     TResult Function(String simulatorId, String name)? iosSimulator,
+    TResult Function(String targetId, String name)? webTarget,
     TResult Function(String vmServiceUrl)? manual,
     required TResult orElse(),
   }) {
@@ -169,6 +179,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return physical(_that.serial, _that.name);
       case IosSimulatorBinding() when iosSimulator != null:
         return iosSimulator(_that.simulatorId, _that.name);
+      case WebTargetBinding() when webTarget != null:
+        return webTarget(_that.targetId, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -196,6 +208,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         avd,
     required TResult Function(String serial, String name) physical,
     required TResult Function(String simulatorId, String name) iosSimulator,
+    required TResult Function(String targetId, String name) webTarget,
     required TResult Function(String vmServiceUrl) manual,
   }) {
     final _that = this;
@@ -206,6 +219,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return physical(_that.serial, _that.name);
       case IosSimulatorBinding():
         return iosSimulator(_that.simulatorId, _that.name);
+      case WebTargetBinding():
+        return webTarget(_that.targetId, _that.name);
       case ManualBinding():
         return manual(_that.vmServiceUrl);
       case _:
@@ -230,6 +245,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult? Function(String avdId, String avdName, bool autoBootOnSelect)? avd,
     TResult? Function(String serial, String name)? physical,
     TResult? Function(String simulatorId, String name)? iosSimulator,
+    TResult? Function(String targetId, String name)? webTarget,
     TResult? Function(String vmServiceUrl)? manual,
   }) {
     final _that = this;
@@ -240,6 +256,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return physical(_that.serial, _that.name);
       case IosSimulatorBinding() when iosSimulator != null:
         return iosSimulator(_that.simulatorId, _that.name);
+      case WebTargetBinding() when webTarget != null:
+        return webTarget(_that.targetId, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -466,6 +484,78 @@ class _$IosSimulatorBindingCopyWithImpl<$Res>
       simulatorId: null == simulatorId
           ? _self.simulatorId
           : simulatorId // ignore: cast_nullable_to_non_nullable
+              as String,
+      name: null == name
+          ? _self.name
+          : name // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class WebTargetBinding implements EmulatorBinding {
+  const WebTargetBinding({required this.targetId, required this.name});
+
+  final String targetId;
+  final String name;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $WebTargetBindingCopyWith<WebTargetBinding> get copyWith =>
+      _$WebTargetBindingCopyWithImpl<WebTargetBinding>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is WebTargetBinding &&
+            (identical(other.targetId, targetId) ||
+                other.targetId == targetId) &&
+            (identical(other.name, name) || other.name == name));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, targetId, name);
+
+  @override
+  String toString() {
+    return 'EmulatorBinding.webTarget(targetId: $targetId, name: $name)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $WebTargetBindingCopyWith<$Res>
+    implements $EmulatorBindingCopyWith<$Res> {
+  factory $WebTargetBindingCopyWith(
+          WebTargetBinding value, $Res Function(WebTargetBinding) _then) =
+      _$WebTargetBindingCopyWithImpl;
+  @useResult
+  $Res call({String targetId, String name});
+}
+
+/// @nodoc
+class _$WebTargetBindingCopyWithImpl<$Res>
+    implements $WebTargetBindingCopyWith<$Res> {
+  _$WebTargetBindingCopyWithImpl(this._self, this._then);
+
+  final WebTargetBinding _self;
+  final $Res Function(WebTargetBinding) _then;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? targetId = null,
+    Object? name = null,
+  }) {
+    return _then(WebTargetBinding(
+      targetId: null == targetId
+          ? _self.targetId
+          : targetId // ignore: cast_nullable_to_non_nullable
               as String,
       name: null == name
           ? _self.name

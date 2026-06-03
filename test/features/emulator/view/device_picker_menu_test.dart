@@ -153,7 +153,43 @@ void main() {
     verify(() => session.pickIosSimulator(any())).called(1);
   });
 
-  testWidgets('empty state shows Android Studio link', (tester) async {
+  testWidgets('shows connected web targets', (tester) async {
+    final picker = _PickerCubit(
+      const DevicePickerState.loaded(
+        avds: [],
+        running: [
+          RunningAndroidDevice(
+            serial: flutterWebChromeId,
+            avdName: 'Chrome',
+            state: 'device',
+            kind: AndroidDeviceKind.web,
+            model: 'web-javascript',
+          ),
+        ],
+      ),
+    );
+    final session = _SessionCubit();
+    when(() => session.pickWebTarget(any())).thenAnswer((_) async {});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MultiBlocProvider(
+          providers: [
+            BlocProvider<DevicePickerCubit>.value(value: picker),
+            BlocProvider<EmulatorSessionCubit>.value(value: session),
+          ],
+          child: const Scaffold(body: DevicePickerMenu()),
+        ),
+      ),
+    );
+
+    expect(find.text('CONNECTED'), findsOneWidget);
+    expect(find.text('Chrome (chrome)'), findsOneWidget);
+    await tester.tap(find.text('Chrome (chrome)'));
+    verify(() => session.pickWebTarget(any())).called(1);
+  });
+
+  testWidgets('empty state explains no Flutter devices were detected',
+      (tester) async {
     final picker =
         _PickerCubit(const DevicePickerState.loaded(avds: [], running: []));
     await tester.pumpWidget(

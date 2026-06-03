@@ -229,6 +229,32 @@ void main() {
       }
     });
 
+    test('returns null for web targets without invoking device tools',
+        () async {
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        fail('unexpected process call: $executable ${args.join(' ')}');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(
+        detector,
+        processRunner: runner,
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync('webshot_test_');
+      try {
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          serial: flutterWebChromeId,
+          platform: flutterWebPlatform,
+        );
+
+        expect(result, isNull);
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
     test('returns null when screencap fails', () async {
       Future<ProcessResult> runner(String executable, List<String> args) async {
         if (args.contains('devices')) {

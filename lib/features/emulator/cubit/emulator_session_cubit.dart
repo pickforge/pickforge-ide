@@ -126,6 +126,25 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         } else {
           emit(EmulatorSessionState.cold(avd: avd));
         }
+      case WebTargetBinding(:final targetId, :final name):
+        final avd = Avd(
+          id: targetId,
+          name: name,
+          platform: flutterWebPlatform,
+        );
+        final snap = await discovery.snapshot();
+        final running = snap.runningFor(avd);
+        if (running != null && running.state == 'device') {
+          emit(_idleState(avd, running.serial));
+        } else {
+          emit(
+            EmulatorSessionState.error(
+              avd: avd,
+              serial: targetId,
+              message: 'Web target $targetId is not available',
+            ),
+          );
+        }
     }
   }
 
@@ -141,6 +160,26 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         emit(_idleState(avd, running.serial));
       } else {
         emit(EmulatorSessionState.cold(avd: avd));
+      }
+      return;
+    }
+    if (avd.platform == flutterWebPlatform) {
+      await settings.setEmulatorBinding(
+        projectRoot,
+        EmulatorBinding.webTarget(targetId: avd.id, name: avd.name),
+      );
+      final snap = await discovery.snapshot();
+      final running = snap.runningFor(avd);
+      if (running != null && running.state == 'device') {
+        emit(_idleState(avd, running.serial));
+      } else {
+        emit(
+          EmulatorSessionState.error(
+            avd: avd,
+            serial: avd.id,
+            message: 'Web target ${avd.id} is not available',
+          ),
+        );
       }
       return;
     }
@@ -196,6 +235,28 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
           avd: avd,
           serial: device.serial,
           message: 'iOS simulator ${device.serial} is ${device.state}',
+        ),
+      );
+    }
+  }
+
+  Future<void> pickWebTarget(RunningAndroidDevice device) async {
+    final avd = device.asDeviceAvd;
+    await settings.setEmulatorBinding(
+      projectRoot,
+      EmulatorBinding.webTarget(
+        targetId: device.serial,
+        name: device.displayName,
+      ),
+    );
+    if (device.state == 'device') {
+      emit(_idleState(avd, device.serial));
+    } else {
+      emit(
+        EmulatorSessionState.error(
+          avd: avd,
+          serial: device.serial,
+          message: 'Web target ${device.serial} is ${device.state}',
         ),
       );
     }

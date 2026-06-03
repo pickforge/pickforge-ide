@@ -39,6 +39,32 @@ void main() {
   }
 }
 ''';
+  const webDevicesJson = '''
+[
+  {
+    "name": "Chrome",
+    "id": "chrome",
+    "isSupported": true,
+    "targetPlatform": "web-javascript",
+    "emulator": false,
+    "sdk": "Google Chrome"
+  },
+  {
+    "name": "Web Server",
+    "id": "web-server",
+    "isSupported": true,
+    "targetPlatform": "web-javascript",
+    "emulator": false
+  },
+  {
+    "name": "Linux",
+    "id": "linux",
+    "isSupported": true,
+    "targetPlatform": "linux-x64",
+    "emulator": false
+  }
+]
+''';
 
   test('listAvds parses flutter emulators --machine JSON', () async {
     final json =
@@ -117,6 +143,19 @@ emulator-5556	offline
     expect(devices.single.asDeviceAvd.platform, iosSimulatorPlatform);
   });
 
+  test('listWebTargets parses flutter devices web targets', () async {
+    when(() => runner.run('flutter', ['devices', '--machine']))
+        .thenAnswer((_) async => ok(webDevicesJson));
+
+    final devices = await service.listWebTargets();
+
+    expect(devices, hasLength(2));
+    expect(devices.first.serial, flutterWebChromeId);
+    expect(devices.first.displayName, 'Chrome');
+    expect(devices.first.kind, AndroidDeviceKind.web);
+    expect(devices.first.asDeviceAvd.platform, flutterWebPlatform);
+  });
+
   test('snapshot composes both lists', () async {
     final emusJson =
         await File('test/fixtures/flutter_emulators.json').readAsString();
@@ -136,10 +175,16 @@ emulator-5556	offline
         ['simctl', 'list', 'devices', 'booted', '--json'],
       ),
     ).thenAnswer((_) async => ok(bootedIosJson));
+    when(() => runner.run('flutter', ['devices', '--machine']))
+        .thenAnswer((_) async => ok(webDevicesJson));
     final snap = await service.snapshot();
     expect(snap.avds, hasLength(2));
-    expect(snap.running, hasLength(3));
+    expect(snap.running, hasLength(5));
     expect(snap.runningFor(snap.avds.first)?.serial, 'emulator-5554');
     expect(snap.iosSimulators.single.displayName, 'iPhone 16');
+    expect(snap.webTargets.map((device) => device.serial), [
+      flutterWebChromeId,
+      flutterWebServerId,
+    ]);
   });
 }

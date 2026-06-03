@@ -64,6 +64,15 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
       emit(state.copyWith(binding: binding));
       return;
     }
+    if (avd.platform == flutterWebPlatform) {
+      final binding = EmulatorBinding.webTarget(
+        targetId: avd.id,
+        name: avd.name,
+      );
+      await settings.setEmulatorBinding(projectRoot, binding);
+      emit(state.copyWith(binding: binding));
+      return;
+    }
     final binding = EmulatorBinding.avd(avdId: avd.id, avdName: avd.name);
     await settings.setEmulatorBinding(projectRoot, binding);
     emit(state.copyWith(binding: binding));
@@ -87,6 +96,18 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
   ) async {
     final binding = EmulatorBinding.iosSimulator(
       simulatorId: device.serial,
+      name: device.displayName,
+    );
+    await settings.setEmulatorBinding(projectRoot, binding);
+    emit(state.copyWith(binding: binding));
+  }
+
+  Future<void> setWebTarget(
+    String projectRoot,
+    RunningAndroidDevice device,
+  ) async {
+    final binding = EmulatorBinding.webTarget(
+      targetId: device.serial,
       name: device.displayName,
     );
     await settings.setEmulatorBinding(projectRoot, binding);

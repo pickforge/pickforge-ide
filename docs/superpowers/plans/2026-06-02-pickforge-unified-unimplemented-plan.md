@@ -392,12 +392,20 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P3.T4 — Flutter web target support
 
-**Status:** Deferred
+**Status:** Completed
 **Tasks**
 
-- [ ] Support Chrome/web VM service connection.
-- [ ] Handle web-specific inspector/source paths.
-- [ ] Define screenshot behavior for browser targets.
+- [x] Support Chrome/web VM service connection.
+- [x] Handle web-specific inspector/source paths.
+- [x] Define screenshot behavior for browser targets.
+
+**Latest evidence**
+
+- 2026-06-03: Added Chrome/web-server discovery from `flutter devices --machine`, `EmulatorBinding.webTarget`, picker/settings/session wiring, and web run-session selection through the existing `flutter run --machine -d <targetId>` path.
+- 2026-06-03: Added web source path normalization for `org-dartlang-app:/...` creation locations and project-root-relative snippet extraction/forge eligibility.
+- 2026-06-03: Defined browser device screenshot behavior as unsupported in `AdbScreenshotCapturer`; Flutter reports Chrome `capabilities.screenshot: false`, while inspector screenshots remain separate VM Service/inspector-extension context.
+- 2026-06-03: Verified Chrome was discoverable with `fvm flutter devices --machine`, then ran the fixture app with `timeout 90s fvm flutter run -d chrome --machine --web-browser-flag=--headless=new --web-browser-flag=--disable-gpu`; Flutter emitted `app.debugPort` with a `ws://127.0.0.1:.../ws` VM Service URI and started from `org-dartlang-app:/web_entrypoint.dart`.
+- 2026-06-03: Focused web discovery/settings/session/screenshot/source-path tests passed, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, and `fvm flutter test --reporter=compact` passed (450 passed, 2 skipped without `PICKFORGE_E2E_AVD`), and both Android emulator E2Es passed with `fvm flutter test --reporter=compact --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart test/integration/widget_pick_e2e_test.dart`.
 
 ### P3.T5 — Flutter desktop target support
 

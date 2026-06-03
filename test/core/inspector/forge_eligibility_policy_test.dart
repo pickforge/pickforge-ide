@@ -46,6 +46,16 @@ void main() {
     );
   });
 
+  test('allows web creation locations under project lib directory', () {
+    expect(
+      policy.canForge(
+        _widget('org-dartlang-app:///lib/main.dart'),
+        '/workspace/app',
+      ),
+      isTrue,
+    );
+  });
+
   test('rejects widgets without creation location', () {
     expect(policy.canForge(_widget(null), '/workspace/app'), isFalse);
   });

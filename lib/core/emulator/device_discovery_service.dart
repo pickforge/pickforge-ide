@@ -50,12 +50,14 @@ class DeviceDiscoveryService {
       listAvds(),
       listRunningDevices(),
       listRunningIosSimulators(),
+      listWebTargets(),
     ]);
     return DeviceListSnapshot(
       avds: results[0] as List<Avd>,
       running: [
         ...results[1] as List<RunningAndroidDevice>,
         ...results[2] as List<RunningAndroidDevice>,
+        ...results[3] as List<RunningAndroidDevice>,
       ],
     );
   }
@@ -68,6 +70,16 @@ class DeviceDiscoveryService {
       );
       if (res.exitCode != 0) return const [];
       return _parseBootedIosSimulators(res.stdout.toString());
+    } on ProcessRunnerException {
+      return const [];
+    }
+  }
+
+  Future<List<RunningAndroidDevice>> listWebTargets() async {
+    try {
+      final res = await _runner.run('flutter', ['devices', '--machine']);
+      if (res.exitCode != 0) return const [];
+      return _parseWebTargets(res.stdout.toString());
     } on ProcessRunnerException {
       return const [];
     }
@@ -187,5 +199,48 @@ class DeviceDiscoveryService {
     } on FormatException {
       return const [];
     }
+  }
+
+  List<RunningAndroidDevice> _parseWebTargets(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .where(_isSupportedWebDevice)
+          .map(_webDeviceFromJson)
+          .where((device) => device.serial.isNotEmpty)
+          .toList();
+    } on FormatException {
+      return const [];
+    }
+  }
+
+  RunningAndroidDevice _webDeviceFromJson(Map<String, dynamic> json) {
+    return RunningAndroidDevice(
+      serial: (json['id'] as String? ?? '').trim(),
+      avdName: _trimmedString(json['name']),
+      state: 'device',
+      kind: AndroidDeviceKind.web,
+      model: _trimmedString(json['targetPlatform']),
+    );
+  }
+
+  bool _isSupportedWebDevice(Map<String, dynamic> json) {
+    if (json['isSupported'] == false) return false;
+    final id = json['id'] as String?;
+    final targetPlatform = json['targetPlatform'] as String?;
+    final category = json['category'] as String?;
+    return id == flutterWebChromeId ||
+        id == flutterWebServerId ||
+        id == 'edge' ||
+        category == 'web' ||
+        targetPlatform?.startsWith('web-') == true;
+  }
+
+  String? _trimmedString(Object? value) {
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
   }
 }

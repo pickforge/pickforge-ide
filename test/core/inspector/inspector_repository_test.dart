@@ -65,7 +65,7 @@ void main() {
         ],
       },
     );
-    when(() => src.extract(any()))
+    when(() => src.extract(any(), projectRoot: any(named: 'projectRoot')))
         .thenAnswer((_) async => '   10  ElevatedButton(...)');
 
     final selected = await repo.fetchSelection();
@@ -94,7 +94,8 @@ void main() {
       },
     );
     when(ext.getRootWidgetSummaryTree).thenAnswer((_) async => null);
-    when(() => src.extract(any())).thenAnswer((_) async => null);
+    when(() => src.extract(any(), projectRoot: any(named: 'projectRoot')))
+        .thenAnswer((_) async => null);
     when(
       () => ext.screenshot(
         id: any(named: 'id'),

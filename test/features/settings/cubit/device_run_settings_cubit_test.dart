@@ -197,6 +197,34 @@ void main() {
     );
   });
 
+  test('setAvd persists web target binding for web targets', () async {
+    when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setAvd(
+      '/p',
+      const Avd(
+        id: flutterWebChromeId,
+        name: 'Chrome',
+        platform: flutterWebPlatform,
+      ),
+    );
+
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.webTarget(
+          targetId: flutterWebChromeId,
+          name: 'Chrome',
+        ),
+      ),
+    ).called(1);
+    expect(
+      (cubit.state.binding! as WebTargetBinding).targetId,
+      flutterWebChromeId,
+    );
+  });
+
   test('setPhysicalDevice persists physical binding', () async {
     when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
     final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
@@ -254,6 +282,36 @@ void main() {
     expect(
       (cubit.state.binding! as IosSimulatorBinding).simulatorId,
       'A1B2C3D4-0000-1111-2222-333344445555',
+    );
+  });
+
+  test('setWebTarget persists web target binding', () async {
+    when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setWebTarget(
+      '/p',
+      const RunningAndroidDevice(
+        serial: flutterWebChromeId,
+        avdName: 'Chrome',
+        state: 'device',
+        kind: AndroidDeviceKind.web,
+        model: 'web-javascript',
+      ),
+    );
+
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.webTarget(
+          targetId: flutterWebChromeId,
+          name: 'Chrome',
+        ),
+      ),
+    ).called(1);
+    expect(
+      (cubit.state.binding! as WebTargetBinding).targetId,
+      flutterWebChromeId,
     );
   });
 

@@ -34,6 +34,24 @@ void main() {
     expect(snippet, contains('line 2'));
   });
 
+  test('extracts web creation locations relative to project root', () async {
+    final libDir = Directory('${tmp.path}/lib')..createSync();
+    final file = File('${libDir.path}/main.dart');
+    await file.writeAsString(List.generate(20, (i) => 'line $i').join('\n'));
+    const extractor = SourceSnippetExtractor(contextLines: 1);
+    final snippet = await extractor.extract(
+      const CreationLocation(
+        file: 'org-dartlang-app:///lib/main.dart',
+        line: 2,
+        column: 1,
+      ),
+      projectRoot: tmp.path,
+    );
+    expect(snippet, contains('line 0'));
+    expect(snippet, contains('line 1'));
+    expect(snippet, contains('line 2'));
+  });
+
   test('returns null when file does not exist', () async {
     const extractor = SourceSnippetExtractor();
     final snippet = await extractor.extract(

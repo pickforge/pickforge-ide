@@ -1,6 +1,7 @@
 import 'package:bloc/bloc.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/agent/agent_launcher.dart';
+import 'package:pickforge/core/agent/headless/chat_prompt_dispatcher.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/agent/models/forge_request.dart';
 import 'package:pickforge/core/di/injection.dart';
@@ -74,7 +75,12 @@ class ForgeCubit extends Cubit<ForgeState> {
       );
 
       final ctx = await _launcher.prepareContext(req);
-      _pool.sendPrompt(chatId, ctx.initialPrompt);
+      _sendPrompt(
+        agentId: state.agentId,
+        chatId: chatId,
+        projectRoot: projectRoot,
+        prompt: ctx.initialPrompt,
+      );
       emit(state.copyWith(launching: false));
     } on Object catch (e) {
       _recordDiagnostic('error', 'Forge failed: $e');
@@ -105,5 +111,23 @@ class ForgeCubit extends Cubit<ForgeState> {
     if (getIt.isRegistered<DiagnosticsService>()) {
       getIt<DiagnosticsService>().recordLog(level, message);
     }
+  }
+
+  void _sendPrompt({
+    required AgentProfileId agentId,
+    required String chatId,
+    required String projectRoot,
+    required String prompt,
+  }) {
+    if (getIt.isRegistered<ChatPromptDispatcher>()) {
+      getIt<ChatPromptDispatcher>().sendPrompt(
+        agentId: agentId,
+        chatId: chatId,
+        projectRoot: projectRoot,
+        prompt: prompt,
+      );
+      return;
+    }
+    _pool.sendPrompt(chatId, prompt);
   }
 }

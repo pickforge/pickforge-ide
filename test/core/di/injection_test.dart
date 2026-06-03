@@ -1,5 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
+import 'package:pickforge/core/agent/headless/chat_prompt_dispatcher.dart';
+import 'package:pickforge/core/agent/headless/headless_chat_adapter_registry.dart';
+import 'package:pickforge/core/agent/headless/headless_chat_feature_flags.dart';
+import 'package:pickforge/core/agent/headless/headless_chat_session_pool.dart';
 import 'package:pickforge/core/agent/models.dart';
 import 'package:pickforge/core/di/app_bootstrap.dart';
 import 'package:pickforge/core/di/injection.dart';
@@ -36,5 +40,20 @@ void main() {
         AgentProfileId.gemini,
       }),
     );
+  });
+
+  test('configureDependencies registers headless chat services', () async {
+    await configureDependencies();
+
+    final registry = getIt<HeadlessChatAdapterRegistry>();
+    expect(registry.supports(AgentProfileId.claudeCode), isTrue);
+    expect(registry.supports(AgentProfileId.codex), isTrue);
+    expect(registry.supports(AgentProfileId.opencode), isTrue);
+    expect(
+      getIt<HeadlessChatFeatureFlags>().enabled(AgentProfileId.codex),
+      isFalse,
+    );
+    expect(getIt<HeadlessChatSessionPool>(), isA<HeadlessChatSessionPool>());
+    expect(getIt<ChatPromptDispatcher>(), isA<ChatPromptDispatcher>());
   });
 }

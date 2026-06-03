@@ -462,16 +462,17 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P4.T3 — Headless chat adapter mode
 
-**Status:** Deferred / major post-MVP alternative
+**Status:** Completed / feature-flagged
 **Goal:** Render Pickforge-owned chat UI over structured CLI output instead of PTY UI.
+**Why:** Added experimental Claude Code `stream-json`, Codex `exec --json`, and OpenCode `run --format json` adapters behind per-agent Dart-define feature flags. Pickforge now has a headless session pool, normalized `ChatMessage` stream, and alternate chat pane without replacing the default PTY workflow.
 
 **Staging**
 
-- [ ] Claude Code stream-json adapter.
-- [ ] Codex exec JSON adapter.
-- [ ] OpenCode run JSON adapter.
-- [ ] Normalize output into `ChatMessage`.
-- [ ] Add per-agent feature flag.
+- [x] Claude Code stream-json adapter.
+- [x] Codex exec JSON adapter.
+- [x] OpenCode run JSON adapter.
+- [x] Normalize output into `ChatMessage`.
+- [x] Add per-agent feature flag.
 
 **Non-goals**
 

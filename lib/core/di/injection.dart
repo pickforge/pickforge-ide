@@ -5,6 +5,13 @@ import 'package:injectable/injectable.dart';
 
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
+import 'package:pickforge/core/agent/headless/chat_prompt_dispatcher.dart';
+import 'package:pickforge/core/agent/headless/claude_code_stream_json_adapter.dart';
+import 'package:pickforge/core/agent/headless/codex_exec_json_adapter.dart';
+import 'package:pickforge/core/agent/headless/headless_chat_adapter_registry.dart';
+import 'package:pickforge/core/agent/headless/headless_chat_feature_flags.dart';
+import 'package:pickforge/core/agent/headless/headless_chat_session_pool.dart';
+import 'package:pickforge/core/agent/headless/opencode_run_json_adapter.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
 import 'package:pickforge/core/agent/profiles/claude_code_profile.dart';
 import 'package:pickforge/core/agent/profiles/codex_profile.dart';
@@ -24,6 +31,7 @@ import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/process/binary_detector.dart' hide ProcessRunner;
 import 'package:pickforge/core/skills/skill_store.dart';
+import 'package:pickforge/core/terminal/pty_session_pool.dart';
 
 final GetIt getIt = GetIt.instance;
 
@@ -83,6 +91,47 @@ abstract class AgentProfileModule {
     GeminiProfile gemini,
   ) =>
       AgentProfileRegistry([claude, codex, opencode, cursor, gemini]);
+}
+
+@module
+abstract class HeadlessChatModule {
+  @singleton
+  ClaudeCodeStreamJsonAdapter get claudeCodeStreamJsonAdapter =>
+      const ClaudeCodeStreamJsonAdapter();
+
+  @singleton
+  CodexExecJsonAdapter get codexExecJsonAdapter => const CodexExecJsonAdapter();
+
+  @singleton
+  OpenCodeRunJsonAdapter get openCodeRunJsonAdapter =>
+      const OpenCodeRunJsonAdapter();
+
+  @singleton
+  HeadlessChatAdapterRegistry headlessChatAdapterRegistry(
+    ClaudeCodeStreamJsonAdapter claude,
+    CodexExecJsonAdapter codex,
+    OpenCodeRunJsonAdapter opencode,
+  ) =>
+      HeadlessChatAdapterRegistry([claude, codex, opencode]);
+
+  @lazySingleton
+  HeadlessChatFeatureFlags get headlessChatFeatureFlags =>
+      const HeadlessChatFeatureFlags.fromEnvironment();
+
+  @lazySingleton
+  HeadlessChatSessionPool headlessChatSessionPool(
+    ProcessRunner runner,
+    HeadlessChatAdapterRegistry registry,
+  ) =>
+      HeadlessChatSessionPool(runner, registry);
+
+  @lazySingleton
+  ChatPromptDispatcher chatPromptDispatcher(
+    PtySessionPool ptyPool,
+    HeadlessChatSessionPool headlessPool,
+    HeadlessChatFeatureFlags flags,
+  ) =>
+      ChatPromptDispatcher(ptyPool, headlessPool, flags);
 }
 
 @module

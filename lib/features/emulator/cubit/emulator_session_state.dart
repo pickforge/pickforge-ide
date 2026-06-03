@@ -18,6 +18,8 @@ sealed class EmulatorSessionState with _$EmulatorSessionState {
   const factory EmulatorSessionState.idle({
     required Avd avd,
     required String serial,
+    DateTime? idleSince,
+    @Default(false) bool shutdownPrompt,
   }) = Idle;
 
   const factory EmulatorSessionState.recoveryPending({

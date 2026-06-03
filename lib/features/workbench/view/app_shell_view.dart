@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:multi_split_view/multi_split_view.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
+import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
@@ -136,6 +137,7 @@ class _AppShellViewState extends State<AppShellView> {
                         logsCubit: context.read<RunLogsCubit>(),
                         ipcServer: getIt<EmulatorIpcServer>(),
                         recoveryStore: const RunSessionRecoveryStore(),
+                        shutdownController: getIt<AvdShutdownController>(),
                       );
                       unawaited(cubit.bootstrap());
                       return cubit;

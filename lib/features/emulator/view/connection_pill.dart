@@ -89,7 +89,8 @@ class _PillContent extends StatelessWidget {
         NoDevicePicked() => 'Pick device',
         Cold(:final avd) => avd.name,
         Booting(:final avd) => '${avd.name} booting...',
-        Idle(:final avd) => avd.name,
+        Idle(:final avd, :final shutdownPrompt) =>
+          shutdownPrompt ? 'Shutdown ${avd.name}?' : avd.name,
         RecoveryPending(:final avd, :final canAdopt) =>
           canAdopt ? 'Recover ${avd?.name ?? 'run'}' : 'Stale run',
         Running(:final manual, :final avd) =>
@@ -214,7 +215,7 @@ class _Menu extends StatelessWidget {
               child: Text('View run history'),
             ),
           ],
-        Cold() || Idle() => const [
+        Cold() => const [
             PopupMenuItem(
               value: _MenuAction.pickDevice,
               child: Text('Pick different...'),
@@ -228,6 +229,34 @@ class _Menu extends StatelessWidget {
               child: Text('Forget device'),
             ),
             PopupMenuItem(
+              value: _MenuAction.viewHistory,
+              child: Text('View run history'),
+            ),
+          ],
+        Idle(:final shutdownPrompt) => [
+            if (shutdownPrompt)
+              const PopupMenuItem(
+                value: _MenuAction.keepIdleAvd,
+                child: Text('Keep running'),
+              ),
+            if (shutdownPrompt)
+              const PopupMenuItem(
+                value: _MenuAction.shutdownIdleAvd,
+                child: Text('Shutdown emulator'),
+              ),
+            const PopupMenuItem(
+              value: _MenuAction.pickDevice,
+              child: Text('Pick different...'),
+            ),
+            const PopupMenuItem(
+              value: _MenuAction.manualUrl,
+              child: Text('Manual VM Service URL...'),
+            ),
+            const PopupMenuItem(
+              value: _MenuAction.forget,
+              child: Text('Forget device'),
+            ),
+            const PopupMenuItem(
               value: _MenuAction.viewHistory,
               child: Text('View run history'),
             ),
@@ -326,6 +355,10 @@ class _Menu extends StatelessWidget {
         await cubit.adoptRecoveredRun();
       case _MenuAction.cleanupRecoveredRun:
         await cubit.cleanupRecoveredRun();
+      case _MenuAction.shutdownIdleAvd:
+        await cubit.confirmIdleShutdown();
+      case _MenuAction.keepIdleAvd:
+        cubit.dismissIdleShutdownPrompt();
       case _MenuAction.viewLogs:
         try {
           context.read<WorkbenchLayoutCubit>().toggleRunLogs();
@@ -347,6 +380,8 @@ enum _MenuAction {
   stop,
   adoptRecoveredRun,
   cleanupRecoveredRun,
+  shutdownIdleAvd,
+  keepIdleAvd,
   viewLogs,
   viewHistory
 }
@@ -393,8 +428,21 @@ class _PrimaryAction extends StatelessWidget {
       Cold() => TextButton(onPressed: cubit.bootAvd, child: const Text('Boot')),
       Booting() =>
         TextButton(onPressed: cubit.cancelBoot, child: const Text('Cancel')),
-      Idle() =>
-        TextButton(onPressed: cubit.runApp, child: const Text('Run app')),
+      Idle(:final shutdownPrompt) => shutdownPrompt
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton(
+                  onPressed: cubit.dismissIdleShutdownPrompt,
+                  child: const Text('Keep'),
+                ),
+                TextButton(
+                  onPressed: cubit.confirmIdleShutdown,
+                  child: const Text('Shutdown'),
+                ),
+              ],
+            )
+          : TextButton(onPressed: cubit.runApp, child: const Text('Run app')),
       RecoveryPending(:final canAdopt) => TextButton(
           onPressed:
               canAdopt ? cubit.adoptRecoveredRun : cubit.cleanupRecoveredRun,

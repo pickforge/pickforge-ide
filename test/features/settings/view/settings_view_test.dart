@@ -10,6 +10,7 @@ import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -66,6 +67,8 @@ void main() {
         .thenAnswer((_) async => const RunArgs());
     when(() => settings.getEmulatorLaunchOptions(any()))
         .thenAnswer((_) async => const EmulatorLaunchOptions());
+    when(() => settings.getEmulatorIdleShutdownSettings(any()))
+        .thenAnswer((_) async => const EmulatorIdleShutdownSettings());
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(avds: [], running: []),
     );

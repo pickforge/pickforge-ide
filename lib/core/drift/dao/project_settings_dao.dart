@@ -25,6 +25,7 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
     Object? flutterRunArgs = const Value<String?>.absent(),
     Object? targetFile = const Value<String?>.absent(),
     Object? emulatorLaunchOptions = const Value<String?>.absent(),
+    Object? emulatorIdleShutdown = const Value<String?>.absent(),
     bool? autoBootOnSelect,
     DateTime? now,
   }) {
@@ -38,6 +39,7 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
       flutterRunArgs: _nullableTextValue(flutterRunArgs),
       targetFile: _nullableTextValue(targetFile),
       emulatorLaunchOptions: _nullableTextValue(emulatorLaunchOptions),
+      emulatorIdleShutdown: _nullableTextValue(emulatorIdleShutdown),
       autoBootOnSelect: autoBootOnSelect == null
           ? const Value.absent()
           : Value(autoBootOnSelect),

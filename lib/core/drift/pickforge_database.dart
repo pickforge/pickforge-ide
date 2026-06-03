@@ -41,7 +41,7 @@ class PickforgeDatabase extends _$PickforgeDatabase {
   PickforgeDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -127,6 +127,12 @@ class PickforgeDatabase extends _$PickforgeDatabase {
             await m.addColumn(
               projectSettings,
               projectSettings.emulatorLaunchOptions,
+            );
+          }
+          if (from < 6) {
+            await m.addColumn(
+              projectSettings,
+              projectSettings.emulatorIdleShutdown,
             );
           }
         },

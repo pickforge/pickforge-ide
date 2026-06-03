@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
@@ -138,6 +139,29 @@ class ProjectSettingsRepository {
       projectRoot: projectRoot,
       emulatorLaunchOptions: Value(
         options.isDefault ? null : jsonEncode(options.toJson()),
+      ),
+    );
+  }
+
+  Future<EmulatorIdleShutdownSettings> getEmulatorIdleShutdownSettings(
+    String projectRoot,
+  ) async {
+    final row = await _db.projectSettingsDao.loadFor(projectRoot);
+    final json = row?.emulatorIdleShutdown;
+    if (json == null) return const EmulatorIdleShutdownSettings();
+    return EmulatorIdleShutdownSettings.fromJson(
+      (jsonDecode(json) as Map<String, dynamic>).cast<String, Object?>(),
+    );
+  }
+
+  Future<void> setEmulatorIdleShutdownSettings(
+    String projectRoot,
+    EmulatorIdleShutdownSettings settings,
+  ) {
+    return _db.projectSettingsDao.upsert(
+      projectRoot: projectRoot,
+      emulatorIdleShutdown: Value(
+        settings.isDefault ? null : jsonEncode(settings.toJson()),
       ),
     );
   }

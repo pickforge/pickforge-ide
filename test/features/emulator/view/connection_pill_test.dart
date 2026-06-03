@@ -54,6 +54,23 @@ void main() {
     expect(find.text('Run app'), findsOneWidget);
   });
 
+  testWidgets('Idle shutdown prompt shows keep and shutdown actions',
+      (tester) async {
+    await pump(
+      tester,
+      EmulatorSessionState.idle(
+        avd: const Avd(id: 'A', name: 'Pixel 5 API 34', platform: 'android'),
+        serial: 'emulator-5554',
+        idleSince: DateTime.utc(2026, 6, 3),
+        shutdownPrompt: true,
+      ),
+    );
+    expect(find.text('Shutdown Pixel 5 API 34?'), findsOneWidget);
+    expect(find.text('Keep'), findsOneWidget);
+    expect(find.text('Shutdown'), findsOneWidget);
+    expect(find.text('Run app'), findsNothing);
+  });
+
   testWidgets('Running shows Reload button + AVD name', (tester) async {
     await pump(
       tester,

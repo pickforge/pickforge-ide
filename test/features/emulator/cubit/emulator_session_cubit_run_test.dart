@@ -4,9 +4,11 @@ import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
+import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
@@ -35,6 +37,8 @@ class _FakeRunSession extends Mock implements RunSession {}
 
 class _Recovery extends Mock implements RunSessionRecoveryStore {}
 
+class _Shutdown extends Mock implements AvdShutdownController {}
+
 void main() {
   late _MS settings;
   late _MD disc;
@@ -44,6 +48,7 @@ void main() {
   late _MLog log;
   late _MV vm;
   late _Recovery recovery;
+  late _Shutdown shutdown;
   late _FakeRunSession session;
   late StreamController<RunSessionEvent> events;
 
@@ -57,6 +62,7 @@ void main() {
         startedAt: DateTime.utc(2026, 6, 3),
       ),
     );
+    registerFallbackValue(const EmulatorIdleShutdownSettings());
   });
 
   setUp(() {
@@ -68,6 +74,7 @@ void main() {
     log = _MLog();
     vm = _MV();
     recovery = _Recovery();
+    shutdown = _Shutdown();
     session = _FakeRunSession();
     events = StreamController<RunSessionEvent>.broadcast();
     when(() => session.events).thenAnswer((_) => events.stream);
@@ -80,6 +87,8 @@ void main() {
     when(() => session.stop()).thenAnswer((_) async {});
     when(() => settings.getRunArgs('/p'))
         .thenAnswer((_) async => const RunArgs());
+    when(() => settings.getEmulatorIdleShutdownSettings('/p'))
+        .thenAnswer((_) async => const EmulatorIdleShutdownSettings());
     when(
       () => log.recordStart(
         sessionId: any(named: 'sessionId'),
@@ -116,6 +125,7 @@ void main() {
     when(() => recovery.remove(any())).thenAnswer((_) async {});
     when(() => recovery.cleanup(any())).thenAnswer((_) async {});
     when(() => recovery.findRecoverable('/p')).thenAnswer((_) async => null);
+    when(() => shutdown.shutdown(any())).thenAnswer((_) async {});
   });
   tearDown(() => events.close());
 
@@ -394,6 +404,141 @@ void main() {
     },
     expect: () => [isA<Running>(), isA<Idle>()],
     verify: (_) => verify(() => session.stop()).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'stopped event prompts before idle shutdown by default',
+    setUp: () {
+      when(() => settings.getEmulatorIdleShutdownSettings('/p')).thenAnswer(
+        (_) async => const EmulatorIdleShutdownSettings(enabled: true),
+      );
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: any(named: 'serial'),
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      shutdownController: shutdown,
+    ),
+    seed: () => const EmulatorSessionState.idle(
+      avd: avd,
+      serial: 'emulator-5554',
+    ),
+    act: (c) async {
+      await c.runApp();
+      events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      events.add(const RunSessionEvent.stopped(exitCode: 0, reason: 'stopped'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    },
+    expect: () => [
+      isA<Running>(),
+      isA<Idle>()
+          .having((s) => s.shutdownPrompt, 'shutdownPrompt', isTrue)
+          .having((s) => s.idleSince, 'idleSince', isNotNull),
+    ],
+    verify: (_) => verifyNever(() => shutdown.shutdown(any())),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'confirmIdleShutdown kills emulator and returns to cold state',
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      shutdownController: shutdown,
+    ),
+    seed: () => EmulatorSessionState.idle(
+      avd: avd,
+      serial: 'emulator-5554',
+      idleSince: DateTime.utc(2026, 6, 3),
+      shutdownPrompt: true,
+    ),
+    act: (c) => c.confirmIdleShutdown(),
+    expect: () => [const EmulatorSessionState.cold(avd: avd)],
+    verify: (_) => verify(() => shutdown.shutdown('emulator-5554')).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'dismissIdleShutdownPrompt keeps idle emulator',
+    build: build,
+    seed: () => EmulatorSessionState.idle(
+      avd: avd,
+      serial: 'emulator-5554',
+      idleSince: DateTime.utc(2026, 6, 3),
+      shutdownPrompt: true,
+    ),
+    act: (c) => c.dismissIdleShutdownPrompt(),
+    expect: () => [
+      EmulatorSessionState.idle(
+        avd: avd,
+        serial: 'emulator-5554',
+        idleSince: DateTime.utc(2026, 6, 3),
+      ),
+    ],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'explicit automatic idle shutdown skips prompt',
+    setUp: () {
+      when(() => settings.getEmulatorIdleShutdownSettings('/p')).thenAnswer(
+        (_) async => const EmulatorIdleShutdownSettings(
+          enabled: true,
+          requireConfirmation: false,
+        ),
+      );
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: any(named: 'serial'),
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      shutdownController: shutdown,
+    ),
+    seed: () => const EmulatorSessionState.idle(
+      avd: avd,
+      serial: 'emulator-5554',
+    ),
+    act: (c) async {
+      await c.runApp();
+      events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await c.stopRun();
+    },
+    expect: () => [
+      isA<Running>(),
+      const EmulatorSessionState.cold(avd: avd),
+    ],
+    verify: (_) => verify(() => shutdown.shutdown('emulator-5554')).called(1),
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(

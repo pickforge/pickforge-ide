@@ -57,6 +57,24 @@ void main() {
     expect(find.text('View run history'), findsOneWidget);
   });
 
+  testWidgets('Idle shutdown prompt surfaces keep and shutdown menu actions',
+      (tester) async {
+    await pump(
+      tester,
+      EmulatorSessionState.idle(
+        avd: const Avd(id: 'A', name: 'Pixel 5', platform: 'android'),
+        serial: 'emulator-5554',
+        idleSince: DateTime.utc(2026, 6, 3),
+        shutdownPrompt: true,
+      ),
+    );
+    await tester.tap(find.byKey(const Key('pill-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('Keep running'), findsOneWidget);
+    expect(find.text('Shutdown emulator'), findsOneWidget);
+    expect(find.text('Pick different...'), findsOneWidget);
+  });
+
   testWidgets('RecoveryPending surfaces adopt and cleanup', (tester) async {
     await pump(
       tester,

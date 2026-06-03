@@ -307,12 +307,19 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P2.T5 — Per-project AVD auto-shutdown
 
-**Status:** Deferred
+**Status:** Completed
+**Why:** Each project can now opt into idle emulator shutdown, defaults to prompting before killing the AVD, and only auto-shuts down when confirmation is explicitly disabled.
 **Tasks**
 
-- [ ] Add per-project idle shutdown setting.
-- [ ] Track last activity/run state.
-- [ ] Prompt before destructive shutdown unless explicitly configured.
+- [x] Add per-project idle shutdown setting.
+- [x] Track last activity/run state.
+- [x] Prompt before destructive shutdown unless explicitly configured.
+
+**Latest evidence**
+
+- 2026-06-03: Added `EmulatorIdleShutdownSettings`, schema v6 `emulator_idle_shutdown` persistence, Device & Run controls for `Shutdown when idle` and `Ask before shutdown`, and `AvdShutdownController` using `adb -s <serial> emu kill`.
+- 2026-06-03: Added `Idle.idleSince` and `Idle.shutdownPrompt`, connection pill keep/shutdown actions, Cubit handling for prompt-based shutdown, explicit automatic shutdown, and shutdown failure state.
+- 2026-06-03: Verified with focused idle-shutdown/settings/schema/pill/Cubit tests, `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (401 passed, 2 skipped without `PICKFORGE_E2E_AVD`), `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact`, and `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/widget_pick_e2e_test.dart --reporter=compact`; all passed.
 
 ### P2.T6 — Inspector auto-attach optimization
 

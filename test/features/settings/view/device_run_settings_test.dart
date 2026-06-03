@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
@@ -25,6 +26,7 @@ void main() {
     );
     registerFallbackValue(const RunArgs());
     registerFallbackValue(const EmulatorLaunchOptions());
+    registerFallbackValue(const EmulatorIdleShutdownSettings());
   });
 
   testWidgets('renders AVD list and picking calls cubit', (tester) async {
@@ -254,6 +256,61 @@ void main() {
       () => cubit.setEmulatorLaunchOptions(
         '/p',
         const EmulatorLaunchOptions(port: 5558),
+      ),
+    ).called(1);
+  });
+
+  testWidgets('idle shutdown controls persist prompt and automatic modes',
+      (tester) async {
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(
+        binding: EmulatorBinding.avd(avdId: 'p5', avdName: 'Pixel 5'),
+      ),
+    );
+    when(() => cubit.setIdleShutdownSettings(any(), any()))
+        .thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(
+            body: SingleChildScrollView(
+              child: DeviceRunSettings(projectRoot: '/p'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('emulator-idle-shutdown-enabled')));
+    await tester.pump();
+
+    verify(
+      () => cubit.setIdleShutdownSettings(
+        '/p',
+        const EmulatorIdleShutdownSettings(enabled: true),
+      ),
+    ).called(1);
+
+    cubit.emit(
+      const DeviceRunSettingsState(
+        binding: EmulatorBinding.avd(avdId: 'p5', avdName: 'Pixel 5'),
+        idleShutdownSettings: EmulatorIdleShutdownSettings(enabled: true),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('emulator-idle-shutdown-confirm')));
+    await tester.pump();
+
+    verify(
+      () => cubit.setIdleShutdownSettings(
+        '/p',
+        const EmulatorIdleShutdownSettings(
+          enabled: true,
+          requireConfirmation: false,
+        ),
       ),
     ).called(1);
   });

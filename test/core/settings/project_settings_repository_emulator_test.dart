@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -118,6 +119,47 @@ void main() {
         const EmulatorLaunchOptions(port: 5555),
       ),
       throwsArgumentError,
+    );
+  });
+
+  test('round-trip idle shutdown settings', () async {
+    await repo.setEmulatorIdleShutdownSettings(
+      '/p',
+      const EmulatorIdleShutdownSettings(
+        enabled: true,
+        requireConfirmation: false,
+      ),
+    );
+
+    final got = await repo.getEmulatorIdleShutdownSettings('/p');
+    expect(got.enabled, isTrue);
+    expect(got.requireConfirmation, isFalse);
+  });
+
+  test('getEmulatorIdleShutdownSettings returns defaults when none set',
+      () async {
+    expect(
+      await repo.getEmulatorIdleShutdownSettings('/p'),
+      const EmulatorIdleShutdownSettings(),
+    );
+  });
+
+  test('setEmulatorIdleShutdownSettings clears stored JSON for defaults',
+      () async {
+    await repo.setEmulatorIdleShutdownSettings(
+      '/p',
+      const EmulatorIdleShutdownSettings(enabled: true),
+    );
+    await repo.setEmulatorIdleShutdownSettings(
+      '/p',
+      const EmulatorIdleShutdownSettings(),
+    );
+
+    final row = await db.projectSettingsDao.loadFor('/p');
+    expect(row?.emulatorIdleShutdown, isNull);
+    expect(
+      await repo.getEmulatorIdleShutdownSettings('/p'),
+      const EmulatorIdleShutdownSettings(),
     );
   });
 }

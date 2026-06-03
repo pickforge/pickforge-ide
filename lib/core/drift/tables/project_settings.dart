@@ -15,6 +15,7 @@ class ProjectSettings extends Table {
   TextColumn get flutterRunArgs => text().nullable()();
   TextColumn get targetFile => text().nullable()();
   TextColumn get emulatorLaunchOptions => text().nullable()();
+  TextColumn get emulatorIdleShutdown => text().nullable()();
   BoolColumn get autoBootOnSelect =>
       boolean().withDefault(const Constant(true))();
   BoolColumn get firstRunCelebrated =>

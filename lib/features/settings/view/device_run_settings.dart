@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
@@ -36,6 +37,11 @@ class DeviceRunSettings extends StatelessWidget {
                     .read<DeviceRunSettingsCubit>()
                     .setAutoBoot(projectRoot, enabled: value)
                     .ignore(),
+              ),
+              const SizedBox(height: 8),
+              _IdleShutdownFields(
+                projectRoot: projectRoot,
+                settings: state.idleShutdownSettings,
               ),
               const SizedBox(height: 8),
               _EmulatorLaunchOptionsFields(
@@ -87,6 +93,52 @@ class DeviceRunSettings extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+class _IdleShutdownFields extends StatelessWidget {
+  const _IdleShutdownFields({
+    required this.projectRoot,
+    required this.settings,
+  });
+
+  final String projectRoot;
+  final EmulatorIdleShutdownSettings settings;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SwitchListTile(
+          key: const Key('emulator-idle-shutdown-enabled'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Shutdown when idle'),
+          value: settings.enabled,
+          onChanged: (value) => _set(
+            context,
+            settings.copyWith(enabled: value),
+          ),
+        ),
+        if (settings.enabled)
+          SwitchListTile(
+            key: const Key('emulator-idle-shutdown-confirm'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Ask before shutdown'),
+            value: settings.requireConfirmation,
+            onChanged: (value) => _set(
+              context,
+              settings.copyWith(requireConfirmation: value),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _set(BuildContext context, EmulatorIdleShutdownSettings settings) {
+    context
+        .read<DeviceRunSettingsCubit>()
+        .setIdleShutdownSettings(projectRoot, settings)
+        .ignore();
   }
 }
 

@@ -192,7 +192,9 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult Function()? noDevicePicked,
     TResult Function(Avd avd)? cold,
     TResult Function(Avd avd, int elapsedMs)? booting,
-    TResult Function(Avd avd, String serial)? idle,
+    TResult Function(
+            Avd avd, String serial, DateTime? idleSince, bool shutdownPrompt)?
+        idle,
     TResult Function(String sessionId, int pid, String serial,
             DateTime startedAt, Avd? avd, String? vmServiceUri, bool canAdopt)?
         recoveryPending,
@@ -222,7 +224,8 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
       case Booting() when booting != null:
         return booting(_that.avd, _that.elapsedMs);
       case Idle() when idle != null:
-        return idle(_that.avd, _that.serial);
+        return idle(
+            _that.avd, _that.serial, _that.idleSince, _that.shutdownPrompt);
       case RecoveryPending() when recoveryPending != null:
         return recoveryPending(_that.sessionId, _that.pid, _that.serial,
             _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
@@ -258,7 +261,9 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     required TResult Function() noDevicePicked,
     required TResult Function(Avd avd) cold,
     required TResult Function(Avd avd, int elapsedMs) booting,
-    required TResult Function(Avd avd, String serial) idle,
+    required TResult Function(
+            Avd avd, String serial, DateTime? idleSince, bool shutdownPrompt)
+        idle,
     required TResult Function(String sessionId, int pid, String serial,
             DateTime startedAt, Avd? avd, String? vmServiceUri, bool canAdopt)
         recoveryPending,
@@ -287,7 +292,8 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
       case Booting():
         return booting(_that.avd, _that.elapsedMs);
       case Idle():
-        return idle(_that.avd, _that.serial);
+        return idle(
+            _that.avd, _that.serial, _that.idleSince, _that.shutdownPrompt);
       case RecoveryPending():
         return recoveryPending(_that.sessionId, _that.pid, _that.serial,
             _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
@@ -320,7 +326,9 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult? Function()? noDevicePicked,
     TResult? Function(Avd avd)? cold,
     TResult? Function(Avd avd, int elapsedMs)? booting,
-    TResult? Function(Avd avd, String serial)? idle,
+    TResult? Function(
+            Avd avd, String serial, DateTime? idleSince, bool shutdownPrompt)?
+        idle,
     TResult? Function(String sessionId, int pid, String serial,
             DateTime startedAt, Avd? avd, String? vmServiceUri, bool canAdopt)?
         recoveryPending,
@@ -349,7 +357,8 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
       case Booting() when booting != null:
         return booting(_that.avd, _that.elapsedMs);
       case Idle() when idle != null:
-        return idle(_that.avd, _that.serial);
+        return idle(
+            _that.avd, _that.serial, _that.idleSince, _that.shutdownPrompt);
       case RecoveryPending() when recoveryPending != null:
         return recoveryPending(_that.sessionId, _that.pid, _that.serial,
             _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
@@ -524,10 +533,17 @@ class _$BootingCopyWithImpl<$Res> implements $BootingCopyWith<$Res> {
 /// @nodoc
 
 class Idle implements EmulatorSessionState {
-  const Idle({required this.avd, required this.serial});
+  const Idle(
+      {required this.avd,
+      required this.serial,
+      this.idleSince,
+      this.shutdownPrompt = false});
 
   final Avd avd;
   final String serial;
+  final DateTime? idleSince;
+  @JsonKey()
+  final bool shutdownPrompt;
 
   /// Create a copy of EmulatorSessionState
   /// with the given fields replaced by the non-null parameter values.
@@ -542,15 +558,20 @@ class Idle implements EmulatorSessionState {
         (other.runtimeType == runtimeType &&
             other is Idle &&
             (identical(other.avd, avd) || other.avd == avd) &&
-            (identical(other.serial, serial) || other.serial == serial));
+            (identical(other.serial, serial) || other.serial == serial) &&
+            (identical(other.idleSince, idleSince) ||
+                other.idleSince == idleSince) &&
+            (identical(other.shutdownPrompt, shutdownPrompt) ||
+                other.shutdownPrompt == shutdownPrompt));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, avd, serial);
+  int get hashCode =>
+      Object.hash(runtimeType, avd, serial, idleSince, shutdownPrompt);
 
   @override
   String toString() {
-    return 'EmulatorSessionState.idle(avd: $avd, serial: $serial)';
+    return 'EmulatorSessionState.idle(avd: $avd, serial: $serial, idleSince: $idleSince, shutdownPrompt: $shutdownPrompt)';
   }
 }
 
@@ -560,7 +581,7 @@ abstract mixin class $IdleCopyWith<$Res>
   factory $IdleCopyWith(Idle value, $Res Function(Idle) _then) =
       _$IdleCopyWithImpl;
   @useResult
-  $Res call({Avd avd, String serial});
+  $Res call({Avd avd, String serial, DateTime? idleSince, bool shutdownPrompt});
 }
 
 /// @nodoc
@@ -576,6 +597,8 @@ class _$IdleCopyWithImpl<$Res> implements $IdleCopyWith<$Res> {
   $Res call({
     Object? avd = null,
     Object? serial = null,
+    Object? idleSince = freezed,
+    Object? shutdownPrompt = null,
   }) {
     return _then(Idle(
       avd: null == avd
@@ -586,6 +609,14 @@ class _$IdleCopyWithImpl<$Res> implements $IdleCopyWith<$Res> {
           ? _self.serial
           : serial // ignore: cast_nullable_to_non_nullable
               as String,
+      idleSince: freezed == idleSince
+          ? _self.idleSince
+          : idleSince // ignore: cast_nullable_to_non_nullable
+              as DateTime?,
+      shutdownPrompt: null == shutdownPrompt
+          ? _self.shutdownPrompt
+          : shutdownPrompt // ignore: cast_nullable_to_non_nullable
+              as bool,
     ));
   }
 }

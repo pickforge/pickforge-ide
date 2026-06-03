@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
@@ -9,6 +10,7 @@ class DeviceRunSettingsState extends Equatable {
     this.binding,
     this.runArgs = const RunArgs(),
     this.emulatorLaunchOptions = const EmulatorLaunchOptions(),
+    this.idleShutdownSettings = const EmulatorIdleShutdownSettings(),
     this.avds = const [],
     this.targetFiles = const [],
     this.flavors = const [],
@@ -17,6 +19,7 @@ class DeviceRunSettingsState extends Equatable {
   final EmulatorBinding? binding;
   final RunArgs runArgs;
   final EmulatorLaunchOptions emulatorLaunchOptions;
+  final EmulatorIdleShutdownSettings idleShutdownSettings;
   final List<Avd> avds;
   final List<String> targetFiles;
   final List<String> flavors;
@@ -25,6 +28,7 @@ class DeviceRunSettingsState extends Equatable {
     Object? binding = _unset,
     RunArgs? runArgs,
     EmulatorLaunchOptions? emulatorLaunchOptions,
+    EmulatorIdleShutdownSettings? idleShutdownSettings,
     List<Avd>? avds,
     List<String>? targetFiles,
     List<String>? flavors,
@@ -34,6 +38,7 @@ class DeviceRunSettingsState extends Equatable {
         runArgs: runArgs ?? this.runArgs,
         emulatorLaunchOptions:
             emulatorLaunchOptions ?? this.emulatorLaunchOptions,
+        idleShutdownSettings: idleShutdownSettings ?? this.idleShutdownSettings,
         avds: avds ?? this.avds,
         targetFiles: targetFiles ?? this.targetFiles,
         flavors: flavors ?? this.flavors,
@@ -44,6 +49,7 @@ class DeviceRunSettingsState extends Equatable {
         binding,
         runArgs,
         emulatorLaunchOptions,
+        idleShutdownSettings,
         avds,
         targetFiles,
         flavors,

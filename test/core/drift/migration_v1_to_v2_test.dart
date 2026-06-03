@@ -74,6 +74,7 @@ void main() {
       final names = settingsCols.map((r) => r.read<String>('name')).toSet();
       expect(names.contains('last_chat_id'), isTrue);
       expect(names.contains('pane_sizes'), isTrue);
+      expect(names.contains('emulator_idle_shutdown'), isTrue);
       expect(names.contains('default_terminal_id'), isFalse);
 
       final pickNames = pickCols.map((r) => r.read<String>('name')).toSet();

@@ -29,6 +29,7 @@ import 'package:pickforge/core/drift/dao/projects_dao.dart' as _i1070;
 import 'package:pickforge/core/drift/dao/run_session_log_dao.dart' as _i693;
 import 'package:pickforge/core/drift/pickforge_database.dart' as _i631;
 import 'package:pickforge/core/emulator/avd_launcher.dart' as _i276;
+import 'package:pickforge/core/emulator/avd_shutdown_controller.dart' as _i138;
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart' as _i210;
 import 'package:pickforge/core/emulator/device_discovery_service.dart' as _i577;
 import 'package:pickforge/core/emulator/process_runner.dart' as _i788;
@@ -117,6 +118,8 @@ extension GetItInjectableX on _i174.GetIt {
         () => driftDaoModule.runSessionLogDao(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i276.AvdLauncher>(
         () => _i276.AvdLauncher(gh<_i788.ProcessRunner>()));
+    gh.lazySingleton<_i138.AvdShutdownController>(
+        () => _i138.AvdShutdownController(gh<_i788.ProcessRunner>()));
     gh.lazySingleton<_i210.BootReadinessPoller>(
         () => _i210.BootReadinessPoller(gh<_i788.ProcessRunner>()));
     gh.lazySingleton<_i577.DeviceDiscoveryService>(

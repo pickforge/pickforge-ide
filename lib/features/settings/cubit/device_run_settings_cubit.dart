@@ -2,6 +2,7 @@ import 'package:bloc/bloc.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/flutter_run_target_scanner.dart';
@@ -28,6 +29,7 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
       settings.getEmulatorBinding(projectRoot),
       settings.getRunArgs(projectRoot),
       settings.getEmulatorLaunchOptions(projectRoot),
+      settings.getEmulatorIdleShutdownSettings(projectRoot),
       discovery.snapshot(),
       targetScanner.scan(projectRoot),
     ]);
@@ -35,13 +37,15 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
     final binding = results[0] as EmulatorBinding?;
     final runArgs = results[1]! as RunArgs;
     final launchOptions = results[2]! as EmulatorLaunchOptions;
-    final devices = results[3]! as DeviceListSnapshot;
-    final metadata = results[4]! as FlutterRunMetadata;
+    final idleShutdown = results[3]! as EmulatorIdleShutdownSettings;
+    final devices = results[4]! as DeviceListSnapshot;
+    final metadata = results[5]! as FlutterRunMetadata;
     emit(
       DeviceRunSettingsState(
         binding: binding,
         runArgs: runArgs,
         emulatorLaunchOptions: launchOptions,
+        idleShutdownSettings: idleShutdown,
         avds: devices.avds,
         targetFiles: metadata.targetFiles,
         flavors: metadata.flavors,
@@ -84,6 +88,14 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
     emit(state.copyWith(emulatorLaunchOptions: options));
   }
 
+  Future<void> setIdleShutdownSettings(
+    String projectRoot,
+    EmulatorIdleShutdownSettings idleShutdown,
+  ) async {
+    await settings.setEmulatorIdleShutdownSettings(projectRoot, idleShutdown);
+    emit(state.copyWith(idleShutdownSettings: idleShutdown));
+  }
+
   Future<void> switchToManual(String projectRoot, String url) async {
     final binding = EmulatorBinding.manual(vmServiceUrl: url);
     await settings.setEmulatorBinding(projectRoot, binding);
@@ -97,11 +109,16 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
       projectRoot,
       const EmulatorLaunchOptions(),
     );
+    await settings.setEmulatorIdleShutdownSettings(
+      projectRoot,
+      const EmulatorIdleShutdownSettings(),
+    );
     emit(
       state.copyWith(
         binding: null,
         runArgs: const RunArgs(),
         emulatorLaunchOptions: const EmulatorLaunchOptions(),
+        idleShutdownSettings: const EmulatorIdleShutdownSettings(),
       ),
     );
   }

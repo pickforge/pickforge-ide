@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/flutter_run_target_scanner.dart';
@@ -33,6 +34,7 @@ void main() {
       const EmulatorBinding.avd(avdId: 'fallback', avdName: 'fallback'),
     );
     registerFallbackValue(const EmulatorLaunchOptions());
+    registerFallbackValue(const EmulatorIdleShutdownSettings());
   });
 
   setUp(() {
@@ -52,6 +54,9 @@ void main() {
     );
     when(() => repo.getEmulatorLaunchOptions('/p')).thenAnswer(
       (_) async => const EmulatorLaunchOptions(noAudio: true),
+    );
+    when(() => repo.getEmulatorIdleShutdownSettings('/p')).thenAnswer(
+      (_) async => const EmulatorIdleShutdownSettings(enabled: true),
     );
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(
@@ -75,6 +80,7 @@ void main() {
     expect(cubit.state.binding, isA<AvdBinding>());
     expect(cubit.state.runArgs.targetFile, 'lib/main_dev.dart');
     expect(cubit.state.emulatorLaunchOptions.noAudio, isTrue);
+    expect(cubit.state.idleShutdownSettings.enabled, isTrue);
     expect(cubit.state.avds.single.name, 'Pixel 5');
     expect(cubit.state.targetFiles, ['lib/main.dart', 'lib/main_dev.dart']);
     expect(cubit.state.flavors, ['dev']);
@@ -90,6 +96,8 @@ void main() {
     when(() => repo.getRunArgs(any())).thenAnswer((_) async => const RunArgs());
     when(() => repo.getEmulatorLaunchOptions(any()))
         .thenAnswer((_) async => const EmulatorLaunchOptions());
+    when(() => repo.getEmulatorIdleShutdownSettings(any()))
+        .thenAnswer((_) async => const EmulatorIdleShutdownSettings());
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(
         avds: [Avd(id: 'p5', name: 'Pixel 5', platform: 'android')],
@@ -118,6 +126,8 @@ void main() {
     when(() => repo.getRunArgs('/p')).thenAnswer((_) async => const RunArgs());
     when(() => repo.getEmulatorLaunchOptions('/p'))
         .thenAnswer((_) async => const EmulatorLaunchOptions());
+    when(() => repo.getEmulatorIdleShutdownSettings('/p'))
+        .thenAnswer((_) async => const EmulatorIdleShutdownSettings());
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(avds: [], running: []),
     );
@@ -189,11 +199,34 @@ void main() {
     expect(cubit.state.emulatorLaunchOptions, const EmulatorLaunchOptions());
   });
 
+  test('setIdleShutdownSettings persists settings', () async {
+    const idleShutdown = EmulatorIdleShutdownSettings(
+      enabled: true,
+      requireConfirmation: false,
+    );
+    when(() => repo.setEmulatorIdleShutdownSettings('/p', idleShutdown))
+        .thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setIdleShutdownSettings('/p', idleShutdown);
+
+    verify(
+      () => repo.setEmulatorIdleShutdownSettings('/p', idleShutdown),
+    ).called(1);
+    expect(cubit.state.idleShutdownSettings, idleShutdown);
+  });
+
   test('reset clears binding and run args', () async {
     when(() => repo.clearEmulatorBinding('/p')).thenAnswer((_) async {});
     when(() => repo.setRunArgs('/p', const RunArgs())).thenAnswer((_) async {});
     when(
       () => repo.setEmulatorLaunchOptions('/p', const EmulatorLaunchOptions()),
+    ).thenAnswer((_) async {});
+    when(
+      () => repo.setEmulatorIdleShutdownSettings(
+        '/p',
+        const EmulatorIdleShutdownSettings(),
+      ),
     ).thenAnswer((_) async {});
     final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
 
@@ -204,8 +237,18 @@ void main() {
     verify(
       () => repo.setEmulatorLaunchOptions('/p', const EmulatorLaunchOptions()),
     ).called(1);
+    verify(
+      () => repo.setEmulatorIdleShutdownSettings(
+        '/p',
+        const EmulatorIdleShutdownSettings(),
+      ),
+    ).called(1);
     expect(cubit.state.binding, isNull);
     expect(cubit.state.runArgs, const RunArgs());
     expect(cubit.state.emulatorLaunchOptions, const EmulatorLaunchOptions());
+    expect(
+      cubit.state.idleShutdownSettings,
+      const EmulatorIdleShutdownSettings(),
+    );
   });
 }

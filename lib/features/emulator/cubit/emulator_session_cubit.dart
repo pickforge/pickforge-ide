@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bloc/bloc.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
+import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/cancel_token.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
@@ -35,6 +36,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     this.ipcServer,
     this.eventLogWriter = const RunSessionEventLogWriter(),
     this.recoveryStore,
+    this.shutdownController,
   }) : super(const EmulatorSessionState.noDevicePicked());
 
   final String projectRoot;
@@ -49,6 +51,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   final EmulatorIpcServer? ipcServer;
   final RunSessionEventLogWriter eventLogWriter;
   final RunSessionRecoveryStore? recoveryStore;
+  final AvdShutdownController? shutdownController;
 
   CancelToken? _bootCancel;
   AvdLaunchHandle? _bootHandle;
@@ -83,7 +86,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         final snap = await discovery.snapshot();
         final running = snap.runningFor(avd);
         if (running != null && running.state == 'device') {
-          emit(EmulatorSessionState.idle(avd: avd, serial: running.serial));
+          emit(_idleState(avd, running.serial));
         } else {
           emit(EmulatorSessionState.cold(avd: avd));
         }
@@ -98,7 +101,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final snap = await discovery.snapshot();
     final running = snap.runningFor(avd);
     if (running != null && running.state == 'device') {
-      emit(EmulatorSessionState.idle(avd: avd, serial: running.serial));
+      emit(_idleState(avd, running.serial));
     } else {
       emit(EmulatorSessionState.cold(avd: avd));
     }
@@ -134,7 +137,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
           case BootPending():
             break;
           case BootReady(:final serial):
-            emit(EmulatorSessionState.idle(avd: avd, serial: serial));
+            emit(_idleState(avd, serial));
             return;
           case BootTimeout():
             await handle.cancel();
@@ -330,12 +333,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     await _eventsSub?.cancel();
     _eventsSub = null;
     if (current is Running && current.avd != null && current.serial != null) {
-      emit(
-        EmulatorSessionState.idle(
-          avd: current.avd!,
-          serial: current.serial!,
-        ),
-      );
+      await _emitIdleAfterRun(current.avd!, current.serial!);
     }
   }
 
@@ -373,13 +371,20 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     await _removeRecovery();
     await _unbindIpc();
     if (current is Running && current.avd != null && current.serial != null) {
-      emit(
-        EmulatorSessionState.idle(
-          avd: current.avd!,
-          serial: current.serial!,
-        ),
-      );
+      await _emitIdleAfterRun(current.avd!, current.serial!);
     }
+  }
+
+  Future<void> confirmIdleShutdown() async {
+    final current = state;
+    if (current is! Idle) return;
+    await _shutdownIdleDevice(current);
+  }
+
+  void dismissIdleShutdownPrompt() {
+    final current = state;
+    if (current is! Idle || !current.shutdownPrompt) return;
+    emit(current.copyWith(shutdownPrompt: false));
   }
 
   Future<void> adoptRecoveredRun() async {
@@ -504,6 +509,51 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     _hotRestartCount = 0;
     _errorCount = 0;
     _lastError = null;
+  }
+
+  Idle _idleState(Avd avd, String serial, {bool shutdownPrompt = false}) {
+    return Idle(
+      avd: avd,
+      serial: serial,
+      idleSince: DateTime.now(),
+      shutdownPrompt: shutdownPrompt,
+    );
+  }
+
+  Future<void> _emitIdleAfterRun(Avd avd, String serial) async {
+    final idle = _idleState(avd, serial);
+    final settings = await this.settings.getEmulatorIdleShutdownSettings(
+          projectRoot,
+        );
+    if (!settings.enabled) {
+      emit(idle);
+      return;
+    }
+    if (settings.requireConfirmation) {
+      emit(idle.copyWith(shutdownPrompt: true));
+      return;
+    }
+    await _shutdownIdleDevice(idle);
+  }
+
+  Future<void> _shutdownIdleDevice(Idle idle) async {
+    final controller = shutdownController;
+    if (controller == null) {
+      emit(idle.copyWith(shutdownPrompt: false));
+      return;
+    }
+    try {
+      await controller.shutdown(idle.serial);
+      emit(EmulatorSessionState.cold(avd: idle.avd));
+    } on Object catch (e) {
+      emit(
+        EmulatorSessionState.error(
+          message: e.toString(),
+          avd: idle.avd,
+          serial: idle.serial,
+        ),
+      );
+    }
   }
 
   EmulatorSessionState _recoveryState(RunSessionRecoveryMetadata recovery) {

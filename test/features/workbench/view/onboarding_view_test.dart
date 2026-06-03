@@ -169,6 +169,8 @@ void main() {
                 'claude': 1,
                 'codex': 0,
                 'opencode': 1,
+                'agent': 1,
+                'gemini': 1,
               }),
             ),
             openSettings: () => openedSettings = true,
@@ -182,7 +184,7 @@ void main() {
     expect(find.text('Flutter/FVM'), findsOneWidget);
     expect(find.text('adb'), findsOneWidget);
     expect(find.text('Available'), findsNWidgets(2));
-    expect(find.text('Missing'), findsNWidgets(4));
+    expect(find.text('Missing'), findsNWidgets(6));
     expect(find.text('Open settings'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Open settings'));

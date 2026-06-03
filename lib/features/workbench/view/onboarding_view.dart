@@ -318,6 +318,16 @@ class _SetupChecksCard extends StatelessWidget {
                       available: data.openCodeAvailable,
                       command: 'opencode --version',
                     ),
+                    _SetupCheckRow(
+                      label: l10n.diagnosticsCursor,
+                      available: data.cursorAvailable,
+                      command: 'agent --version',
+                    ),
+                    _SetupCheckRow(
+                      label: l10n.diagnosticsGemini,
+                      available: data.geminiAvailable,
+                      command: 'gemini --version',
+                    ),
                   ],
                 ],
               );

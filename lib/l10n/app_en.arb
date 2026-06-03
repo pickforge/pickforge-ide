@@ -93,6 +93,8 @@
   "diagnosticsClaude": "Claude Code",
   "diagnosticsCodex": "Codex",
   "diagnosticsOpenCode": "OpenCode",
+  "diagnosticsCursor": "Cursor",
+  "diagnosticsGemini": "Gemini",
   "diagnosticsAvailable": "Available",
   "diagnosticsMissing": "Missing",
   "diagnosticsCopySupportBundle": "Copy support bundle",

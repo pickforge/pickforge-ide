@@ -451,13 +451,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P4.T2 — Agent expansion
 
-**Status:** Deferred
+**Status:** Completed
+**Why:** Cursor CLI has a stable documented `agent` command and Gemini CLI has a stable documented `gemini` command, so both now have Pickforge agent profiles and diagnostics coverage.
 **Tasks**
 
-- [ ] Add Cursor CLI profile if stable CLI exists.
-- [ ] Add Gemini CLI profile.
-- [ ] Add test fixtures for each profile's invocation args and resume behavior.
-- [ ] Keep bring-your-own-auth; do not handle tokens.
+- [x] Add Cursor CLI profile if stable CLI exists.
+- [x] Add Gemini CLI profile.
+- [x] Add test fixtures for each profile's invocation args and resume behavior.
+- [x] Keep bring-your-own-auth; do not handle tokens.
 
 ### P4.T3 — Headless chat adapter mode
 

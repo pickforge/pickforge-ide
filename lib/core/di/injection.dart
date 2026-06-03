@@ -8,6 +8,8 @@ import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
 import 'package:pickforge/core/agent/profiles/claude_code_profile.dart';
 import 'package:pickforge/core/agent/profiles/codex_profile.dart';
+import 'package:pickforge/core/agent/profiles/cursor_profile.dart';
+import 'package:pickforge/core/agent/profiles/gemini_profile.dart';
 import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
 import 'package:pickforge/core/di/injection.config.dart';
@@ -67,12 +69,20 @@ abstract class AgentProfileModule {
   OpenCodeProfile get opencodeProfile => const OpenCodeProfile();
 
   @singleton
+  CursorProfile get cursorProfile => const CursorProfile();
+
+  @singleton
+  GeminiProfile get geminiProfile => const GeminiProfile();
+
+  @singleton
   AgentProfileRegistry agentProfileRegistry(
     ClaudeCodeProfile claude,
     CodexProfile codex,
     OpenCodeProfile opencode,
+    CursorProfile cursor,
+    GeminiProfile gemini,
   ) =>
-      AgentProfileRegistry([claude, codex, opencode]);
+      AgentProfileRegistry([claude, codex, opencode, cursor, gemini]);
 }
 
 @module

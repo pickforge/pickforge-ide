@@ -360,6 +360,18 @@ class _DiagnosticsSection extends StatelessWidget {
                         ? l10n.diagnosticsAvailable
                         : l10n.diagnosticsMissing,
                   ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsCursor,
+                    value: data.cursorAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsGemini,
+                    value: data.geminiAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: () => unawaited(

@@ -14,6 +14,8 @@ class DiagnosticsSnapshot extends Equatable {
     required this.claudeAvailable,
     required this.codexAvailable,
     required this.openCodeAvailable,
+    required this.cursorAvailable,
+    required this.geminiAvailable,
   });
 
   final String operatingSystem;
@@ -24,6 +26,8 @@ class DiagnosticsSnapshot extends Equatable {
   final bool claudeAvailable;
   final bool codexAvailable;
   final bool openCodeAvailable;
+  final bool cursorAvailable;
+  final bool geminiAvailable;
 
   @override
   List<Object?> get props => [
@@ -35,6 +39,8 @@ class DiagnosticsSnapshot extends Equatable {
         claudeAvailable,
         codexAvailable,
         openCodeAvailable,
+        cursorAvailable,
+        geminiAvailable,
       ];
 }
 
@@ -62,6 +68,8 @@ class DiagnosticsService {
       claudeAvailable: await _commandAvailable('claude', ['--version']),
       codexAvailable: await _commandAvailable('codex', ['--version']),
       openCodeAvailable: await _commandAvailable('opencode', ['--version']),
+      cursorAvailable: await _commandAvailable('agent', ['--version']),
+      geminiAvailable: await _commandAvailable('gemini', ['--version']),
     );
   }
 
@@ -100,7 +108,9 @@ class DiagnosticsService {
       ..writeln('- emulator: ${_availability(current.emulatorAvailable)}')
       ..writeln('- Claude Code: ${_availability(current.claudeAvailable)}')
       ..writeln('- Codex: ${_availability(current.codexAvailable)}')
-      ..writeln('- OpenCode: ${_availability(current.openCodeAvailable)}');
+      ..writeln('- OpenCode: ${_availability(current.openCodeAvailable)}')
+      ..writeln('- Cursor: ${_availability(current.cursorAvailable)}')
+      ..writeln('- Gemini: ${_availability(current.geminiAvailable)}');
 
     if (lastVmError != null && lastVmError.trim().isNotEmpty) {
       buffer

@@ -16,6 +16,8 @@ import 'package:pickforge/core/agent/agent_profile_registry.dart' as _i360;
 import 'package:pickforge/core/agent/pickforge_context_writer.dart' as _i342;
 import 'package:pickforge/core/agent/profiles/claude_code_profile.dart' as _i14;
 import 'package:pickforge/core/agent/profiles/codex_profile.dart' as _i454;
+import 'package:pickforge/core/agent/profiles/cursor_profile.dart' as _i870;
+import 'package:pickforge/core/agent/profiles/gemini_profile.dart' as _i887;
 import 'package:pickforge/core/agent/profiles/opencode_profile.dart' as _i621;
 import 'package:pickforge/core/agent/widget_context_renderer.dart' as _i810;
 import 'package:pickforge/core/chats/chats_repository.dart' as _i779;
@@ -95,6 +97,8 @@ extension GetItInjectableX on _i174.GetIt {
     gh.singleton<_i454.CodexProfile>(() => agentProfileModule.codexProfile);
     gh.singleton<_i621.OpenCodeProfile>(
         () => agentProfileModule.opencodeProfile);
+    gh.singleton<_i870.CursorProfile>(() => agentProfileModule.cursorProfile);
+    gh.singleton<_i887.GeminiProfile>(() => agentProfileModule.geminiProfile);
     gh.singleton<_i895.SkillStore>(() => skillsModule.skillStore);
     gh.singleton<_i810.WidgetContextRenderer>(
         () => agentLauncherModule.widgetContextRenderer);
@@ -126,22 +130,10 @@ extension GetItInjectableX on _i174.GetIt {
         () => _i577.DeviceDiscoveryService(gh<_i788.ProcessRunner>()));
     gh.lazySingleton<_i849.RunSessionController>(
         () => _i849.RunSessionController(gh<_i788.ProcessRunner>()));
-    gh.singleton<_i360.AgentProfileRegistry>(
-        () => agentProfileModule.agentProfileRegistry(
-              gh<_i14.ClaudeCodeProfile>(),
-              gh<_i454.CodexProfile>(),
-              gh<_i621.OpenCodeProfile>(),
-            ));
     gh.lazySingleton<_i779.ChatsRepository>(
         () => _i779.ChatsRepository(gh<_i905.ChatsDao>()));
     gh.factory<_i638.WorkbenchLayoutCubit>(
         () => _i638.WorkbenchLayoutCubit(gh<_i459.ProjectSettingsDao>()));
-    gh.singleton<_i683.AgentLauncher>(() => agentLauncherModule.agentLauncher(
-          gh<_i360.AgentProfileRegistry>(),
-          gh<_i342.PickforgeContextWriter>(),
-          gh<_i895.SkillStore>(),
-          gh<_i810.WidgetContextRenderer>(),
-        ));
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
     gh.lazySingleton<_i1048.OnboardingPreferences>(
         () => _i1048.OnboardingPreferences(gh<_i460.SharedPreferences>()));
@@ -159,11 +151,6 @@ extension GetItInjectableX on _i174.GetIt {
         gh<_i141.WorkspaceSidebarSettingsRepository>()));
     gh.singleton<_i704.AdbScreenshotCapturer>(() =>
         adbScreenshotModule.adbScreenshotCapturer(gh<_i993.BinaryDetector>()));
-    gh.factory<_i888.ForgeCubit>(() => _i888.ForgeCubit(
-          gh<_i683.AgentLauncher>(),
-          gh<_i704.AdbScreenshotCapturer>(),
-          gh<_i685.PtySessionPool>(),
-        ));
     gh.factory<_i154.ChatsCubit>(() => _i154.ChatsCubit(
           gh<_i779.ChatsRepository>(),
           gh<_i340.ProjectSettingsRepository>(),
@@ -175,14 +162,33 @@ extension GetItInjectableX on _i174.GetIt {
           discovery: gh<_i577.DeviceDiscoveryService>(),
           targetScanner: gh<_i680.FlutterRunTargetScanner>(),
         ));
+    gh.singleton<_i360.AgentProfileRegistry>(
+        () => agentProfileModule.agentProfileRegistry(
+              gh<_i14.ClaudeCodeProfile>(),
+              gh<_i454.CodexProfile>(),
+              gh<_i621.OpenCodeProfile>(),
+              gh<_i870.CursorProfile>(),
+              gh<_i887.GeminiProfile>(),
+            ));
     gh.lazySingleton<_i613.ProjectsRepository>(
         () => _i613.ProjectsRepository(gh<_i1070.ProjectsDao>()));
     gh.factory<_i18.SettingsCubit>(() => _i18.SettingsCubit(
           gh<_i340.ProjectSettingsRepository>(),
           gh<_i195.EmbeddedTerminalSettingsRepository>(),
         ));
+    gh.singleton<_i683.AgentLauncher>(() => agentLauncherModule.agentLauncher(
+          gh<_i360.AgentProfileRegistry>(),
+          gh<_i342.PickforgeContextWriter>(),
+          gh<_i895.SkillStore>(),
+          gh<_i810.WidgetContextRenderer>(),
+        ));
     gh.factory<_i882.ProjectsCubit>(() => _i882.ProjectsCubit(
           gh<_i613.ProjectsRepository>(),
+          gh<_i685.PtySessionPool>(),
+        ));
+    gh.factory<_i888.ForgeCubit>(() => _i888.ForgeCubit(
+          gh<_i683.AgentLauncher>(),
+          gh<_i704.AdbScreenshotCapturer>(),
           gh<_i685.PtySessionPool>(),
         ));
     return this;

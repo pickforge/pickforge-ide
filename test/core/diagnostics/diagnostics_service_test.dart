@@ -15,6 +15,8 @@ void main() {
         'claude': 1,
         'codex': 0,
         'opencode': 1,
+        'agent': 0,
+        'gemini': 1,
       }),
     );
 
@@ -27,6 +29,8 @@ void main() {
     expect(snapshot.claudeAvailable, isFalse);
     expect(snapshot.codexAvailable, isTrue);
     expect(snapshot.openCodeAvailable, isFalse);
+    expect(snapshot.cursorAvailable, isTrue);
+    expect(snapshot.geminiAvailable, isFalse);
   });
 
   test('support bundle excludes source and redacts logs', () async {
@@ -39,6 +43,8 @@ void main() {
         'claude': 1,
         'codex': 1,
         'opencode': 1,
+        'agent': 1,
+        'gemini': 1,
       }),
     )..recordLog('error', 'token=super-secret');
 

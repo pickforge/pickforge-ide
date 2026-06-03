@@ -106,6 +106,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-03: Ran `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/widget_pick_e2e_test.dart --reporter=compact` against `emulator-5554` (`Pixel_10`); passed.
 - 2026-06-03: Ran `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact` against `emulator-5554` (`Pixel_10`); passed.
 - 2026-06-03: Ran focused Forge/context/PTY tests proving context file writing and prompt delivery to the active session pool; passed.
+- 2026-06-03: Added and ran a `ForgeCubit` regression with real `AgentLauncher`, real `PickforgeContextWriter`, project-local skill override, fake adb, and recording PTY pool; verified `skill-active.md`, `widget-context.md`, `initial-prompt.md`, and prompt delivery to `chat-1`.
 
 ### P1.T2 — Inspector screenshot capture path
 

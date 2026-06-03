@@ -1,15 +1,22 @@
+import 'dart:io';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/agent/agent_launcher.dart';
+import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/agent/models/forge_request.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
+import 'package:pickforge/core/agent/profiles/claude_code_profile.dart';
+import 'package:pickforge/core/agent/widget_context_renderer.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
+import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart';
 import 'package:pickforge/features/forge/cubit/forge_state.dart';
@@ -21,6 +28,22 @@ class _MockAdb extends Mock implements AdbScreenshotCapturer {}
 class _MockPool extends Mock implements PtySessionPool {}
 
 class _MockDiagnostics extends Mock implements DiagnosticsService {}
+
+class _NullAdb extends Fake implements AdbScreenshotCapturer {
+  @override
+  Future<String?> capture({required String outputDir}) async => null;
+}
+
+class _RecordingPool extends PtySessionPool {
+  String? chatId;
+  String? prompt;
+
+  @override
+  void sendPrompt(String chatId, String prompt) {
+    this.chatId = chatId;
+    this.prompt = prompt;
+  }
+}
 
 class _FakeForgeRequest extends Fake implements ForgeRequest {}
 
@@ -183,6 +206,71 @@ void main() {
         ).called(1);
       },
     );
+
+    test('forge writes real context files and sends prompt to pool', () async {
+      final project = await Directory.systemTemp.createTemp('pickforge_forge_');
+      addTearDown(() => project.delete(recursive: true));
+      await Directory(p.join(project.path, 'lib')).create(recursive: true);
+      await File(p.join(project.path, 'lib', 'main.dart')).writeAsString(
+        'class CounterPage {}\n',
+      );
+      await Directory(p.join(project.path, '.pickforge', 'skills'))
+          .create(recursive: true);
+      await File(p.join(project.path, '.pickforge', '.gitignore'))
+          .writeAsString('*\n');
+      await File(p.join(project.path, '.pickforge', 'skills', 'edit-widget.md'))
+          .writeAsString('# Edit widget skill');
+
+      final pool = _RecordingPool();
+      final cubit = ForgeCubit(
+        AgentLauncher(
+          agentRegistry: AgentProfileRegistry(const [ClaudeCodeProfile()]),
+          contextWriter: PickforgeContextWriter(),
+          skillStore: SkillStore(),
+          widgetRenderer: const WidgetContextRenderer(),
+        ),
+        _NullAdb(),
+        pool,
+      );
+      addTearDown(cubit.close);
+
+      const selection = SelectedWidget(
+        node: WidgetNode(
+          id: 'counter-page',
+          className: 'CounterPage',
+          children: [],
+          creationLocation: CreationLocation(
+            file: 'lib/main.dart',
+            line: 1,
+            column: 7,
+          ),
+        ),
+        ancestorClasses: ['MaterialApp', 'Scaffold'],
+        sourceSnippet: 'class CounterPage {}',
+        screenshotPath: null,
+        adbScreenshotPath: null,
+        propertiesJson: {},
+      );
+
+      await cubit.forge(
+        selection: selection,
+        projectRoot: project.path,
+        chatId: 'chat-1',
+      );
+
+      final pickforgeDir = Directory(p.join(project.path, '.pickforge'));
+      final skill = File(p.join(pickforgeDir.path, 'skill-active.md'));
+      final widgetContext =
+          File(p.join(pickforgeDir.path, 'widget-context.md'));
+      final initialPrompt =
+          File(p.join(pickforgeDir.path, 'initial-prompt.md'));
+
+      expect(skill.readAsStringSync(), '# Edit widget skill');
+      expect(widgetContext.readAsStringSync(), contains('CounterPage'));
+      expect(initialPrompt.readAsStringSync(), contains('widget-context.md'));
+      expect(pool.chatId, 'chat-1');
+      expect(pool.prompt, initialPrompt.readAsStringSync());
+    });
 
     blocTest<ForgeCubit, ForgeState>(
       'forge failure emits error state and skips sendPrompt',

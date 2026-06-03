@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:multi_split_view/multi_split_view.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
@@ -14,6 +15,7 @@ import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
+import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/projects/project_file_tree_scanner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -136,6 +138,9 @@ class _AppShellViewState extends State<AppShellView> {
                         vmClient: getIt<VmServiceClient>(),
                         logsCubit: context.read<RunLogsCubit>(),
                         ipcServer: getIt<EmulatorIpcServer>(),
+                        pickHistoryDao:
+                            getIt<PickforgeDatabase>().pickHistoryDao,
+                        screenshotCapturer: getIt<AdbScreenshotCapturer>(),
                         recoveryStore: const RunSessionRecoveryStore(),
                         shutdownController: getIt<AvdShutdownController>(),
                       );
@@ -147,6 +152,7 @@ class _AppShellViewState extends State<AppShellView> {
                 child: WidgetPickerScope(
                   projectRoot: projectRoot,
                   vmClient: getIt<VmServiceClient>(),
+                  ipcServer: getIt<EmulatorIpcServer>(),
                   inspectorVisible: !layout.rightCollapsed,
                   child: scaffold,
                 ),

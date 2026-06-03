@@ -11,6 +11,8 @@ typedef EmulatorIpcRequestHandler = Future<Map<String, Object?>> Function(
   String line,
 );
 
+typedef EmulatorIpcProvider = FutureOr<Object?> Function();
+
 abstract interface class EmulatorIpcTransport {
   String get endpoint;
   Future<void> start(EmulatorIpcRequestHandler handler);
@@ -47,7 +49,11 @@ class EmulatorIpcServer {
 
   final EmulatorIpcTransport _transport;
   RunSession? _session;
-  String Function()? _selectionProvider;
+  EmulatorIpcProvider? _selectionProvider;
+  EmulatorIpcProvider? _pickHistoryProvider;
+  EmulatorIpcProvider? _screenshotProvider;
+  EmulatorIpcProvider? _runLogsProvider;
+  EmulatorIpcProvider? _projectContextProvider;
 
   String get socketPath => _transport.endpoint;
 
@@ -59,8 +65,28 @@ class EmulatorIpcServer {
   void bindActiveRunSession(RunSession? session) => _session = session;
 
   // ignore: use_setters_to_change_properties, reason: Binds a callback target.
-  void bindSelectionProvider(String Function()? provider) {
+  void bindSelectionProvider(EmulatorIpcProvider? provider) {
     _selectionProvider = provider;
+  }
+
+  // ignore: use_setters_to_change_properties, reason: Binds a callback target.
+  void bindPickHistoryProvider(EmulatorIpcProvider? provider) {
+    _pickHistoryProvider = provider;
+  }
+
+  // ignore: use_setters_to_change_properties, reason: Binds a callback target.
+  void bindScreenshotProvider(EmulatorIpcProvider? provider) {
+    _screenshotProvider = provider;
+  }
+
+  // ignore: use_setters_to_change_properties, reason: Binds a callback target.
+  void bindRunLogsProvider(EmulatorIpcProvider? provider) {
+    _runLogsProvider = provider;
+  }
+
+  // ignore: use_setters_to_change_properties, reason: Binds a callback target.
+  void bindProjectContextProvider(EmulatorIpcProvider? provider) {
+    _projectContextProvider = provider;
   }
 
   Future<Map<String, Object?>> _dispatch(String line) async {
@@ -78,6 +104,7 @@ class EmulatorIpcServer {
             'vmServiceUri': _session?.vmServiceUri,
           };
         case 'hotReload':
+        case 'hot_reload':
           final session = _session;
           if (session == null) {
             error = 'no_active_session';
@@ -86,6 +113,7 @@ class EmulatorIpcServer {
             result = {'ok': true};
           }
         case 'hotRestart':
+        case 'hot_restart':
           final session = _session;
           if (session == null) {
             error = 'no_active_session';
@@ -94,9 +122,28 @@ class EmulatorIpcServer {
             result = {'ok': true};
           }
         case 'getVmServiceUri':
+        case 'get_vm_service_uri':
           result = _session?.vmServiceUri;
         case 'getCurrentSelection':
-          result = _selectionProvider?.call();
+        case 'get_selected_widget':
+          result = await _selectionProvider?.call();
+        case 'list_pickforge_history':
+          result = await _pickHistoryProvider?.call() ?? const [];
+        case 'capture_screenshot':
+          result = await _screenshotProvider?.call() ??
+              const {
+                'ok': false,
+                'path': null,
+                'reason': 'unavailable',
+              };
+        case 'get_run_logs':
+          result = await _runLogsProvider?.call() ?? const [];
+        case 'get_project_context':
+          result = await _projectContextProvider?.call() ??
+              const {
+                'projectRoot': null,
+                'files': <Object?>[],
+              };
         default:
           error = 'unknown_method';
       }

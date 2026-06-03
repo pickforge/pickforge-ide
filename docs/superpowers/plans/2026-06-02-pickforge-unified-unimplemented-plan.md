@@ -430,23 +430,24 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P4.T1 — Pickforge MCP server
 
-**Status:** Deferred / Phase 1.5
+**Status:** Partial / IPC backend complete
+**Why:** Pickforge now exposes the P4.T1 capabilities through the existing project-discovered local IPC socket. The actual MCP stdio/server adapter remains external by design and should proxy this IPC contract.
 **Goal:** Let agents re-query Pickforge state after the initial prompt.
 
 **Capabilities**
 
-- [ ] `get_selected_widget`
-- [ ] `list_pickforge_history`
-- [ ] `capture_screenshot`
-- [ ] `hot_reload`
-- [ ] `get_run_logs`
-- [ ] `get_project_context`
+- [x] `get_selected_widget`
+- [x] `list_pickforge_history`
+- [x] `capture_screenshot`
+- [x] `hot_reload`
+- [x] `get_run_logs`
+- [x] `get_project_context`
 
 **Integration**
 
-- [ ] Decide whether MCP server ships inside this repo, separate repo, or both.
-- [ ] Document socket/transport discovery.
-- [ ] Add agent-profile-specific MCP configuration guidance.
+- [x] Decide whether MCP server ships inside this repo, separate repo, or both.
+- [x] Document socket/transport discovery.
+- [x] Add agent-profile-specific MCP configuration guidance.
 
 ### P4.T2 — Agent expansion
 

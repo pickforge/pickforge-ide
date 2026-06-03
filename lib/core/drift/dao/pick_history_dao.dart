@@ -37,7 +37,23 @@ class PickHistoryDao extends DatabaseAccessor<PickforgeDatabase>
   }
 
   Stream<List<PickHistoryRow>> recent({int limit = 50}) => (select(pickHistory)
-        ..orderBy([(t) => OrderingTerm.desc(t.pickedAt)])
+        ..orderBy([
+          (t) => OrderingTerm.desc(t.pickedAt),
+          (t) => OrderingTerm.desc(t.id),
+        ])
         ..limit(limit))
       .watch();
+
+  Future<List<PickHistoryRow>> recentForProject(
+    String projectRoot, {
+    int limit = 50,
+  }) =>
+      (select(pickHistory)
+            ..where((t) => t.projectRoot.equals(projectRoot))
+            ..orderBy([
+              (t) => OrderingTerm.desc(t.pickedAt),
+              (t) => OrderingTerm.desc(t.id),
+            ])
+            ..limit(limit))
+          .get();
 }

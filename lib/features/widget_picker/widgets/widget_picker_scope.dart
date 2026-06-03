@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
 import 'package:pickforge/core/inspector/inspector_repository.dart';
 import 'package:pickforge/core/inspector/selection_stream.dart';
 import 'package:pickforge/core/inspector/source_snippet_extractor.dart';
@@ -17,6 +18,7 @@ class WidgetPickerScope extends StatefulWidget {
     required this.child,
     this.projectRoot,
     this.vmClient,
+    this.ipcServer,
     this.inspectorVisible = true,
     super.key,
   });
@@ -24,6 +26,7 @@ class WidgetPickerScope extends StatefulWidget {
   final Widget child;
   final String? projectRoot;
   final VmServiceClient? vmClient;
+  final EmulatorIpcServer? ipcServer;
   final bool inspectorVisible;
 
   @override
@@ -41,12 +44,17 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
   @override
   void initState() {
     super.initState();
+    _bindSelectionProvider();
     _listen();
   }
 
   @override
   void didUpdateWidget(covariant WidgetPickerScope oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.ipcServer, widget.ipcServer)) {
+      oldWidget.ipcServer?.bindSelectionProvider(null);
+      _bindSelectionProvider();
+    }
     if (!identical(oldWidget.vmClient, widget.vmClient) ||
         oldWidget.projectRoot != widget.projectRoot) {
       _generation++;
@@ -66,8 +74,15 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
     _generation++;
     unawaited(_serviceSub?.cancel());
     unawaited(_stateSub?.cancel());
+    widget.ipcServer?.bindSelectionProvider(null);
     unawaited(_cubit?.close());
     super.dispose();
+  }
+
+  void _bindSelectionProvider() {
+    widget.ipcServer?.bindSelectionProvider(
+      () => _cubit?.state.selection?.toJson(),
+    );
   }
 
   void _listen() {

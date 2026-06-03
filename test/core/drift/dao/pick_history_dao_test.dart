@@ -26,6 +26,45 @@ void main() {
     expect(recent.first.widgetClass, 'ElevatedButton');
   });
 
+  test('recentForProject returns only project rows newest first', () async {
+    await db.pickHistoryDao.insertPick(
+      projectRoot: '/me/app',
+      widgetClass: 'First',
+      creationFile: null,
+      creationLine: null,
+      skillId: 'edit-widget',
+      agentId: 'codex',
+      terminalId: 'terminal',
+      widgetContextJson: '{}',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await db.pickHistoryDao.insertPick(
+      projectRoot: '/other/app',
+      widgetClass: 'Other',
+      creationFile: null,
+      creationLine: null,
+      skillId: 'edit-widget',
+      agentId: 'codex',
+      terminalId: 'terminal',
+      widgetContextJson: '{}',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await db.pickHistoryDao.insertPick(
+      projectRoot: '/me/app',
+      widgetClass: 'Second',
+      creationFile: null,
+      creationLine: null,
+      skillId: 'edit-widget',
+      agentId: 'codex',
+      terminalId: 'terminal',
+      widgetContextJson: '{}',
+    );
+
+    final recent = await db.pickHistoryDao.recentForProject('/me/app');
+
+    expect(recent.map((row) => row.widgetClass), ['Second', 'First']);
+  });
+
   test('agent run log increments hot reload counter', () async {
     final pickId = await db.pickHistoryDao.insertPick(
       projectRoot: '/me/app',

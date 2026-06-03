@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bloc/bloc.dart';
+import 'package:pickforge/core/drift/dao/pick_history_dao.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
@@ -14,6 +15,7 @@ import 'package:pickforge/core/emulator/run_session_event_log_writer.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
+import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -34,10 +36,14 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     required this.vmClient,
     this.logsCubit,
     this.ipcServer,
+    this.pickHistoryDao,
+    this.screenshotCapturer,
     this.eventLogWriter = const RunSessionEventLogWriter(),
     this.recoveryStore,
     this.shutdownController,
-  }) : super(const EmulatorSessionState.noDevicePicked());
+  }) : super(const EmulatorSessionState.noDevicePicked()) {
+    _bindIpcProjectProviders();
+  }
 
   final String projectRoot;
   final ProjectSettingsRepository settings;
@@ -49,6 +55,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   final VmServiceClient vmClient;
   final RunLogsCubit? logsCubit;
   final EmulatorIpcServer? ipcServer;
+  final PickHistoryDao? pickHistoryDao;
+  final AdbScreenshotCapturer? screenshotCapturer;
   final RunSessionEventLogWriter eventLogWriter;
   final RunSessionRecoveryStore? recoveryStore;
   final AvdShutdownController? shutdownController;
@@ -725,6 +733,196 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     }
   }
 
+  void _bindIpcProjectProviders() {
+    final server = ipcServer;
+    if (server == null) return;
+    server
+      ..bindRunLogsProvider(_runLogsForIpc)
+      ..bindProjectContextProvider(_projectContextForIpc)
+      ..bindPickHistoryProvider(_pickHistoryForIpc)
+      ..bindScreenshotProvider(_captureScreenshotForIpc);
+  }
+
+  void _unbindIpcProjectProviders() {
+    final server = ipcServer;
+    if (server == null) return;
+    server
+      ..bindRunLogsProvider(null)
+      ..bindProjectContextProvider(null)
+      ..bindPickHistoryProvider(null)
+      ..bindScreenshotProvider(null);
+  }
+
+  List<Map<String, Object?>> _runLogsForIpc() {
+    final entries = logsCubit?.state.entries;
+    if (entries == null) return const [];
+    return entries
+        .map(
+          (entry) => <String, Object?>{
+            'timestamp': entry.timestamp.toIso8601String(),
+            'level': entry.level.name,
+            'category': entry.category,
+            'line': entry.line,
+          },
+        )
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, Object?>>> _pickHistoryForIpc() async {
+    final dao = pickHistoryDao;
+    if (dao == null) return const [];
+    final rows = await dao.recentForProject(projectRoot);
+    return rows
+        .map(
+          (row) => <String, Object?>{
+            'id': row.id,
+            'projectRoot': row.projectRoot,
+            'widgetClass': row.widgetClass,
+            'creationFile': row.creationFile,
+            'creationLine': row.creationLine,
+            'skillId': row.skillId,
+            'agentId': row.agentId,
+            'terminalId': row.terminalId,
+            'chatId': row.chatId,
+            'pickedAt': row.pickedAt.toIso8601String(),
+            'widgetContextJson': row.widgetContextJson,
+          },
+        )
+        .toList(growable: false);
+  }
+
+  Future<Map<String, Object?>> _captureScreenshotForIpc() async {
+    final capturer = screenshotCapturer;
+    if (capturer == null) {
+      return const {'ok': false, 'path': null, 'reason': 'unavailable'};
+    }
+    final target = _screenshotTarget();
+    if (target == null) {
+      return const {'ok': false, 'path': null, 'reason': 'no_active_target'};
+    }
+    if (target.platform == flutterWebPlatform) {
+      return const {'ok': false, 'path': null, 'reason': 'unsupported_target'};
+    }
+    final dir = await PickforgeProjectDirectory.ensure(projectRoot);
+    final path = await capturer.capture(
+      outputDir: dir.path,
+      serial: target.serial,
+      platform: target.platform,
+    );
+    return {
+      'ok': path != null,
+      'path': path,
+      'reason': path == null ? 'capture_failed' : null,
+    };
+  }
+
+  ({String? serial, String? platform})? _screenshotTarget() {
+    return switch (state) {
+      Idle(:final avd, :final serial) => (
+          serial: serial,
+          platform: avd.platform,
+        ),
+      Running(:final avd, :final serial) => (
+          serial: serial,
+          platform: avd?.platform,
+        ),
+      Reconnecting(:final avd, :final serial) => (
+          serial: serial,
+          platform: avd.platform,
+        ),
+      EmulatorError(:final avd, :final serial)
+          when avd != null || serial != null =>
+        (
+          serial: serial,
+          platform: avd?.platform,
+        ),
+      _ => null,
+    };
+  }
+
+  Future<Map<String, Object?>> _projectContextForIpc() async {
+    final dir = Directory('$projectRoot/.pickforge');
+    return {
+      'projectRoot': projectRoot,
+      'pickforgeDir': dir.path,
+      'files': await Future.wait(
+        const [
+          'skill-active.md',
+          'widget-context.md',
+          'initial-prompt.md',
+          'ipc.sock-path',
+        ].map((name) => _textContextFile(dir, name)),
+      ),
+      'screenshots': await Future.wait(
+        const ['screenshot.png', 'device-screen.png'].map(
+          (name) => _binaryContextFile(dir, name),
+        ),
+      ),
+    };
+  }
+
+  Future<Map<String, Object?>> _textContextFile(
+    Directory dir,
+    String name,
+  ) async {
+    final file = File('${dir.path}/$name');
+    if (!file.existsSync()) {
+      return {
+        'name': name,
+        'path': file.path,
+        'exists': false,
+        'content': null,
+      };
+    }
+    try {
+      return {
+        'name': name,
+        'path': file.path,
+        'exists': true,
+        'content': await file.readAsString(),
+      };
+    } on Object catch (error) {
+      return {
+        'name': name,
+        'path': file.path,
+        'exists': true,
+        'content': null,
+        'error': error.toString(),
+      };
+    }
+  }
+
+  Future<Map<String, Object?>> _binaryContextFile(
+    Directory dir,
+    String name,
+  ) async {
+    final file = File('${dir.path}/$name');
+    if (!file.existsSync()) {
+      return {
+        'name': name,
+        'path': file.path,
+        'exists': false,
+        'bytes': null,
+      };
+    }
+    try {
+      return {
+        'name': name,
+        'path': file.path,
+        'exists': true,
+        'bytes': await file.length(),
+      };
+    } on Object catch (error) {
+      return {
+        'name': name,
+        'path': file.path,
+        'exists': true,
+        'bytes': null,
+        'error': error.toString(),
+      };
+    }
+  }
+
   void _resetRunSummary() {
     _hotReloadCount = 0;
     _hotRestartCount = 0;
@@ -843,6 +1041,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     _bootCancel?.cancel();
     await _bootHandle?.cancel();
     await _unbindIpc();
+    _unbindIpcProjectProviders();
     await _activeSession?.stop();
     if (_activeSession != null) {
       await _removeRecovery();

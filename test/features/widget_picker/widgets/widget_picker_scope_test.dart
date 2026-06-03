@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:vm_service/vm_service.dart';
@@ -20,6 +21,33 @@ class _FakeResponse extends Fake implements Response {
 }
 
 void main() {
+  testWidgets('binds and clears IPC selection provider', (tester) async {
+    final ipc = _RecordingIpcServer();
+    final client = VmServiceClient.forTesting(
+      factory: (_) async {
+        throw StateError('unexpected attach');
+      },
+    );
+    addTearDown(client.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WidgetPickerScope(
+          vmClient: client,
+          ipcServer: ipc,
+          child: const Text('content'),
+        ),
+      ),
+    );
+
+    expect(ipc.selectionProviders, hasLength(1));
+    expect(ipc.selectionProviders.single?.call(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    expect(ipc.selectionProviders.last, isNull);
+  });
+
   testWidgets('clears in-flight attach when VM disconnects', (tester) async {
     final service = _MockVmService();
     final vmCompleter = Completer<VM>();
@@ -162,4 +190,28 @@ Future<void> _pumpUntilText(WidgetTester tester, String text) async {
     await tester.pump(const Duration(milliseconds: 10));
     if (find.text(text).evaluate().isNotEmpty) return;
   }
+}
+
+final class _RecordingIpcServer extends EmulatorIpcServer {
+  _RecordingIpcServer()
+      : super(socketPath: 'test', transport: _NoopIpcTransport());
+
+  final selectionProviders = <EmulatorIpcProvider?>[];
+
+  @override
+  void bindSelectionProvider(EmulatorIpcProvider? provider) {
+    selectionProviders.add(provider);
+    super.bindSelectionProvider(provider);
+  }
+}
+
+final class _NoopIpcTransport implements EmulatorIpcTransport {
+  @override
+  String get endpoint => 'test';
+
+  @override
+  Future<void> start(EmulatorIpcRequestHandler handler) async {}
+
+  @override
+  Future<void> stop() async {}
 }

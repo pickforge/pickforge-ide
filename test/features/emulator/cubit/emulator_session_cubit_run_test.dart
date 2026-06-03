@@ -72,6 +72,25 @@ void main() {
         avdName: any(named: 'avdName'),
         serial: any(named: 'serial'),
         vmServiceUrl: any(named: 'vmServiceUrl'),
+        targetFile: any(named: 'targetFile'),
+      ),
+    ).thenAnswer((_) async {});
+    when(
+      () => log.recordVmServiceUrl(
+        sessionId: any(named: 'sessionId'),
+        vmServiceUrl: any(named: 'vmServiceUrl'),
+      ),
+    ).thenAnswer((_) async {});
+    when(
+      () => log.recordEnd(
+        sessionId: any(named: 'sessionId'),
+        endedAt: any(named: 'endedAt'),
+        exitReason: any(named: 'exitReason'),
+        exitCode: any(named: 'exitCode'),
+        hotReloadCount: any(named: 'hotReloadCount'),
+        hotRestartCount: any(named: 'hotRestartCount'),
+        errorCount: any(named: 'errorCount'),
+        lastError: any(named: 'lastError'),
       ),
     ).thenAnswer((_) async {});
     when(() => vm.connect(any())).thenAnswer((_) async {});
@@ -111,6 +130,52 @@ void main() {
     },
     expect: () => [isA<Running>().having((s) => s.manual, 'manual', false)],
     verify: (_) => verify(() => vm.connect('ws://x/ws')).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'runApp records target file on session start',
+    setUp: () {
+      when(() => settings.getRunArgs('/p')).thenAnswer(
+        (_) async => const RunArgs(targetFile: 'lib/main_dev.dart'),
+      );
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: 'emulator-5554',
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: build,
+    seed: () =>
+        const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
+    act: (c) async {
+      await c.runApp();
+    },
+    verify: (_) {
+      verify(
+        () => run.start(
+          projectRoot: '/p',
+          serial: 'emulator-5554',
+          targetFile: 'lib/main_dev.dart',
+          extraArgs: const [],
+        ),
+      ).called(1);
+      verify(
+        () => log.recordStart(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          startedAt: any(named: 'startedAt'),
+          connectionMode: 'auto',
+          avdId: 'Pixel_5_API_34',
+          avdName: 'Pixel 5 API 34',
+          serial: 'emulator-5554',
+          vmServiceUrl: 'ws://x/ws',
+          targetFile: 'lib/main_dev.dart',
+        ),
+      ).called(1);
+    },
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
@@ -168,5 +233,64 @@ void main() {
       isA<Running>(),
       isA<Running>().having((s) => s.lastReloadAt, 'lastReloadAt', isNotNull),
     ],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'stopped event records run summary',
+    setUp: () => when(
+      () => run.start(
+        projectRoot: '/p',
+        serial: any(named: 'serial'),
+        targetFile: any(named: 'targetFile'),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session),
+    build: build,
+    seed: () => const EmulatorSessionState.idle(
+      avd: avd,
+      serial: 'emulator-5554',
+    ),
+    act: (c) async {
+      await c.runApp();
+      events
+        ..add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'))
+        ..add(const RunSessionEvent.log(line: 'boom', level: LogLevel.error))
+        ..add(
+          const RunSessionEvent.reloadCompleted(
+            success: true,
+            fullRestart: false,
+            durationMs: 120,
+          ),
+        )
+        ..add(
+          const RunSessionEvent.reloadCompleted(
+            success: true,
+            fullRestart: true,
+            durationMs: 300,
+          ),
+        )
+        ..add(const RunSessionEvent.stopped(exitCode: 1, reason: 'crash'));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    },
+    expect: () => [
+      isA<Running>(),
+      isA<Running>(),
+      isA<Running>(),
+      isA<Idle>(),
+    ],
+    verify: (_) {
+      verify(
+        () => log.recordEnd(
+          sessionId: 'ses-1',
+          endedAt: any(named: 'endedAt'),
+          exitReason: 'crash',
+          exitCode: 1,
+          hotReloadCount: 1,
+          hotRestartCount: 1,
+          errorCount: 1,
+          lastError: 'boom',
+        ),
+      ).called(1);
+    },
   );
 }

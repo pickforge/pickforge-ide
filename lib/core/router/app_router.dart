@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/onboarding_preferences.dart';
+import 'package:pickforge/features/emulator/view/run_history_view.dart';
 import 'package:pickforge/features/history/view/history_view.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/workbench/view/app_shell_view.dart';
@@ -17,6 +18,7 @@ class AppRoutes {
   static const onboarding = '/onboarding';
   static const demo = '/demo';
   static const history = '/history';
+  static const runHistory = '/run-history';
   static const settings = '/settings';
 }
 
@@ -68,6 +70,13 @@ GoRouter buildAppRouter({String? initialLocation}) {
         builder: (context, __) => _withCommandPalette(
           context,
           const HistoryView(),
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.runHistory,
+        builder: (context, __) => _withCommandPalette(
+          context,
+          const RunHistoryView(),
         ),
       ),
       GoRoute(

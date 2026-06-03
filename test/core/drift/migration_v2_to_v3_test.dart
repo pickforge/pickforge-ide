@@ -68,6 +68,8 @@ void main() {
       final logCols =
           await db.customSelect('PRAGMA table_info(run_session_log);').get();
       expect(logCols, isNotEmpty);
+      final logNames = logCols.map((r) => r.read<String>('name')).toSet();
+      expect(logNames.contains('target_file'), isTrue);
 
       final manual = await db
           .customSelect(

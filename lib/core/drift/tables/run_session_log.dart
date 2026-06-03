@@ -10,6 +10,7 @@ class RunSessionLog extends Table {
   TextColumn get avdName => text().nullable()();
   TextColumn get serial => text().nullable()();
   TextColumn get vmServiceUrl => text().nullable()();
+  TextColumn get targetFile => text().nullable()();
   TextColumn get connectionMode => text()();
   TextColumn get exitReason => text().nullable()();
   IntColumn get exitCode => integer().nullable()();

@@ -54,6 +54,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   StreamSubscription<VmServiceConnectionState>? _vmSub;
   Avd? _pendingRunAvd;
   String? _pendingRunSerial;
+  int _hotReloadCount = 0;
+  int _hotRestartCount = 0;
+  int _errorCount = 0;
+  String? _lastError;
 
   Future<void> bootstrap() async {
     final binding = await settings.getEmulatorBinding(projectRoot);
@@ -154,6 +158,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final current = state;
     if (current is! Idle) return;
     final args = await settings.getRunArgs(projectRoot);
+    _resetRunSummary();
     final session = await runController.start(
       projectRoot: projectRoot,
       serial: current.serial,
@@ -172,6 +177,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
       avdName: current.avd.name,
       serial: current.serial,
       vmServiceUrl: session.vmServiceUri,
+      targetFile: args.targetFile,
     );
     await _eventsSub?.cancel();
     _eventsSub = session.events.listen(_onRunEvent);
@@ -186,14 +192,38 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     logsCubit?.append(event);
     event.when(
       stage: (_) {},
-      log: (_, __, ___) {},
+      log: (line, level, _) {
+        if (level == LogLevel.error) {
+          _errorCount++;
+          _lastError = line;
+        }
+      },
       vmServiceReady: (uri) => unawaited(_handleVmServiceReady(uri)),
       stopped: (exitCode, reason) =>
           unawaited(_handleRunStopped(exitCode, reason)),
-      reloadCompleted: (_, __, ___, ____, _____) {
+      reloadCompleted: (success, fullRestart, _, __, hint) {
+        if (success) {
+          if (fullRestart) {
+            _hotRestartCount++;
+          } else {
+            _hotReloadCount++;
+          }
+        } else {
+          _errorCount++;
+          _lastError = hint ??
+              (fullRestart ? 'Hot restart failed' : 'Hot reload failed');
+        }
         final current = state;
         if (current is! Running) return;
-        emit(current.copyWith(lastReloadAt: DateTime.now()));
+        emit(
+          current.copyWith(
+            lastReloadAt: DateTime.now(),
+            stats: current.stats.copyWith(
+              hotReloadCount: _hotReloadCount,
+              hotRestartCount: _hotRestartCount,
+            ),
+          ),
+        );
       },
     );
   }
@@ -217,6 +247,15 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final current = state;
     final avd = current is Running ? current.avd : _pendingRunAvd;
     final serial = current is Running ? current.serial : _pendingRunSerial;
+    final session = _activeSession;
+    if (session != null) {
+      unawaited(
+        logRepo.recordVmServiceUrl(
+          sessionId: session.sessionId,
+          vmServiceUrl: uri,
+        ),
+      );
+    }
     try {
       await vmClient.connect(uri);
     } on Object {
@@ -242,6 +281,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         endedAt: DateTime.now(),
         exitReason: reason,
         exitCode: exitCode,
+        hotReloadCount: _hotReloadCount,
+        hotRestartCount: _hotRestartCount,
+        errorCount: _errorCount,
+        lastError: _lastError,
       );
     }
     _activeSession = null;
@@ -268,7 +311,20 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
 
   Future<void> stopRun() async {
     final current = state;
-    await _activeSession?.stop();
+    final session = _activeSession;
+    await session?.stop();
+    if (session != null) {
+      await logRepo.recordEnd(
+        sessionId: session.sessionId,
+        endedAt: DateTime.now(),
+        exitReason: 'user_stop',
+        exitCode: 0,
+        hotReloadCount: _hotReloadCount,
+        hotRestartCount: _hotRestartCount,
+        errorCount: _errorCount,
+        lastError: _lastError,
+      );
+    }
     await _eventsSub?.cancel();
     _eventsSub = null;
     _activeSession = null;
@@ -360,6 +416,13 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     if (file.existsSync()) {
       file.deleteSync();
     }
+  }
+
+  void _resetRunSummary() {
+    _hotReloadCount = 0;
+    _hotRestartCount = 0;
+    _errorCount = 0;
+    _lastError = null;
   }
 
   @override

@@ -13,7 +13,7 @@ class RunSession {
     required this.sessionId,
     required RunningProcess proc,
     required this.events,
-    required Future<void> Function({required bool fullRestart}) sendReload,
+    required Future<bool> Function({required bool fullRestart}) sendReload,
     required Future<void> Function() sendStop,
   })  : _proc = proc,
         _sendReload = sendReload,
@@ -22,7 +22,7 @@ class RunSession {
   final String sessionId;
   final Stream<RunSessionEvent> events;
   final RunningProcess _proc;
-  final Future<void> Function({required bool fullRestart}) _sendReload;
+  final Future<bool> Function({required bool fullRestart}) _sendReload;
   final Future<void> Function() _sendStop;
 
   String? _appId;
@@ -34,13 +34,11 @@ class RunSession {
   Future<int> get exitCode => _proc.exitCode;
 
   Future<bool> hotReload() async {
-    await _sendReload(fullRestart: false);
-    return true;
+    return _sendReload(fullRestart: false);
   }
 
   Future<bool> hotRestart() async {
-    await _sendReload(fullRestart: true);
-    return true;
+    return _sendReload(fullRestart: true);
   }
 
   Future<void> stop() async {
@@ -86,7 +84,10 @@ class RunSessionController {
     var nextId = 1;
     String? appId;
 
-    Future<void> sendRequest(String method, Map<String, dynamic> params) async {
+    Future<DecodedResponse> sendRequest(
+      String method,
+      Map<String, dynamic> params,
+    ) async {
       final id = nextId++;
       final completer = Completer<DecodedResponse>();
       pendingReplies[id] = completer;
@@ -95,7 +96,7 @@ class RunSessionController {
               {'id': id, 'method': method, 'params': params},
             ])}\n'),
       );
-      await completer.future.timeout(
+      return completer.future.timeout(
         const Duration(seconds: 30),
         onTimeout: () {
           pendingReplies.remove(id);
@@ -109,12 +110,37 @@ class RunSessionController {
       sessionId: const Uuid().v4(),
       proc: proc,
       events: controller.stream,
-      sendReload: ({required fullRestart}) => sendRequest('app.restart', {
-        'appId': appId,
-        'fullRestart': fullRestart,
-        'pause': false,
-        'reason': fullRestart ? 'manual-restart' : 'manual',
-      }),
+      sendReload: ({required fullRestart}) async {
+        final started = DateTime.now();
+        try {
+          final response = await sendRequest('app.restart', {
+            'appId': appId,
+            'fullRestart': fullRestart,
+            'pause': false,
+            'reason': fullRestart ? 'manual-restart' : 'manual',
+          });
+          final hint = _reloadError(response);
+          controller.add(
+            RunSessionEvent.reloadCompleted(
+              success: hint == null,
+              fullRestart: fullRestart,
+              durationMs: DateTime.now().difference(started).inMilliseconds,
+              hint: hint,
+            ),
+          );
+          return hint == null;
+        } on Object catch (e) {
+          controller.add(
+            RunSessionEvent.reloadCompleted(
+              success: false,
+              fullRestart: fullRestart,
+              durationMs: DateTime.now().difference(started).inMilliseconds,
+              hint: e.toString(),
+            ),
+          );
+          rethrow;
+        }
+      },
       sendStop: () async {
         await proc.kill();
       },
@@ -185,4 +211,16 @@ class RunSessionController {
         'status' => LogLevel.status,
         _ => LogLevel.info,
       };
+
+  String? _reloadError(DecodedResponse response) {
+    if (response.error != null) return response.error.toString();
+    final result = response.result;
+    if (result is Map) {
+      final code = result['code'];
+      if (code is int && code != 0) {
+        return result['message']?.toString() ?? 'Flutter restart failed';
+      }
+    }
+    return null;
+  }
 }

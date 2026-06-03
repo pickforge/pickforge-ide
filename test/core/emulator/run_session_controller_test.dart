@@ -118,9 +118,26 @@ void main() {
       await session.events.firstWhere((_) => session.vmServiceUri != null);
 
       final reloadFuture = session.hotReload();
+      final reloadEventFuture = session.events.firstWhere(
+        (event) => event.maybeWhen(
+          reloadCompleted: (_, __, ___, ____, _____) => true,
+          orElse: () => false,
+        ),
+      );
       fake.stdoutCtrl.add(utf8.encode('[{"id":1,"result":{"code":0}}]\n'));
       final ok = await reloadFuture.timeout(const Duration(seconds: 2));
       expect(ok, isTrue);
+      final reloadEvent = await reloadEventFuture.timeout(
+        const Duration(seconds: 2),
+      );
+      expect(
+        reloadEvent.maybeWhen(
+          reloadCompleted: (success, fullRestart, _, __, ___) =>
+              success && !fullRestart,
+          orElse: () => false,
+        ),
+        isTrue,
+      );
 
       final stdinJson =
           jsonDecode(utf8.decode(fake.stdinCapture.last)) as List<dynamic>;

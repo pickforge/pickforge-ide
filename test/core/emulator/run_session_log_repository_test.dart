@@ -22,10 +22,24 @@ void main() {
       avdName: 'B',
       serial: 'emulator-5554',
       vmServiceUrl: 'ws://x',
+      targetFile: 'lib/main_dev.dart',
       connectionMode: 'auto',
     );
     final got = await repo.latestFor('/p');
     expect(got?.sessionId, 's1');
+    expect(got?.targetFile, 'lib/main_dev.dart');
+  });
+
+  test('recordVmServiceUrl updates latest row', () async {
+    await repo.recordStart(
+      sessionId: 's1',
+      projectRoot: '/p',
+      startedAt: DateTime.utc(2026, 4, 28),
+      connectionMode: 'auto',
+    );
+    await repo.recordVmServiceUrl(sessionId: 's1', vmServiceUrl: 'ws://ready');
+    final got = await repo.latestFor('/p');
+    expect(got?.vmServiceUrl, 'ws://ready');
   });
 
   test('recordEnd is idempotent', () async {

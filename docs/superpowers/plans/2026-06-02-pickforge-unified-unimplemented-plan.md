@@ -239,7 +239,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P2.T1 — Run-log persistence and Run History UI
 
-**Status:** Deferred
+**Status:** Completed
 **Source:** `NOTES.md`, emulator-per-project design
 **Why:** Run logs are in memory; `run_session_log` rows exist but no UI surfaces past sessions.
 
@@ -247,13 +247,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [x] Persist run logs under `.pickforge/runs/<sessionId>/log.jsonl`.
 - [x] Add retention/cap policy.
-- [ ] Add Run History UI listing past sessions per project.
-- [ ] Link run sessions to errors, hot reload count, VM service URL, target file, and exit reason.
+- [x] Add Run History UI listing past sessions per project.
+- [x] Link run sessions to errors, hot reload count, VM service URL, target file, and exit reason.
 
 **Latest evidence**
 
 - 2026-06-03: Verified `RunSessionLogDao.pruneToCap` and `RunSessionLogRepository.recordStart(..., cap: 100)` retention behavior; ran `fvm flutter test test/core/drift/dao/run_session_log_dao_test.dart --reporter=compact`, passed.
 - 2026-06-03: Added `RunSessionEventLogWriter` and cubit wiring to append run events to `.pickforge/runs/<sessionId>/log.jsonl`; ran `fvm flutter test test/core/emulator/run_session_event_log_writer_test.dart test/features/emulator/cubit/emulator_session_logs_wire_test.dart --reporter=compact`, passed.
+- 2026-06-03: Added route-backed `RunHistoryView`, `run_session_log.target_file`, VM Service URL updates, persisted reload/error summaries, and run-history command/menu entry; ran focused run-history/schema/cubit/router tests, `fvm flutter analyze`, `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact`, and `fvm flutter test --reporter=compact` (346 passed, 2 skipped without `PICKFORGE_E2E_AVD`), passed.
 
 ### P2.T2 — Build flavor and target picker UI
 

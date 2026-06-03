@@ -41,7 +41,7 @@ class PickforgeDatabase extends _$PickforgeDatabase {
   PickforgeDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -119,6 +119,9 @@ class PickforgeDatabase extends _$PickforgeDatabase {
               "UPDATE project_settings SET connection_mode = 'manual' "
               'WHERE vm_service_url IS NOT NULL',
             );
+          }
+          if (from >= 3 && from < 4) {
+            await m.addColumn(runSessionLog, runSessionLog.targetFile);
           }
         },
         beforeOpen: (details) async {

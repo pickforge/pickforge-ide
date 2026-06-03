@@ -18,6 +18,7 @@ void main() {
       avdName: 'Pixel 5 API 34',
       serial: 'emulator-5554',
       vmServiceUrl: 'ws://x/ws',
+      targetFile: 'lib/main_dev.dart',
       connectionMode: 'auto',
     );
     final end = start.add(const Duration(minutes: 5));
@@ -31,6 +32,22 @@ void main() {
     expect(rows, hasLength(1));
     expect(rows.single.exitReason, 'user_stop');
     expect(rows.single.hotReloadCount, 3);
+    expect(rows.single.targetFile, 'lib/main_dev.dart');
+  });
+
+  test('recordVmServiceUrl updates started row', () async {
+    await db.runSessionLogDao.recordStart(
+      sessionId: 'ses-1',
+      projectRoot: '/tmp/p',
+      startedAt: DateTime.utc(2026, 4, 28),
+      connectionMode: 'auto',
+    );
+    await db.runSessionLogDao.recordVmServiceUrl(
+      sessionId: 'ses-1',
+      vmServiceUrl: 'ws://ready/ws',
+    );
+    final rows = await db.runSessionLogDao.recentFor('/tmp/p');
+    expect(rows.single.vmServiceUrl, 'ws://ready/ws');
   });
 
   test('recordEnd is idempotent on same sessionId', () async {

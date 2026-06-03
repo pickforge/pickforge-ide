@@ -76,6 +76,13 @@ void main() {
         avdName: any(named: 'avdName'),
         serial: any(named: 'serial'),
         vmServiceUrl: any(named: 'vmServiceUrl'),
+        targetFile: any(named: 'targetFile'),
+      ),
+    ).thenAnswer((_) async {});
+    when(
+      () => logRepo.recordVmServiceUrl(
+        sessionId: any(named: 'sessionId'),
+        vmServiceUrl: any(named: 'vmServiceUrl'),
       ),
     ).thenAnswer((_) async {});
     when(() => vm.connect(any())).thenAnswer((_) async {});

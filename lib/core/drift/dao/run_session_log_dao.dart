@@ -18,6 +18,7 @@ class RunSessionLogDao extends DatabaseAccessor<PickforgeDatabase>
     String? avdName,
     String? serial,
     String? vmServiceUrl,
+    String? targetFile,
   }) {
     return into(runSessionLog).insertOnConflictUpdate(
       RunSessionLogCompanion(
@@ -29,7 +30,18 @@ class RunSessionLogDao extends DatabaseAccessor<PickforgeDatabase>
         avdName: Value(avdName),
         serial: Value(serial),
         vmServiceUrl: Value(vmServiceUrl),
+        targetFile: Value(targetFile),
       ),
+    );
+  }
+
+  Future<void> recordVmServiceUrl({
+    required String sessionId,
+    required String vmServiceUrl,
+  }) {
+    return (update(runSessionLog)..where((t) => t.sessionId.equals(sessionId)))
+        .write(
+      RunSessionLogCompanion(vmServiceUrl: Value(vmServiceUrl)),
     );
   }
 

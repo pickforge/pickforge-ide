@@ -16,6 +16,7 @@ class RunSessionLogRepository {
     String? avdName,
     String? serial,
     String? vmServiceUrl,
+    String? targetFile,
     int cap = 100,
   }) async {
     await _db.runSessionLogDao.recordStart(
@@ -27,9 +28,19 @@ class RunSessionLogRepository {
       avdName: avdName,
       serial: serial,
       vmServiceUrl: vmServiceUrl,
+      targetFile: targetFile,
     );
     await _db.runSessionLogDao.pruneToCap(projectRoot, cap: cap);
   }
+
+  Future<void> recordVmServiceUrl({
+    required String sessionId,
+    required String vmServiceUrl,
+  }) =>
+      _db.runSessionLogDao.recordVmServiceUrl(
+        sessionId: sessionId,
+        vmServiceUrl: vmServiceUrl,
+      );
 
   Future<void> recordEnd({
     required String sessionId,

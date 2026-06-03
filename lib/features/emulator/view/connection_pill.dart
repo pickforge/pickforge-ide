@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/features/emulator/cubit/device_picker_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -205,6 +207,10 @@ class _Menu extends StatelessWidget {
               value: _MenuAction.manualUrl,
               child: Text('Manual VM Service URL...'),
             ),
+            PopupMenuItem(
+              value: _MenuAction.viewHistory,
+              child: Text('View run history'),
+            ),
           ],
         Cold() || Idle() => const [
             PopupMenuItem(
@@ -219,6 +225,10 @@ class _Menu extends StatelessWidget {
               value: _MenuAction.forget,
               child: Text('Forget device'),
             ),
+            PopupMenuItem(
+              value: _MenuAction.viewHistory,
+              child: Text('View run history'),
+            ),
           ],
         Running(:final manual) => [
             const PopupMenuItem(
@@ -229,6 +239,10 @@ class _Menu extends StatelessWidget {
             const PopupMenuItem(
               value: _MenuAction.viewLogs,
               child: Text('View logs'),
+            ),
+            const PopupMenuItem(
+              value: _MenuAction.viewHistory,
+              child: Text('View run history'),
             ),
             if (manual)
               const PopupMenuItem(
@@ -241,11 +255,19 @@ class _Menu extends StatelessWidget {
               value: _MenuAction.viewLogs,
               child: Text('View logs'),
             ),
+            PopupMenuItem(
+              value: _MenuAction.viewHistory,
+              child: Text('View run history'),
+            ),
           ],
         EmulatorError() => const [
             PopupMenuItem(
               value: _MenuAction.viewLogs,
               child: Text('View logs'),
+            ),
+            PopupMenuItem(
+              value: _MenuAction.viewHistory,
+              child: Text('View run history'),
             ),
             PopupMenuItem(
               value: _MenuAction.pickDevice,
@@ -283,6 +305,8 @@ class _Menu extends StatelessWidget {
         } on ProviderNotFoundException {
           break;
         }
+      case _MenuAction.viewHistory:
+        context.go(AppRoutes.runHistory);
     }
   }
 }
@@ -294,7 +318,8 @@ enum _MenuAction {
   forget,
   hotRestart,
   stop,
-  viewLogs
+  viewLogs,
+  viewHistory
 }
 
 Future<void> _openPicker(BuildContext context) async {

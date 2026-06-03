@@ -69,6 +69,12 @@ List<PickforgeCommand> buildNavCommands(BuildContext context) {
       run: () => context.go(AppRoutes.history),
     ),
     PickforgeCommand(
+      id: 'nav-run-history',
+      title: 'Open Run History',
+      hint: 'Past Flutter run sessions',
+      run: () => context.go(AppRoutes.runHistory),
+    ),
+    PickforgeCommand(
       id: 'nav-settings',
       title: 'Go to Settings',
       hint: 'App settings',

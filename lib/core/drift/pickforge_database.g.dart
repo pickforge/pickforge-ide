@@ -2494,6 +2494,12 @@ class $RunSessionLogTable extends RunSessionLog
   late final GeneratedColumn<String> vmServiceUrl = GeneratedColumn<String>(
       'vm_service_url', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _targetFileMeta =
+      const VerificationMeta('targetFile');
+  @override
+  late final GeneratedColumn<String> targetFile = GeneratedColumn<String>(
+      'target_file', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _connectionModeMeta =
       const VerificationMeta('connectionMode');
   @override
@@ -2552,6 +2558,7 @@ class $RunSessionLogTable extends RunSessionLog
         avdName,
         serial,
         vmServiceUrl,
+        targetFile,
         connectionMode,
         exitReason,
         exitCode,
@@ -2611,6 +2618,12 @@ class $RunSessionLogTable extends RunSessionLog
           _vmServiceUrlMeta,
           vmServiceUrl.isAcceptableOrUnknown(
               data['vm_service_url']!, _vmServiceUrlMeta));
+    }
+    if (data.containsKey('target_file')) {
+      context.handle(
+          _targetFileMeta,
+          targetFile.isAcceptableOrUnknown(
+              data['target_file']!, _targetFileMeta));
     }
     if (data.containsKey('connection_mode')) {
       context.handle(
@@ -2677,6 +2690,8 @@ class $RunSessionLogTable extends RunSessionLog
           .read(DriftSqlType.string, data['${effectivePrefix}serial']),
       vmServiceUrl: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}vm_service_url']),
+      targetFile: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}target_file']),
       connectionMode: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}connection_mode'])!,
       exitReason: attachedDatabase.typeMapping
@@ -2710,6 +2725,7 @@ class RunSessionLogRow extends DataClass
   final String? avdName;
   final String? serial;
   final String? vmServiceUrl;
+  final String? targetFile;
   final String connectionMode;
   final String? exitReason;
   final int? exitCode;
@@ -2726,6 +2742,7 @@ class RunSessionLogRow extends DataClass
       this.avdName,
       this.serial,
       this.vmServiceUrl,
+      this.targetFile,
       required this.connectionMode,
       this.exitReason,
       this.exitCode,
@@ -2753,6 +2770,9 @@ class RunSessionLogRow extends DataClass
     }
     if (!nullToAbsent || vmServiceUrl != null) {
       map['vm_service_url'] = Variable<String>(vmServiceUrl);
+    }
+    if (!nullToAbsent || targetFile != null) {
+      map['target_file'] = Variable<String>(targetFile);
     }
     map['connection_mode'] = Variable<String>(connectionMode);
     if (!nullToAbsent || exitReason != null) {
@@ -2788,6 +2808,9 @@ class RunSessionLogRow extends DataClass
       vmServiceUrl: vmServiceUrl == null && nullToAbsent
           ? const Value.absent()
           : Value(vmServiceUrl),
+      targetFile: targetFile == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetFile),
       connectionMode: Value(connectionMode),
       exitReason: exitReason == null && nullToAbsent
           ? const Value.absent()
@@ -2816,6 +2839,7 @@ class RunSessionLogRow extends DataClass
       avdName: serializer.fromJson<String?>(json['avdName']),
       serial: serializer.fromJson<String?>(json['serial']),
       vmServiceUrl: serializer.fromJson<String?>(json['vmServiceUrl']),
+      targetFile: serializer.fromJson<String?>(json['targetFile']),
       connectionMode: serializer.fromJson<String>(json['connectionMode']),
       exitReason: serializer.fromJson<String?>(json['exitReason']),
       exitCode: serializer.fromJson<int?>(json['exitCode']),
@@ -2837,6 +2861,7 @@ class RunSessionLogRow extends DataClass
       'avdName': serializer.toJson<String?>(avdName),
       'serial': serializer.toJson<String?>(serial),
       'vmServiceUrl': serializer.toJson<String?>(vmServiceUrl),
+      'targetFile': serializer.toJson<String?>(targetFile),
       'connectionMode': serializer.toJson<String>(connectionMode),
       'exitReason': serializer.toJson<String?>(exitReason),
       'exitCode': serializer.toJson<int?>(exitCode),
@@ -2856,6 +2881,7 @@ class RunSessionLogRow extends DataClass
           Value<String?> avdName = const Value.absent(),
           Value<String?> serial = const Value.absent(),
           Value<String?> vmServiceUrl = const Value.absent(),
+          Value<String?> targetFile = const Value.absent(),
           String? connectionMode,
           Value<String?> exitReason = const Value.absent(),
           Value<int?> exitCode = const Value.absent(),
@@ -2873,6 +2899,7 @@ class RunSessionLogRow extends DataClass
         serial: serial.present ? serial.value : this.serial,
         vmServiceUrl:
             vmServiceUrl.present ? vmServiceUrl.value : this.vmServiceUrl,
+        targetFile: targetFile.present ? targetFile.value : this.targetFile,
         connectionMode: connectionMode ?? this.connectionMode,
         exitReason: exitReason.present ? exitReason.value : this.exitReason,
         exitCode: exitCode.present ? exitCode.value : this.exitCode,
@@ -2894,6 +2921,8 @@ class RunSessionLogRow extends DataClass
       vmServiceUrl: data.vmServiceUrl.present
           ? data.vmServiceUrl.value
           : this.vmServiceUrl,
+      targetFile:
+          data.targetFile.present ? data.targetFile.value : this.targetFile,
       connectionMode: data.connectionMode.present
           ? data.connectionMode.value
           : this.connectionMode,
@@ -2923,6 +2952,7 @@ class RunSessionLogRow extends DataClass
           ..write('avdName: $avdName, ')
           ..write('serial: $serial, ')
           ..write('vmServiceUrl: $vmServiceUrl, ')
+          ..write('targetFile: $targetFile, ')
           ..write('connectionMode: $connectionMode, ')
           ..write('exitReason: $exitReason, ')
           ..write('exitCode: $exitCode, ')
@@ -2944,6 +2974,7 @@ class RunSessionLogRow extends DataClass
       avdName,
       serial,
       vmServiceUrl,
+      targetFile,
       connectionMode,
       exitReason,
       exitCode,
@@ -2963,6 +2994,7 @@ class RunSessionLogRow extends DataClass
           other.avdName == this.avdName &&
           other.serial == this.serial &&
           other.vmServiceUrl == this.vmServiceUrl &&
+          other.targetFile == this.targetFile &&
           other.connectionMode == this.connectionMode &&
           other.exitReason == this.exitReason &&
           other.exitCode == this.exitCode &&
@@ -2981,6 +3013,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
   final Value<String?> avdName;
   final Value<String?> serial;
   final Value<String?> vmServiceUrl;
+  final Value<String?> targetFile;
   final Value<String> connectionMode;
   final Value<String?> exitReason;
   final Value<int?> exitCode;
@@ -2998,6 +3031,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
     this.avdName = const Value.absent(),
     this.serial = const Value.absent(),
     this.vmServiceUrl = const Value.absent(),
+    this.targetFile = const Value.absent(),
     this.connectionMode = const Value.absent(),
     this.exitReason = const Value.absent(),
     this.exitCode = const Value.absent(),
@@ -3016,6 +3050,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
     this.avdName = const Value.absent(),
     this.serial = const Value.absent(),
     this.vmServiceUrl = const Value.absent(),
+    this.targetFile = const Value.absent(),
     required String connectionMode,
     this.exitReason = const Value.absent(),
     this.exitCode = const Value.absent(),
@@ -3037,6 +3072,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
     Expression<String>? avdName,
     Expression<String>? serial,
     Expression<String>? vmServiceUrl,
+    Expression<String>? targetFile,
     Expression<String>? connectionMode,
     Expression<String>? exitReason,
     Expression<int>? exitCode,
@@ -3055,6 +3091,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
       if (avdName != null) 'avd_name': avdName,
       if (serial != null) 'serial': serial,
       if (vmServiceUrl != null) 'vm_service_url': vmServiceUrl,
+      if (targetFile != null) 'target_file': targetFile,
       if (connectionMode != null) 'connection_mode': connectionMode,
       if (exitReason != null) 'exit_reason': exitReason,
       if (exitCode != null) 'exit_code': exitCode,
@@ -3075,6 +3112,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
       Value<String?>? avdName,
       Value<String?>? serial,
       Value<String?>? vmServiceUrl,
+      Value<String?>? targetFile,
       Value<String>? connectionMode,
       Value<String?>? exitReason,
       Value<int?>? exitCode,
@@ -3092,6 +3130,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
       avdName: avdName ?? this.avdName,
       serial: serial ?? this.serial,
       vmServiceUrl: vmServiceUrl ?? this.vmServiceUrl,
+      targetFile: targetFile ?? this.targetFile,
       connectionMode: connectionMode ?? this.connectionMode,
       exitReason: exitReason ?? this.exitReason,
       exitCode: exitCode ?? this.exitCode,
@@ -3129,6 +3168,9 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
     }
     if (vmServiceUrl.present) {
       map['vm_service_url'] = Variable<String>(vmServiceUrl.value);
+    }
+    if (targetFile.present) {
+      map['target_file'] = Variable<String>(targetFile.value);
     }
     if (connectionMode.present) {
       map['connection_mode'] = Variable<String>(connectionMode.value);
@@ -3168,6 +3210,7 @@ class RunSessionLogCompanion extends UpdateCompanion<RunSessionLogRow> {
           ..write('avdName: $avdName, ')
           ..write('serial: $serial, ')
           ..write('vmServiceUrl: $vmServiceUrl, ')
+          ..write('targetFile: $targetFile, ')
           ..write('connectionMode: $connectionMode, ')
           ..write('exitReason: $exitReason, ')
           ..write('exitCode: $exitCode, ')
@@ -4594,6 +4637,7 @@ typedef $$RunSessionLogTableCreateCompanionBuilder = RunSessionLogCompanion
   Value<String?> avdName,
   Value<String?> serial,
   Value<String?> vmServiceUrl,
+  Value<String?> targetFile,
   required String connectionMode,
   Value<String?> exitReason,
   Value<int?> exitCode,
@@ -4613,6 +4657,7 @@ typedef $$RunSessionLogTableUpdateCompanionBuilder = RunSessionLogCompanion
   Value<String?> avdName,
   Value<String?> serial,
   Value<String?> vmServiceUrl,
+  Value<String?> targetFile,
   Value<String> connectionMode,
   Value<String?> exitReason,
   Value<int?> exitCode,
@@ -4655,6 +4700,9 @@ class $$RunSessionLogTableFilterComposer
 
   ColumnFilters<String> get vmServiceUrl => $composableBuilder(
       column: $table.vmServiceUrl, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get targetFile => $composableBuilder(
+      column: $table.targetFile, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get connectionMode => $composableBuilder(
       column: $table.connectionMode,
@@ -4715,6 +4763,9 @@ class $$RunSessionLogTableOrderingComposer
       column: $table.vmServiceUrl,
       builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get targetFile => $composableBuilder(
+      column: $table.targetFile, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get connectionMode => $composableBuilder(
       column: $table.connectionMode,
       builder: (column) => ColumnOrderings(column));
@@ -4773,6 +4824,9 @@ class $$RunSessionLogTableAnnotationComposer
   GeneratedColumn<String> get vmServiceUrl => $composableBuilder(
       column: $table.vmServiceUrl, builder: (column) => column);
 
+  GeneratedColumn<String> get targetFile => $composableBuilder(
+      column: $table.targetFile, builder: (column) => column);
+
   GeneratedColumn<String> get connectionMode => $composableBuilder(
       column: $table.connectionMode, builder: (column) => column);
 
@@ -4830,6 +4884,7 @@ class $$RunSessionLogTableTableManager extends RootTableManager<
             Value<String?> avdName = const Value.absent(),
             Value<String?> serial = const Value.absent(),
             Value<String?> vmServiceUrl = const Value.absent(),
+            Value<String?> targetFile = const Value.absent(),
             Value<String> connectionMode = const Value.absent(),
             Value<String?> exitReason = const Value.absent(),
             Value<int?> exitCode = const Value.absent(),
@@ -4848,6 +4903,7 @@ class $$RunSessionLogTableTableManager extends RootTableManager<
             avdName: avdName,
             serial: serial,
             vmServiceUrl: vmServiceUrl,
+            targetFile: targetFile,
             connectionMode: connectionMode,
             exitReason: exitReason,
             exitCode: exitCode,
@@ -4866,6 +4922,7 @@ class $$RunSessionLogTableTableManager extends RootTableManager<
             Value<String?> avdName = const Value.absent(),
             Value<String?> serial = const Value.absent(),
             Value<String?> vmServiceUrl = const Value.absent(),
+            Value<String?> targetFile = const Value.absent(),
             required String connectionMode,
             Value<String?> exitReason = const Value.absent(),
             Value<int?> exitCode = const Value.absent(),
@@ -4884,6 +4941,7 @@ class $$RunSessionLogTableTableManager extends RootTableManager<
             avdName: avdName,
             serial: serial,
             vmServiceUrl: vmServiceUrl,
+            targetFile: targetFile,
             connectionMode: connectionMode,
             exitReason: exitReason,
             exitCode: exitCode,

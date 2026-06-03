@@ -6,6 +6,7 @@ import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/core/settings/onboarding_preferences.dart';
+import 'package:pickforge/features/emulator/view/run_history_view.dart';
 import 'package:pickforge/features/history/view/history_view.dart';
 import 'package:pickforge/features/workbench/view/demo_workspace_view.dart';
 import 'package:pickforge/features/workbench/view/onboarding_view.dart';
@@ -25,8 +26,8 @@ void main() {
   });
 
   testWidgets(
-      'router has workbench, onboarding, demo, history, and settings routes',
-      (tester) async {
+      'router has workbench, onboarding, demo, history, run history, '
+      'and settings routes', (tester) async {
     tester.view.physicalSize = const Size(1400, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -58,6 +59,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(HistoryView), findsOneWidget);
+
+    router.go(AppRoutes.runHistory);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(RunHistoryView), findsOneWidget);
   });
 
   testWidgets('router can start directly in demo mode', (tester) async {
@@ -114,6 +120,11 @@ void main() {
     expect(find.text('Show Onboarding'), findsOneWidget);
     expect(find.text('Open Demo Workspace'), findsOneWidget);
     expect(find.text('Open Pick History'), findsOneWidget);
+    expect(find.text('Open Run History'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'settings');
+    await tester.pumpAndSettle();
+
     expect(find.text('Go to Settings'), findsOneWidget);
   });
 }

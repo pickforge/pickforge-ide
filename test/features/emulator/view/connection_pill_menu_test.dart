@@ -54,5 +54,6 @@ void main() {
     expect(find.text('Hot restart'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
     expect(find.text('View logs'), findsOneWidget);
+    expect(find.text('View run history'), findsOneWidget);
   });
 }

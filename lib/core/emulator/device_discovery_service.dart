@@ -27,7 +27,7 @@ class DeviceDiscoveryService {
       final devices = _parseAdbDevices(res.stdout.toString());
       final out = <RunningAndroidDevice>[];
       for (final device in devices) {
-        if (!device.serial.startsWith('emulator-')) {
+        if (device.isPhysical) {
           out.add(device);
           continue;
         }
@@ -108,14 +108,30 @@ class DeviceDiscoveryService {
       if (trimmed.isEmpty || trimmed.startsWith('List of devices')) continue;
       final tokens = trimmed.split(RegExp(r'\s+'));
       if (tokens.length < 2) continue;
+      final serial = tokens[0];
+      final isEmulator = serial.startsWith('emulator-');
       out.add(
         RunningAndroidDevice(
-          serial: tokens[0],
+          serial: serial,
           avdName: null,
           state: tokens[1],
+          kind: isEmulator
+              ? AndroidDeviceKind.emulator
+              : AndroidDeviceKind.physical,
+          model: _adbDetail(tokens, 'model'),
         ),
       );
     }
     return out;
+  }
+
+  String? _adbDetail(List<String> tokens, String key) {
+    final prefix = '$key:';
+    for (final token in tokens.skip(2)) {
+      if (!token.startsWith(prefix)) continue;
+      final value = token.substring(prefix.length).replaceAll('_', ' ').trim();
+      return value.isEmpty ? null : value;
+    }
+    return null;
   }
 }

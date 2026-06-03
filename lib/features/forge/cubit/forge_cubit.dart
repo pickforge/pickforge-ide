@@ -38,6 +38,7 @@ class ForgeCubit extends Cubit<ForgeState> {
     required String chatId,
     List<String> attachmentPaths = const [],
     String customNote = '',
+    String? deviceSerial,
   }) async {
     if (!const ForgeEligibilityPolicy().canForge(selection, projectRoot)) {
       emit(
@@ -53,6 +54,7 @@ class ForgeCubit extends Cubit<ForgeState> {
     try {
       final adbPath = await _adb.capture(
         outputDir: '$projectRoot/.pickforge',
+        serial: deviceSerial,
       );
 
       final enriched = adbPath != null

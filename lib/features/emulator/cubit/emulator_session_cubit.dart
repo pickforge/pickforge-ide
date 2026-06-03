@@ -82,13 +82,36 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
       case ManualBinding(:final vmServiceUrl):
         await _attachManual(vmServiceUrl);
       case AvdBinding(:final avdId, :final avdName):
-        final avd = Avd(id: avdId, name: avdName, platform: 'android');
+        final avd = Avd(
+          id: avdId,
+          name: avdName,
+          platform: androidEmulatorPlatform,
+        );
         final snap = await discovery.snapshot();
         final running = snap.runningFor(avd);
         if (running != null && running.state == 'device') {
           emit(_idleState(avd, running.serial));
         } else {
           emit(EmulatorSessionState.cold(avd: avd));
+        }
+      case PhysicalDeviceBinding(:final serial, :final name):
+        final avd = Avd(
+          id: serial,
+          name: name,
+          platform: androidPhysicalPlatform,
+        );
+        final snap = await discovery.snapshot();
+        final running = snap.runningFor(avd);
+        if (running != null && running.state == 'device') {
+          emit(_idleState(avd, running.serial));
+        } else {
+          emit(
+            EmulatorSessionState.error(
+              avd: avd,
+              serial: serial,
+              message: 'Physical device $serial is not connected',
+            ),
+          );
         }
     }
   }
@@ -104,6 +127,28 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
       emit(_idleState(avd, running.serial));
     } else {
       emit(EmulatorSessionState.cold(avd: avd));
+    }
+  }
+
+  Future<void> pickPhysicalDevice(RunningAndroidDevice device) async {
+    final avd = device.asDeviceAvd;
+    await settings.setEmulatorBinding(
+      projectRoot,
+      EmulatorBinding.physical(
+        serial: device.serial,
+        name: device.displayName,
+      ),
+    );
+    if (device.state == 'device') {
+      emit(_idleState(avd, device.serial));
+    } else {
+      emit(
+        EmulatorSessionState.error(
+          avd: avd,
+          serial: device.serial,
+          message: 'Physical device ${device.serial} is ${device.state}',
+        ),
+      );
     }
   }
 
@@ -522,6 +567,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
 
   Future<void> _emitIdleAfterRun(Avd avd, String serial) async {
     final idle = _idleState(avd, serial);
+    if (avd.platform == androidPhysicalPlatform) {
+      emit(idle);
+      return;
+    }
     final settings = await this.settings.getEmulatorIdleShutdownSettings(
           projectRoot,
         );
@@ -537,6 +586,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   }
 
   Future<void> _shutdownIdleDevice(Idle idle) async {
+    if (idle.avd.platform == androidPhysicalPlatform) {
+      emit(idle.copyWith(shutdownPrompt: false));
+      return;
+    }
     final controller = shutdownController;
     if (controller == null) {
       emit(idle.copyWith(shutdownPrompt: false));
@@ -572,7 +625,13 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final id = recovery.avdId;
     final name = recovery.avdName;
     if (id == null || name == null) return null;
-    return Avd(id: id, name: name, platform: 'android');
+    return Avd(
+      id: id,
+      name: name,
+      platform: recovery.serial.startsWith('emulator-')
+          ? androidEmulatorPlatform
+          : androidPhysicalPlatform,
+    );
   }
 
   Future<void> _persistRecovery() async {

@@ -47,6 +47,7 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
         emulatorLaunchOptions: launchOptions,
         idleShutdownSettings: idleShutdown,
         avds: devices.avds,
+        runningDevices: devices.running,
         targetFiles: metadata.targetFiles,
         flavors: metadata.flavors,
       ),
@@ -55,6 +56,18 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
 
   Future<void> setAvd(String projectRoot, Avd avd) async {
     final binding = EmulatorBinding.avd(avdId: avd.id, avdName: avd.name);
+    await settings.setEmulatorBinding(projectRoot, binding);
+    emit(state.copyWith(binding: binding));
+  }
+
+  Future<void> setPhysicalDevice(
+    String projectRoot,
+    RunningAndroidDevice device,
+  ) async {
+    final binding = EmulatorBinding.physical(
+      serial: device.serial,
+      name: device.displayName,
+    );
     await settings.setEmulatorBinding(projectRoot, binding);
     emit(state.copyWith(binding: binding));
   }

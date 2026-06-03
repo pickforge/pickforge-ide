@@ -30,6 +30,13 @@ void main() {
     registerFallbackValue(
       const Avd(id: 'fallback', name: 'fallback', platform: 'android'),
     );
+    registerFallbackValue(
+      const RunningAndroidDevice(
+        serial: 'fallback',
+        avdName: null,
+        state: 'device',
+      ),
+    );
   });
 
   testWidgets('shows Running and Available sections', (tester) async {
@@ -50,6 +57,7 @@ void main() {
     );
     final session = _SessionCubit();
     when(() => session.pickAvd(any())).thenAnswer((_) async {});
+    when(() => session.pickPhysicalDevice(any())).thenAnswer((_) async {});
     await tester.pumpWidget(
       MaterialApp(
         home: MultiBlocProvider(
@@ -69,6 +77,41 @@ void main() {
     verify(() => session.pickAvd(any())).called(1);
   });
 
+  testWidgets('shows connected physical devices', (tester) async {
+    final picker = _PickerCubit(
+      const DevicePickerState.loaded(
+        avds: [],
+        running: [
+          RunningAndroidDevice(
+            serial: 'R58M1234567',
+            avdName: null,
+            state: 'device',
+            kind: AndroidDeviceKind.physical,
+            model: 'Pixel 6',
+          ),
+        ],
+      ),
+    );
+    final session = _SessionCubit();
+    when(() => session.pickPhysicalDevice(any())).thenAnswer((_) async {});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MultiBlocProvider(
+          providers: [
+            BlocProvider<DevicePickerCubit>.value(value: picker),
+            BlocProvider<EmulatorSessionCubit>.value(value: session),
+          ],
+          child: const Scaffold(body: DevicePickerMenu()),
+        ),
+      ),
+    );
+
+    expect(find.text('CONNECTED'), findsOneWidget);
+    expect(find.text('Pixel 6 (R58M1234567)'), findsOneWidget);
+    await tester.tap(find.text('Pixel 6 (R58M1234567)'));
+    verify(() => session.pickPhysicalDevice(any())).called(1);
+  });
+
   testWidgets('empty state shows Android Studio link', (tester) async {
     final picker =
         _PickerCubit(const DevicePickerState.loaded(avds: [], running: []));
@@ -84,7 +127,7 @@ void main() {
       ),
     );
     expect(
-      find.textContaining('No Android emulators detected'),
+      find.textContaining('No Android devices detected'),
       findsOneWidget,
     );
   });

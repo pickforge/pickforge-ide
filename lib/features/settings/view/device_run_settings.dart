@@ -26,7 +26,7 @@ class DeviceRunSettings extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            _AvdDropdown(projectRoot: projectRoot, state: state),
+            _DeviceDropdown(projectRoot: projectRoot, state: state),
             const SizedBox(height: 8),
             if (binding is AvdBinding) ...[
               SwitchListTile(
@@ -247,32 +247,92 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
   }
 }
 
-class _AvdDropdown extends StatelessWidget {
-  const _AvdDropdown({required this.projectRoot, required this.state});
+class _DeviceDropdown extends StatelessWidget {
+  const _DeviceDropdown({required this.projectRoot, required this.state});
 
   final String projectRoot;
   final DeviceRunSettingsState state;
 
   @override
   Widget build(BuildContext context) {
-    final selected = state.binding is AvdBinding
-        ? (state.binding! as AvdBinding).avdId
-        : null;
-    return DropdownButton<Avd>(
-      hint: const Text('Select Android emulator'),
-      value: state.avds.where((avd) => avd.id == selected).firstOrNull,
-      items: state.avds
-          .map((avd) => DropdownMenuItem(value: avd, child: Text(avd.name)))
+    final options = [
+      ...state.avds.map(_DeviceOption.avd),
+      ...state.runningDevices
+          .where((device) => device.isPhysical && device.state == 'device')
+          .map(_DeviceOption.physical),
+    ];
+    final selected = switch (state.binding) {
+      AvdBinding(:final avdId) => _DeviceOption.avdKey(avdId),
+      PhysicalDeviceBinding(:final serial) => _DeviceOption.physicalKey(serial),
+      _ => null,
+    };
+    return DropdownButton<_DeviceOption>(
+      key: const Key('device-dropdown'),
+      hint: const Text('Select Android device'),
+      value: options.where((option) => option.key == selected).firstOrNull,
+      items: options
+          .map(
+            (option) => DropdownMenuItem(
+              value: option,
+              child: Text(option.label),
+            ),
+          )
           .toList(),
-      onChanged: (avd) {
-        if (avd == null) return;
-        context
-            .read<DeviceRunSettingsCubit>()
-            .setAvd(projectRoot, avd)
-            .ignore();
+      onChanged: (option) {
+        if (option == null) return;
+        switch (option) {
+          case _AvdOption(:final avd):
+            context
+                .read<DeviceRunSettingsCubit>()
+                .setAvd(projectRoot, avd)
+                .ignore();
+          case _PhysicalDeviceOption(:final device):
+            context
+                .read<DeviceRunSettingsCubit>()
+                .setPhysicalDevice(projectRoot, device)
+                .ignore();
+        }
       },
     );
   }
+}
+
+sealed class _DeviceOption {
+  const _DeviceOption();
+
+  factory _DeviceOption.avd(Avd avd) = _AvdOption;
+  factory _DeviceOption.physical(RunningAndroidDevice device) =
+      _PhysicalDeviceOption;
+
+  String get key;
+  String get label;
+
+  static String avdKey(String id) => 'avd:$id';
+  static String physicalKey(String serial) => 'physical:$serial';
+}
+
+final class _AvdOption extends _DeviceOption {
+  const _AvdOption(this.avd);
+
+  final Avd avd;
+
+  @override
+  String get key => _DeviceOption.avdKey(avd.id);
+
+  @override
+  String get label => avd.name;
+}
+
+final class _PhysicalDeviceOption extends _DeviceOption {
+  const _PhysicalDeviceOption(this.device);
+
+  final RunningAndroidDevice device;
+
+  @override
+  String get key => _DeviceOption.physicalKey(device.serial);
+
+  @override
+  String get label => '${device.displayName} (${device.serial})';
 }
 
 class _RunArgsFields extends StatelessWidget {

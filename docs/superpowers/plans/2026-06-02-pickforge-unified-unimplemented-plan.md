@@ -359,12 +359,18 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P3.T2 — Physical Android support
 
-**Status:** Deferred
+**Status:** Completed
 **Tasks**
 
-- [ ] Detect physical devices separately from emulators.
-- [ ] Respect adb serial selection.
-- [ ] Validate screenshot and run-session behavior.
+- [x] Detect physical devices separately from emulators.
+- [x] Respect adb serial selection.
+- [x] Validate screenshot and run-session behavior.
+
+**Latest evidence**
+
+- 2026-06-03: Added physical Android device classification from `adb devices -l`, model-based display names, persisted `EmulatorBinding.physical`, and connected-device rows in the device picker and Device & Run settings.
+- 2026-06-03: Threaded selected serials through run sessions and Android screenshots so physical devices use `flutter run -d <serial>` and `adb -s <serial> exec-out screencap -p`; idle shutdown remains emulator-only.
+- 2026-06-03: Verified with focused physical-device discovery/settings/session/screenshot/forge tests, `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (423 passed, 2 skipped without `PICKFORGE_E2E_AVD`), and both emulator E2Es using `fvm flutter test --reporter=compact --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart test/integration/widget_pick_e2e_test.dart`; all passed locally.
 
 ### P3.T3 — iOS Simulator support
 

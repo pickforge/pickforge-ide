@@ -60,6 +60,12 @@ class ProjectSettingsRepository {
     if (row.connectionMode == 'manual' && row.vmServiceUrl != null) {
       return EmulatorBinding.manual(vmServiceUrl: row.vmServiceUrl!);
     }
+    if (row.connectionMode == 'physical' && row.avdId != null) {
+      return EmulatorBinding.physical(
+        serial: row.avdId!,
+        name: row.avdName ?? row.avdId!,
+      );
+    }
     if (row.avdId != null && row.avdName != null) {
       return EmulatorBinding.avd(
         avdId: row.avdId!,
@@ -82,6 +88,15 @@ class ProjectSettingsRepository {
           avdName: Value(avdName),
           connectionMode: const Value('auto'),
           autoBootOnSelect: autoBootOnSelect,
+          vmServiceUrl: const Value<String?>(null),
+        );
+      case PhysicalDeviceBinding(:final serial, :final name):
+        await _db.projectSettingsDao.upsert(
+          projectRoot: projectRoot,
+          avdId: Value(serial),
+          avdName: Value(name),
+          connectionMode: const Value('physical'),
+          autoBootOnSelect: false,
           vmServiceUrl: const Value<String?>(null),
         );
       case ManualBinding(:final vmServiceUrl):

@@ -8,6 +8,8 @@ import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/projects/git_status_service.dart';
+import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
+import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
 import 'package:pickforge/features/forge/cubit/context_attachments_cubit.dart';
 import 'package:pickforge/features/forge/cubit/context_attachments_state.dart';
@@ -91,6 +93,7 @@ class _ForgePanelBody extends StatelessWidget {
         final attachments =
             attachmentState?.attachments ?? const <ContextAttachment>[];
         final runLogCount = _runLogCountFor(context);
+        final deviceSerial = _deviceSerialFor(context);
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Column(
@@ -155,6 +158,7 @@ class _ForgePanelBody extends StatelessWidget {
                                   chatId!,
                                   attachments,
                                   attachmentState?.customNote ?? '',
+                                  deviceSerial,
                                 ),
                               ),
                       child: Text(l10n.forgeItButton),
@@ -424,6 +428,20 @@ int _runLogCountFor(BuildContext context) {
   }
 }
 
+String? _deviceSerialFor(BuildContext context) {
+  try {
+    return switch (context.watch<EmulatorSessionCubit>().state) {
+      Idle(:final serial) => serial,
+      Running(:final serial) => serial,
+      Reconnecting(:final serial) => serial,
+      EmulatorError(:final serial) => serial,
+      _ => null,
+    };
+  } on ProviderNotFoundException {
+    return null;
+  }
+}
+
 ContextAttachmentsCubit? _attachmentsCubitOrNull(BuildContext context) {
   try {
     return context.read<ContextAttachmentsCubit>();
@@ -575,6 +593,7 @@ Future<void> _confirmAndForge(
   String chatId,
   List<ContextAttachment> attachments,
   String customNote,
+  String? deviceSerial,
 ) async {
   if (!await _confirmDirtyWorktree(context, projectRoot)) return;
   await cubit.forge(
@@ -583,6 +602,7 @@ Future<void> _confirmAndForge(
     chatId: chatId,
     attachmentPaths: [for (final attachment in attachments) attachment.path],
     customNote: customNote,
+    deviceSerial: deviceSerial,
   );
 }
 

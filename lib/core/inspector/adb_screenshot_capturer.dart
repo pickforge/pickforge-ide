@@ -10,7 +10,7 @@ typedef AdbProcessRunner = Future<ProcessResult> Function(
   List<String> arguments,
 );
 
-/// Captures screenshots from Android emulators via adb.
+/// Captures screenshots from Android devices via adb.
 ///
 /// NOT annotated with `@lazySingleton` — wired via `@module` in injection.dart
 /// because of the optional `processRunner` parameter.
@@ -23,37 +23,26 @@ class AdbScreenshotCapturer {
   final BinaryDetector _detector;
   final AdbProcessRunner _processRunner;
 
-  /// Captures a screenshot from a connected emulator.
+  /// Captures a screenshot from a connected Android device.
   ///
   /// 1. Check `adb` is on PATH via detector
-  /// 2. Run `adb devices`, parse for `emulator-XXX\tdevice` line
+  /// 2. Use the provided serial or parse the first connected device
   /// 3. Run `adb -s <serial> exec-out screencap -p`
   /// 4. Write PNG bytes to `{outputDir}/device-screen.png`
   /// 5. Return path or null on failure
-  Future<String?> capture({required String outputDir}) async {
+  Future<String?> capture({required String outputDir, String? serial}) async {
     // 1. Check adb on PATH
     final adbOnPath = await _detector.isBinaryOnPath('adb');
     if (!adbOnPath) return null;
 
-    // 2. Find emulator
-    final devicesResult = await _processRunner('adb', ['devices']);
-    if (devicesResult.exitCode != 0) return null;
-
-    final devicesOutput = devicesResult.stdout.toString();
-    String? emulatorSerial;
-    for (final line in devicesOutput.split('\n')) {
-      final trimmed = line.trim();
-      if (trimmed.startsWith('emulator-') && trimmed.endsWith('\tdevice')) {
-        emulatorSerial = trimmed.split('\t').first;
-        break;
-      }
-    }
-    if (emulatorSerial == null) return null;
+    // 2. Find device
+    final deviceSerial = serial ?? await _firstConnectedDeviceSerial();
+    if (deviceSerial == null) return null;
 
     // 3. Capture screencap
     final screencapResult = await _processRunner(
       'adb',
-      ['-s', emulatorSerial, 'exec-out', 'screencap', '-p'],
+      ['-s', deviceSerial, 'exec-out', 'screencap', '-p'],
     );
     if (screencapResult.exitCode != 0) return null;
 
@@ -70,5 +59,18 @@ class AdbScreenshotCapturer {
 
     // 5. Return path
     return outputPath;
+  }
+
+  Future<String?> _firstConnectedDeviceSerial() async {
+    final devicesResult = await _processRunner('adb', ['devices']);
+    if (devicesResult.exitCode != 0) return null;
+
+    final devicesOutput = devicesResult.stdout.toString();
+    for (final line in devicesOutput.split('\n')) {
+      final trimmed = line.trim();
+      if (!trimmed.endsWith('\tdevice')) continue;
+      return trimmed.split('\t').first;
+    }
+    return null;
   }
 }

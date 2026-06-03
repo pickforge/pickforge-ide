@@ -61,7 +61,15 @@ void main() {
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(
         avds: [Avd(id: 'p5', name: 'Pixel 5', platform: 'android')],
-        running: [],
+        running: [
+          RunningAndroidDevice(
+            serial: 'R58M1234567',
+            avdName: null,
+            state: 'device',
+            kind: AndroidDeviceKind.physical,
+            model: 'Pixel 6',
+          ),
+        ],
       ),
     );
 
@@ -82,6 +90,7 @@ void main() {
     expect(cubit.state.emulatorLaunchOptions.noAudio, isTrue);
     expect(cubit.state.idleShutdownSettings.enabled, isTrue);
     expect(cubit.state.avds.single.name, 'Pixel 5');
+    expect(cubit.state.runningDevices.single.serial, 'R58M1234567');
     expect(cubit.state.targetFiles, ['lib/main.dart', 'lib/main_dev.dart']);
     expect(cubit.state.flavors, ['dev']);
   });
@@ -158,6 +167,36 @@ void main() {
       ),
     ).called(1);
     expect((cubit.state.binding! as AvdBinding).avdId, 'p7');
+  });
+
+  test('setPhysicalDevice persists physical binding', () async {
+    when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setPhysicalDevice(
+      '/p',
+      const RunningAndroidDevice(
+        serial: 'R58M1234567',
+        avdName: null,
+        state: 'device',
+        kind: AndroidDeviceKind.physical,
+        model: 'Pixel 6',
+      ),
+    );
+
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.physical(
+          serial: 'R58M1234567',
+          name: 'Pixel 6',
+        ),
+      ),
+    ).called(1);
+    expect(
+      (cubit.state.binding! as PhysicalDeviceBinding).serial,
+      'R58M1234567',
+    );
   });
 
   test('setRunArgs persists args', () async {

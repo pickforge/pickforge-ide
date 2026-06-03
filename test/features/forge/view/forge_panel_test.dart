@@ -1,15 +1,22 @@
+// ignore_for_file: prefer_mixin, reason: Cubit test fakes mix in Mock.
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
+import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
+import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/forge/forge.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -57,6 +64,7 @@ class _RecordingForgeCubit extends ForgeCubit {
   SelectedWidget? forgedSelection;
   String? forgedProjectRoot;
   String? forgedChatId;
+  String? forgedDeviceSerial;
 
   @override
   void selectSkill(SkillId skill) {
@@ -80,10 +88,12 @@ class _RecordingForgeCubit extends ForgeCubit {
     required String chatId,
     List<String> attachmentPaths = const [],
     String customNote = '',
+    String? deviceSerial,
   }) async {
     forgedSelection = selection;
     forgedProjectRoot = projectRoot;
     forgedChatId = chatId;
+    forgedDeviceSerial = deviceSerial;
   }
 
   @override
@@ -106,6 +116,12 @@ class _ThrowingLauncher extends Fake implements AgentLauncher {}
 class _ThrowingAdb extends Fake implements AdbScreenshotCapturer {}
 
 class _NoopPool extends Fake implements PtySessionPool {}
+
+class _SessionCubit extends Cubit<EmulatorSessionState>
+    with Mock
+    implements EmulatorSessionCubit {
+  _SessionCubit(super.initialState);
+}
 
 class _CleanProcessRunner implements ProcessRunner {
   @override
@@ -262,6 +278,50 @@ void main() {
     expect(cubit.forgedSelection, _sampleWidget);
     expect(cubit.forgedProjectRoot, '/tmp/test');
     expect(cubit.forgedChatId, 'chat-1');
+  });
+
+  testWidgets('ForgePanel forwards active device serial to forge',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final forgeCubit = _RecordingForgeCubit();
+    final sessionCubit = _SessionCubit(
+      const EmulatorSessionState.idle(
+        avd: Avd(
+          id: 'R58M1234567',
+          name: 'Pixel 6',
+          platform: androidPhysicalPlatform,
+        ),
+        serial: 'R58M1234567',
+      ),
+    );
+    addTearDown(forgeCubit.close);
+    addTearDown(sessionCubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: BlocProvider<EmulatorSessionCubit>.value(
+          value: sessionCubit,
+          child: Scaffold(
+            body: ForgePanel(
+              selection: _sampleWidget,
+              projectRoot: '/tmp/test',
+              chatId: 'chat-1',
+              cubit: forgeCubit,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Forge it'));
+    await tester.pumpAndSettle();
+
+    expect(forgeCubit.forgedDeviceSerial, 'R58M1234567');
   });
 
   testWidgets('ForgePanel preview includes skill and widget context',

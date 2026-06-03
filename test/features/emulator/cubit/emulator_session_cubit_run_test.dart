@@ -13,6 +13,7 @@ import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
+import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
@@ -53,6 +54,9 @@ void main() {
   late StreamController<RunSessionEvent> events;
 
   setUpAll(() {
+    registerFallbackValue(
+      const EmulatorBinding.avd(avdId: 'fallback', avdName: 'fallback'),
+    );
     registerFallbackValue(
       RunSessionRecoveryMetadata(
         sessionId: 'fallback',
@@ -141,6 +145,18 @@ void main() {
       );
   const avd =
       Avd(id: 'Pixel_5_API_34', name: 'Pixel 5 API 34', platform: 'android');
+  const physicalAvd = Avd(
+    id: 'R58M1234567',
+    name: 'Pixel 6',
+    platform: androidPhysicalPlatform,
+  );
+  const physicalDevice = RunningAndroidDevice(
+    serial: 'R58M1234567',
+    avdName: null,
+    state: 'device',
+    kind: AndroidDeviceKind.physical,
+    model: 'Pixel 6',
+  );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'bootstrap offers adoption for recoverable orphaned run',
@@ -268,6 +284,79 @@ void main() {
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootstrap restores connected physical device binding',
+    setUp: () {
+      when(() => settings.getEmulatorBinding('/p')).thenAnswer(
+        (_) async => const EmulatorBinding.physical(
+          serial: 'R58M1234567',
+          name: 'Pixel 6',
+        ),
+      );
+      when(disc.snapshot).thenAnswer(
+        (_) async => const DeviceListSnapshot(
+          avds: [],
+          running: [physicalDevice],
+        ),
+      );
+    },
+    build: build,
+    act: (c) => c.bootstrap(),
+    expect: () => [
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', physicalAvd)
+          .having((s) => s.serial, 'serial', 'R58M1234567'),
+    ],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootstrap reports disconnected physical device binding',
+    setUp: () {
+      when(() => settings.getEmulatorBinding('/p')).thenAnswer(
+        (_) async => const EmulatorBinding.physical(
+          serial: 'R58M1234567',
+          name: 'Pixel 6',
+        ),
+      );
+      when(disc.snapshot).thenAnswer(
+        (_) async => const DeviceListSnapshot(avds: [], running: []),
+      );
+    },
+    build: build,
+    act: (c) => c.bootstrap(),
+    expect: () => [
+      isA<EmulatorError>().having((s) => s.avd, 'avd', physicalAvd).having(
+            (s) => s.message,
+            'message',
+            'Physical device R58M1234567 is not connected',
+          ),
+    ],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'pickPhysicalDevice persists serial and enters idle',
+    setUp: () {
+      when(() => settings.setEmulatorBinding('/p', any()))
+          .thenAnswer((_) async {});
+    },
+    build: build,
+    act: (c) => c.pickPhysicalDevice(physicalDevice),
+    expect: () => [
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', physicalAvd)
+          .having((s) => s.serial, 'serial', 'R58M1234567'),
+    ],
+    verify: (_) => verify(
+      () => settings.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.physical(
+          serial: 'R58M1234567',
+          name: 'Pixel 6',
+        ),
+      ),
+    ).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'runApp from idle attaches inspector on vmServiceReady',
     setUp: () => when(
       () => run.start(
@@ -378,6 +467,51 @@ void main() {
           serial: 'emulator-5554',
           vmServiceUrl: 'ws://x/ws',
           targetFile: 'lib/main_dev.dart',
+        ),
+      ).called(1);
+    },
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'runApp from physical device uses selected serial',
+    setUp: () {
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: 'R58M1234567',
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: build,
+    seed: () => const EmulatorSessionState.idle(
+      avd: physicalAvd,
+      serial: 'R58M1234567',
+    ),
+    act: (c) async {
+      await c.runApp();
+    },
+    verify: (_) {
+      verify(
+        () => run.start(
+          projectRoot: '/p',
+          serial: 'R58M1234567',
+          targetFile: any(named: 'targetFile'),
+          extraArgs: const [],
+        ),
+      ).called(1);
+      verify(
+        () => log.recordStart(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          startedAt: any(named: 'startedAt'),
+          connectionMode: 'auto',
+          avdId: 'R58M1234567',
+          avdName: 'Pixel 6',
+          serial: 'R58M1234567',
+          vmServiceUrl: 'ws://x/ws',
+          targetFile: any(named: 'targetFile'),
         ),
       ).called(1);
     },
@@ -539,6 +673,55 @@ void main() {
       const EmulatorSessionState.cold(avd: avd),
     ],
     verify: (_) => verify(() => shutdown.shutdown('emulator-5554')).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'physical device skips automatic idle shutdown',
+    setUp: () {
+      when(() => settings.getEmulatorIdleShutdownSettings('/p')).thenAnswer(
+        (_) async => const EmulatorIdleShutdownSettings(
+          enabled: true,
+          requireConfirmation: false,
+        ),
+      );
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: any(named: 'serial'),
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      shutdownController: shutdown,
+    ),
+    seed: () => const EmulatorSessionState.idle(
+      avd: physicalAvd,
+      serial: 'R58M1234567',
+    ),
+    act: (c) async {
+      await c.runApp();
+      events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await c.stopRun();
+    },
+    expect: () => [
+      isA<Running>(),
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', physicalAvd)
+          .having((s) => s.serial, 'serial', 'R58M1234567')
+          .having((s) => s.shutdownPrompt, 'shutdownPrompt', isFalse),
+    ],
+    verify: (_) => verifyNever(() => shutdown.shutdown(any())),
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(

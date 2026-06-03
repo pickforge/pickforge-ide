@@ -54,17 +54,20 @@ class _DeviceList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = context.read<EmulatorSessionCubit>();
+    final physicalDevices = running
+        .where((device) => device.isPhysical && device.state == 'device')
+        .toList();
     final runningAvds =
         avds.where((avd) => running.any((r) => r.avdName == avd.id)).toList();
     final coldAvds =
         avds.where((avd) => !running.any((r) => r.avdName == avd.id)).toList();
 
-    if (avds.isEmpty) {
+    if (avds.isEmpty && physicalDevices.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(24),
         child: Text(
-          'No Android emulators detected.\n'
-          'Open Android Studio > Device Manager > Create.',
+          'No Android devices detected.\n'
+          'Connect a device or create an emulator in Android Studio.',
         ),
       );
     }
@@ -73,6 +76,12 @@ class _DeviceList extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (physicalDevices.isNotEmpty) const _Header('CONNECTED'),
+        for (final device in physicalDevices)
+          _DeviceRow(
+            label: '${device.displayName} (${device.serial})',
+            onTap: () => unawaited(_pickPhysical(context, session, device)),
+          ),
         if (runningAvds.isNotEmpty) const _Header('RUNNING'),
         for (final avd in runningAvds)
           _DeviceRow(
@@ -96,6 +105,15 @@ class _DeviceList extends StatelessWidget {
   ) async {
     await Navigator.of(context).maybePop();
     await session.pickAvd(avd);
+  }
+
+  Future<void> _pickPhysical(
+    BuildContext context,
+    EmulatorSessionCubit session,
+    RunningAndroidDevice device,
+  ) async {
+    await Navigator.of(context).maybePop();
+    await session.pickPhysicalDevice(device);
   }
 }
 

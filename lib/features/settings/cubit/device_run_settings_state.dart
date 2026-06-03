@@ -12,6 +12,7 @@ class DeviceRunSettingsState extends Equatable {
     this.emulatorLaunchOptions = const EmulatorLaunchOptions(),
     this.idleShutdownSettings = const EmulatorIdleShutdownSettings(),
     this.avds = const [],
+    this.runningDevices = const [],
     this.targetFiles = const [],
     this.flavors = const [],
   });
@@ -21,6 +22,7 @@ class DeviceRunSettingsState extends Equatable {
   final EmulatorLaunchOptions emulatorLaunchOptions;
   final EmulatorIdleShutdownSettings idleShutdownSettings;
   final List<Avd> avds;
+  final List<RunningAndroidDevice> runningDevices;
   final List<String> targetFiles;
   final List<String> flavors;
 
@@ -30,6 +32,7 @@ class DeviceRunSettingsState extends Equatable {
     EmulatorLaunchOptions? emulatorLaunchOptions,
     EmulatorIdleShutdownSettings? idleShutdownSettings,
     List<Avd>? avds,
+    List<RunningAndroidDevice>? runningDevices,
     List<String>? targetFiles,
     List<String>? flavors,
   }) =>
@@ -40,6 +43,7 @@ class DeviceRunSettingsState extends Equatable {
             emulatorLaunchOptions ?? this.emulatorLaunchOptions,
         idleShutdownSettings: idleShutdownSettings ?? this.idleShutdownSettings,
         avds: avds ?? this.avds,
+        runningDevices: runningDevices ?? this.runningDevices,
         targetFiles: targetFiles ?? this.targetFiles,
         flavors: flavors ?? this.flavors,
       );
@@ -51,6 +55,7 @@ class DeviceRunSettingsState extends Equatable {
         emulatorLaunchOptions,
         idleShutdownSettings,
         avds,
+        runningDevices,
         targetFiles,
         flavors,
       ];

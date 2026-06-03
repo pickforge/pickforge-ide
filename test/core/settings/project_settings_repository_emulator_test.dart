@@ -42,6 +42,20 @@ void main() {
     expect((got! as ManualBinding).vmServiceUrl, 'ws://x/ws');
   });
 
+  test('round-trip physical device binding', () async {
+    await repo.setEmulatorBinding(
+      '/p',
+      const EmulatorBinding.physical(
+        serial: 'R58M1234567',
+        name: 'Pixel 6',
+      ),
+    );
+    final got = await repo.getEmulatorBinding('/p');
+    expect(got, isA<PhysicalDeviceBinding>());
+    expect((got! as PhysicalDeviceBinding).serial, 'R58M1234567');
+    expect((got as PhysicalDeviceBinding).name, 'Pixel 6');
+  });
+
   test('clearEmulatorBinding returns null', () async {
     await repo.setEmulatorBinding(
       '/p',

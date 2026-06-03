@@ -34,4 +34,21 @@ void main() {
     const snap = DeviceListSnapshot(avds: [avd], running: []);
     expect(snap.runningFor(avd), isNull);
   });
+
+  test('physical device exposes display AVD and matches by serial', () {
+    const device = RunningAndroidDevice(
+      serial: 'R58M1234567',
+      avdName: null,
+      state: 'device',
+      kind: AndroidDeviceKind.physical,
+      model: 'Pixel 6',
+    );
+    final avd = device.asDeviceAvd;
+    const snap = DeviceListSnapshot(avds: [], running: [device]);
+
+    expect(device.displayName, 'Pixel 6');
+    expect(avd.id, 'R58M1234567');
+    expect(avd.platform, androidPhysicalPlatform);
+    expect(snap.runningFor(avd), device);
+  });
 }

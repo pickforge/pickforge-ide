@@ -24,6 +24,13 @@ void main() {
     registerFallbackValue(
       const Avd(id: 'fallback', name: 'fallback', platform: 'android'),
     );
+    registerFallbackValue(
+      const RunningAndroidDevice(
+        serial: 'fallback',
+        avdName: null,
+        state: 'device',
+      ),
+    );
     registerFallbackValue(const RunArgs());
     registerFallbackValue(const EmulatorLaunchOptions());
     registerFallbackValue(const EmulatorIdleShutdownSettings());
@@ -47,12 +54,44 @@ void main() {
     );
 
     expect(find.text('Device & Run'), findsOneWidget);
-    await tester.tap(find.byType(DropdownButton<Avd>));
+    await tester.tap(find.byKey(const Key('device-dropdown')));
     await tester.pumpAndSettle();
     expect(find.text('Pixel 5'), findsOneWidget);
     await tester.tap(find.text('Pixel 5'));
     await tester.pumpAndSettle();
     verify(() => cubit.setAvd('/p', any())).called(1);
+  });
+
+  testWidgets('renders physical device list and picking calls cubit',
+      (tester) async {
+    const device = RunningAndroidDevice(
+      serial: 'R58M1234567',
+      avdName: null,
+      state: 'device',
+      kind: AndroidDeviceKind.physical,
+      model: 'Pixel 6',
+    );
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(runningDevices: [device]),
+    );
+    when(() => cubit.setPhysicalDevice(any(), any())).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('device-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Pixel 6 (R58M1234567)'), findsOneWidget);
+    await tester.tap(find.text('Pixel 6 (R58M1234567)').last);
+    await tester.pumpAndSettle();
+
+    verify(() => cubit.setPhysicalDevice('/p', device)).called(1);
   });
 
   testWidgets('manual mode reveals URL field', (tester) async {

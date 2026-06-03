@@ -31,7 +31,8 @@ class _MockDiagnostics extends Mock implements DiagnosticsService {}
 
 class _NullAdb extends Fake implements AdbScreenshotCapturer {
   @override
-  Future<String?> capture({required String outputDir}) async => null;
+  Future<String?> capture({required String outputDir, String? serial}) async =>
+      null;
 }
 
 class _RecordingPool extends PtySessionPool {
@@ -156,7 +157,10 @@ void main() {
       'forge succeeds: launching true → false; sends prompt to pool',
       build: () {
         when(
-          () => adb.capture(outputDir: any(named: 'outputDir')),
+          () => adb.capture(
+            outputDir: any(named: 'outputDir'),
+            serial: any(named: 'serial'),
+          ),
         ).thenAnswer((_) async => null);
         when(() => launcher.prepareContext(any()))
             .thenAnswer((_) async => _stubContext());
@@ -181,7 +185,10 @@ void main() {
       'forge captures adb screenshot and passes enriched widget',
       build: () {
         when(
-          () => adb.capture(outputDir: any(named: 'outputDir')),
+          () => adb.capture(
+            outputDir: any(named: 'outputDir'),
+            serial: any(named: 'serial'),
+          ),
         ).thenAnswer((_) async => '/tmp/test/.pickforge/device-screen.png');
         when(() => launcher.prepareContext(any()))
             .thenAnswer((_) async => _stubContext());
@@ -273,10 +280,42 @@ void main() {
     });
 
     blocTest<ForgeCubit, ForgeState>(
+      'forge forwards selected device serial to adb screenshot',
+      build: () {
+        when(
+          () => adb.capture(
+            outputDir: any(named: 'outputDir'),
+            serial: any(named: 'serial'),
+          ),
+        ).thenAnswer((_) async => null);
+        when(() => launcher.prepareContext(any()))
+            .thenAnswer((_) async => _stubContext());
+        return buildCubit();
+      },
+      act: (cubit) => cubit.forge(
+        selection: _sampleWidget,
+        projectRoot: '/tmp/test',
+        chatId: 'chat-1',
+        deviceSerial: 'R58M1234567',
+      ),
+      verify: (_) {
+        verify(
+          () => adb.capture(
+            outputDir: '/tmp/test/.pickforge',
+            serial: 'R58M1234567',
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ForgeCubit, ForgeState>(
       'forge failure emits error state and skips sendPrompt',
       build: () {
         when(
-          () => adb.capture(outputDir: any(named: 'outputDir')),
+          () => adb.capture(
+            outputDir: any(named: 'outputDir'),
+            serial: any(named: 'serial'),
+          ),
         ).thenAnswer((_) async => null);
         when(
           () => launcher.prepareContext(any()),
@@ -310,7 +349,12 @@ void main() {
             .having((s) => s.lastError, 'lastError', isNotNull),
       ],
       verify: (_) {
-        verifyNever(() => adb.capture(outputDir: any(named: 'outputDir')));
+        verifyNever(
+          () => adb.capture(
+            outputDir: any(named: 'outputDir'),
+            serial: any(named: 'serial'),
+          ),
+        );
         verifyNever(() => launcher.prepareContext(any()));
         verifyNever(() => pool.sendPrompt(any(), any()));
       },

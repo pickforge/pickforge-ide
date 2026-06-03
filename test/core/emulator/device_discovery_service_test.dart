@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
+import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 
 class _FakeRunner extends Mock implements ProcessRunner {}
@@ -43,7 +44,12 @@ void main() {
   });
 
   test('listRunningDevices parses adb devices -l', () async {
-    final raw = await File('test/fixtures/adb_devices_two.txt').readAsString();
+    const raw = '''
+List of devices attached
+R58M1234567	device usb:1-1 product:oriole model:Pixel_6 device:oriole transport_id:1
+emulator-5554	device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:2
+emulator-5556	offline
+''';
     when(() => runner.run('adb', ['devices', '-l']))
         .thenAnswer((_) async => ok(raw));
     when(() => runner.run('adb', ['-s', 'emulator-5554', 'emu', 'avd', 'name']))
@@ -51,11 +57,19 @@ void main() {
     when(() => runner.run('adb', ['-s', 'emulator-5556', 'emu', 'avd', 'name']))
         .thenAnswer((_) async => fail(''));
     final devs = await service.listRunningDevices();
-    expect(devs, hasLength(2));
-    expect(devs[0].serial, 'emulator-5554');
+    expect(devs, hasLength(3));
+    expect(devs[0].serial, 'R58M1234567');
+    expect(devs[0].kind, AndroidDeviceKind.physical);
+    expect(devs[0].model, 'Pixel 6');
     expect(devs[0].state, 'device');
-    expect(devs[1].serial, 'emulator-5556');
-    expect(devs[1].state, 'offline');
+    expect(devs[1].serial, 'emulator-5554');
+    expect(devs[1].kind, AndroidDeviceKind.emulator);
+    expect(devs[1].state, 'device');
+    expect(devs[2].serial, 'emulator-5556');
+    expect(devs[2].state, 'offline');
+    verifyNever(
+      () => runner.run('adb', ['-s', 'R58M1234567', 'emu', 'avd', 'name']),
+    );
   });
 
   test('listRunningDevices returns empty when no emulators', () async {

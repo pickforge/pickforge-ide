@@ -10,6 +10,11 @@ abstract class EmulatorBinding with _$EmulatorBinding {
     @Default(true) bool autoBootOnSelect,
   }) = AvdBinding;
 
+  const factory EmulatorBinding.physical({
+    required String serial,
+    required String name,
+  }) = PhysicalDeviceBinding;
+
   const factory EmulatorBinding.manual({
     required String vmServiceUrl,
   }) = ManualBinding;

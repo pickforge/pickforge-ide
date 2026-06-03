@@ -24,7 +24,7 @@ void main() {
       }
     });
 
-    test('returns null when no emulator found', () async {
+    test('returns null when no device found', () async {
       Future<ProcessResult> runner(String executable, List<String> args) async {
         if (args.contains('devices')) {
           return ProcessResult(
@@ -89,6 +89,90 @@ void main() {
         expect(outputFile.existsSync(), isTrue);
         final bytes = outputFile.readAsBytesSync();
         expect(bytes, equals(pngHeader));
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    test('captures from provided physical device serial', () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      final calls = <List<String>>[];
+
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        calls.add(args);
+        if (args.contains('devices')) {
+          return ProcessResult(1, 1, '', 'should not query devices');
+        }
+        if (args.contains('screencap')) {
+          return ProcessResult(0, 0, pngHeader, '');
+        }
+        return ProcessResult(0, 0, '/usr/bin/adb', '');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(
+        detector,
+        processRunner: runner,
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync('adb_test_');
+      try {
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          serial: 'R58M1234567',
+        );
+
+        expect(result, isNotNull);
+        expect(
+          calls,
+          contains(
+            equals(['-s', 'R58M1234567', 'exec-out', 'screencap', '-p']),
+          ),
+        );
+        expect(calls, isNot(contains(equals(['devices']))));
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    test('uses first connected physical device when serial is omitted',
+        () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      final calls = <List<String>>[];
+
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        calls.add(args);
+        if (args.contains('devices')) {
+          return ProcessResult(
+            0,
+            0,
+            'List of devices attached\nR58M1234567\tdevice\n',
+            '',
+          );
+        }
+        if (args.contains('screencap')) {
+          return ProcessResult(0, 0, pngHeader, '');
+        }
+        return ProcessResult(0, 0, '/usr/bin/adb', '');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(
+        detector,
+        processRunner: runner,
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync('adb_test_');
+      try {
+        final result = await capturer.capture(outputDir: tempDir.path);
+
+        expect(result, isNotNull);
+        expect(
+          calls,
+          contains(
+            equals(['-s', 'R58M1234567', 'exec-out', 'screencap', '-p']),
+          ),
+        );
       } finally {
         tempDir.deleteSync(recursive: true);
       }

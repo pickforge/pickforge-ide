@@ -52,6 +52,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
     TResult Function(AvdBinding value)? avd,
+    TResult Function(PhysicalDeviceBinding value)? physical,
     TResult Function(ManualBinding value)? manual,
     required TResult orElse(),
   }) {
@@ -59,6 +60,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     switch (_that) {
       case AvdBinding() when avd != null:
         return avd(_that);
+      case PhysicalDeviceBinding() when physical != null:
+        return physical(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -82,12 +85,15 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   @optionalTypeArgs
   TResult map<TResult extends Object?>({
     required TResult Function(AvdBinding value) avd,
+    required TResult Function(PhysicalDeviceBinding value) physical,
     required TResult Function(ManualBinding value) manual,
   }) {
     final _that = this;
     switch (_that) {
       case AvdBinding():
         return avd(_that);
+      case PhysicalDeviceBinding():
+        return physical(_that);
       case ManualBinding():
         return manual(_that);
       case _:
@@ -110,12 +116,15 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(AvdBinding value)? avd,
+    TResult? Function(PhysicalDeviceBinding value)? physical,
     TResult? Function(ManualBinding value)? manual,
   }) {
     final _that = this;
     switch (_that) {
       case AvdBinding() when avd != null:
         return avd(_that);
+      case PhysicalDeviceBinding() when physical != null:
+        return physical(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -138,6 +147,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(String avdId, String avdName, bool autoBootOnSelect)? avd,
+    TResult Function(String serial, String name)? physical,
     TResult Function(String vmServiceUrl)? manual,
     required TResult orElse(),
   }) {
@@ -145,6 +155,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     switch (_that) {
       case AvdBinding() when avd != null:
         return avd(_that.avdId, _that.avdName, _that.autoBootOnSelect);
+      case PhysicalDeviceBinding() when physical != null:
+        return physical(_that.serial, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -170,12 +182,15 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     required TResult Function(
             String avdId, String avdName, bool autoBootOnSelect)
         avd,
+    required TResult Function(String serial, String name) physical,
     required TResult Function(String vmServiceUrl) manual,
   }) {
     final _that = this;
     switch (_that) {
       case AvdBinding():
         return avd(_that.avdId, _that.avdName, _that.autoBootOnSelect);
+      case PhysicalDeviceBinding():
+        return physical(_that.serial, _that.name);
       case ManualBinding():
         return manual(_that.vmServiceUrl);
       case _:
@@ -198,12 +213,15 @@ extension EmulatorBindingPatterns on EmulatorBinding {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(String avdId, String avdName, bool autoBootOnSelect)? avd,
+    TResult? Function(String serial, String name)? physical,
     TResult? Function(String vmServiceUrl)? manual,
   }) {
     final _that = this;
     switch (_that) {
       case AvdBinding() when avd != null:
         return avd(_that.avdId, _that.avdName, _that.autoBootOnSelect);
+      case PhysicalDeviceBinding() when physical != null:
+        return physical(_that.serial, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -291,6 +309,78 @@ class _$AvdBindingCopyWithImpl<$Res> implements $AvdBindingCopyWith<$Res> {
           ? _self.autoBootOnSelect
           : autoBootOnSelect // ignore: cast_nullable_to_non_nullable
               as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class PhysicalDeviceBinding implements EmulatorBinding {
+  const PhysicalDeviceBinding({required this.serial, required this.name});
+
+  final String serial;
+  final String name;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $PhysicalDeviceBindingCopyWith<PhysicalDeviceBinding> get copyWith =>
+      _$PhysicalDeviceBindingCopyWithImpl<PhysicalDeviceBinding>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is PhysicalDeviceBinding &&
+            (identical(other.serial, serial) || other.serial == serial) &&
+            (identical(other.name, name) || other.name == name));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, serial, name);
+
+  @override
+  String toString() {
+    return 'EmulatorBinding.physical(serial: $serial, name: $name)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $PhysicalDeviceBindingCopyWith<$Res>
+    implements $EmulatorBindingCopyWith<$Res> {
+  factory $PhysicalDeviceBindingCopyWith(PhysicalDeviceBinding value,
+          $Res Function(PhysicalDeviceBinding) _then) =
+      _$PhysicalDeviceBindingCopyWithImpl;
+  @useResult
+  $Res call({String serial, String name});
+}
+
+/// @nodoc
+class _$PhysicalDeviceBindingCopyWithImpl<$Res>
+    implements $PhysicalDeviceBindingCopyWith<$Res> {
+  _$PhysicalDeviceBindingCopyWithImpl(this._self, this._then);
+
+  final PhysicalDeviceBinding _self;
+  final $Res Function(PhysicalDeviceBinding) _then;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? serial = null,
+    Object? name = null,
+  }) {
+    return _then(PhysicalDeviceBinding(
+      serial: null == serial
+          ? _self.serial
+          : serial // ignore: cast_nullable_to_non_nullable
+              as String,
+      name: null == name
+          ? _self.name
+          : name // ignore: cast_nullable_to_non_nullable
+              as String,
     ));
   }
 }

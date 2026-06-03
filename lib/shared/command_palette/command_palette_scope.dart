@@ -63,6 +63,12 @@ List<PickforgeCommand> buildNavCommands(BuildContext context) {
       run: () => context.go(AppRoutes.demo),
     ),
     PickforgeCommand(
+      id: 'nav-history',
+      title: 'Open Pick History',
+      hint: 'Recent widget picks',
+      run: () => context.go(AppRoutes.history),
+    ),
+    PickforgeCommand(
       id: 'nav-settings',
       title: 'Go to Settings',
       hint: 'App settings',

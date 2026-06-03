@@ -18,6 +18,7 @@ class PickHistoryDao extends DatabaseAccessor<PickforgeDatabase>
     required String agentId,
     required String terminalId,
     required String widgetContextJson,
+    String? chatId,
   }) {
     return into(pickHistory).insert(
       PickHistoryCompanion.insert(
@@ -28,6 +29,7 @@ class PickHistoryDao extends DatabaseAccessor<PickforgeDatabase>
         skillId: skillId,
         agentId: agentId,
         terminalId: terminalId,
+        chatId: Value(chatId),
         pickedAt: DateTime.now(),
         widgetContextJson: widgetContextJson,
       ),

@@ -189,14 +189,19 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Implementation option**
 
-- [ ] Add `HistoryView` or fold recent picks into command palette/search.
-- [ ] Show selected widget class, project, skill, agent, picked time, and linked chat if available.
-- [ ] Add route/command entry if implemented.
+- [x] Add `HistoryView` or fold recent picks into command palette/search.
+- [x] Show selected widget class, project, skill, agent, picked time, and linked chat if available.
+- [x] Add route/command entry if implemented.
 
 **Validation**
 
-- DAO/repository tests for recent history.
-- Widget test for rendering an empty and populated history.
+- [x] DAO/repository tests for recent history.
+- [x] Widget test for rendering an empty and populated history.
+
+**Latest evidence**
+
+- 2026-06-03: Added pick-history recording from inspector selections, a route-backed `HistoryView`, and a command palette entry; ran `fvm flutter test test/core/history/pick_history_recorder_test.dart test/features/history/view/history_view_test.dart test/core/router/app_router_test.dart test/features/workbench/view/inspector_panel_test.dart --reporter=compact`, passed.
+- 2026-06-03: Final P1.T6 gates passed: `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, and `fvm flutter test --reporter=compact` (338 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`).
 
 ### P1.T7 — PTY lifecycle on project switch
 

@@ -1,8 +1,12 @@
+import 'dart:async';
+
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/history/pick_history_recorder.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/features/forge/forge.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
@@ -206,5 +210,81 @@ void main() {
     expect(find.text('Forge it'), findsOneWidget);
     final button = tester.widget<FilledButton>(find.byType(FilledButton));
     expect(button.onPressed, isNull);
+  });
+
+  testWidgets('records pick history when selected widget changes',
+      (tester) async {
+    final db = PickforgeDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    final pickerStream = StreamController<WidgetPickerState>.broadcast();
+    addTearDown(pickerStream.close);
+
+    final cubit = _MockCubit();
+    when(() => cubit.state).thenReturn(WidgetPickerState.initial());
+    when(() => cubit.stream).thenAnswer((_) => pickerStream.stream);
+
+    final projectsCubit = _MockProjectsCubit();
+    final projectsState = ProjectsReady(
+      projects: [_project('/tmp/test')],
+      activeProjectRoot: '/tmp/test',
+    );
+    when(() => projectsCubit.state).thenReturn(projectsState);
+    when(() => projectsCubit.stream)
+        .thenAnswer((_) => Stream.fromIterable([projectsState]));
+
+    final chatsCubit = _MockChatsCubit();
+    final chatsState = ChatsReady(
+      chatsByProject: {
+        '/tmp/test': [_chat('chat-1', '/tmp/test')],
+      },
+      expanded: const {'/tmp/test'},
+      activeChatId: 'chat-1',
+    );
+    when(() => chatsCubit.state).thenReturn(chatsState);
+    when(() => chatsCubit.stream)
+        .thenAnswer((_) => Stream.fromIterable([chatsState]));
+
+    final forgeCubit = _MockForgeCubit();
+    when(() => forgeCubit.state).thenReturn(ForgeState.initial());
+    when(() => forgeCubit.stream).thenAnswer((_) => const Stream.empty());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: MultiBlocProvider(
+          providers: [
+            BlocProvider<ProjectsCubit>.value(value: projectsCubit),
+            BlocProvider<ChatsCubit>.value(value: chatsCubit),
+            BlocProvider<ForgeCubit>.value(value: forgeCubit),
+          ],
+          child: Scaffold(
+            body: InspectorPanel(
+              cubit: cubit,
+              historyRecorder: PickHistoryRecorder(db.pickHistoryDao),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    pickerStream.add(
+      const WidgetPickerState(
+        selection: _sampleWidget,
+        selectModeEnabled: true,
+      ),
+    );
+    await tester.pump();
+
+    var rows = <PickHistoryRow>[];
+    for (var i = 0; i < 20 && rows.isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+      rows = await db.select(db.pickHistory).get();
+    }
+
+    expect(rows, hasLength(1));
+    expect(rows.single.widgetClass, 'Text');
+    expect(rows.single.projectRoot, '/tmp/test');
+    expect(rows.single.chatId, 'chat-1');
   });
 }

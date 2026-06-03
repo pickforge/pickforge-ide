@@ -56,4 +56,40 @@ void main() {
     expect(find.text('View logs'), findsOneWidget);
     expect(find.text('View run history'), findsOneWidget);
   });
+
+  testWidgets('RecoveryPending surfaces adopt and cleanup', (tester) async {
+    await pump(
+      tester,
+      EmulatorSessionState.recoveryPending(
+        sessionId: 's',
+        pid: 4242,
+        serial: 'emulator-5554',
+        startedAt: DateTime.utc(2026, 6, 3),
+        avd: const Avd(id: 'A', name: 'Pixel 5', platform: 'android'),
+        vmServiceUri: 'ws://x/ws',
+        canAdopt: true,
+      ),
+    );
+    await tester.tap(find.byKey(const Key('pill-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('Adopt recovered run'), findsOneWidget);
+    expect(find.text('Clean up orphaned run'), findsOneWidget);
+    expect(find.text('View run history'), findsOneWidget);
+  });
+
+  testWidgets('Recovered running state surfaces cleanup instead of restart',
+      (tester) async {
+    await pump(
+      tester,
+      EmulatorSessionState.running(
+        vmServiceUri: 'ws://x',
+        stats: RunStats(),
+        recovered: true,
+      ),
+    );
+    await tester.tap(find.byKey(const Key('pill-menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('Hot restart'), findsNothing);
+    expect(find.text('Clean up orphaned run'), findsOneWidget);
+  });
 }

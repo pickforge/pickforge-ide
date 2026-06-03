@@ -68,6 +68,36 @@ void main() {
     expect(find.text('Reload'), findsOneWidget);
   });
 
+  testWidgets('RecoveryPending shows adopt action', (tester) async {
+    await pump(
+      tester,
+      EmulatorSessionState.recoveryPending(
+        sessionId: 's',
+        pid: 4242,
+        serial: 'emulator-5554',
+        startedAt: DateTime.utc(2026, 6, 3),
+        avd: const Avd(id: 'A', name: 'Pixel 5 API 34', platform: 'android'),
+        vmServiceUri: 'ws://x/ws',
+        canAdopt: true,
+      ),
+    );
+    expect(find.text('Recover Pixel 5 API 34'), findsOneWidget);
+    expect(find.text('Adopt'), findsOneWidget);
+  });
+
+  testWidgets('Recovered running state hides reload', (tester) async {
+    await pump(
+      tester,
+      EmulatorSessionState.running(
+        vmServiceUri: 'ws://x',
+        stats: RunStats(),
+        recovered: true,
+      ),
+    );
+    expect(find.text('Reload'), findsNothing);
+    expect(find.text('Cleanup'), findsOneWidget);
+  });
+
   testWidgets('Manual mode shows Manual label', (tester) async {
     await pump(
       tester,

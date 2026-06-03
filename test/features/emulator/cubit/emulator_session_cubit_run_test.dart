@@ -10,6 +10,7 @@ import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
+import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
@@ -32,6 +33,8 @@ class _MV extends Mock implements VmServiceClient {}
 
 class _FakeRunSession extends Mock implements RunSession {}
 
+class _Recovery extends Mock implements RunSessionRecoveryStore {}
+
 void main() {
   late _MS settings;
   late _MD disc;
@@ -40,8 +43,21 @@ void main() {
   late _MR run;
   late _MLog log;
   late _MV vm;
+  late _Recovery recovery;
   late _FakeRunSession session;
   late StreamController<RunSessionEvent> events;
+
+  setUpAll(() {
+    registerFallbackValue(
+      RunSessionRecoveryMetadata(
+        sessionId: 'fallback',
+        projectRoot: '/fallback',
+        pid: 1,
+        serial: 'emulator-5554',
+        startedAt: DateTime.utc(2026, 6, 3),
+      ),
+    );
+  });
 
   setUp(() {
     settings = _MS();
@@ -51,12 +67,14 @@ void main() {
     run = _MR();
     log = _MLog();
     vm = _MV();
+    recovery = _Recovery();
     session = _FakeRunSession();
     events = StreamController<RunSessionEvent>.broadcast();
     when(() => session.events).thenAnswer((_) => events.stream);
     when(() => session.appId).thenReturn('app-1');
     when(() => session.vmServiceUri).thenReturn('ws://x/ws');
     when(() => session.sessionId).thenReturn('ses-1');
+    when(() => session.pid).thenReturn(4242);
     when(() => session.hotReload()).thenAnswer((_) async => true);
     when(() => session.hotRestart()).thenAnswer((_) async => true);
     when(() => session.stop()).thenAnswer((_) async {});
@@ -94,6 +112,10 @@ void main() {
       ),
     ).thenAnswer((_) async {});
     when(() => vm.connect(any())).thenAnswer((_) async {});
+    when(() => recovery.persist(any())).thenAnswer((_) async {});
+    when(() => recovery.remove(any())).thenAnswer((_) async {});
+    when(() => recovery.cleanup(any())).thenAnswer((_) async {});
+    when(() => recovery.findRecoverable('/p')).thenAnswer((_) async => null);
   });
   tearDown(() => events.close());
 
@@ -109,6 +131,131 @@ void main() {
       );
   const avd =
       Avd(id: 'Pixel_5_API_34', name: 'Pixel 5 API 34', platform: 'android');
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootstrap offers adoption for recoverable orphaned run',
+    setUp: () {
+      when(() => recovery.findRecoverable('/p')).thenAnswer(
+        (_) async => RunSessionRecoveryMetadata(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          pid: 4242,
+          serial: 'emulator-5554',
+          startedAt: DateTime.utc(2026, 6, 3),
+          avdId: 'Pixel_10',
+          avdName: 'Pixel 10',
+          vmServiceUri: 'ws://x/ws',
+        ),
+      );
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      recoveryStore: recovery,
+    ),
+    act: (c) => c.bootstrap(),
+    expect: () => [
+      isA<RecoveryPending>()
+          .having((s) => s.canAdopt, 'canAdopt', isTrue)
+          .having((s) => s.pid, 'pid', 4242),
+    ],
+    verify: (_) => verifyNever(() => settings.getEmulatorBinding('/p')),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'adoptRecoveredRun connects to saved VM service',
+    setUp: () {
+      when(() => recovery.findRecoverable('/p')).thenAnswer(
+        (_) async => RunSessionRecoveryMetadata(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          pid: 4242,
+          serial: 'emulator-5554',
+          startedAt: DateTime.utc(2026, 6, 3),
+          avdId: 'Pixel_10',
+          avdName: 'Pixel 10',
+          vmServiceUri: 'ws://x/ws',
+          appId: 'app-1',
+        ),
+      );
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      recoveryStore: recovery,
+    ),
+    act: (c) async {
+      await c.bootstrap();
+      await c.adoptRecoveredRun();
+    },
+    expect: () => [
+      isA<RecoveryPending>(),
+      isA<Running>()
+          .having((s) => s.recovered, 'recovered', isTrue)
+          .having((s) => s.vmServiceUri, 'vmServiceUri', 'ws://x/ws'),
+    ],
+    verify: (_) => verify(() => vm.connect('ws://x/ws')).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'cleanupRecoveredRun kills safe orphan and returns to device state',
+    setUp: () {
+      when(() => recovery.findRecoverable('/p')).thenAnswer(
+        (_) async => RunSessionRecoveryMetadata(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          pid: 4242,
+          serial: 'emulator-5554',
+          startedAt: DateTime.utc(2026, 6, 3),
+          avdId: 'Pixel_10',
+          avdName: 'Pixel 10',
+        ),
+      );
+      when(() => settings.getEmulatorBinding('/p')).thenAnswer(
+        (_) async => null,
+      );
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      recoveryStore: recovery,
+    ),
+    act: (c) async {
+      await c.bootstrap();
+      when(() => recovery.findRecoverable('/p')).thenAnswer((_) async => null);
+      await c.cleanupRecoveredRun();
+    },
+    expect: () => [isA<RecoveryPending>(), isA<NoDevicePicked>()],
+    verify: (_) => verify(
+      () => recovery.cleanup(
+        any(
+          that: isA<RunSessionRecoveryMetadata>().having(
+            (m) => m.sessionId,
+            'sessionId',
+            'ses-1',
+          ),
+        ),
+      ),
+    ).called(1),
+  );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'runApp from idle attaches inspector on vmServiceReady',
@@ -130,6 +277,54 @@ void main() {
     },
     expect: () => [isA<Running>().having((s) => s.manual, 'manual', false)],
     verify: (_) => verify(() => vm.connect('ws://x/ws')).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'runApp persists recovery metadata and removes it on stop',
+    setUp: () => when(
+      () => run.start(
+        projectRoot: '/p',
+        serial: 'emulator-5554',
+        targetFile: any(named: 'targetFile'),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session),
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      recoveryStore: recovery,
+    ),
+    seed: () =>
+        const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
+    act: (c) async {
+      await c.runApp();
+      events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await c.stopRun();
+    },
+    expect: () => [isA<Running>(), isA<Idle>()],
+    verify: (_) {
+      verify(
+        () => recovery.persist(
+          any(
+            that: isA<RunSessionRecoveryMetadata>()
+                .having((m) => m.pid, 'pid', 4242)
+                .having((m) => m.ipcSocketPath, 'ipcSocketPath', isNull),
+          ),
+        ),
+      ).called(greaterThanOrEqualTo(1));
+      verify(
+        () => recovery.remove(
+          any(that: isA<RunSessionRecoveryMetadata>()),
+        ),
+      ).called(1);
+    },
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(

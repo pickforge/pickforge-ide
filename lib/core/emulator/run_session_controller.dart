@@ -31,6 +31,7 @@ class RunSession {
 
   String? get appId => _appId;
   String? get vmServiceUri => _vmServiceUri;
+  int get pid => _proc.pid;
   Future<int> get exitCode => _proc.exitCode;
 
   Future<bool> hotReload() async {

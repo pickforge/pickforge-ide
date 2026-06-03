@@ -55,6 +55,7 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult Function(Cold value)? cold,
     TResult Function(Booting value)? booting,
     TResult Function(Idle value)? idle,
+    TResult Function(RecoveryPending value)? recoveryPending,
     TResult Function(Running value)? running,
     TResult Function(Reconnecting value)? reconnecting,
     TResult Function(EmulatorError value)? error,
@@ -70,6 +71,8 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return booting(_that);
       case Idle() when idle != null:
         return idle(_that);
+      case RecoveryPending() when recoveryPending != null:
+        return recoveryPending(_that);
       case Running() when running != null:
         return running(_that);
       case Reconnecting() when reconnecting != null:
@@ -100,6 +103,7 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     required TResult Function(Cold value) cold,
     required TResult Function(Booting value) booting,
     required TResult Function(Idle value) idle,
+    required TResult Function(RecoveryPending value) recoveryPending,
     required TResult Function(Running value) running,
     required TResult Function(Reconnecting value) reconnecting,
     required TResult Function(EmulatorError value) error,
@@ -114,6 +118,8 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return booting(_that);
       case Idle():
         return idle(_that);
+      case RecoveryPending():
+        return recoveryPending(_that);
       case Running():
         return running(_that);
       case Reconnecting():
@@ -141,6 +147,7 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult? Function(Cold value)? cold,
     TResult? Function(Booting value)? booting,
     TResult? Function(Idle value)? idle,
+    TResult? Function(RecoveryPending value)? recoveryPending,
     TResult? Function(Running value)? running,
     TResult? Function(Reconnecting value)? reconnecting,
     TResult? Function(EmulatorError value)? error,
@@ -155,6 +162,8 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return booting(_that);
       case Idle() when idle != null:
         return idle(_that);
+      case RecoveryPending() when recoveryPending != null:
+        return recoveryPending(_that);
       case Running() when running != null:
         return running(_that);
       case Reconnecting() when reconnecting != null:
@@ -184,8 +193,18 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult Function(Avd avd)? cold,
     TResult Function(Avd avd, int elapsedMs)? booting,
     TResult Function(Avd avd, String serial)? idle,
-    TResult Function(String vmServiceUri, RunStats stats, Avd? avd,
-            String? serial, String? appId, bool manual, DateTime? lastReloadAt)?
+    TResult Function(String sessionId, int pid, String serial,
+            DateTime startedAt, Avd? avd, String? vmServiceUri, bool canAdopt)?
+        recoveryPending,
+    TResult Function(
+            String vmServiceUri,
+            RunStats stats,
+            Avd? avd,
+            String? serial,
+            String? appId,
+            bool manual,
+            bool recovered,
+            DateTime? lastReloadAt)?
         running,
     TResult Function(Avd avd, String serial, String appId, int attempt)?
         reconnecting,
@@ -204,9 +223,12 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return booting(_that.avd, _that.elapsedMs);
       case Idle() when idle != null:
         return idle(_that.avd, _that.serial);
+      case RecoveryPending() when recoveryPending != null:
+        return recoveryPending(_that.sessionId, _that.pid, _that.serial,
+            _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
       case Running() when running != null:
         return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
-            _that.appId, _that.manual, _that.lastReloadAt);
+            _that.appId, _that.manual, _that.recovered, _that.lastReloadAt);
       case Reconnecting() when reconnecting != null:
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
@@ -237,8 +259,18 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     required TResult Function(Avd avd) cold,
     required TResult Function(Avd avd, int elapsedMs) booting,
     required TResult Function(Avd avd, String serial) idle,
-    required TResult Function(String vmServiceUri, RunStats stats, Avd? avd,
-            String? serial, String? appId, bool manual, DateTime? lastReloadAt)
+    required TResult Function(String sessionId, int pid, String serial,
+            DateTime startedAt, Avd? avd, String? vmServiceUri, bool canAdopt)
+        recoveryPending,
+    required TResult Function(
+            String vmServiceUri,
+            RunStats stats,
+            Avd? avd,
+            String? serial,
+            String? appId,
+            bool manual,
+            bool recovered,
+            DateTime? lastReloadAt)
         running,
     required TResult Function(Avd avd, String serial, String appId, int attempt)
         reconnecting,
@@ -256,9 +288,12 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return booting(_that.avd, _that.elapsedMs);
       case Idle():
         return idle(_that.avd, _that.serial);
+      case RecoveryPending():
+        return recoveryPending(_that.sessionId, _that.pid, _that.serial,
+            _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
       case Running():
         return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
-            _that.appId, _that.manual, _that.lastReloadAt);
+            _that.appId, _that.manual, _that.recovered, _that.lastReloadAt);
       case Reconnecting():
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
@@ -286,8 +321,18 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
     TResult? Function(Avd avd)? cold,
     TResult? Function(Avd avd, int elapsedMs)? booting,
     TResult? Function(Avd avd, String serial)? idle,
-    TResult? Function(String vmServiceUri, RunStats stats, Avd? avd,
-            String? serial, String? appId, bool manual, DateTime? lastReloadAt)?
+    TResult? Function(String sessionId, int pid, String serial,
+            DateTime startedAt, Avd? avd, String? vmServiceUri, bool canAdopt)?
+        recoveryPending,
+    TResult? Function(
+            String vmServiceUri,
+            RunStats stats,
+            Avd? avd,
+            String? serial,
+            String? appId,
+            bool manual,
+            bool recovered,
+            DateTime? lastReloadAt)?
         running,
     TResult? Function(Avd avd, String serial, String appId, int attempt)?
         reconnecting,
@@ -305,9 +350,12 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return booting(_that.avd, _that.elapsedMs);
       case Idle() when idle != null:
         return idle(_that.avd, _that.serial);
+      case RecoveryPending() when recoveryPending != null:
+        return recoveryPending(_that.sessionId, _that.pid, _that.serial,
+            _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
       case Running() when running != null:
         return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
-            _that.appId, _that.manual, _that.lastReloadAt);
+            _that.appId, _that.manual, _that.recovered, _that.lastReloadAt);
       case Reconnecting() when reconnecting != null:
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
@@ -544,6 +592,132 @@ class _$IdleCopyWithImpl<$Res> implements $IdleCopyWith<$Res> {
 
 /// @nodoc
 
+class RecoveryPending implements EmulatorSessionState {
+  const RecoveryPending(
+      {required this.sessionId,
+      required this.pid,
+      required this.serial,
+      required this.startedAt,
+      this.avd,
+      this.vmServiceUri,
+      this.canAdopt = false});
+
+  final String sessionId;
+  final int pid;
+  final String serial;
+  final DateTime startedAt;
+  final Avd? avd;
+  final String? vmServiceUri;
+  @JsonKey()
+  final bool canAdopt;
+
+  /// Create a copy of EmulatorSessionState
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $RecoveryPendingCopyWith<RecoveryPending> get copyWith =>
+      _$RecoveryPendingCopyWithImpl<RecoveryPending>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is RecoveryPending &&
+            (identical(other.sessionId, sessionId) ||
+                other.sessionId == sessionId) &&
+            (identical(other.pid, pid) || other.pid == pid) &&
+            (identical(other.serial, serial) || other.serial == serial) &&
+            (identical(other.startedAt, startedAt) ||
+                other.startedAt == startedAt) &&
+            (identical(other.avd, avd) || other.avd == avd) &&
+            (identical(other.vmServiceUri, vmServiceUri) ||
+                other.vmServiceUri == vmServiceUri) &&
+            (identical(other.canAdopt, canAdopt) ||
+                other.canAdopt == canAdopt));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, sessionId, pid, serial,
+      startedAt, avd, vmServiceUri, canAdopt);
+
+  @override
+  String toString() {
+    return 'EmulatorSessionState.recoveryPending(sessionId: $sessionId, pid: $pid, serial: $serial, startedAt: $startedAt, avd: $avd, vmServiceUri: $vmServiceUri, canAdopt: $canAdopt)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $RecoveryPendingCopyWith<$Res>
+    implements $EmulatorSessionStateCopyWith<$Res> {
+  factory $RecoveryPendingCopyWith(
+          RecoveryPending value, $Res Function(RecoveryPending) _then) =
+      _$RecoveryPendingCopyWithImpl;
+  @useResult
+  $Res call(
+      {String sessionId,
+      int pid,
+      String serial,
+      DateTime startedAt,
+      Avd? avd,
+      String? vmServiceUri,
+      bool canAdopt});
+}
+
+/// @nodoc
+class _$RecoveryPendingCopyWithImpl<$Res>
+    implements $RecoveryPendingCopyWith<$Res> {
+  _$RecoveryPendingCopyWithImpl(this._self, this._then);
+
+  final RecoveryPending _self;
+  final $Res Function(RecoveryPending) _then;
+
+  /// Create a copy of EmulatorSessionState
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? sessionId = null,
+    Object? pid = null,
+    Object? serial = null,
+    Object? startedAt = null,
+    Object? avd = freezed,
+    Object? vmServiceUri = freezed,
+    Object? canAdopt = null,
+  }) {
+    return _then(RecoveryPending(
+      sessionId: null == sessionId
+          ? _self.sessionId
+          : sessionId // ignore: cast_nullable_to_non_nullable
+              as String,
+      pid: null == pid
+          ? _self.pid
+          : pid // ignore: cast_nullable_to_non_nullable
+              as int,
+      serial: null == serial
+          ? _self.serial
+          : serial // ignore: cast_nullable_to_non_nullable
+              as String,
+      startedAt: null == startedAt
+          ? _self.startedAt
+          : startedAt // ignore: cast_nullable_to_non_nullable
+              as DateTime,
+      avd: freezed == avd
+          ? _self.avd
+          : avd // ignore: cast_nullable_to_non_nullable
+              as Avd?,
+      vmServiceUri: freezed == vmServiceUri
+          ? _self.vmServiceUri
+          : vmServiceUri // ignore: cast_nullable_to_non_nullable
+              as String?,
+      canAdopt: null == canAdopt
+          ? _self.canAdopt
+          : canAdopt // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
 class Running implements EmulatorSessionState {
   Running(
       {required this.vmServiceUri,
@@ -552,6 +726,7 @@ class Running implements EmulatorSessionState {
       this.serial,
       this.appId,
       this.manual = false,
+      this.recovered = false,
       this.lastReloadAt});
 
   final String vmServiceUri;
@@ -561,6 +736,8 @@ class Running implements EmulatorSessionState {
   final String? appId;
   @JsonKey()
   final bool manual;
+  @JsonKey()
+  final bool recovered;
   final DateTime? lastReloadAt;
 
   /// Create a copy of EmulatorSessionState
@@ -582,17 +759,19 @@ class Running implements EmulatorSessionState {
             (identical(other.serial, serial) || other.serial == serial) &&
             (identical(other.appId, appId) || other.appId == appId) &&
             (identical(other.manual, manual) || other.manual == manual) &&
+            (identical(other.recovered, recovered) ||
+                other.recovered == recovered) &&
             (identical(other.lastReloadAt, lastReloadAt) ||
                 other.lastReloadAt == lastReloadAt));
   }
 
   @override
   int get hashCode => Object.hash(runtimeType, vmServiceUri, stats, avd, serial,
-      appId, manual, lastReloadAt);
+      appId, manual, recovered, lastReloadAt);
 
   @override
   String toString() {
-    return 'EmulatorSessionState.running(vmServiceUri: $vmServiceUri, stats: $stats, avd: $avd, serial: $serial, appId: $appId, manual: $manual, lastReloadAt: $lastReloadAt)';
+    return 'EmulatorSessionState.running(vmServiceUri: $vmServiceUri, stats: $stats, avd: $avd, serial: $serial, appId: $appId, manual: $manual, recovered: $recovered, lastReloadAt: $lastReloadAt)';
   }
 }
 
@@ -609,6 +788,7 @@ abstract mixin class $RunningCopyWith<$Res>
       String? serial,
       String? appId,
       bool manual,
+      bool recovered,
       DateTime? lastReloadAt});
 }
 
@@ -629,6 +809,7 @@ class _$RunningCopyWithImpl<$Res> implements $RunningCopyWith<$Res> {
     Object? serial = freezed,
     Object? appId = freezed,
     Object? manual = null,
+    Object? recovered = null,
     Object? lastReloadAt = freezed,
   }) {
     return _then(Running(
@@ -655,6 +836,10 @@ class _$RunningCopyWithImpl<$Res> implements $RunningCopyWith<$Res> {
       manual: null == manual
           ? _self.manual
           : manual // ignore: cast_nullable_to_non_nullable
+              as bool,
+      recovered: null == recovered
+          ? _self.recovered
+          : recovered // ignore: cast_nullable_to_non_nullable
               as bool,
       lastReloadAt: freezed == lastReloadAt
           ? _self.lastReloadAt

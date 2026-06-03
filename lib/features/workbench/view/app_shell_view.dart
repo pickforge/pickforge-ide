@@ -12,6 +12,7 @@ import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
+import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/projects/project_file_tree_scanner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -134,6 +135,7 @@ class _AppShellViewState extends State<AppShellView> {
                         vmClient: getIt<VmServiceClient>(),
                         logsCubit: context.read<RunLogsCubit>(),
                         ipcServer: getIt<EmulatorIpcServer>(),
+                        recoveryStore: const RunSessionRecoveryStore(),
                       );
                       unawaited(cubit.bootstrap());
                       return cubit;

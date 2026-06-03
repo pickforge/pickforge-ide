@@ -90,6 +90,8 @@ class _PillContent extends StatelessWidget {
         Cold(:final avd) => avd.name,
         Booting(:final avd) => '${avd.name} booting...',
         Idle(:final avd) => avd.name,
+        RecoveryPending(:final avd, :final canAdopt) =>
+          canAdopt ? 'Recover ${avd?.name ?? 'run'}' : 'Stale run',
         Running(:final manual, :final avd) =>
           manual ? 'Manual' : (avd?.name ?? 'Running'),
         Reconnecting(:final avd) => '${avd.name} reconnecting',
@@ -230,12 +232,18 @@ class _Menu extends StatelessWidget {
               child: Text('View run history'),
             ),
           ],
-        Running(:final manual) => [
-            const PopupMenuItem(
-              value: _MenuAction.hotRestart,
-              child: Text('Hot restart'),
+        Running(:final manual, :final recovered) => [
+            if (!recovered)
+              const PopupMenuItem(
+                value: _MenuAction.hotRestart,
+                child: Text('Hot restart'),
+              ),
+            PopupMenuItem(
+              value: recovered
+                  ? _MenuAction.cleanupRecoveredRun
+                  : _MenuAction.stop,
+              child: Text(recovered ? 'Clean up orphaned run' : 'Stop'),
             ),
-            const PopupMenuItem(value: _MenuAction.stop, child: Text('Stop')),
             const PopupMenuItem(
               value: _MenuAction.viewLogs,
               child: Text('View logs'),
@@ -249,6 +257,21 @@ class _Menu extends StatelessWidget {
                 value: _MenuAction.editUrl,
                 child: Text('Edit URL...'),
               ),
+          ],
+        RecoveryPending(:final canAdopt) => [
+            if (canAdopt)
+              const PopupMenuItem(
+                value: _MenuAction.adoptRecoveredRun,
+                child: Text('Adopt recovered run'),
+              ),
+            const PopupMenuItem(
+              value: _MenuAction.cleanupRecoveredRun,
+              child: Text('Clean up orphaned run'),
+            ),
+            const PopupMenuItem(
+              value: _MenuAction.viewHistory,
+              child: Text('View run history'),
+            ),
           ],
         Booting() || Reconnecting() => const [
             PopupMenuItem(
@@ -299,6 +322,10 @@ class _Menu extends StatelessWidget {
         await cubit.hotRestart();
       case _MenuAction.stop:
         await cubit.stopRun();
+      case _MenuAction.adoptRecoveredRun:
+        await cubit.adoptRecoveredRun();
+      case _MenuAction.cleanupRecoveredRun:
+        await cubit.cleanupRecoveredRun();
       case _MenuAction.viewLogs:
         try {
           context.read<WorkbenchLayoutCubit>().toggleRunLogs();
@@ -318,6 +345,8 @@ enum _MenuAction {
   forget,
   hotRestart,
   stop,
+  adoptRecoveredRun,
+  cleanupRecoveredRun,
   viewLogs,
   viewHistory
 }
@@ -366,8 +395,17 @@ class _PrimaryAction extends StatelessWidget {
         TextButton(onPressed: cubit.cancelBoot, child: const Text('Cancel')),
       Idle() =>
         TextButton(onPressed: cubit.runApp, child: const Text('Run app')),
-      Running() =>
-        TextButton(onPressed: cubit.hotReload, child: const Text('Reload')),
+      RecoveryPending(:final canAdopt) => TextButton(
+          onPressed:
+              canAdopt ? cubit.adoptRecoveredRun : cubit.cleanupRecoveredRun,
+          child: Text(canAdopt ? 'Adopt' : 'Cleanup'),
+        ),
+      Running(:final recovered) => recovered
+          ? TextButton(
+              onPressed: cubit.cleanupRecoveredRun,
+              child: const Text('Cleanup'),
+            )
+          : TextButton(onPressed: cubit.hotReload, child: const Text('Reload')),
       Reconnecting() => const SizedBox.shrink(),
       EmulatorError() =>
         TextButton(onPressed: cubit.bootAvd, child: const Text('Retry')),

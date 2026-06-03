@@ -20,6 +20,16 @@ sealed class EmulatorSessionState with _$EmulatorSessionState {
     required String serial,
   }) = Idle;
 
+  const factory EmulatorSessionState.recoveryPending({
+    required String sessionId,
+    required int pid,
+    required String serial,
+    required DateTime startedAt,
+    Avd? avd,
+    String? vmServiceUri,
+    @Default(false) bool canAdopt,
+  }) = RecoveryPending;
+
   factory EmulatorSessionState.running({
     required String vmServiceUri,
     required RunStats stats,
@@ -27,6 +37,7 @@ sealed class EmulatorSessionState with _$EmulatorSessionState {
     String? serial,
     String? appId,
     @Default(false) bool manual,
+    @Default(false) bool recovered,
     DateTime? lastReloadAt,
   }) = Running;
 

@@ -12,6 +12,7 @@ import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_event_log_writer.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
+import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
 import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -33,6 +34,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     this.logsCubit,
     this.ipcServer,
     this.eventLogWriter = const RunSessionEventLogWriter(),
+    this.recoveryStore,
   }) : super(const EmulatorSessionState.noDevicePicked());
 
   final String projectRoot;
@@ -46,6 +48,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   final RunLogsCubit? logsCubit;
   final EmulatorIpcServer? ipcServer;
   final RunSessionEventLogWriter eventLogWriter;
+  final RunSessionRecoveryStore? recoveryStore;
 
   CancelToken? _bootCancel;
   AvdLaunchHandle? _bootHandle;
@@ -58,8 +61,15 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   int _hotRestartCount = 0;
   int _errorCount = 0;
   String? _lastError;
+  RunSessionRecoveryMetadata? _activeRecovery;
 
   Future<void> bootstrap() async {
+    final recovery = await recoveryStore?.findRecoverable(projectRoot);
+    if (recovery != null) {
+      _activeRecovery = recovery;
+      emit(_recoveryState(recovery));
+      return;
+    }
     final binding = await settings.getEmulatorBinding(projectRoot);
     if (binding == null) {
       emit(const EmulatorSessionState.noDevicePicked());
@@ -160,19 +170,34 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     if (current is! Idle) return;
     final args = await settings.getRunArgs(projectRoot);
     _resetRunSummary();
+    final startedAt = DateTime.now();
     final session = await runController.start(
       projectRoot: projectRoot,
       serial: current.serial,
       targetFile: args.targetFile,
       extraArgs: args.extraArgs,
     );
+    if (recoveryStore != null) {
+      _activeRecovery = RunSessionRecoveryMetadata(
+        sessionId: session.sessionId,
+        projectRoot: projectRoot,
+        pid: session.pid,
+        serial: current.serial,
+        startedAt: startedAt,
+        avdId: current.avd.id,
+        avdName: current.avd.name,
+        targetFile: args.targetFile,
+        extraArgs: args.extraArgs,
+      );
+      await _persistRecovery();
+    }
     _pendingRunAvd = current.avd;
     _pendingRunSerial = current.serial;
     _activeSession = session;
     await logRepo.recordStart(
       sessionId: session.sessionId,
       projectRoot: projectRoot,
-      startedAt: DateTime.now(),
+      startedAt: startedAt,
       connectionMode: 'auto',
       avdId: current.avd.id,
       avdName: current.avd.name,
@@ -182,7 +207,13 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     );
     await _eventsSub?.cancel();
     _eventsSub = session.events.listen(_onRunEvent);
-    await _bindIpc(session);
+    final ipcSocketPath = await _bindIpc(session);
+    if (ipcSocketPath != null) {
+      _activeRecovery = _activeRecovery?.copyWith(
+        ipcSocketPath: ipcSocketPath,
+      );
+      await _persistRecovery();
+    }
   }
 
   void _onRunEvent(RunSessionEvent event) {
@@ -250,6 +281,11 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final serial = current is Running ? current.serial : _pendingRunSerial;
     final session = _activeSession;
     if (session != null) {
+      _activeRecovery = _activeRecovery?.copyWith(
+        vmServiceUri: uri,
+        appId: session.appId,
+      );
+      await _persistRecovery();
       unawaited(
         logRepo.recordVmServiceUrl(
           sessionId: session.sessionId,
@@ -289,6 +325,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
       );
     }
     _activeSession = null;
+    await _removeRecovery();
     await _unbindIpc();
     await _eventsSub?.cancel();
     _eventsSub = null;
@@ -313,6 +350,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   Future<void> stopRun() async {
     final current = state;
     final session = _activeSession;
+    if (session == null && _activeRecovery != null) {
+      await cleanupRecoveredRun();
+      return;
+    }
     await session?.stop();
     if (session != null) {
       await logRepo.recordEnd(
@@ -329,6 +370,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     await _eventsSub?.cancel();
     _eventsSub = null;
     _activeSession = null;
+    await _removeRecovery();
     await _unbindIpc();
     if (current is Running && current.avd != null && current.serial != null) {
       emit(
@@ -338,6 +380,43 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         ),
       );
     }
+  }
+
+  Future<void> adoptRecoveredRun() async {
+    final recovery = _activeRecovery;
+    if (recovery == null || !recovery.canAdopt) return;
+    final uri = recovery.vmServiceUri!;
+    try {
+      await vmClient.connect(uri);
+      emit(
+        EmulatorSessionState.running(
+          avd: _avdFromRecovery(recovery),
+          serial: recovery.serial,
+          appId: recovery.appId,
+          vmServiceUri: uri,
+          stats: RunStats(startedAt: recovery.startedAt),
+          recovered: true,
+        ),
+      );
+    } on Object catch (e) {
+      emit(
+        EmulatorSessionState.error(
+          message: e.toString(),
+          avd: _avdFromRecovery(recovery),
+          serial: recovery.serial,
+          lastVmServiceUri: uri,
+        ),
+      );
+    }
+  }
+
+  Future<void> cleanupRecoveredRun() async {
+    final recovery = _activeRecovery;
+    if (recovery == null) return;
+    await recoveryStore?.cleanup(recovery);
+    _activeRecovery = null;
+    await _unbindIpc();
+    await bootstrap();
   }
 
   void bindVmStateStream() {
@@ -401,12 +480,13 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     }
   }
 
-  Future<void> _bindIpc(RunSession session) async {
+  Future<String?> _bindIpc(RunSession session) async {
     final server = ipcServer;
-    if (server == null) return;
+    if (server == null) return null;
     server.bindActiveRunSession(session);
     final dir = await PickforgeProjectDirectory.ensure(projectRoot);
     File('${dir.path}/ipc.sock-path').writeAsStringSync(server.socketPath);
+    return server.socketPath;
   }
 
   Future<void> _unbindIpc() async {
@@ -426,12 +506,61 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     _lastError = null;
   }
 
+  EmulatorSessionState _recoveryState(RunSessionRecoveryMetadata recovery) {
+    return EmulatorSessionState.recoveryPending(
+      sessionId: recovery.sessionId,
+      pid: recovery.pid,
+      serial: recovery.serial,
+      startedAt: recovery.startedAt,
+      avd: _avdFromRecovery(recovery),
+      vmServiceUri: recovery.vmServiceUri,
+      canAdopt: recovery.canAdopt,
+    );
+  }
+
+  Avd? _avdFromRecovery(RunSessionRecoveryMetadata recovery) {
+    final id = recovery.avdId;
+    final name = recovery.avdName;
+    if (id == null || name == null) return null;
+    return Avd(id: id, name: name, platform: 'android');
+  }
+
+  Future<void> _persistRecovery() async {
+    final recovery = _activeRecovery;
+    final store = recoveryStore;
+    if (recovery == null || store == null) return;
+    try {
+      await store.persist(recovery);
+    } on Object {
+      return;
+    }
+  }
+
+  Future<void> _removeRecovery() async {
+    final recovery = _activeRecovery;
+    final store = recoveryStore;
+    if (recovery == null || store == null) {
+      _activeRecovery = null;
+      return;
+    }
+    try {
+      await store.remove(recovery);
+    } on Object {
+      _activeRecovery = null;
+      return;
+    }
+    _activeRecovery = null;
+  }
+
   @override
   Future<void> close() async {
     _bootCancel?.cancel();
     await _bootHandle?.cancel();
     await _unbindIpc();
     await _activeSession?.stop();
+    if (_activeSession != null) {
+      await _removeRecovery();
+    }
     await _eventsSub?.cancel();
     await _vmSub?.cancel();
     return super.close();

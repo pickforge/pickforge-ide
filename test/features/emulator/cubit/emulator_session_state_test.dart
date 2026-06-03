@@ -19,6 +19,18 @@ void main() {
       const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
     );
     expect(
+      EmulatorSessionState.recoveryPending(
+        sessionId: 's',
+        pid: 1,
+        serial: 'emulator-5554',
+        startedAt: DateTime.utc(2026, 6, 3),
+        avd: avd,
+        vmServiceUri: 'ws://x/ws',
+        canAdopt: true,
+      ),
+      isA<EmulatorSessionState>(),
+    );
+    expect(
       EmulatorSessionState.running(
         avd: avd,
         serial: 'emulator-5554',

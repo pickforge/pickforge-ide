@@ -290,13 +290,20 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P2.T4 — Run-session crash recovery/adoption
 
-**Status:** Deferred
+**Status:** Completed
+**Why:** Pickforge now writes recoverable run metadata, detects live orphaned `flutter run --machine` processes on startup, and exposes adoption or safe cleanup in the connection pill.
 **Tasks**
 
-- [ ] Persist PID/session metadata and IPC socket path.
-- [ ] On Pickforge startup, detect orphaned `flutter run --machine`.
-- [ ] Offer adoption or cleanup.
-- [ ] Handle stale PID safely.
+- [x] Persist PID/session metadata and IPC socket path.
+- [x] On Pickforge startup, detect orphaned `flutter run --machine`.
+- [x] Offer adoption or cleanup.
+- [x] Handle stale PID safely.
+
+**Latest evidence**
+
+- 2026-06-03: Added `RunSessionRecoveryStore`, persisted `.pickforge/runs/<sessionId>/session.json` metadata with PID, serial, VM Service URL, app id, and IPC socket path, and wired `EmulatorSessionCubit` startup to surface recoverable orphaned runs.
+- 2026-06-03: Added recovery/adoption/cleanup connection pill actions, guarded stale PID cleanup by re-validating `/proc/<pid>/cmdline` and process cwd before terminating, and covered persistence, stale cleanup, cubit adoption, and UI behavior with focused tests.
+- 2026-06-03: Verified with `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (385 passed, 2 skipped without `PICKFORGE_E2E_AVD`), `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact`, and `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/widget_pick_e2e_test.dart --reporter=compact`; all passed.
 
 ### P2.T5 — Per-project AVD auto-shutdown
 

@@ -51,6 +51,12 @@ List<PickforgeCommand> buildNavCommands(BuildContext context) {
       run: () => context.go(AppRoutes.workbench),
     ),
     PickforgeCommand(
+      id: 'nav-onboarding',
+      title: 'Show Onboarding',
+      hint: 'First-run setup checklist',
+      run: () => context.go(AppRoutes.onboarding),
+    ),
+    PickforgeCommand(
       id: 'nav-settings',
       title: 'Go to Settings',
       hint: 'App settings',

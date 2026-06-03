@@ -38,6 +38,7 @@ import 'package:pickforge/core/emulator/run_session_log_repository.dart'
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart' as _i704;
 import 'package:pickforge/core/process/binary_detector.dart' as _i993;
 import 'package:pickforge/core/projects/projects_repository.dart' as _i613;
+import 'package:pickforge/core/settings/onboarding_preferences.dart' as _i1048;
 import 'package:pickforge/core/settings/project_settings_repository.dart'
     as _i340;
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart'
@@ -135,6 +136,8 @@ extension GetItInjectableX on _i174.GetIt {
           gh<_i810.WidgetContextRenderer>(),
         ));
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
+    gh.lazySingleton<_i1048.OnboardingPreferences>(
+        () => _i1048.OnboardingPreferences(gh<_i460.SharedPreferences>()));
     gh.lazySingleton<_i141.WorkspaceSidebarSettingsRepository>(() =>
         _i141.WorkspaceSidebarSettingsRepository(
             gh<_i460.SharedPreferences>()));

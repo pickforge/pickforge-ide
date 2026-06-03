@@ -139,6 +139,7 @@
   "onboardingChecklistForge": "Forge and hot reload",
   "onboardingDemoButton": "Explore demo mode",
   "onboardingOpenSampleApp": "Open sample Flutter app",
+  "onboardingDismissButton": "Dismiss for now",
   "onboardingSetupChecksTitle": "Setup checks",
   "onboardingOpenSettings": "Open settings",
   "onboardingRetrySetupChecks": "Retry",

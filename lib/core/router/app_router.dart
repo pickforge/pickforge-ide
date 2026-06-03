@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
+import 'package:pickforge/core/settings/onboarding_preferences.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/workbench/view/app_shell_view.dart';
 import 'package:pickforge/features/workbench/view/onboarding_view.dart';
@@ -21,7 +22,12 @@ GoRouter buildAppRouter() {
     redirect: (context, state) async {
       if (state.matchedLocation != AppRoutes.root) return null;
       final projects = await getIt<ProjectsRepository>().list();
-      if (projects.isEmpty) return AppRoutes.onboarding;
+      if (projects.isEmpty) {
+        if (getIt<OnboardingPreferences>().isDismissed) {
+          return AppRoutes.workbench;
+        }
+        return AppRoutes.onboarding;
+      }
       return AppRoutes.workbench;
     },
     routes: [

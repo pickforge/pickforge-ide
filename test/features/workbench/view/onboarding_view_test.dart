@@ -51,6 +51,7 @@ void main() {
     expect(find.text('First-run checklist'), findsOneWidget);
     expect(find.text('Explore demo mode'), findsOneWidget);
     expect(find.text('Open sample Flutter app'), findsOneWidget);
+    expect(find.text('Dismiss for now'), findsOneWidget);
 
     await tester.tap(find.text('Pick folder'));
     await tester.pumpAndSettle();
@@ -107,6 +108,32 @@ void main() {
     await tester.pumpAndSettle();
 
     verify(() => repo.add('/sample')).called(1);
+  });
+
+  testWidgets('dismiss button calls dismiss callback', (tester) async {
+    final repo = _MockRepo();
+    final cubit = ProjectsCubit(repo, PtySessionPool());
+    var dismissed = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: BlocProvider.value(
+          value: cubit,
+          child: OnboardingView(
+            pickFolder: () async => null,
+            dismissOnboarding: () async => dismissed = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Dismiss for now'));
+    await tester.pumpAndSettle();
+
+    expect(dismissed, isTrue);
   });
 
   testWidgets('setup checks show available and missing tools', (tester) async {

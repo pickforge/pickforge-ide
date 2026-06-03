@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/router/app_router.dart';
+import 'package:pickforge/core/settings/onboarding_preferences.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
@@ -21,6 +22,7 @@ class OnboardingView extends StatefulWidget {
     this.sampleProjectRoot,
     this.diagnosticsService,
     this.openSettings,
+    this.dismissOnboarding,
   });
 
   /// Override for tests.
@@ -28,6 +30,7 @@ class OnboardingView extends StatefulWidget {
   final String? sampleProjectRoot;
   final DiagnosticsService? diagnosticsService;
   final VoidCallback? openSettings;
+  final Future<void> Function()? dismissOnboarding;
 
   @override
   State<OnboardingView> createState() => _OnboardingViewState();
@@ -76,6 +79,17 @@ class _OnboardingViewState extends State<OnboardingView> {
     }
   }
 
+  Future<void> _dismissOnboarding() async {
+    final dismiss = widget.dismissOnboarding;
+    if (dismiss != null) {
+      await dismiss();
+      return;
+    }
+    await getIt<OnboardingPreferences>().setDismissed(value: true);
+    if (!mounted) return;
+    context.go(AppRoutes.workbench);
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
@@ -111,6 +125,12 @@ class _OnboardingViewState extends State<OnboardingView> {
                   onPressed: () => unawaited(_openSampleProject()),
                   icon: const Icon(Icons.folder_special_outlined),
                   label: Text(l10n.onboardingOpenSampleApp),
+                ),
+                const SizedBox(height: 12),
+                TextButton.icon(
+                  onPressed: () => unawaited(_dismissOnboarding()),
+                  icon: const Icon(Icons.close),
+                  label: Text(l10n.onboardingDismissButton),
                 ),
                 const SizedBox(height: 24),
                 _FirstRunChecklist(l10n: l10n),

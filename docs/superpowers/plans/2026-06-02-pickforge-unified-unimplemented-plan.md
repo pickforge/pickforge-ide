@@ -590,7 +590,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add inline setup checks for agent binaries, `adb`, Flutter/FVM, and emulator availability.
 - [x] Add recoverable setup actions: copy command and retry detection.
 - [x] Add recoverable setup action: open settings.
-- [ ] Make onboarding dismissible and restorable from command palette/help.
+- [x] Make onboarding dismissible and restorable from command palette/help.
 
 **Validation**
 

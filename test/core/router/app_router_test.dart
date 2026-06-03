@@ -5,6 +5,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/router/app_router.dart';
+import 'package:pickforge/core/settings/onboarding_preferences.dart';
 import 'package:pickforge/features/workbench/view/onboarding_view.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,9 +13,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _MockProjectsRepository extends Mock implements ProjectsRepository {}
 
 void main() {
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    return getIt.reset();
+    await getIt.reset();
+    final prefs = await SharedPreferences.getInstance();
+    getIt.registerSingleton<OnboardingPreferences>(
+      OnboardingPreferences(prefs),
+    );
   });
 
   testWidgets('router has workbench, onboarding, and settings routes',
@@ -70,6 +75,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Go to Workbench'), findsOneWidget);
+    expect(find.text('Show Onboarding'), findsOneWidget);
     expect(find.text('Go to Settings'), findsOneWidget);
   });
 }

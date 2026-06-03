@@ -508,7 +508,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 ### P5.T2 — True hover-over-live-emulator UX
 
 **Status:** Partial / transform complete
-**Why:** Added a tested `MirrorTransform` utility for mapping hover/local mirror coordinates onto device coordinates, including letterbox rejection and inverse 0/90/180/270 degree rotation.
+**Why:** Added a tested `MirrorTransform` utility for mapping hover/local mirror coordinates onto device coordinates, including letterbox rejection and inverse 0/90/180/270 degree rotation. Flutter's inspector hit testing is currently exposed only inside the target app's select-mode overlay, not as a VM service coordinate query, so true hover preview/highlight remains blocked until Pickforge has an embedded mirror/input surface.
 **Tasks**
 
 - [x] Overlay hover target mapping onto mirrored emulator coordinates.

@@ -255,6 +255,60 @@ void main() {
       }
     });
 
+    test('captures desktop screenshot with flutter screenshot', () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      final calls = <({String executable, List<String> args})>[];
+
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        calls.add((executable: executable, args: args));
+        if (executable == 'flutter' && args.contains('screenshot')) {
+          await File(args.last).writeAsBytes(pngHeader);
+          return ProcessResult(0, 0, '', '');
+        }
+        return ProcessResult(0, 0, '/usr/bin/${args.single}', '');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(
+        detector,
+        processRunner: runner,
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync('desktopshot_test_');
+      try {
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          serial: flutterLinuxDeviceId,
+          platform: flutterDesktopPlatform,
+        );
+
+        expect(result, isNotNull);
+        expect(File(result!).readAsBytesSync(), pngHeader);
+        expect(
+          calls.map((call) => call.executable),
+          isNot(contains('adb')),
+        );
+        expect(
+          calls.map((call) => call.executable),
+          isNot(contains('xcrun')),
+        );
+        expect(
+          calls.map((call) => call.args),
+          contains(
+            equals([
+              'screenshot',
+              '-d',
+              flutterLinuxDeviceId,
+              '-o',
+              result,
+            ]),
+          ),
+        );
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
     test('returns null when screencap fails', () async {
       Future<ProcessResult> runner(String executable, List<String> args) async {
         if (args.contains('devices')) {

@@ -225,6 +225,34 @@ void main() {
     );
   });
 
+  test('setAvd persists desktop target binding for desktop targets', () async {
+    when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setAvd(
+      '/p',
+      const Avd(
+        id: flutterLinuxDeviceId,
+        name: 'Linux',
+        platform: flutterDesktopPlatform,
+      ),
+    );
+
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.desktopTarget(
+          targetId: flutterLinuxDeviceId,
+          name: 'Linux',
+        ),
+      ),
+    ).called(1);
+    expect(
+      (cubit.state.binding! as DesktopTargetBinding).targetId,
+      flutterLinuxDeviceId,
+    );
+  });
+
   test('setPhysicalDevice persists physical binding', () async {
     when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
     final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
@@ -312,6 +340,36 @@ void main() {
     expect(
       (cubit.state.binding! as WebTargetBinding).targetId,
       flutterWebChromeId,
+    );
+  });
+
+  test('setDesktopTarget persists desktop target binding', () async {
+    when(() => repo.setEmulatorBinding('/p', any())).thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setDesktopTarget(
+      '/p',
+      const RunningAndroidDevice(
+        serial: flutterLinuxDeviceId,
+        avdName: 'Linux',
+        state: 'device',
+        kind: AndroidDeviceKind.desktop,
+        model: 'linux-x64',
+      ),
+    );
+
+    verify(
+      () => repo.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.desktopTarget(
+          targetId: flutterLinuxDeviceId,
+          name: 'Linux',
+        ),
+      ),
+    ).called(1);
+    expect(
+      (cubit.state.binding! as DesktopTargetBinding).targetId,
+      flutterLinuxDeviceId,
     );
   });
 

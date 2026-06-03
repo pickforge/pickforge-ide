@@ -73,6 +73,15 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
       emit(state.copyWith(binding: binding));
       return;
     }
+    if (avd.platform == flutterDesktopPlatform) {
+      final binding = EmulatorBinding.desktopTarget(
+        targetId: avd.id,
+        name: avd.name,
+      );
+      await settings.setEmulatorBinding(projectRoot, binding);
+      emit(state.copyWith(binding: binding));
+      return;
+    }
     final binding = EmulatorBinding.avd(avdId: avd.id, avdName: avd.name);
     await settings.setEmulatorBinding(projectRoot, binding);
     emit(state.copyWith(binding: binding));
@@ -107,6 +116,18 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
     RunningAndroidDevice device,
   ) async {
     final binding = EmulatorBinding.webTarget(
+      targetId: device.serial,
+      name: device.displayName,
+    );
+    await settings.setEmulatorBinding(projectRoot, binding);
+    emit(state.copyWith(binding: binding));
+  }
+
+  Future<void> setDesktopTarget(
+    String projectRoot,
+    RunningAndroidDevice device,
+  ) async {
+    final binding = EmulatorBinding.desktopTarget(
       targetId: device.serial,
       name: device.displayName,
     );

@@ -117,6 +117,8 @@ class _DeviceList extends StatelessWidget {
       await session.pickIosSimulator(device);
     } else if (device.isWebTarget) {
       await session.pickWebTarget(device);
+    } else if (device.isDesktopTarget) {
+      await session.pickDesktopTarget(device);
     } else {
       await session.pickPhysicalDevice(device);
     }

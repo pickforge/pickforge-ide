@@ -78,6 +78,12 @@ class ProjectSettingsRepository {
         name: row.avdName ?? row.avdId!,
       );
     }
+    if (row.connectionMode == 'desktop' && row.avdId != null) {
+      return EmulatorBinding.desktopTarget(
+        targetId: row.avdId!,
+        name: row.avdName ?? row.avdId!,
+      );
+    }
     if (row.avdId != null && row.avdName != null) {
       return EmulatorBinding.avd(
         avdId: row.avdId!,
@@ -126,6 +132,15 @@ class ProjectSettingsRepository {
           avdId: Value(targetId),
           avdName: Value(name),
           connectionMode: const Value('web'),
+          autoBootOnSelect: false,
+          vmServiceUrl: const Value<String?>(null),
+        );
+      case DesktopTargetBinding(:final targetId, :final name):
+        await _db.projectSettingsDao.upsert(
+          projectRoot: projectRoot,
+          avdId: Value(targetId),
+          avdName: Value(name),
+          connectionMode: const Value('desktop'),
           autoBootOnSelect: false,
           vmServiceUrl: const Value<String?>(null),
         );

@@ -163,6 +163,38 @@ void main() {
     verify(() => cubit.setWebTarget('/p', device)).called(1);
   });
 
+  testWidgets('renders desktop target list and picking calls cubit',
+      (tester) async {
+    const device = RunningAndroidDevice(
+      serial: flutterLinuxDeviceId,
+      avdName: 'Linux',
+      state: 'device',
+      kind: AndroidDeviceKind.desktop,
+      model: 'linux-x64',
+    );
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(runningDevices: [device]),
+    );
+    when(() => cubit.setDesktopTarget(any(), any())).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('device-dropdown')));
+    await tester.pumpAndSettle();
+    expect(find.text('Linux (linux)'), findsOneWidget);
+    await tester.tap(find.text('Linux (linux)').last);
+    await tester.pumpAndSettle();
+
+    verify(() => cubit.setDesktopTarget('/p', device)).called(1);
+  });
+
   testWidgets('manual mode reveals URL field', (tester) async {
     final cubit = _Cubit(
       const DeviceRunSettingsState(

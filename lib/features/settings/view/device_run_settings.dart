@@ -269,6 +269,8 @@ class _DeviceDropdown extends StatelessWidget {
       IosSimulatorBinding(:final simulatorId) =>
         _DeviceOption.iosKey(simulatorId),
       WebTargetBinding(:final targetId) => _DeviceOption.webKey(targetId),
+      DesktopTargetBinding(:final targetId) =>
+        _DeviceOption.desktopKey(targetId),
       _ => null,
     };
     return DropdownButton<_DeviceOption>(
@@ -302,6 +304,11 @@ class _DeviceDropdown extends StatelessWidget {
                   .read<DeviceRunSettingsCubit>()
                   .setWebTarget(projectRoot, device)
                   .ignore();
+            } else if (device.isDesktopTarget) {
+              context
+                  .read<DeviceRunSettingsCubit>()
+                  .setDesktopTarget(projectRoot, device)
+                  .ignore();
             } else {
               context
                   .read<DeviceRunSettingsCubit>()
@@ -328,6 +335,7 @@ sealed class _DeviceOption {
   static String physicalKey(String serial) => 'physical:$serial';
   static String iosKey(String simulatorId) => 'ios:$simulatorId';
   static String webKey(String targetId) => 'web:$targetId';
+  static String desktopKey(String targetId) => 'desktop:$targetId';
 }
 
 final class _AvdOption extends _DeviceOption {
@@ -340,7 +348,9 @@ final class _AvdOption extends _DeviceOption {
       ? _DeviceOption.iosKey(avd.id)
       : avd.platform == flutterWebPlatform
           ? _DeviceOption.webKey(avd.id)
-          : _DeviceOption.avdKey(avd.id);
+          : avd.platform == flutterDesktopPlatform
+              ? _DeviceOption.desktopKey(avd.id)
+              : _DeviceOption.avdKey(avd.id);
 
   @override
   String get label => avd.name;
@@ -356,7 +366,9 @@ final class _ConnectedDeviceOption extends _DeviceOption {
       ? _DeviceOption.iosKey(device.serial)
       : device.isWebTarget
           ? _DeviceOption.webKey(device.serial)
-          : _DeviceOption.physicalKey(device.serial);
+          : device.isDesktopTarget
+              ? _DeviceOption.desktopKey(device.serial)
+              : _DeviceOption.physicalKey(device.serial);
 
   @override
   String get label => '${device.displayName} (${device.serial})';

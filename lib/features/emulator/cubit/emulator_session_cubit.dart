@@ -145,6 +145,25 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
             ),
           );
         }
+      case DesktopTargetBinding(:final targetId, :final name):
+        final avd = Avd(
+          id: targetId,
+          name: name,
+          platform: flutterDesktopPlatform,
+        );
+        final snap = await discovery.snapshot();
+        final running = snap.runningFor(avd);
+        if (running != null && running.state == 'device') {
+          emit(_idleState(avd, running.serial));
+        } else {
+          emit(
+            EmulatorSessionState.error(
+              avd: avd,
+              serial: targetId,
+              message: 'Desktop target $targetId is not available',
+            ),
+          );
+        }
     }
   }
 
@@ -178,6 +197,26 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
             avd: avd,
             serial: avd.id,
             message: 'Web target ${avd.id} is not available',
+          ),
+        );
+      }
+      return;
+    }
+    if (avd.platform == flutterDesktopPlatform) {
+      await settings.setEmulatorBinding(
+        projectRoot,
+        EmulatorBinding.desktopTarget(targetId: avd.id, name: avd.name),
+      );
+      final snap = await discovery.snapshot();
+      final running = snap.runningFor(avd);
+      if (running != null && running.state == 'device') {
+        emit(_idleState(avd, running.serial));
+      } else {
+        emit(
+          EmulatorSessionState.error(
+            avd: avd,
+            serial: avd.id,
+            message: 'Desktop target ${avd.id} is not available',
           ),
         );
       }
@@ -257,6 +296,28 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
           avd: avd,
           serial: device.serial,
           message: 'Web target ${device.serial} is ${device.state}',
+        ),
+      );
+    }
+  }
+
+  Future<void> pickDesktopTarget(RunningAndroidDevice device) async {
+    final avd = device.asDeviceAvd;
+    await settings.setEmulatorBinding(
+      projectRoot,
+      EmulatorBinding.desktopTarget(
+        targetId: device.serial,
+        name: device.displayName,
+      ),
+    );
+    if (device.state == 'device') {
+      emit(_idleState(avd, device.serial));
+    } else {
+      emit(
+        EmulatorSessionState.error(
+          avd: avd,
+          serial: device.serial,
+          message: 'Desktop target ${device.serial} is ${device.state}',
         ),
       );
     }

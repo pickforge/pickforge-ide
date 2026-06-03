@@ -25,6 +25,11 @@ abstract class EmulatorBinding with _$EmulatorBinding {
     required String name,
   }) = WebTargetBinding;
 
+  const factory EmulatorBinding.desktopTarget({
+    required String targetId,
+    required String name,
+  }) = DesktopTargetBinding;
+
   const factory EmulatorBinding.manual({
     required String vmServiceUrl,
   }) = ManualBinding;

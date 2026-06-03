@@ -87,6 +87,20 @@ void main() {
     expect((got as WebTargetBinding).name, 'Chrome');
   });
 
+  test('round-trip desktop target binding', () async {
+    await repo.setEmulatorBinding(
+      '/p',
+      const EmulatorBinding.desktopTarget(
+        targetId: 'linux',
+        name: 'Linux',
+      ),
+    );
+    final got = await repo.getEmulatorBinding('/p');
+    expect(got, isA<DesktopTargetBinding>());
+    expect((got! as DesktopTargetBinding).targetId, 'linux');
+    expect((got as DesktopTargetBinding).name, 'Linux');
+  });
+
   test('clearEmulatorBinding returns null', () async {
     await repo.setEmulatorBinding(
       '/p',

@@ -50,7 +50,7 @@ class DeviceDiscoveryService {
       listAvds(),
       listRunningDevices(),
       listRunningIosSimulators(),
-      listWebTargets(),
+      listFlutterDeviceTargets(),
     ]);
     return DeviceListSnapshot(
       avds: results[0] as List<Avd>,
@@ -76,10 +76,20 @@ class DeviceDiscoveryService {
   }
 
   Future<List<RunningAndroidDevice>> listWebTargets() async {
+    final devices = await listFlutterDeviceTargets();
+    return devices.where((device) => device.isWebTarget).toList();
+  }
+
+  Future<List<RunningAndroidDevice>> listDesktopTargets() async {
+    final devices = await listFlutterDeviceTargets();
+    return devices.where((device) => device.isDesktopTarget).toList();
+  }
+
+  Future<List<RunningAndroidDevice>> listFlutterDeviceTargets() async {
     try {
       final res = await _runner.run('flutter', ['devices', '--machine']);
       if (res.exitCode != 0) return const [];
-      return _parseWebTargets(res.stdout.toString());
+      return _parseFlutterDeviceTargets(res.stdout.toString());
     } on ProcessRunnerException {
       return const [];
     }
@@ -201,33 +211,48 @@ class DeviceDiscoveryService {
     }
   }
 
-  List<RunningAndroidDevice> _parseWebTargets(String raw) {
+  List<RunningAndroidDevice> _parseFlutterDeviceTargets(String raw) {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const [];
-      return decoded
-          .whereType<Map<String, dynamic>>()
-          .where(_isSupportedWebDevice)
-          .map(_webDeviceFromJson)
-          .where((device) => device.serial.isNotEmpty)
-          .toList();
+      final out = <RunningAndroidDevice>[];
+      for (final json in decoded.whereType<Map<String, dynamic>>()) {
+        final device = _flutterDeviceTargetFromJson(json);
+        if (device != null && device.serial.isNotEmpty) out.add(device);
+      }
+      return out;
     } on FormatException {
       return const [];
     }
   }
 
-  RunningAndroidDevice _webDeviceFromJson(Map<String, dynamic> json) {
+  RunningAndroidDevice? _flutterDeviceTargetFromJson(
+    Map<String, dynamic> json,
+  ) {
+    if (json['isSupported'] == false) return null;
+    if (_isWebDevice(json)) {
+      return _deviceFromFlutterJson(json, AndroidDeviceKind.web);
+    }
+    if (_isDesktopDevice(json)) {
+      return _deviceFromFlutterJson(json, AndroidDeviceKind.desktop);
+    }
+    return null;
+  }
+
+  RunningAndroidDevice _deviceFromFlutterJson(
+    Map<String, dynamic> json,
+    AndroidDeviceKind kind,
+  ) {
     return RunningAndroidDevice(
       serial: (json['id'] as String? ?? '').trim(),
       avdName: _trimmedString(json['name']),
       state: 'device',
-      kind: AndroidDeviceKind.web,
+      kind: kind,
       model: _trimmedString(json['targetPlatform']),
     );
   }
 
-  bool _isSupportedWebDevice(Map<String, dynamic> json) {
-    if (json['isSupported'] == false) return false;
+  bool _isWebDevice(Map<String, dynamic> json) {
     final id = json['id'] as String?;
     final targetPlatform = json['targetPlatform'] as String?;
     final category = json['category'] as String?;
@@ -236,6 +261,19 @@ class DeviceDiscoveryService {
         id == 'edge' ||
         category == 'web' ||
         targetPlatform?.startsWith('web-') == true;
+  }
+
+  bool _isDesktopDevice(Map<String, dynamic> json) {
+    final id = json['id'] as String?;
+    final targetPlatform = json['targetPlatform'] as String?;
+    final category = json['category'] as String?;
+    return id == flutterLinuxDeviceId ||
+        id == flutterMacosDeviceId ||
+        id == flutterWindowsDeviceId ||
+        category == 'desktop' ||
+        targetPlatform?.startsWith('linux-') == true ||
+        targetPlatform?.startsWith('darwin-') == true ||
+        targetPlatform?.startsWith('windows-') == true;
   }
 
   String? _trimmedString(Object? value) {

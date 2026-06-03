@@ -181,6 +181,18 @@ void main() {
     kind: AndroidDeviceKind.web,
     model: 'web-javascript',
   );
+  const desktopAvd = Avd(
+    id: flutterLinuxDeviceId,
+    name: 'Linux',
+    platform: flutterDesktopPlatform,
+  );
+  const desktopDevice = RunningAndroidDevice(
+    serial: flutterLinuxDeviceId,
+    avdName: 'Linux',
+    state: 'device',
+    kind: AndroidDeviceKind.desktop,
+    model: 'linux-x64',
+  );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'bootstrap offers adoption for recoverable orphaned run',
@@ -483,6 +495,55 @@ void main() {
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootstrap restores available desktop target binding',
+    setUp: () {
+      when(() => settings.getEmulatorBinding('/p')).thenAnswer(
+        (_) async => const EmulatorBinding.desktopTarget(
+          targetId: flutterLinuxDeviceId,
+          name: 'Linux',
+        ),
+      );
+      when(disc.snapshot).thenAnswer(
+        (_) async => const DeviceListSnapshot(
+          avds: [],
+          running: [desktopDevice],
+        ),
+      );
+    },
+    build: build,
+    act: (c) => c.bootstrap(),
+    expect: () => [
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', desktopAvd)
+          .having((s) => s.serial, 'serial', flutterLinuxDeviceId),
+    ],
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'pickDesktopTarget persists target and enters idle',
+    setUp: () {
+      when(() => settings.setEmulatorBinding('/p', any()))
+          .thenAnswer((_) async {});
+    },
+    build: build,
+    act: (c) => c.pickDesktopTarget(desktopDevice),
+    expect: () => [
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', desktopAvd)
+          .having((s) => s.serial, 'serial', flutterLinuxDeviceId),
+    ],
+    verify: (_) => verify(
+      () => settings.setEmulatorBinding(
+        '/p',
+        const EmulatorBinding.desktopTarget(
+          targetId: flutterLinuxDeviceId,
+          name: 'Linux',
+        ),
+      ),
+    ).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'runApp from idle attaches inspector on vmServiceReady',
     setUp: () => when(
       () => run.start(
@@ -726,6 +787,51 @@ void main() {
           avdId: flutterWebChromeId,
           avdName: 'Chrome',
           serial: flutterWebChromeId,
+          vmServiceUrl: 'ws://x/ws',
+          targetFile: any(named: 'targetFile'),
+        ),
+      ).called(1);
+    },
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'runApp from desktop target uses selected Flutter device id',
+    setUp: () {
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: flutterLinuxDeviceId,
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: build,
+    seed: () => const EmulatorSessionState.idle(
+      avd: desktopAvd,
+      serial: flutterLinuxDeviceId,
+    ),
+    act: (c) async {
+      await c.runApp();
+    },
+    verify: (_) {
+      verify(
+        () => run.start(
+          projectRoot: '/p',
+          serial: flutterLinuxDeviceId,
+          targetFile: any(named: 'targetFile'),
+          extraArgs: const [],
+        ),
+      ).called(1);
+      verify(
+        () => log.recordStart(
+          sessionId: 'ses-1',
+          projectRoot: '/p',
+          startedAt: any(named: 'startedAt'),
+          connectionMode: 'auto',
+          avdId: flutterLinuxDeviceId,
+          avdName: 'Linux',
+          serial: flutterLinuxDeviceId,
           vmServiceUrl: 'ws://x/ws',
           targetFile: any(named: 'targetFile'),
         ),
@@ -984,6 +1090,55 @@ void main() {
       isA<Idle>()
           .having((s) => s.avd, 'avd', webAvd)
           .having((s) => s.serial, 'serial', flutterWebChromeId)
+          .having((s) => s.shutdownPrompt, 'shutdownPrompt', isFalse),
+    ],
+    verify: (_) => verifyNever(() => shutdown.shutdown(any())),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'desktop target skips automatic idle shutdown',
+    setUp: () {
+      when(() => settings.getEmulatorIdleShutdownSettings('/p')).thenAnswer(
+        (_) async => const EmulatorIdleShutdownSettings(
+          enabled: true,
+          requireConfirmation: false,
+        ),
+      );
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: any(named: 'serial'),
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: () => EmulatorSessionCubit(
+      projectRoot: '/p',
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      shutdownController: shutdown,
+    ),
+    seed: () => const EmulatorSessionState.idle(
+      avd: desktopAvd,
+      serial: flutterLinuxDeviceId,
+    ),
+    act: (c) async {
+      await c.runApp();
+      events.add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await c.stopRun();
+    },
+    expect: () => [
+      isA<Running>(),
+      isA<Idle>()
+          .having((s) => s.avd, 'avd', desktopAvd)
+          .having((s) => s.serial, 'serial', flutterLinuxDeviceId)
           .having((s) => s.shutdownPrompt, 'shutdownPrompt', isFalse),
     ],
     verify: (_) => verifyNever(() => shutdown.shutdown(any())),

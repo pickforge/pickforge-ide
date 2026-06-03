@@ -188,6 +188,41 @@ void main() {
     verify(() => session.pickWebTarget(any())).called(1);
   });
 
+  testWidgets('shows connected desktop targets', (tester) async {
+    final picker = _PickerCubit(
+      const DevicePickerState.loaded(
+        avds: [],
+        running: [
+          RunningAndroidDevice(
+            serial: flutterLinuxDeviceId,
+            avdName: 'Linux',
+            state: 'device',
+            kind: AndroidDeviceKind.desktop,
+            model: 'linux-x64',
+          ),
+        ],
+      ),
+    );
+    final session = _SessionCubit();
+    when(() => session.pickDesktopTarget(any())).thenAnswer((_) async {});
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MultiBlocProvider(
+          providers: [
+            BlocProvider<DevicePickerCubit>.value(value: picker),
+            BlocProvider<EmulatorSessionCubit>.value(value: session),
+          ],
+          child: const Scaffold(body: DevicePickerMenu()),
+        ),
+      ),
+    );
+
+    expect(find.text('CONNECTED'), findsOneWidget);
+    expect(find.text('Linux (linux)'), findsOneWidget);
+    await tester.tap(find.text('Linux (linux)'));
+    verify(() => session.pickDesktopTarget(any())).called(1);
+  });
+
   testWidgets('empty state explains no Flutter devices were detected',
       (tester) async {
     final picker =

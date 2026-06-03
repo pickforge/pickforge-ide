@@ -96,4 +96,27 @@ void main() {
     expect(avd.platform, flutterWebPlatform);
     expect(snap.runningFor(flutterTarget), device);
   });
+
+  test('desktop target exposes display AVD and matches by Flutter device id',
+      () {
+    const device = RunningAndroidDevice(
+      serial: flutterLinuxDeviceId,
+      avdName: 'Linux',
+      state: 'device',
+      kind: AndroidDeviceKind.desktop,
+      model: 'linux-x64',
+    );
+    const flutterTarget = Avd(
+      id: flutterLinuxDeviceId,
+      name: 'Linux',
+      platform: flutterDesktopPlatform,
+    );
+    final avd = device.asDeviceAvd;
+    const snap = DeviceListSnapshot(avds: [flutterTarget], running: [device]);
+
+    expect(device.displayName, 'Linux');
+    expect(device.isConnectedDevice, isTrue);
+    expect(avd.platform, flutterDesktopPlatform);
+    expect(snap.runningFor(flutterTarget), device);
+  });
 }

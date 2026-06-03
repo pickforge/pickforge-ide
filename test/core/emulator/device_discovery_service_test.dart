@@ -62,6 +62,20 @@ void main() {
     "isSupported": true,
     "targetPlatform": "linux-x64",
     "emulator": false
+  },
+  {
+    "name": "macOS",
+    "id": "macos",
+    "isSupported": true,
+    "targetPlatform": "darwin-arm64",
+    "emulator": false
+  },
+  {
+    "name": "Windows",
+    "id": "windows",
+    "isSupported": true,
+    "targetPlatform": "windows-x64",
+    "emulator": false
   }
 ]
 ''';
@@ -156,6 +170,23 @@ emulator-5556	offline
     expect(devices.first.asDeviceAvd.platform, flutterWebPlatform);
   });
 
+  test('listDesktopTargets parses flutter devices desktop targets', () async {
+    when(() => runner.run('flutter', ['devices', '--machine']))
+        .thenAnswer((_) async => ok(webDevicesJson));
+
+    final devices = await service.listDesktopTargets();
+
+    expect(devices, hasLength(3));
+    expect(devices.map((device) => device.serial), [
+      flutterLinuxDeviceId,
+      flutterMacosDeviceId,
+      flutterWindowsDeviceId,
+    ]);
+    expect(devices.first.displayName, 'Linux');
+    expect(devices.first.kind, AndroidDeviceKind.desktop);
+    expect(devices.first.asDeviceAvd.platform, flutterDesktopPlatform);
+  });
+
   test('snapshot composes both lists', () async {
     final emusJson =
         await File('test/fixtures/flutter_emulators.json').readAsString();
@@ -179,12 +210,17 @@ emulator-5556	offline
         .thenAnswer((_) async => ok(webDevicesJson));
     final snap = await service.snapshot();
     expect(snap.avds, hasLength(2));
-    expect(snap.running, hasLength(5));
+    expect(snap.running, hasLength(8));
     expect(snap.runningFor(snap.avds.first)?.serial, 'emulator-5554');
     expect(snap.iosSimulators.single.displayName, 'iPhone 16');
     expect(snap.webTargets.map((device) => device.serial), [
       flutterWebChromeId,
       flutterWebServerId,
+    ]);
+    expect(snap.desktopTargets.map((device) => device.serial), [
+      flutterLinuxDeviceId,
+      flutterMacosDeviceId,
+      flutterWindowsDeviceId,
     ]);
   });
 }

@@ -7,6 +7,10 @@ const iosFlutterSimulatorId = 'apple_ios_simulator';
 const flutterWebPlatform = 'web';
 const flutterWebChromeId = 'chrome';
 const flutterWebServerId = 'web-server';
+const flutterDesktopPlatform = 'desktop';
+const flutterLinuxDeviceId = 'linux';
+const flutterMacosDeviceId = 'macos';
+const flutterWindowsDeviceId = 'windows';
 
 class Avd extends Equatable {
   const Avd({
@@ -23,7 +27,7 @@ class Avd extends Equatable {
   List<Object?> get props => [id, name, platform];
 }
 
-enum AndroidDeviceKind { emulator, physical, iosSimulator, web }
+enum AndroidDeviceKind { emulator, physical, iosSimulator, web, desktop }
 
 class RunningAndroidDevice extends Equatable {
   const RunningAndroidDevice({
@@ -44,7 +48,9 @@ class RunningAndroidDevice extends Equatable {
   bool get isPhysical => kind == AndroidDeviceKind.physical;
   bool get isIosSimulator => kind == AndroidDeviceKind.iosSimulator;
   bool get isWebTarget => kind == AndroidDeviceKind.web;
-  bool get isConnectedDevice => isPhysical || isIosSimulator || isWebTarget;
+  bool get isDesktopTarget => kind == AndroidDeviceKind.desktop;
+  bool get isConnectedDevice =>
+      isPhysical || isIosSimulator || isWebTarget || isDesktopTarget;
   String get displayName => avdName ?? model ?? serial;
 
   Avd get asDeviceAvd => Avd(
@@ -54,6 +60,7 @@ class RunningAndroidDevice extends Equatable {
           AndroidDeviceKind.physical => androidPhysicalPlatform,
           AndroidDeviceKind.iosSimulator => iosSimulatorPlatform,
           AndroidDeviceKind.web => flutterWebPlatform,
+          AndroidDeviceKind.desktop => flutterDesktopPlatform,
           AndroidDeviceKind.emulator => androidEmulatorPlatform,
         },
       );
@@ -71,6 +78,10 @@ class RunningAndroidDevice extends Equatable {
     }
     if (avd.platform == flutterWebPlatform) {
       return isWebTarget &&
+          (serial == avd.id || avdName == avd.id || displayName == avd.name);
+    }
+    if (avd.platform == flutterDesktopPlatform) {
+      return isDesktopTarget &&
           (serial == avd.id || avdName == avd.id || displayName == avd.name);
     }
     return isEmulator && (avdName == avd.id || avdName == avd.name);
@@ -104,6 +115,8 @@ class DeviceListSnapshot extends Equatable {
       running.where((device) => device.isIosSimulator).toList();
   List<RunningAndroidDevice> get webTargets =>
       running.where((device) => device.isWebTarget).toList();
+  List<RunningAndroidDevice> get desktopTargets =>
+      running.where((device) => device.isDesktopTarget).toList();
   List<RunningAndroidDevice> get connectedDevices =>
       running.where((device) => device.isConnectedDevice).toList();
 

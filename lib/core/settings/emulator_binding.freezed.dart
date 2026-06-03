@@ -55,6 +55,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult Function(PhysicalDeviceBinding value)? physical,
     TResult Function(IosSimulatorBinding value)? iosSimulator,
     TResult Function(WebTargetBinding value)? webTarget,
+    TResult Function(DesktopTargetBinding value)? desktopTarget,
     TResult Function(ManualBinding value)? manual,
     required TResult orElse(),
   }) {
@@ -68,6 +69,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return iosSimulator(_that);
       case WebTargetBinding() when webTarget != null:
         return webTarget(_that);
+      case DesktopTargetBinding() when desktopTarget != null:
+        return desktopTarget(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -94,6 +97,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     required TResult Function(PhysicalDeviceBinding value) physical,
     required TResult Function(IosSimulatorBinding value) iosSimulator,
     required TResult Function(WebTargetBinding value) webTarget,
+    required TResult Function(DesktopTargetBinding value) desktopTarget,
     required TResult Function(ManualBinding value) manual,
   }) {
     final _that = this;
@@ -106,6 +110,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return iosSimulator(_that);
       case WebTargetBinding():
         return webTarget(_that);
+      case DesktopTargetBinding():
+        return desktopTarget(_that);
       case ManualBinding():
         return manual(_that);
       case _:
@@ -131,6 +137,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult? Function(PhysicalDeviceBinding value)? physical,
     TResult? Function(IosSimulatorBinding value)? iosSimulator,
     TResult? Function(WebTargetBinding value)? webTarget,
+    TResult? Function(DesktopTargetBinding value)? desktopTarget,
     TResult? Function(ManualBinding value)? manual,
   }) {
     final _that = this;
@@ -143,6 +150,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return iosSimulator(_that);
       case WebTargetBinding() when webTarget != null:
         return webTarget(_that);
+      case DesktopTargetBinding() when desktopTarget != null:
+        return desktopTarget(_that);
       case ManualBinding() when manual != null:
         return manual(_that);
       case _:
@@ -168,6 +177,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult Function(String serial, String name)? physical,
     TResult Function(String simulatorId, String name)? iosSimulator,
     TResult Function(String targetId, String name)? webTarget,
+    TResult Function(String targetId, String name)? desktopTarget,
     TResult Function(String vmServiceUrl)? manual,
     required TResult orElse(),
   }) {
@@ -181,6 +191,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return iosSimulator(_that.simulatorId, _that.name);
       case WebTargetBinding() when webTarget != null:
         return webTarget(_that.targetId, _that.name);
+      case DesktopTargetBinding() when desktopTarget != null:
+        return desktopTarget(_that.targetId, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -209,6 +221,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     required TResult Function(String serial, String name) physical,
     required TResult Function(String simulatorId, String name) iosSimulator,
     required TResult Function(String targetId, String name) webTarget,
+    required TResult Function(String targetId, String name) desktopTarget,
     required TResult Function(String vmServiceUrl) manual,
   }) {
     final _that = this;
@@ -221,6 +234,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return iosSimulator(_that.simulatorId, _that.name);
       case WebTargetBinding():
         return webTarget(_that.targetId, _that.name);
+      case DesktopTargetBinding():
+        return desktopTarget(_that.targetId, _that.name);
       case ManualBinding():
         return manual(_that.vmServiceUrl);
       case _:
@@ -246,6 +261,7 @@ extension EmulatorBindingPatterns on EmulatorBinding {
     TResult? Function(String serial, String name)? physical,
     TResult? Function(String simulatorId, String name)? iosSimulator,
     TResult? Function(String targetId, String name)? webTarget,
+    TResult? Function(String targetId, String name)? desktopTarget,
     TResult? Function(String vmServiceUrl)? manual,
   }) {
     final _that = this;
@@ -258,6 +274,8 @@ extension EmulatorBindingPatterns on EmulatorBinding {
         return iosSimulator(_that.simulatorId, _that.name);
       case WebTargetBinding() when webTarget != null:
         return webTarget(_that.targetId, _that.name);
+      case DesktopTargetBinding() when desktopTarget != null:
+        return desktopTarget(_that.targetId, _that.name);
       case ManualBinding() when manual != null:
         return manual(_that.vmServiceUrl);
       case _:
@@ -553,6 +571,79 @@ class _$WebTargetBindingCopyWithImpl<$Res>
     Object? name = null,
   }) {
     return _then(WebTargetBinding(
+      targetId: null == targetId
+          ? _self.targetId
+          : targetId // ignore: cast_nullable_to_non_nullable
+              as String,
+      name: null == name
+          ? _self.name
+          : name // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class DesktopTargetBinding implements EmulatorBinding {
+  const DesktopTargetBinding({required this.targetId, required this.name});
+
+  final String targetId;
+  final String name;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $DesktopTargetBindingCopyWith<DesktopTargetBinding> get copyWith =>
+      _$DesktopTargetBindingCopyWithImpl<DesktopTargetBinding>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is DesktopTargetBinding &&
+            (identical(other.targetId, targetId) ||
+                other.targetId == targetId) &&
+            (identical(other.name, name) || other.name == name));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, targetId, name);
+
+  @override
+  String toString() {
+    return 'EmulatorBinding.desktopTarget(targetId: $targetId, name: $name)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $DesktopTargetBindingCopyWith<$Res>
+    implements $EmulatorBindingCopyWith<$Res> {
+  factory $DesktopTargetBindingCopyWith(DesktopTargetBinding value,
+          $Res Function(DesktopTargetBinding) _then) =
+      _$DesktopTargetBindingCopyWithImpl;
+  @useResult
+  $Res call({String targetId, String name});
+}
+
+/// @nodoc
+class _$DesktopTargetBindingCopyWithImpl<$Res>
+    implements $DesktopTargetBindingCopyWith<$Res> {
+  _$DesktopTargetBindingCopyWithImpl(this._self, this._then);
+
+  final DesktopTargetBinding _self;
+  final $Res Function(DesktopTargetBinding) _then;
+
+  /// Create a copy of EmulatorBinding
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? targetId = null,
+    Object? name = null,
+  }) {
+    return _then(DesktopTargetBinding(
       targetId: null == targetId
           ? _self.targetId
           : targetId // ignore: cast_nullable_to_non_nullable

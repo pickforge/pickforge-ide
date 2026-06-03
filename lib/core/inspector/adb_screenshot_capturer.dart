@@ -34,6 +34,9 @@ class AdbScreenshotCapturer {
     if (platform == iosSimulatorPlatform) {
       return _captureIosSimulator(outputDir: outputDir, simulatorId: serial);
     }
+    if (platform == flutterDesktopPlatform) {
+      return _captureDesktop(outputDir: outputDir, targetId: serial);
+    }
     if (platform == flutterWebPlatform) return null;
     return _captureAndroid(outputDir: outputDir, serial: serial);
   }
@@ -128,6 +131,35 @@ class AdbScreenshotCapturer {
     } on FormatException {
       return null;
     }
+  }
+
+  Future<String?> _captureDesktop({
+    required String outputDir,
+    String? targetId,
+  }) async {
+    final flutterOnPath = await _detector.isBinaryOnPath('flutter');
+    if (!flutterOnPath) return null;
+
+    final id = targetId ?? _hostDesktopTargetId();
+    if (id == null) return null;
+
+    final outputPath = await _outputPath(outputDir);
+    final result = await _processRunner(
+      'flutter',
+      ['screenshot', '-d', id, '-o', outputPath],
+    );
+    if (result.exitCode != 0) return null;
+
+    final file = File(outputPath);
+    if (!file.existsSync() || file.lengthSync() == 0) return null;
+    return outputPath;
+  }
+
+  String? _hostDesktopTargetId() {
+    if (Platform.isLinux) return flutterLinuxDeviceId;
+    if (Platform.isMacOS) return flutterMacosDeviceId;
+    if (Platform.isWindows) return flutterWindowsDeviceId;
+    return null;
   }
 
   Future<String> _outputPath(String outputDir) async {

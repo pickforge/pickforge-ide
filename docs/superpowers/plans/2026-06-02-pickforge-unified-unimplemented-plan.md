@@ -409,12 +409,22 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P3.T5 — Flutter desktop target support
 
-**Status:** Deferred
+**Status:** Partial / host-gated
 **Tasks**
 
-- [ ] Attach to desktop target VM services.
-- [ ] Define screenshot path per platform.
-- [ ] Validate with Linux first, then macOS/Windows.
+- [x] Attach to desktop target VM services.
+- [x] Define screenshot path per platform.
+- [x] Validate with Linux first.
+- [ ] Validate macOS/Windows on native hosts.
+
+**Latest evidence**
+
+- 2026-06-03: Added Linux/macOS/Windows discovery from `flutter devices --machine`, `EmulatorBinding.desktopTarget`, picker/settings/session wiring, and desktop run-session selection through the existing `flutter run --machine -d <targetId>` path.
+- 2026-06-03: Added desktop secondary screenshot behavior through `flutter screenshot -d <targetId> -o <path>` with null-on-failure semantics; inspector screenshots remain the primary VM Service/inspector-extension context.
+- 2026-06-03: Verified Linux was discoverable with `fvm flutter devices --machine`, then ran the fixture app with `timeout 120s fvm flutter run -d linux --machine`; Flutter emitted `app.debugPort` with a `ws://127.0.0.1:.../ws` VM Service URI and then stopped cleanly after SIGTERM.
+- 2026-06-03: Focused desktop discovery/settings/session/screenshot tests passed, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, and `fvm flutter test --reporter=compact` passed (462 passed, 2 skipped without `PICKFORGE_E2E_AVD`), and both Android emulator E2Es passed with `fvm flutter test --reporter=compact --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart test/integration/widget_pick_e2e_test.dart`.
+
+**Blocked:** macOS and Windows live desktop validation require native macOS/Windows hosts; this Linux environment can validate Linux and command construction for all desktop target ids.
 
 ## 9. Agent ecosystem and MCP
 

@@ -112,6 +112,7 @@ void main() {
   testWidgets('setup checks show available and missing tools', (tester) async {
     final repo = _MockRepo();
     final cubit = ProjectsCubit(repo, PtySessionPool());
+    var openedSettings = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -131,6 +132,7 @@ void main() {
                 'opencode': 1,
               }),
             ),
+            openSettings: () => openedSettings = true,
           ),
         ),
       ),
@@ -142,6 +144,14 @@ void main() {
     expect(find.text('adb'), findsOneWidget);
     expect(find.text('Available'), findsNWidgets(2));
     expect(find.text('Missing'), findsNWidgets(4));
+    expect(find.text('Open settings'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Open settings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open settings'));
+    await tester.pump();
+
+    expect(openedSettings, isTrue);
   });
 }
 

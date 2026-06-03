@@ -140,6 +140,7 @@
   "onboardingDemoButton": "Explore demo mode",
   "onboardingOpenSampleApp": "Open sample Flutter app",
   "onboardingSetupChecksTitle": "Setup checks",
+  "onboardingOpenSettings": "Open settings",
   "onboardingRetrySetupChecks": "Retry",
   "onboardingCopySetupCommand": "Copy setup command",
   "onboardingDemoTitle": "Demo workspace",

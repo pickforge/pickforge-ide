@@ -5,9 +5,11 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
+import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
@@ -18,12 +20,14 @@ class OnboardingView extends StatefulWidget {
     this.pickFolder,
     this.sampleProjectRoot,
     this.diagnosticsService,
+    this.openSettings,
   });
 
   /// Override for tests.
   final Future<String?> Function()? pickFolder;
   final String? sampleProjectRoot;
   final DiagnosticsService? diagnosticsService;
+  final VoidCallback? openSettings;
 
   @override
   State<OnboardingView> createState() => _OnboardingViewState();
@@ -116,6 +120,8 @@ class _OnboardingViewState extends State<OnboardingView> {
                     key: ValueKey(_setupChecksKey),
                     diagnostics: diagnostics,
                     onRetry: () => setState(() => _setupChecksKey++),
+                    onOpenSettings: widget.openSettings ??
+                        () => context.go(AppRoutes.settings),
                   ),
                 ],
                 if (_demoMode) ...[
@@ -200,11 +206,13 @@ class _SetupChecksCard extends StatelessWidget {
   const _SetupChecksCard({
     required this.diagnostics,
     required this.onRetry,
+    required this.onOpenSettings,
     super.key,
   });
 
   final DiagnosticsService diagnostics;
   final VoidCallback onRetry;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -221,13 +229,19 @@ class _SetupChecksCard extends StatelessWidget {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Text(
+                    l10n.onboardingSetupChecksTitle,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  OverflowBar(
+                    alignment: MainAxisAlignment.end,
+                    spacing: 8,
                     children: [
-                      Expanded(
-                        child: Text(
-                          l10n.onboardingSetupChecksTitle,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
+                      TextButton.icon(
+                        onPressed: onOpenSettings,
+                        icon: const Icon(Icons.settings_outlined, size: 16),
+                        label: Text(l10n.onboardingOpenSettings),
                       ),
                       TextButton.icon(
                         onPressed: onRetry,

@@ -101,6 +101,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - **Forge it** is disabled unless there is both a selected widget and active chat for the active project.
 - Prompt is sent to the visible active chat's PTY session.
 
+**Latest evidence**
+
+- 2026-06-03: Ran `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/widget_pick_e2e_test.dart --reporter=compact` against `emulator-5554` (`Pixel_10`); passed.
+- 2026-06-03: Ran `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact` against `emulator-5554` (`Pixel_10`); passed.
+- 2026-06-03: Ran focused Forge/context/PTY tests proving context file writing and prompt delivery to the active session pool; passed.
+
 ### P1.T2 — Inspector screenshot capture path
 
 **Status:** Completed
@@ -583,7 +589,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add "Open sample Flutter app" flow using `fixtures/sample_flutter_app`.
 - [x] Add inline setup checks for agent binaries, `adb`, Flutter/FVM, and emulator availability.
 - [x] Add recoverable setup actions: copy command and retry detection.
-- [ ] Add recoverable setup action: open settings.
+- [x] Add recoverable setup action: open settings.
 - [ ] Make onboarding dismissible and restorable from command palette/help.
 
 **Validation**

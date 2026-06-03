@@ -6,6 +6,7 @@ import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/cancel_token.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -42,6 +43,7 @@ void main() {
   setUpAll(() {
     registerFallbackValue(Duration.zero);
     registerFallbackValue(CancelToken());
+    registerFallbackValue(const EmulatorLaunchOptions());
   });
 
   setUp(() {
@@ -53,6 +55,8 @@ void main() {
     log = _MLog();
     vm = _MV();
     handle = _FakeHandle();
+    when(() => settings.getEmulatorLaunchOptions('/p'))
+        .thenAnswer((_) async => const EmulatorLaunchOptions());
     when(() => handle.cancel()).thenAnswer((_) async {});
   });
 
@@ -72,8 +76,12 @@ void main() {
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'bootAvd: launch + ready -> idle',
     setUp: () {
-      when(() => launcher.launch('Pixel_5_API_34'))
-          .thenAnswer((_) async => handle);
+      when(
+        () => launcher.launch(
+          'Pixel_5_API_34',
+          options: any(named: 'options'),
+        ),
+      ).thenAnswer((_) async => handle);
       when(
         () => poller.poll(
           avdId: any(named: 'avdId'),
@@ -90,13 +98,60 @@ void main() {
       isA<Booting>(),
       isA<Idle>().having((s) => s.serial, 'serial', 'emulator-5554'),
     ],
+    verify: (_) => verify(
+      () => launcher.launch('Pixel_5_API_34'),
+    ).called(1),
+  );
+
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'bootAvd: passes saved launch options',
+    setUp: () {
+      const options = EmulatorLaunchOptions(
+        noAudio: true,
+        gpuMode: EmulatorGpuMode.host,
+        port: 5556,
+      );
+      when(() => settings.getEmulatorLaunchOptions('/p'))
+          .thenAnswer((_) async => options);
+      when(() => launcher.launch('Pixel_5_API_34', options: options))
+          .thenAnswer((_) async => handle);
+      when(
+        () => poller.poll(
+          avdId: any(named: 'avdId'),
+          timeout: any(named: 'timeout'),
+          interval: any(named: 'interval'),
+          cancel: any(named: 'cancel'),
+        ),
+      ).thenAnswer((_) => Stream.value(const BootReady('emulator-5556')));
+    },
+    build: build,
+    seed: () => const EmulatorSessionState.cold(avd: avd),
+    act: (c) => c.bootAvd(),
+    expect: () => [
+      isA<Booting>(),
+      isA<Idle>().having((s) => s.serial, 'serial', 'emulator-5556'),
+    ],
+    verify: (_) => verify(
+      () => launcher.launch(
+        'Pixel_5_API_34',
+        options: const EmulatorLaunchOptions(
+          noAudio: true,
+          gpuMode: EmulatorGpuMode.host,
+          port: 5556,
+        ),
+      ),
+    ).called(1),
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'bootAvd: timeout -> error, kills launch handle',
     setUp: () {
-      when(() => launcher.launch('Pixel_5_API_34'))
-          .thenAnswer((_) async => handle);
+      when(
+        () => launcher.launch(
+          'Pixel_5_API_34',
+          options: any(named: 'options'),
+        ),
+      ).thenAnswer((_) async => handle);
       when(
         () => poller.poll(
           avdId: any(named: 'avdId'),
@@ -116,8 +171,12 @@ void main() {
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'cancelBoot: returns to cold and kills handle',
     setUp: () {
-      when(() => launcher.launch('Pixel_5_API_34'))
-          .thenAnswer((_) async => handle);
+      when(
+        () => launcher.launch(
+          'Pixel_5_API_34',
+          options: any(named: 'options'),
+        ),
+      ).thenAnswer((_) async => handle);
       when(
         () => poller.poll(
           avdId: any(named: 'avdId'),

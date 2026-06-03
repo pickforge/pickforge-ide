@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
@@ -26,7 +27,7 @@ class DeviceRunSettings extends StatelessWidget {
             const SizedBox(height: 8),
             _AvdDropdown(projectRoot: projectRoot, state: state),
             const SizedBox(height: 8),
-            if (binding is AvdBinding)
+            if (binding is AvdBinding) ...[
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Auto-boot on select'),
@@ -36,6 +37,12 @@ class DeviceRunSettings extends StatelessWidget {
                     .setAutoBoot(projectRoot, enabled: value)
                     .ignore(),
               ),
+              const SizedBox(height: 8),
+              _EmulatorLaunchOptionsFields(
+                projectRoot: projectRoot,
+                options: state.emulatorLaunchOptions,
+              ),
+            ],
             const SizedBox(height: 8),
             _RunArgsFields(
               projectRoot: projectRoot,
@@ -80,6 +87,111 @@ class DeviceRunSettings extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+class _EmulatorLaunchOptionsFields extends StatelessWidget {
+  const _EmulatorLaunchOptionsFields({
+    required this.projectRoot,
+    required this.options,
+  });
+
+  final String projectRoot;
+  final EmulatorLaunchOptions options;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          key: const Key('emulator-no-audio'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('No audio'),
+          value: options.noAudio,
+          onChanged: (value) => _set(
+            context,
+            options.copyWith(noAudio: value),
+          ),
+        ),
+        SwitchListTile(
+          key: const Key('emulator-no-snapshot-load'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Cold boot'),
+          value: options.noSnapshotLoad,
+          onChanged: (value) => _set(
+            context,
+            options.copyWith(noSnapshotLoad: value),
+          ),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<EmulatorGpuMode?>(
+          key: const Key('emulator-gpu-mode'),
+          initialValue: options.gpuMode,
+          decoration: const InputDecoration(labelText: 'GPU mode'),
+          items: [
+            const DropdownMenuItem<EmulatorGpuMode?>(
+              child: Text('Default'),
+            ),
+            ...EmulatorGpuMode.values.map(
+              (mode) => DropdownMenuItem<EmulatorGpuMode?>(
+                value: mode,
+                child: Text(mode.label),
+              ),
+            ),
+          ],
+          onChanged: (mode) => _set(
+            context,
+            options.copyWith(gpuMode: mode),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          key: ValueKey('emulator-port-${options.port ?? ''}'),
+          initialValue: options.port?.toString() ?? '',
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Console port',
+            helperText: 'Even 5554-5682',
+          ),
+          onFieldSubmitted: (value) => _setInt(
+            context,
+            value,
+            (port) => options.copyWith(port: port),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          key: ValueKey('emulator-cores-${options.cores ?? ''}'),
+          initialValue: options.cores?.toString() ?? '',
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'CPU cores'),
+          onFieldSubmitted: (value) => _setInt(
+            context,
+            value,
+            (cores) => options.copyWith(cores: cores),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _set(BuildContext context, EmulatorLaunchOptions options) {
+    context
+        .read<DeviceRunSettingsCubit>()
+        .setEmulatorLaunchOptions(projectRoot, options)
+        .ignore();
+  }
+
+  void _setInt(
+    BuildContext context,
+    String text,
+    EmulatorLaunchOptions Function(int?) build,
+  ) {
+    final trimmed = text.trim();
+    final value = trimmed.isEmpty ? null : int.tryParse(trimmed);
+    if (value == null && trimmed.isNotEmpty) return;
+    _set(context, build(value));
   }
 }
 

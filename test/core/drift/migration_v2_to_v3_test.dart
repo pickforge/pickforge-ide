@@ -62,6 +62,7 @@ void main() {
       expect(names.contains('connection_mode'), isTrue);
       expect(names.contains('flutter_run_args'), isTrue);
       expect(names.contains('target_file'), isTrue);
+      expect(names.contains('emulator_launch_options'), isTrue);
       expect(names.contains('auto_boot_on_select'), isTrue);
       expect(names.contains('first_run_celebrated'), isTrue);
 

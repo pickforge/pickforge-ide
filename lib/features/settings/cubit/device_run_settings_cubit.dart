@@ -2,6 +2,7 @@ import 'package:bloc/bloc.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/flutter_run_target_scanner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -26,18 +27,21 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
     final results = await Future.wait<Object?>([
       settings.getEmulatorBinding(projectRoot),
       settings.getRunArgs(projectRoot),
+      settings.getEmulatorLaunchOptions(projectRoot),
       discovery.snapshot(),
       targetScanner.scan(projectRoot),
     ]);
     if (isClosed || generation != _loadGeneration) return;
     final binding = results[0] as EmulatorBinding?;
     final runArgs = results[1]! as RunArgs;
-    final devices = results[2]! as DeviceListSnapshot;
-    final metadata = results[3]! as FlutterRunMetadata;
+    final launchOptions = results[2]! as EmulatorLaunchOptions;
+    final devices = results[3]! as DeviceListSnapshot;
+    final metadata = results[4]! as FlutterRunMetadata;
     emit(
       DeviceRunSettingsState(
         binding: binding,
         runArgs: runArgs,
+        emulatorLaunchOptions: launchOptions,
         avds: devices.avds,
         targetFiles: metadata.targetFiles,
         flavors: metadata.flavors,
@@ -71,6 +75,15 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
     emit(state.copyWith(runArgs: args));
   }
 
+  Future<void> setEmulatorLaunchOptions(
+    String projectRoot,
+    EmulatorLaunchOptions options,
+  ) async {
+    if (options.validationErrors.isNotEmpty) return;
+    await settings.setEmulatorLaunchOptions(projectRoot, options);
+    emit(state.copyWith(emulatorLaunchOptions: options));
+  }
+
   Future<void> switchToManual(String projectRoot, String url) async {
     final binding = EmulatorBinding.manual(vmServiceUrl: url);
     await settings.setEmulatorBinding(projectRoot, binding);
@@ -80,6 +93,16 @@ class DeviceRunSettingsCubit extends Cubit<DeviceRunSettingsState> {
   Future<void> reset(String projectRoot) async {
     await settings.clearEmulatorBinding(projectRoot);
     await settings.setRunArgs(projectRoot, const RunArgs());
-    emit(state.copyWith(binding: null, runArgs: const RunArgs()));
+    await settings.setEmulatorLaunchOptions(
+      projectRoot,
+      const EmulatorLaunchOptions(),
+    );
+    emit(
+      state.copyWith(
+        binding: null,
+        runArgs: const RunArgs(),
+        emulatorLaunchOptions: const EmulatorLaunchOptions(),
+      ),
+    );
   }
 }

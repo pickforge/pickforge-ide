@@ -19,6 +19,7 @@ void main() {
       connectionMode: const Value('auto'),
       flutterRunArgs: const Value('["--flavor","dev"]'),
       targetFile: const Value('lib/main_dev.dart'),
+      emulatorLaunchOptions: const Value('{"noAudio":true}'),
       autoBootOnSelect: true,
     );
     final row = await db.projectSettingsDao.loadFor('/tmp/p');
@@ -28,6 +29,7 @@ void main() {
     expect(row.connectionMode, 'auto');
     expect(row.flutterRunArgs, '["--flavor","dev"]');
     expect(row.targetFile, 'lib/main_dev.dart');
+    expect(row.emulatorLaunchOptions, '{"noAudio":true}');
     expect(row.autoBootOnSelect, true);
     expect(row.firstRunCelebrated, false);
   });

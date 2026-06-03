@@ -38,6 +38,8 @@ import 'package:pickforge/core/emulator/run_session_log_repository.dart'
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart' as _i704;
 import 'package:pickforge/core/process/binary_detector.dart' as _i993;
 import 'package:pickforge/core/projects/projects_repository.dart' as _i613;
+import 'package:pickforge/core/settings/flutter_run_target_scanner.dart'
+    as _i680;
 import 'package:pickforge/core/settings/onboarding_preferences.dart' as _i1048;
 import 'package:pickforge/core/settings/project_settings_repository.dart'
     as _i340;
@@ -101,6 +103,8 @@ extension GetItInjectableX on _i174.GetIt {
         () => _i342.PickforgeContextWriter());
     gh.lazySingleton<_i536.AppBootstrap>(() => _i536.AppBootstrap());
     gh.lazySingleton<_i631.PickforgeDatabase>(() => _i631.PickforgeDatabase());
+    gh.lazySingleton<_i680.FlutterRunTargetScanner>(
+        () => const _i680.FlutterRunTargetScanner());
     gh.lazySingleton<_i685.PtySessionPool>(() => _i685.PtySessionPool());
     gh.lazySingleton<_i292.VmServiceClient>(() => _i292.VmServiceClient());
     gh.lazySingleton<_i1070.ProjectsDao>(
@@ -163,15 +167,16 @@ extension GetItInjectableX on _i174.GetIt {
         ));
     gh.factory<_i132.DevicePickerCubit>(
         () => _i132.DevicePickerCubit(gh<_i577.DeviceDiscoveryService>()));
+    gh.factory<_i998.DeviceRunSettingsCubit>(() => _i998.DeviceRunSettingsCubit(
+          settings: gh<_i340.ProjectSettingsRepository>(),
+          discovery: gh<_i577.DeviceDiscoveryService>(),
+          targetScanner: gh<_i680.FlutterRunTargetScanner>(),
+        ));
     gh.lazySingleton<_i613.ProjectsRepository>(
         () => _i613.ProjectsRepository(gh<_i1070.ProjectsDao>()));
     gh.factory<_i18.SettingsCubit>(() => _i18.SettingsCubit(
           gh<_i340.ProjectSettingsRepository>(),
           gh<_i195.EmbeddedTerminalSettingsRepository>(),
-        ));
-    gh.factory<_i998.DeviceRunSettingsCubit>(() => _i998.DeviceRunSettingsCubit(
-          settings: gh<_i340.ProjectSettingsRepository>(),
-          discovery: gh<_i577.DeviceDiscoveryService>(),
         ));
     gh.factory<_i882.ProjectsCubit>(() => _i882.ProjectsCubit(
           gh<_i613.ProjectsRepository>(),

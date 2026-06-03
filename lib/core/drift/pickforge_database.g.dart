@@ -76,6 +76,12 @@ class $ProjectSettingsTable extends ProjectSettings
   late final GeneratedColumn<String> targetFile = GeneratedColumn<String>(
       'target_file', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _emulatorLaunchOptionsMeta =
+      const VerificationMeta('emulatorLaunchOptions');
+  @override
+  late final GeneratedColumn<String> emulatorLaunchOptions =
+      GeneratedColumn<String>('emulator_launch_options', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _autoBootOnSelectMeta =
       const VerificationMeta('autoBootOnSelect');
   @override
@@ -109,6 +115,7 @@ class $ProjectSettingsTable extends ProjectSettings
         connectionMode,
         flutterRunArgs,
         targetFile,
+        emulatorLaunchOptions,
         autoBootOnSelect,
         firstRunCelebrated
       ];
@@ -184,6 +191,12 @@ class $ProjectSettingsTable extends ProjectSettings
           targetFile.isAcceptableOrUnknown(
               data['target_file']!, _targetFileMeta));
     }
+    if (data.containsKey('emulator_launch_options')) {
+      context.handle(
+          _emulatorLaunchOptionsMeta,
+          emulatorLaunchOptions.isAcceptableOrUnknown(
+              data['emulator_launch_options']!, _emulatorLaunchOptionsMeta));
+    }
     if (data.containsKey('auto_boot_on_select')) {
       context.handle(
           _autoBootOnSelectMeta,
@@ -227,6 +240,9 @@ class $ProjectSettingsTable extends ProjectSettings
           DriftSqlType.string, data['${effectivePrefix}flutter_run_args']),
       targetFile: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}target_file']),
+      emulatorLaunchOptions: attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}emulator_launch_options']),
       autoBootOnSelect: attachedDatabase.typeMapping.read(
           DriftSqlType.bool, data['${effectivePrefix}auto_boot_on_select'])!,
       firstRunCelebrated: attachedDatabase.typeMapping.read(
@@ -253,6 +269,7 @@ class ProjectSettingsRow extends DataClass
   final String connectionMode;
   final String? flutterRunArgs;
   final String? targetFile;
+  final String? emulatorLaunchOptions;
   final bool autoBootOnSelect;
   final bool firstRunCelebrated;
   const ProjectSettingsRow(
@@ -267,6 +284,7 @@ class ProjectSettingsRow extends DataClass
       required this.connectionMode,
       this.flutterRunArgs,
       this.targetFile,
+      this.emulatorLaunchOptions,
       required this.autoBootOnSelect,
       required this.firstRunCelebrated});
   @override
@@ -300,6 +318,9 @@ class ProjectSettingsRow extends DataClass
     }
     if (!nullToAbsent || targetFile != null) {
       map['target_file'] = Variable<String>(targetFile);
+    }
+    if (!nullToAbsent || emulatorLaunchOptions != null) {
+      map['emulator_launch_options'] = Variable<String>(emulatorLaunchOptions);
     }
     map['auto_boot_on_select'] = Variable<bool>(autoBootOnSelect);
     map['first_run_celebrated'] = Variable<bool>(firstRunCelebrated);
@@ -336,6 +357,9 @@ class ProjectSettingsRow extends DataClass
       targetFile: targetFile == null && nullToAbsent
           ? const Value.absent()
           : Value(targetFile),
+      emulatorLaunchOptions: emulatorLaunchOptions == null && nullToAbsent
+          ? const Value.absent()
+          : Value(emulatorLaunchOptions),
       autoBootOnSelect: Value(autoBootOnSelect),
       firstRunCelebrated: Value(firstRunCelebrated),
     );
@@ -356,6 +380,8 @@ class ProjectSettingsRow extends DataClass
       connectionMode: serializer.fromJson<String>(json['connectionMode']),
       flutterRunArgs: serializer.fromJson<String?>(json['flutterRunArgs']),
       targetFile: serializer.fromJson<String?>(json['targetFile']),
+      emulatorLaunchOptions:
+          serializer.fromJson<String?>(json['emulatorLaunchOptions']),
       autoBootOnSelect: serializer.fromJson<bool>(json['autoBootOnSelect']),
       firstRunCelebrated: serializer.fromJson<bool>(json['firstRunCelebrated']),
     );
@@ -375,6 +401,8 @@ class ProjectSettingsRow extends DataClass
       'connectionMode': serializer.toJson<String>(connectionMode),
       'flutterRunArgs': serializer.toJson<String?>(flutterRunArgs),
       'targetFile': serializer.toJson<String?>(targetFile),
+      'emulatorLaunchOptions':
+          serializer.toJson<String?>(emulatorLaunchOptions),
       'autoBootOnSelect': serializer.toJson<bool>(autoBootOnSelect),
       'firstRunCelebrated': serializer.toJson<bool>(firstRunCelebrated),
     };
@@ -392,6 +420,7 @@ class ProjectSettingsRow extends DataClass
           String? connectionMode,
           Value<String?> flutterRunArgs = const Value.absent(),
           Value<String?> targetFile = const Value.absent(),
+          Value<String?> emulatorLaunchOptions = const Value.absent(),
           bool? autoBootOnSelect,
           bool? firstRunCelebrated}) =>
       ProjectSettingsRow(
@@ -409,6 +438,9 @@ class ProjectSettingsRow extends DataClass
         flutterRunArgs:
             flutterRunArgs.present ? flutterRunArgs.value : this.flutterRunArgs,
         targetFile: targetFile.present ? targetFile.value : this.targetFile,
+        emulatorLaunchOptions: emulatorLaunchOptions.present
+            ? emulatorLaunchOptions.value
+            : this.emulatorLaunchOptions,
         autoBootOnSelect: autoBootOnSelect ?? this.autoBootOnSelect,
         firstRunCelebrated: firstRunCelebrated ?? this.firstRunCelebrated,
       );
@@ -437,6 +469,9 @@ class ProjectSettingsRow extends DataClass
           : this.flutterRunArgs,
       targetFile:
           data.targetFile.present ? data.targetFile.value : this.targetFile,
+      emulatorLaunchOptions: data.emulatorLaunchOptions.present
+          ? data.emulatorLaunchOptions.value
+          : this.emulatorLaunchOptions,
       autoBootOnSelect: data.autoBootOnSelect.present
           ? data.autoBootOnSelect.value
           : this.autoBootOnSelect,
@@ -460,6 +495,7 @@ class ProjectSettingsRow extends DataClass
           ..write('connectionMode: $connectionMode, ')
           ..write('flutterRunArgs: $flutterRunArgs, ')
           ..write('targetFile: $targetFile, ')
+          ..write('emulatorLaunchOptions: $emulatorLaunchOptions, ')
           ..write('autoBootOnSelect: $autoBootOnSelect, ')
           ..write('firstRunCelebrated: $firstRunCelebrated')
           ..write(')'))
@@ -479,6 +515,7 @@ class ProjectSettingsRow extends DataClass
       connectionMode,
       flutterRunArgs,
       targetFile,
+      emulatorLaunchOptions,
       autoBootOnSelect,
       firstRunCelebrated);
   @override
@@ -496,6 +533,7 @@ class ProjectSettingsRow extends DataClass
           other.connectionMode == this.connectionMode &&
           other.flutterRunArgs == this.flutterRunArgs &&
           other.targetFile == this.targetFile &&
+          other.emulatorLaunchOptions == this.emulatorLaunchOptions &&
           other.autoBootOnSelect == this.autoBootOnSelect &&
           other.firstRunCelebrated == this.firstRunCelebrated);
 }
@@ -512,6 +550,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
   final Value<String> connectionMode;
   final Value<String?> flutterRunArgs;
   final Value<String?> targetFile;
+  final Value<String?> emulatorLaunchOptions;
   final Value<bool> autoBootOnSelect;
   final Value<bool> firstRunCelebrated;
   final Value<int> rowid;
@@ -527,6 +566,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     this.connectionMode = const Value.absent(),
     this.flutterRunArgs = const Value.absent(),
     this.targetFile = const Value.absent(),
+    this.emulatorLaunchOptions = const Value.absent(),
     this.autoBootOnSelect = const Value.absent(),
     this.firstRunCelebrated = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -543,6 +583,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     this.connectionMode = const Value.absent(),
     this.flutterRunArgs = const Value.absent(),
     this.targetFile = const Value.absent(),
+    this.emulatorLaunchOptions = const Value.absent(),
     this.autoBootOnSelect = const Value.absent(),
     this.firstRunCelebrated = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -559,6 +600,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     Expression<String>? connectionMode,
     Expression<String>? flutterRunArgs,
     Expression<String>? targetFile,
+    Expression<String>? emulatorLaunchOptions,
     Expression<bool>? autoBootOnSelect,
     Expression<bool>? firstRunCelebrated,
     Expression<int>? rowid,
@@ -575,6 +617,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       if (connectionMode != null) 'connection_mode': connectionMode,
       if (flutterRunArgs != null) 'flutter_run_args': flutterRunArgs,
       if (targetFile != null) 'target_file': targetFile,
+      if (emulatorLaunchOptions != null)
+        'emulator_launch_options': emulatorLaunchOptions,
       if (autoBootOnSelect != null) 'auto_boot_on_select': autoBootOnSelect,
       if (firstRunCelebrated != null)
         'first_run_celebrated': firstRunCelebrated,
@@ -594,6 +638,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       Value<String>? connectionMode,
       Value<String?>? flutterRunArgs,
       Value<String?>? targetFile,
+      Value<String?>? emulatorLaunchOptions,
       Value<bool>? autoBootOnSelect,
       Value<bool>? firstRunCelebrated,
       Value<int>? rowid}) {
@@ -609,6 +654,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       connectionMode: connectionMode ?? this.connectionMode,
       flutterRunArgs: flutterRunArgs ?? this.flutterRunArgs,
       targetFile: targetFile ?? this.targetFile,
+      emulatorLaunchOptions:
+          emulatorLaunchOptions ?? this.emulatorLaunchOptions,
       autoBootOnSelect: autoBootOnSelect ?? this.autoBootOnSelect,
       firstRunCelebrated: firstRunCelebrated ?? this.firstRunCelebrated,
       rowid: rowid ?? this.rowid,
@@ -651,6 +698,10 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     if (targetFile.present) {
       map['target_file'] = Variable<String>(targetFile.value);
     }
+    if (emulatorLaunchOptions.present) {
+      map['emulator_launch_options'] =
+          Variable<String>(emulatorLaunchOptions.value);
+    }
     if (autoBootOnSelect.present) {
       map['auto_boot_on_select'] = Variable<bool>(autoBootOnSelect.value);
     }
@@ -677,6 +728,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
           ..write('connectionMode: $connectionMode, ')
           ..write('flutterRunArgs: $flutterRunArgs, ')
           ..write('targetFile: $targetFile, ')
+          ..write('emulatorLaunchOptions: $emulatorLaunchOptions, ')
           ..write('autoBootOnSelect: $autoBootOnSelect, ')
           ..write('firstRunCelebrated: $firstRunCelebrated, ')
           ..write('rowid: $rowid')
@@ -3283,6 +3335,7 @@ typedef $$ProjectSettingsTableCreateCompanionBuilder = ProjectSettingsCompanion
   Value<String> connectionMode,
   Value<String?> flutterRunArgs,
   Value<String?> targetFile,
+  Value<String?> emulatorLaunchOptions,
   Value<bool> autoBootOnSelect,
   Value<bool> firstRunCelebrated,
   Value<int> rowid,
@@ -3300,6 +3353,7 @@ typedef $$ProjectSettingsTableUpdateCompanionBuilder = ProjectSettingsCompanion
   Value<String> connectionMode,
   Value<String?> flutterRunArgs,
   Value<String?> targetFile,
+  Value<String?> emulatorLaunchOptions,
   Value<bool> autoBootOnSelect,
   Value<bool> firstRunCelebrated,
   Value<int> rowid,
@@ -3349,6 +3403,10 @@ class $$ProjectSettingsTableFilterComposer
 
   ColumnFilters<String> get targetFile => $composableBuilder(
       column: $table.targetFile, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get emulatorLaunchOptions => $composableBuilder(
+      column: $table.emulatorLaunchOptions,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<bool> get autoBootOnSelect => $composableBuilder(
       column: $table.autoBootOnSelect,
@@ -3405,6 +3463,10 @@ class $$ProjectSettingsTableOrderingComposer
   ColumnOrderings<String> get targetFile => $composableBuilder(
       column: $table.targetFile, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get emulatorLaunchOptions => $composableBuilder(
+      column: $table.emulatorLaunchOptions,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<bool> get autoBootOnSelect => $composableBuilder(
       column: $table.autoBootOnSelect,
       builder: (column) => ColumnOrderings(column));
@@ -3456,6 +3518,9 @@ class $$ProjectSettingsTableAnnotationComposer
   GeneratedColumn<String> get targetFile => $composableBuilder(
       column: $table.targetFile, builder: (column) => column);
 
+  GeneratedColumn<String> get emulatorLaunchOptions => $composableBuilder(
+      column: $table.emulatorLaunchOptions, builder: (column) => column);
+
   GeneratedColumn<bool> get autoBootOnSelect => $composableBuilder(
       column: $table.autoBootOnSelect, builder: (column) => column);
 
@@ -3502,6 +3567,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             Value<String> connectionMode = const Value.absent(),
             Value<String?> flutterRunArgs = const Value.absent(),
             Value<String?> targetFile = const Value.absent(),
+            Value<String?> emulatorLaunchOptions = const Value.absent(),
             Value<bool> autoBootOnSelect = const Value.absent(),
             Value<bool> firstRunCelebrated = const Value.absent(),
             Value<int> rowid = const Value.absent(),
@@ -3518,6 +3584,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             connectionMode: connectionMode,
             flutterRunArgs: flutterRunArgs,
             targetFile: targetFile,
+            emulatorLaunchOptions: emulatorLaunchOptions,
             autoBootOnSelect: autoBootOnSelect,
             firstRunCelebrated: firstRunCelebrated,
             rowid: rowid,
@@ -3534,6 +3601,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             Value<String> connectionMode = const Value.absent(),
             Value<String?> flutterRunArgs = const Value.absent(),
             Value<String?> targetFile = const Value.absent(),
+            Value<String?> emulatorLaunchOptions = const Value.absent(),
             Value<bool> autoBootOnSelect = const Value.absent(),
             Value<bool> firstRunCelebrated = const Value.absent(),
             Value<int> rowid = const Value.absent(),
@@ -3550,6 +3618,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             connectionMode: connectionMode,
             flutterRunArgs: flutterRunArgs,
             targetFile: targetFile,
+            emulatorLaunchOptions: emulatorLaunchOptions,
             autoBootOnSelect: autoBootOnSelect,
             firstRunCelebrated: firstRunCelebrated,
             rowid: rowid,

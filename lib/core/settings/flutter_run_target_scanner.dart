@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:injectable/injectable.dart';
 import 'package:path/path.dart' as p;
 
 class FlutterRunMetadata {
@@ -12,6 +13,7 @@ class FlutterRunMetadata {
   final List<String> flavors;
 }
 
+@lazySingleton
 class FlutterRunTargetScanner {
   const FlutterRunTargetScanner();
 

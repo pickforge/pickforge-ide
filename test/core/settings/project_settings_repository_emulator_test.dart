@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
@@ -66,5 +67,57 @@ void main() {
     final got = await repo.getRunArgs('/p');
     expect(got.targetFile, isNull);
     expect(got.extraArgs, isEmpty);
+  });
+
+  test('round-trip emulator launch options', () async {
+    await repo.setEmulatorLaunchOptions(
+      '/p',
+      const EmulatorLaunchOptions(
+        noAudio: true,
+        gpuMode: EmulatorGpuMode.host,
+        noSnapshotLoad: true,
+        port: 5556,
+        cores: 4,
+      ),
+    );
+
+    final got = await repo.getEmulatorLaunchOptions('/p');
+    expect(got.noAudio, isTrue);
+    expect(got.gpuMode, EmulatorGpuMode.host);
+    expect(got.noSnapshotLoad, isTrue);
+    expect(got.port, 5556);
+    expect(got.cores, 4);
+  });
+
+  test('getEmulatorLaunchOptions returns defaults when none set', () async {
+    expect(
+      await repo.getEmulatorLaunchOptions('/p'),
+      const EmulatorLaunchOptions(),
+    );
+  });
+
+  test('setEmulatorLaunchOptions clears stored JSON for defaults', () async {
+    await repo.setEmulatorLaunchOptions(
+      '/p',
+      const EmulatorLaunchOptions(noAudio: true),
+    );
+    await repo.setEmulatorLaunchOptions('/p', const EmulatorLaunchOptions());
+
+    final row = await db.projectSettingsDao.loadFor('/p');
+    expect(row?.emulatorLaunchOptions, isNull);
+    expect(
+      await repo.getEmulatorLaunchOptions('/p'),
+      const EmulatorLaunchOptions(),
+    );
+  });
+
+  test('setEmulatorLaunchOptions rejects invalid options', () {
+    expect(
+      () => repo.setEmulatorLaunchOptions(
+        '/p',
+        const EmulatorLaunchOptions(port: 5555),
+      ),
+      throwsArgumentError,
+    );
   });
 }

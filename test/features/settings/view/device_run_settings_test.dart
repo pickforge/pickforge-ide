@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
@@ -23,6 +24,7 @@ void main() {
       const Avd(id: 'fallback', name: 'fallback', platform: 'android'),
     );
     registerFallbackValue(const RunArgs());
+    registerFallbackValue(const EmulatorLaunchOptions());
   });
 
   testWidgets('renders AVD list and picking calls cubit', (tester) async {
@@ -194,6 +196,64 @@ void main() {
             '--dart-define=NAME=Pick Forge',
           ],
         ),
+      ),
+    ).called(1);
+  });
+
+  testWidgets('emulator launch controls persist option changes',
+      (tester) async {
+    final cubit = _Cubit(
+      const DeviceRunSettingsState(
+        binding: EmulatorBinding.avd(avdId: 'p5', avdName: 'Pixel 5'),
+        emulatorLaunchOptions: EmulatorLaunchOptions(port: 5556),
+      ),
+    );
+    when(() => cubit.setEmulatorLaunchOptions(any(), any()))
+        .thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<DeviceRunSettingsCubit>.value(
+          value: cubit,
+          child: const Scaffold(
+            body: SingleChildScrollView(
+              child: DeviceRunSettings(projectRoot: '/p'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('emulator-no-audio')));
+    await tester.pump();
+    verify(
+      () => cubit.setEmulatorLaunchOptions(
+        '/p',
+        const EmulatorLaunchOptions(noAudio: true, port: 5556),
+      ),
+    ).called(1);
+
+    await tester.tap(find.byKey(const Key('emulator-gpu-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Host').last);
+    await tester.pumpAndSettle();
+    verify(
+      () => cubit.setEmulatorLaunchOptions(
+        '/p',
+        const EmulatorLaunchOptions(gpuMode: EmulatorGpuMode.host, port: 5556),
+      ),
+    ).called(1);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('emulator-port-5556')),
+      '5558',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    verify(
+      () => cubit.setEmulatorLaunchOptions(
+        '/p',
+        const EmulatorLaunchOptions(port: 5558),
       ),
     ).called(1);
   });

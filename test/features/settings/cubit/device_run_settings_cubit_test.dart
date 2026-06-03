@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/flutter_run_target_scanner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -31,6 +32,7 @@ void main() {
     registerFallbackValue(
       const EmulatorBinding.avd(avdId: 'fallback', avdName: 'fallback'),
     );
+    registerFallbackValue(const EmulatorLaunchOptions());
   });
 
   setUp(() {
@@ -47,6 +49,9 @@ void main() {
         targetFile: 'lib/main_dev.dart',
         extraArgs: ['--flavor', 'dev'],
       ),
+    );
+    when(() => repo.getEmulatorLaunchOptions('/p')).thenAnswer(
+      (_) async => const EmulatorLaunchOptions(noAudio: true),
     );
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(
@@ -69,6 +74,7 @@ void main() {
 
     expect(cubit.state.binding, isA<AvdBinding>());
     expect(cubit.state.runArgs.targetFile, 'lib/main_dev.dart');
+    expect(cubit.state.emulatorLaunchOptions.noAudio, isTrue);
     expect(cubit.state.avds.single.name, 'Pixel 5');
     expect(cubit.state.targetFiles, ['lib/main.dart', 'lib/main_dev.dart']);
     expect(cubit.state.flavors, ['dev']);
@@ -82,6 +88,8 @@ void main() {
     when(() => repo.getEmulatorBinding('/second'))
         .thenAnswer((_) => second.future);
     when(() => repo.getRunArgs(any())).thenAnswer((_) async => const RunArgs());
+    when(() => repo.getEmulatorLaunchOptions(any()))
+        .thenAnswer((_) async => const EmulatorLaunchOptions());
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(
         avds: [Avd(id: 'p5', name: 'Pixel 5', platform: 'android')],
@@ -108,6 +116,8 @@ void main() {
     final binding = Completer<EmulatorBinding?>();
     when(() => repo.getEmulatorBinding('/p')).thenAnswer((_) => binding.future);
     when(() => repo.getRunArgs('/p')).thenAnswer((_) async => const RunArgs());
+    when(() => repo.getEmulatorLaunchOptions('/p'))
+        .thenAnswer((_) async => const EmulatorLaunchOptions());
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(avds: [], running: []),
     );
@@ -151,16 +161,51 @@ void main() {
     expect(cubit.state.runArgs, args);
   });
 
+  test('setEmulatorLaunchOptions persists options', () async {
+    const options = EmulatorLaunchOptions(
+      noAudio: true,
+      gpuMode: EmulatorGpuMode.host,
+      port: 5556,
+    );
+    when(() => repo.setEmulatorLaunchOptions('/p', options))
+        .thenAnswer((_) async {});
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setEmulatorLaunchOptions('/p', options);
+
+    verify(() => repo.setEmulatorLaunchOptions('/p', options)).called(1);
+    expect(cubit.state.emulatorLaunchOptions, options);
+  });
+
+  test('setEmulatorLaunchOptions ignores invalid options', () async {
+    final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
+
+    await cubit.setEmulatorLaunchOptions(
+      '/p',
+      const EmulatorLaunchOptions(port: 5555),
+    );
+
+    verifyNever(() => repo.setEmulatorLaunchOptions(any(), any()));
+    expect(cubit.state.emulatorLaunchOptions, const EmulatorLaunchOptions());
+  });
+
   test('reset clears binding and run args', () async {
     when(() => repo.clearEmulatorBinding('/p')).thenAnswer((_) async {});
     when(() => repo.setRunArgs('/p', const RunArgs())).thenAnswer((_) async {});
+    when(
+      () => repo.setEmulatorLaunchOptions('/p', const EmulatorLaunchOptions()),
+    ).thenAnswer((_) async {});
     final cubit = DeviceRunSettingsCubit(settings: repo, discovery: discovery);
 
     await cubit.reset('/p');
 
     verify(() => repo.clearEmulatorBinding('/p')).called(1);
     verify(() => repo.setRunArgs('/p', const RunArgs())).called(1);
+    verify(
+      () => repo.setEmulatorLaunchOptions('/p', const EmulatorLaunchOptions()),
+    ).called(1);
     expect(cubit.state.binding, isNull);
     expect(cubit.state.runArgs, const RunArgs());
+    expect(cubit.state.emulatorLaunchOptions, const EmulatorLaunchOptions());
   });
 }

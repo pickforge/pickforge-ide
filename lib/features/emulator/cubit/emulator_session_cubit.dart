@@ -115,7 +115,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final cancel = CancelToken();
     _bootCancel = cancel;
     try {
-      final handle = await launcher.launch(avd.id);
+      final options = await settings.getEmulatorLaunchOptions(projectRoot);
+      final handle = await launcher.launch(avd.id, options: options);
       _bootHandle = handle;
       await for (final event in poller.poll(avdId: avd.id, cancel: cancel)) {
         if (state is! Booting) return;

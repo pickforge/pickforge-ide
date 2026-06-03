@@ -274,12 +274,19 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P2.T3 — Power AVD flags
 
-**Status:** Deferred
+**Status:** Completed
+**Why:** Per-project emulator launch options are persisted and validated, while the no-options path still uses `flutter emulators --launch`.
+
 **Tasks**
 
-- [ ] Add optional per-project emulator launch flags: `-no-audio`, `-gpu`, `-no-snapshot-load`, custom port, cores.
-- [ ] Validate flags against known emulator capabilities.
-- [ ] Keep simple `flutter emulators --launch` path as default.
+- [x] Add optional per-project emulator launch flags: `-no-audio`, `-gpu`, `-no-snapshot-load`, custom port, cores.
+- [x] Validate flags against known emulator capabilities.
+- [x] Keep simple `flutter emulators --launch` path as default.
+
+**Latest evidence**
+
+- 2026-06-03: Added `EmulatorLaunchOptions`, per-project settings persistence, Device & Run controls, direct `emulator -avd ...` launch when flags are set, and default `flutter emulators --launch` preservation when flags are empty.
+- 2026-06-03: Verified with focused launcher/settings/migration/boot tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (373 passed, 2 skipped without `PICKFORGE_E2E_AVD`), `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact`, and `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/widget_pick_e2e_test.dart --reporter=compact`; all passed.
 
 ### P2.T4 — Run-session crash recovery/adoption
 

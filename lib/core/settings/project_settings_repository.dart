@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 
@@ -111,6 +112,33 @@ class ProjectSettingsRepository {
       projectRoot: projectRoot,
       targetFile: Value(args.targetFile),
       flutterRunArgs: Value(jsonEncode(args.extraArgs)),
+    );
+  }
+
+  Future<EmulatorLaunchOptions> getEmulatorLaunchOptions(
+    String projectRoot,
+  ) async {
+    final row = await _db.projectSettingsDao.loadFor(projectRoot);
+    final json = row?.emulatorLaunchOptions;
+    if (json == null) return const EmulatorLaunchOptions();
+    return EmulatorLaunchOptions.fromJson(
+      (jsonDecode(json) as Map<String, dynamic>).cast<String, Object?>(),
+    );
+  }
+
+  Future<void> setEmulatorLaunchOptions(
+    String projectRoot,
+    EmulatorLaunchOptions options,
+  ) {
+    final errors = options.validationErrors;
+    if (errors.isNotEmpty) {
+      throw ArgumentError(errors.join('\n'));
+    }
+    return _db.projectSettingsDao.upsert(
+      projectRoot: projectRoot,
+      emulatorLaunchOptions: Value(
+        options.isDefault ? null : jsonEncode(options.toJson()),
+      ),
     );
   }
 

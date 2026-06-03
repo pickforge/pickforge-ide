@@ -5,6 +5,8 @@ import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/agent/models/forge_request.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
+import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
@@ -17,6 +19,8 @@ class _MockLauncher extends Mock implements AgentLauncher {}
 class _MockAdb extends Mock implements AdbScreenshotCapturer {}
 
 class _MockPool extends Mock implements PtySessionPool {}
+
+class _MockDiagnostics extends Mock implements DiagnosticsService {}
 
 class _FakeForgeRequest extends Fake implements ForgeRequest {}
 
@@ -76,23 +80,31 @@ void main() {
   late _MockLauncher launcher;
   late _MockAdb adb;
   late _MockPool pool;
+  late _MockDiagnostics diagnostics;
 
   setUp(() {
     launcher = _MockLauncher();
     adb = _MockAdb();
     pool = _MockPool();
+    diagnostics = _MockDiagnostics();
     when(() => pool.sendPrompt(any(), any())).thenReturn(null);
+    when(() => diagnostics.recordLog(any(), any())).thenReturn(null);
+    getIt.registerSingleton<DiagnosticsService>(diagnostics);
   });
+
+  tearDown(getIt.reset);
+
+  ForgeCubit buildCubit() => ForgeCubit(launcher, adb, pool);
 
   group('ForgeCubit', () {
     test('initial state matches ForgeState.initial()', () {
-      final cubit = ForgeCubit(launcher, adb, pool);
+      final cubit = buildCubit();
       expect(cubit.state, equals(ForgeState.initial()));
     });
 
     blocTest<ForgeCubit, ForgeState>(
       'selectSkill emits new skill',
-      build: () => ForgeCubit(launcher, adb, pool),
+      build: buildCubit,
       act: (cubit) => cubit.selectSkill(SkillId.extractWidget),
       expect: () => [
         ForgeState.initial().copyWith(skill: SkillId.extractWidget),
@@ -101,7 +113,7 @@ void main() {
 
     blocTest<ForgeCubit, ForgeState>(
       'selectAgent emits new agentId',
-      build: () => ForgeCubit(launcher, adb, pool),
+      build: buildCubit,
       act: (cubit) => cubit.selectAgent(AgentProfileId.codex),
       expect: () => [
         ForgeState.initial().copyWith(agentId: AgentProfileId.codex),
@@ -110,7 +122,7 @@ void main() {
 
     blocTest<ForgeCubit, ForgeState>(
       'selectTerminal emits new terminalId',
-      build: () => ForgeCubit(launcher, adb, pool),
+      build: buildCubit,
       act: (cubit) => cubit.selectTerminal('kitty'),
       expect: () => [
         ForgeState.initial().copyWith(terminalId: 'kitty'),
@@ -125,7 +137,7 @@ void main() {
         ).thenAnswer((_) async => null);
         when(() => launcher.prepareContext(any()))
             .thenAnswer((_) async => _stubContext());
-        return ForgeCubit(launcher, adb, pool);
+        return buildCubit();
       },
       act: (cubit) => cubit.forge(
         selection: _sampleWidget,
@@ -150,7 +162,7 @@ void main() {
         ).thenAnswer((_) async => '/tmp/test/.pickforge/device-screen.png');
         when(() => launcher.prepareContext(any()))
             .thenAnswer((_) async => _stubContext());
-        return ForgeCubit(launcher, adb, pool);
+        return buildCubit();
       },
       act: (cubit) => cubit.forge(
         selection: _sampleWidget,
@@ -181,7 +193,7 @@ void main() {
         when(
           () => launcher.prepareContext(any()),
         ).thenThrow(Exception('launch failed'));
-        return ForgeCubit(launcher, adb, pool);
+        return buildCubit();
       },
       act: (cubit) => cubit.forge(
         selection: _sampleWidget,
@@ -191,13 +203,14 @@ void main() {
       verify: (cubit) {
         expect(cubit.state.launching, isFalse);
         expect(cubit.state.lastError, isNotNull);
+        verify(() => diagnostics.recordLog('error', any())).called(1);
         verifyNever(() => pool.sendPrompt(any(), any()));
       },
     );
 
     blocTest<ForgeCubit, ForgeState>(
       'forge skips non-user-code widgets',
-      build: () => ForgeCubit(launcher, adb, pool),
+      build: buildCubit,
       act: (cubit) => cubit.forge(
         selection: _frameworkWidget,
         projectRoot: '/tmp/test',

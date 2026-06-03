@@ -11,6 +11,7 @@ import 'package:pickforge/core/agent/profiles/codex_profile.dart';
 import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
 import 'package:pickforge/core/di/injection.config.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/dao/chats_dao.dart';
 import 'package:pickforge/core/drift/dao/project_settings_dao.dart';
 import 'package:pickforge/core/drift/dao/projects_dao.dart';
@@ -29,6 +30,11 @@ Future<void> configureDependencies() async {
   await getIt.init();
   if (!getIt.isRegistered<ProcessRunner>()) {
     getIt.registerSingleton<ProcessRunner>(RealProcessRunner());
+  }
+  if (!getIt.isRegistered<DiagnosticsService>()) {
+    getIt.registerLazySingleton<DiagnosticsService>(
+      () => DiagnosticsService(getIt<ProcessRunner>()),
+    );
   }
   if (!getIt.isRegistered<EmulatorIpcServer>()) {
     final socketPath = await _defaultIpcSocketPath();

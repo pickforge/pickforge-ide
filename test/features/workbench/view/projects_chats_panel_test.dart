@@ -11,11 +11,13 @@ import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
+import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart';
 import 'package:pickforge/features/workbench/view/projects_chats_panel.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/main.dart' show shouldSyncChatsForProjects;
@@ -25,6 +27,19 @@ class _MockProjectsRepo extends Mock implements ProjectsRepository {}
 class _MockChatsRepo extends Mock implements ChatsRepository {}
 
 class _MockSettings extends Mock implements ProjectSettingsRepository {}
+
+class _FakeSidebarSettingsRepository
+    implements WorkspaceSidebarSettingsRepository {
+  WorkspaceSidebarSettings settings = WorkspaceSidebarSettings.defaults;
+
+  @override
+  Future<WorkspaceSidebarSettings> load() async => settings;
+
+  @override
+  Future<void> save(WorkspaceSidebarSettings settings) async {
+    this.settings = settings;
+  }
+}
 
 ProjectRow _project(String root) => ProjectRow(
       projectRoot: root,
@@ -47,37 +62,42 @@ ChatRow _chat(String id, String project, String title) => ChatRow(
 Widget _harness({
   required ProjectsCubit projectsCubit,
   required ChatsCubit chatsCubit,
+  WorkspaceSidebarCubit? sidebarCubit,
   bool withProjectSyncListener = false,
-}) =>
-    MaterialApp(
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: MultiBlocProvider(
-        providers: [
-          BlocProvider.value(value: projectsCubit),
-          BlocProvider.value(value: chatsCubit),
-        ],
-        child: Builder(
-          builder: (context) {
-            const panel = Scaffold(body: ProjectsChatsPanel());
-            if (!withProjectSyncListener) return panel;
-            return BlocListener<ProjectsCubit, ProjectsState>(
-              listenWhen: shouldSyncChatsForProjects,
-              listener: (context, state) {
-                if (state is! ProjectsReady) return;
-                unawaited(
-                  context.read<ChatsCubit>().syncProjects(
-                        state.projects.map((p) => p.projectRoot).toList(),
-                        defaultExpand: state.activeProjectRoot,
-                      ),
-                );
-              },
-              child: panel,
-            );
-          },
-        ),
+}) {
+  final sidebar =
+      sidebarCubit ?? WorkspaceSidebarCubit(_FakeSidebarSettingsRepository());
+  return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: MultiBlocProvider(
+      providers: [
+        BlocProvider.value(value: projectsCubit),
+        BlocProvider.value(value: chatsCubit),
+        BlocProvider.value(value: sidebar),
+      ],
+      child: Builder(
+        builder: (context) {
+          const panel = Scaffold(body: ProjectsChatsPanel());
+          if (!withProjectSyncListener) return panel;
+          return BlocListener<ProjectsCubit, ProjectsState>(
+            listenWhen: shouldSyncChatsForProjects,
+            listener: (context, state) {
+              if (state is! ProjectsReady) return;
+              unawaited(
+                context.read<ChatsCubit>().syncProjects(
+                      state.projects.map((p) => p.projectRoot).toList(),
+                      defaultExpand: state.activeProjectRoot,
+                    ),
+              );
+            },
+            child: panel,
+          );
+        },
       ),
-    );
+    ),
+  );
+}
 
 void main() {
   testWidgets('renders projects header with empty state and "+" button',

@@ -165,4 +165,41 @@ void main() {
       tempDir.deleteSync(recursive: true);
     }
   });
+
+  test('prepareContext appends redacted custom notes', () async {
+    final tempDir = Directory.systemTemp.createTempSync('agent_launcher_test_');
+    try {
+      final req = ForgeRequest(
+        agentId: AgentProfileId.opencode,
+        skill: SkillId.editWidget,
+        widget: const SelectedWidget(
+          node: WidgetNode(
+            id: 'w-1',
+            className: 'MyWidget',
+            children: [],
+            creationLocation: null,
+          ),
+          ancestorClasses: ['MaterialApp'],
+          sourceSnippet: null,
+          screenshotPath: null,
+          adbScreenshotPath: null,
+          propertiesJson: {},
+        ),
+        terminalId: 'unused',
+        projectRoot: tempDir.path,
+        customNote: 'token=secret\nMake it denser.',
+      );
+
+      final ctx = await launcher.prepareContext(req);
+      final widgetContext =
+          File(ctx.written.widgetContextPath).readAsStringSync();
+
+      expect(widgetContext, contains('## Custom Notes'));
+      expect(widgetContext, contains('token=[REDACTED]'));
+      expect(widgetContext, contains('Make it denser.'));
+      expect(widgetContext, isNot(contains('secret')));
+    } finally {
+      tempDir.deleteSync(recursive: true);
+    }
+  });
 }

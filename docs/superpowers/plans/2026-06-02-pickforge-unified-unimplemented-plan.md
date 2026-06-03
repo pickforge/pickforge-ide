@@ -56,16 +56,16 @@ Treat these capabilities as already present in the codebase or current working t
 
 ### P0.T1 — Land current MVP core-loop wiring
 
-**Status:** Unlanded
-**Why:** The widget picker → inspector → ForgePanel → active chat wiring exists in the working tree but is not committed/pushed.
+**Status:** Completed
+**Why:** The widget picker → inspector → ForgePanel → active chat wiring is committed on `main`/`origin/main` (`e236683`) and current main CI runs are green.
 
 **Tasks**
 
-- [ ] Review current uncommitted diff.
-- [ ] Confirm no secrets or unrelated files are staged.
-- [ ] Commit MVP core-loop wiring.
-- [ ] Push `main`.
-- [ ] Watch GitHub CI to green.
+- [x] Review current uncommitted diff.
+- [x] Confirm no secrets or unrelated files are staged.
+- [x] Commit MVP core-loop wiring.
+- [x] Push `main`.
+- [x] Watch GitHub CI to green.
 
 **Validation**
 
@@ -87,13 +87,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Tasks**
 
-- [ ] Launch the fixture or a real Flutter app in an Android emulator.
+- [x] Launch the fixture or a real Flutter app in an Android emulator.
 - [ ] Bind it to a Pickforge project.
-- [ ] Confirm the connection pill reaches `Running`.
-- [ ] Pick a user-code widget and verify the details panel shows class, ancestors, source snippet, and screenshot state.
+- [x] Confirm the runtime reaches a running VM Service in emulator E2E.
+- [x] Pick a user-code widget and verify inspector selection, source metadata, eligibility, and screenshot state.
 - [ ] Press **Forge it** and verify the prompt appears in the active embedded terminal session.
 - [ ] Verify agent context files under `.pickforge/`.
-- [ ] Verify hot reload/restart still keeps selection working after app changes.
+- [x] Verify hot reload/restart path with emulator E2E.
 
 **Acceptance criteria**
 
@@ -103,16 +103,16 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T2 — Inspector screenshot capture path
 
-**Status:** Partial
-**Why:** Android `adb` screenshot capture exists, but the primary `ext.flutter.inspector.screenshot` path and `SelectedWidget.screenshotPath` are not clearly wired into the pick flow.
+**Status:** Completed
+**Why:** Inspector screenshots are captured into `.pickforge/screenshot.png`, Android device screenshots remain secondary context, previews render from `SelectedWidget.screenshotPath`, and forge prompts include screenshot paths.
 
 **Tasks**
 
-- [ ] Add screenshot capture to the inspector selection flow.
-- [ ] Persist clean inspector screenshot under `.pickforge/screenshot.png`.
-- [ ] Preserve Android device screenshot as secondary context when `adb` is available.
-- [ ] Render screenshot preview consistently in `WidgetDetailsPanel`.
-- [ ] Include both screenshot paths in the forge prompt when present.
+- [x] Add screenshot capture to the inspector selection flow.
+- [x] Persist clean inspector screenshot under `.pickforge/screenshot.png`.
+- [x] Preserve Android device screenshot as secondary context when `adb` is available.
+- [x] Render screenshot preview consistently in `WidgetDetailsPanel`.
+- [x] Include both screenshot paths in the forge prompt when present.
 
 **Validation**
 
@@ -122,15 +122,15 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T3 — User-code widget gating
 
-**Status:** Not started
-**Why:** Release checklist requires framework widgets to disable **Forge it** with a hint, but current button gating is based on selection/chat availability.
+**Status:** Completed
+**Why:** Forge eligibility is limited to user-code widgets and framework/internal selections show the user-code hint instead of allowing forge.
 
 **Tasks**
 
-- [ ] Define user-code detection: project-root-contained creation file, non-null creation location, or explicit allowlist.
-- [ ] Add a `SelectedWidget` helper or policy service for forge eligibility.
-- [ ] Disable **Forge it** for framework/internal widgets.
-- [ ] Show a clear hint: pick a widget from the app's source.
+- [x] Define user-code detection: project-root-contained creation file, non-null creation location, or explicit allowlist.
+- [x] Add a `SelectedWidget` helper or policy service for forge eligibility.
+- [x] Disable **Forge it** for framework/internal widgets.
+- [x] Show a clear hint: pick a widget from the app's source.
 
 **Validation**
 
@@ -139,14 +139,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T4 — Active-project settings correctness
 
-**Status:** Partial
-**Why:** Settings UI currently uses `Directory.current.path`, but settings are meant to apply to the selected project.
+**Status:** Completed
+**Why:** Settings load from the active project root and show an empty state when no project is selected.
 
 **Tasks**
 
-- [ ] Pass active project root into `SettingsView` or move device/run settings into a project-scoped surface.
-- [ ] Ensure default agent, terminal settings, emulator binding, target file, and extra run args load for the intended project.
-- [ ] Add empty state when no project is selected.
+- [x] Pass active project root into `SettingsView` or move device/run settings into a project-scoped surface.
+- [x] Ensure default agent, terminal settings, emulator binding, target file, and extra run args load for the intended project.
+- [x] Add empty state when no project is selected.
 
 **Validation**
 
@@ -155,14 +155,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T5 — Command palette wiring
 
-**Status:** Partial
-**Why:** `CommandPaletteScope` and nav commands exist, but the app shell/router is not wrapped with it.
+**Status:** Completed
+**Why:** The router is wrapped in `CommandPaletteScope` and exposes base Workbench/Settings navigation commands.
 
 **Tasks**
 
-- [ ] Wrap `MaterialApp.router` or the routed shell in `CommandPaletteScope`.
-- [ ] Include Workbench and Settings navigation commands.
-- [ ] Add context-aware commands later only after base nav works.
+- [x] Wrap `MaterialApp.router` or the routed shell in `CommandPaletteScope`.
+- [x] Include Workbench and Settings navigation commands.
+- [x] Leave context-aware commands deferred until base nav works.
 
 **Validation**
 
@@ -171,12 +171,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T6 — Pick history UI or explicit deletion from MVP
 
-**Status:** Not started
+**Status:** Completed for MVP
 **Why:** Drift has pick history and release checklist expects a History view, but no history feature route/view is present.
 
 **Decision needed**
 
-- Either implement a minimal history surface for MVP, or explicitly remove it from MVP release criteria.
+- [x] Explicitly remove the full History UI from MVP release criteria; keep pick history data recording and defer the full History UI to post-MVP.
 
 **Implementation option**
 
@@ -191,15 +191,15 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T7 — PTY lifecycle on project switch
 
-**Status:** Partial
-**Why:** `PtySessionPool.parkAll()` exists, but project-switch parking is not clearly wired.
+**Status:** Completed
+**Why:** Project switches park outgoing PTY sessions and active chats are constrained to the selected project.
 
 **Tasks**
 
-- [ ] Define desired behavior for switching active projects.
-- [ ] Park/kill outgoing project's PTYs on project switch.
-- [ ] Rehydrate terminal scrollback for selected chat in incoming project.
-- [ ] Ensure prompts cannot be sent to a parked/stale chat.
+- [x] Define desired behavior for switching active projects.
+- [x] Park/kill outgoing project's PTYs on project switch.
+- [x] Rehydrate terminal scrollback for selected chat in incoming project.
+- [x] Ensure prompts cannot be sent to a parked/stale chat.
 
 **Validation**
 
@@ -208,14 +208,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T8 — Dogfood release checklist refresh
 
-**Status:** Partial
-**Why:** `docs/release-checklist.md` still references old manual VM URL and detected terminal checks.
+**Status:** Completed
+**Why:** `docs/release-checklist.md` now reflects the embedded-terminal, per-project emulator flow and separates manual dogfood signoff from automated validation.
 
 **Tasks**
 
-- [ ] Update checklist to current embedded-terminal and per-project emulator flow.
-- [ ] Add a local dogfood signoff section for MVP.
-- [ ] Keep manual checks separate from automated validation.
+- [x] Update checklist to current embedded-terminal and per-project emulator flow.
+- [x] Add a local dogfood signoff section for MVP.
+- [x] Keep manual checks separate from automated validation.
 
 **Validation**
 
@@ -467,27 +467,28 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T4 — Left pane list/grid views with grouping
 
-**Status:** Not started
+**Status:** Partial / in progress
 **Why:** The left pane should scale beyond a flat Warp-like sidebar. Users need to switch between dense list and visual grid modes and group workspaces/chats in ways that match their workflow.
 
 **Goal:** Make the left pane a real workspace navigator, not just a project/chat list.
 
 **Tasks**
 
-- [ ] Add a left-pane view mode toggle: **List** and **Grid**.
-- [ ] Add grouping modes available in both views:
-  - [ ] by project,
-  - [ ] by recent activity,
-  - [ ] by pinned/favorites,
-  - [ ] by agent,
-  - [ ] by skill,
-  - [ ] by custom user group.
-- [ ] Add project/chat pinning.
-- [ ] Add collapsible groups in list mode.
-- [ ] Add card density settings in grid mode.
-- [ ] Persist view mode, grouping mode, expanded groups, and pinned IDs.
-- [ ] Support drag/drop between custom groups if it feels stable; otherwise ship context-menu grouping first.
-- [ ] Add keyboard navigation and fuzzy filtering inside the left pane.
+- [x] Add a left-pane view mode toggle: **List** and **Grid**.
+- [x] Add grouping modes available in both views:
+  - [x] by project,
+  - [x] by recent activity,
+  - [x] by pinned/favorites,
+  - [x] by agent,
+  - [x] by skill,
+  - [x] by custom user group.
+- [x] Add project/chat pinning.
+- [x] Add collapsible groups in list mode.
+- [x] Add card density settings in grid mode.
+- [x] Persist view mode, grouping mode, expanded groups, and pinned IDs.
+- [x] Ship context-menu custom grouping first; keep drag/drop deferred unless it feels stable.
+- [x] Add keyboard navigation inside the left pane.
+- [x] Add fuzzy filtering inside the left pane.
 
 **Data model**
 
@@ -497,13 +498,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Validation**
 
-- Cubit tests for grouping/sorting/pinning.
-- Widget tests for list mode, grid mode, empty state, pinned group, and group collapse/expand.
-- Golden/screenshot tests for dense and roomy layouts.
+- [x] Cubit tests for grouping/sorting/pinning.
+- [x] Widget tests for list mode, grid mode, empty state, pinned group, and group collapse/expand.
+- [ ] Golden/screenshot tests for dense and roomy layouts.
 
 ### P6.T5 — VS Code-style project file explorer
 
-**Status:** Not started
+**Status:** Completed
 **Why:** Pickforge should let users browse the active project without context-switching to a file manager or editor.
 
 **Goal:** Add a file tree between navigation and work surfaces, similar to VS Code's Explorer, with safe default-app opening.
@@ -516,18 +517,18 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Tasks**
 
-- [ ] Add `ProjectFileExplorerCubit` that scans the active project's directory tree.
-- [ ] Respect `.gitignore`, `.pickforge/.gitignore`, hidden files toggle, and common excludes (`build/`, `.dart_tool/`, `.git/`, platform build outputs).
-- [ ] Render expandable folders and file icons.
-- [ ] Add file search/filter.
-- [ ] Open files/folders with the system default app:
-  - [ ] Linux: `xdg-open`,
-  - [ ] macOS: `open`,
-  - [ ] Windows: `start`/ShellExecute.
-- [ ] Add "Reveal in file manager" action.
-- [ ] Add "Copy relative path" and "Copy absolute path" actions.
-- [ ] Add "Attach this file to next forge prompt" as a later enhancement.
-- [ ] Watch filesystem changes and refresh without rescanning too aggressively.
+- [x] Add `ProjectFileExplorerCubit` that scans the active project's directory tree.
+- [x] Respect `.gitignore`, `.pickforge/.gitignore`, hidden files toggle, and common excludes (`build/`, `.dart_tool/`, `.git/`, platform build outputs).
+- [x] Render expandable folders and file icons.
+- [x] Add file search/filter.
+- [x] Open files/folders with the system default app:
+  - [x] Linux: `xdg-open`,
+  - [x] macOS: `open`,
+  - [x] Windows: `start`/ShellExecute.
+- [x] Add "Reveal in file manager" action.
+- [x] Add "Copy relative path" and "Copy absolute path" actions.
+- [x] Add "Attach this file to next forge prompt" as a later enhancement.
+- [x] Watch filesystem changes and refresh without rescanning too aggressively.
 
 **Safety**
 
@@ -537,22 +538,24 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Validation**
 
-- Unit tests for tree scanning, ignore rules, symlink loops, and sorting.
-- Widget tests for folder expand/collapse and context actions.
-- Process-runner tests for platform open commands, using fakes.
+- [x] Unit tests for tree scanning, ignore rules, symlink loops, and sorting.
+- [x] Widget tests for folder expand/collapse and context actions.
+- [x] Process-runner tests for platform open commands, using fakes.
 
 ### P6.T6 — Context attachments tray
 
-**Status:** Not started
+**Status:** Completed
 **Why:** A phenomenal agent workflow needs explicit control over what gets sent with a forge prompt.
 
 **Tasks**
 
-- [ ] Let users attach files from the project explorer to the next forge prompt.
-- [ ] Show selected widget, screenshot(s), files, run logs, and custom notes as chips.
-- [ ] Add remove/reorder controls.
-- [ ] Persist only intentional attachments; avoid silently sending unrelated files.
-- [ ] Add token/size warnings for large context bundles.
+- [x] Let users attach files from the project explorer to the next forge prompt.
+- [x] Show selected widget, screenshot(s), files, run logs, and custom notes as chips.
+- [x] Show attached files as chips.
+- [x] Add remove/reorder controls.
+- [x] Add remove controls for attached files.
+- [x] Persist only intentional attachments; avoid silently sending unrelated files.
+- [x] Add token/size warnings for large context bundles.
 
 ### P6.T7 — Session/task organization
 
@@ -569,16 +572,18 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T8 — First-run onboarding and demo mode
 
-**Status:** Not started
+**Status:** Partial / in progress
 **Why:** A great app should prove its value in the first five minutes, even before the user's own environment is perfectly configured.
 
 **Tasks**
 
-- [ ] Add a first-run checklist: add project, pick device/manual URL, create chat, pick widget, forge.
+- [x] Add a first-run checklist: add project, pick device/manual URL, create chat, pick widget, forge.
 - [ ] Add a demo mode backed by fake project/emulator/widget data so the UI can be explored without Android tooling.
-- [ ] Add "Open sample Flutter app" flow using `fixtures/sample_flutter_app`.
-- [ ] Add inline setup checks for agent binaries, `adb`, Flutter/FVM, and emulator availability.
-- [ ] Add recoverable setup actions: copy command, open settings, retry detection.
+- [x] Add a demo-mode affordance/card explaining fake project/emulator/widget/chat data.
+- [x] Add "Open sample Flutter app" flow using `fixtures/sample_flutter_app`.
+- [x] Add inline setup checks for agent binaries, `adb`, Flutter/FVM, and emulator availability.
+- [x] Add recoverable setup actions: copy command and retry detection.
+- [ ] Add recoverable setup action: open settings.
 - [ ] Make onboarding dismissible and restorable from command palette/help.
 
 **Validation**
@@ -588,63 +593,66 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T9 — Agent change review and git safety
 
-**Status:** Not started
+**Status:** Partial / in progress
 **Why:** The agent edits the user's project. Pickforge should make changes visible, reversible, and safe without becoming a full IDE.
 
 **Tasks**
 
-- [ ] Capture pre-forge git status and current branch for the project.
-- [ ] Warn before forging into a dirty worktree unless the user acknowledges.
-- [ ] After agent changes, show changed files and a concise diff summary.
+- [x] Capture pre-forge git status and current branch for the project.
+- [x] Warn before forging into a dirty worktree unless the user acknowledges.
+- [x] After agent changes, show changed files and a concise diff summary.
 - [ ] Add actions: open changed file, copy diff, run configured validator, discard instructions.
-- [ ] Detect untracked files separately and never delete/move them.
+- [x] Add action: copy diff.
+- [x] Detect untracked files separately and never delete/move them.
 - [ ] Add optional "create checkpoint commit" or "stash before forge" workflow later.
 - [ ] Surface hot reload/test/analyze result alongside the diff.
 
 **Validation**
 
-- Unit tests for git status parsing.
-- Widget tests for dirty worktree warning and post-forge diff summary.
+- [x] Unit tests for git status parsing.
+- [ ] Widget tests for dirty worktree warning and post-forge diff summary.
 - Manual dogfood with a real git repo containing staged, unstaged, and untracked files.
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 
-**Status:** Not started
+**Status:** Partial / in progress
 **Why:** Users should trust what Pickforge sends to agents, especially when project files and screenshots can be attached.
 
 **Tasks**
 
-- [ ] Add a "Preview context" affordance before sending a forge prompt.
-- [ ] Show selected widget metadata, screenshots, attached files, skill text, and generated prompt.
-- [ ] Add redaction rules for common secrets: `.env`, tokens, private keys, API keys.
-- [ ] Block or warn on suspicious attachments.
-- [ ] Add size/token budget estimate.
+- [x] Add a "Preview context" affordance before sending a forge prompt.
+- [x] Show selected widget metadata, screenshots, attached files, skill text, and generated prompt.
+- [x] Add redaction rules for common secrets: `.env`, tokens, private keys, API keys.
+- [x] Block or warn on suspicious attachments.
+- [x] Add size/token budget estimate.
 - [ ] Let users edit the final instruction while preserving generated context.
 - [ ] Add prompt templates per skill and agent profile.
 
 **Validation**
 
-- Unit tests for secret-pattern redaction and blocked file classes.
-- Snapshot tests for generated prompt preview.
+- [x] Unit tests for secret-pattern redaction.
+- [x] Unit tests for blocked file classes.
+- [x] Snapshot tests for generated prompt preview.
 - Manual review with fixtures containing fake secrets.
 
 ### P6.T11 — In-app diagnostics and local support bundle
 
-**Status:** Not started
+**Status:** Partial / in progress
 **Why:** Before telemetry exists, users still need a way to understand and report failures.
 
 **Tasks**
 
-- [ ] Add local structured app log with bounded retention.
+- [x] Add local structured app log with bounded retention.
 - [ ] Add diagnostics view: app version, OS, Flutter version, agent binary availability, adb status, emulator status, last VM error.
-- [ ] Add "Export support bundle" that excludes source files, prompts, screenshots, and secrets by default.
+- [x] Add diagnostics card for OS, agent binary availability, `adb`, `git`, Android emulator, and Flutter/FVM availability.
+- [x] Add "Export support bundle" that excludes source files, prompts, screenshots, and secrets by default.
 - [ ] Add copyable error details for connection/run/agent failures.
 - [ ] Include CI/build metadata in diagnostics when available.
 
 **Validation**
 
-- Unit tests for redacted bundle generation.
-- Widget tests for diagnostics happy/error states.
+- [x] Unit tests for redacted bundle generation.
+- [x] Widget tests for diagnostics happy/error states.
 
 ## 12. Pro/cloud/distribution
 

@@ -40,6 +40,8 @@ import 'package:pickforge/core/process/binary_detector.dart' as _i993;
 import 'package:pickforge/core/projects/projects_repository.dart' as _i613;
 import 'package:pickforge/core/settings/project_settings_repository.dart'
     as _i340;
+import 'package:pickforge/core/settings/workspace_sidebar_settings.dart'
+    as _i141;
 import 'package:pickforge/core/skills/skill_store.dart' as _i895;
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart'
     as _i195;
@@ -58,6 +60,8 @@ import 'package:pickforge/features/workbench/cubit/projects_cubit.dart'
     as _i882;
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart'
     as _i638;
+import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart'
+    as _i90;
 import 'package:shared_preferences/shared_preferences.dart' as _i460;
 
 extension GetItInjectableX on _i174.GetIt {
@@ -131,6 +135,9 @@ extension GetItInjectableX on _i174.GetIt {
           gh<_i810.WidgetContextRenderer>(),
         ));
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
+    gh.lazySingleton<_i141.WorkspaceSidebarSettingsRepository>(() =>
+        _i141.WorkspaceSidebarSettingsRepository(
+            gh<_i460.SharedPreferences>()));
     gh.lazySingleton<_i195.EmbeddedTerminalSettingsRepository>(() =>
         _i195.EmbeddedTerminalSettingsRepository(
             gh<_i460.SharedPreferences>()));
@@ -138,6 +145,8 @@ extension GetItInjectableX on _i174.GetIt {
         () => _i227.RunSessionLogRepository(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i340.ProjectSettingsRepository>(
         () => _i340.ProjectSettingsRepository(gh<_i631.PickforgeDatabase>()));
+    gh.factory<_i90.WorkspaceSidebarCubit>(() => _i90.WorkspaceSidebarCubit(
+        gh<_i141.WorkspaceSidebarSettingsRepository>()));
     gh.singleton<_i704.AdbScreenshotCapturer>(() =>
         adbScreenshotModule.adbScreenshotCapturer(gh<_i993.BinaryDetector>()));
     gh.factory<_i888.ForgeCubit>(() => _i888.ForgeCubit(

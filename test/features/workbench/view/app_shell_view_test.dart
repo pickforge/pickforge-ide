@@ -6,17 +6,21 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
+import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/dao/project_settings_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart';
 import 'package:pickforge/features/workbench/view/app_shell_view.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _MockDao extends Mock implements ProjectSettingsDao {}
 
@@ -30,6 +34,14 @@ class _MockWidgetPickerCubit extends Mock implements WidgetPickerCubit {}
 
 void main() {
   testWidgets('renders three panes inside MultiSplitView', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await getIt.reset();
+    addTearDown(getIt.reset);
+    final prefs = await SharedPreferences.getInstance();
+    getIt.registerFactory<WorkspaceSidebarCubit>(
+      () => WorkspaceSidebarCubit(WorkspaceSidebarSettingsRepository(prefs)),
+    );
+
     tester.view.physicalSize = const Size(1400, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);

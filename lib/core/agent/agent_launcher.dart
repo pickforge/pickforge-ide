@@ -1,4 +1,5 @@
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
+import 'package:pickforge/core/agent/context_attachment_renderer.dart';
 import 'package:pickforge/core/agent/models.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
@@ -8,6 +9,18 @@ class PreparedContext {
   PreparedContext({required this.written, required this.initialPrompt});
 
   final WrittenContext written;
+  final String initialPrompt;
+}
+
+class ForgeContextPreview {
+  ForgeContextPreview({
+    required this.skillMarkdown,
+    required this.widgetContextMarkdown,
+    required this.initialPrompt,
+  });
+
+  final String skillMarkdown;
+  final String widgetContextMarkdown;
   final String initialPrompt;
 }
 
@@ -22,20 +35,28 @@ class AgentLauncher {
     required this.contextWriter,
     required this.skillStore,
     required this.widgetRenderer,
+    this.attachmentRenderer = const ContextAttachmentRenderer(),
   });
 
   final AgentProfileRegistry agentRegistry;
   final PickforgeContextWriter contextWriter;
   final SkillStore skillStore;
   final WidgetContextRenderer widgetRenderer;
+  final ContextAttachmentRenderer attachmentRenderer;
 
-  Future<PreparedContext> prepareContext(ForgeRequest req) async {
+  Future<ForgeContextPreview> buildPreview(ForgeRequest req) async {
     final agent = agentRegistry.get(req.agentId);
     final skillContent = await skillStore.loadSkill(
       req.skill,
       projectRoot: req.projectRoot,
     );
-    final widgetContext = widgetRenderer.render(req.widget);
+    final attachments = await attachmentRenderer.render(
+      projectRoot: req.projectRoot,
+      paths: req.attachmentPaths,
+    );
+    final customNote = _renderCustomNote(req.customNote);
+    final widgetContext =
+        '${widgetRenderer.render(req.widget)}$attachments$customNote';
 
     final initialPrompt = agent.buildInitialPrompt(
       pickforgeDirRelative: '.pickforge',
@@ -47,13 +68,33 @@ class AgentLauncher {
           req.widget.adbScreenshotPath != null ? 'device-screen.png' : null,
     );
 
-    final written = await contextWriter.write(
-      projectRoot: req.projectRoot,
+    return ForgeContextPreview(
       skillMarkdown: skillContent,
       widgetContextMarkdown: widgetContext,
       initialPrompt: initialPrompt,
     );
+  }
 
-    return PreparedContext(written: written, initialPrompt: initialPrompt);
+  Future<PreparedContext> prepareContext(ForgeRequest req) async {
+    final preview = await buildPreview(req);
+
+    final written = await contextWriter.write(
+      projectRoot: req.projectRoot,
+      skillMarkdown: preview.skillMarkdown,
+      widgetContextMarkdown: preview.widgetContextMarkdown,
+      initialPrompt: preview.initialPrompt,
+    );
+
+    return PreparedContext(
+      written: written,
+      initialPrompt: preview.initialPrompt,
+    );
+  }
+
+  String _renderCustomNote(String note) {
+    final trimmed = note.trim();
+    if (trimmed.isEmpty) return '';
+    return '\n## Custom Notes\n\n'
+        '${attachmentRenderer.redactor.redact(trimmed)}\n';
   }
 }

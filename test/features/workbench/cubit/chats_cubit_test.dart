@@ -143,6 +143,29 @@ void main() {
   );
 
   blocTest<ChatsCubit, ChatsState>(
+    'activateProject restores saved chat or clears incompatible active chat',
+    setUp: () {
+      when(() => repo.list('/a'))
+          .thenAnswer((_) async => [_row('a-chat', '/a', 'Chat A')]);
+      when(() => repo.list('/b')).thenAnswer((_) async => <ChatRow>[]);
+      when(() => settings.getLastChatId('/a'))
+          .thenAnswer((_) async => 'a-chat');
+      when(() => settings.getLastChatId('/b')).thenAnswer((_) async => null);
+    },
+    build: () => ChatsCubit(repo, settings),
+    act: (c) async {
+      await c.syncProjects(['/a', '/b']);
+      await c.activateProject('/a');
+      await c.activateProject('/b');
+    },
+    skip: 2,
+    expect: () => [
+      isA<ChatsReady>().having((s) => s.activeChatId, 'active', 'a-chat'),
+      isA<ChatsReady>().having((s) => s.activeChatId, 'active', null),
+    ],
+  );
+
+  blocTest<ChatsCubit, ChatsState>(
     'toggleExpanded flips the expanded set for a project',
     setUp: () {
       when(() => repo.list('/p')).thenAnswer((_) async => <ChatRow>[]);

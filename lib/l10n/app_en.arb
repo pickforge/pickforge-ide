@@ -9,9 +9,94 @@
   "connectStatusConnected": "Connected",
   "connectStatusError": "Couldn't reach VM Service. Is your app running?",
   "forgeItButton": "Forge it",
+  "forgePreviewButton": "Preview context",
+  "forgePreviewTitle": "Forge context preview",
+  "forgeContextAttachments": "Context attachments",
+  "forgeSelectedWidgetChip": "Widget: {className}",
+  "@forgeSelectedWidgetChip": {
+    "placeholders": {
+      "className": {}
+    }
+  },
+  "forgeScreenshotChip": "Screenshot: {fileName}",
+  "@forgeScreenshotChip": {
+    "placeholders": {
+      "fileName": {}
+    }
+  },
+  "forgeDeviceScreenshotChip": "Device: {fileName}",
+  "@forgeDeviceScreenshotChip": {
+    "placeholders": {
+      "fileName": {}
+    }
+  },
+  "forgeRunLogsChip": "Run logs: {count}",
+  "@forgeRunLogsChip": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "forgeMoveAttachmentUp": "Move attachment up",
+  "forgeMoveAttachmentDown": "Move attachment down",
+  "forgeAddCustomNote": "Add note",
+  "forgeCustomNoteChip": "Custom note",
+  "forgeCustomNoteTitle": "Custom note",
+  "forgeCustomNoteLabel": "Notes for the next forge prompt",
+  "forgeCustomNoteSave": "Save note",
+  "forgeAttachmentSizeWarning": "Large context: {size}",
+  "@forgeAttachmentSizeWarning": {
+    "placeholders": {
+      "size": {}
+    }
+  },
+  "forgeBlockedAttachment": "{path} was not attached ({reason}).",
+  "@forgeBlockedAttachment": {
+    "placeholders": {
+      "path": {},
+      "reason": {}
+    }
+  },
+  "forgeDirtyWorktreeTitle": "Forge into dirty worktree?",
+  "forgeDirtyWorktreeBranch": "Branch: {branch}",
+  "@forgeDirtyWorktreeBranch": {
+    "placeholders": {
+      "branch": {}
+    }
+  },
+  "forgeDirtyWorktreeMessage": "This project has uncommitted changes. Staged: {staged}, unstaged: {unstaged}, untracked: {untracked}. Continue only if you are comfortable with the agent editing this state.",
+  "@forgeDirtyWorktreeMessage": {
+    "placeholders": {
+      "staged": {},
+      "unstaged": {},
+      "untracked": {}
+    }
+  },
+  "forgeDirtyWorktreeContinue": "Continue",
+  "forgeProjectChangesTitle": "Project changes",
+  "forgeChangedFiles": "{count} changed files",
+  "@forgeChangedFiles": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "forgeCopyDiff": "Copy diff",
+  "forgeDiffCopied": "Diff copied",
   "forgePickUserCodeHint": "Pick a widget from your app source.",
   "historyTitle": "Recent forges",
   "settingsTitle": "Settings",
+  "diagnosticsTitle": "Diagnostics",
+  "diagnosticsOperatingSystem": "OS",
+  "diagnosticsAdb": "adb",
+  "diagnosticsGit": "git",
+  "diagnosticsFlutter": "Flutter/FVM",
+  "diagnosticsEmulator": "Android emulator",
+  "diagnosticsClaude": "Claude Code",
+  "diagnosticsCodex": "Codex",
+  "diagnosticsOpenCode": "OpenCode",
+  "diagnosticsAvailable": "Available",
+  "diagnosticsMissing": "Missing",
+  "diagnosticsCopySupportBundle": "Copy support bundle",
+  "diagnosticsSupportBundleCopied": "Support bundle copied",
   "workbenchProjectsHeader": "Projects",
   "workbenchAddProject": "Add project",
   "workbenchChatsHeader": "Chats",
@@ -19,7 +104,46 @@
   "workbenchNoProjects": "Add your first project",
   "workbenchNoChats": "Start your first chat",
   "workbenchPickFolder": "Pick folder",
+  "sidebarSearch": "Search projects and chats",
+  "sidebarListMode": "List",
+  "sidebarGridMode": "Grid",
+  "sidebarGroupProject": "Project",
+  "sidebarGroupRecent": "Recent",
+  "sidebarGroupPinned": "Pinned",
+  "sidebarGroupAgent": "Agent",
+  "sidebarGroupSkill": "Skill",
+  "sidebarGroupCustom": "Custom",
+  "sidebarPin": "Pin",
+  "sidebarUnpin": "Unpin",
+  "sidebarSetCustomGroup": "Set custom group",
+  "sidebarClearCustomGroup": "Clear custom group",
+  "sidebarCustomGroupTitle": "Custom group",
+  "sidebarCustomGroupLabel": "Group name",
+  "sidebarSave": "Save",
+  "explorerHeader": "Explorer",
+  "explorerSearch": "Search files",
+  "explorerShowHidden": "Show hidden files",
+  "explorerHideHidden": "Hide hidden files",
+  "explorerOpen": "Open",
+  "explorerReveal": "Reveal in file manager",
+  "explorerAttachToForge": "Attach to next forge prompt",
+  "explorerCopyRelativePath": "Copy relative path",
+  "explorerCopyAbsolutePath": "Copy absolute path",
+  "explorerEmpty": "No files found",
   "onboardingHeading": "Add your first Flutter project",
+  "onboardingChecklistTitle": "First-run checklist",
+  "onboardingChecklistAddProject": "Add a Flutter project",
+  "onboardingChecklistPickDevice": "Pick an emulator or manual VM Service URL",
+  "onboardingChecklistCreateChat": "Create an agent chat",
+  "onboardingChecklistPickWidget": "Pick a widget from your app",
+  "onboardingChecklistForge": "Forge and hot reload",
+  "onboardingDemoButton": "Explore demo mode",
+  "onboardingOpenSampleApp": "Open sample Flutter app",
+  "onboardingSetupChecksTitle": "Setup checks",
+  "onboardingRetrySetupChecks": "Retry",
+  "onboardingCopySetupCommand": "Copy setup command",
+  "onboardingDemoTitle": "Demo workspace",
+  "onboardingDemoDescription": "Preview Pickforge with fake project, widget, emulator, and chat data. No Android tooling or agent CLI required.",
   "gitignoreDialogTitle": "Update .gitignore?",
   "gitignoreDialogMessage": "Pickforge stores chat transcripts and local settings under .pickforge/. Add it to your project's .gitignore?",
   "gitignoreDialogConfirm": "Add it",

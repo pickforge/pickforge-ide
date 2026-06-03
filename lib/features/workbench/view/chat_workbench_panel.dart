@@ -20,6 +20,8 @@ import 'package:pickforge/core/terminal/transcript_replayer.dart';
 import 'package:pickforge/features/emulator/view/run_logs_pane.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
+import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
 import 'package:xterm/xterm.dart';
@@ -52,8 +54,15 @@ class _ChatWorkbenchPanelState extends State<ChatWorkbenchPanel> {
       builder: (context, layout) {
         return BlocBuilder<ChatsCubit, ChatsState>(
           builder: (context, state) {
+            final activeProjectRoot =
+                switch (context.watch<ProjectsCubit>().state) {
+              ProjectsReady(:final activeProjectRoot) => activeProjectRoot,
+              _ => null,
+            };
             final chatPane = switch (state) {
-              ChatsReady(:final activeChat) when activeChat != null =>
+              ChatsReady(:final activeChat)
+                  when activeChat != null &&
+                      activeChat.projectRoot == activeProjectRoot =>
                 _ChatTerminal(
                   key: ValueKey(activeChat.chatId),
                   chat: activeChat,

@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
@@ -75,10 +78,26 @@ class _RecordingForgeCubit extends ForgeCubit {
     required SelectedWidget selection,
     required String projectRoot,
     required String chatId,
+    List<String> attachmentPaths = const [],
+    String customNote = '',
   }) async {
     forgedSelection = selection;
     forgedProjectRoot = projectRoot;
     forgedChatId = chatId;
+  }
+
+  @override
+  Future<ForgeContextPreview> preview({
+    required SelectedWidget selection,
+    required String projectRoot,
+    List<String> attachmentPaths = const [],
+    String customNote = '',
+  }) async {
+    return ForgeContextPreview(
+      skillMarkdown: '# Skill',
+      widgetContextMarkdown: '# Widget',
+      initialPrompt: '# Prompt',
+    );
   }
 }
 
@@ -88,10 +107,34 @@ class _ThrowingAdb extends Fake implements AdbScreenshotCapturer {}
 
 class _NoopPool extends Fake implements PtySessionPool {}
 
+class _CleanProcessRunner implements ProcessRunner {
+  @override
+  Future<ProcessResult> run(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) async {
+    return ProcessResult(1, 0, '', '');
+  }
+
+  @override
+  Future<RunningProcess> spawn(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) {
+    throw UnimplementedError();
+  }
+}
+
 void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await configureDependencies();
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(_CleanProcessRunner());
   });
 
   tearDown(getIt.reset);
@@ -214,10 +257,41 @@ void main() {
     );
 
     await tester.tap(find.text('Forge it'));
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(cubit.forgedSelection, _sampleWidget);
     expect(cubit.forgedProjectRoot, '/tmp/test');
     expect(cubit.forgedChatId, 'chat-1');
+  });
+
+  testWidgets('ForgePanel preview includes skill and widget context',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Preview context'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('# Skill'), findsOneWidget);
+    expect(find.textContaining('# Widget'), findsOneWidget);
   });
 }

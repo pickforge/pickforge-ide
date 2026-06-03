@@ -14,6 +14,11 @@ _ForgeRequest _$ForgeRequestFromJson(Map<String, dynamic> json) =>
       widget: SelectedWidget.fromJson(json['widget'] as Map<String, dynamic>),
       terminalId: json['terminalId'] as String,
       projectRoot: json['projectRoot'] as String,
+      attachmentPaths: (json['attachmentPaths'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const [],
+      customNote: json['customNote'] as String? ?? '',
     );
 
 Map<String, dynamic> _$ForgeRequestToJson(_ForgeRequest instance) =>
@@ -23,4 +28,6 @@ Map<String, dynamic> _$ForgeRequestToJson(_ForgeRequest instance) =>
       'widget': instance.widget.toJson(),
       'terminalId': instance.terminalId,
       'projectRoot': instance.projectRoot,
+      'attachmentPaths': instance.attachmentPaths,
+      'customNote': instance.customNote,
     };

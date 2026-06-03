@@ -3,6 +3,8 @@ import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/agent/models/forge_request.dart';
+import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
@@ -34,6 +36,8 @@ class ForgeCubit extends Cubit<ForgeState> {
     required SelectedWidget selection,
     required String projectRoot,
     required String chatId,
+    List<String> attachmentPaths = const [],
+    String customNote = '',
   }) async {
     if (!const ForgeEligibilityPolicy().canForge(selection, projectRoot)) {
       emit(
@@ -61,13 +65,41 @@ class ForgeCubit extends Cubit<ForgeState> {
         agentId: state.agentId,
         terminalId: state.terminalId,
         projectRoot: projectRoot,
+        attachmentPaths: attachmentPaths,
+        customNote: customNote,
       );
 
       final ctx = await _launcher.prepareContext(req);
       _pool.sendPrompt(chatId, ctx.initialPrompt);
       emit(state.copyWith(launching: false));
     } on Object catch (e) {
+      _recordDiagnostic('error', 'Forge failed: $e');
       emit(state.copyWith(launching: false, lastError: e.toString()));
+    }
+  }
+
+  Future<ForgeContextPreview> preview({
+    required SelectedWidget selection,
+    required String projectRoot,
+    List<String> attachmentPaths = const [],
+    String customNote = '',
+  }) {
+    return _launcher.buildPreview(
+      ForgeRequest(
+        widget: selection,
+        skill: state.skill,
+        agentId: state.agentId,
+        terminalId: state.terminalId,
+        projectRoot: projectRoot,
+        attachmentPaths: attachmentPaths,
+        customNote: customNote,
+      ),
+    );
+  }
+
+  void _recordDiagnostic(String level, String message) {
+    if (getIt.isRegistered<DiagnosticsService>()) {
+      getIt<DiagnosticsService>().recordLog(level, message);
     }
   }
 }

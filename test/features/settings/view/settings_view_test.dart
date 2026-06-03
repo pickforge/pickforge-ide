@@ -1,12 +1,16 @@
 // ignore_for_file: prefer_mixin, reason: Cubit test fakes mix in Mock.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
@@ -15,6 +19,7 @@ import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class _ProjectsCubit extends Cubit<ProjectsState>
     with Mock
@@ -29,6 +34,8 @@ class _TerminalSettingsRepo extends Mock
 
 class _DeviceDiscovery extends Mock implements DeviceDiscoveryService {}
 
+class _DiagnosticsRunner extends Mock implements ProcessRunner {}
+
 ProjectRow _project(String root) => ProjectRow(
       projectRoot: root,
       displayName: 'Project',
@@ -41,11 +48,13 @@ void main() {
   late _ProjectSettingsRepo settings;
   late _TerminalSettingsRepo terminal;
   late _DeviceDiscovery discovery;
+  late _DiagnosticsRunner diagnosticsRunner;
 
   setUp(() {
     settings = _ProjectSettingsRepo();
     terminal = _TerminalSettingsRepo();
     discovery = _DeviceDiscovery();
+    diagnosticsRunner = _DiagnosticsRunner();
     when(() => terminal.load()).thenAnswer(
       (_) async => EmbeddedTerminalSettings.defaults,
     );
@@ -57,6 +66,14 @@ void main() {
     when(discovery.snapshot).thenAnswer(
       (_) async => const DeviceListSnapshot(avds: [], running: []),
     );
+    when(
+      () => diagnosticsRunner.run(
+        any(),
+        any(),
+        cwd: any(named: 'cwd'),
+        env: any(named: 'env'),
+      ),
+    ).thenAnswer((_) async => ProcessResult(1, 0, '', ''));
   });
 
   testWidgets('loads settings for the active project', (tester) async {
@@ -74,12 +91,15 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: BlocProvider<ProjectsCubit>.value(
           value: projectsCubit,
           child: Scaffold(
             body: SettingsView(
               settingsCubit: settingsCubit,
               deviceRunSettingsCubit: deviceRunCubit,
+              diagnosticsService: DiagnosticsService(diagnosticsRunner),
             ),
           ),
         ),
@@ -89,6 +109,7 @@ void main() {
 
     verify(() => settings.getDefaultAgentId('/workspace/app')).called(1);
     verify(() => settings.getRunArgs('/workspace/app')).called(1);
+    expect(find.text('Diagnostics'), findsOneWidget);
   });
 
   testWidgets('shows empty state when no project is selected', (tester) async {
@@ -96,6 +117,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: BlocProvider<ProjectsCubit>.value(
           value: projectsCubit,
           child: Scaffold(

@@ -9,20 +9,26 @@ import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
+import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
+import 'package:pickforge/core/projects/project_file_opener.dart';
+import 'package:pickforge/core/projects/project_file_tree_scanner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
+import 'package:pickforge/features/forge/cubit/context_attachments_cubit.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
+import 'package:pickforge/features/workbench/cubit/project_file_explorer_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
+import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart';
 import 'package:pickforge/features/workbench/view/chat_workbench_panel.dart';
 import 'package:pickforge/features/workbench/view/inspector_panel.dart';
-import 'package:pickforge/features/workbench/view/projects_chats_panel.dart';
+import 'package:pickforge/features/workbench/view/workbench_left_pane.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 
 class AppShellView extends StatefulWidget {
@@ -51,74 +57,99 @@ class _AppShellViewState extends State<AppShellView> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<WorkbenchLayoutCubit, WorkbenchLayoutState>(
-      builder: (context, layout) {
-        final reduce = ReduceMotion.of(context);
-        Widget animated(Widget child, {required Duration delay}) {
-          if (reduce) return child;
-          return child.animate().fadeIn(
-                duration: 240.ms,
-                delay: delay,
-                curve: Curves.easeOutCubic,
-              );
-        }
-
-        _syncAreas(layout, animated);
-
-        final scaffold = Scaffold(
-          body: MultiSplitView(
-            controller: _controller,
-            onDividerDragEnd: (_) {
-              final left = _controller.getArea(0).size ?? layout.leftWidth;
-              final right = _controller.areasCount > 2
-                  ? (_controller.getArea(2).size ?? layout.rightWidth)
-                  : layout.rightWidth;
-              context
-                  .read<WorkbenchLayoutCubit>()
-                  .updateSizes(left: left, right: right);
-            },
-          ),
-        );
-        return BlocBuilder<ProjectsCubit, ProjectsState>(
-          buildWhen: (_, current) => current is ProjectsReady,
-          builder: (context, projects) {
-            final projectRoot = switch (projects) {
-              ProjectsReady(:final activeProjectRoot) => activeProjectRoot,
-              _ => null,
-            };
-            if (projectRoot == null) return scaffold;
-            return MultiBlocProvider(
-              key: ValueKey(projectRoot),
-              providers: [
-                BlocProvider(create: (_) => RunLogsCubit()),
-                BlocProvider<EmulatorSessionCubit>(
-                  create: (context) {
-                    final cubit = EmulatorSessionCubit(
-                      projectRoot: projectRoot,
-                      settings: getIt<ProjectSettingsRepository>(),
-                      discovery: getIt<DeviceDiscoveryService>(),
-                      launcher: getIt<AvdLauncher>(),
-                      poller: getIt<BootReadinessPoller>(),
-                      runController: getIt<RunSessionController>(),
-                      logRepo: getIt<RunSessionLogRepository>(),
-                      vmClient: getIt<VmServiceClient>(),
-                      logsCubit: context.read<RunLogsCubit>(),
-                      ipcServer: getIt<EmulatorIpcServer>(),
-                    );
-                    unawaited(cubit.bootstrap());
-                    return cubit;
-                  },
-                ),
-              ],
-              child: WidgetPickerScope(
-                projectRoot: projectRoot,
-                vmClient: getIt<VmServiceClient>(),
-                child: scaffold,
-              ),
-            );
-          },
-        );
+    return BlocProvider<WorkspaceSidebarCubit>(
+      create: (_) {
+        final cubit = getIt<WorkspaceSidebarCubit>();
+        unawaited(cubit.load());
+        return cubit;
       },
+      child: BlocBuilder<WorkbenchLayoutCubit, WorkbenchLayoutState>(
+        builder: (context, layout) {
+          final reduce = ReduceMotion.of(context);
+          Widget animated(Widget child, {required Duration delay}) {
+            if (reduce) return child;
+            return child.animate().fadeIn(
+                  duration: 240.ms,
+                  delay: delay,
+                  curve: Curves.easeOutCubic,
+                );
+          }
+
+          _syncAreas(layout, animated);
+
+          final scaffold = Scaffold(
+            body: MultiSplitView(
+              controller: _controller,
+              onDividerDragEnd: (_) {
+                final left = _controller.getArea(0).size ?? layout.leftWidth;
+                final right = _controller.areasCount > 2
+                    ? (_controller.getArea(2).size ?? layout.rightWidth)
+                    : layout.rightWidth;
+                context
+                    .read<WorkbenchLayoutCubit>()
+                    .updateSizes(left: left, right: right);
+              },
+            ),
+          );
+          return BlocBuilder<ProjectsCubit, ProjectsState>(
+            buildWhen: (_, current) => current is ProjectsReady,
+            builder: (context, projects) {
+              final projectRoot = switch (projects) {
+                ProjectsReady(:final activeProjectRoot) => activeProjectRoot,
+                _ => null,
+              };
+              if (projectRoot == null) return scaffold;
+              return MultiBlocProvider(
+                key: ValueKey(projectRoot),
+                providers: [
+                  BlocProvider(create: (_) => RunLogsCubit()),
+                  BlocProvider(
+                    create: (_) => ContextAttachmentsCubit(
+                      projectRoot: projectRoot,
+                    ),
+                  ),
+                  BlocProvider<ProjectFileExplorerCubit>(
+                    create: (_) {
+                      final processRunner = getIt<ProcessRunner>();
+                      final cubit = ProjectFileExplorerCubit(
+                        projectRoot: projectRoot,
+                        scanner: const ProjectFileTreeScanner(),
+                        opener: ProjectFileOpener(runner: processRunner),
+                      );
+                      unawaited(cubit.load());
+                      unawaited(cubit.watch());
+                      return cubit;
+                    },
+                  ),
+                  BlocProvider<EmulatorSessionCubit>(
+                    create: (context) {
+                      final cubit = EmulatorSessionCubit(
+                        projectRoot: projectRoot,
+                        settings: getIt<ProjectSettingsRepository>(),
+                        discovery: getIt<DeviceDiscoveryService>(),
+                        launcher: getIt<AvdLauncher>(),
+                        poller: getIt<BootReadinessPoller>(),
+                        runController: getIt<RunSessionController>(),
+                        logRepo: getIt<RunSessionLogRepository>(),
+                        vmClient: getIt<VmServiceClient>(),
+                        logsCubit: context.read<RunLogsCubit>(),
+                        ipcServer: getIt<EmulatorIpcServer>(),
+                      );
+                      unawaited(cubit.bootstrap());
+                      return cubit;
+                    },
+                  ),
+                ],
+                child: WidgetPickerScope(
+                  projectRoot: projectRoot,
+                  vmClient: getIt<VmServiceClient>(),
+                  child: scaffold,
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -139,7 +170,7 @@ class _AppShellViewState extends State<AppShellView> {
       ..min = 180
       ..max = 360
       ..builder = (_, __) => animated(
-            const ProjectsChatsPanel(key: Key('workbench-left')),
+            const WorkbenchLeftPane(key: Key('workbench-left')),
             delay: Duration.zero,
           );
 
@@ -173,7 +204,7 @@ class _AppShellViewState extends State<AppShellView> {
         min: 180,
         max: 360,
         builder: (_, __) => animated(
-          const ProjectsChatsPanel(key: Key('workbench-left')),
+          const WorkbenchLeftPane(key: Key('workbench-left')),
           delay: Duration.zero,
         ),
       ),

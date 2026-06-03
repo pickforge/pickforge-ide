@@ -115,6 +115,18 @@ class ChatsCubit extends Cubit<ChatsState> {
     if (root != null) await _settings.setLastChatId(root, chatId);
   }
 
+  Future<void> activateProject(String projectRoot) async {
+    final s = state;
+    if (s is! ChatsReady) return;
+    final savedActive = await _settings.getLastChatId(projectRoot);
+    final savedExists = savedActive != null &&
+        s.chatsByProject[projectRoot]?.any(
+              (chat) => chat.chatId == savedActive,
+            ) ==
+            true;
+    emit(s.copyWith(activeChatId: savedExists ? savedActive : null));
+  }
+
   void toggleExpanded(String projectRoot) {
     final s = state;
     if (s is! ChatsReady) return;

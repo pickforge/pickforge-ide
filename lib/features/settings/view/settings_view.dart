@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
@@ -12,16 +14,19 @@ import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
 import 'package:pickforge/features/settings/view/device_run_settings.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({
     super.key,
     this.settingsCubit,
     this.deviceRunSettingsCubit,
+    this.diagnosticsService,
   });
 
   final SettingsCubit? settingsCubit;
   final DeviceRunSettingsCubit? deviceRunSettingsCubit;
+  final DiagnosticsService? diagnosticsService;
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -126,6 +131,14 @@ class _SettingsViewState extends State<SettingsView> {
                     _buildFontSizeSlider(state, context),
                     const SizedBox(height: 12),
                     _buildThemeDropdown(state, context),
+                    if (_diagnosticsServiceOrNull()
+                        case final diagnostics?) ...[
+                      const SizedBox(height: 24),
+                      _DiagnosticsSection(
+                        diagnostics: diagnostics,
+                        projectRoot: projectRoot,
+                      ),
+                    ],
                   ],
                 ),
               );
@@ -134,6 +147,15 @@ class _SettingsViewState extends State<SettingsView> {
         },
       ),
     );
+  }
+
+  DiagnosticsService? _diagnosticsServiceOrNull() {
+    if (widget.diagnosticsService != null) return widget.diagnosticsService;
+    try {
+      return getIt<DiagnosticsService>();
+    } on Object {
+      return null;
+    }
   }
 
   Widget _buildAgentDropdown(
@@ -258,6 +280,143 @@ class _SettingsViewState extends State<SettingsView> {
           },
         ),
       ],
+    );
+  }
+}
+
+class _DiagnosticsSection extends StatelessWidget {
+  const _DiagnosticsSection({
+    required this.diagnostics,
+    required this.projectRoot,
+  });
+
+  final DiagnosticsService diagnostics;
+  final String? projectRoot;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return FutureBuilder<DiagnosticsSnapshot>(
+      future: diagnostics.snapshot(),
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.diagnosticsTitle,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                if (!snapshot.hasData)
+                  const LinearProgressIndicator(minHeight: 1)
+                else ...[
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsOperatingSystem,
+                    value: data!.operatingSystem,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsAdb,
+                    value: data.adbAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsGit,
+                    value: data.gitAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsFlutter,
+                    value: data.flutterAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsEmulator,
+                    value: data.emulatorAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsClaude,
+                    value: data.claudeAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsCodex,
+                    value: data.codexAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  _DiagnosticRow(
+                    label: l10n.diagnosticsOpenCode,
+                    value: data.openCodeAvailable
+                        ? l10n.diagnosticsAvailable
+                        : l10n.diagnosticsMissing,
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => unawaited(
+                      _copySupportBundle(context, diagnostics, projectRoot),
+                    ),
+                    icon: const Icon(Icons.ios_share, size: 16),
+                    label: Text(l10n.diagnosticsCopySupportBundle),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+Future<void> _copySupportBundle(
+  BuildContext context,
+  DiagnosticsService diagnostics,
+  String? projectRoot,
+) async {
+  final l10n = AppLocalizations.of(context);
+  final bundle = await diagnostics.buildSupportBundle(
+    activeProjectRoot: projectRoot,
+  );
+  if (!context.mounted) return;
+  await Clipboard.setData(ClipboardData(text: bundle));
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(l10n.diagnosticsSupportBundleCopied)),
+  );
+}
+
+class _DiagnosticRow extends StatelessWidget {
+  const _DiagnosticRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+          ),
+          Expanded(child: Text(value)),
+        ],
+      ),
     );
   }
 }

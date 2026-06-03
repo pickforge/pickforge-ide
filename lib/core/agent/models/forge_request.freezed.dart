@@ -21,6 +21,8 @@ mixin _$ForgeRequest {
   SelectedWidget get widget;
   String get terminalId;
   String get projectRoot;
+  List<String> get attachmentPaths;
+  String get customNote;
 
   /// Create a copy of ForgeRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -44,17 +46,28 @@ mixin _$ForgeRequest {
             (identical(other.terminalId, terminalId) ||
                 other.terminalId == terminalId) &&
             (identical(other.projectRoot, projectRoot) ||
-                other.projectRoot == projectRoot));
+                other.projectRoot == projectRoot) &&
+            const DeepCollectionEquality()
+                .equals(other.attachmentPaths, attachmentPaths) &&
+            (identical(other.customNote, customNote) ||
+                other.customNote == customNote));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode =>
-      Object.hash(runtimeType, agentId, skill, widget, terminalId, projectRoot);
+  int get hashCode => Object.hash(
+      runtimeType,
+      agentId,
+      skill,
+      widget,
+      terminalId,
+      projectRoot,
+      const DeepCollectionEquality().hash(attachmentPaths),
+      customNote);
 
   @override
   String toString() {
-    return 'ForgeRequest(agentId: $agentId, skill: $skill, widget: $widget, terminalId: $terminalId, projectRoot: $projectRoot)';
+    return 'ForgeRequest(agentId: $agentId, skill: $skill, widget: $widget, terminalId: $terminalId, projectRoot: $projectRoot, attachmentPaths: $attachmentPaths, customNote: $customNote)';
   }
 }
 
@@ -69,7 +82,9 @@ abstract mixin class $ForgeRequestCopyWith<$Res> {
       @_SkillIdConverter() SkillId skill,
       SelectedWidget widget,
       String terminalId,
-      String projectRoot});
+      String projectRoot,
+      List<String> attachmentPaths,
+      String customNote});
 
   $SelectedWidgetCopyWith<$Res> get widget;
 }
@@ -91,6 +106,8 @@ class _$ForgeRequestCopyWithImpl<$Res> implements $ForgeRequestCopyWith<$Res> {
     Object? widget = null,
     Object? terminalId = null,
     Object? projectRoot = null,
+    Object? attachmentPaths = null,
+    Object? customNote = null,
   }) {
     return _then(_self.copyWith(
       agentId: null == agentId
@@ -112,6 +129,14 @@ class _$ForgeRequestCopyWithImpl<$Res> implements $ForgeRequestCopyWith<$Res> {
       projectRoot: null == projectRoot
           ? _self.projectRoot
           : projectRoot // ignore: cast_nullable_to_non_nullable
+              as String,
+      attachmentPaths: null == attachmentPaths
+          ? _self.attachmentPaths
+          : attachmentPaths // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      customNote: null == customNote
+          ? _self.customNote
+          : customNote // ignore: cast_nullable_to_non_nullable
               as String,
     ));
   }
@@ -225,15 +250,23 @@ extension ForgeRequestPatterns on ForgeRequest {
             @_SkillIdConverter() SkillId skill,
             SelectedWidget widget,
             String terminalId,
-            String projectRoot)?
+            String projectRoot,
+            List<String> attachmentPaths,
+            String customNote)?
         $default, {
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case _ForgeRequest() when $default != null:
-        return $default(_that.agentId, _that.skill, _that.widget,
-            _that.terminalId, _that.projectRoot);
+        return $default(
+            _that.agentId,
+            _that.skill,
+            _that.widget,
+            _that.terminalId,
+            _that.projectRoot,
+            _that.attachmentPaths,
+            _that.customNote);
       case _:
         return orElse();
     }
@@ -259,14 +292,22 @@ extension ForgeRequestPatterns on ForgeRequest {
             @_SkillIdConverter() SkillId skill,
             SelectedWidget widget,
             String terminalId,
-            String projectRoot)
+            String projectRoot,
+            List<String> attachmentPaths,
+            String customNote)
         $default,
   ) {
     final _that = this;
     switch (_that) {
       case _ForgeRequest():
-        return $default(_that.agentId, _that.skill, _that.widget,
-            _that.terminalId, _that.projectRoot);
+        return $default(
+            _that.agentId,
+            _that.skill,
+            _that.widget,
+            _that.terminalId,
+            _that.projectRoot,
+            _that.attachmentPaths,
+            _that.customNote);
       case _:
         throw StateError('Unexpected subclass');
     }
@@ -291,14 +332,22 @@ extension ForgeRequestPatterns on ForgeRequest {
             @_SkillIdConverter() SkillId skill,
             SelectedWidget widget,
             String terminalId,
-            String projectRoot)?
+            String projectRoot,
+            List<String> attachmentPaths,
+            String customNote)?
         $default,
   ) {
     final _that = this;
     switch (_that) {
       case _ForgeRequest() when $default != null:
-        return $default(_that.agentId, _that.skill, _that.widget,
-            _that.terminalId, _that.projectRoot);
+        return $default(
+            _that.agentId,
+            _that.skill,
+            _that.widget,
+            _that.terminalId,
+            _that.projectRoot,
+            _that.attachmentPaths,
+            _that.customNote);
       case _:
         return null;
     }
@@ -313,7 +362,10 @@ class _ForgeRequest implements ForgeRequest {
       @_SkillIdConverter() required this.skill,
       required this.widget,
       required this.terminalId,
-      required this.projectRoot});
+      required this.projectRoot,
+      final List<String> attachmentPaths = const [],
+      this.customNote = ''})
+      : _attachmentPaths = attachmentPaths;
   factory _ForgeRequest.fromJson(Map<String, dynamic> json) =>
       _$ForgeRequestFromJson(json);
 
@@ -329,6 +381,18 @@ class _ForgeRequest implements ForgeRequest {
   final String terminalId;
   @override
   final String projectRoot;
+  final List<String> _attachmentPaths;
+  @override
+  @JsonKey()
+  List<String> get attachmentPaths {
+    if (_attachmentPaths is EqualUnmodifiableListView) return _attachmentPaths;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_attachmentPaths);
+  }
+
+  @override
+  @JsonKey()
+  final String customNote;
 
   /// Create a copy of ForgeRequest
   /// with the given fields replaced by the non-null parameter values.
@@ -356,17 +420,28 @@ class _ForgeRequest implements ForgeRequest {
             (identical(other.terminalId, terminalId) ||
                 other.terminalId == terminalId) &&
             (identical(other.projectRoot, projectRoot) ||
-                other.projectRoot == projectRoot));
+                other.projectRoot == projectRoot) &&
+            const DeepCollectionEquality()
+                .equals(other._attachmentPaths, _attachmentPaths) &&
+            (identical(other.customNote, customNote) ||
+                other.customNote == customNote));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode =>
-      Object.hash(runtimeType, agentId, skill, widget, terminalId, projectRoot);
+  int get hashCode => Object.hash(
+      runtimeType,
+      agentId,
+      skill,
+      widget,
+      terminalId,
+      projectRoot,
+      const DeepCollectionEquality().hash(_attachmentPaths),
+      customNote);
 
   @override
   String toString() {
-    return 'ForgeRequest(agentId: $agentId, skill: $skill, widget: $widget, terminalId: $terminalId, projectRoot: $projectRoot)';
+    return 'ForgeRequest(agentId: $agentId, skill: $skill, widget: $widget, terminalId: $terminalId, projectRoot: $projectRoot, attachmentPaths: $attachmentPaths, customNote: $customNote)';
   }
 }
 
@@ -383,7 +458,9 @@ abstract mixin class _$ForgeRequestCopyWith<$Res>
       @_SkillIdConverter() SkillId skill,
       SelectedWidget widget,
       String terminalId,
-      String projectRoot});
+      String projectRoot,
+      List<String> attachmentPaths,
+      String customNote});
 
   @override
   $SelectedWidgetCopyWith<$Res> get widget;
@@ -407,6 +484,8 @@ class __$ForgeRequestCopyWithImpl<$Res>
     Object? widget = null,
     Object? terminalId = null,
     Object? projectRoot = null,
+    Object? attachmentPaths = null,
+    Object? customNote = null,
   }) {
     return _then(_ForgeRequest(
       agentId: null == agentId
@@ -428,6 +507,14 @@ class __$ForgeRequestCopyWithImpl<$Res>
       projectRoot: null == projectRoot
           ? _self.projectRoot
           : projectRoot // ignore: cast_nullable_to_non_nullable
+              as String,
+      attachmentPaths: null == attachmentPaths
+          ? _self._attachmentPaths
+          : attachmentPaths // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      customNote: null == customNote
+          ? _self.customNote
+          : customNote // ignore: cast_nullable_to_non_nullable
               as String,
     ));
   }

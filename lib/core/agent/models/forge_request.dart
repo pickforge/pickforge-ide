@@ -31,6 +31,8 @@ abstract class ForgeRequest with _$ForgeRequest {
     required SelectedWidget widget,
     required String terminalId,
     required String projectRoot,
+    @Default([]) List<String> attachmentPaths,
+    @Default('') String customNote,
   }) = _ForgeRequest;
 
   factory ForgeRequest.fromJson(Map<String, dynamic> json) =>

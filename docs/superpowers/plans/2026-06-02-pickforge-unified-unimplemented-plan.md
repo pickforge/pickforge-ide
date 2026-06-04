@@ -515,6 +515,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Query/preview widget under pointer.
 - [ ] Show highlight without interfering with app input.
 
+**Blocked:** True hover preview/highlight needs an embedded mirror/input surface plus a reliable widget-under-coordinate query or app-side overlay channel. The current implementation can map coordinates but cannot ask the Flutter inspector for a passive hover target without entering the target app's select-mode overlay.
+
 ### P5.T3 — Widget-tree diffing and rebuild tracking
 
 **Status:** Completed
@@ -970,6 +972,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Test with `adb` available and unavailable.
 - [ ] Test on a small sample app and a larger real app.
 - [ ] Test with no emulator connection: chats and project browsing should still work.
+
+**Latest evidence**
+
+- 2026-06-04: Local preflight found Claude Code `2.1.161`, Codex CLI `0.136.0`, OpenCode `1.14.30`, `adb`, `fvm`, and `git` available on PATH; the standalone `emulator` command was missing. Existing diagnostics/onboarding tests cover available/missing tool display, but this is not a substitute for the full manual dogfood matrix.
+
+**Blocked:** Full manual matrix signoff requires a visible desktop session, controlled PATH permutations for each missing agent/`adb` case, and both small and larger real Flutter projects. The current headless Linux session can record availability and automated emulator evidence, but cannot complete visible app-level dogfood.
 
 ### P9.T6 — Accessibility and keyboard-first audit
 

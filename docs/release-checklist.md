@@ -9,9 +9,11 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `fvm dart format --set-exit-if-changed .`
 - [ ] `fvm flutter analyze`
 - [ ] `fvm flutter test --reporter=compact`
+- [ ] `scripts/desktop_build_smoke.sh` on each desktop host.
 - [ ] `scripts/linux_smoke.sh` on Linux.
 - [ ] `scripts/emulator_e2e.sh Pixel_10` on a prepared Android runner.
-- [ ] Review CI artifacts for golden failures, Linux smoke output, and emulator E2E logs/screenshots.
+- [ ] `scripts/dogfood_preflight.sh` before manual dogfood.
+- [ ] Review CI artifacts for golden failures, desktop build failures, Linux smoke output, and emulator E2E logs/screenshots.
 
 ## Cold-Install Smoke
 
@@ -86,10 +88,15 @@ they do not replace manual dogfood on real desktop hosts.
 
 - Pending native macOS host dogfood before public release.
 
+### Windows
+
+- Pending native Windows host dogfood before public release.
+
 ## Release Signoff
 
 - [ ] Linux dogfood pass completed on a real desktop session.
 - [ ] macOS dogfood pass completed before public release.
+- [ ] Windows dogfood pass completed before public release.
 - [ ] Blockers recorded as issues or follow-up plan items.
 
 Sign off: _______________________________

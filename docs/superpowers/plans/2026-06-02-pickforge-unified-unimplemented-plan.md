@@ -423,6 +423,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-03: Added desktop secondary screenshot behavior through `flutter screenshot -d <targetId> -o <path>` with null-on-failure semantics; inspector screenshots remain the primary VM Service/inspector-extension context.
 - 2026-06-03: Verified Linux was discoverable with `fvm flutter devices --machine`, then ran the fixture app with `timeout 120s fvm flutter run -d linux --machine`; Flutter emitted `app.debugPort` with a `ws://127.0.0.1:.../ws` VM Service URI and then stopped cleanly after SIGTERM.
 - 2026-06-03: Focused desktop discovery/settings/session/screenshot tests passed, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, and `fvm flutter test --reporter=compact` passed (462 passed, 2 skipped without `PICKFORGE_E2E_AVD`), and both Android emulator E2Es passed with `fvm flutter test --reporter=compact --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart test/integration/widget_pick_e2e_test.dart`.
+- 2026-06-04: Added `scripts/desktop_build_smoke.sh` and CI desktop build smoke coverage for Linux, macOS, and Windows hosts. This verifies host-specific Flutter desktop builds in CI, but does not replace live macOS/Windows VM Service and inspector dogfood. Verified locally on Linux with `scripts/desktop_build_smoke.sh`.
 
 **Blocked:** macOS and Windows live desktop validation require native macOS/Windows hosts; this Linux environment can validate Linux and command construction for all desktop target ids.
 
@@ -907,6 +908,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Updated CI/release workflows to Node 24 action majors, added read-only workflow permissions, job timeouts, compact test output, and kept codegen drift checks in CI. Verified workflow YAML parsing with PyYAML, `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Added the existing Linux desktop smoke script to the Ubuntu CI leg with Linux desktop/Xvfb/ImageMagick dependencies and `build/smoke/linux/**` artifact upload. Verified workflow YAML parsing with PyYAML, `bash -n scripts/linux_smoke.sh`, `scripts/linux_smoke.sh`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`.
+- 2026-06-04: Added PR CI desktop build smoke coverage on `ubuntu-latest`, `macos-latest`, and `windows-latest` through `scripts/desktop_build_smoke.sh`, with build artifacts uploaded only on failure. Verified with workflow YAML parsing, `bash -n scripts/desktop_build_smoke.sh scripts/dogfood_preflight.sh scripts/web_demo_smoke.sh scripts/linux_smoke.sh scripts/emulator_e2e.sh`, `scripts/desktop_build_smoke.sh`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`.
 
 ### P9.T3 — Release checklist execution
 
@@ -921,8 +923,9 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Updated `docs/release-checklist.md` for current automated preflight, demo/project/device binding, current agent profiles, `.pickforge/` context outputs, workspace UX, hot reload/review, keyboard/accessibility, and release signoff. Recorded Linux automated results from `scripts/linux_smoke.sh` and `scripts/emulator_e2e.sh Pixel_10`, plus the headless Xvfb blocker for full visible desktop click-through.
+- 2026-06-04: Added `docs/qa/manual-dogfood.md`, `scripts/dogfood_preflight.sh`, and desktop build smoke entries to the release checklist so visible-desktop and native-host preparation steps are explicit. Verified locally with `scripts/dogfood_preflight.sh`.
 
-**Blocked:** Full Linux checklist signoff still requires a real desktop session for project binding and visible embedded-terminal prompt delivery. macOS checklist execution requires a native macOS host.
+**Blocked:** Full Linux checklist signoff still requires a real desktop session for project binding and visible embedded-terminal prompt delivery. macOS and Windows checklist execution require native macOS/Windows hosts.
 
 ### P9.T4 — Local app testing strategy
 
@@ -976,6 +979,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Local preflight found Claude Code `2.1.161`, Codex CLI `0.136.0`, OpenCode `1.14.30`, `adb`, `fvm`, and `git` available on PATH; the standalone `emulator` command was missing. Existing diagnostics/onboarding tests cover available/missing tool display, but this is not a substitute for the full manual dogfood matrix.
+- 2026-06-04: Added `scripts/dogfood_preflight.sh` and `docs/qa/manual-dogfood.md` to capture local tool/version/device availability and define the approved manual agent/model matrix: Codex with GPT 5.3 Codex Spark, OpenCode with DeepSeek V4 Flash, and Claude Code with Sonnet 4.6. Pickforge does not pass model flags yet, so the selected models must be configured in the CLIs before manual dogfood. `scripts/dogfood_preflight.sh` found `emulator-5554` and `emulator-5556` attached locally, with `claude`, `codex`, `opencode`, `adb`, `fvm`, and `git` available.
 
 **Blocked:** Full manual matrix signoff requires a visible desktop session, controlled PATH permutations for each missing agent/`adb` case, and both small and larger real Flutter projects. The current headless Linux session can record availability and automated emulator evidence, but cannot complete visible app-level dogfood.
 

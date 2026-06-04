@@ -17,6 +17,12 @@ without an explicit web-safe entrypoint.
   under `build/smoke/linux/`.
 - `scripts/emulator_e2e.sh Pixel_10` runs the opt-in Android emulator E2Es and
   writes artifacts under `build/e2e/android/`.
+- `scripts/desktop_build_smoke.sh` builds the current host's desktop target in
+  debug mode by default.
+- `scripts/dogfood_preflight.sh` records local agent, Android, and Flutter tool
+  availability under `build/dogfood/`.
+- `docs/qa/manual-dogfood.md` describes the visible desktop and native-host
+  checks that cannot be completed by headless CI.
 
 ## Web Demo Harness
 

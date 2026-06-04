@@ -39,6 +39,12 @@ jobs:
             windows-latest) fvm flutter build windows --release ;;
           esac
         shell: bash
+      - name: Native desktop launch smoke
+        if: matrix.os != 'ubuntu-latest'
+        env:
+          PICKFORGE_DESKTOP_BUILD_MODE: release
+        run: scripts/desktop_launch_smoke.sh
+        shell: bash
       - name: Package Linux .deb
         if: matrix.os == 'ubuntu-latest'
         run: scripts/package_linux_deb.sh --skip-build

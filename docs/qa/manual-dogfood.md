@@ -115,8 +115,10 @@ hosts, run:
 ```bash
 scripts/dogfood_preflight.sh
 scripts/desktop_build_smoke.sh
+scripts/desktop_launch_smoke.sh
 fvm flutter test --reporter=compact
 ```
 
+The launch smoke only verifies the built app starts and stays alive briefly.
 Then repeat the visible desktop project binding, widget pick, Forge prompt, and
 `.pickforge/` context-file checks on that platform.

@@ -19,6 +19,10 @@ without an explicit web-safe entrypoint.
   writes artifacts under `build/e2e/android/`.
 - `scripts/desktop_build_smoke.sh` builds the current host's desktop target in
   debug mode by default.
+- `scripts/desktop_launch_smoke.sh` launches the already-built macOS or Windows
+  desktop app and verifies it survives a short liveness window. Linux launch
+  coverage uses `scripts/linux_smoke.sh` instead because it also probes the VM
+  Service under Xvfb.
 - `scripts/dogfood_preflight.sh` records local agent, Android, and Flutter tool
   availability under `build/dogfood/`.
 - `docs/qa/manual-dogfood.md` describes the visible desktop and native-host

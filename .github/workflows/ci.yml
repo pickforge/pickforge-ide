@@ -94,11 +94,23 @@ jobs:
       - name: Desktop build smoke
         run: scripts/desktop_build_smoke.sh
         shell: bash
+      - name: Native desktop launch smoke
+        if: matrix.os != 'ubuntu-latest'
+        run: scripts/desktop_launch_smoke.sh
+        shell: bash
       - name: Upload desktop build artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: desktop-build-failure-${{ matrix.os }}
           path: build/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload native desktop launch smoke artifacts
+        if: always() && matrix.os != 'ubuntu-latest'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-launch-smoke-${{ matrix.os }}-${{ github.run_number }}
+          path: build/smoke/desktop-launch/**
           if-no-files-found: ignore
           retention-days: 7

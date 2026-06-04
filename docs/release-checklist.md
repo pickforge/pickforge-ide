@@ -10,6 +10,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `fvm flutter analyze`
 - [ ] `fvm flutter test --reporter=compact`
 - [ ] `scripts/desktop_build_smoke.sh` on each desktop host.
+- [ ] `scripts/desktop_launch_smoke.sh` on macOS and Windows after the desktop build smoke.
 - [ ] `scripts/linux_smoke.sh` on Linux.
 - [ ] `scripts/package_linux_deb.sh --skip-build` after the Linux release build.
 - [ ] `scripts/linux_deb_smoke.sh --skip-build` after the Linux package is created.

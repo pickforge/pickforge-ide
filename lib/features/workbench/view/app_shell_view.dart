@@ -132,6 +132,7 @@ class _AppShellViewState extends State<AppShellView> {
                         projectRoot: projectRoot,
                         scanner: const ProjectFileTreeScanner(),
                         opener: ProjectFileOpener(runner: processRunner),
+                        diagnostics: getIt<DiagnosticsService>(),
                       );
                       unawaited(cubit.load());
                       unawaited(cubit.watch());

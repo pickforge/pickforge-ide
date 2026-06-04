@@ -37,6 +37,7 @@ class DiagnosticsSnapshot extends Equatable {
     required this.geminiAvailable,
     required this.lastVmError,
     required this.failures,
+    required this.performanceCounters,
     required this.buildMetadata,
   });
 
@@ -55,6 +56,7 @@ class DiagnosticsSnapshot extends Equatable {
   final bool geminiAvailable;
   final String? lastVmError;
   final List<DiagnosticsFailureDetails> failures;
+  final List<DiagnosticsPerformanceCounter> performanceCounters;
 
   @override
   List<Object?> get props => [
@@ -72,6 +74,7 @@ class DiagnosticsSnapshot extends Equatable {
         geminiAvailable,
         lastVmError,
         failures,
+        performanceCounters,
         buildMetadata,
       ];
 }
@@ -188,15 +191,42 @@ class DiagnosticsFailureDetails extends Equatable {
   List<Object?> get props => [kind, timestamp, message];
 }
 
+class DiagnosticsPerformanceCounter extends Equatable {
+  const DiagnosticsPerformanceCounter({
+    required this.name,
+    required this.lastDuration,
+    required this.maxDuration,
+    required this.sampleCount,
+    required this.recordedAt,
+  });
+
+  final String name;
+  final Duration lastDuration;
+  final Duration maxDuration;
+  final int sampleCount;
+  final DateTime recordedAt;
+
+  @override
+  List<Object?> get props => [
+        name,
+        lastDuration,
+        maxDuration,
+        sampleCount,
+        recordedAt,
+      ];
+}
+
 class DiagnosticsService {
   DiagnosticsService(
     this._runner, {
     ContextRedactor redactor = const ContextRedactor(),
     int maxLogEntries = 100,
+    int maxPerformanceCounters = 50,
     String appVersion = _defaultAppVersion,
     DiagnosticsBuildMetadata? buildMetadata,
   })  : _redactor = redactor,
         _maxLogEntries = maxLogEntries,
+        _maxPerformanceCounters = maxPerformanceCounters,
         _appVersion = appVersion,
         _buildMetadata =
             buildMetadata ?? DiagnosticsBuildMetadata.fromEnvironment();
@@ -204,10 +234,12 @@ class DiagnosticsService {
   final ProcessRunner _runner;
   final ContextRedactor _redactor;
   final int _maxLogEntries;
+  final int _maxPerformanceCounters;
   final String _appVersion;
   final DiagnosticsBuildMetadata _buildMetadata;
   final List<DiagnosticsLogEntry> _logs = [];
   final Map<DiagnosticsFailureKind, DiagnosticsFailureDetails> _failures = {};
+  final Map<String, DiagnosticsPerformanceCounter> _performanceCounters = {};
   String? _lastVmError;
 
   Future<DiagnosticsSnapshot> snapshot() async {
@@ -230,6 +262,7 @@ class DiagnosticsService {
       geminiAvailable: await _commandAvailable('gemini', ['--version']),
       lastVmError: _lastVmError,
       failures: failures,
+      performanceCounters: performanceCounters,
     );
   }
 
@@ -237,6 +270,12 @@ class DiagnosticsService {
   List<DiagnosticsFailureDetails> get failures {
     final values = _failures.values.toList()
       ..sort((a, b) => a.kind.index.compareTo(b.kind.index));
+    return List.unmodifiable(values);
+  }
+
+  List<DiagnosticsPerformanceCounter> get performanceCounters {
+    final values = _performanceCounters.values.toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
     return List.unmodifiable(values);
   }
 
@@ -277,6 +316,28 @@ class DiagnosticsService {
       message: redacted,
     );
     recordLog('error', '${_failureLabel(kind)}: $redacted');
+  }
+
+  void recordPerformance(String name, Duration elapsed) {
+    final redactedName = _redactor.redact(name).trim();
+    if (redactedName.isEmpty) return;
+    final current = _performanceCounters[redactedName];
+    final maxDuration = current == null || elapsed > current.maxDuration
+        ? elapsed
+        : current.maxDuration;
+    _performanceCounters[redactedName] = DiagnosticsPerformanceCounter(
+      name: redactedName,
+      lastDuration: elapsed,
+      maxDuration: maxDuration,
+      sampleCount: (current?.sampleCount ?? 0) + 1,
+      recordedAt: DateTime.now().toUtc(),
+    );
+    if (_performanceCounters.length > _maxPerformanceCounters) {
+      final oldest = _performanceCounters.values.reduce(
+        (a, b) => a.recordedAt.isBefore(b.recordedAt) ? a : b,
+      );
+      _performanceCounters.remove(oldest.name);
+    }
   }
 
   Future<String> buildSupportBundle({
@@ -326,6 +387,20 @@ class DiagnosticsService {
         buffer.writeln(
           '- ${failure.timestamp.toIso8601String()} '
           '[${_failureLabel(failure.kind)}] ${failure.message}',
+        );
+      }
+    }
+
+    if (current.performanceCounters.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('## Performance counters')
+        ..writeln();
+      for (final counter in current.performanceCounters) {
+        buffer.writeln(
+          '- ${counter.name}: last ${counter.lastDuration.inMilliseconds}ms, '
+          'max ${counter.maxDuration.inMilliseconds}ms, '
+          '${_sampleLabel(counter.sampleCount)}',
         );
       }
     }
@@ -381,6 +456,8 @@ class DiagnosticsService {
   }
 
   String _availability(bool value) => value ? 'available' : 'missing';
+
+  String _sampleLabel(int count) => count == 1 ? '1 sample' : '$count samples';
 
   String _failureLabel(DiagnosticsFailureKind kind) => switch (kind) {
         DiagnosticsFailureKind.connection => 'connection',

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/projects/project_file_tree_scanner.dart';
 import 'package:pickforge/features/workbench/cubit/project_file_explorer_state.dart';
@@ -11,24 +12,30 @@ class ProjectFileExplorerCubit extends Cubit<ProjectFileExplorerState> {
     required String projectRoot,
     required ProjectFileTreeScanner scanner,
     required ProjectFileOpener opener,
+    DiagnosticsService? diagnostics,
   })  : _projectRoot = projectRoot,
         _scanner = scanner,
         _opener = opener,
+        _diagnostics = diagnostics,
         super(const ProjectFileExplorerState());
 
   final String _projectRoot;
   final ProjectFileTreeScanner _scanner;
   final ProjectFileOpener _opener;
+  final DiagnosticsService? _diagnostics;
   StreamSubscription<FileSystemEvent>? _watchSubscription;
   Timer? _reloadDebounce;
 
   Future<void> load() async {
     emit(state.copyWith(status: ProjectFileExplorerStatus.loading));
+    final stopwatch = Stopwatch()..start();
     try {
       final nodes = await _scanner.scan(
         _projectRoot,
         showHidden: state.showHidden,
       );
+      stopwatch.stop();
+      _diagnostics?.recordPerformance('fileExplorer.scan', stopwatch.elapsed);
       if (isClosed) return;
       emit(
         state.copyWith(
@@ -37,6 +44,8 @@ class ProjectFileExplorerCubit extends Cubit<ProjectFileExplorerState> {
         ),
       );
     } on Object catch (error) {
+      stopwatch.stop();
+      _diagnostics?.recordPerformance('fileExplorer.scan', stopwatch.elapsed);
       if (isClosed) return;
       emit(
         state.copyWith(

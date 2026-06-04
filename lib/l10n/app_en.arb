@@ -254,6 +254,7 @@
   "diagnosticsLastVmError": "Last VM error",
   "diagnosticsNoVmError": "No VM error recorded",
   "diagnosticsRecentFailures": "Recent failures",
+  "diagnosticsPerformanceCounters": "Performance counters",
   "diagnosticsFailureConnection": "Connection",
   "diagnosticsFailureRun": "Run",
   "diagnosticsFailureAgent": "Agent",

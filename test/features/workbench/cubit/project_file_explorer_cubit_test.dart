@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
+import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/projects/project_file_tree.dart';
 import 'package:pickforge/core/projects/project_file_tree_scanner.dart';
@@ -25,6 +29,22 @@ void main() {
 
     expect(cubit.state.status, ProjectFileExplorerStatus.ready);
     expect(cubit.state.nodes.single.name, 'lib');
+  });
+
+  test('load records scan performance counter', () async {
+    final diagnostics = DiagnosticsService(_FakeRunner());
+    final cubit = ProjectFileExplorerCubit(
+      projectRoot: '/app',
+      scanner: _FakeScanner(const []),
+      opener: _FakeOpener(),
+      diagnostics: diagnostics,
+    );
+
+    await cubit.load();
+
+    expect(diagnostics.performanceCounters, hasLength(1));
+    expect(diagnostics.performanceCounters.single.name, 'fileExplorer.scan');
+    expect(diagnostics.performanceCounters.single.sampleCount, 1);
   });
 
   test('toggleExpanded tracks expanded paths', () {
@@ -63,4 +83,25 @@ class _FakeOpener implements ProjectFileOpener {
 
   @override
   Future<void> reveal(String path) async {}
+}
+
+class _FakeRunner implements ProcessRunner {
+  @override
+  Future<ProcessResult> run(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) async =>
+      ProcessResult(1, 0, '', '');
+
+  @override
+  Future<RunningProcess> spawn(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) {
+    throw UnimplementedError();
+  }
 }

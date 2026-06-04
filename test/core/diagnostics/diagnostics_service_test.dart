@@ -28,7 +28,10 @@ void main() {
         commitSha: 'abc123',
         refName: 'main',
       ),
-    )..recordVmError('apiKey=vm-secret');
+    )
+      ..recordVmError('apiKey=vm-secret')
+      ..recordPerformance('fileExplorer.scan', const Duration(milliseconds: 12))
+      ..recordPerformance('fileExplorer.scan', const Duration(milliseconds: 8));
 
     final snapshot = await service.snapshot();
 
@@ -49,6 +52,17 @@ void main() {
     expect(snapshot.failures, hasLength(1));
     expect(snapshot.failures.single.kind, DiagnosticsFailureKind.connection);
     expect(snapshot.failures.single.message, 'apiKey=[REDACTED]');
+    expect(snapshot.performanceCounters, hasLength(1));
+    expect(snapshot.performanceCounters.single.name, 'fileExplorer.scan');
+    expect(
+      snapshot.performanceCounters.single.lastDuration,
+      const Duration(milliseconds: 8),
+    );
+    expect(
+      snapshot.performanceCounters.single.maxDuration,
+      const Duration(milliseconds: 12),
+    );
+    expect(snapshot.performanceCounters.single.sampleCount, 2);
   });
 
   test('support bundle excludes source and redacts logs', () async {
@@ -82,7 +96,11 @@ void main() {
       ..recordLog('error', 'token=super-secret')
       ..recordVmError('password=vm-secret')
       ..recordRunError('run token=super-secret')
-      ..recordAgentError('agent apiKey=agent-secret');
+      ..recordAgentError('agent apiKey=agent-secret')
+      ..recordPerformance(
+        'fileExplorer.scan',
+        const Duration(milliseconds: 42),
+      );
 
     final bundle = await service.buildSupportBundle(
       activeProjectRoot: '/home/me/project',
@@ -106,6 +124,11 @@ void main() {
     expect(bundle, contains('[connection] password=[REDACTED]'));
     expect(bundle, contains('[run] run token=[REDACTED]'));
     expect(bundle, contains('[agent] agent apiKey=[REDACTED]'));
+    expect(bundle, contains('## Performance counters'));
+    expect(
+      bundle,
+      contains('- fileExplorer.scan: last 42ms, max 42ms, 1 sample'),
+    );
     expect(bundle, isNot(contains('super-secret')));
     expect(bundle, isNot(contains('vm-secret')));
     expect(bundle, isNot(contains('agent-secret')));

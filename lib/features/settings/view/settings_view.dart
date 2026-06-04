@@ -399,6 +399,19 @@ class _DiagnosticsSection extends StatelessWidget {
                     failure: failure,
                   ),
               ],
+              if (data.performanceCounters.isNotEmpty) ...[
+                const SizedBox(height: PickforgeSpacing.sm),
+                Text(
+                  l10n.diagnosticsPerformanceCounters,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: PickforgeSpacing.xs),
+                for (final counter in data.performanceCounters)
+                  _DiagnosticRow(
+                    label: counter.name,
+                    value: _performanceCounterValue(counter),
+                  ),
+              ],
               const SizedBox(height: PickforgeSpacing.xs),
               OutlinedButton.icon(
                 style: settingsCompactButtonStyle(),
@@ -439,6 +452,14 @@ List<Widget> _buildMetadataRows(
       if (metadata.buildUrl case final value?)
         _DiagnosticRow(label: l10n.diagnosticsBuildUrl, value: value),
     ];
+
+String _performanceCounterValue(DiagnosticsPerformanceCounter counter) {
+  final sampleLabel = _sampleLabel(counter.sampleCount);
+  return 'last ${counter.lastDuration.inMilliseconds}ms, '
+      'max ${counter.maxDuration.inMilliseconds}ms, $sampleLabel';
+}
+
+String _sampleLabel(int count) => count == 1 ? '1 sample' : '$count samples';
 
 Future<void> _copySupportBundle(
   BuildContext context,

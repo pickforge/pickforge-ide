@@ -149,7 +149,11 @@ void main() {
               )
                 ..recordVmError('SocketException: apiKey=secret')
                 ..recordRunError('Run failed: token=secret')
-                ..recordAgentError('Agent failed: password=secret'),
+                ..recordAgentError('Agent failed: password=secret')
+                ..recordPerformance(
+                  'fileExplorer.scan',
+                  const Duration(milliseconds: 42),
+                ),
             ),
           ),
         ),
@@ -181,6 +185,9 @@ void main() {
     expect(find.text('Agent'), findsOneWidget);
     expect(find.text('Run failed: token=[REDACTED]'), findsOneWidget);
     expect(find.text('Agent failed: password=[REDACTED]'), findsOneWidget);
+    expect(find.text('Performance counters'), findsOneWidget);
+    expect(find.text('fileExplorer.scan'), findsOneWidget);
+    expect(find.text('last 42ms, max 42ms, 1 sample'), findsOneWidget);
 
     await tester.drag(
       find.byType(SingleChildScrollView),

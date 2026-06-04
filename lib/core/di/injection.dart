@@ -32,6 +32,8 @@ import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/process/binary_detector.dart' hide ProcessRunner;
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
+import 'package:pickforge/core/update/update_check_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final GetIt getIt = GetIt.instance;
 
@@ -44,6 +46,18 @@ Future<void> configureDependencies() async {
   if (!getIt.isRegistered<DiagnosticsService>()) {
     getIt.registerLazySingleton<DiagnosticsService>(
       () => DiagnosticsService(getIt<ProcessRunner>()),
+    );
+  }
+  if (!getIt.isRegistered<UpdateCheckSettingsRepository>()) {
+    getIt.registerLazySingleton<UpdateCheckSettingsRepository>(
+      () => UpdateCheckSettingsRepository(getIt<SharedPreferences>()),
+    );
+  }
+  if (!getIt.isRegistered<UpdateCheckService>()) {
+    getIt.registerLazySingleton<UpdateCheckService>(
+      () => UpdateCheckService(
+        settings: getIt<UpdateCheckSettingsRepository>(),
+      ),
     );
   }
   if (!getIt.isRegistered<EmulatorIpcServer>()) {

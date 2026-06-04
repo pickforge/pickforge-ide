@@ -9,6 +9,7 @@ import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
+import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
 import 'package:pickforge/features/settings/view/device_run_settings.dart';
@@ -24,11 +25,13 @@ class SettingsView extends StatefulWidget {
     this.settingsCubit,
     this.deviceRunSettingsCubit,
     this.diagnosticsService,
+    this.updateSettingsRepository,
   });
 
   final SettingsCubit? settingsCubit;
   final DeviceRunSettingsCubit? deviceRunSettingsCubit;
   final DiagnosticsService? diagnosticsService;
+  final UpdateCheckSettingsRepository? updateSettingsRepository;
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -150,6 +153,11 @@ class _SettingsViewState extends State<SettingsView> {
                         _buildThemeDropdown(state, context),
                       ],
                     ),
+                    if (_updateSettingsRepositoryOrNull()
+                        case final updateSettings?) ...[
+                      const SizedBox(height: PickforgeSpacing.lg),
+                      _UpdateSettingsSection(repository: updateSettings),
+                    ],
                     if (_diagnosticsServiceOrNull()
                         case final diagnostics?) ...[
                       const SizedBox(height: PickforgeSpacing.lg),
@@ -172,6 +180,17 @@ class _SettingsViewState extends State<SettingsView> {
     if (widget.diagnosticsService != null) return widget.diagnosticsService;
     try {
       return getIt<DiagnosticsService>();
+    } on Object {
+      return null;
+    }
+  }
+
+  UpdateCheckSettingsRepository? _updateSettingsRepositoryOrNull() {
+    if (widget.updateSettingsRepository != null) {
+      return widget.updateSettingsRepository;
+    }
+    try {
+      return getIt<UpdateCheckSettingsRepository>();
     } on Object {
       return null;
     }
@@ -511,6 +530,58 @@ class _DiagnosticsSection extends StatelessWidget {
                 label: Text(l10n.diagnosticsCopySupportBundle),
               ),
             ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _UpdateSettingsSection extends StatefulWidget {
+  const _UpdateSettingsSection({required this.repository});
+
+  final UpdateCheckSettingsRepository repository;
+
+  @override
+  State<_UpdateSettingsSection> createState() => _UpdateSettingsSectionState();
+}
+
+class _UpdateSettingsSectionState extends State<_UpdateSettingsSection> {
+  late Future<UpdateCheckSettings> _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings = widget.repository.load();
+  }
+
+  Future<void> _setEnabled(bool enabled) async {
+    await widget.repository.setEnabled(enabled: enabled);
+    if (!mounted) return;
+    setState(() {
+      _settings = widget.repository.load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return FutureBuilder<UpdateCheckSettings>(
+      future: _settings,
+      builder: (context, snapshot) {
+        final settings = snapshot.data;
+        return SettingsSection(
+          title: l10n.settingsUpdates,
+          children: [
+            if (settings == null)
+              const LinearProgressIndicator(minHeight: 2)
+            else
+              SettingsToggleRow(
+                switchKey: const Key('update-check-enabled'),
+                label: l10n.settingsUpdateCheckEnabled,
+                value: settings.enabled,
+                onChanged: (value) => _setEnabled(value).ignore(),
+              ),
           ],
         );
       },

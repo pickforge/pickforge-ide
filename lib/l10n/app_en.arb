@@ -276,6 +276,8 @@
   "settingsValidatorCommand": "Command",
   "settingsValidatorCommandHelper": "Runs manually from Project changes using the project root as the working directory.",
   "settingsValidatorCommandSave": "Save",
+  "settingsUpdates": "Updates",
+  "settingsUpdateCheckEnabled": "Check for updates",
   "settingsFontFamily": "Font family",
   "settingsFontSize": "Font size",
   "settingsTheme": "Theme",

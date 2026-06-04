@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/router/app_router.dart';
+import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:pickforge/core/window/window_bootstrap.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -19,6 +20,7 @@ Future<void> main() async {
   await bootstrapWindow();
   await configureDependencies();
   runApp(const PickforgeApp());
+  unawaited(_startUpdateCheck());
 }
 
 // Swallow upstream Flutter assertion when a synthesized modifier KeyUpEvent
@@ -43,6 +45,15 @@ void _installHardwareKeyboardAssertionGuard() {
 bool _isPressedKeysAssertion(Object error) {
   return error is AssertionError &&
       (error.message?.toString().contains('_pressedKeys.containsKey') ?? false);
+}
+
+Future<void> _startUpdateCheck() async {
+  try {
+    if (!getIt.isRegistered<UpdateCheckService>()) return;
+    await getIt<UpdateCheckService>().checkInBackground();
+  } on Object {
+    return;
+  }
 }
 
 class PickforgeApp extends StatelessWidget {

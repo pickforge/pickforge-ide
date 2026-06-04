@@ -17,12 +17,14 @@ import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
+import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _ProjectsCubit extends Cubit<ProjectsState>
     with Mock
@@ -52,13 +54,18 @@ void main() {
   late _TerminalSettingsRepo terminal;
   late _DeviceDiscovery discovery;
   late _DiagnosticsRunner diagnosticsRunner;
+  late UpdateCheckSettingsRepository updates;
   String? clipboardText;
 
-  setUp(() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
     settings = _ProjectSettingsRepo();
     terminal = _TerminalSettingsRepo();
     discovery = _DeviceDiscovery();
     diagnosticsRunner = _DiagnosticsRunner();
+    updates = UpdateCheckSettingsRepository(
+      await SharedPreferences.getInstance(),
+    );
     clipboardText = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
@@ -137,6 +144,7 @@ void main() {
             body: SettingsView(
               settingsCubit: settingsCubit,
               deviceRunSettingsCubit: deviceRunCubit,
+              updateSettingsRepository: updates,
               diagnosticsService: DiagnosticsService(
                 diagnosticsRunner,
                 appVersion: '9.8.7+6',
@@ -167,6 +175,8 @@ void main() {
     verify(() => settings.getValidatorCommand('/workspace/app')).called(1);
     verify(() => settings.getRunArgs('/workspace/app')).called(1);
     expect(find.text('Project validator'), findsOneWidget);
+    expect(find.text('Updates'), findsOneWidget);
+    expect(find.text('Check for updates'), findsOneWidget);
     expect(find.text('Diagnostics'), findsOneWidget);
     expect(find.text('App version'), findsOneWidget);
     expect(find.text('9.8.7+6'), findsOneWidget);
@@ -209,6 +219,48 @@ void main() {
       contains('SocketException: apiKey=[REDACTED]'),
     );
     expect(find.text('Error details copied'), findsOneWidget);
+  });
+
+  testWidgets('toggles update checks', (tester) async {
+    final projectsCubit = _ProjectsCubit(
+      ProjectsReady(
+        projects: [_project('/workspace/app')],
+        activeProjectRoot: '/workspace/app',
+      ),
+    );
+    final settingsCubit = SettingsCubit(settings, terminal);
+    final deviceRunCubit = DeviceRunSettingsCubit(
+      settings: settings,
+      discovery: discovery,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: BlocProvider<ProjectsCubit>.value(
+          value: projectsCubit,
+          child: Scaffold(
+            body: SettingsView(
+              settingsCubit: settingsCubit,
+              deviceRunSettingsCubit: deviceRunCubit,
+              updateSettingsRepository: updates,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect((await updates.load()).enabled, isTrue);
+
+    final toggle = find.byKey(const Key('update-check-enabled'));
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    expect((await updates.load()).enabled, isFalse);
   });
 
   testWidgets('saves project validator command', (tester) async {

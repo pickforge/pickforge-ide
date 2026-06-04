@@ -7,6 +7,7 @@ import 'package:pickforge/core/agent/headless/headless_chat_session_pool.dart';
 import 'package:pickforge/core/agent/models.dart';
 import 'package:pickforge/core/di/app_bootstrap.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -20,6 +21,16 @@ void main() {
   test('configureDependencies registers AppBootstrap', () async {
     await configureDependencies();
     expect(getIt<AppBootstrap>().isReady, isTrue);
+  });
+
+  test('configureDependencies registers update check services', () async {
+    await configureDependencies();
+
+    expect(
+      getIt<UpdateCheckSettingsRepository>(),
+      isA<UpdateCheckSettingsRepository>(),
+    );
+    expect(getIt<UpdateCheckService>(), isA<UpdateCheckService>());
   });
 
   test('configureDependencies registers agent profiles', () async {

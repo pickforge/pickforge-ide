@@ -834,12 +834,16 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P7.T1 — Update check via Dio
 
-**Status:** Deferred
+**Status:** Completed / build-time endpoint
 **Tasks**
 
-- [ ] Decide update metadata endpoint.
-- [ ] Add opt-out behavior.
-- [ ] Avoid blocking app startup.
+- [x] Decide update metadata endpoint.
+- [x] Add opt-out behavior.
+- [x] Avoid blocking app startup.
+
+**Latest evidence**
+
+- 2026-06-04: Added a Dio-backed `UpdateCheckService` using the build-time `PICKFORGE_UPDATE_METADATA_URL` endpoint, documented the metadata schema in `docs/architecture/update-checks.md`, added Settings opt-out backed by SharedPreferences, and started checks fire-and-forget after `runApp` so startup is not blocked. Verified with focused update/DI/settings tests, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (601 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/linux_smoke.sh`.
 
 ### P7.T2 — Telemetry and crash reports
 

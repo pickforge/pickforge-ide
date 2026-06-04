@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/projects/project_file_tree.dart';
 import 'package:pickforge/core/projects/project_file_tree_scanner.dart';
 
 void main() {
@@ -80,4 +81,73 @@ void main() {
 
     expect(nodes.single.children.single.isDirectory, isFalse);
   });
+
+  test('scans large fixture project within bounded budget', () async {
+    _writeLargeFixture(tmp);
+
+    final stopwatch = Stopwatch()..start();
+    final nodes = await const ProjectFileTreeScanner(
+      maxEntriesPerDirectory: 1000,
+    ).scan(tmp.path);
+    stopwatch.stop();
+
+    final relativePaths =
+        _flatten(nodes).map((node) => node.relativePath).toSet();
+
+    expect(relativePaths, contains('lib/feature_00/widget_00.dart'));
+    expect(relativePaths, contains('lib/feature_19/widget_24.dart'));
+    expect(relativePaths, contains('test/feature_09/widget_09_test.dart'));
+    expect(
+      relativePaths.where((path) => path.startsWith('build/')),
+      isEmpty,
+    );
+    expect(
+      relativePaths.where((path) => path.startsWith('.dart_tool/')),
+      isEmpty,
+    );
+    expect(relativePaths.where((path) => path.startsWith('.git/')), isEmpty);
+    expect(nodes.map((node) => node.name), ['lib', 'test', 'README.md']);
+    expect(stopwatch.elapsedMilliseconds, lessThan(2500));
+  });
+}
+
+void _writeLargeFixture(Directory root) {
+  File(p.join(root.path, 'README.md')).writeAsStringSync('fixture');
+  for (var feature = 0; feature < 20; feature++) {
+    final featureName = feature.toString().padLeft(2, '0');
+    final libDir = Directory(p.join(root.path, 'lib', 'feature_$featureName'))
+      ..createSync(recursive: true);
+    for (var file = 0; file < 25; file++) {
+      final fileName = file.toString().padLeft(2, '0');
+      File(p.join(libDir.path, 'widget_$fileName.dart')).writeAsStringSync(
+        'class Widget$fileName {}\n',
+      );
+    }
+  }
+  for (var feature = 0; feature < 10; feature++) {
+    final featureName = feature.toString().padLeft(2, '0');
+    final testDir = Directory(p.join(root.path, 'test', 'feature_$featureName'))
+      ..createSync(recursive: true);
+    for (var file = 0; file < 10; file++) {
+      final fileName = file.toString().padLeft(2, '0');
+      File(p.join(testDir.path, 'widget_${fileName}_test.dart'))
+          .writeAsStringSync('void main() {}\n');
+    }
+  }
+  for (final excluded in ['.git', '.dart_tool', 'build']) {
+    final excludedDir = Directory(p.join(root.path, excluded))
+      ..createSync(recursive: true);
+    for (var file = 0; file < 150; file++) {
+      File(p.join(excludedDir.path, 'generated_$file.txt')).writeAsStringSync(
+        'excluded\n',
+      );
+    }
+  }
+}
+
+Iterable<ProjectFileNode> _flatten(List<ProjectFileNode> nodes) sync* {
+  for (final node in nodes) {
+    yield node;
+    yield* _flatten(node.children);
+  }
 }

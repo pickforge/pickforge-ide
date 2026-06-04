@@ -983,7 +983,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T7 — Performance and scalability budgets
 
-**Status:** Partial / sidebar benchmark added
+**Status:** Partial / scalability tests added
 **Why:** The app must stay fast on real projects with thousands of files, many chats, and large transcripts.
 
 **Budgets**
@@ -997,7 +997,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Tasks**
 
 - [x] Add benchmark-style tests or instrumentation for large sidebar state.
-- [ ] Add fixture project with many files for explorer tests.
+- [x] Add fixture project with many files for explorer tests.
 - [ ] Add transcript replay stress test.
 - [ ] Add performance counters in diagnostics.
 - [ ] Define and enforce file scan excludes.
@@ -1005,6 +1005,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Added a benchmark-style regression test for `buildWorkspaceSidebarSections` with 100 projects and 2,000 chats across project, recent, pinned, agent, skill, and custom grouping modes. The test enforces a conservative 500ms ceiling for the pure section-building path. Verified with `test/features/workbench/cubit/workspace_sidebar_sections_test.dart`.
+- 2026-06-04: Added a generated large-project fixture test for `ProjectFileTreeScanner` with 600 scanned source/test files and 450 ignored files under `.git`, `.dart_tool`, and `build`. The test verifies sorted output, common excludes, and a conservative 2500ms scanner budget. Verified with `test/core/projects/project_file_tree_scanner_test.dart`.
 
 ### P9.T8 — Storage migration and backward-compatibility suite
 

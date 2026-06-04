@@ -125,8 +125,10 @@ recoverable state and the normal PATH works again afterward.
 ## Native Host Passes
 
 macOS/iOS dogfood needs a macOS host with Xcode and an iOS Simulator. Windows
-dogfood needs a native Windows host with Visual Studio desktop tooling. On those
-hosts, run:
+dogfood needs a native Windows host with Visual Studio desktop tooling. Use
+`docs/qa/native-host-validation.md` as the authoritative runbook for the exact
+commands, manual pass criteria, and required evidence. On those hosts, run at
+minimum:
 
 ```bash
 scripts/dogfood_preflight.sh

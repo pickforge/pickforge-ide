@@ -36,6 +36,8 @@ without an explicit web-safe entrypoint.
   dirty-worktree Forge review.
 - `docs/qa/manual-dogfood.md` describes the visible desktop and native-host
   checks that cannot be completed by headless CI.
+- `docs/qa/native-host-validation.md` is the concrete macOS/iOS Simulator,
+  macOS desktop, and Windows desktop runbook for host-gated release evidence.
 
 ## Web Demo Harness
 

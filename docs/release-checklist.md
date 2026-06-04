@@ -107,11 +107,15 @@ they do not replace manual dogfood on real desktop hosts.
 
 ### macOS
 
-- Pending native macOS host dogfood before public release.
+- Pending native macOS host dogfood before public release. Use
+  `docs/qa/native-host-validation.md` for the iOS Simulator and macOS desktop
+  evidence required before ticking the macOS checklist items.
 
 ### Windows
 
-- Pending native Windows host dogfood before public release.
+- Pending native Windows host dogfood before public release. Use
+  `docs/qa/native-host-validation.md` for the Windows desktop evidence required
+  before ticking the Windows checklist items.
 
 ## Release Signoff
 

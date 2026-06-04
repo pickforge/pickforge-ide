@@ -280,6 +280,7 @@ class _ContextTag extends StatelessWidget {
     this.warning = false,
     this.onPressed,
     this.onDeleted,
+    this.deleteTooltip,
     this.trailing,
   });
 
@@ -288,12 +289,15 @@ class _ContextTag extends StatelessWidget {
   final bool warning;
   final VoidCallback? onPressed;
   final VoidCallback? onDeleted;
+  final String? deleteTooltip;
   final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final accent = warning ? colorScheme.error : colorScheme.primary;
+    final deleteTooltip = this.deleteTooltip ??
+        MaterialLocalizations.of(context).closeButtonLabel;
     final content = Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: PickforgeSpacing.sm,
@@ -317,10 +321,21 @@ class _ContextTag extends StatelessWidget {
           ),
           if (onDeleted != null) ...[
             const SizedBox(width: PickforgeSpacing.xs),
-            InkResponse(
-              radius: 12,
-              onTap: onDeleted,
-              child: Icon(Icons.close, size: 14, color: accent),
+            Tooltip(
+              message: deleteTooltip,
+              excludeFromSemantics: true,
+              child: Semantics(
+                container: true,
+                button: true,
+                label: deleteTooltip,
+                child: ExcludeSemantics(
+                  child: InkResponse(
+                    radius: 12,
+                    onTap: onDeleted,
+                    child: Icon(Icons.close, size: 14, color: accent),
+                  ),
+                ),
+              ),
             ),
           ],
           if (trailing != null) ...[
@@ -585,6 +600,7 @@ class _ContextTray extends StatelessWidget {
                         ),
                       ),
               onDeleted: cubit == null ? null : () => cubit.setCustomNote(''),
+              deleteTooltip: l10n.forgeRemoveCustomNote,
             )
           else
             OutlinedButton.icon(
@@ -642,6 +658,7 @@ class _AttachmentChip extends StatelessWidget {
       icon: Icons.attach_file,
       label: label,
       onDeleted: cubit == null ? null : () => cubit!.remove(attachment.path),
+      deleteTooltip: l10n.forgeRemoveAttachment,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -673,11 +690,13 @@ class _ContextWarning extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return _ContextTag(
       icon: Icons.warning_amber,
       label: text,
       warning: true,
       onDeleted: onDismiss,
+      deleteTooltip: l10n.forgeDismissContextWarning,
     );
   }
 }

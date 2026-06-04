@@ -44,8 +44,10 @@
   "forgeSkillSourceBundled": "Bundled skill",
   "forgeMoveAttachmentUp": "Move attachment up",
   "forgeMoveAttachmentDown": "Move attachment down",
+  "forgeRemoveAttachment": "Remove attachment",
   "forgeAddCustomNote": "Add note",
   "forgeCustomNoteChip": "Custom note",
+  "forgeRemoveCustomNote": "Remove note",
   "forgeCustomNoteTitle": "Custom note",
   "forgeCustomNoteLabel": "Notes for the next forge prompt",
   "forgeCustomNoteSave": "Save note",
@@ -62,6 +64,7 @@
       "reason": {}
     }
   },
+  "forgeDismissContextWarning": "Dismiss warning",
   "forgeDirtyWorktreeTitle": "Forge into dirty worktree?",
   "forgeDirtyWorktreeBranch": "Branch: {branch}",
   "@forgeDirtyWorktreeBranch": {

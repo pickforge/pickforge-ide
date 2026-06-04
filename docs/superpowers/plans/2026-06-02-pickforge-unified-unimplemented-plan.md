@@ -976,6 +976,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Added direct workbench shortcuts for Add Project (`Ctrl/Cmd+O`), New Chat (`Ctrl/Cmd+N`), Hot Reload (`Ctrl/Cmd+R`), and F5 as Run App when idle or Hot Reload while running. Added a focus-scoped Forge shortcut (`Ctrl/Cmd+Enter`) inside `ForgePanel`. Verified with `test/features/workbench/view/workbench_command_palette_scope_test.dart` and `test/features/forge/view/forge_panel_test.dart`.
+- 2026-06-04: Added explicit tooltip and semantics labels for Forge context-tray icon-only removal controls: remove note, remove attachment, and dismiss warning. Verified with `test/features/forge/view/forge_panel_test.dart`.
 
 ### P9.T7 — Performance and scalability budgets
 

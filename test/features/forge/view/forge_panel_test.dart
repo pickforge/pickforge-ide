@@ -18,6 +18,7 @@ import 'package:pickforge/core/skills/models/skill_id.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
+import 'package:pickforge/features/forge/cubit/context_attachments_cubit.dart';
 import 'package:pickforge/features/forge/forge.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -397,6 +398,54 @@ void main() {
     expect(cubit.forgedSelection, _sampleWidget);
     expect(cubit.forgedProjectRoot, '/tmp/test');
     expect(cubit.forgedChatId, 'chat-1');
+  });
+
+  testWidgets('ForgePanel labels icon-only context removal controls',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final tempDir = Directory.systemTemp.createTempSync(
+      'forge_panel_context_semantics_test_',
+    );
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final noteFile = File('${tempDir.path}/notes.md')
+      ..writeAsStringSync('note');
+    final attachmentsCubit = ContextAttachmentsCubit(projectRoot: tempDir.path)
+      ..setCustomNote('Remember spacing')
+      ..attach(noteFile.path)
+      ..attach('${tempDir.path}/.env');
+    addTearDown(attachmentsCubit.close);
+
+    final semantics = tester.ensureSemantics();
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BlocProvider<ContextAttachmentsCubit>.value(
+            value: attachmentsCubit,
+            child: Scaffold(
+              body: ForgePanel(
+                selection: _sampleWidget,
+                projectRoot: tempDir.path,
+                chatId: 'chat-1',
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byTooltip('Remove note'), findsOneWidget);
+      expect(find.byTooltip('Remove attachment'), findsOneWidget);
+      expect(find.byTooltip('Dismiss warning'), findsOneWidget);
+      expect(find.bySemanticsLabel('Remove note'), findsOneWidget);
+      expect(find.bySemanticsLabel('Remove attachment'), findsOneWidget);
+      expect(find.bySemanticsLabel('Dismiss warning'), findsOneWidget);
+    } finally {
+      semantics.dispose();
+    }
   });
 
   testWidgets('ForgePanel forwards active device serial to forge',

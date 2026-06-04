@@ -46,6 +46,9 @@ class AppShellView extends StatefulWidget {
 
 class _AppShellViewState extends State<AppShellView> {
   late final MultiSplitViewController _controller;
+  late final FocusNode _leftPaneFocusNode;
+  late final FocusNode _middlePaneFocusNode;
+  late final FocusNode _rightPaneFocusNode;
 
   bool _hasRight = false;
 
@@ -53,10 +56,16 @@ class _AppShellViewState extends State<AppShellView> {
   void initState() {
     super.initState();
     _controller = MultiSplitViewController();
+    _leftPaneFocusNode = FocusNode(debugLabel: 'workbench-left-pane');
+    _middlePaneFocusNode = FocusNode(debugLabel: 'workbench-middle-pane');
+    _rightPaneFocusNode = FocusNode(debugLabel: 'workbench-right-pane');
   }
 
   @override
   void dispose() {
+    _rightPaneFocusNode.dispose();
+    _middlePaneFocusNode.dispose();
+    _leftPaneFocusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -105,7 +114,7 @@ class _AppShellViewState extends State<AppShellView> {
                 _ => null,
               };
               if (projectRoot == null) {
-                return WorkbenchCommandPaletteScope(child: scaffold);
+                return _withWorkbenchShortcuts(scaffold);
               }
               return MultiBlocProvider(
                 key: ValueKey(projectRoot),
@@ -159,7 +168,7 @@ class _AppShellViewState extends State<AppShellView> {
                   vmClient: getIt<VmServiceClient>(),
                   ipcServer: getIt<EmulatorIpcServer>(),
                   inspectorVisible: !layout.rightCollapsed,
-                  child: WorkbenchCommandPaletteScope(child: scaffold),
+                  child: _withWorkbenchShortcuts(scaffold),
                 ),
               );
             },
@@ -186,14 +195,22 @@ class _AppShellViewState extends State<AppShellView> {
       ..min = 180
       ..max = 360
       ..builder = (_, __) => animated(
-            const WorkbenchLeftPane(key: Key('workbench-left')),
+            _PaneFocusFrame(
+              frameKey: const Key('workbench-left-focus-frame'),
+              focusNode: _leftPaneFocusNode,
+              child: const WorkbenchLeftPane(key: Key('workbench-left')),
+            ),
             delay: Duration.zero,
           );
 
     _controller.getArea(1)
       ..min = 320
       ..builder = (_, __) => animated(
-            const ChatWorkbenchPanel(key: Key('workbench-middle')),
+            _PaneFocusFrame(
+              frameKey: const Key('workbench-middle-focus-frame'),
+              focusNode: _middlePaneFocusNode,
+              child: const ChatWorkbenchPanel(key: Key('workbench-middle')),
+            ),
             delay: 60.ms,
           );
 
@@ -203,7 +220,11 @@ class _AppShellViewState extends State<AppShellView> {
         ..min = 240
         ..max = 480
         ..builder = (_, __) => animated(
-              const InspectorPanel(key: Key('workbench-right')),
+              _PaneFocusFrame(
+                frameKey: const Key('workbench-right-focus-frame'),
+                focusNode: _rightPaneFocusNode,
+                child: const InspectorPanel(key: Key('workbench-right')),
+              ),
               delay: 120.ms,
             );
     }
@@ -220,7 +241,11 @@ class _AppShellViewState extends State<AppShellView> {
         min: 180,
         max: 360,
         builder: (_, __) => animated(
-          const WorkbenchLeftPane(key: Key('workbench-left')),
+          _PaneFocusFrame(
+            frameKey: const Key('workbench-left-focus-frame'),
+            focusNode: _leftPaneFocusNode,
+            child: const WorkbenchLeftPane(key: Key('workbench-left')),
+          ),
           delay: Duration.zero,
         ),
       ),
@@ -228,7 +253,11 @@ class _AppShellViewState extends State<AppShellView> {
         id: 'middle',
         min: 320,
         builder: (_, __) => animated(
-          const ChatWorkbenchPanel(key: Key('workbench-middle')),
+          _PaneFocusFrame(
+            frameKey: const Key('workbench-middle-focus-frame'),
+            focusNode: _middlePaneFocusNode,
+            child: const ChatWorkbenchPanel(key: Key('workbench-middle')),
+          ),
           delay: 60.ms,
         ),
       ),
@@ -239,11 +268,60 @@ class _AppShellViewState extends State<AppShellView> {
           min: 240,
           max: 480,
           builder: (_, __) => animated(
-            const InspectorPanel(key: Key('workbench-right')),
+            _PaneFocusFrame(
+              frameKey: const Key('workbench-right-focus-frame'),
+              focusNode: _rightPaneFocusNode,
+              child: const InspectorPanel(key: Key('workbench-right')),
+            ),
             delay: 120.ms,
           ),
         ),
     ];
     _controller.areas = areas;
+  }
+
+  Widget _withWorkbenchShortcuts(Widget child) {
+    return WorkbenchCommandPaletteScope(
+      onFocusExplorer: _leftPaneFocusNode.requestFocus,
+      onFocusTerminal: _middlePaneFocusNode.requestFocus,
+      child: child,
+    );
+  }
+}
+
+class _PaneFocusFrame extends StatelessWidget {
+  const _PaneFocusFrame({
+    required this.frameKey,
+    required this.focusNode,
+    required this.child,
+  });
+
+  final Key frameKey;
+  final FocusNode focusNode;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      focusNode: focusNode,
+      child: AnimatedBuilder(
+        animation: focusNode,
+        child: child,
+        builder: (context, child) {
+          return DecoratedBox(
+            key: frameKey,
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: focusNode.hasFocus
+                    ? Theme.of(context).colorScheme.secondary
+                    : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: child,
+          );
+        },
+      ),
+    );
   }
 }

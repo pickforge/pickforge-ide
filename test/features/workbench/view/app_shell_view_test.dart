@@ -2,6 +2,7 @@
 // ignore_for_file: unnecessary_lambdas
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -89,5 +90,57 @@ void main() {
     expect(find.byKey(const Key('workbench-left')), findsOneWidget);
     expect(find.byKey(const Key('workbench-middle')), findsOneWidget);
     expect(find.byKey(const Key('workbench-right')), findsOneWidget);
+
+    final focusedColor = Theme.of(tester.element(find.byType(AppShellView)))
+        .colorScheme
+        .secondary;
+    expect(
+      _paneBorderColor(tester, const Key('workbench-left-focus-frame')),
+      Colors.transparent,
+    );
+
+    await _sendControlShiftShortcut(tester, LogicalKeyboardKey.keyE);
+    await tester.pump();
+
+    expect(
+      _paneBorderColor(tester, const Key('workbench-left-focus-frame')),
+      focusedColor,
+    );
+
+    await _sendControlShortcut(tester, LogicalKeyboardKey.backquote);
+    await tester.pump();
+
+    expect(
+      _paneBorderColor(tester, const Key('workbench-middle-focus-frame')),
+      focusedColor,
+    );
   });
+}
+
+Color _paneBorderColor(WidgetTester tester, Key key) {
+  final box = tester.widget<DecoratedBox>(find.byKey(key));
+  final decoration = box.decoration as BoxDecoration;
+  final border = decoration.border;
+  if (border is! Border) fail('Expected pane focus frame to use Border.');
+  return border.top.color;
+}
+
+Future<void> _sendControlShiftShortcut(
+  WidgetTester tester,
+  LogicalKeyboardKey key,
+) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.sendKeyEvent(key);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+}
+
+Future<void> _sendControlShortcut(
+  WidgetTester tester,
+  LogicalKeyboardKey key,
+) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+  await tester.sendKeyEvent(key);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
 }

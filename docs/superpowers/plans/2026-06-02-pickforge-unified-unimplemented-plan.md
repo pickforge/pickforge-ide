@@ -960,8 +960,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Tasks**
 
-- [ ] Define keyboard shortcuts for major actions: command palette, new chat, add project, focus explorer, focus terminal, forge, run/hot reload.
-- [ ] Add visible focus states across panes.
+- [x] Define keyboard shortcuts for major actions: command palette, new chat, add project, focus explorer, focus terminal, forge, run/hot reload.
+- [x] Add visible focus states across panes.
 - [ ] Verify tab order in sidebar, file explorer, inspector, settings, and dialogs.
 - [ ] Support text scaling without overflow.
 - [x] Add high-contrast checks for dark theme.
@@ -979,6 +979,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Added explicit tooltip and semantics labels for Forge context-tray icon-only removal controls: remove note, remove attachment, and dismiss warning. Verified with `test/features/forge/view/forge_panel_test.dart`.
 - 2026-06-04: Added AA contrast tests for dark theme `surface/onSurface`, `primary/onPrimary`, `secondary/onSecondary`, and `error/onError`; updated accent foreground colors to near-black so bright action/error surfaces meet text contrast. Verified with `test/shared/theme/pickforge_theme_test.dart`.
 - 2026-06-04: Added large-text sidebar screenshot coverage at 1.6 text scale for the compact projects/chats layout, including overflow and nonblank pixel checks. Verified with `test/features/workbench/view/projects_chats_panel_test.dart`.
+- 2026-06-04: Added workbench focus shortcuts for explorer (`Ctrl/Cmd+Shift+E`) and terminal/chat (`Ctrl/Cmd+\``), plus visible focus frames for left, middle, and right panes. Verified shortcut dispatch and focus-frame color changes with `test/features/workbench/view/app_shell_view_test.dart`.
 
 ### P9.T7 — Performance and scalability budgets
 

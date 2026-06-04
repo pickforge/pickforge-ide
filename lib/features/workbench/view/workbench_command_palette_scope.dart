@@ -18,17 +18,25 @@ class WorkbenchCommandPaletteScope extends StatelessWidget {
   const WorkbenchCommandPaletteScope({
     required this.child,
     this.pickFolder = getDirectoryPath,
+    this.onFocusExplorer,
+    this.onFocusTerminal,
     super.key,
   });
 
   final Widget child;
   final Future<String?> Function() pickFolder;
+  final VoidCallback? onFocusExplorer;
+  final VoidCallback? onFocusTerminal;
 
   @override
   Widget build(BuildContext context) {
     final commands = buildWorkbenchCommands(context, pickFolder: pickFolder);
     return CallbackShortcuts(
-      bindings: buildWorkbenchShortcutBindings(commands),
+      bindings: buildWorkbenchShortcutBindings(
+        commands,
+        onFocusExplorer: onFocusExplorer,
+        onFocusTerminal: onFocusTerminal,
+      ),
       child: CommandPaletteScope(
         commands: commands,
         child: child,
@@ -39,8 +47,10 @@ class WorkbenchCommandPaletteScope extends StatelessWidget {
 
 @visibleForTesting
 Map<ShortcutActivator, VoidCallback> buildWorkbenchShortcutBindings(
-  List<PickforgeCommand> commands,
-) {
+  List<PickforgeCommand> commands, {
+  VoidCallback? onFocusExplorer,
+  VoidCallback? onFocusTerminal,
+}) {
   final byId = {for (final command in commands) command.id: command};
   final bindings = <ShortcutActivator, VoidCallback>{};
 
@@ -54,6 +64,28 @@ Map<ShortcutActivator, VoidCallback> buildWorkbenchShortcutBindings(
   bindPlatform('quick-add-project', LogicalKeyboardKey.keyO);
   bindPlatform('quick-new-chat', LogicalKeyboardKey.keyN);
   bindPlatform('quick-hot-reload', LogicalKeyboardKey.keyR);
+  if (onFocusExplorer != null) {
+    bindings[const SingleActivator(
+      LogicalKeyboardKey.keyE,
+      control: true,
+      shift: true,
+    )] = onFocusExplorer;
+    bindings[const SingleActivator(
+      LogicalKeyboardKey.keyE,
+      meta: true,
+      shift: true,
+    )] = onFocusExplorer;
+  }
+  if (onFocusTerminal != null) {
+    bindings[const SingleActivator(
+      LogicalKeyboardKey.backquote,
+      control: true,
+    )] = onFocusTerminal;
+    bindings[const SingleActivator(
+      LogicalKeyboardKey.backquote,
+      meta: true,
+    )] = onFocusTerminal;
+  }
 
   final runOrReload = byId['quick-run-app'] ?? byId['quick-hot-reload'];
   if (runOrReload != null) {

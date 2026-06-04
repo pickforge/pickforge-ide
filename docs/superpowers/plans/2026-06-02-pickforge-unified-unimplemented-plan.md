@@ -886,7 +886,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P7.T5 — Pickforge Pro backend
 
-**Status:** Deferred
+**Status:** Partial / Supabase direction documented
 **Committed backend direction:** Supabase
 
 **Potential features**
@@ -897,6 +897,10 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Premium skill packs.
 - [ ] Multi-agent swarm orchestration.
 - [ ] Stripe billing.
+
+**Latest evidence**
+
+- 2026-06-04: Documented the Supabase-backed Pro direction in `docs/architecture/pro-backend.md`, including local-first boundaries, Google/GitHub auth, RLS-first user/team tables, premium skill-pack storage, explicit opt-in cloud sync, server-side Stripe handling, and release gates for privacy/RLS/billing/offline behavior. No Pro backend code was added; the feature list remains future work.
 
 ## 13. Architecture refactors
 

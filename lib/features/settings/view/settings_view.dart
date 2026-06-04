@@ -322,8 +322,12 @@ class _DiagnosticsSection extends StatelessWidget {
               const LinearProgressIndicator(minHeight: 2)
             else ...[
               _DiagnosticRow(
+                label: l10n.diagnosticsAppVersion,
+                value: data!.appVersion,
+              ),
+              _DiagnosticRow(
                 label: l10n.diagnosticsOperatingSystem,
-                value: data!.operatingSystem,
+                value: data.operatingSystem,
               ),
               _DiagnosticRow(
                 label: l10n.diagnosticsAdb,
@@ -339,9 +343,7 @@ class _DiagnosticsSection extends StatelessWidget {
               ),
               _DiagnosticRow(
                 label: l10n.diagnosticsFlutter,
-                value: data.flutterAvailable
-                    ? l10n.diagnosticsAvailable
-                    : l10n.diagnosticsMissing,
+                value: data.flutterVersion ?? l10n.diagnosticsMissing,
               ),
               _DiagnosticRow(
                 label: l10n.diagnosticsEmulator,
@@ -378,6 +380,10 @@ class _DiagnosticsSection extends StatelessWidget {
                 value: data.geminiAvailable
                     ? l10n.diagnosticsAvailable
                     : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsLastVmError,
+                value: data.lastVmError ?? l10n.diagnosticsNoVmError,
               ),
               const SizedBox(height: PickforgeSpacing.xs),
               OutlinedButton.icon(

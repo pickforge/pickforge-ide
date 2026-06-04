@@ -79,7 +79,17 @@ void main() {
         cwd: any(named: 'cwd'),
         env: any(named: 'env'),
       ),
-    ).thenAnswer((_) async => ProcessResult(1, 0, '', ''));
+    ).thenAnswer(
+      (invocation) async {
+        final executable = invocation.positionalArguments.first as String;
+        return ProcessResult(
+          1,
+          0,
+          executable == 'fvm' ? 'Flutter 3.41.7 • channel stable\nTools' : '',
+          '',
+        );
+      },
+    );
   });
 
   testWidgets('loads settings for the active project', (tester) async {
@@ -105,7 +115,10 @@ void main() {
             body: SettingsView(
               settingsCubit: settingsCubit,
               deviceRunSettingsCubit: deviceRunCubit,
-              diagnosticsService: DiagnosticsService(diagnosticsRunner),
+              diagnosticsService: DiagnosticsService(
+                diagnosticsRunner,
+                appVersion: '9.8.7+6',
+              )..recordVmError('SocketException: apiKey=secret'),
             ),
           ),
         ),
@@ -116,6 +129,11 @@ void main() {
     verify(() => settings.getDefaultAgentId('/workspace/app')).called(1);
     verify(() => settings.getRunArgs('/workspace/app')).called(1);
     expect(find.text('Diagnostics'), findsOneWidget);
+    expect(find.text('App version'), findsOneWidget);
+    expect(find.text('9.8.7+6'), findsOneWidget);
+    expect(find.text('Flutter 3.41.7 • channel stable'), findsOneWidget);
+    expect(find.text('Last VM error'), findsOneWidget);
+    expect(find.text('SocketException: apiKey=[REDACTED]'), findsOneWidget);
   });
 
   testWidgets('shows empty state when no project is selected', (tester) async {

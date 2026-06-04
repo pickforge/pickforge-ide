@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
@@ -30,14 +31,19 @@ class _MLog extends Mock implements RunSessionLogRepository {}
 
 class _MV extends Mock implements VmServiceClient {}
 
+class _MDiagnostics extends Mock implements DiagnosticsService {}
+
 void main() {
   late _MV vm;
+  late _MDiagnostics diagnostics;
   late StreamController<VmServiceConnectionState> stateCtrl;
   setUp(() {
     vm = _MV();
+    diagnostics = _MDiagnostics();
     stateCtrl = StreamController<VmServiceConnectionState>.broadcast();
     when(() => vm.state).thenAnswer((_) => stateCtrl.stream);
     when(() => vm.currentUrl).thenReturn('ws://x');
+    when(() => diagnostics.recordVmError(any())).thenReturn(null);
   });
   tearDown(() => stateCtrl.close());
   EmulatorSessionCubit build() => EmulatorSessionCubit(
@@ -49,6 +55,7 @@ void main() {
         runController: _MR(),
         logRepo: _MLog(),
         vmClient: vm,
+        diagnostics: diagnostics,
       );
   const avd = Avd(id: 'X', name: 'X', platform: 'android');
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
@@ -71,5 +78,8 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     },
     expect: () => [isA<Reconnecting>(), isA<Running>()],
+    verify: (_) {
+      verify(() => diagnostics.recordVmError('drop')).called(1);
+    },
   );
 }

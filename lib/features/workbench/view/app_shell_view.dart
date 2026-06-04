@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:multi_split_view/multi_split_view.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
@@ -141,6 +142,7 @@ class _AppShellViewState extends State<AppShellView> {
                         vmClient: getIt<VmServiceClient>(),
                         logsCubit: context.read<RunLogsCubit>(),
                         ipcServer: getIt<EmulatorIpcServer>(),
+                        diagnostics: getIt<DiagnosticsService>(),
                         pickHistoryDao:
                             getIt<PickforgeDatabase>().pickHistoryDao,
                         screenshotCapturer: getIt<AdbScreenshotCapturer>(),

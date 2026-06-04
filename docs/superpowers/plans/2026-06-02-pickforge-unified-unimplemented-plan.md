@@ -779,7 +779,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Tasks**
 
 - [x] Add local structured app log with bounded retention.
-- [ ] Add diagnostics view: app version, OS, Flutter version, agent binary availability, adb status, emulator status, last VM error.
+- [x] Add diagnostics view: app version, OS, Flutter version, agent binary availability, adb status, emulator status, last VM error.
 - [x] Add diagnostics card for OS, agent binary availability, `adb`, `git`, Android emulator, and Flutter/FVM availability.
 - [x] Add "Export support bundle" that excludes source files, prompts, screenshots, and secrets by default.
 - [ ] Add copyable error details for connection/run/agent failures.
@@ -789,6 +789,10 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [x] Unit tests for redacted bundle generation.
 - [x] Widget tests for diagnostics happy/error states.
+
+**Latest evidence**
+
+- 2026-06-04: Expanded the settings diagnostics view with app version, Flutter version text, and redacted last VM error, and wired VM connection errors from the emulator cubit into diagnostics/support bundles. Verified with focused diagnostics/settings/emulator tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ## 12. Pro/cloud/distribution
 

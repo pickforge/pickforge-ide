@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:bloc/bloc.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/dao/pick_history_dao.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
@@ -41,6 +42,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     this.eventLogWriter = const RunSessionEventLogWriter(),
     this.recoveryStore,
     this.shutdownController,
+    this.diagnostics,
   }) : super(const EmulatorSessionState.noDevicePicked()) {
     _bindIpcProjectProviders();
   }
@@ -60,6 +62,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   final RunSessionEventLogWriter eventLogWriter;
   final RunSessionRecoveryStore? recoveryStore;
   final AvdShutdownController? shutdownController;
+  final DiagnosticsService? diagnostics;
 
   CancelToken? _bootCancel;
   AvdLaunchHandle? _bootHandle;
@@ -528,7 +531,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     }
     try {
       await vmClient.connect(uri);
-    } on Object {
+    } on Object catch (e) {
+      _recordVmError(e.toString());
       // VmServiceClient exposes connection errors through its state stream.
     }
     emit(
@@ -634,6 +638,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         ),
       );
     } on Object catch (e) {
+      _recordVmError(e.toString());
       emit(
         EmulatorSessionState.error(
           message: e.toString(),
@@ -677,7 +682,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
           );
         }
       },
-      error: (_, __) {
+      error: (message, _) {
+        _recordVmError(message);
         final current = state;
         if (current is Running &&
             !current.manual &&
@@ -706,6 +712,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         ),
       );
     } on Object catch (e) {
+      _recordVmError(e.toString());
       emit(
         EmulatorSessionState.error(
           message: e.toString(),
@@ -722,6 +729,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final dir = await PickforgeProjectDirectory.ensure(projectRoot);
     File('${dir.path}/ipc.sock-path').writeAsStringSync(server.socketPath);
     return server.socketPath;
+  }
+
+  void _recordVmError(String message) {
+    diagnostics?.recordVmError(message);
   }
 
   Future<void> _unbindIpc() async {

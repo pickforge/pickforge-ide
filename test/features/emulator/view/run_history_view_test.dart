@@ -2,20 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/features/emulator/view/run_history_view.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 void main() {
   testWidgets('renders no active project state', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: RunHistoryView()));
+    await tester.pumpWidget(_app(const RunHistoryView()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Run History'), findsOneWidget);
+    expect(find.text('Run history'), findsOneWidget);
     expect(find.text('Select a project to view run history'), findsOneWidget);
   });
 
   testWidgets('renders empty run history state', (tester) async {
     await tester.pumpWidget(
-      MaterialApp(
-        home: RunHistoryView(
+      _app(
+        RunHistoryView(
           projectRoot: '/tmp/app',
           historyStream: Stream.value(const []),
         ),
@@ -49,8 +50,8 @@ void main() {
     ];
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: RunHistoryView(
+      _app(
+        RunHistoryView(
           projectRoot: '/tmp/app',
           historyStream: Stream.value(rows),
         ),
@@ -72,4 +73,12 @@ void main() {
     expect(find.text('Errors: 3'), findsOneWidget);
     expect(find.text('Last error: build failed'), findsOneWidget);
   });
+}
+
+Widget _app(Widget home) {
+  return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: home,
+  );
 }

@@ -87,6 +87,125 @@
   "forgeDiffCopied": "Diff copied",
   "forgePickUserCodeHint": "Pick a widget from your app source.",
   "historyTitle": "Recent forges",
+  "pickHistoryTitle": "Pick history",
+  "pickHistorySubtitle": "Recent widget selections and forge context.",
+  "pickHistoryEmpty": "No picks recorded yet",
+  "historyProject": "Project: {value}",
+  "@historyProject": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "historyLocation": "Location: {value}",
+  "@historyLocation": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "historySkill": "Skill: {value}",
+  "@historySkill": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "historyAgent": "Agent: {value}",
+  "@historyAgent": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "historyPicked": "Picked: {value}",
+  "@historyPicked": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "historyChat": "Chat: {value}",
+  "@historyChat": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "historyChatNone": "none",
+  "runHistoryTitle": "Run history",
+  "runHistorySubtitle": "Recent Flutter run sessions for the active project.",
+  "runHistoryNoProject": "Select a project to view run history",
+  "runHistoryEmpty": "No run sessions recorded",
+  "runHistoryProject": "Project: {value}",
+  "@runHistoryProject": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistorySession": "Session: {value}",
+  "@runHistorySession": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryStarted": "Started: {value}",
+  "@runHistoryStarted": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryEnded": "Ended: {value}",
+  "@runHistoryEnded": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryTarget": "Target: {value}",
+  "@runHistoryTarget": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryVmService": "VM Service: {value}",
+  "@runHistoryVmService": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryExit": "Exit: {value}",
+  "@runHistoryExit": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryExitCode": "Exit code: {value}",
+  "@runHistoryExitCode": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryHotReloads": "Hot reloads: {count}",
+  "@runHistoryHotReloads": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "runHistoryHotRestarts": "Hot restarts: {count}",
+  "@runHistoryHotRestarts": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "runHistoryErrors": "Errors: {count}",
+  "@runHistoryErrors": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "runHistoryLastError": "Last error: {value}",
+  "@runHistoryLastError": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "runHistoryDefaultTarget": "default",
+  "runHistoryNoVmService": "none",
+  "runHistoryRunning": "running",
   "settingsTitle": "Settings",
   "diagnosticsTitle": "Diagnostics",
   "diagnosticsOperatingSystem": "OS",

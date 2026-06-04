@@ -98,119 +98,130 @@ class _ForgePanelBody extends StatelessWidget {
             attachmentState?.attachments ?? const <ContextAttachment>[];
         final runLogCount = _runLogCountFor(context);
         final deviceTarget = _deviceTargetFor(context);
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SkillPicker(
-                      value: state.skill,
-                      onChanged: cubit.selectSkill,
-                    ),
-                    _SkillSourceButton(
-                      source: _skillStore().resolveSkillSource(
-                        state.skill,
-                        projectRoot: projectRoot,
+        final forgeAction = (!canForge || state.launching)
+            ? null
+            : () => unawaited(
+                  _confirmAndForge(
+                    context,
+                    cubit,
+                    selection!,
+                    projectRoot,
+                    chatId!,
+                    attachments,
+                    attachmentState?.customNote ?? '',
+                    deviceTarget.serial,
+                    deviceTarget.platform,
+                  ),
+                );
+        return CallbackShortcuts(
+          bindings: {
+            if (forgeAction != null) ...{
+              const SingleActivator(LogicalKeyboardKey.enter, control: true):
+                  forgeAction,
+              const SingleActivator(LogicalKeyboardKey.enter, meta: true):
+                  forgeAction,
+            },
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      SkillPicker(
+                        value: state.skill,
+                        onChanged: cubit.selectSkill,
                       ),
-                    ),
-                    AgentPicker(
-                      value: state.agentId,
-                      onChanged: cubit.selectAgent,
-                    ),
-                    if (showUserCodeHint) ...[
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 240),
-                        child: Text(
-                          l10n.forgePickUserCodeHint,
-                          overflow: TextOverflow.ellipsis,
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
+                      _SkillSourceButton(
+                        source: _skillStore().resolveSkillSource(
+                          state.skill,
+                          projectRoot: projectRoot,
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      AgentPicker(
+                        value: state.agentId,
+                        onChanged: cubit.selectAgent,
+                      ),
+                      if (showUserCodeHint) ...[
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          child: Text(
+                            l10n.forgePickUserCodeHint,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      OutlinedButton.icon(
+                        style: _forgeCompactOutlinedStyle(context),
+                        onPressed: selection == null
+                            ? null
+                            : () => unawaited(
+                                  _showPreview(
+                                    context,
+                                    cubit,
+                                    selection!,
+                                    projectRoot,
+                                    attachments,
+                                    attachmentState?.customNote ?? '',
+                                    onForge: (!canForge || state.launching)
+                                        ? null
+                                        : (initialPromptOverride) =>
+                                            _confirmAndForge(
+                                              context,
+                                              cubit,
+                                              selection!,
+                                              projectRoot,
+                                              chatId!,
+                                              attachments,
+                                              attachmentState?.customNote ?? '',
+                                              deviceTarget.serial,
+                                              deviceTarget.platform,
+                                              initialPromptOverride:
+                                                  initialPromptOverride,
+                                            ),
+                                  ),
+                                ),
+                        icon: const Icon(Icons.article_outlined, size: 16),
+                        label: Text(l10n.forgePreviewButton),
+                      ),
+                      const SizedBox(width: PickforgeSpacing.sm),
+                      FilledButton.icon(
+                        style: _forgeCompactFilledStyle(),
+                        onPressed: forgeAction,
+                        icon: const Icon(Icons.auto_fix_high, size: 16),
+                        label: Text(l10n.forgeItButton),
+                      ),
                     ],
-                    OutlinedButton.icon(
-                      style: _forgeCompactOutlinedStyle(context),
-                      onPressed: selection == null
-                          ? null
-                          : () => unawaited(
-                                _showPreview(
-                                  context,
-                                  cubit,
-                                  selection!,
-                                  projectRoot,
-                                  attachments,
-                                  attachmentState?.customNote ?? '',
-                                  onForge: (!canForge || state.launching)
-                                      ? null
-                                      : (initialPromptOverride) =>
-                                          _confirmAndForge(
-                                            context,
-                                            cubit,
-                                            selection!,
-                                            projectRoot,
-                                            chatId!,
-                                            attachments,
-                                            attachmentState?.customNote ?? '',
-                                            deviceTarget.serial,
-                                            deviceTarget.platform,
-                                            initialPromptOverride:
-                                                initialPromptOverride,
-                                          ),
-                                ),
-                              ),
-                      icon: const Icon(Icons.article_outlined, size: 16),
-                      label: Text(l10n.forgePreviewButton),
-                    ),
-                    const SizedBox(width: PickforgeSpacing.sm),
-                    FilledButton.icon(
-                      style: _forgeCompactFilledStyle(),
-                      onPressed: (!canForge || state.launching)
-                          ? null
-                          : () => unawaited(
-                                _confirmAndForge(
-                                  context,
-                                  cubit,
-                                  selection!,
-                                  projectRoot,
-                                  chatId!,
-                                  attachments,
-                                  attachmentState?.customNote ?? '',
-                                  deviceTarget.serial,
-                                  deviceTarget.platform,
-                                ),
-                              ),
-                      icon: const Icon(Icons.auto_fix_high, size: 16),
-                      label: Text(l10n.forgeItButton),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              if (selection != null ||
-                  attachments.isNotEmpty ||
-                  attachmentState?.lastBlockedReason != null) ...[
+                if (selection != null ||
+                    attachments.isNotEmpty ||
+                    attachmentState?.lastBlockedReason != null) ...[
+                  const SizedBox(height: PickforgeSpacing.sm),
+                  _ContextTray(
+                    selection: selection,
+                    attachmentState: attachmentState,
+                    runLogCount: runLogCount,
+                    largeContextBytes: _largeContextBytes,
+                  ),
+                ],
                 const SizedBox(height: PickforgeSpacing.sm),
-                _ContextTray(
-                  selection: selection,
-                  attachmentState: attachmentState,
-                  runLogCount: runLogCount,
-                  largeContextBytes: _largeContextBytes,
-                ),
+                _GitChangesCard(projectRoot: projectRoot),
               ],
-              const SizedBox(height: PickforgeSpacing.sm),
-              _GitChangesCard(projectRoot: projectRoot),
-            ],
+            ),
           ),
         );
       },

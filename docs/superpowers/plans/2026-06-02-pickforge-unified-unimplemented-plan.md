@@ -955,7 +955,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T6 — Accessibility and keyboard-first audit
 
-**Status:** Not started
+**Status:** Partial / shortcuts started
 **Why:** Dev tools live on keyboard speed. Accessibility also catches poor focus, contrast, and semantics early.
 
 **Tasks**
@@ -972,6 +972,10 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - Widget tests for shortcut dispatch where feasible.
 - Golden/screenshot tests at larger text scale.
 - Manual keyboard-only dogfood pass.
+
+**Latest evidence**
+
+- 2026-06-04: Added direct workbench shortcuts for Add Project (`Ctrl/Cmd+O`), New Chat (`Ctrl/Cmd+N`), Hot Reload (`Ctrl/Cmd+R`), and F5 as Run App when idle or Hot Reload while running. Added a focus-scoped Forge shortcut (`Ctrl/Cmd+Enter`) inside `ForgePanel`. Verified with `test/features/workbench/view/workbench_command_palette_scope_test.dart` and `test/features/forge/view/forge_panel_test.dart`.
 
 ### P9.T7 — Performance and scalability budgets
 

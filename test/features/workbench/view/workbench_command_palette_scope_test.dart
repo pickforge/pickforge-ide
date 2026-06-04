@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -101,6 +102,59 @@ void main() {
     verify(() => projects.add('/picked')).called(1);
   });
 
+  testWidgets('workbench shortcuts dispatch quick actions', (tester) async {
+    final projects = _ProjectsCubit();
+    final chats = _ChatsCubit();
+    final emulator = _EmulatorCubit();
+
+    _stubProjects(projects);
+    _stubChats(chats);
+    _stubEmulator(
+      emulator,
+      EmulatorSessionState.running(
+        vmServiceUri: 'ws://x/ws',
+        stats: RunStats(),
+        avd: const Avd(id: 'Pixel_10', name: 'Pixel 10', platform: 'android'),
+        serial: 'emulator-5554',
+      ),
+    );
+    when(
+      () => chats.newChat(
+        projectRoot: '/p',
+        defaultAgentId: 'claude-code',
+      ),
+    ).thenAnswer((_) async => 'chat-1');
+    when(() => projects.add('/picked')).thenAnswer((_) async {});
+    when(emulator.hotReload).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      _Harness(
+        projects: projects,
+        chats: chats,
+        emulator: emulator,
+        pickFolder: () async => '/picked',
+      ),
+    );
+
+    await _sendControlShortcut(tester, LogicalKeyboardKey.keyN);
+    await tester.pumpAndSettle();
+    await _sendControlShortcut(tester, LogicalKeyboardKey.keyR);
+    await tester.pumpAndSettle();
+    await _sendControlShortcut(tester, LogicalKeyboardKey.keyO);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.f5);
+    await tester.pumpAndSettle();
+
+    verify(
+      () => chats.newChat(
+        projectRoot: '/p',
+        defaultAgentId: 'claude-code',
+      ),
+    ).called(1);
+    verify(emulator.hotReload).called(2);
+    verify(() => projects.add('/picked')).called(1);
+  });
+
   testWidgets('workbench palette runs app from idle state', (tester) async {
     final projects = _ProjectsCubit();
     final chats = _ChatsCubit();
@@ -130,6 +184,32 @@ void main() {
 
     await _filterPalette(tester, 'Run App');
     await tester.tap(_commandTile('Run App'));
+    await tester.pumpAndSettle();
+
+    verify(emulator.runApp).called(1);
+  });
+
+  testWidgets('workbench run shortcut starts idle app', (tester) async {
+    final projects = _ProjectsCubit();
+    final chats = _ChatsCubit();
+    final emulator = _EmulatorCubit();
+
+    _stubProjects(projects);
+    _stubChats(chats);
+    _stubEmulator(
+      emulator,
+      const EmulatorSessionState.idle(
+        avd: Avd(id: 'Pixel_10', name: 'Pixel 10', platform: 'android'),
+        serial: 'emulator-5554',
+      ),
+    );
+    when(emulator.runApp).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      _Harness(projects: projects, chats: chats, emulator: emulator),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.f5);
     await tester.pumpAndSettle();
 
     verify(emulator.runApp).called(1);
@@ -180,6 +260,15 @@ Future<void> _filterPalette(WidgetTester tester, String query) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _sendControlShortcut(
+  WidgetTester tester,
+  LogicalKeyboardKey key,
+) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+  await tester.sendKeyEvent(key);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+}
+
 Finder _commandTile(String title) => find.widgetWithText(ListTile, title);
 
 class _Harness extends StatelessWidget {
@@ -204,21 +293,24 @@ class _Harness extends StatelessWidget {
           BlocProvider<ChatsCubit>.value(value: chats),
           BlocProvider<EmulatorSessionCubit>.value(value: emulator),
         ],
-        child: Scaffold(
-          body: Builder(
-            builder: (context) => ElevatedButton(
-              onPressed: () => unawaited(
-                showDialog<void>(
-                  context: context,
-                  builder: (_) => CommandPalette(
-                    commands: buildWorkbenchCommands(
-                      context,
-                      pickFolder: pickFolder ?? (() async => null),
+        child: WorkbenchCommandPaletteScope(
+          pickFolder: pickFolder ?? (() async => null),
+          child: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => unawaited(
+                  showDialog<void>(
+                    context: context,
+                    builder: (_) => CommandPalette(
+                      commands: buildWorkbenchCommands(
+                        context,
+                        pickFolder: pickFolder ?? (() async => null),
+                      ),
                     ),
                   ),
                 ),
+                child: const Text('Open'),
               ),
-              child: const Text('Open'),
             ),
           ),
         ),

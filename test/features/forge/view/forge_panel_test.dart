@@ -3,6 +3,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -355,6 +356,42 @@ void main() {
     );
 
     await tester.tap(find.text('Forge it'));
+    await tester.pumpAndSettle();
+
+    expect(cubit.forgedSelection, _sampleWidget);
+    expect(cubit.forgedProjectRoot, '/tmp/test');
+    expect(cubit.forgedChatId, 'chat-1');
+  });
+
+  testWidgets('ForgePanel dispatches Ctrl Enter when panel has focus',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pumpAndSettle();
 
     expect(cubit.forgedSelection, _sampleWidget);

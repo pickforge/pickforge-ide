@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:pickforge/core/router/app_router.dart';
@@ -25,11 +26,41 @@ class WorkbenchCommandPaletteScope extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CommandPaletteScope(
-      commands: buildWorkbenchCommands(context, pickFolder: pickFolder),
-      child: child,
+    final commands = buildWorkbenchCommands(context, pickFolder: pickFolder);
+    return CallbackShortcuts(
+      bindings: buildWorkbenchShortcutBindings(commands),
+      child: CommandPaletteScope(
+        commands: commands,
+        child: child,
+      ),
     );
   }
+}
+
+@visibleForTesting
+Map<ShortcutActivator, VoidCallback> buildWorkbenchShortcutBindings(
+  List<PickforgeCommand> commands,
+) {
+  final byId = {for (final command in commands) command.id: command};
+  final bindings = <ShortcutActivator, VoidCallback>{};
+
+  void bindPlatform(String id, LogicalKeyboardKey key) {
+    final command = byId[id];
+    if (command == null) return;
+    bindings[SingleActivator(key, control: true)] = command.run;
+    bindings[SingleActivator(key, meta: true)] = command.run;
+  }
+
+  bindPlatform('quick-add-project', LogicalKeyboardKey.keyO);
+  bindPlatform('quick-new-chat', LogicalKeyboardKey.keyN);
+  bindPlatform('quick-hot-reload', LogicalKeyboardKey.keyR);
+
+  final runOrReload = byId['quick-run-app'] ?? byId['quick-hot-reload'];
+  if (runOrReload != null) {
+    bindings[const SingleActivator(LogicalKeyboardKey.f5)] = runOrReload.run;
+  }
+
+  return bindings;
 }
 
 @visibleForTesting

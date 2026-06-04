@@ -909,7 +909,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T4 — Local app testing strategy
 
-**Status:** Not started
+**Status:** Partial / Linux smoke target added
 **Why:** The app needs repeatable validation beyond unit/widget tests. The real runtime is Flutter desktop plus Android emulator/VM Service, so browser-only testing is insufficient.
 
 **Testing layers**
@@ -930,11 +930,15 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Tasks**
 
-- [ ] Add a Linux desktop smoke test target.
-- [ ] Decide whether to use `integration_test` on Linux desktop, screenshot/golden tests, or an external virtual-display launcher.
+- [x] Add a Linux desktop smoke test target.
+- [x] Decide whether to use `integration_test` on Linux desktop, screenshot/golden tests, or an external virtual-display launcher.
 - [ ] Add deterministic fake services for VM Service, emulator state, file explorer, and chats.
 - [ ] Add CI artifacts for screenshots on failure.
-- [ ] Keep real AVD tests opt-in unless CI reliability is proven.
+- [x] Keep real AVD tests opt-in unless CI reliability is proven.
+
+**Latest evidence**
+
+- 2026-06-04: Added `scripts/linux_smoke.sh`, which launches Pickforge on the Linux desktop target inside Xvfb, starts directly on `/demo`, probes the Flutter VM Service inspector root tree for `DemoWorkspaceView`, and saves smoke artifacts under `build/smoke/linux/`. Verified locally with `scripts/linux_smoke.sh`; the VM-service assertion passed, while the root Xvfb screenshot artifact was captured but blank in this headless environment.
 
 ### P9.T5 — Manual dogfood matrix
 

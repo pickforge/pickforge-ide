@@ -197,6 +197,52 @@ void main() {
 
     expect(openedSettings, isTrue);
   });
+
+  for (final entry in {
+    'adb': 'adb',
+    'claude': 'Claude Code',
+    'codex': 'Codex',
+    'opencode': 'OpenCode',
+    'agent': 'Cursor',
+    'gemini': 'Gemini',
+  }.entries) {
+    testWidgets('setup checks recover when ${entry.key} is missing',
+        (tester) async {
+      final repo = _MockRepo();
+      final cubit = ProjectsCubit(repo, PtySessionPool());
+      final exitCodes = {
+        'fvm': 0,
+        'adb': 0,
+        'emulator': 0,
+        'claude': 0,
+        'codex': 0,
+        'opencode': 0,
+        'agent': 0,
+        'gemini': 0,
+        entry.key: 1,
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: BlocProvider.value(
+            value: cubit,
+            child: OnboardingView(
+              pickFolder: () async => null,
+              diagnosticsService: DiagnosticsService(_FakeRunner(exitCodes)),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(entry.value), findsOneWidget);
+      expect(find.text('Missing'), findsOneWidget);
+      expect(find.text('Available'), findsNWidgets(7));
+      expect(find.byTooltip('Copy setup command'), findsOneWidget);
+    });
+  }
 }
 
 class _FakeRunner implements ProcessRunner {

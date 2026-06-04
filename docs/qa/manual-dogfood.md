@@ -45,22 +45,25 @@ product change.
 1. Run `scripts/dogfood_preflight.sh` and save `build/dogfood/preflight.txt`.
 2. Run `scripts/desktop_build_smoke.sh`.
 3. Run `scripts/emulator_e2e.sh Pixel_10`.
-4. Start Pickforge from the visible desktop session:
+4. Run `scripts/linux_visible_diagnostics_smoke.sh` from the visible desktop
+   session to capture setup-check screenshots for available, missing-agent, and
+   missing-`adb` cases.
+5. Start Pickforge from the visible desktop session:
 
    ```bash
    fvm flutter run -d linux
    ```
 
-5. Add `fixtures/sample_flutter_app` as a Pickforge project.
-6. Bind `Pixel_10` or attach to the sample app's VM Service.
-7. Pick a user-code widget and verify the inspector metadata and screenshot.
-8. Select/create a chat for the active project.
-9. Press **Forge it** and verify the prompt appears in the visible embedded
+6. Add `fixtures/sample_flutter_app` as a Pickforge project.
+7. Bind `Pixel_10` or attach to the sample app's VM Service.
+8. Pick a user-code widget and verify the inspector metadata and screenshot.
+9. Select/create a chat for the active project.
+10. Press **Forge it** and verify the prompt appears in the visible embedded
    terminal.
-10. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
+11. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
     `.pickforge/initial-prompt.md`, and available screenshots in the sample
     project.
-11. Repeat the Forge prompt delivery once for each configured agent profile.
+12. Repeat the Forge prompt delivery once for each configured agent profile.
 
 ## Missing Tool Cases
 
@@ -69,19 +72,23 @@ login-shell PATH merging so missing-tool cases are deterministic:
 
 ```bash
 scripts/missing_tool_smoke.sh
+scripts/linux_visible_diagnostics_smoke.sh
 ```
 
-Then run the same scenarios against the built desktop bundle in a disposable
-visible shell so the normal user environment is not modified. Set
-`PICKFORGE_INHERITED_ENV_ONLY=1` when testing PATH permutations; otherwise the
-app intentionally resolves the user's login-shell PATH and may find tools that
-the disposable shell hides.
+The visible diagnostics script runs the same scenarios against the desktop app
+with a controlled PATH, probes the live Flutter inspector tree, and writes
+screenshots under `build/dogfood/visible-diagnostics/`. Set
+`PICKFORGE_INHERITED_ENV_ONLY=1` for any additional manual PATH permutations;
+otherwise the app intentionally resolves the user's login-shell PATH and may
+find tools that the disposable shell hides.
 
 Verify setup checks and terminal startup failures are recoverable for:
 
 - Missing `claude`.
 - Missing `codex`.
 - Missing `opencode`.
+- Missing `agent`.
+- Missing `gemini`.
 - Missing `adb`.
 
 Do not mark a missing-binary case complete unless the app UI shows the expected

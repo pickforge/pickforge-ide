@@ -8,8 +8,8 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 all_tools=(fvm git adb emulator claude codex opencode agent gemini)
-required_available=(fvm git adb emulator claude codex opencode)
-cases=(claude codex opencode adb)
+required_available=(fvm git adb emulator claude codex opencode agent gemini)
+cases=(claude codex opencode agent gemini adb)
 
 make_tool() {
   local dir="$1"

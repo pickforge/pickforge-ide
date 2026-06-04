@@ -539,14 +539,22 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T1 — Design-system polish pass
 
-**Status:** Partial / inspector polish started
-**Why:** The inspector details panel now uses localized labels for empty states, ancestors, source, and recent rebuilds, and the panel/chip/source styling no longer relies on hardcoded Material grey colors. The broader app-wide Material-default audit, density pass, motion confirmation, and localization sweep remain open.
+**Status:** Partial / audit and inspector polish started
+**Why:** The inspector details panel now uses localized labels for empty states, ancestors, source, and recent rebuilds, and the panel/chip/source styling no longer relies on hardcoded Material grey colors. The Material-default audit is recorded below; the broader density pass, motion confirmation, and localization sweep remain open.
 **Tasks**
 
-- [ ] Audit Material-default UI remnants.
+- [x] Audit Material-default UI remnants.
 - [ ] Tighten density, spacing, typography, colors, and empty states.
 - [ ] Confirm reduce-motion behavior for all animations.
 - [ ] Add missing localized strings.
+
+**Audit findings — 2026-06-04**
+
+- History and run-history views still use default `Scaffold`/`AppBar`/`Card` composition and dense hardcoded label text.
+- Settings and device-run settings still rely heavily on stock `Card`, `ChoiceChip`, `ActionChip`, `TextButton`, and hardcoded labels.
+- Connection pill menus/actions contain many hardcoded user-visible strings and default `TextButton` actions.
+- Forge and onboarding still use several stock `Card`/`Chip`/progress indicator patterns that need a Pickforge-specific density and surface pass.
+- Demo/onboarding chip labels include intentional sample literals, but should be reviewed separately from localizable UI copy.
 
 ### P6.T2 — Command palette expansion
 

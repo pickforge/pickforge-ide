@@ -462,6 +462,7 @@ class _GitChangesCardState extends State<_GitChangesCard> {
     final service = _gitStatusServiceOrNull();
     if (service == null) return const SizedBox.shrink();
     final settings = _projectSettingsOrNull();
+    final hotReload = _hotReloadReviewFor(context);
     final l10n = AppLocalizations.of(context);
     return FutureBuilder<_ProjectReviewData>(
       future: _loadProjectReviewData(
@@ -541,6 +542,10 @@ class _GitChangesCardState extends State<_GitChangesCard> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
+              if (hotReload != null) ...[
+                const SizedBox(height: PickforgeSpacing.sm),
+                _HotReloadResultView(review: hotReload),
+              ],
               if (_validatorRunning || _validatorResult != null) ...[
                 const SizedBox(height: PickforgeSpacing.sm),
                 _ValidatorResultView(
@@ -600,6 +605,81 @@ Future<_ProjectReviewData> _loadProjectReviewData(
     summary: results[0] as GitDiffSummary?,
     validatorCommand: results[1] as String?,
   );
+}
+
+class _HotReloadReview {
+  const _HotReloadReview({
+    required this.success,
+    required this.fullRestart,
+    required this.durationMs,
+    this.hint,
+  });
+
+  final bool success;
+  final bool fullRestart;
+  final int? durationMs;
+  final String? hint;
+
+  String title(AppLocalizations l10n) {
+    final duration = durationMs?.toString() ?? 'n/a';
+    if (fullRestart) {
+      return success
+          ? l10n.forgeHotRestartPassed(duration)
+          : l10n.forgeHotRestartFailed(duration);
+    }
+    return success
+        ? l10n.forgeHotReloadPassed(duration)
+        : l10n.forgeHotReloadFailed(duration);
+  }
+}
+
+class _HotReloadResultView extends StatelessWidget {
+  const _HotReloadResultView({required this.review});
+
+  final _HotReloadReview review;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final hint = review.hint?.trim();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(PickforgeSpacing.sm),
+      decoration: BoxDecoration(
+        color: review.success
+            ? colorScheme.primaryContainer.withValues(alpha: 0.24)
+            : colorScheme.errorContainer.withValues(alpha: 0.28),
+        border: Border.all(
+          color: review.success
+              ? colorScheme.primary.withValues(alpha: 0.28)
+              : colorScheme.error.withValues(alpha: 0.34),
+        ),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            review.title(l10n),
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: review.success ? colorScheme.primary : colorScheme.error,
+            ),
+          ),
+          if (hint != null && hint.isNotEmpty) ...[
+            const SizedBox(height: PickforgeSpacing.xs),
+            SelectableText(
+              hint,
+              maxLines: 3,
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _ValidatorResultView extends StatelessWidget {
@@ -913,6 +993,30 @@ int _runLogCountFor(BuildContext context) {
     };
   } on ProviderNotFoundException {
     return (serial: null, platform: null);
+  }
+}
+
+_HotReloadReview? _hotReloadReviewFor(BuildContext context) {
+  try {
+    return switch (context.watch<EmulatorSessionCubit>().state) {
+      Running(
+        :final lastReloadAt,
+        :final lastReloadSucceeded,
+        :final lastReloadFullRestart,
+        :final lastReloadDurationMs,
+        :final lastReloadHint,
+      )
+          when lastReloadAt != null && lastReloadSucceeded != null =>
+        _HotReloadReview(
+          success: lastReloadSucceeded,
+          fullRestart: lastReloadFullRestart,
+          durationMs: lastReloadDurationMs,
+          hint: lastReloadHint,
+        ),
+      _ => null,
+    };
+  } on ProviderNotFoundException {
+    return null;
   }
 }
 

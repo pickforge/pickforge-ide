@@ -1154,7 +1154,7 @@ void main() {
   );
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
-    'reloadCompleted records lastReloadAt on running state',
+    'reloadCompleted records latest reload outcome on running state',
     setUp: () => when(
       () => run.start(
         projectRoot: '/p',
@@ -1183,7 +1183,15 @@ void main() {
     },
     expect: () => [
       isA<Running>(),
-      isA<Running>().having((s) => s.lastReloadAt, 'lastReloadAt', isNotNull),
+      isA<Running>()
+          .having((s) => s.lastReloadAt, 'lastReloadAt', isNotNull)
+          .having((s) => s.lastReloadSucceeded, 'lastReloadSucceeded', isTrue)
+          .having(
+            (s) => s.lastReloadFullRestart,
+            'lastReloadFullRestart',
+            isFalse,
+          )
+          .having((s) => s.lastReloadDurationMs, 'lastReloadDurationMs', 120),
     ],
   );
 

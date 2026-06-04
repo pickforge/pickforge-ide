@@ -206,7 +206,11 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
             String? appId,
             bool manual,
             bool recovered,
-            DateTime? lastReloadAt)?
+            DateTime? lastReloadAt,
+            bool? lastReloadSucceeded,
+            bool lastReloadFullRestart,
+            int? lastReloadDurationMs,
+            String? lastReloadHint)?
         running,
     TResult Function(Avd avd, String serial, String appId, int attempt)?
         reconnecting,
@@ -230,8 +234,19 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return recoveryPending(_that.sessionId, _that.pid, _that.serial,
             _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
       case Running() when running != null:
-        return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
-            _that.appId, _that.manual, _that.recovered, _that.lastReloadAt);
+        return running(
+            _that.vmServiceUri,
+            _that.stats,
+            _that.avd,
+            _that.serial,
+            _that.appId,
+            _that.manual,
+            _that.recovered,
+            _that.lastReloadAt,
+            _that.lastReloadSucceeded,
+            _that.lastReloadFullRestart,
+            _that.lastReloadDurationMs,
+            _that.lastReloadHint);
       case Reconnecting() when reconnecting != null:
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
@@ -275,7 +290,11 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
             String? appId,
             bool manual,
             bool recovered,
-            DateTime? lastReloadAt)
+            DateTime? lastReloadAt,
+            bool? lastReloadSucceeded,
+            bool lastReloadFullRestart,
+            int? lastReloadDurationMs,
+            String? lastReloadHint)
         running,
     required TResult Function(Avd avd, String serial, String appId, int attempt)
         reconnecting,
@@ -298,8 +317,19 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return recoveryPending(_that.sessionId, _that.pid, _that.serial,
             _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
       case Running():
-        return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
-            _that.appId, _that.manual, _that.recovered, _that.lastReloadAt);
+        return running(
+            _that.vmServiceUri,
+            _that.stats,
+            _that.avd,
+            _that.serial,
+            _that.appId,
+            _that.manual,
+            _that.recovered,
+            _that.lastReloadAt,
+            _that.lastReloadSucceeded,
+            _that.lastReloadFullRestart,
+            _that.lastReloadDurationMs,
+            _that.lastReloadHint);
       case Reconnecting():
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
@@ -340,7 +370,11 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
             String? appId,
             bool manual,
             bool recovered,
-            DateTime? lastReloadAt)?
+            DateTime? lastReloadAt,
+            bool? lastReloadSucceeded,
+            bool lastReloadFullRestart,
+            int? lastReloadDurationMs,
+            String? lastReloadHint)?
         running,
     TResult? Function(Avd avd, String serial, String appId, int attempt)?
         reconnecting,
@@ -363,8 +397,19 @@ extension EmulatorSessionStatePatterns on EmulatorSessionState {
         return recoveryPending(_that.sessionId, _that.pid, _that.serial,
             _that.startedAt, _that.avd, _that.vmServiceUri, _that.canAdopt);
       case Running() when running != null:
-        return running(_that.vmServiceUri, _that.stats, _that.avd, _that.serial,
-            _that.appId, _that.manual, _that.recovered, _that.lastReloadAt);
+        return running(
+            _that.vmServiceUri,
+            _that.stats,
+            _that.avd,
+            _that.serial,
+            _that.appId,
+            _that.manual,
+            _that.recovered,
+            _that.lastReloadAt,
+            _that.lastReloadSucceeded,
+            _that.lastReloadFullRestart,
+            _that.lastReloadDurationMs,
+            _that.lastReloadHint);
       case Reconnecting() when reconnecting != null:
         return reconnecting(
             _that.avd, _that.serial, _that.appId, _that.attempt);
@@ -758,7 +803,11 @@ class Running implements EmulatorSessionState {
       this.appId,
       this.manual = false,
       this.recovered = false,
-      this.lastReloadAt});
+      this.lastReloadAt,
+      this.lastReloadSucceeded,
+      this.lastReloadFullRestart = false,
+      this.lastReloadDurationMs,
+      this.lastReloadHint});
 
   final String vmServiceUri;
   final RunStats stats;
@@ -770,6 +819,11 @@ class Running implements EmulatorSessionState {
   @JsonKey()
   final bool recovered;
   final DateTime? lastReloadAt;
+  final bool? lastReloadSucceeded;
+  @JsonKey()
+  final bool lastReloadFullRestart;
+  final int? lastReloadDurationMs;
+  final String? lastReloadHint;
 
   /// Create a copy of EmulatorSessionState
   /// with the given fields replaced by the non-null parameter values.
@@ -793,16 +847,36 @@ class Running implements EmulatorSessionState {
             (identical(other.recovered, recovered) ||
                 other.recovered == recovered) &&
             (identical(other.lastReloadAt, lastReloadAt) ||
-                other.lastReloadAt == lastReloadAt));
+                other.lastReloadAt == lastReloadAt) &&
+            (identical(other.lastReloadSucceeded, lastReloadSucceeded) ||
+                other.lastReloadSucceeded == lastReloadSucceeded) &&
+            (identical(other.lastReloadFullRestart, lastReloadFullRestart) ||
+                other.lastReloadFullRestart == lastReloadFullRestart) &&
+            (identical(other.lastReloadDurationMs, lastReloadDurationMs) ||
+                other.lastReloadDurationMs == lastReloadDurationMs) &&
+            (identical(other.lastReloadHint, lastReloadHint) ||
+                other.lastReloadHint == lastReloadHint));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, vmServiceUri, stats, avd, serial,
-      appId, manual, recovered, lastReloadAt);
+  int get hashCode => Object.hash(
+      runtimeType,
+      vmServiceUri,
+      stats,
+      avd,
+      serial,
+      appId,
+      manual,
+      recovered,
+      lastReloadAt,
+      lastReloadSucceeded,
+      lastReloadFullRestart,
+      lastReloadDurationMs,
+      lastReloadHint);
 
   @override
   String toString() {
-    return 'EmulatorSessionState.running(vmServiceUri: $vmServiceUri, stats: $stats, avd: $avd, serial: $serial, appId: $appId, manual: $manual, recovered: $recovered, lastReloadAt: $lastReloadAt)';
+    return 'EmulatorSessionState.running(vmServiceUri: $vmServiceUri, stats: $stats, avd: $avd, serial: $serial, appId: $appId, manual: $manual, recovered: $recovered, lastReloadAt: $lastReloadAt, lastReloadSucceeded: $lastReloadSucceeded, lastReloadFullRestart: $lastReloadFullRestart, lastReloadDurationMs: $lastReloadDurationMs, lastReloadHint: $lastReloadHint)';
   }
 }
 
@@ -820,7 +894,11 @@ abstract mixin class $RunningCopyWith<$Res>
       String? appId,
       bool manual,
       bool recovered,
-      DateTime? lastReloadAt});
+      DateTime? lastReloadAt,
+      bool? lastReloadSucceeded,
+      bool lastReloadFullRestart,
+      int? lastReloadDurationMs,
+      String? lastReloadHint});
 }
 
 /// @nodoc
@@ -842,6 +920,10 @@ class _$RunningCopyWithImpl<$Res> implements $RunningCopyWith<$Res> {
     Object? manual = null,
     Object? recovered = null,
     Object? lastReloadAt = freezed,
+    Object? lastReloadSucceeded = freezed,
+    Object? lastReloadFullRestart = null,
+    Object? lastReloadDurationMs = freezed,
+    Object? lastReloadHint = freezed,
   }) {
     return _then(Running(
       vmServiceUri: null == vmServiceUri
@@ -876,6 +958,22 @@ class _$RunningCopyWithImpl<$Res> implements $RunningCopyWith<$Res> {
           ? _self.lastReloadAt
           : lastReloadAt // ignore: cast_nullable_to_non_nullable
               as DateTime?,
+      lastReloadSucceeded: freezed == lastReloadSucceeded
+          ? _self.lastReloadSucceeded
+          : lastReloadSucceeded // ignore: cast_nullable_to_non_nullable
+              as bool?,
+      lastReloadFullRestart: null == lastReloadFullRestart
+          ? _self.lastReloadFullRestart
+          : lastReloadFullRestart // ignore: cast_nullable_to_non_nullable
+              as bool,
+      lastReloadDurationMs: freezed == lastReloadDurationMs
+          ? _self.lastReloadDurationMs
+          : lastReloadDurationMs // ignore: cast_nullable_to_non_nullable
+              as int?,
+      lastReloadHint: freezed == lastReloadHint
+          ? _self.lastReloadHint
+          : lastReloadHint // ignore: cast_nullable_to_non_nullable
+              as String?,
     ));
   }
 }

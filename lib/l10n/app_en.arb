@@ -99,6 +99,30 @@
       "exitCode": {}
     }
   },
+  "forgeHotReloadPassed": "Hot reload passed ({durationMs} ms)",
+  "@forgeHotReloadPassed": {
+    "placeholders": {
+      "durationMs": {}
+    }
+  },
+  "forgeHotReloadFailed": "Hot reload failed ({durationMs} ms)",
+  "@forgeHotReloadFailed": {
+    "placeholders": {
+      "durationMs": {}
+    }
+  },
+  "forgeHotRestartPassed": "Hot restart passed ({durationMs} ms)",
+  "@forgeHotRestartPassed": {
+    "placeholders": {
+      "durationMs": {}
+    }
+  },
+  "forgeHotRestartFailed": "Hot restart failed ({durationMs} ms)",
+  "@forgeHotRestartFailed": {
+    "placeholders": {
+      "durationMs": {}
+    }
+  },
   "forgeOpenChangedFile": "Open changed file",
   "forgeChangedFileOpened": "Opened {file}",
   "@forgeChangedFileOpened": {

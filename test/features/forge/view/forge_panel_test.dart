@@ -12,6 +12,7 @@ import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
+import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -672,6 +673,116 @@ void main() {
     expect(find.textContaining('lib/a.dart'), findsWidgets);
     expect(find.textContaining('lib/b.dart'), findsWidgets);
     expect(find.textContaining('scratch.txt'), findsOneWidget);
+  });
+
+  testWidgets('ForgePanel shows latest hot reload result beside diff',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(
+      _GitProcessRunner(
+        stdoutByArgs: {
+          'status --porcelain=v1': ' M lib/b.dart\n',
+          'rev-parse --abbrev-ref HEAD': 'feature/review\n',
+          'diff --stat HEAD': ' lib/b.dart | 1 +\n',
+        },
+      ),
+    );
+
+    final session = _SessionCubit(
+      EmulatorSessionState.running(
+        vmServiceUri: 'ws://x/ws',
+        stats: RunStats(hotReloadCount: 1),
+        lastReloadAt: DateTime(2026),
+        lastReloadSucceeded: true,
+        lastReloadDurationMs: 120,
+      ),
+    );
+    addTearDown(session.close);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: BlocProvider<EmulatorSessionCubit>.value(
+          value: session,
+          child: Scaffold(
+            body: ForgePanel(
+              selection: _sampleWidget,
+              projectRoot: '/tmp/test',
+              chatId: 'chat-1',
+              cubit: cubit,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Project changes'), findsOneWidget);
+    expect(find.text('Hot reload passed (120 ms)'), findsOneWidget);
+  });
+
+  testWidgets('ForgePanel shows failed hot restart hint beside diff',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(
+      _GitProcessRunner(
+        stdoutByArgs: {
+          'status --porcelain=v1': ' M lib/b.dart\n',
+          'rev-parse --abbrev-ref HEAD': 'feature/review\n',
+          'diff --stat HEAD': ' lib/b.dart | 1 +\n',
+        },
+      ),
+    );
+
+    final session = _SessionCubit(
+      EmulatorSessionState.running(
+        vmServiceUri: 'ws://x/ws',
+        stats: RunStats(),
+        lastReloadAt: DateTime(2026),
+        lastReloadSucceeded: false,
+        lastReloadFullRestart: true,
+        lastReloadDurationMs: 88,
+        lastReloadHint: 'Compilation failed',
+      ),
+    );
+    addTearDown(session.close);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: BlocProvider<EmulatorSessionCubit>.value(
+          value: session,
+          child: Scaffold(
+            body: ForgePanel(
+              selection: _sampleWidget,
+              projectRoot: '/tmp/test',
+              chatId: 'chat-1',
+              cubit: cubit,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hot restart failed (88 ms)'), findsOneWidget);
+    expect(find.text('Compilation failed'), findsOneWidget);
   });
 
   testWidgets('ForgePanel opens changed files and shows discard instructions',

@@ -473,7 +473,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         }
         unawaited(_handleRunStopped(exitCode, reason));
       },
-      reloadCompleted: (success, fullRestart, _, __, hint) {
+      reloadCompleted: (success, fullRestart, durationMs, __, hint) {
         if (success) {
           if (fullRestart) {
             _hotRestartCount++;
@@ -493,6 +493,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         emit(
           current.copyWith(
             lastReloadAt: DateTime.now(),
+            lastReloadSucceeded: success,
+            lastReloadFullRestart: fullRestart,
+            lastReloadDurationMs: durationMs,
+            lastReloadHint: hint,
             stats: current.stats.copyWith(
               hotReloadCount: _hotReloadCount,
               hotRestartCount: _hotRestartCount,

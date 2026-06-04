@@ -41,6 +41,10 @@ sealed class EmulatorSessionState with _$EmulatorSessionState {
     @Default(false) bool manual,
     @Default(false) bool recovered,
     DateTime? lastReloadAt,
+    bool? lastReloadSucceeded,
+    @Default(false) bool lastReloadFullRestart,
+    int? lastReloadDurationMs,
+    String? lastReloadHint,
   }) = Running;
 
   const factory EmulatorSessionState.reconnecting({

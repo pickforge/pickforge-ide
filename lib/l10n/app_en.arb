@@ -207,6 +207,12 @@
   "runHistoryNoVmService": "none",
   "runHistoryRunning": "running",
   "settingsTitle": "Settings",
+  "settingsNoProject": "Select a project to configure project settings.",
+  "settingsDefaultAgent": "Default agent",
+  "settingsEmbeddedTerminal": "Embedded Terminal",
+  "settingsFontFamily": "Font family",
+  "settingsFontSize": "Font size",
+  "settingsTheme": "Theme",
   "diagnosticsTitle": "Diagnostics",
   "diagnosticsOperatingSystem": "OS",
   "diagnosticsAdb": "adb",
@@ -238,6 +244,108 @@
   "headlessChatEmpty": "No messages yet",
   "headlessChatInputHint": "Message the agent",
   "headlessChatSend": "Send",
+  "chatSelectOrCreate": "Select or create a chat to begin",
+  "chatRoleUser": "You",
+  "chatRoleAssistant": "Agent",
+  "chatRoleSystem": "System",
+  "chatRoleError": "Error",
+  "widgetPickerNoSelection": "Tap a widget in the emulator to pick it",
+  "manualVmServiceTitle": "Manual VM Service URL",
+  "manualVmServiceHint": "ws://127.0.0.1:PORT/UUID/ws",
+  "manualVmServiceValidationScheme": "URL must start with ws:// or wss://",
+  "manualVmServiceValidationHost": "URL must include a host",
+  "manualVmServiceValidationPort": "URL must include a valid port",
+  "manualVmServiceConnect": "Connect",
+  "runLogsEmpty": "No run logs yet",
+  "runLogsFilterAll": "All",
+  "runLogsFilterBuild": "Build",
+  "runLogsFilterHotReload": "Hot reload",
+  "runLogsFilterErrors": "Errors",
+  "connectionPickDevice": "Pick device",
+  "connectionBooting": "{name} booting...",
+  "@connectionBooting": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "connectionShutdownPrompt": "Shutdown {name}?",
+  "@connectionShutdownPrompt": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "connectionRecover": "Recover {name}",
+  "@connectionRecover": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "connectionRecoverFallback": "run",
+  "connectionStaleRun": "Stale run",
+  "connectionRunning": "Running",
+  "connectionManual": "Manual",
+  "connectionReconnecting": "{name} reconnecting",
+  "@connectionReconnecting": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "connectionError": "Error {message}",
+  "@connectionError": {
+    "placeholders": {
+      "message": {}
+    }
+  },
+  "connectionMenuPickDevice": "Pick device...",
+  "connectionMenuPickDifferent": "Pick different...",
+  "connectionMenuManualUrl": "Manual VM Service URL...",
+  "connectionMenuViewRunHistory": "View run history",
+  "connectionMenuForgetDevice": "Forget device",
+  "connectionMenuKeepRunning": "Keep running",
+  "connectionMenuShutdownEmulator": "Shutdown emulator",
+  "connectionMenuHotRestart": "Hot restart",
+  "connectionMenuStop": "Stop",
+  "connectionMenuViewLogs": "View logs",
+  "connectionMenuEditUrl": "Edit URL...",
+  "connectionMenuAdoptRecoveredRun": "Adopt recovered run",
+  "connectionMenuCleanupOrphanedRun": "Clean up orphaned run",
+  "connectionActionBoot": "Boot",
+  "connectionActionCancel": "Cancel",
+  "connectionActionKeep": "Keep",
+  "connectionActionShutdown": "Shutdown",
+  "connectionActionRunApp": "Run app",
+  "connectionActionAdopt": "Adopt",
+  "connectionActionCleanup": "Cleanup",
+  "connectionActionReload": "Reload",
+  "connectionActionRetry": "Retry",
+  "deviceRunTitle": "Device & Run",
+  "deviceRunAutoBoot": "Auto-boot on select",
+  "deviceRunConnectionMode": "Connection mode",
+  "deviceRunAuto": "Auto",
+  "deviceRunManual": "Manual",
+  "deviceRunManualVmServiceUrl": "Manual VM Service URL",
+  "deviceRunResetDevice": "Reset device",
+  "deviceRunShutdownWhenIdle": "Shutdown when idle",
+  "deviceRunAskBeforeShutdown": "Ask before shutdown",
+  "deviceRunNoAudio": "No audio",
+  "deviceRunColdBoot": "Cold boot",
+  "deviceRunGpuMode": "GPU mode",
+  "deviceRunDefault": "Default",
+  "deviceRunConsolePort": "Console port",
+  "deviceRunConsolePortHelper": "Even 5554-5682",
+  "deviceRunCpuCores": "CPU cores",
+  "deviceRunSelectFlutterDevice": "Select Flutter device",
+  "deviceRunTargetFile": "Target file",
+  "deviceRunDefaultTarget": "Default target",
+  "deviceRunFlavor": "Flavor",
+  "deviceRunDetectedFlavors": "Detected: {flavors}",
+  "@deviceRunDetectedFlavors": {
+    "placeholders": {
+      "flavors": {}
+    }
+  },
+  "deviceRunExtraArgs": "Extra args",
+  "deviceRunExtraArgsHelper": "Advanced flutter run arguments",
   "sidebarSearch": "Search projects and chats",
   "sidebarListMode": "List",
   "sidebarGridMode": "Grid",

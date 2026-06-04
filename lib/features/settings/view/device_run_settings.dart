@@ -8,6 +8,7 @@ import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_state.dart';
 import 'package:pickforge/features/settings/widgets/settings_section.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class DeviceRunSettings extends StatelessWidget {
@@ -19,14 +20,15 @@ class DeviceRunSettings extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<DeviceRunSettingsCubit, DeviceRunSettingsState>(
       builder: (context, state) {
+        final l10n = AppLocalizations.of(context);
         final binding = state.binding;
         return SettingsSection(
-          title: 'Device & Run',
+          title: l10n.deviceRunTitle,
           children: [
             _DeviceDropdown(projectRoot: projectRoot, state: state),
             if (binding is AvdBinding) ...[
               SettingsToggleRow(
-                label: 'Auto-boot on select',
+                label: l10n.deviceRunAutoBoot,
                 value: binding.autoBootOnSelect,
                 onChanged: (value) => context
                     .read<DeviceRunSettingsCubit>()
@@ -49,12 +51,18 @@ class DeviceRunSettings extends StatelessWidget {
               flavors: state.flavors,
             ),
             SettingsField(
-              label: 'Connection mode',
+              label: l10n.deviceRunConnectionMode,
               child: SegmentedButton<bool>(
                 showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(value: false, label: Text('Auto')),
-                  ButtonSegment(value: true, label: Text('Manual')),
+                segments: [
+                  ButtonSegment(
+                    value: false,
+                    label: Text(l10n.deviceRunAuto),
+                  ),
+                  ButtonSegment(
+                    value: true,
+                    label: Text(l10n.deviceRunManual),
+                  ),
                 ],
                 selected: {binding is ManualBinding},
                 onSelectionChanged: (selection) {
@@ -69,7 +77,7 @@ class DeviceRunSettings extends StatelessWidget {
             ),
             if (binding is ManualBinding) ...[
               SettingsField(
-                label: 'Manual VM Service URL',
+                label: l10n.deviceRunManualVmServiceUrl,
                 child: SelectableText(binding.vmServiceUrl),
               ),
             ],
@@ -82,7 +90,7 @@ class DeviceRunSettings extends StatelessWidget {
                     .reset(projectRoot)
                     .ignore(),
                 icon: const Icon(Icons.restart_alt, size: 16),
-                label: const Text('Reset device'),
+                label: Text(l10n.deviceRunResetDevice),
               ),
             ),
           ],
@@ -107,7 +115,7 @@ class _IdleShutdownFields extends StatelessWidget {
       children: [
         SettingsToggleRow(
           switchKey: const Key('emulator-idle-shutdown-enabled'),
-          label: 'Shutdown when idle',
+          label: AppLocalizations.of(context).deviceRunShutdownWhenIdle,
           value: settings.enabled,
           onChanged: (value) => _set(
             context,
@@ -117,7 +125,7 @@ class _IdleShutdownFields extends StatelessWidget {
         if (settings.enabled)
           SettingsToggleRow(
             switchKey: const Key('emulator-idle-shutdown-confirm'),
-            label: 'Ask before shutdown',
+            label: AppLocalizations.of(context).deviceRunAskBeforeShutdown,
             value: settings.requireConfirmation,
             onChanged: (value) => _set(
               context,
@@ -152,7 +160,7 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
       children: [
         SettingsToggleRow(
           switchKey: const Key('emulator-no-audio'),
-          label: 'No audio',
+          label: AppLocalizations.of(context).deviceRunNoAudio,
           value: options.noAudio,
           onChanged: (value) => _set(
             context,
@@ -161,7 +169,7 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
         ),
         SettingsToggleRow(
           switchKey: const Key('emulator-no-snapshot-load'),
-          label: 'Cold boot',
+          label: AppLocalizations.of(context).deviceRunColdBoot,
           value: options.noSnapshotLoad,
           onChanged: (value) => _set(
             context,
@@ -172,10 +180,12 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
         DropdownButtonFormField<EmulatorGpuMode?>(
           key: const Key('emulator-gpu-mode'),
           initialValue: options.gpuMode,
-          decoration: settingsInputDecoration(labelText: 'GPU mode'),
+          decoration: settingsInputDecoration(
+            labelText: AppLocalizations.of(context).deviceRunGpuMode,
+          ),
           items: [
-            const DropdownMenuItem<EmulatorGpuMode?>(
-              child: Text('Default'),
+            DropdownMenuItem<EmulatorGpuMode?>(
+              child: Text(AppLocalizations.of(context).deviceRunDefault),
             ),
             ...EmulatorGpuMode.values.map(
               (mode) => DropdownMenuItem<EmulatorGpuMode?>(
@@ -195,8 +205,8 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
           initialValue: options.port?.toString() ?? '',
           keyboardType: TextInputType.number,
           decoration: settingsInputDecoration(
-            labelText: 'Console port',
-            helperText: 'Even 5554-5682',
+            labelText: AppLocalizations.of(context).deviceRunConsolePort,
+            helperText: AppLocalizations.of(context).deviceRunConsolePortHelper,
           ),
           onFieldSubmitted: (value) => _setInt(
             context,
@@ -209,7 +219,9 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
           key: ValueKey('emulator-cores-${options.cores ?? ''}'),
           initialValue: options.cores?.toString() ?? '',
           keyboardType: TextInputType.number,
-          decoration: settingsInputDecoration(labelText: 'CPU cores'),
+          decoration: settingsInputDecoration(
+            labelText: AppLocalizations.of(context).deviceRunCpuCores,
+          ),
           onFieldSubmitted: (value) => _setInt(
             context,
             value,
@@ -265,9 +277,12 @@ class _DeviceDropdown extends StatelessWidget {
         _DeviceOption.desktopKey(targetId),
       _ => null,
     };
+    final l10n = AppLocalizations.of(context);
     return DropdownButtonFormField<_DeviceOption>(
       key: const Key('device-dropdown'),
-      decoration: settingsInputDecoration(labelText: 'Select Flutter device'),
+      decoration: settingsInputDecoration(
+        labelText: l10n.deviceRunSelectFlutterDevice,
+      ),
       initialValue:
           options.where((option) => option.key == selected).firstOrNull,
       isExpanded: true,
@@ -384,18 +399,22 @@ class _RunArgsFields extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final parsed = args.parsed;
+    final l10n = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         DropdownButtonFormField<String>(
           key: const Key('run-target-dropdown'),
           initialValue: _targetValue,
-          decoration: settingsInputDecoration(labelText: 'Target file'),
+          decoration:
+              settingsInputDecoration(labelText: l10n.deviceRunTargetFile),
           items: _targetOptions
               .map(
                 (target) => DropdownMenuItem(
                   value: target,
-                  child: Text(target.isEmpty ? 'Default target' : target),
+                  child: Text(
+                    target.isEmpty ? l10n.deviceRunDefaultTarget : target,
+                  ),
                 ),
               )
               .toList(),
@@ -426,9 +445,12 @@ class _RunArgsFields extends StatelessWidget {
           key: ValueKey('run-flavor-${parsed.flavor ?? ''}'),
           initialValue: parsed.flavor ?? '',
           decoration: settingsInputDecoration(
-            labelText: 'Flavor',
-            helperText:
-                flavors.isEmpty ? null : 'Detected: ${flavors.join(', ')}',
+            labelText: l10n.deviceRunFlavor,
+            helperText: flavors.isEmpty
+                ? null
+                : l10n.deviceRunDetectedFlavors(
+                    flavors.join(', '),
+                  ),
           ),
           onFieldSubmitted: (value) => context
               .read<DeviceRunSettingsCubit>()
@@ -461,8 +483,8 @@ class _RunArgsFields extends StatelessWidget {
           ),
           initialValue: formatExtraArgsText(parsed.manualExtraArgs),
           decoration: settingsInputDecoration(
-            labelText: 'Extra args',
-            helperText: 'Advanced flutter run arguments',
+            labelText: l10n.deviceRunExtraArgs,
+            helperText: l10n.deviceRunExtraArgsHelper,
           ),
           onFieldSubmitted: (value) => context
               .read<DeviceRunSettingsCubit>()

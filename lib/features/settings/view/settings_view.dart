@@ -91,6 +91,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: _cubit),
@@ -103,11 +104,11 @@ class _SettingsViewState extends State<SettingsView> {
             _ => null,
           };
           if (projectRoot == null) {
-            return const Padding(
-              padding: EdgeInsets.all(PickforgeSpacing.lg),
+            return Padding(
+              padding: const EdgeInsets.all(PickforgeSpacing.lg),
               child: SettingsEmptyState(
                 icon: Icons.tune,
-                message: 'Select a project to configure project settings.',
+                message: l10n.settingsNoProject,
               ),
             );
           }
@@ -120,7 +121,7 @@ class _SettingsViewState extends State<SettingsView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     SettingsSection(
-                      title: 'Default agent',
+                      title: l10n.settingsDefaultAgent,
                       children: [
                         _buildAgentDropdown(state, context, projectRoot),
                       ],
@@ -132,7 +133,7 @@ class _SettingsViewState extends State<SettingsView> {
                     ),
                     const SizedBox(height: PickforgeSpacing.lg),
                     SettingsSection(
-                      title: 'Embedded Terminal',
+                      title: l10n.settingsEmbeddedTerminal,
                       children: [
                         _buildFontFamilyDropdown(state, context),
                         _buildFontSizeSlider(state, context),
@@ -200,7 +201,7 @@ class _SettingsViewState extends State<SettingsView> {
       'Berkeley Mono',
     ];
     return SettingsField(
-      label: 'Font family',
+      label: AppLocalizations.of(context).settingsFontFamily,
       child: DropdownButtonFormField<String>(
         initialValue: families.contains(state.terminal.fontFamily)
             ? state.terminal.fontFamily
@@ -230,7 +231,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   Widget _buildFontSizeSlider(SettingsState state, BuildContext context) {
     return SettingsField(
-      label: 'Font size',
+      label: AppLocalizations.of(context).settingsFontSize,
       child: Row(
         children: [
           Expanded(
@@ -269,7 +270,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   Widget _buildThemeDropdown(SettingsState state, BuildContext context) {
     return SettingsField(
-      label: 'Theme',
+      label: AppLocalizations.of(context).settingsTheme,
       child: DropdownButtonFormField<TerminalThemeId>(
         initialValue: state.terminal.themeId,
         decoration: settingsInputDecoration(),

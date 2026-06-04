@@ -7,6 +7,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/emulator/view/manual_url_form.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class _Cubit extends Cubit<EmulatorSessionState>
     with Mock
@@ -20,6 +21,8 @@ void main() {
     when(() => cubit.submitManualUrl(any())).thenAnswer((_) async {});
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: BlocProvider<EmulatorSessionCubit>.value(
           value: cubit,
           child: const Scaffold(body: ManualUrlForm()),
@@ -39,6 +42,8 @@ void main() {
   testWidgets('invalid URL shows inline error', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: BlocProvider<EmulatorSessionCubit>.value(
           value: _Cubit(),
           child: const Scaffold(body: ManualUrlForm()),

@@ -131,10 +131,11 @@ class _EmptyChat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return ColoredBox(
       color: Theme.of(context).colorScheme.surface,
-      child: const Center(
-        child: Text('Select or create a chat to begin'),
+      child: Center(
+        child: Text(l10n.chatSelectOrCreate),
       ),
     );
   }
@@ -345,7 +346,7 @@ class _HeadlessMessageBubble extends StatelessWidget {
                 isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
               Text(
-                _roleLabel(message.role),
+                _roleLabel(context, message.role),
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: foreground.withValues(alpha: 0.72),
                     ),
@@ -362,12 +363,15 @@ class _HeadlessMessageBubble extends StatelessWidget {
     );
   }
 
-  String _roleLabel(ChatMessageRole role) => switch (role) {
-        ChatMessageRole.user => 'You',
-        ChatMessageRole.assistant => 'Agent',
-        ChatMessageRole.system => 'System',
-        ChatMessageRole.error => 'Error',
-      };
+  String _roleLabel(BuildContext context, ChatMessageRole role) {
+    final l10n = AppLocalizations.of(context);
+    return switch (role) {
+      ChatMessageRole.user => l10n.chatRoleUser,
+      ChatMessageRole.assistant => l10n.chatRoleAssistant,
+      ChatMessageRole.system => l10n.chatRoleSystem,
+      ChatMessageRole.error => l10n.chatRoleError,
+    };
+  }
 }
 
 class _ChatTerminal extends StatefulWidget {

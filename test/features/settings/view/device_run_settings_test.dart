@@ -12,11 +12,27 @@ import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_state.dart';
 import 'package:pickforge/features/settings/view/device_run_settings.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class _Cubit extends Cubit<DeviceRunSettingsState>
     with Mock
     implements DeviceRunSettingsCubit {
   _Cubit(super.initialState);
+}
+
+class _LocalizedMaterialApp extends StatelessWidget {
+  const _LocalizedMaterialApp({required this.home});
+
+  final Widget home;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: home,
+    );
+  }
 }
 
 void main() {
@@ -45,7 +61,7 @@ void main() {
     when(() => cubit.setAvd(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -77,7 +93,7 @@ void main() {
     when(() => cubit.setPhysicalDevice(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -109,7 +125,7 @@ void main() {
     when(() => cubit.setIosSimulator(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -146,7 +162,7 @@ void main() {
     when(() => cubit.setWebTarget(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -178,7 +194,7 @@ void main() {
     when(() => cubit.setDesktopTarget(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -203,7 +219,7 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -224,7 +240,7 @@ void main() {
     when(() => cubit.setRunArgs(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -256,7 +272,7 @@ void main() {
     when(() => cubit.setRunArgs(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -283,7 +299,7 @@ void main() {
     when(() => cubit.setRunArgs(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -312,7 +328,7 @@ void main() {
     when(() => cubit.setRunArgs(any(), any())).thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(body: DeviceRunSettings(projectRoot: '/p')),
@@ -354,7 +370,7 @@ void main() {
         .thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(
@@ -411,7 +427,7 @@ void main() {
         .thenAnswer((_) async {});
 
     await tester.pumpWidget(
-      MaterialApp(
+      _LocalizedMaterialApp(
         home: BlocProvider<DeviceRunSettingsCubit>.value(
           value: cubit,
           child: const Scaffold(

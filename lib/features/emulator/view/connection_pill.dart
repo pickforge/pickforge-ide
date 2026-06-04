@@ -11,6 +11,7 @@ import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/emulator/view/device_picker_menu.dart';
 import 'package:pickforge/features/emulator/view/manual_url_form.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
@@ -75,13 +76,14 @@ class _PillContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
           _StatusDot(state: state),
           const SizedBox(width: 8),
-          Expanded(child: Text(_label(state))),
+          Expanded(child: Text(_label(state, l10n))),
           if (cubit != null) _PrimaryAction(state: state, cubit: cubit!),
           const SizedBox(width: 4),
           if (cubit != null) _Menu(state: state, cubit: cubit!),
@@ -90,18 +92,23 @@ class _PillContent extends StatelessWidget {
     );
   }
 
-  String _label(EmulatorSessionState state) => switch (state) {
-        NoDevicePicked() => 'Pick device',
+  String _label(EmulatorSessionState state, AppLocalizations l10n) =>
+      switch (state) {
+        NoDevicePicked() => l10n.connectionPickDevice,
         Cold(:final avd) => avd.name,
-        Booting(:final avd) => '${avd.name} booting...',
+        Booting(:final avd) => l10n.connectionBooting(avd.name),
         Idle(:final avd, :final shutdownPrompt) =>
-          shutdownPrompt ? 'Shutdown ${avd.name}?' : avd.name,
-        RecoveryPending(:final avd, :final canAdopt) =>
-          canAdopt ? 'Recover ${avd?.name ?? 'run'}' : 'Stale run',
-        Running(:final manual, :final avd) =>
-          manual ? 'Manual' : (avd?.name ?? 'Running'),
-        Reconnecting(:final avd) => '${avd.name} reconnecting',
-        EmulatorError(:final message) => 'Error $message',
+          shutdownPrompt ? l10n.connectionShutdownPrompt(avd.name) : avd.name,
+        RecoveryPending(:final avd, :final canAdopt) => canAdopt
+            ? l10n.connectionRecover(
+                avd?.name ?? l10n.connectionRecoverFallback,
+              )
+            : l10n.connectionStaleRun,
+        Running(:final manual, :final avd) => manual
+            ? l10n.connectionManual
+            : (avd?.name ?? l10n.connectionRunning),
+        Reconnecting(:final avd) => l10n.connectionReconnecting(avd.name),
+        EmulatorError(:final message) => l10n.connectionError(message),
       };
 }
 
@@ -212,142 +219,147 @@ class _Menu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return PopupMenuButton<_MenuAction>(
       key: const Key('pill-menu'),
       icon: const Icon(Icons.expand_more, size: 18),
       onSelected: (action) => _onSelected(context, action),
       itemBuilder: (context) => switch (state) {
-        NoDevicePicked() => const [
+        NoDevicePicked() => [
             PopupMenuItem(
               value: _MenuAction.pickDevice,
-              child: Text('Pick device...'),
+              child: Text(l10n.connectionMenuPickDevice),
             ),
             PopupMenuItem(
               value: _MenuAction.manualUrl,
-              child: Text('Manual VM Service URL...'),
+              child: Text(l10n.connectionMenuManualUrl),
             ),
             PopupMenuItem(
               value: _MenuAction.viewHistory,
-              child: Text('View run history'),
+              child: Text(l10n.connectionMenuViewRunHistory),
             ),
           ],
-        Cold() => const [
+        Cold() => [
             PopupMenuItem(
               value: _MenuAction.pickDevice,
-              child: Text('Pick different...'),
+              child: Text(l10n.connectionMenuPickDifferent),
             ),
             PopupMenuItem(
               value: _MenuAction.manualUrl,
-              child: Text('Manual VM Service URL...'),
+              child: Text(l10n.connectionMenuManualUrl),
             ),
             PopupMenuItem(
               value: _MenuAction.forget,
-              child: Text('Forget device'),
+              child: Text(l10n.connectionMenuForgetDevice),
             ),
             PopupMenuItem(
               value: _MenuAction.viewHistory,
-              child: Text('View run history'),
+              child: Text(l10n.connectionMenuViewRunHistory),
             ),
           ],
         Idle(:final shutdownPrompt) => [
             if (shutdownPrompt)
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: _MenuAction.keepIdleAvd,
-                child: Text('Keep running'),
+                child: Text(l10n.connectionMenuKeepRunning),
               ),
             if (shutdownPrompt)
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: _MenuAction.shutdownIdleAvd,
-                child: Text('Shutdown emulator'),
+                child: Text(l10n.connectionMenuShutdownEmulator),
               ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.pickDevice,
-              child: Text('Pick different...'),
+              child: Text(l10n.connectionMenuPickDifferent),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.manualUrl,
-              child: Text('Manual VM Service URL...'),
+              child: Text(l10n.connectionMenuManualUrl),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.forget,
-              child: Text('Forget device'),
+              child: Text(l10n.connectionMenuForgetDevice),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.viewHistory,
-              child: Text('View run history'),
+              child: Text(l10n.connectionMenuViewRunHistory),
             ),
           ],
         Running(:final manual, :final recovered) => [
             if (!recovered)
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: _MenuAction.hotRestart,
-                child: Text('Hot restart'),
+                child: Text(l10n.connectionMenuHotRestart),
               ),
             PopupMenuItem(
               value: recovered
                   ? _MenuAction.cleanupRecoveredRun
                   : _MenuAction.stop,
-              child: Text(recovered ? 'Clean up orphaned run' : 'Stop'),
+              child: Text(
+                recovered
+                    ? l10n.connectionMenuCleanupOrphanedRun
+                    : l10n.connectionMenuStop,
+              ),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.viewLogs,
-              child: Text('View logs'),
+              child: Text(l10n.connectionMenuViewLogs),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.viewHistory,
-              child: Text('View run history'),
+              child: Text(l10n.connectionMenuViewRunHistory),
             ),
             if (manual)
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: _MenuAction.editUrl,
-                child: Text('Edit URL...'),
+                child: Text(l10n.connectionMenuEditUrl),
               ),
           ],
         RecoveryPending(:final canAdopt) => [
             if (canAdopt)
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: _MenuAction.adoptRecoveredRun,
-                child: Text('Adopt recovered run'),
+                child: Text(l10n.connectionMenuAdoptRecoveredRun),
               ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.cleanupRecoveredRun,
-              child: Text('Clean up orphaned run'),
+              child: Text(l10n.connectionMenuCleanupOrphanedRun),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: _MenuAction.viewHistory,
-              child: Text('View run history'),
+              child: Text(l10n.connectionMenuViewRunHistory),
             ),
           ],
-        Booting() || Reconnecting() => const [
+        Booting() || Reconnecting() => [
             PopupMenuItem(
               value: _MenuAction.viewLogs,
-              child: Text('View logs'),
+              child: Text(l10n.connectionMenuViewLogs),
             ),
             PopupMenuItem(
               value: _MenuAction.viewHistory,
-              child: Text('View run history'),
+              child: Text(l10n.connectionMenuViewRunHistory),
             ),
           ],
-        EmulatorError() => const [
+        EmulatorError() => [
             PopupMenuItem(
               value: _MenuAction.viewLogs,
-              child: Text('View logs'),
+              child: Text(l10n.connectionMenuViewLogs),
             ),
             PopupMenuItem(
               value: _MenuAction.viewHistory,
-              child: Text('View run history'),
+              child: Text(l10n.connectionMenuViewRunHistory),
             ),
             PopupMenuItem(
               value: _MenuAction.pickDevice,
-              child: Text('Pick different...'),
+              child: Text(l10n.connectionMenuPickDifferent),
             ),
             PopupMenuItem(
               value: _MenuAction.manualUrl,
-              child: Text('Manual VM Service URL...'),
+              child: Text(l10n.connectionMenuManualUrl),
             ),
             PopupMenuItem(
               value: _MenuAction.forget,
-              child: Text('Forget device'),
+              child: Text(l10n.connectionMenuForgetDevice),
             ),
           ],
       },
@@ -439,17 +451,18 @@ class _PrimaryAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return switch (state) {
       NoDevicePicked() => const SizedBox.shrink(),
       Cold() => _PillActionButton(
           icon: Icons.play_arrow,
-          label: 'Boot',
+          label: l10n.connectionActionBoot,
           onPressed: cubit.bootAvd,
           primary: true,
         ),
       Booting() => _PillActionButton(
           icon: Icons.close,
-          label: 'Cancel',
+          label: l10n.connectionActionCancel,
           onPressed: cubit.cancelBoot,
         ),
       Idle(:final shutdownPrompt) => shutdownPrompt
@@ -458,13 +471,13 @@ class _PrimaryAction extends StatelessWidget {
               children: [
                 _PillActionButton(
                   icon: Icons.pause_circle_outline,
-                  label: 'Keep',
+                  label: l10n.connectionActionKeep,
                   onPressed: cubit.dismissIdleShutdownPrompt,
                 ),
                 const SizedBox(width: PickforgeSpacing.xs),
                 _PillActionButton(
                   icon: Icons.power_settings_new,
-                  label: 'Shutdown',
+                  label: l10n.connectionActionShutdown,
                   onPressed: cubit.confirmIdleShutdown,
                   danger: true,
                 ),
@@ -472,32 +485,34 @@ class _PrimaryAction extends StatelessWidget {
             )
           : _PillActionButton(
               icon: Icons.terminal,
-              label: 'Run app',
+              label: l10n.connectionActionRunApp,
               onPressed: cubit.runApp,
               primary: true,
             ),
       RecoveryPending(:final canAdopt) => _PillActionButton(
           icon: canAdopt ? Icons.restore : Icons.cleaning_services,
-          label: canAdopt ? 'Adopt' : 'Cleanup',
+          label: canAdopt
+              ? l10n.connectionActionAdopt
+              : l10n.connectionActionCleanup,
           onPressed:
               canAdopt ? cubit.adoptRecoveredRun : cubit.cleanupRecoveredRun,
         ),
       Running(:final recovered) => recovered
           ? _PillActionButton(
               icon: Icons.cleaning_services,
-              label: 'Cleanup',
+              label: l10n.connectionActionCleanup,
               onPressed: cubit.cleanupRecoveredRun,
             )
           : _PillActionButton(
               icon: Icons.refresh,
-              label: 'Reload',
+              label: l10n.connectionActionReload,
               onPressed: cubit.hotReload,
               primary: true,
             ),
       Reconnecting() => const SizedBox.shrink(),
       EmulatorError() => _PillActionButton(
           icon: Icons.refresh,
-          label: 'Retry',
+          label: l10n.connectionActionRetry,
           onPressed: cubit.bootAvd,
         ),
     };

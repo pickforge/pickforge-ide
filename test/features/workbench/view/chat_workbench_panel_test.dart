@@ -93,6 +93,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: MultiBlocProvider(
           providers: [
             BlocProvider.value(value: projectsCubit),
@@ -173,6 +175,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: MultiBlocProvider(
           providers: [
             BlocProvider.value(value: projectsCubit),
@@ -211,6 +215,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: MultiBlocProvider(
           providers: [
             BlocProvider.value(value: projectsCubit),

@@ -9,6 +9,7 @@ import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/emulator/view/connection_pill.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 
 class _FakeCubit extends Cubit<EmulatorSessionState>
     with Mock
@@ -20,6 +21,8 @@ void main() {
   Future<void> pump(WidgetTester tester, EmulatorSessionState state) async {
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: BlocProvider<EmulatorSessionCubit>.value(
           value: _FakeCubit(state),
           child: const Scaffold(body: ConnectionPill()),

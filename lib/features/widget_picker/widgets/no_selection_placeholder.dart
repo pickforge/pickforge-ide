@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/shared/motion/pickforge_motion.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 
@@ -8,9 +9,9 @@ class NoSelectionPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const text = Text('Tap a widget in the emulator to pick it');
+    final text = Text(AppLocalizations.of(context).widgetPickerNoSelection);
     if (ReduceMotion.of(context)) {
-      return const Center(child: text);
+      return Center(child: text);
     }
     return Center(
       child: text

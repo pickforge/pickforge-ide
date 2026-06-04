@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/drift/tables/chats.dart';
 import 'package:uuid/uuid.dart';
@@ -71,6 +72,20 @@ class ChatsDao extends DatabaseAccessor<PickforgeDatabase>
   Future<void> setSkillId(String chatId, String skillId) =>
       (update(chats)..where((c) => c.chatId.equals(chatId)))
           .write(ChatsCompanion(skillId: Value(skillId)));
+
+  Future<void> setTaskStatus(String chatId, ChatTaskStatus status) =>
+      (update(chats)..where((c) => c.chatId.equals(chatId)))
+          .write(ChatsCompanion(status: Value(status.name)));
+
+  Future<void> setTaskBrief(String chatId, String? taskBrief) =>
+      (update(chats)..where((c) => c.chatId.equals(chatId))).write(
+        ChatsCompanion(taskBriefText: Value(normalizeTaskBrief(taskBrief))),
+      );
+
+  Future<void> setLabels(String chatId, List<String> labels) =>
+      (update(chats)..where((c) => c.chatId.equals(chatId))).write(
+        ChatsCompanion(labelsJson: Value(encodeChatLabels(labels))),
+      );
 
   Future<void> touch(String chatId, DateTime now) =>
       (update(chats)..where((c) => c.chatId.equals(chatId)))

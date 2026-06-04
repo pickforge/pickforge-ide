@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:injectable/injectable.dart';
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -139,6 +140,30 @@ class ChatsCubit extends Cubit<ChatsState> {
     final s = state;
     if (s is! ChatsReady) return;
     await _repo.rename(chatId, title);
+    final root = _projectOfChat(s, chatId);
+    if (root != null) await _refreshProject(root);
+  }
+
+  Future<void> setTaskStatus(String chatId, ChatTaskStatus status) async {
+    final s = state;
+    if (s is! ChatsReady) return;
+    await _repo.setTaskStatus(chatId, status);
+    final root = _projectOfChat(s, chatId);
+    if (root != null) await _refreshProject(root);
+  }
+
+  Future<void> setTaskBrief(String chatId, String? taskBrief) async {
+    final s = state;
+    if (s is! ChatsReady) return;
+    await _repo.setTaskBrief(chatId, taskBrief);
+    final root = _projectOfChat(s, chatId);
+    if (root != null) await _refreshProject(root);
+  }
+
+  Future<void> setLabels(String chatId, List<String> labels) async {
+    final s = state;
+    if (s is! ChatsReady) return;
+    await _repo.setLabels(chatId, labels);
     final root = _projectOfChat(s, chatId);
     if (root != null) await _refreshProject(root);
   }

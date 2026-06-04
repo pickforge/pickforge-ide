@@ -2109,6 +2109,23 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, ChatRow> {
   late final GeneratedColumn<String> sessionId = GeneratedColumn<String>(
       'session_id', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _labelsJsonMeta =
+      const VerificationMeta('labelsJson');
+  @override
+  late final GeneratedColumn<String> labelsJson = GeneratedColumn<String>(
+      'labels_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+      'status', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _taskBriefTextMeta =
+      const VerificationMeta('taskBriefText');
+  @override
+  late final GeneratedColumn<String> taskBriefText = GeneratedColumn<String>(
+      'task_brief_text', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _createdAtMeta =
       const VerificationMeta('createdAt');
   @override
@@ -2137,6 +2154,9 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, ChatRow> {
         agentId,
         skillId,
         sessionId,
+        labelsJson,
+        status,
+        taskBriefText,
         createdAt,
         lastActivityAt,
         sortOrder
@@ -2185,6 +2205,22 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, ChatRow> {
       context.handle(_sessionIdMeta,
           sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta));
     }
+    if (data.containsKey('labels_json')) {
+      context.handle(
+          _labelsJsonMeta,
+          labelsJson.isAcceptableOrUnknown(
+              data['labels_json']!, _labelsJsonMeta));
+    }
+    if (data.containsKey('status')) {
+      context.handle(_statusMeta,
+          status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+    }
+    if (data.containsKey('task_brief_text')) {
+      context.handle(
+          _taskBriefTextMeta,
+          taskBriefText.isAcceptableOrUnknown(
+              data['task_brief_text']!, _taskBriefTextMeta));
+    }
     if (data.containsKey('created_at')) {
       context.handle(_createdAtMeta,
           createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
@@ -2224,6 +2260,12 @@ class $ChatsTable extends Chats with TableInfo<$ChatsTable, ChatRow> {
           .read(DriftSqlType.string, data['${effectivePrefix}skill_id']),
       sessionId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}session_id']),
+      labelsJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}labels_json']),
+      status: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}status']),
+      taskBriefText: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}task_brief_text']),
       createdAt: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}created_at'])!,
       lastActivityAt: attachedDatabase.typeMapping.read(
@@ -2246,6 +2288,9 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
   final String agentId;
   final String? skillId;
   final String? sessionId;
+  final String? labelsJson;
+  final String? status;
+  final String? taskBriefText;
   final DateTime createdAt;
   final DateTime lastActivityAt;
   final int sortOrder;
@@ -2256,6 +2301,9 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
       required this.agentId,
       this.skillId,
       this.sessionId,
+      this.labelsJson,
+      this.status,
+      this.taskBriefText,
       required this.createdAt,
       required this.lastActivityAt,
       required this.sortOrder});
@@ -2271,6 +2319,15 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
     }
     if (!nullToAbsent || sessionId != null) {
       map['session_id'] = Variable<String>(sessionId);
+    }
+    if (!nullToAbsent || labelsJson != null) {
+      map['labels_json'] = Variable<String>(labelsJson);
+    }
+    if (!nullToAbsent || status != null) {
+      map['status'] = Variable<String>(status);
+    }
+    if (!nullToAbsent || taskBriefText != null) {
+      map['task_brief_text'] = Variable<String>(taskBriefText);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['last_activity_at'] = Variable<DateTime>(lastActivityAt);
@@ -2290,6 +2347,14 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
       sessionId: sessionId == null && nullToAbsent
           ? const Value.absent()
           : Value(sessionId),
+      labelsJson: labelsJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(labelsJson),
+      status:
+          status == null && nullToAbsent ? const Value.absent() : Value(status),
+      taskBriefText: taskBriefText == null && nullToAbsent
+          ? const Value.absent()
+          : Value(taskBriefText),
       createdAt: Value(createdAt),
       lastActivityAt: Value(lastActivityAt),
       sortOrder: Value(sortOrder),
@@ -2306,6 +2371,9 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
       agentId: serializer.fromJson<String>(json['agentId']),
       skillId: serializer.fromJson<String?>(json['skillId']),
       sessionId: serializer.fromJson<String?>(json['sessionId']),
+      labelsJson: serializer.fromJson<String?>(json['labelsJson']),
+      status: serializer.fromJson<String?>(json['status']),
+      taskBriefText: serializer.fromJson<String?>(json['taskBriefText']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       lastActivityAt: serializer.fromJson<DateTime>(json['lastActivityAt']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
@@ -2321,6 +2389,9 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
       'agentId': serializer.toJson<String>(agentId),
       'skillId': serializer.toJson<String?>(skillId),
       'sessionId': serializer.toJson<String?>(sessionId),
+      'labelsJson': serializer.toJson<String?>(labelsJson),
+      'status': serializer.toJson<String?>(status),
+      'taskBriefText': serializer.toJson<String?>(taskBriefText),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'lastActivityAt': serializer.toJson<DateTime>(lastActivityAt),
       'sortOrder': serializer.toJson<int>(sortOrder),
@@ -2334,6 +2405,9 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
           String? agentId,
           Value<String?> skillId = const Value.absent(),
           Value<String?> sessionId = const Value.absent(),
+          Value<String?> labelsJson = const Value.absent(),
+          Value<String?> status = const Value.absent(),
+          Value<String?> taskBriefText = const Value.absent(),
           DateTime? createdAt,
           DateTime? lastActivityAt,
           int? sortOrder}) =>
@@ -2344,6 +2418,10 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
         agentId: agentId ?? this.agentId,
         skillId: skillId.present ? skillId.value : this.skillId,
         sessionId: sessionId.present ? sessionId.value : this.sessionId,
+        labelsJson: labelsJson.present ? labelsJson.value : this.labelsJson,
+        status: status.present ? status.value : this.status,
+        taskBriefText:
+            taskBriefText.present ? taskBriefText.value : this.taskBriefText,
         createdAt: createdAt ?? this.createdAt,
         lastActivityAt: lastActivityAt ?? this.lastActivityAt,
         sortOrder: sortOrder ?? this.sortOrder,
@@ -2357,6 +2435,12 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
       agentId: data.agentId.present ? data.agentId.value : this.agentId,
       skillId: data.skillId.present ? data.skillId.value : this.skillId,
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
+      labelsJson:
+          data.labelsJson.present ? data.labelsJson.value : this.labelsJson,
+      status: data.status.present ? data.status.value : this.status,
+      taskBriefText: data.taskBriefText.present
+          ? data.taskBriefText.value
+          : this.taskBriefText,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       lastActivityAt: data.lastActivityAt.present
           ? data.lastActivityAt.value
@@ -2374,6 +2458,9 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
           ..write('agentId: $agentId, ')
           ..write('skillId: $skillId, ')
           ..write('sessionId: $sessionId, ')
+          ..write('labelsJson: $labelsJson, ')
+          ..write('status: $status, ')
+          ..write('taskBriefText: $taskBriefText, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastActivityAt: $lastActivityAt, ')
           ..write('sortOrder: $sortOrder')
@@ -2382,8 +2469,19 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
   }
 
   @override
-  int get hashCode => Object.hash(chatId, projectRoot, title, agentId, skillId,
-      sessionId, createdAt, lastActivityAt, sortOrder);
+  int get hashCode => Object.hash(
+      chatId,
+      projectRoot,
+      title,
+      agentId,
+      skillId,
+      sessionId,
+      labelsJson,
+      status,
+      taskBriefText,
+      createdAt,
+      lastActivityAt,
+      sortOrder);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2394,6 +2492,9 @@ class ChatRow extends DataClass implements Insertable<ChatRow> {
           other.agentId == this.agentId &&
           other.skillId == this.skillId &&
           other.sessionId == this.sessionId &&
+          other.labelsJson == this.labelsJson &&
+          other.status == this.status &&
+          other.taskBriefText == this.taskBriefText &&
           other.createdAt == this.createdAt &&
           other.lastActivityAt == this.lastActivityAt &&
           other.sortOrder == this.sortOrder);
@@ -2406,6 +2507,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
   final Value<String> agentId;
   final Value<String?> skillId;
   final Value<String?> sessionId;
+  final Value<String?> labelsJson;
+  final Value<String?> status;
+  final Value<String?> taskBriefText;
   final Value<DateTime> createdAt;
   final Value<DateTime> lastActivityAt;
   final Value<int> sortOrder;
@@ -2417,6 +2521,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
     this.agentId = const Value.absent(),
     this.skillId = const Value.absent(),
     this.sessionId = const Value.absent(),
+    this.labelsJson = const Value.absent(),
+    this.status = const Value.absent(),
+    this.taskBriefText = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.lastActivityAt = const Value.absent(),
     this.sortOrder = const Value.absent(),
@@ -2429,6 +2536,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
     required String agentId,
     this.skillId = const Value.absent(),
     this.sessionId = const Value.absent(),
+    this.labelsJson = const Value.absent(),
+    this.status = const Value.absent(),
+    this.taskBriefText = const Value.absent(),
     required DateTime createdAt,
     required DateTime lastActivityAt,
     this.sortOrder = const Value.absent(),
@@ -2446,6 +2556,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
     Expression<String>? agentId,
     Expression<String>? skillId,
     Expression<String>? sessionId,
+    Expression<String>? labelsJson,
+    Expression<String>? status,
+    Expression<String>? taskBriefText,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? lastActivityAt,
     Expression<int>? sortOrder,
@@ -2458,6 +2571,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
       if (agentId != null) 'agent_id': agentId,
       if (skillId != null) 'skill_id': skillId,
       if (sessionId != null) 'session_id': sessionId,
+      if (labelsJson != null) 'labels_json': labelsJson,
+      if (status != null) 'status': status,
+      if (taskBriefText != null) 'task_brief_text': taskBriefText,
       if (createdAt != null) 'created_at': createdAt,
       if (lastActivityAt != null) 'last_activity_at': lastActivityAt,
       if (sortOrder != null) 'sort_order': sortOrder,
@@ -2472,6 +2588,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
       Value<String>? agentId,
       Value<String?>? skillId,
       Value<String?>? sessionId,
+      Value<String?>? labelsJson,
+      Value<String?>? status,
+      Value<String?>? taskBriefText,
       Value<DateTime>? createdAt,
       Value<DateTime>? lastActivityAt,
       Value<int>? sortOrder,
@@ -2483,6 +2602,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
       agentId: agentId ?? this.agentId,
       skillId: skillId ?? this.skillId,
       sessionId: sessionId ?? this.sessionId,
+      labelsJson: labelsJson ?? this.labelsJson,
+      status: status ?? this.status,
+      taskBriefText: taskBriefText ?? this.taskBriefText,
       createdAt: createdAt ?? this.createdAt,
       lastActivityAt: lastActivityAt ?? this.lastActivityAt,
       sortOrder: sortOrder ?? this.sortOrder,
@@ -2511,6 +2633,15 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
     if (sessionId.present) {
       map['session_id'] = Variable<String>(sessionId.value);
     }
+    if (labelsJson.present) {
+      map['labels_json'] = Variable<String>(labelsJson.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (taskBriefText.present) {
+      map['task_brief_text'] = Variable<String>(taskBriefText.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -2535,6 +2666,9 @@ class ChatsCompanion extends UpdateCompanion<ChatRow> {
           ..write('agentId: $agentId, ')
           ..write('skillId: $skillId, ')
           ..write('sessionId: $sessionId, ')
+          ..write('labelsJson: $labelsJson, ')
+          ..write('status: $status, ')
+          ..write('taskBriefText: $taskBriefText, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastActivityAt: $lastActivityAt, ')
           ..write('sortOrder: $sortOrder, ')
@@ -4436,6 +4570,9 @@ typedef $$ChatsTableCreateCompanionBuilder = ChatsCompanion Function({
   required String agentId,
   Value<String?> skillId,
   Value<String?> sessionId,
+  Value<String?> labelsJson,
+  Value<String?> status,
+  Value<String?> taskBriefText,
   required DateTime createdAt,
   required DateTime lastActivityAt,
   Value<int> sortOrder,
@@ -4448,6 +4585,9 @@ typedef $$ChatsTableUpdateCompanionBuilder = ChatsCompanion Function({
   Value<String> agentId,
   Value<String?> skillId,
   Value<String?> sessionId,
+  Value<String?> labelsJson,
+  Value<String?> status,
+  Value<String?> taskBriefText,
   Value<DateTime> createdAt,
   Value<DateTime> lastActivityAt,
   Value<int> sortOrder,
@@ -4497,6 +4637,15 @@ class $$ChatsTableFilterComposer
 
   ColumnFilters<String> get sessionId => $composableBuilder(
       column: $table.sessionId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get labelsJson => $composableBuilder(
+      column: $table.labelsJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get taskBriefText => $composableBuilder(
+      column: $table.taskBriefText, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnFilters(column));
@@ -4553,6 +4702,16 @@ class $$ChatsTableOrderingComposer
   ColumnOrderings<String> get sessionId => $composableBuilder(
       column: $table.sessionId, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get labelsJson => $composableBuilder(
+      column: $table.labelsJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get taskBriefText => $composableBuilder(
+      column: $table.taskBriefText,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnOrderings(column));
 
@@ -4607,6 +4766,15 @@ class $$ChatsTableAnnotationComposer
 
   GeneratedColumn<String> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
+
+  GeneratedColumn<String> get labelsJson => $composableBuilder(
+      column: $table.labelsJson, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<String> get taskBriefText => $composableBuilder(
+      column: $table.taskBriefText, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -4667,6 +4835,9 @@ class $$ChatsTableTableManager extends RootTableManager<
             Value<String> agentId = const Value.absent(),
             Value<String?> skillId = const Value.absent(),
             Value<String?> sessionId = const Value.absent(),
+            Value<String?> labelsJson = const Value.absent(),
+            Value<String?> status = const Value.absent(),
+            Value<String?> taskBriefText = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
             Value<DateTime> lastActivityAt = const Value.absent(),
             Value<int> sortOrder = const Value.absent(),
@@ -4679,6 +4850,9 @@ class $$ChatsTableTableManager extends RootTableManager<
             agentId: agentId,
             skillId: skillId,
             sessionId: sessionId,
+            labelsJson: labelsJson,
+            status: status,
+            taskBriefText: taskBriefText,
             createdAt: createdAt,
             lastActivityAt: lastActivityAt,
             sortOrder: sortOrder,
@@ -4691,6 +4865,9 @@ class $$ChatsTableTableManager extends RootTableManager<
             required String agentId,
             Value<String?> skillId = const Value.absent(),
             Value<String?> sessionId = const Value.absent(),
+            Value<String?> labelsJson = const Value.absent(),
+            Value<String?> status = const Value.absent(),
+            Value<String?> taskBriefText = const Value.absent(),
             required DateTime createdAt,
             required DateTime lastActivityAt,
             Value<int> sortOrder = const Value.absent(),
@@ -4703,6 +4880,9 @@ class $$ChatsTableTableManager extends RootTableManager<
             agentId: agentId,
             skillId: skillId,
             sessionId: sessionId,
+            labelsJson: labelsJson,
+            status: status,
+            taskBriefText: taskBriefText,
             createdAt: createdAt,
             lastActivityAt: lastActivityAt,
             sortOrder: sortOrder,

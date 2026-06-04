@@ -9,11 +9,11 @@ void main() {
     final repo = WorkspaceSidebarSettingsRepository(prefs);
     const settings = WorkspaceSidebarSettings(
       viewMode: WorkspaceSidebarViewMode.grid,
-      groupingMode: WorkspaceSidebarGroupingMode.agent,
+      groupingMode: WorkspaceSidebarGroupingMode.label,
       density: WorkspaceSidebarDensity.comfortable,
       pinnedProjectRoots: {'/app'},
       pinnedChatIds: {'chat-1'},
-      collapsedGroupIds: {'agent:codex'},
+      collapsedGroupIds: {'label:Bug%20fixes'},
       customChatGroups: {'chat-1': 'Bug fixes'},
     );
 

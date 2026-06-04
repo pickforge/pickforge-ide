@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
@@ -52,11 +53,22 @@ ProjectRow _project(String root) => ProjectRow(
       sortOrder: 0,
     );
 
-ChatRow _chat(String id, String project, String title) => ChatRow(
+ChatRow _chat(
+  String id,
+  String project,
+  String title, {
+  ChatTaskStatus status = ChatTaskStatus.active,
+  List<String> labels = const [],
+  String? brief,
+}) =>
+    ChatRow(
       chatId: id,
       projectRoot: project,
       title: title,
       agentId: 'codex',
+      status: status.name,
+      labelsJson: encodeChatLabels(labels),
+      taskBriefText: brief,
       createdAt: DateTime(2026, 4, 25),
       lastActivityAt: DateTime(2026, 4, 25),
       sortOrder: 0,
@@ -302,6 +314,44 @@ void main() {
 
     expect(find.text('a'), findsOneWidget);
     expect(find.text('Chat 1'), findsOneWidget);
+  });
+
+  testWidgets('renders chat task metadata in the sidebar', (tester) async {
+    final pRepo = _MockProjectsRepo();
+    when(() => pRepo.list()).thenAnswer((_) async => [_project('/a')]);
+    when(() => pRepo.touch(any<String>())).thenAnswer((_) async {});
+
+    final cRepo = _MockChatsRepo();
+    when(() => cRepo.list('/a')).thenAnswer(
+      (_) async => [
+        _chat(
+          'c1',
+          '/a',
+          'Chat 1',
+          status: ChatTaskStatus.waiting,
+          labels: ['release'],
+          brief: 'Sidebar polish',
+        ),
+      ],
+    );
+    final settings = _MockSettings();
+    when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
+    when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
+
+    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final chatsCubit = ChatsCubit(cRepo, settings);
+    await projectsCubit.load();
+    await chatsCubit.syncProjects(['/a']);
+    chatsCubit.toggleExpanded('/a');
+
+    await tester.pumpWidget(
+      _harness(projectsCubit: projectsCubit, chatsCubit: chatsCubit),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Waiting'), findsOneWidget);
+    expect(find.text('Sidebar polish'), findsOneWidget);
+    expect(find.text('release'), findsOneWidget);
   });
 
   testWidgets('chat tap waits for project switch before selecting chat',

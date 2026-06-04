@@ -1,4 +1,5 @@
 import 'package:injectable/injectable.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/dao/chats_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 
@@ -34,6 +35,15 @@ class ChatsRepository {
 
   Future<void> setSkillId(String chatId, String skillId) =>
       _dao.setSkillId(chatId, skillId);
+
+  Future<void> setTaskStatus(String chatId, ChatTaskStatus status) =>
+      _dao.setTaskStatus(chatId, status);
+
+  Future<void> setTaskBrief(String chatId, String? taskBrief) =>
+      _dao.setTaskBrief(chatId, taskBrief);
+
+  Future<void> setLabels(String chatId, List<String> labels) =>
+      _dao.setLabels(chatId, labels);
 
   Future<void> touch(String chatId) => _dao.touch(chatId, DateTime.now());
 

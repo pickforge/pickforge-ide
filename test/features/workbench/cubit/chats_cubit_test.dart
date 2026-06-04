@@ -1,6 +1,7 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
@@ -11,11 +12,18 @@ class _MockRepo extends Mock implements ChatsRepository {}
 
 class _MockSettings extends Mock implements ProjectSettingsRepository {}
 
-ChatRow _row(String id, String project, String title) => ChatRow(
+ChatRow _row(
+  String id,
+  String project,
+  String title, {
+  ChatTaskStatus status = ChatTaskStatus.active,
+}) =>
+    ChatRow(
       chatId: id,
       projectRoot: project,
       title: title,
       agentId: 'codex',
+      status: status.name,
       createdAt: DateTime(2026, 4, 25),
       lastActivityAt: DateTime(2026, 4, 25),
       sortOrder: 0,
@@ -181,6 +189,38 @@ void main() {
         (s) => s.expanded.contains('/p'),
         'expanded',
         true,
+      ),
+    ],
+  );
+
+  blocTest<ChatsCubit, ChatsState>(
+    'setTaskStatus refreshes the chat project',
+    setUp: () {
+      var rows = [_row('c1', '/p', 'Chat 1')];
+      when(() => repo.list('/p')).thenAnswer((_) async => rows);
+      when(() => repo.setTaskStatus('c1', ChatTaskStatus.done))
+          .thenAnswer((_) async {
+        rows = [
+          _row(
+            'c1',
+            '/p',
+            'Chat 1',
+            status: ChatTaskStatus.done,
+          ),
+        ];
+      });
+    },
+    build: () => ChatsCubit(repo, settings),
+    act: (c) async {
+      await c.syncProjects(['/p']);
+      await c.setTaskStatus('c1', ChatTaskStatus.done);
+    },
+    skip: 2,
+    expect: () => [
+      isA<ChatsReady>().having(
+        (s) => s.chatsByProject['/p']!.single.taskStatus,
+        'status',
+        ChatTaskStatus.done,
       ),
     ],
   );

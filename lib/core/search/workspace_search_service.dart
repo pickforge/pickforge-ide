@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/search/search_matcher.dart';
 
@@ -50,6 +51,9 @@ class WorkspaceSearchService {
         chat.title,
         chat.agentId,
         chat.skillId,
+        chat.taskStatus.displayName,
+        chat.taskBrief,
+        ...chat.taskLabels,
         projects[chat.projectRoot],
         chat.projectRoot,
       ])) {
@@ -137,7 +141,13 @@ class WorkspaceSearchService {
 
   String _chatSubtitle(ChatRow chat, Map<String, String> projects) {
     final project = projects[chat.projectRoot] ?? p.basename(chat.projectRoot);
-    return '$project - ${chat.agentId}';
+    final labels = chat.taskLabels;
+    final metadata = [
+      chat.agentId,
+      chat.taskStatus.displayName,
+      if (labels.isNotEmpty) labels.join(', '),
+    ];
+    return '$project - ${metadata.join(' - ')}';
   }
 
   String? _tryReadTail(File file) {

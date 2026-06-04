@@ -1,5 +1,6 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/dao/chats_dao.dart';
 import 'package:pickforge/core/drift/dao/projects_dao.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
@@ -61,5 +62,24 @@ void main() {
     final row = (await dao.byProject('/tmp/app')).single;
     expect(row.title, 'renamed');
     expect(row.sessionId, 'sess-123');
+  });
+
+  test('setTaskStatus + setTaskBrief + setLabels updates task metadata',
+      () async {
+    final id = await dao.insert(
+      projectRoot: '/tmp/app',
+      title: 'Task',
+      agentId: 'codex',
+      now: DateTime(2026, 4, 25),
+    );
+
+    await dao.setTaskStatus(id, ChatTaskStatus.waiting);
+    await dao.setTaskBrief(id, '  Polish the sidebar  ');
+    await dao.setLabels(id, ['ui', 'ui', 'release']);
+
+    final row = (await dao.byProject('/tmp/app')).single;
+    expect(row.taskStatus, ChatTaskStatus.waiting);
+    expect(row.taskBrief, 'Polish the sidebar');
+    expect(row.taskLabels, ['ui', 'release']);
   });
 }

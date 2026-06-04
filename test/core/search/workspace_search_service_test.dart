@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/search/workspace_search_service.dart';
 
@@ -28,6 +29,9 @@ void main() {
       agentId: 'codex',
       now: DateTime(2026, 6, 4, 11),
     );
+    await db.chatsDao.setTaskStatus(chatId, ChatTaskStatus.waiting);
+    await db.chatsDao.setTaskBrief(chatId, 'Release readiness checks');
+    await db.chatsDao.setLabels(chatId, ['release', 'ui']);
     await db.pickHistoryDao.insertPick(
       projectRoot: projectRoot,
       widgetClass: 'ElevatedButton',
@@ -77,5 +81,12 @@ void main() {
         .single;
     expect(transcript.chatId, chatId);
     expect(transcript.subtitle, contains('disabled state'));
+
+    final labelResults = await search.search('release readiness');
+    final chat = labelResults
+        .where((r) => r.kind == WorkspaceSearchResultKind.chat)
+        .single;
+    expect(chat.subtitle, contains('Waiting'));
+    expect(chat.subtitle, contains('release'));
   });
 }

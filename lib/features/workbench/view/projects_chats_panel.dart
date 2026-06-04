@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/gitignore_helper.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
@@ -210,6 +211,14 @@ class _SidebarToolbar extends StatelessWidget {
                         DropdownMenuItem(
                           value: WorkspaceSidebarGroupingMode.skill,
                           child: Text(l10n.sidebarGroupSkill),
+                        ),
+                        DropdownMenuItem(
+                          value: WorkspaceSidebarGroupingMode.status,
+                          child: Text(l10n.sidebarGroupStatus),
+                        ),
+                        DropdownMenuItem(
+                          value: WorkspaceSidebarGroupingMode.label,
+                          child: Text(l10n.sidebarGroupLabel),
                         ),
                         DropdownMenuItem(
                           value: WorkspaceSidebarGroupingMode.custom,
@@ -672,6 +681,24 @@ class _SidebarEntryTile extends StatelessWidget {
           onSetCustomGroup: (group) => context
               .read<WorkspaceSidebarCubit>()
               .setChatCustomGroup(entry.chat!.chatId, group),
+          onSetStatus: (status) => unawaited(
+            context.read<ChatsCubit>().setTaskStatus(
+                  entry.chat!.chatId,
+                  status,
+                ),
+          ),
+          onSetTaskBrief: (brief) => unawaited(
+            context.read<ChatsCubit>().setTaskBrief(
+                  entry.chat!.chatId,
+                  brief,
+                ),
+          ),
+          onSetLabels: (labels) => unawaited(
+            context.read<ChatsCubit>().setLabels(
+                  entry.chat!.chatId,
+                  labels,
+                ),
+          ),
           onTap: () => onSelectChat(entry.chat!),
         ),
     };
@@ -734,6 +761,9 @@ class _ChatTile extends StatelessWidget {
     required this.customGroup,
     required this.onPin,
     required this.onSetCustomGroup,
+    required this.onSetStatus,
+    required this.onSetTaskBrief,
+    required this.onSetLabels,
     required this.onTap,
   });
 
@@ -743,12 +773,20 @@ class _ChatTile extends StatelessWidget {
   final String? customGroup;
   final VoidCallback onPin;
   final void Function(String? group) onSetCustomGroup;
+  final void Function(ChatTaskStatus status) onSetStatus;
+  final void Function(String? brief) onSetTaskBrief;
+  final void Function(List<String> labels) onSetLabels;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final l10n = AppLocalizations.of(context);
+    final status = chat.taskStatus;
+    final showStatus = status != ChatTaskStatus.active;
+    final labels = chat.taskLabels;
+    final brief = chat.taskBrief;
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 1, 6, 1),
       child: Material(
@@ -765,20 +803,50 @@ class _ChatTile extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    chat.title,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: isActive ? cs.primary : cs.onSurface,
-                      fontWeight:
-                          isActive ? FontWeight.w500 : FontWeight.normal,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              chat.title,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: isActive ? cs.primary : cs.onSurface,
+                                fontWeight: isActive
+                                    ? FontWeight.w500
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                          if (showStatus) ...[
+                            const SizedBox(width: 6),
+                            _TaskStatusChip(status: status),
+                          ],
+                        ],
+                      ),
+                      if (brief != null) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          brief,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                      if (labels.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        _ChatLabelsRow(labels: labels),
+                      ],
+                    ],
                   ),
                 ),
                 IconButton(
-                  tooltip: isPinned
-                      ? AppLocalizations.of(context).sidebarUnpin
-                      : AppLocalizations.of(context).sidebarPin,
+                  tooltip: isPinned ? l10n.sidebarUnpin : l10n.sidebarPin,
                   icon: Icon(
                     isPinned ? Icons.push_pin : Icons.push_pin_outlined,
                     size: 14,
@@ -791,6 +859,28 @@ class _ChatTile extends StatelessWidget {
                   icon: const Icon(Icons.more_horiz, size: 14),
                   onSelected: (action) async {
                     switch (action) {
+                      case _ChatAction.setBrief:
+                        final brief = await _askTaskBrief(
+                          context,
+                          initialValue: chat.taskBrief,
+                        );
+                        if (brief != null) onSetTaskBrief(brief);
+                      case _ChatAction.setLabels:
+                        final labels = await _askLabels(
+                          context,
+                          initialValue: chat.taskLabels,
+                        );
+                        if (labels != null) onSetLabels(labels);
+                      case _ChatAction.setActive:
+                        onSetStatus(ChatTaskStatus.active);
+                      case _ChatAction.setWaiting:
+                        onSetStatus(ChatTaskStatus.waiting);
+                      case _ChatAction.setDone:
+                        onSetStatus(ChatTaskStatus.done);
+                      case _ChatAction.archive:
+                        onSetStatus(ChatTaskStatus.archived);
+                      case _ChatAction.restore:
+                        onSetStatus(ChatTaskStatus.active);
                       case _ChatAction.setGroup:
                         final group = await _askCustomGroup(
                           context,
@@ -803,15 +893,47 @@ class _ChatTile extends StatelessWidget {
                   },
                   itemBuilder: (context) => [
                     PopupMenuItem(
+                      value: _ChatAction.setBrief,
+                      child: Text(l10n.sidebarSetTaskBrief),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatAction.setLabels,
+                      child: Text(l10n.sidebarSetLabels),
+                    ),
+                    const PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: _ChatAction.setActive,
+                      child: Text(l10n.sidebarSetStatusActive),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatAction.setWaiting,
+                      child: Text(l10n.sidebarSetStatusWaiting),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatAction.setDone,
+                      child: Text(l10n.sidebarSetStatusDone),
+                    ),
+                    PopupMenuItem(
+                      value: status == ChatTaskStatus.archived
+                          ? _ChatAction.restore
+                          : _ChatAction.archive,
+                      child: Text(
+                        status == ChatTaskStatus.archived
+                            ? l10n.sidebarRestoreChat
+                            : l10n.sidebarArchiveChat,
+                      ),
+                    ),
+                    const PopupMenuDivider(),
+                    PopupMenuItem(
                       value: _ChatAction.setGroup,
                       child: Text(
-                        AppLocalizations.of(context).sidebarSetCustomGroup,
+                        l10n.sidebarSetCustomGroup,
                       ),
                     ),
                     PopupMenuItem(
                       value: _ChatAction.clearGroup,
                       child: Text(
-                        AppLocalizations.of(context).sidebarClearCustomGroup,
+                        l10n.sidebarClearCustomGroup,
                       ),
                     ),
                   ],
@@ -869,6 +991,11 @@ class _EntryGridCard extends StatelessWidget {
       WorkspaceSidebarEntryKind.chat => _SidebarCard(
           icon: Icons.chat_bubble_outline,
           title: entry.chat!.title,
+          subtitle: entry.chat!.taskBrief,
+          status: entry.chat!.taskStatus == ChatTaskStatus.active
+              ? null
+              : entry.chat!.taskStatus,
+          labels: entry.chat!.taskLabels,
           selected: entry.chat!.chatId == activeChatId,
           onTap: () => onSelectChat(entry.chat!),
         ),
@@ -882,10 +1009,16 @@ class _SidebarCard extends StatelessWidget {
     required this.title,
     required this.selected,
     required this.onTap,
+    this.subtitle,
+    this.status,
+    this.labels = const [],
   });
 
   final IconData icon;
   final String title;
+  final String? subtitle;
+  final ChatTaskStatus? status;
+  final List<String> labels;
   final bool selected;
   final VoidCallback onTap;
 
@@ -893,6 +1026,7 @@ class _SidebarCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final hasMetadata = status != null || subtitle != null || labels.isNotEmpty;
     return Material(
       color: selected
           ? cs.primary.withValues(alpha: 0.12)
@@ -905,9 +1039,18 @@ class _SidebarCard extends StatelessWidget {
           padding: const EdgeInsets.all(8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: hasMetadata
+                ? MainAxisAlignment.start
+                : MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 18, color: selected ? cs.primary : null),
+              Row(
+                children: [
+                  Icon(icon, size: 18, color: selected ? cs.primary : null),
+                  const Spacer(),
+                  if (status case final status?)
+                    Flexible(child: _TaskStatusChip(status: status)),
+                ],
+              ),
               const SizedBox(height: 6),
               Text(
                 title,
@@ -918,6 +1061,21 @@ class _SidebarCard extends StatelessWidget {
                   fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                 ),
               ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 3),
+                Text(
+                  subtitle!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              if (labels.isNotEmpty) ...[
+                const SizedBox(height: 5),
+                _ChatLabelsRow(labels: labels, maxLabels: 2),
+              ],
             ],
           ),
         ),
@@ -926,7 +1084,173 @@ class _SidebarCard extends StatelessWidget {
   }
 }
 
-enum _ChatAction { setGroup, clearGroup }
+class _TaskStatusChip extends StatelessWidget {
+  const _TaskStatusChip({required this.status});
+
+  final ChatTaskStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final (background, foreground) = switch (status) {
+      ChatTaskStatus.active => (cs.primaryContainer, cs.onPrimaryContainer),
+      ChatTaskStatus.waiting => (cs.tertiaryContainer, cs.onTertiaryContainer),
+      ChatTaskStatus.done => (cs.secondaryContainer, cs.onSecondaryContainer),
+      ChatTaskStatus.archived => (cs.surfaceContainerHighest, cs.outline),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        _statusLabel(AppLocalizations.of(context), status),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: foreground,
+              fontWeight: FontWeight.w600,
+            ),
+      ),
+    );
+  }
+}
+
+class _ChatLabelsRow extends StatelessWidget {
+  const _ChatLabelsRow({
+    required this.labels,
+    this.maxLabels = 3,
+  });
+
+  final List<String> labels;
+  final int maxLabels;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final visible = labels.take(maxLabels).toList(growable: false);
+    final remaining = labels.length - visible.length;
+    return Wrap(
+      spacing: 4,
+      runSpacing: 4,
+      children: [
+        for (final label in visible)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              border: Border.all(color: cs.outlineVariant),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        if (remaining > 0)
+          Text(
+            '+$remaining',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+          ),
+      ],
+    );
+  }
+}
+
+enum _ChatAction {
+  setBrief,
+  setLabels,
+  setActive,
+  setWaiting,
+  setDone,
+  archive,
+  restore,
+  setGroup,
+  clearGroup,
+}
+
+String _statusLabel(AppLocalizations l10n, ChatTaskStatus status) {
+  return switch (status) {
+    ChatTaskStatus.active => l10n.sidebarStatusActive,
+    ChatTaskStatus.waiting => l10n.sidebarStatusWaiting,
+    ChatTaskStatus.done => l10n.sidebarStatusDone,
+    ChatTaskStatus.archived => l10n.sidebarStatusArchived,
+  };
+}
+
+Future<String?> _askTaskBrief(
+  BuildContext context, {
+  required String? initialValue,
+}) {
+  final controller = TextEditingController(text: initialValue ?? '');
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(AppLocalizations.of(ctx).sidebarTaskBriefTitle),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        minLines: 1,
+        maxLines: 3,
+        decoration: InputDecoration(
+          labelText: AppLocalizations.of(ctx).sidebarTaskBriefLabel,
+        ),
+        onSubmitted: (_) => Navigator.of(ctx).pop(controller.text),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(controller.text),
+          child: Text(AppLocalizations.of(ctx).sidebarSave),
+        ),
+      ],
+    ),
+  ).whenComplete(controller.dispose);
+}
+
+Future<List<String>?> _askLabels(
+  BuildContext context, {
+  required List<String> initialValue,
+}) {
+  final controller = TextEditingController(text: initialValue.join(', '));
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(AppLocalizations.of(ctx).sidebarLabelsTitle),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: AppLocalizations.of(ctx).sidebarLabelsLabel,
+        ),
+        onSubmitted: (_) => Navigator.of(ctx).pop(controller.text),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(controller.text),
+          child: Text(AppLocalizations.of(ctx).sidebarSave),
+        ),
+      ],
+    ),
+  )
+      .then(
+        (value) => value == null ? null : parseChatLabelInput(value),
+      )
+      .whenComplete(controller.dispose);
+}
 
 Future<String?> _askCustomGroup(
   BuildContext context, {

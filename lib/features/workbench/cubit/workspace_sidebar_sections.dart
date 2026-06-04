@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
 
@@ -79,6 +80,14 @@ List<WorkspaceSidebarSection> buildWorkspaceSidebarSections({
         chatsByProject: chatsByProject,
         projects: projects,
       ),
+    WorkspaceSidebarGroupingMode.status => _byStatus(
+        projects,
+        chatsByProject,
+      ),
+    WorkspaceSidebarGroupingMode.label => _byLabel(
+        projects,
+        chatsByProject,
+      ),
     WorkspaceSidebarGroupingMode.custom => _byCustom(
         projects,
         chatsByProject,
@@ -98,12 +107,23 @@ List<WorkspaceSidebarSection> buildWorkspaceSidebarSections({
               WorkspaceSidebarEntryKind.project => entry.project!.projectRoot
                   .toLowerCase()
                   .contains(normalizedQuery),
-              WorkspaceSidebarEntryKind.chat =>
-                entry.chat!.agentId.toLowerCase().contains(normalizedQuery) ||
-                    (entry.chat!.skillId
-                            ?.toLowerCase()
-                            .contains(normalizedQuery) ??
-                        false),
+              WorkspaceSidebarEntryKind.chat => entry.chat!.agentId
+                      .toLowerCase()
+                      .contains(normalizedQuery) ||
+                  (entry.chat!.skillId
+                          ?.toLowerCase()
+                          .contains(normalizedQuery) ??
+                      false) ||
+                  entry.chat!.taskStatus.displayName
+                      .toLowerCase()
+                      .contains(normalizedQuery) ||
+                  (entry.chat!.taskBrief
+                          ?.toLowerCase()
+                          .contains(normalizedQuery) ??
+                      false) ||
+                  entry.chat!.taskLabels.any(
+                    (label) => label.toLowerCase().contains(normalizedQuery),
+                  ),
             };
       }).toList(),
     ),
@@ -213,6 +233,70 @@ List<WorkspaceSidebarSection> _byChatField({
       ),
     WorkspaceSidebarSection(
       id: '$idPrefix:projects',
+      title: 'Projects',
+      entries: [
+        for (final project in projects) WorkspaceSidebarEntry.project(project),
+      ],
+    ),
+  ];
+}
+
+List<WorkspaceSidebarSection> _byStatus(
+  List<ProjectRow> projects,
+  Map<String, List<ChatRow>> chatsByProject,
+) {
+  final grouped = <ChatTaskStatus, List<ChatRow>>{
+    for (final status in ChatTaskStatus.values) status: <ChatRow>[],
+  };
+  for (final chat in _allChats(chatsByProject)) {
+    grouped[chat.taskStatus]!.add(chat);
+  }
+  return [
+    for (final status in ChatTaskStatus.values)
+      WorkspaceSidebarSection(
+        id: 'status:${status.name}',
+        title: status.displayName,
+        entries: [
+          for (final chat in grouped[status]!) WorkspaceSidebarEntry.chat(chat),
+        ],
+      ),
+    WorkspaceSidebarSection(
+      id: 'status:projects',
+      title: 'Projects',
+      entries: [
+        for (final project in projects) WorkspaceSidebarEntry.project(project),
+      ],
+    ),
+  ];
+}
+
+List<WorkspaceSidebarSection> _byLabel(
+  List<ProjectRow> projects,
+  Map<String, List<ChatRow>> chatsByProject,
+) {
+  final grouped = <String, List<ChatRow>>{};
+  for (final chat in _allChats(chatsByProject)) {
+    final labels = chat.taskLabels;
+    if (labels.isEmpty) {
+      grouped.putIfAbsent('No label', () => []).add(chat);
+    } else {
+      for (final label in labels) {
+        grouped.putIfAbsent(label, () => []).add(chat);
+      }
+    }
+  }
+  final titles = grouped.keys.toList()..sort();
+  return [
+    for (final title in titles)
+      WorkspaceSidebarSection(
+        id: 'label:${Uri.encodeComponent(title)}',
+        title: title,
+        entries: [
+          for (final chat in grouped[title]!) WorkspaceSidebarEntry.chat(chat),
+        ],
+      ),
+    WorkspaceSidebarSection(
+      id: 'label:projects',
       title: 'Projects',
       entries: [
         for (final project in projects) WorkspaceSidebarEntry.project(project),

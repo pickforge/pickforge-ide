@@ -12,6 +12,8 @@ enum WorkspaceSidebarGroupingMode {
   pinned,
   agent,
   skill,
+  status,
+  label,
   custom,
 }
 

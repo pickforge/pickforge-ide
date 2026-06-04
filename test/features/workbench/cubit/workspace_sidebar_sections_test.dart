@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
 import 'package:pickforge/features/workbench/cubit/workspace_sidebar_sections.dart';
@@ -59,6 +60,66 @@ void main() {
     expect(sections.first.entries.single.chat?.chatId, 'c1');
   });
 
+  test('groups chats by task status', () {
+    final sections = buildWorkspaceSidebarSections(
+      projects: [_project('/app')],
+      chatsByProject: {
+        '/app': [
+          _chat('c1', '/app', 'Fix button'),
+          _chat(
+            'c2',
+            '/app',
+            'Release pass',
+            status: ChatTaskStatus.waiting,
+          ),
+        ],
+      },
+      settings: const WorkspaceSidebarSettings(
+        groupingMode: WorkspaceSidebarGroupingMode.status,
+      ),
+    );
+
+    final waiting =
+        sections.singleWhere((section) => section.title == 'Waiting');
+    expect(waiting.entries.single.chat?.chatId, 'c2');
+  });
+
+  test('groups chats by labels and searches labels and briefs', () {
+    final sections = buildWorkspaceSidebarSections(
+      projects: [_project('/app')],
+      chatsByProject: {
+        '/app': [
+          _chat(
+            'c1',
+            '/app',
+            'Fix button',
+            labels: ['release', 'ui'],
+            brief: 'Toolbar polish',
+          ),
+          _chat('c2', '/app', 'Backend cleanup'),
+        ],
+      },
+      settings: const WorkspaceSidebarSettings(
+        groupingMode: WorkspaceSidebarGroupingMode.label,
+      ),
+      query: 'release',
+    );
+
+    expect(sections.map((section) => section.title), contains('release'));
+    expect(
+      sections
+          .expand((section) => section.entries)
+          .map((entry) => entry.chat?.chatId),
+      contains('c1'),
+    );
+    expect(
+      sections
+          .expand((section) => section.entries)
+          .map((entry) => entry.chat?.chatId),
+      isNot(contains('c2')),
+    );
+  });
+
   test('builds large sidebar sections within interactive budget', () {
     final projects = List.generate(
       100,
@@ -93,6 +154,12 @@ void main() {
       ),
       const WorkspaceSidebarSettings(
         groupingMode: WorkspaceSidebarGroupingMode.skill,
+      ),
+      const WorkspaceSidebarSettings(
+        groupingMode: WorkspaceSidebarGroupingMode.status,
+      ),
+      const WorkspaceSidebarSettings(
+        groupingMode: WorkspaceSidebarGroupingMode.label,
       ),
       const WorkspaceSidebarSettings(
         groupingMode: WorkspaceSidebarGroupingMode.custom,
@@ -137,6 +204,9 @@ ChatRow _chat(
   String title, {
   String agentId = 'codex',
   String? skillId,
+  ChatTaskStatus status = ChatTaskStatus.active,
+  List<String> labels = const [],
+  String? brief,
   DateTime? lastActivityAt,
 }) =>
     ChatRow(
@@ -145,6 +215,9 @@ ChatRow _chat(
       title: title,
       agentId: agentId,
       skillId: skillId,
+      status: status.name,
+      labelsJson: encodeChatLabels(labels),
+      taskBriefText: brief,
       createdAt: DateTime(2026),
       lastActivityAt: lastActivityAt ?? DateTime(2026),
       sortOrder: 0,

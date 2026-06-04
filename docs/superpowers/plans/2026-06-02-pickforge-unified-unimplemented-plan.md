@@ -697,16 +697,21 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T7 — Session/task organization
 
-**Status:** Deferred
-**Why:** Once users have many chats, they need stronger organization than project + chat.
+**Status:** Completed
+**Why:** Chats now carry persisted task metadata and the left pane can group, search, archive, and restore chat tasks without leaving the existing workspace navigator.
 
 **Tasks**
 
-- [ ] Add chat labels/tags.
-- [ ] Add status: active, waiting, done, archived.
-- [ ] Add "task brief" metadata per chat.
-- [ ] Add archive and restore.
-- [ ] Surface grouped tasks in the left pane list/grid views.
+- [x] Add chat labels/tags.
+- [x] Add status: active, waiting, done, archived.
+- [x] Add "task brief" metadata per chat.
+- [x] Add archive and restore.
+- [x] Surface grouped tasks in the left pane list/grid views.
+
+**Latest evidence**
+
+- 2026-06-04: Added schema v7 chat task metadata (`labels_json`, `status`, `task_brief_text`), DAO/repository/Cubit update APIs, active/waiting/done/archived status handling, labels, task brief dialogs, archive/restore actions, and Status/Label grouping modes in list and grid sidebar views. Workspace search now matches chat task status, labels, and brief.
+- 2026-06-04: Verified with `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm flutter gen-l10n`, `fvm dart run drift_dev schema dump lib/core/drift/pickforge_database.dart test/core/drift/schema/pickforge_database_v7.json`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, and focused Drift/search/sidebar/Cubit/widget tests for chat task metadata and v6 -> v7 migration.
 
 ### P6.T8 — First-run onboarding and demo mode
 

@@ -41,7 +41,7 @@ class PickforgeDatabase extends _$PickforgeDatabase {
   PickforgeDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -134,6 +134,27 @@ class PickforgeDatabase extends _$PickforgeDatabase {
               projectSettings,
               projectSettings.emulatorIdleShutdown,
             );
+          }
+          if (from < 7) {
+            final chatTables = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type = 'table' "
+              "AND name = 'chats'",
+            ).get();
+            if (chatTables.isNotEmpty) {
+              final columns = await customSelect(
+                'PRAGMA table_info(chats);',
+              ).get();
+              final names = columns.map((r) => r.read<String>('name')).toSet();
+              if (!names.contains('labels_json')) {
+                await m.addColumn(chats, chats.labelsJson);
+              }
+              if (!names.contains('status')) {
+                await m.addColumn(chats, chats.status);
+              }
+              if (!names.contains('task_brief_text')) {
+                await m.addColumn(chats, chats.taskBriefText);
+              }
+            }
           }
         },
         beforeOpen: (details) async {

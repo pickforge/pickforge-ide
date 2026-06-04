@@ -10,6 +10,9 @@ class Chats extends Table {
   TextColumn get agentId => text()();
   TextColumn get skillId => text().nullable()();
   TextColumn get sessionId => text().nullable()();
+  TextColumn get labelsJson => text().nullable()();
+  TextColumn get status => text().nullable()();
+  TextColumn get taskBriefText => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get lastActivityAt => dateTime()();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();

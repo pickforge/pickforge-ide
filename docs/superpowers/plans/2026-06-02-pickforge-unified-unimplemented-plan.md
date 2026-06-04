@@ -889,9 +889,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Status:** Partial
 **Tasks**
 
-- [ ] Keep format/analyze/test/codegen drift checks green.
+- [x] Keep format/analyze/test/codegen drift checks green.
 - [ ] Add platform-specific smoke checks where cheap.
-- [ ] Address GitHub Actions Node 20 deprecation before it becomes blocking.
+- [x] Address GitHub Actions Node 20 deprecation before it becomes blocking.
+
+**Latest evidence**
+
+- 2026-06-04: Updated CI/release workflows to Node 24 action majors, added read-only workflow permissions, job timeouts, compact test output, and kept codegen drift checks in CI. Verified workflow YAML parsing with PyYAML, `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ### P9.T3 — Release checklist execution
 

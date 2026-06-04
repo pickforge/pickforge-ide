@@ -510,6 +510,7 @@ class _DiagnosticFailureRow extends StatelessWidget {
             width: 136,
             child: Text(
               label,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelMedium,
             ),
           ),
@@ -542,6 +543,7 @@ class _DiagnosticRow extends StatelessWidget {
             width: 136,
             child: Text(
               label,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelMedium,
             ),
           ),

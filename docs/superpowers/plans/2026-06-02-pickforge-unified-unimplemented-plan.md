@@ -968,17 +968,17 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T6 — Accessibility and keyboard-first audit
 
-**Status:** Partial / accessibility slices
+**Status:** Completed
 **Why:** Dev tools live on keyboard speed. Accessibility also catches poor focus, contrast, and semantics early.
 
 **Tasks**
 
 - [x] Define keyboard shortcuts for major actions: command palette, new chat, add project, focus explorer, focus terminal, forge, run/hot reload.
 - [x] Add visible focus states across panes.
-- [ ] Verify tab order in sidebar, file explorer, inspector, settings, and dialogs.
-- [ ] Support text scaling without overflow.
+- [x] Verify tab order in sidebar, file explorer, inspector, settings, and dialogs.
+- [x] Support text scaling without overflow.
 - [x] Add high-contrast checks for dark theme.
-- [ ] Add semantics labels for icon-only controls.
+- [x] Add semantics labels for icon-only controls.
 
 **Validation**
 
@@ -987,6 +987,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - Manual keyboard-only dogfood pass.
 
 **Latest evidence**
+
+- 2026-06-04: Added `test/features/workbench/view/workbench_accessibility_test.dart`, covering tooltip/semantics exposure for icon-only controls, tab traversal through sidebar dialog, file explorer, inspector, and settings, and 1.6x text-scaling smoke coverage across primary workbench panels. Hardened settings diagnostics labels against high text-scale overflow. Verified with `fvm flutter test test/features/workbench/view/workbench_accessibility_test.dart --reporter=compact`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`.
 
 - 2026-06-04: Added direct workbench shortcuts for Add Project (`Ctrl/Cmd+O`), New Chat (`Ctrl/Cmd+N`), Hot Reload (`Ctrl/Cmd+R`), and F5 as Run App when idle or Hot Reload while running. Added a focus-scoped Forge shortcut (`Ctrl/Cmd+Enter`) inside `ForgePanel`. Verified with `test/features/workbench/view/workbench_command_palette_scope_test.dart` and `test/features/forge/view/forge_panel_test.dart`.
 - 2026-06-04: Added explicit tooltip and semantics labels for Forge context-tray icon-only removal controls: remove note, remove attachment, and dismiss warning. Verified with `test/features/forge/view/forge_panel_test.dart`.

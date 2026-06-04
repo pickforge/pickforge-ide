@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/vm_service/inspector_extensions.dart';
 import 'package:vm_service/vm_service.dart';
 
@@ -64,6 +66,61 @@ void main() {
         args: {'enabled': 'true'},
       ),
     ).called(1);
+  });
+
+  test('listenToExtensionEvents subscribes to the extension stream', () async {
+    when(() => vm.streamListen(EventStreams.kExtension))
+        .thenAnswer((_) async => Success());
+
+    await ext.listenToExtensionEvents();
+
+    verify(() => vm.streamListen(EventStreams.kExtension)).called(1);
+  });
+
+  test('listenToExtensionEvents ignores already subscribed error', () async {
+    when(() => vm.streamListen(EventStreams.kExtension)).thenThrow(
+      RPCError('streamListen', RPCErrorKind.kStreamAlreadySubscribed.code),
+    );
+
+    await ext.listenToExtensionEvents();
+
+    verify(() => vm.streamListen(EventStreams.kExtension)).called(1);
+  });
+
+  test('watchRebuiltWidgets decodes Flutter rebuild events', () async {
+    final controller = StreamController<Event>();
+    addTearDown(controller.close);
+    when(() => vm.onExtensionEvent).thenAnswer((_) => controller.stream);
+
+    final expectStats = expectLater(
+      ext.watchRebuiltWidgets(),
+      emits(
+        predicate<RebuildStats>(
+          (stats) =>
+              stats.widgets.single.className == 'Counter' &&
+              stats.widgets.single.count == 4,
+        ),
+      ),
+    );
+
+    controller.add(
+      Event(
+        extensionKind: 'Flutter.RebuiltWidgets',
+        extensionData: ExtensionData.parse({
+          'events': [9, 4],
+          'locations': {
+            '/app/lib/main.dart': {
+              'ids': [9],
+              'lines': [21],
+              'columns': [6],
+              'names': ['Counter'],
+            },
+          },
+        }),
+      ),
+    );
+
+    await expectStats;
   });
 
   test('getSelectedWidget requests an object group and returns response json',

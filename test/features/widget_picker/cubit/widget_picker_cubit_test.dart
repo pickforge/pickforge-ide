@@ -41,7 +41,11 @@ void main() {
         verify(repo.enableSelectMode).called(1);
       },
       expect: () => [
-        const WidgetPickerState(selectModeEnabled: true, selection: null),
+        const WidgetPickerState(
+          selectModeEnabled: true,
+          selection: null,
+          latestRebuildStats: null,
+        ),
       ],
     );
 
@@ -71,8 +75,16 @@ void main() {
         await cubit.pauseListening();
       },
       expect: () => [
-        const WidgetPickerState(selectModeEnabled: true, selection: null),
-        const WidgetPickerState(selectModeEnabled: false, selection: null),
+        const WidgetPickerState(
+          selectModeEnabled: true,
+          selection: null,
+          latestRebuildStats: null,
+        ),
+        const WidgetPickerState(
+          selectModeEnabled: false,
+          selection: null,
+          latestRebuildStats: null,
+        ),
       ],
       verify: (_) => verify(repo.disableSelectMode).called(1),
     );
@@ -152,9 +164,14 @@ void main() {
       },
       act: (cubit) => cubit.startListening(),
       expect: () => [
-        const WidgetPickerState(selectModeEnabled: true, selection: null),
         const WidgetPickerState(
           selectModeEnabled: true,
+          selection: null,
+          latestRebuildStats: null,
+        ),
+        const WidgetPickerState(
+          selectModeEnabled: true,
+          latestRebuildStats: null,
           selection: SelectedWidget(
             node: WidgetNode(
               id: 'w1',
@@ -170,6 +187,69 @@ void main() {
           ),
         ),
       ],
+    );
+
+    blocTest<WidgetPickerCubit, WidgetPickerState>(
+      'emits latest rebuild stats when the inspector reports rebuilt widgets',
+      build: () {
+        when(() => stream.poll()).thenAnswer((_) => const Stream.empty());
+        when(repo.listenToExtensionEvents).thenAnswer((_) async {});
+        when(() => repo.trackRebuildDirtyWidgets(enabled: true))
+            .thenAnswer((_) async {});
+        when(() => repo.trackRebuildDirtyWidgets(enabled: false))
+            .thenAnswer((_) async {});
+        when(repo.watchRebuiltWidgets).thenAnswer(
+          (_) => Stream.value(
+            const RebuildStats(
+              frameNumber: 7,
+              startTime: 100,
+              widgets: [
+                RebuiltWidget(
+                  className: 'Counter',
+                  count: 2,
+                  location: CreationLocation(
+                    file: '/app/lib/main.dart',
+                    line: 20,
+                    column: 8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        return WidgetPickerCubit(repo, stream);
+      },
+      act: (cubit) => cubit.startListening(),
+      expect: () => [
+        const WidgetPickerState(
+          selectModeEnabled: true,
+          selection: null,
+          latestRebuildStats: null,
+        ),
+        const WidgetPickerState(
+          selectModeEnabled: true,
+          selection: null,
+          latestRebuildStats: RebuildStats(
+            frameNumber: 7,
+            startTime: 100,
+            widgets: [
+              RebuiltWidget(
+                className: 'Counter',
+                count: 2,
+                location: CreationLocation(
+                  file: '/app/lib/main.dart',
+                  line: 20,
+                  column: 8,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+      verify: (_) {
+        verify(repo.listenToExtensionEvents).called(1);
+        verify(() => repo.trackRebuildDirtyWidgets(enabled: true)).called(1);
+      },
     );
   });
 }

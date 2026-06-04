@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:pickforge/core/inspector/models.dart';
+import 'package:pickforge/core/inspector/rebuild_stats_decoder.dart';
 import 'package:vm_service/vm_service.dart';
 
 class InspectorExtensions {
@@ -9,6 +11,7 @@ class InspectorExtensions {
 
   final VmService _vm;
   final String isolateId;
+  final _rebuildStatsDecoder = RebuildStatsDecoder();
 
   Future<void> setSelectMode({required bool enabled}) async {
     await _vm.callServiceExtension(
@@ -25,6 +28,19 @@ class InspectorExtensions {
       args: {'enabled': enabled.toString()},
     );
   }
+
+  Future<void> listenToExtensionEvents() async {
+    try {
+      await _vm.streamListen(EventStreams.kExtension);
+    } on RPCError catch (e) {
+      if (e.code != RPCErrorKind.kStreamAlreadySubscribed.code) rethrow;
+    }
+  }
+
+  Stream<RebuildStats> watchRebuiltWidgets() => _vm.onExtensionEvent
+      .map(_rebuildStatsDecoder.decode)
+      .where((stats) => stats != null)
+      .cast<RebuildStats>();
 
   Future<Map<String, dynamic>?> getSelectedWidget() async {
     final response = await _vm.callServiceExtension(

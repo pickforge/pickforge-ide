@@ -8,10 +8,12 @@ abstract class WidgetPickerState with _$WidgetPickerState {
   const factory WidgetPickerState({
     required SelectedWidget? selection,
     required bool selectModeEnabled,
+    required RebuildStats? latestRebuildStats,
   }) = _WidgetPickerState;
 
   factory WidgetPickerState.initial() => const WidgetPickerState(
         selection: null,
         selectModeEnabled: false,
+        latestRebuildStats: null,
       );
 }

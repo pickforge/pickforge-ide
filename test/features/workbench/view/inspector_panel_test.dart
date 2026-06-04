@@ -105,6 +105,21 @@ void main() {
     const pickerState = WidgetPickerState(
       selection: _sampleWidget,
       selectModeEnabled: true,
+      latestRebuildStats: RebuildStats(
+        frameNumber: 3,
+        startTime: 1000,
+        widgets: [
+          RebuiltWidget(
+            className: 'CounterText',
+            location: CreationLocation(
+              file: '/tmp/test/lib/main.dart',
+              line: 1,
+              column: 1,
+            ),
+            count: 4,
+          ),
+        ],
+      ),
     );
     when(() => cubit.state).thenReturn(pickerState);
     when(() => cubit.stream)
@@ -151,6 +166,9 @@ void main() {
     );
 
     expect(find.text('Text'), findsOneWidget);
+    expect(find.text('CounterText'), findsOneWidget);
+    expect(find.text('Recent rebuilds'), findsOneWidget);
+    expect(find.text('x4'), findsOneWidget);
     expect(find.text('Forge it'), findsOneWidget);
     final button = tester.widget<FilledButton>(find.byType(FilledButton));
     expect(button.onPressed, isNotNull);
@@ -162,6 +180,7 @@ void main() {
     const pickerState = WidgetPickerState(
       selection: _sampleWidget,
       selectModeEnabled: true,
+      latestRebuildStats: null,
     );
     when(() => cubit.state).thenReturn(pickerState);
     when(() => cubit.stream)
@@ -272,6 +291,7 @@ void main() {
       const WidgetPickerState(
         selection: _sampleWidget,
         selectModeEnabled: true,
+        latestRebuildStats: null,
       ),
     );
     await tester.pump();

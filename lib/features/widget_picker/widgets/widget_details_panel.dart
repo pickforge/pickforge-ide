@@ -4,9 +4,14 @@ import 'package:pickforge/features/widget_picker/widgets/screenshot_preview.dart
 import 'package:pickforge/shared/theme/pickforge_typography.dart';
 
 class WidgetDetailsPanel extends StatelessWidget {
-  const WidgetDetailsPanel({required this.selected, super.key});
+  const WidgetDetailsPanel({
+    required this.selected,
+    this.rebuildStats,
+    super.key,
+  });
 
   final SelectedWidget selected;
+  final RebuildStats? rebuildStats;
 
   @override
   Widget build(BuildContext context) {
@@ -33,9 +38,101 @@ class WidgetDetailsPanel extends StatelessWidget {
           _AncestorChain(ancestors: selected.ancestorClasses, mono: mono),
           const SizedBox(height: 16),
           ScreenshotPreview(path: selected.screenshotPath),
+          if (rebuildStats case final stats? when stats.widgets.isNotEmpty)
+            _RebuildStatsPanel(stats: stats, mono: mono),
           if (selected.sourceSnippet != null)
             _SourceSnippet(snippet: selected.sourceSnippet!, mono: mono),
         ],
+      ),
+    );
+  }
+}
+
+class _RebuildStatsPanel extends StatelessWidget {
+  const _RebuildStatsPanel({required this.stats, this.mono});
+
+  final RebuildStats stats;
+  final String? mono;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final widgets = stats.widgets.take(8).toList(growable: false);
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
+          border: Border.all(color: colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Recent rebuilds', style: textTheme.titleSmall),
+            const SizedBox(height: 8),
+            for (final widget in widgets)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _RebuildCountBadge(count: widget.count),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(widget.className, style: textTheme.bodyMedium),
+                          Text(
+                            _locationText(widget.location),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontFamily: mono, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _locationText(CreationLocation location) {
+    return '${location.file}:${location.line}:${location.column}';
+  }
+}
+
+class _RebuildCountBadge extends StatelessWidget {
+  const _RebuildCountBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        'x$count',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: colorScheme.onPrimaryContainer,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

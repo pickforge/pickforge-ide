@@ -16,6 +16,7 @@ T _$identity<T>(T value) => value;
 mixin _$WidgetPickerState {
   SelectedWidget? get selection;
   bool get selectModeEnabled;
+  RebuildStats? get latestRebuildStats;
 
   /// Create a copy of WidgetPickerState
   /// with the given fields replaced by the non-null parameter values.
@@ -33,15 +34,18 @@ mixin _$WidgetPickerState {
             (identical(other.selection, selection) ||
                 other.selection == selection) &&
             (identical(other.selectModeEnabled, selectModeEnabled) ||
-                other.selectModeEnabled == selectModeEnabled));
+                other.selectModeEnabled == selectModeEnabled) &&
+            (identical(other.latestRebuildStats, latestRebuildStats) ||
+                other.latestRebuildStats == latestRebuildStats));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, selection, selectModeEnabled);
+  int get hashCode => Object.hash(
+      runtimeType, selection, selectModeEnabled, latestRebuildStats);
 
   @override
   String toString() {
-    return 'WidgetPickerState(selection: $selection, selectModeEnabled: $selectModeEnabled)';
+    return 'WidgetPickerState(selection: $selection, selectModeEnabled: $selectModeEnabled, latestRebuildStats: $latestRebuildStats)';
   }
 }
 
@@ -51,9 +55,13 @@ abstract mixin class $WidgetPickerStateCopyWith<$Res> {
           WidgetPickerState value, $Res Function(WidgetPickerState) _then) =
       _$WidgetPickerStateCopyWithImpl;
   @useResult
-  $Res call({SelectedWidget? selection, bool selectModeEnabled});
+  $Res call(
+      {SelectedWidget? selection,
+      bool selectModeEnabled,
+      RebuildStats? latestRebuildStats});
 
   $SelectedWidgetCopyWith<$Res>? get selection;
+  $RebuildStatsCopyWith<$Res>? get latestRebuildStats;
 }
 
 /// @nodoc
@@ -71,6 +79,7 @@ class _$WidgetPickerStateCopyWithImpl<$Res>
   $Res call({
     Object? selection = freezed,
     Object? selectModeEnabled = null,
+    Object? latestRebuildStats = freezed,
   }) {
     return _then(_self.copyWith(
       selection: freezed == selection
@@ -81,6 +90,10 @@ class _$WidgetPickerStateCopyWithImpl<$Res>
           ? _self.selectModeEnabled
           : selectModeEnabled // ignore: cast_nullable_to_non_nullable
               as bool,
+      latestRebuildStats: freezed == latestRebuildStats
+          ? _self.latestRebuildStats
+          : latestRebuildStats // ignore: cast_nullable_to_non_nullable
+              as RebuildStats?,
     ));
   }
 
@@ -95,6 +108,20 @@ class _$WidgetPickerStateCopyWithImpl<$Res>
 
     return $SelectedWidgetCopyWith<$Res>(_self.selection!, (value) {
       return _then(_self.copyWith(selection: value));
+    });
+  }
+
+  /// Create a copy of WidgetPickerState
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $RebuildStatsCopyWith<$Res>? get latestRebuildStats {
+    if (_self.latestRebuildStats == null) {
+      return null;
+    }
+
+    return $RebuildStatsCopyWith<$Res>(_self.latestRebuildStats!, (value) {
+      return _then(_self.copyWith(latestRebuildStats: value));
     });
   }
 }
@@ -192,14 +219,16 @@ extension WidgetPickerStatePatterns on WidgetPickerState {
 
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>(
-    TResult Function(SelectedWidget? selection, bool selectModeEnabled)?
+    TResult Function(SelectedWidget? selection, bool selectModeEnabled,
+            RebuildStats? latestRebuildStats)?
         $default, {
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case _WidgetPickerState() when $default != null:
-        return $default(_that.selection, _that.selectModeEnabled);
+        return $default(
+            _that.selection, _that.selectModeEnabled, _that.latestRebuildStats);
       case _:
         return orElse();
     }
@@ -220,13 +249,15 @@ extension WidgetPickerStatePatterns on WidgetPickerState {
 
   @optionalTypeArgs
   TResult when<TResult extends Object?>(
-    TResult Function(SelectedWidget? selection, bool selectModeEnabled)
+    TResult Function(SelectedWidget? selection, bool selectModeEnabled,
+            RebuildStats? latestRebuildStats)
         $default,
   ) {
     final _that = this;
     switch (_that) {
       case _WidgetPickerState():
-        return $default(_that.selection, _that.selectModeEnabled);
+        return $default(
+            _that.selection, _that.selectModeEnabled, _that.latestRebuildStats);
       case _:
         throw StateError('Unexpected subclass');
     }
@@ -246,13 +277,15 @@ extension WidgetPickerStatePatterns on WidgetPickerState {
 
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>(
-    TResult? Function(SelectedWidget? selection, bool selectModeEnabled)?
+    TResult? Function(SelectedWidget? selection, bool selectModeEnabled,
+            RebuildStats? latestRebuildStats)?
         $default,
   ) {
     final _that = this;
     switch (_that) {
       case _WidgetPickerState() when $default != null:
-        return $default(_that.selection, _that.selectModeEnabled);
+        return $default(
+            _that.selection, _that.selectModeEnabled, _that.latestRebuildStats);
       case _:
         return null;
     }
@@ -263,12 +296,16 @@ extension WidgetPickerStatePatterns on WidgetPickerState {
 
 class _WidgetPickerState implements WidgetPickerState {
   const _WidgetPickerState(
-      {required this.selection, required this.selectModeEnabled});
+      {required this.selection,
+      required this.selectModeEnabled,
+      required this.latestRebuildStats});
 
   @override
   final SelectedWidget? selection;
   @override
   final bool selectModeEnabled;
+  @override
+  final RebuildStats? latestRebuildStats;
 
   /// Create a copy of WidgetPickerState
   /// with the given fields replaced by the non-null parameter values.
@@ -286,15 +323,18 @@ class _WidgetPickerState implements WidgetPickerState {
             (identical(other.selection, selection) ||
                 other.selection == selection) &&
             (identical(other.selectModeEnabled, selectModeEnabled) ||
-                other.selectModeEnabled == selectModeEnabled));
+                other.selectModeEnabled == selectModeEnabled) &&
+            (identical(other.latestRebuildStats, latestRebuildStats) ||
+                other.latestRebuildStats == latestRebuildStats));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, selection, selectModeEnabled);
+  int get hashCode => Object.hash(
+      runtimeType, selection, selectModeEnabled, latestRebuildStats);
 
   @override
   String toString() {
-    return 'WidgetPickerState(selection: $selection, selectModeEnabled: $selectModeEnabled)';
+    return 'WidgetPickerState(selection: $selection, selectModeEnabled: $selectModeEnabled, latestRebuildStats: $latestRebuildStats)';
   }
 }
 
@@ -306,10 +346,15 @@ abstract mixin class _$WidgetPickerStateCopyWith<$Res>
       __$WidgetPickerStateCopyWithImpl;
   @override
   @useResult
-  $Res call({SelectedWidget? selection, bool selectModeEnabled});
+  $Res call(
+      {SelectedWidget? selection,
+      bool selectModeEnabled,
+      RebuildStats? latestRebuildStats});
 
   @override
   $SelectedWidgetCopyWith<$Res>? get selection;
+  @override
+  $RebuildStatsCopyWith<$Res>? get latestRebuildStats;
 }
 
 /// @nodoc
@@ -327,6 +372,7 @@ class __$WidgetPickerStateCopyWithImpl<$Res>
   $Res call({
     Object? selection = freezed,
     Object? selectModeEnabled = null,
+    Object? latestRebuildStats = freezed,
   }) {
     return _then(_WidgetPickerState(
       selection: freezed == selection
@@ -337,6 +383,10 @@ class __$WidgetPickerStateCopyWithImpl<$Res>
           ? _self.selectModeEnabled
           : selectModeEnabled // ignore: cast_nullable_to_non_nullable
               as bool,
+      latestRebuildStats: freezed == latestRebuildStats
+          ? _self.latestRebuildStats
+          : latestRebuildStats // ignore: cast_nullable_to_non_nullable
+              as RebuildStats?,
     ));
   }
 
@@ -351,6 +401,20 @@ class __$WidgetPickerStateCopyWithImpl<$Res>
 
     return $SelectedWidgetCopyWith<$Res>(_self.selection!, (value) {
       return _then(_self.copyWith(selection: value));
+    });
+  }
+
+  /// Create a copy of WidgetPickerState
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @pragma('vm:prefer-inline')
+  $RebuildStatsCopyWith<$Res>? get latestRebuildStats {
+    if (_self.latestRebuildStats == null) {
+      return null;
+    }
+
+    return $RebuildStatsCopyWith<$Res>(_self.latestRebuildStats!, (value) {
+      return _then(_self.copyWith(latestRebuildStats: value));
     });
   }
 }

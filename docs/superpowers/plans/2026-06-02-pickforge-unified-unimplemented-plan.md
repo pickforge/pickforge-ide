@@ -517,13 +517,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P5.T3 — Widget-tree diffing and rebuild tracking
 
-**Status:** Partial / tracking and snapshots wired
-**Why:** Added VM service wrappers for `ext.flutter.inspector.trackRebuildDirtyWidgets` and repository-level widget tree snapshots via `getRootWidgetSummaryTree`. Rendering changed widgets after hot reload remains future UI work.
+**Status:** Completed
+**Why:** Added VM service wrappers for `ext.flutter.inspector.trackRebuildDirtyWidgets`, repository-level widget tree snapshots via `getRootWidgetSummaryTree`, decoding for `Flutter.RebuiltWidgets` extension events, picker-state propagation of the latest rebuild stats, and an inspector panel section that renders recent rebuilt widgets with counts and source locations.
 **Tasks**
 
 - [x] Use `ext.flutter.inspector.trackRebuildDirtyWidgets`.
 - [x] Capture before/after widget tree snapshots.
-- [ ] Render changed widgets after hot reload.
+- [x] Render changed widgets after hot reload.
 
 ### P5.T4 — Screenshot before/after loop
 

@@ -15,8 +15,10 @@ class WidgetPickerCubit extends Cubit<WidgetPickerState> {
   // Cancellation is requested without awaiting so select mode can stop first.
   // ignore: cancel_subscriptions
   StreamSubscription<SelectedWidget?>? _subscription;
+  StreamSubscription<RebuildStats>? _rebuildSubscription;
   Future<void>? _startTask;
   bool _wantsListening = false;
+  bool _rebuildTrackingEnabled = false;
 
   Future<void> startListening() async {
     _wantsListening = true;
@@ -49,6 +51,7 @@ class WidgetPickerCubit extends Cubit<WidgetPickerState> {
         if (!isClosed) emit(state.copyWith(selection: selected));
       },
     );
+    await _startRebuildTracking();
   }
 
   Future<void> pauseListening({bool emitState = true}) async {
@@ -57,11 +60,41 @@ class WidgetPickerCubit extends Cubit<WidgetPickerState> {
     _subscription = null;
     final cancelFuture = subscription?.cancel();
     if (cancelFuture != null) unawaited(cancelFuture);
+    await _stopRebuildTracking();
     if (state.selectModeEnabled) {
       await _disableSelectMode();
       if (emitState && !isClosed) {
         emit(state.copyWith(selectModeEnabled: false));
       }
+    }
+  }
+
+  Future<void> _startRebuildTracking() async {
+    if (_rebuildSubscription != null) return;
+    try {
+      await _repo.listenToExtensionEvents();
+      _rebuildSubscription = _repo.watchRebuiltWidgets().listen((stats) {
+        if (!isClosed) emit(state.copyWith(latestRebuildStats: stats));
+      });
+      await _repo.trackRebuildDirtyWidgets(enabled: true);
+      _rebuildTrackingEnabled = true;
+    } on Object {
+      await _rebuildSubscription?.cancel();
+      _rebuildSubscription = null;
+    }
+  }
+
+  Future<void> _stopRebuildTracking() async {
+    final subscription = _rebuildSubscription;
+    _rebuildSubscription = null;
+    final cancelFuture = subscription?.cancel();
+    if (cancelFuture != null) unawaited(cancelFuture);
+    if (!_rebuildTrackingEnabled) return;
+    _rebuildTrackingEnabled = false;
+    try {
+      await _repo.trackRebuildDirtyWidgets(enabled: false);
+    } on Object {
+      return;
     }
   }
 

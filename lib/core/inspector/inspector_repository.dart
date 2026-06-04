@@ -20,6 +20,9 @@ class InspectorRepository {
   Future<void> trackRebuildDirtyWidgets({required bool enabled}) =>
       _ext.setTrackRebuildDirtyWidgets(enabled: enabled);
 
+  Future<void> listenToExtensionEvents() => _ext.listenToExtensionEvents();
+  Stream<RebuildStats> watchRebuiltWidgets() => _ext.watchRebuiltWidgets();
+
   Future<WidgetNode?> captureWidgetTreeSnapshot() async {
     final rawTree = await _ext.getRootWidgetSummaryTree();
     return rawTree == null ? null : WidgetTreeDecoder.decode(rawTree);

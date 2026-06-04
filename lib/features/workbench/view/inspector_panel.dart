@@ -89,7 +89,10 @@ class _Inner extends StatelessWidget {
                 Expanded(
                   child: selection == null
                       ? const Center(child: Text('No widget selected'))
-                      : WidgetDetailsPanel(selected: selection),
+                      : WidgetDetailsPanel(
+                          selected: selection,
+                          rebuildStats: state.latestRebuildStats,
+                        ),
                 ),
                 if (projectRoot != null) ...[
                   const Divider(height: 1),

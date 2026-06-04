@@ -36,12 +36,13 @@ native-host dogfood before release signoff.
 ## Linux
 
 - Ship an AppImage for broad desktop testing.
-- Add a `.deb` package for Debian/Ubuntu users when install paths and desktop
-  integration are stable.
+- Build a `.deb` package for Debian/Ubuntu users with
+  `scripts/package_linux_deb.sh`.
 - Treat Flathub as the preferred long-term store channel; Snap is secondary and
   only worth adding if users ask for it.
 - Package metadata must include desktop entry, icon, executable name, license,
   and update/check URL behavior.
+- Package signing is still required before public distribution.
 
 ## Signing And Secrets
 

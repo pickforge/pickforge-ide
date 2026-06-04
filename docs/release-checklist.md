@@ -11,6 +11,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `fvm flutter test --reporter=compact`
 - [ ] `scripts/desktop_build_smoke.sh` on each desktop host.
 - [ ] `scripts/linux_smoke.sh` on Linux.
+- [ ] `scripts/package_linux_deb.sh --skip-build` after the Linux release build.
 - [ ] `scripts/emulator_e2e.sh Pixel_10` on a prepared Android runner.
 - [ ] `scripts/dogfood_preflight.sh` before manual dogfood.
 - [ ] Review CI artifacts for golden failures, desktop build failures, Linux smoke output, and emulator E2E logs/screenshots.

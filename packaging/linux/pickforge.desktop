@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pickforge
+Comment=Widget-level AI context for Flutter
+Exec=pickforge
+Icon=pickforge
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true

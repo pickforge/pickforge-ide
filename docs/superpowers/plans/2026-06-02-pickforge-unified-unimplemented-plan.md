@@ -878,11 +878,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [ ] macOS signing and notarization.
 - [ ] Windows signing and SmartScreen reputation.
-- [ ] Linux packaging/signing.
+- [x] Linux `.deb` packaging.
+- [ ] Linux package signing.
 
 **Latest evidence**
 
 - 2026-06-04: Added distribution release gates for signing secrets, protected tags, diagnostics build metadata, Linux cold-install dogfood, macOS Gatekeeper validation, Windows SmartScreen review, and update metadata readiness in `docs/architecture/distribution.md`, and linked that review from `docs/release-checklist.md`.
+- 2026-06-04: Added `scripts/package_linux_deb.sh`, Linux desktop metadata, a scalable app icon, and a tagged-release Linux `.deb` packaging step so release builds can produce `build/dist/linux/pickforge_<version>_amd64.deb` plus a SHA-256 checksum using base `ar`/`tar`/`gzip` tooling. Verified with release workflow YAML parsing, `bash -n scripts/package_linux_deb.sh`, debug-bundle package smoke, release `scripts/package_linux_deb.sh`, archive/control/data member inspection, `sha256sum -c`, `scripts/dogfood_preflight.sh`, `scripts/emulator_e2e.sh Pixel_10` against attached `emulator-5554`, and `scripts/linux_smoke.sh`. Signing remains unchecked.
 
 ### P7.T5 — Pickforge Pro backend
 

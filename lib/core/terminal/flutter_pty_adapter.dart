@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter_pty/flutter_pty.dart';
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/process/user_shell_environment.dart';
+import 'package:pickforge/core/terminal/pty_environment.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
 
 class _FlutterPtyProcess implements PtyProcess {
@@ -48,11 +49,13 @@ class FlutterPtyAdapter implements PtyProcessFactory {
     int rows = 30,
     int cols = 100,
   }) async {
+    final resolvedEnvironment =
+        environment ?? await UserShellEnvironment.instance.load();
     final pty = Pty.start(
       executable,
       arguments: arguments,
       workingDirectory: workingDirectory,
-      environment: environment ?? await UserShellEnvironment.instance.load(),
+      environment: normalizePtyEnvironment(resolvedEnvironment),
       rows: rows,
       columns: cols,
     );

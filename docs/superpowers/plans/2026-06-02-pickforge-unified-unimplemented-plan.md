@@ -920,7 +920,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T4 — Local app testing strategy
 
-**Status:** Partial / Linux smoke CI artifacts added
+**Status:** Partial / deterministic test fixtures added
 **Why:** The app needs repeatable validation beyond unit/widget tests. The real runtime is Flutter desktop plus Android emulator/VM Service, so browser-only testing is insufficient.
 
 **Testing layers**
@@ -943,7 +943,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [x] Add a Linux desktop smoke test target.
 - [x] Decide whether to use `integration_test` on Linux desktop, screenshot/golden tests, or an external virtual-display launcher.
-- [ ] Add deterministic fake services for VM Service, emulator state, file explorer, and chats.
+- [x] Add deterministic fake services for VM Service, emulator state, file explorer, and chats.
 - [x] Add CI artifacts for screenshots on failure.
 - [x] Keep real AVD tests opt-in unless CI reliability is proven.
 
@@ -951,6 +951,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Added `scripts/linux_smoke.sh`, which launches Pickforge on the Linux desktop target inside Xvfb, starts directly on `/demo`, probes the Flutter VM Service inspector root tree for `DemoWorkspaceView`, and saves smoke artifacts under `build/smoke/linux/`. Verified locally with `scripts/linux_smoke.sh`; the VM-service assertion passed, while the root Xvfb screenshot artifact was captured but blank in this headless environment.
 - 2026-06-04: Wired `scripts/linux_smoke.sh` into the Ubuntu CI leg and uploads `build/smoke/linux/**` so smoke failures retain `flutter-run.log`, `inspector-root.json`, and `first-frame.png`.
+- 2026-06-04: Reused the existing VM Service replay fake in `lib/core/vm_service/testing/fake_vm_service.dart` and extracted deterministic workspace test fixtures for emulator/device settings, file explorer, projects, chats, and selected-widget state into `test/support/deterministic_workspace_fixtures.dart`. Updated visual regression tests to consume the shared fixtures and verified `fvm flutter test test/goldens/visual_regression_test.dart --reporter=compact`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`.
 
 ### P9.T5 — Manual dogfood matrix
 

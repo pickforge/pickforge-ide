@@ -8,6 +8,7 @@ import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
@@ -26,12 +27,14 @@ class SettingsView extends StatefulWidget {
     this.deviceRunSettingsCubit,
     this.diagnosticsService,
     this.updateSettingsRepository,
+    this.telemetrySettingsRepository,
   });
 
   final SettingsCubit? settingsCubit;
   final DeviceRunSettingsCubit? deviceRunSettingsCubit;
   final DiagnosticsService? diagnosticsService;
   final UpdateCheckSettingsRepository? updateSettingsRepository;
+  final TelemetrySettingsRepository? telemetrySettingsRepository;
 
   @override
   State<SettingsView> createState() => _SettingsViewState();
@@ -158,6 +161,13 @@ class _SettingsViewState extends State<SettingsView> {
                       const SizedBox(height: PickforgeSpacing.lg),
                       _UpdateSettingsSection(repository: updateSettings),
                     ],
+                    if (_telemetrySettingsRepositoryOrNull()
+                        case final telemetrySettings?) ...[
+                      const SizedBox(height: PickforgeSpacing.lg),
+                      _TelemetrySettingsSection(
+                        repository: telemetrySettings,
+                      ),
+                    ],
                     if (_diagnosticsServiceOrNull()
                         case final diagnostics?) ...[
                       const SizedBox(height: PickforgeSpacing.lg),
@@ -191,6 +201,17 @@ class _SettingsViewState extends State<SettingsView> {
     }
     try {
       return getIt<UpdateCheckSettingsRepository>();
+    } on Object {
+      return null;
+    }
+  }
+
+  TelemetrySettingsRepository? _telemetrySettingsRepositoryOrNull() {
+    if (widget.telemetrySettingsRepository != null) {
+      return widget.telemetrySettingsRepository;
+    }
+    try {
+      return getIt<TelemetrySettingsRepository>();
     } on Object {
       return null;
     }
@@ -579,6 +600,59 @@ class _UpdateSettingsSectionState extends State<_UpdateSettingsSection> {
               SettingsToggleRow(
                 switchKey: const Key('update-check-enabled'),
                 label: l10n.settingsUpdateCheckEnabled,
+                value: settings.enabled,
+                onChanged: (value) => _setEnabled(value).ignore(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _TelemetrySettingsSection extends StatefulWidget {
+  const _TelemetrySettingsSection({required this.repository});
+
+  final TelemetrySettingsRepository repository;
+
+  @override
+  State<_TelemetrySettingsSection> createState() =>
+      _TelemetrySettingsSectionState();
+}
+
+class _TelemetrySettingsSectionState extends State<_TelemetrySettingsSection> {
+  late Future<TelemetrySettings> _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings = widget.repository.load();
+  }
+
+  Future<void> _setEnabled(bool enabled) async {
+    await widget.repository.setEnabled(enabled: enabled);
+    if (!mounted) return;
+    setState(() {
+      _settings = widget.repository.load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return FutureBuilder<TelemetrySettings>(
+      future: _settings,
+      builder: (context, snapshot) {
+        final settings = snapshot.data;
+        return SettingsSection(
+          title: l10n.settingsPrivacy,
+          children: [
+            if (settings == null)
+              const LinearProgressIndicator(minHeight: 2)
+            else
+              SettingsToggleRow(
+                switchKey: const Key('telemetry-enabled'),
+                label: l10n.settingsTelemetryEnabled,
                 value: settings.enabled,
                 onChanged: (value) => _setEnabled(value).ignore(),
               ),

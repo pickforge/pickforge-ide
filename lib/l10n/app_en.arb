@@ -278,6 +278,8 @@
   "settingsValidatorCommandSave": "Save",
   "settingsUpdates": "Updates",
   "settingsUpdateCheckEnabled": "Check for updates",
+  "settingsPrivacy": "Privacy",
+  "settingsTelemetryEnabled": "Share anonymous diagnostics",
   "settingsFontFamily": "Font family",
   "settingsFontSize": "Font size",
   "settingsTheme": "Theme",

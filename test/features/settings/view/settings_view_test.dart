@@ -16,6 +16,7 @@ import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
+import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
@@ -55,6 +56,7 @@ void main() {
   late _DeviceDiscovery discovery;
   late _DiagnosticsRunner diagnosticsRunner;
   late UpdateCheckSettingsRepository updates;
+  late TelemetrySettingsRepository telemetry;
   String? clipboardText;
 
   setUp(() async {
@@ -64,6 +66,9 @@ void main() {
     discovery = _DeviceDiscovery();
     diagnosticsRunner = _DiagnosticsRunner();
     updates = UpdateCheckSettingsRepository(
+      await SharedPreferences.getInstance(),
+    );
+    telemetry = TelemetrySettingsRepository(
       await SharedPreferences.getInstance(),
     );
     clipboardText = null;
@@ -145,6 +150,7 @@ void main() {
               settingsCubit: settingsCubit,
               deviceRunSettingsCubit: deviceRunCubit,
               updateSettingsRepository: updates,
+              telemetrySettingsRepository: telemetry,
               diagnosticsService: DiagnosticsService(
                 diagnosticsRunner,
                 appVersion: '9.8.7+6',
@@ -177,6 +183,8 @@ void main() {
     expect(find.text('Project validator'), findsOneWidget);
     expect(find.text('Updates'), findsOneWidget);
     expect(find.text('Check for updates'), findsOneWidget);
+    expect(find.text('Privacy'), findsOneWidget);
+    expect(find.text('Share anonymous diagnostics'), findsOneWidget);
     expect(find.text('Diagnostics'), findsOneWidget);
     expect(find.text('App version'), findsOneWidget);
     expect(find.text('9.8.7+6'), findsOneWidget);
@@ -245,6 +253,7 @@ void main() {
               settingsCubit: settingsCubit,
               deviceRunSettingsCubit: deviceRunCubit,
               updateSettingsRepository: updates,
+              telemetrySettingsRepository: telemetry,
             ),
           ),
         ),
@@ -261,6 +270,48 @@ void main() {
     await tester.pumpAndSettle();
 
     expect((await updates.load()).enabled, isFalse);
+  });
+
+  testWidgets('toggles telemetry setting', (tester) async {
+    final projectsCubit = _ProjectsCubit(
+      ProjectsReady(
+        projects: [_project('/workspace/app')],
+        activeProjectRoot: '/workspace/app',
+      ),
+    );
+    final settingsCubit = SettingsCubit(settings, terminal);
+    final deviceRunCubit = DeviceRunSettingsCubit(
+      settings: settings,
+      discovery: discovery,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: BlocProvider<ProjectsCubit>.value(
+          value: projectsCubit,
+          child: Scaffold(
+            body: SettingsView(
+              settingsCubit: settingsCubit,
+              deviceRunSettingsCubit: deviceRunCubit,
+              telemetrySettingsRepository: telemetry,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect((await telemetry.load()).enabled, isFalse);
+
+    final toggle = find.byKey(const Key('telemetry-enabled'));
+    await tester.ensureVisible(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+
+    expect((await telemetry.load()).enabled, isTrue);
   });
 
   testWidgets('saves project validator command', (tester) async {

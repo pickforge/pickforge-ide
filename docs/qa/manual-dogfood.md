@@ -44,30 +44,34 @@ product change.
 
 1. Run `scripts/dogfood_preflight.sh` and save `build/dogfood/preflight.txt`.
 2. Run `scripts/desktop_build_smoke.sh`.
-3. Run `scripts/emulator_e2e.sh Pixel_10`.
-4. Run `scripts/linux_visible_diagnostics_smoke.sh` from the visible desktop
+3. Run `scripts/linux_deb_smoke.sh --skip-build` after a Linux release build
+   and package pass to validate the rootless `.deb` contents and extracted
+   bundle launch. This is not a substitute for a true sudo install on a fresh
+   machine.
+4. Run `scripts/emulator_e2e.sh Pixel_10`.
+5. Run `scripts/linux_visible_diagnostics_smoke.sh` from the visible desktop
    session to capture setup-check screenshots for available, missing-agent, and
    missing-`adb` cases.
-5. Run `scripts/agent_profile_pty_smoke.sh` to validate installed Claude Code,
+6. Run `scripts/agent_profile_pty_smoke.sh` to validate installed Claude Code,
    Codex, and OpenCode profile launch plus Pickforge prompt delivery through
    the embedded PTY adapter. The script writes transcripts and copied context
    artifacts under `build/dogfood/agent-profile-pty/`.
-6. Start Pickforge from the visible desktop session:
+7. Start Pickforge from the visible desktop session:
 
    ```bash
    fvm flutter run -d linux
    ```
 
-7. Add `fixtures/sample_flutter_app` as a Pickforge project.
-8. Bind `Pixel_10` or attach to the sample app's VM Service.
-9. Pick a user-code widget and verify the inspector metadata and screenshot.
-10. Select/create a chat for the active project.
-11. Press **Forge it** and verify the prompt appears in the visible embedded
+8. Add `fixtures/sample_flutter_app` as a Pickforge project.
+9. Bind `Pixel_10` or attach to the sample app's VM Service.
+10. Pick a user-code widget and verify the inspector metadata and screenshot.
+11. Select/create a chat for the active project.
+12. Press **Forge it** and verify the prompt appears in the visible embedded
    terminal.
-12. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
+13. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
     `.pickforge/initial-prompt.md`, and available screenshots in the sample
     project.
-13. Repeat visible Forge prompt delivery for any agent profile not covered by
+14. Repeat visible Forge prompt delivery for any agent profile not covered by
     `scripts/agent_profile_pty_smoke.sh`, or when validating model response and
     file-edit behavior rather than PTY launch/prompt delivery.
 

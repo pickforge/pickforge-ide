@@ -138,6 +138,14 @@ void main() {
               diagnosticsService: DiagnosticsService(
                 diagnosticsRunner,
                 appVersion: '9.8.7+6',
+                buildMetadata: const DiagnosticsBuildMetadata(
+                  commitSha: 'abc123',
+                  refName: 'main',
+                  workflow: 'CI',
+                  runId: '987654321',
+                  runNumber: '42',
+                  buildUrl: 'https://example.test/build/42',
+                ),
               )
                 ..recordVmError('SocketException: apiKey=secret')
                 ..recordRunError('Run failed: token=secret')
@@ -154,6 +162,16 @@ void main() {
     expect(find.text('Diagnostics'), findsOneWidget);
     expect(find.text('App version'), findsOneWidget);
     expect(find.text('9.8.7+6'), findsOneWidget);
+    expect(find.text('Build commit'), findsOneWidget);
+    expect(find.text('abc123'), findsOneWidget);
+    expect(find.text('Build ref'), findsOneWidget);
+    expect(find.text('main'), findsOneWidget);
+    expect(find.text('Build workflow'), findsOneWidget);
+    expect(find.text('CI'), findsOneWidget);
+    expect(find.text('Build run'), findsOneWidget);
+    expect(find.text('42 (987654321)'), findsOneWidget);
+    expect(find.text('Build URL'), findsOneWidget);
+    expect(find.text('https://example.test/build/42'), findsOneWidget);
     expect(find.text('Flutter 3.41.7 • channel stable'), findsOneWidget);
     expect(find.text('Last VM error'), findsOneWidget);
     expect(find.text('SocketException: apiKey=[REDACTED]'), findsNWidgets(2));
@@ -166,7 +184,7 @@ void main() {
 
     await tester.drag(
       find.byType(SingleChildScrollView),
-      const Offset(0, -1000),
+      const Offset(0, -1500),
     );
     await tester.pump();
 

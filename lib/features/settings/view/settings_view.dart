@@ -325,6 +325,7 @@ class _DiagnosticsSection extends StatelessWidget {
                 label: l10n.diagnosticsAppVersion,
                 value: data!.appVersion,
               ),
+              ..._buildMetadataRows(l10n, data.buildMetadata),
               _DiagnosticRow(
                 label: l10n.diagnosticsOperatingSystem,
                 value: data.operatingSystem,
@@ -421,6 +422,23 @@ String _failureLabel(AppLocalizations l10n, DiagnosticsFailureKind kind) =>
       DiagnosticsFailureKind.run => l10n.diagnosticsFailureRun,
       DiagnosticsFailureKind.agent => l10n.diagnosticsFailureAgent,
     };
+
+List<Widget> _buildMetadataRows(
+  AppLocalizations l10n,
+  DiagnosticsBuildMetadata metadata,
+) =>
+    [
+      if (metadata.commitSha case final value?)
+        _DiagnosticRow(label: l10n.diagnosticsBuildCommit, value: value),
+      if (metadata.refName case final value?)
+        _DiagnosticRow(label: l10n.diagnosticsBuildRef, value: value),
+      if (metadata.workflow case final value?)
+        _DiagnosticRow(label: l10n.diagnosticsBuildWorkflow, value: value),
+      if (metadata.runLabel case final value?)
+        _DiagnosticRow(label: l10n.diagnosticsBuildRun, value: value),
+      if (metadata.buildUrl case final value?)
+        _DiagnosticRow(label: l10n.diagnosticsBuildUrl, value: value),
+    ];
 
 Future<void> _copySupportBundle(
   BuildContext context,

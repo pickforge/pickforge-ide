@@ -24,11 +24,17 @@ void main() {
         },
       ),
       appVersion: '9.8.7+6',
+      buildMetadata: const DiagnosticsBuildMetadata(
+        commitSha: 'abc123',
+        refName: 'main',
+      ),
     )..recordVmError('apiKey=vm-secret');
 
     final snapshot = await service.snapshot();
 
     expect(snapshot.appVersion, '9.8.7+6');
+    expect(snapshot.buildMetadata.commitSha, 'abc123');
+    expect(snapshot.buildMetadata.refName, 'main');
     expect(snapshot.adbAvailable, isTrue);
     expect(snapshot.gitAvailable, isTrue);
     expect(snapshot.flutterAvailable, isFalse);
@@ -64,6 +70,14 @@ void main() {
         },
       ),
       appVersion: '1.2.3+4',
+      buildMetadata: const DiagnosticsBuildMetadata(
+        commitSha: 'abc123',
+        refName: 'main',
+        workflow: 'CI',
+        runId: '987654321',
+        runNumber: '42',
+        buildUrl: 'https://example.test/build/42',
+      ),
     )
       ..recordLog('error', 'token=super-secret')
       ..recordVmError('password=vm-secret')
@@ -79,6 +93,11 @@ void main() {
       contains('Source files, prompts, screenshots, and secrets: excluded'),
     );
     expect(bundle, contains('- App version: 1.2.3+4'));
+    expect(bundle, contains('- Build commit: abc123'));
+    expect(bundle, contains('- Build ref: main'));
+    expect(bundle, contains('- Build workflow: CI'));
+    expect(bundle, contains('- Build run: 42 (987654321)'));
+    expect(bundle, contains('- Build URL: https://example.test/build/42'));
     expect(bundle, contains('- Flutter/FVM: Flutter 3.41.7 • channel stable'));
     expect(bundle, contains('- Project: project'));
     expect(bundle, contains('token=[REDACTED]'));

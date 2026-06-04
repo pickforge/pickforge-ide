@@ -8,6 +8,18 @@ const _defaultAppVersion = String.fromEnvironment(
   'PICKFORGE_VERSION',
   defaultValue: '0.1.0+1',
 );
+const _defaultBuildCommitSha = String.fromEnvironment(
+  'PICKFORGE_BUILD_COMMIT',
+);
+const _defaultBuildRefName = String.fromEnvironment('PICKFORGE_BUILD_REF');
+const _defaultBuildWorkflow = String.fromEnvironment(
+  'PICKFORGE_BUILD_WORKFLOW',
+);
+const _defaultBuildRunId = String.fromEnvironment('PICKFORGE_BUILD_RUN_ID');
+const _defaultBuildRunNumber = String.fromEnvironment(
+  'PICKFORGE_BUILD_RUN_NUMBER',
+);
+const _defaultBuildUrl = String.fromEnvironment('PICKFORGE_BUILD_URL');
 
 class DiagnosticsSnapshot extends Equatable {
   const DiagnosticsSnapshot({
@@ -25,9 +37,11 @@ class DiagnosticsSnapshot extends Equatable {
     required this.geminiAvailable,
     required this.lastVmError,
     required this.failures,
+    required this.buildMetadata,
   });
 
   final String appVersion;
+  final DiagnosticsBuildMetadata buildMetadata;
   final String operatingSystem;
   final bool adbAvailable;
   final bool gitAvailable;
@@ -58,6 +72,96 @@ class DiagnosticsSnapshot extends Equatable {
         geminiAvailable,
         lastVmError,
         failures,
+        buildMetadata,
+      ];
+}
+
+class DiagnosticsBuildMetadata extends Equatable {
+  const DiagnosticsBuildMetadata({
+    this.commitSha,
+    this.refName,
+    this.workflow,
+    this.runId,
+    this.runNumber,
+    this.buildUrl,
+  });
+
+  factory DiagnosticsBuildMetadata.fromEnvironment([
+    Map<String, String>? environment,
+  ]) {
+    final env = environment ?? Platform.environment;
+    return DiagnosticsBuildMetadata(
+      commitSha: _firstNonEmpty([
+        _defaultBuildCommitSha,
+        env['PICKFORGE_BUILD_COMMIT'],
+        env['GITHUB_SHA'],
+        env['CI_COMMIT_SHA'],
+      ]),
+      refName: _firstNonEmpty([
+        _defaultBuildRefName,
+        env['PICKFORGE_BUILD_REF'],
+        env['GITHUB_REF_NAME'],
+        env['GITHUB_REF'],
+        env['CI_COMMIT_REF_NAME'],
+      ]),
+      workflow: _firstNonEmpty([
+        _defaultBuildWorkflow,
+        env['PICKFORGE_BUILD_WORKFLOW'],
+        env['GITHUB_WORKFLOW'],
+        env['CI_JOB_NAME'],
+      ]),
+      runId: _firstNonEmpty([
+        _defaultBuildRunId,
+        env['PICKFORGE_BUILD_RUN_ID'],
+        env['GITHUB_RUN_ID'],
+        env['CI_PIPELINE_ID'],
+      ]),
+      runNumber: _firstNonEmpty([
+        _defaultBuildRunNumber,
+        env['PICKFORGE_BUILD_RUN_NUMBER'],
+        env['GITHUB_RUN_NUMBER'],
+        env['CI_PIPELINE_IID'],
+      ]),
+      buildUrl: _firstNonEmpty([
+        _defaultBuildUrl,
+        env['PICKFORGE_BUILD_URL'],
+        _githubActionsBuildUrl(env),
+        env['CI_JOB_URL'],
+        env['BUILD_URL'],
+      ]),
+    );
+  }
+
+  final String? commitSha;
+  final String? refName;
+  final String? workflow;
+  final String? runId;
+  final String? runNumber;
+  final String? buildUrl;
+
+  bool get isEmpty =>
+      commitSha == null &&
+      refName == null &&
+      workflow == null &&
+      runId == null &&
+      runNumber == null &&
+      buildUrl == null;
+
+  String? get runLabel => switch ((runNumber, runId)) {
+        (final number?, final id?) => '$number ($id)',
+        (final number?, null) => number,
+        (null, final id?) => id,
+        _ => null,
+      };
+
+  @override
+  List<Object?> get props => [
+        commitSha,
+        refName,
+        workflow,
+        runId,
+        runNumber,
+        buildUrl,
       ];
 }
 
@@ -90,14 +194,18 @@ class DiagnosticsService {
     ContextRedactor redactor = const ContextRedactor(),
     int maxLogEntries = 100,
     String appVersion = _defaultAppVersion,
+    DiagnosticsBuildMetadata? buildMetadata,
   })  : _redactor = redactor,
         _maxLogEntries = maxLogEntries,
-        _appVersion = appVersion;
+        _appVersion = appVersion,
+        _buildMetadata =
+            buildMetadata ?? DiagnosticsBuildMetadata.fromEnvironment();
 
   final ProcessRunner _runner;
   final ContextRedactor _redactor;
   final int _maxLogEntries;
   final String _appVersion;
+  final DiagnosticsBuildMetadata _buildMetadata;
   final List<DiagnosticsLogEntry> _logs = [];
   final Map<DiagnosticsFailureKind, DiagnosticsFailureDetails> _failures = {};
   String? _lastVmError;
@@ -106,6 +214,7 @@ class DiagnosticsService {
     final flutter = await _commandStatus('fvm', ['flutter', '--version']);
     return DiagnosticsSnapshot(
       appVersion: _appVersion,
+      buildMetadata: _buildMetadata,
       operatingSystem: Platform.operatingSystem,
       adbAvailable: await _commandAvailable('adb', ['version']),
       gitAvailable: await _commandAvailable('git', ['--version']),
@@ -175,7 +284,8 @@ class DiagnosticsService {
     String? lastVmError,
   }) async {
     final current = await snapshot();
-    final vmError = _nonEmpty(lastVmError) ?? _nonEmpty(current.lastVmError);
+    final vmError =
+        _nonEmptyValue(lastVmError) ?? _nonEmptyValue(current.lastVmError);
     final buffer = StringBuffer()
       ..writeln('# Pickforge Support Bundle')
       ..writeln()
@@ -184,6 +294,7 @@ class DiagnosticsService {
       ..writeln('## Environment')
       ..writeln()
       ..writeln('- App version: ${current.appVersion}')
+      ..write(_buildMetadataLines(current.buildMetadata))
       ..writeln('- OS: ${current.operatingSystem}')
       ..writeln('- Project: ${_projectLabel(activeProjectRoot)}')
       ..writeln('- adb: ${_availability(current.adbAvailable)}')
@@ -262,11 +373,6 @@ class DiagnosticsService {
     return value.split('\n').first.trim();
   }
 
-  String? _nonEmpty(String? value) {
-    final trimmed = value?.trim();
-    return trimmed == null || trimmed.isEmpty ? null : trimmed;
-  }
-
   String _projectLabel(String? activeProjectRoot) {
     if (activeProjectRoot == null || activeProjectRoot.trim().isEmpty) {
       return 'none';
@@ -281,6 +387,48 @@ class DiagnosticsService {
         DiagnosticsFailureKind.run => 'run',
         DiagnosticsFailureKind.agent => 'agent',
       };
+
+  String _buildMetadataLines(DiagnosticsBuildMetadata metadata) {
+    if (metadata.isEmpty) return '';
+    final buffer = StringBuffer();
+    if (metadata.commitSha case final value?) {
+      buffer.writeln('- Build commit: $value');
+    }
+    if (metadata.refName case final value?) {
+      buffer.writeln('- Build ref: $value');
+    }
+    if (metadata.workflow case final value?) {
+      buffer.writeln('- Build workflow: $value');
+    }
+    if (metadata.runLabel case final value?) {
+      buffer.writeln('- Build run: $value');
+    }
+    if (metadata.buildUrl case final value?) {
+      buffer.writeln('- Build URL: $value');
+    }
+    return buffer.toString();
+  }
+}
+
+String? _firstNonEmpty(Iterable<String?> values) {
+  for (final value in values) {
+    final trimmed = _nonEmptyValue(value);
+    if (trimmed != null) return trimmed;
+  }
+  return null;
+}
+
+String? _nonEmptyValue(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+String? _githubActionsBuildUrl(Map<String, String> env) {
+  final serverUrl = _nonEmptyValue(env['GITHUB_SERVER_URL']);
+  final repository = _nonEmptyValue(env['GITHUB_REPOSITORY']);
+  final runId = _nonEmptyValue(env['GITHUB_RUN_ID']);
+  if (serverUrl == null || repository == null || runId == null) return null;
+  return '$serverUrl/$repository/actions/runs/$runId';
 }
 
 class _CommandStatus {

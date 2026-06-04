@@ -773,7 +773,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T11 — In-app diagnostics and local support bundle
 
-**Status:** Partial / in progress
+**Status:** Complete
 **Why:** Before telemetry exists, users still need a way to understand and report failures.
 
 **Tasks**
@@ -783,7 +783,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add diagnostics card for OS, agent binary availability, `adb`, `git`, Android emulator, and Flutter/FVM availability.
 - [x] Add "Export support bundle" that excludes source files, prompts, screenshots, and secrets by default.
 - [x] Add copyable error details for connection/run/agent failures.
-- [ ] Include CI/build metadata in diagnostics when available.
+- [x] Include CI/build metadata in diagnostics when available.
 
 **Validation**
 
@@ -794,6 +794,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Expanded the settings diagnostics view with app version, Flutter version text, and redacted last VM error, and wired VM connection errors from the emulator cubit into diagnostics/support bundles. Verified with focused diagnostics/settings/emulator tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Added categorized, redacted connection/run/agent failure details to diagnostics snapshots, the support bundle, and the settings diagnostics UI with per-failure clipboard actions. Verified with focused diagnostics/settings/forge/emulator tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
+- 2026-06-04: Added optional CI/build metadata to diagnostics snapshots, settings diagnostics rows, and support bundles via `PICKFORGE_BUILD_*` defines and common CI environment fallbacks. Verified with focused diagnostics/settings tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ## 12. Pro/cloud/distribution
 

@@ -694,7 +694,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T8 — First-run onboarding and demo mode
 
-**Status:** Partial / in progress
+**Status:** Partial / review actions remaining
 **Why:** A great app should prove its value in the first five minutes, even before the user's own environment is perfectly configured.
 
 **Tasks**
@@ -732,8 +732,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Validation**
 
 - [x] Unit tests for git status parsing.
-- [ ] Widget tests for dirty worktree warning and post-forge diff summary.
+- [x] Widget tests for dirty worktree warning and post-forge diff summary.
 - Manual dogfood with a real git repo containing staged, unstaged, and untracked files.
+
+**Latest evidence**
+
+- 2026-06-04: Added Forge panel widget coverage for the dirty-worktree confirmation dialog and post-forge project changes summary with changed files, branch, diff stat, and copy-diff action visible. Verified with focused Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 

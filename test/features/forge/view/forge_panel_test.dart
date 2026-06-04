@@ -148,6 +148,37 @@ class _CleanProcessRunner implements ProcessRunner {
   }
 }
 
+class _GitProcessRunner implements ProcessRunner {
+  const _GitProcessRunner({this.stdoutByArgs = const {}});
+
+  final Map<String, String> stdoutByArgs;
+
+  @override
+  Future<ProcessResult> run(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) async {
+    return ProcessResult(
+      1,
+      0,
+      stdoutByArgs[arguments.join(' ')] ?? '',
+      '',
+    );
+  }
+
+  @override
+  Future<RunningProcess> spawn(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) {
+    throw UnimplementedError();
+  }
+}
+
 void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -400,5 +431,104 @@ void main() {
 
     expect(find.textContaining('# Skill'), findsOneWidget);
     expect(find.textContaining('# Widget'), findsOneWidget);
+  });
+
+  testWidgets('ForgePanel confirms before forging into dirty worktree',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(
+      const _GitProcessRunner(
+        stdoutByArgs: {
+          'status --porcelain=v1':
+              'M  lib/a.dart\n M lib/b.dart\n?? notes.txt\n',
+          'rev-parse --abbrev-ref HEAD': 'feature/dirty\n',
+        },
+      ),
+    );
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Forge it'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Forge into dirty worktree?'), findsOneWidget);
+    expect(find.text('Branch: feature/dirty'), findsWidgets);
+    expect(
+      find.textContaining('Staged: 1, unstaged: 1, untracked: 1'),
+      findsOneWidget,
+    );
+    expect(cubit.forgedSelection, isNull);
+
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    expect(cubit.forgedSelection, _sampleWidget);
+    expect(cubit.forgedProjectRoot, '/tmp/test');
+    expect(cubit.forgedChatId, 'chat-1');
+  });
+
+  testWidgets('ForgePanel shows post-forge diff summary', (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(
+      const _GitProcessRunner(
+        stdoutByArgs: {
+          'status --porcelain=v1':
+              'M  lib/a.dart\n M lib/b.dart\n?? scratch.txt\n',
+          'rev-parse --abbrev-ref HEAD': 'feature/review\n',
+          'diff --stat HEAD': ' lib/a.dart | 2 ++\n lib/b.dart | 1 +\n',
+        },
+      ),
+    );
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Project changes'), findsOneWidget);
+    expect(find.text('Copy diff'), findsOneWidget);
+    expect(find.text('Branch: feature/review'), findsOneWidget);
+    expect(find.text('3 changed files'), findsOneWidget);
+    expect(find.textContaining('lib/a.dart'), findsWidgets);
+    expect(find.textContaining('lib/b.dart'), findsWidgets);
+    expect(find.textContaining('scratch.txt'), findsOneWidget);
   });
 }

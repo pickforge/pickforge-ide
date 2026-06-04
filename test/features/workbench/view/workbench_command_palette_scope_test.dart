@@ -15,6 +15,7 @@ import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/view/workbench_command_palette_scope.dart';
+import 'package:pickforge/shared/command_palette/command.dart';
 import 'package:pickforge/shared/command_palette/command_palette.dart';
 
 class _ProjectsCubit extends Mock implements ProjectsCubit {}
@@ -214,29 +215,71 @@ void main() {
 
     verify(emulator.runApp).called(1);
   });
+
+  testWidgets('workbench palette surfaces transcript search results',
+      (tester) async {
+    final projects = _ProjectsCubit();
+    final chats = _ChatsCubit();
+    final emulator = _EmulatorCubit();
+    var ran = false;
+    _stubProjects(projects);
+    _stubChats(chats);
+    _stubEmulator(emulator, const EmulatorSessionState.noDevicePicked());
+
+    await tester.pumpWidget(
+      _Harness(
+        projects: projects,
+        chats: chats,
+        emulator: emulator,
+        searchCommands: (query) async => [
+          PickforgeCommand(
+            id: 'search-transcript-chat-1',
+            title: 'Transcript: Auth cleanup',
+            hint: 'Found "$query"',
+            run: () => ran = true,
+          ),
+        ],
+      ),
+    );
+
+    await _sendControlShortcut(tester, LogicalKeyboardKey.keyK);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.enterText(find.byType(TextField), 'disabled state');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Transcript: Auth cleanup'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ListTile, 'Transcript: Auth cleanup'));
+    await tester.pump();
+
+    expect(ran, isTrue);
+  });
 }
 
-void _stubProjects(_ProjectsCubit cubit) {
-  final state = ProjectsReady(
-    projects: [
+void _stubProjects(_ProjectsCubit cubit, [ProjectRow? project]) {
+  final row = project ??
       ProjectRow(
         projectRoot: '/p',
         displayName: 'Project',
         createdAt: DateTime(2026, 6, 3),
         lastOpenedAt: DateTime(2026, 6, 3),
         sortOrder: 0,
-      ),
-    ],
-    activeProjectRoot: '/p',
-  );
+      );
+  final state =
+      ProjectsReady(projects: [row], activeProjectRoot: row.projectRoot);
   when(() => cubit.state).thenReturn(state);
   when(() => cubit.stream).thenAnswer((_) => const Stream.empty());
 }
 
-void _stubChats(_ChatsCubit cubit) {
-  const state = ChatsReady(
-    chatsByProject: {'/p': []},
-    expanded: {'/p'},
+void _stubChats(_ChatsCubit cubit, [ChatRow? chat]) {
+  final state = ChatsReady(
+    chatsByProject: {
+      chat?.projectRoot ?? '/p': [
+        if (chat != null) chat,
+      ],
+    },
+    expanded: {chat?.projectRoot ?? '/p'},
   );
   when(() => cubit.state).thenReturn(state);
   when(() => cubit.stream).thenAnswer((_) => const Stream.empty());
@@ -277,12 +320,14 @@ class _Harness extends StatelessWidget {
     required this.chats,
     required this.emulator,
     this.pickFolder,
+    this.searchCommands,
   });
 
   final ProjectsCubit projects;
   final ChatsCubit chats;
   final EmulatorSessionCubit emulator;
   final Future<String?> Function()? pickFolder;
+  final Future<List<PickforgeCommand>> Function(String query)? searchCommands;
 
   @override
   Widget build(BuildContext context) {
@@ -295,6 +340,7 @@ class _Harness extends StatelessWidget {
         ],
         child: WorkbenchCommandPaletteScope(
           pickFolder: pickFolder ?? (() async => null),
+          searchCommands: searchCommands,
           child: Scaffold(
             body: Builder(
               builder: (context) => ElevatedButton(

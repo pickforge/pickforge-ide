@@ -11,16 +11,21 @@ class CommandPaletteScope extends StatelessWidget {
   const CommandPaletteScope({
     required this.commands,
     required this.child,
+    this.searchCommands,
     super.key,
   });
 
   final List<PickforgeCommand> commands;
+  final CommandSearchProvider? searchCommands;
   final Widget child;
 
   Future<void> _openPalette(BuildContext context) {
     return showDialog<void>(
       context: context,
-      builder: (_) => CommandPalette(commands: commands),
+      builder: (_) => CommandPalette(
+        commands: commands,
+        searchCommands: searchCommands,
+      ),
     );
   }
 

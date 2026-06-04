@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/router/app_router.dart';
+import 'package:pickforge/core/search/workspace_search_service.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
@@ -18,6 +21,7 @@ class WorkbenchCommandPaletteScope extends StatelessWidget {
   const WorkbenchCommandPaletteScope({
     required this.child,
     this.pickFolder = getDirectoryPath,
+    this.searchCommands,
     this.onFocusExplorer,
     this.onFocusTerminal,
     super.key,
@@ -25,6 +29,7 @@ class WorkbenchCommandPaletteScope extends StatelessWidget {
 
   final Widget child;
   final Future<String?> Function() pickFolder;
+  final Future<List<PickforgeCommand>> Function(String query)? searchCommands;
   final VoidCallback? onFocusExplorer;
   final VoidCallback? onFocusTerminal;
 
@@ -39,6 +44,8 @@ class WorkbenchCommandPaletteScope extends StatelessWidget {
       ),
       child: CommandPaletteScope(
         commands: commands,
+        searchCommands:
+            searchCommands ?? (query) => _searchWorkspace(context, query),
         child: child,
       ),
     );
@@ -183,4 +190,43 @@ Future<void> _newChat(BuildContext context, String projectRoot) async {
         projectRoot: projectRoot,
         defaultAgentId: 'claude-code',
       );
+}
+
+Future<List<PickforgeCommand>> _searchWorkspace(
+  BuildContext context,
+  String query,
+) async {
+  if (!getIt.isRegistered<PickforgeDatabase>()) return const [];
+  final search = WorkspaceSearchService(getIt<PickforgeDatabase>());
+  final results = await search.search(query);
+  if (!context.mounted) return const [];
+  return [
+    for (final result in results)
+      PickforgeCommand(
+        id: 'search-${result.kind.name}-${result.chatId ?? result.title}',
+        title: result.title,
+        hint: result.subtitle,
+        run: () => _openSearchResult(context, result),
+      ),
+  ];
+}
+
+void _openSearchResult(BuildContext context, WorkspaceSearchResult result) {
+  switch (result.kind) {
+    case WorkspaceSearchResultKind.chat:
+    case WorkspaceSearchResultKind.transcript:
+      final chatId = result.chatId;
+      if (chatId != null) {
+        unawaited(context.read<ChatsCubit>().selectChat(chatId));
+      }
+      context.go(AppRoutes.workbench);
+    case WorkspaceSearchResultKind.pickHistory:
+      final chatId = result.chatId;
+      if (chatId != null) {
+        unawaited(context.read<ChatsCubit>().selectChat(chatId));
+        context.go(AppRoutes.workbench);
+      } else {
+        context.go(AppRoutes.history);
+      }
+  }
 }

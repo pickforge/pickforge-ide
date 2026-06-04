@@ -82,7 +82,8 @@ they do not replace manual dogfood on real desktop hosts.
 - Automated checks passed: `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, `scripts/linux_smoke.sh`, and `scripts/emulator_e2e.sh Pixel_10`.
 - `scripts/linux_smoke.sh` reached `DemoWorkspaceView` through the Flutter VM Service and wrote `build/smoke/linux/flutter-run.log`, `build/smoke/linux/inspector-root.json`, and `build/smoke/linux/first-frame.png`.
 - `scripts/emulator_e2e.sh Pixel_10` passed both emulator and widget-pick E2Es and wrote logs plus the inspector screenshot under `build/e2e/android/`.
-- Blocker: full visible Linux desktop click-through for project binding and embedded-terminal prompt delivery was not completed in this headless Xvfb environment; the root screenshot artifact is captured but blank without a lightweight window manager.
+- Visible desktop pass completed project binding and embedded-terminal prompt delivery against `/home/dev/Development/Personal/MyGamesList/app` on `emulator-5554`: selected the app-owned sign-in `ElevatedButton`, pressed **Forge it**, verified `.pickforge/` context files, and verified the active transcript starts with `[Pickforge sent prompt]`.
+- Remaining Linux signoff gaps: cold-install artifact pass, all-agent profile passes, missing-binary recovery cases, `adb` unavailable case, and no-emulator browsing/chat workflow.
 
 ### macOS
 

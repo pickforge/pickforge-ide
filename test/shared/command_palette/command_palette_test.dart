@@ -67,4 +67,44 @@ void main() {
     expect(find.text('Go to Connect'), findsNothing);
     expect(find.text('Go to History'), findsNothing);
   });
+
+  testWidgets('query can load dynamic search commands', (tester) async {
+    var ran = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) {
+            return ElevatedButton(
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => CommandPalette(
+                  commands: const [],
+                  searchCommands: (query) async => [
+                    PickforgeCommand(
+                      id: 'search-chat-1',
+                      title: 'Transcript: Auth cleanup',
+                      hint: 'Found "$query"',
+                      run: () => ran = true,
+                    ),
+                  ],
+                ),
+              ),
+              child: const Text('Open'),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'auth');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Transcript: Auth cleanup'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ListTile, 'Transcript: Auth cleanup'));
+    await tester.pumpAndSettle();
+
+    expect(ran, isTrue);
+  });
 }

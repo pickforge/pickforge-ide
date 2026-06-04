@@ -575,21 +575,29 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T2 — Command palette expansion
 
-**Status:** Partial / quick actions wired
-**Why:** The workbench command palette now includes quick actions for new chat, add project, run app, hot reload, pick device, and open settings. Search remains limited to command title/hint filtering until transcript/history indexing is implemented.
+**Status:** Completed
+**Why:** The workbench command palette includes quick actions and can now surface on-demand workspace search results from chats, recent pick history, widget classes, and transcript text.
 **Tasks**
 
 - [x] Add quick actions: new chat, add project, run app, hot reload, pick device, open settings.
-- [ ] Add fuzzy search across chats/history if history search is implemented.
+- [x] Add fuzzy search across chats/history if history search is implemented.
+
+**Latest evidence**
+
+- 2026-06-04: Added dynamic command-palette search commands backed by `WorkspaceSearchService`; chat titles and pick-history fields use fuzzy token matching, while transcript text is searched on demand from project-local `.pickforge/chats/<chatId>/transcript.log` tails. Verified with focused search and workbench palette tests, `fvm dart format --set-exit-if-changed ...`, and `fvm flutter analyze`.
 
 ### P6.T3 — Search across transcripts and pick history
 
-**Status:** Deferred
+**Status:** Completed
 **Tasks**
 
-- [ ] Index transcript text files or search on demand.
-- [ ] Include pick history and widget classes.
-- [ ] Surface results in command palette or dedicated search UI.
+- [x] Index transcript text files or search on demand.
+- [x] Include pick history and widget classes.
+- [x] Surface results in command palette or dedicated search UI.
+
+**Latest evidence**
+
+- 2026-06-04: Added on-demand workspace search over chats, recent pick history, widget classes, and bounded transcript tails, surfaced as command-palette results. Verified with `test/core/search/workspace_search_service_test.dart`, `test/shared/command_palette/command_palette_test.dart`, and `test/features/workbench/view/workbench_command_palette_scope_test.dart`.
 
 ### P6.T4 — Left pane list/grid views with grouping
 
@@ -917,7 +925,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T3 — Release checklist execution
 
-**Status:** Partial / Linux automated results recorded
+**Status:** Partial / Linux visible dogfood started
 **Tasks**
 
 - [x] Update checklist to current app.
@@ -929,8 +937,9 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Updated `docs/release-checklist.md` for current automated preflight, demo/project/device binding, current agent profiles, `.pickforge/` context outputs, workspace UX, hot reload/review, keyboard/accessibility, and release signoff. Recorded Linux automated results from `scripts/linux_smoke.sh` and `scripts/emulator_e2e.sh Pixel_10`, plus the headless Xvfb blocker for full visible desktop click-through.
 - 2026-06-04: Added `docs/qa/manual-dogfood.md`, `scripts/dogfood_preflight.sh`, and desktop build smoke entries to the release checklist so visible-desktop and native-host preparation steps are explicit. Verified locally with `scripts/dogfood_preflight.sh`.
+- 2026-06-04: Updated `docs/release-checklist.md` after the visible MyGamesList Linux pass resolved the project-binding and embedded-terminal prompt-delivery blocker. Linux signoff remains unchecked until cold-install artifact, all-agent profile, missing-binary, `adb` unavailable, and no-emulator browsing/chat cases are run.
 
-**Blocked:** Full Linux checklist signoff still requires a real desktop session for project binding and visible embedded-terminal prompt delivery. macOS and Windows checklist execution require native macOS/Windows hosts.
+**Blocked:** macOS and Windows checklist execution require native macOS/Windows hosts. Linux signoff is still incomplete, but no longer blocked on visible project-binding or embedded-terminal prompt evidence.
 
 ### P9.T4 — Local app testing strategy
 

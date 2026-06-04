@@ -47,6 +47,19 @@ class ChatsDao extends DatabaseAccessor<PickforgeDatabase>
         .get();
   }
 
+  Future<List<ChatRow>> all({int limit = 100}) {
+    return (select(chats)
+          ..orderBy([
+            (c) => OrderingTerm(
+                  expression: c.lastActivityAt,
+                  mode: OrderingMode.desc,
+                ),
+            (c) => OrderingTerm(expression: c.title),
+          ])
+          ..limit(limit))
+        .get();
+  }
+
   Future<void> rename(String chatId, String title) =>
       (update(chats)..where((c) => c.chatId.equals(chatId)))
           .write(ChatsCompanion(title: Value(title)));

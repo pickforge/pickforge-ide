@@ -44,6 +44,15 @@ class PickHistoryDao extends DatabaseAccessor<PickforgeDatabase>
         ..limit(limit))
       .watch();
 
+  Future<List<PickHistoryRow>> recentRows({int limit = 50}) =>
+      (select(pickHistory)
+            ..orderBy([
+              (t) => OrderingTerm.desc(t.pickedAt),
+              (t) => OrderingTerm.desc(t.id),
+            ])
+            ..limit(limit))
+          .get();
+
   Future<List<PickHistoryRow>> recentForProject(
     String projectRoot, {
     int limit = 50,

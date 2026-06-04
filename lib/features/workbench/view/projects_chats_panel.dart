@@ -225,8 +225,8 @@ class _SidebarToolbar extends StatelessWidget {
                   IconButton(
                     tooltip: state.settings.density ==
                             WorkspaceSidebarDensity.compact
-                        ? 'Comfortable density'
-                        : 'Compact density',
+                        ? l10n.sidebarComfortableDensity
+                        : l10n.sidebarCompactDensity,
                     icon: Icon(
                       state.settings.density == WorkspaceSidebarDensity.compact
                           ? Icons.density_medium

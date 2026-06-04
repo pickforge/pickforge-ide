@@ -2,8 +2,10 @@
 // ignore_for_file: unnecessary_lambdas
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -21,6 +23,7 @@ import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart'
 import 'package:pickforge/features/workbench/view/projects_chats_panel.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/main.dart' show shouldSyncChatsForProjects;
+import 'package:pickforge/shared/theme/pickforge_theme.dart';
 
 class _MockProjectsRepo extends Mock implements ProjectsRepository {}
 
@@ -64,10 +67,23 @@ Widget _harness({
   required ChatsCubit chatsCubit,
   WorkspaceSidebarCubit? sidebarCubit,
   bool withProjectSyncListener = false,
+  Key? screenshotKey,
+  Size? panelSize,
+  bool usePickforgeTheme = false,
 }) {
   final sidebar =
       sidebarCubit ?? WorkspaceSidebarCubit(_FakeSidebarSettingsRepository());
+  Widget panel = const ProjectsChatsPanel();
+  if (screenshotKey != null) {
+    panel = RepaintBoundary(key: screenshotKey, child: panel);
+  }
+  if (panelSize != null) {
+    panel = Center(child: SizedBox.fromSize(size: panelSize, child: panel));
+  }
   return MaterialApp(
+    theme: usePickforgeTheme ? PickforgeTheme.dark() : null,
+    darkTheme: usePickforgeTheme ? PickforgeTheme.dark() : null,
+    themeMode: usePickforgeTheme ? ThemeMode.dark : ThemeMode.system,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: MultiBlocProvider(
@@ -78,8 +94,8 @@ Widget _harness({
       ],
       child: Builder(
         builder: (context) {
-          const panel = Scaffold(body: ProjectsChatsPanel());
-          if (!withProjectSyncListener) return panel;
+          final scaffold = Scaffold(body: panel);
+          if (!withProjectSyncListener) return scaffold;
           return BlocListener<ProjectsCubit, ProjectsState>(
             listenWhen: shouldSyncChatsForProjects,
             listener: (context, state) {
@@ -91,11 +107,142 @@ Widget _harness({
                     ),
               );
             },
-            child: panel,
+            child: scaffold,
           );
         },
       ),
     ),
+  );
+}
+
+class _SidebarFixture {
+  const _SidebarFixture({
+    required this.projectsCubit,
+    required this.chatsCubit,
+    required this.sidebarCubit,
+  });
+
+  final ProjectsCubit projectsCubit;
+  final ChatsCubit chatsCubit;
+  final WorkspaceSidebarCubit sidebarCubit;
+}
+
+class _ImageStats {
+  const _ImageStats({
+    required this.width,
+    required this.height,
+    required this.opaquePixels,
+    required this.uniqueColors,
+  });
+
+  final int width;
+  final int height;
+  final int opaquePixels;
+  final int uniqueColors;
+}
+
+Future<_SidebarFixture> _sidebarFixture(
+  WorkspaceSidebarSettings settings,
+) async {
+  final projects = [
+    _project('/workspace/alpha_app'),
+    _project('/workspace/design_system'),
+    _project('/workspace/shop_admin'),
+  ];
+  final chatsByProject = {
+    '/workspace/alpha_app': [
+      _chat('alpha-ui', '/workspace/alpha_app', 'Refine picker overlay'),
+      _chat('alpha-terminal', '/workspace/alpha_app', 'Terminal prompt audit'),
+    ],
+    '/workspace/design_system': [
+      _chat('design-colors', '/workspace/design_system', 'Color token pass'),
+      _chat('design-density', '/workspace/design_system', 'Density review'),
+    ],
+    '/workspace/shop_admin': [
+      _chat('shop-run', '/workspace/shop_admin', 'Run flow cleanup'),
+    ],
+  };
+  final projectRoots = projects.map((project) => project.projectRoot).toList();
+
+  final pRepo = _MockProjectsRepo();
+  when(() => pRepo.list()).thenAnswer((_) async => projects);
+  when(() => pRepo.touch(any<String>())).thenAnswer((_) async {});
+
+  final cRepo = _MockChatsRepo();
+  when(() => cRepo.list(any())).thenAnswer((invocation) async {
+    final root = invocation.positionalArguments.single as String;
+    return chatsByProject[root] ?? const <ChatRow>[];
+  });
+
+  final projectSettings = _MockSettings();
+  when(() => projectSettings.getLastChatId(any()))
+      .thenAnswer((_) async => 'alpha-ui');
+  when(() => projectSettings.setLastChatId(any(), any()))
+      .thenAnswer((_) async {});
+
+  final sidebarRepo = _FakeSidebarSettingsRepository()..settings = settings;
+  final sidebarCubit = WorkspaceSidebarCubit(sidebarRepo);
+  await sidebarCubit.load();
+
+  final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+  final chatsCubit = ChatsCubit(cRepo, projectSettings);
+  await projectsCubit.load();
+  await chatsCubit.syncProjects(
+    projectRoots,
+    defaultExpand: projectRoots.first,
+  );
+  projectRoots.skip(1).forEach(chatsCubit.toggleExpanded);
+
+  return _SidebarFixture(
+    projectsCubit: projectsCubit,
+    chatsCubit: chatsCubit,
+    sidebarCubit: sidebarCubit,
+  );
+}
+
+Future<_ImageStats> _captureStats(WidgetTester tester, Key key) async {
+  final boundary = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(key),
+  );
+  final capture = await tester.runAsync(() async {
+    final image = await boundary.toImage();
+    final width = image.width;
+    final height = image.height;
+    final byteData = await image.toByteData();
+    image.dispose();
+    return (byteData: byteData, width: width, height: height);
+  });
+  if (capture == null || capture.byteData == null) {
+    fail('Unable to read sidebar screenshot bytes.');
+  }
+  return _statsFor(
+    capture.byteData!,
+    width: capture.width,
+    height: capture.height,
+  );
+}
+
+_ImageStats _statsFor(
+  ByteData byteData, {
+  required int width,
+  required int height,
+}) {
+  final bytes = byteData.buffer.asUint8List();
+  final colors = <int>{};
+  var opaquePixels = 0;
+  for (var index = 0; index < bytes.length; index += 4) {
+    final red = bytes[index];
+    final green = bytes[index + 1];
+    final blue = bytes[index + 2];
+    final alpha = bytes[index + 3];
+    if (alpha > 0) opaquePixels++;
+    colors.add(red << 24 | green << 16 | blue << 8 | alpha);
+  }
+  return _ImageStats(
+    width: width,
+    height: height,
+    opaquePixels: opaquePixels,
+    uniqueColors: colors.length,
   );
 }
 
@@ -227,5 +374,68 @@ void main() {
     verifyNever(() => cRepo.list('/a'));
     verifyNever(() => cRepo.list('/b'));
     expect((chatsCubit.state as ChatsReady).activeChatId, 'c-b');
+  });
+
+  testWidgets('compact list layout renders a nonblank sidebar screenshot',
+      (tester) async {
+    const screenshotKey = Key('compact-sidebar-screenshot');
+    final fixture = await _sidebarFixture(WorkspaceSidebarSettings.defaults);
+
+    await tester.pumpWidget(
+      _harness(
+        projectsCubit: fixture.projectsCubit,
+        chatsCubit: fixture.chatsCubit,
+        sidebarCubit: fixture.sidebarCubit,
+        screenshotKey: screenshotKey,
+        panelSize: const Size(320, 560),
+        usePickforgeTheme: true,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('alpha_app'), findsOneWidget);
+    expect(find.text('Refine picker overlay'), findsOneWidget);
+
+    final stats = await _captureStats(tester, screenshotKey);
+    expect(stats.width, 320);
+    expect(stats.height, 560);
+    expect(stats.opaquePixels, 320 * 560);
+    expect(stats.uniqueColors, greaterThan(24));
+  });
+
+  testWidgets('comfortable grid layout renders a nonblank sidebar screenshot',
+      (tester) async {
+    const screenshotKey = Key('comfortable-grid-sidebar-screenshot');
+    final fixture = await _sidebarFixture(
+      const WorkspaceSidebarSettings(
+        viewMode: WorkspaceSidebarViewMode.grid,
+        density: WorkspaceSidebarDensity.comfortable,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _harness(
+        projectsCubit: fixture.projectsCubit,
+        chatsCubit: fixture.chatsCubit,
+        sidebarCubit: fixture.sidebarCubit,
+        screenshotKey: screenshotKey,
+        panelSize: const Size(360, 580),
+        usePickforgeTheme: true,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('design_system'), findsWidgets);
+    expect(find.text('Color token pass'), findsOneWidget);
+
+    final stats = await _captureStats(tester, screenshotKey);
+    expect(stats.width, 360);
+    expect(stats.height, 580);
+    expect(stats.opaquePixels, 360 * 580);
+    expect(stats.uniqueColors, greaterThan(24));
   });
 }

@@ -585,8 +585,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T4 — Left pane list/grid views with grouping
 
-**Status:** Partial / in progress
-**Why:** The left pane should scale beyond a flat Warp-like sidebar. Users need to switch between dense list and visual grid modes and group workspaces/chats in ways that match their workflow.
+**Status:** Completed
+**Why:** The left pane now supports list/grid modes, project/recent/pinned/agent/skill/custom grouping, project/chat pinning, collapsible groups, persisted density/view/group settings, keyboard navigation, fuzzy filtering, and compact/comfortable screenshot coverage.
 
 **Goal:** Make the left pane a real workspace navigator, not just a project/chat list.
 
@@ -618,7 +618,11 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [x] Cubit tests for grouping/sorting/pinning.
 - [x] Widget tests for list mode, grid mode, empty state, pinned group, and group collapse/expand.
-- [ ] Golden/screenshot tests for dense and roomy layouts.
+- [x] Golden/screenshot tests for dense and roomy layouts.
+
+**Latest evidence**
+
+- 2026-06-04: Added widget screenshot readback tests for compact list and comfortable grid sidebar layouts, including fixed-size render bounds and nonblank pixel/color checks; localized the sidebar density toggle tooltips. Verified with focused sidebar tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ### P6.T5 — VS Code-style project file explorer
 

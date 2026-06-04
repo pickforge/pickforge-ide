@@ -355,6 +355,8 @@
   "sidebarGroupAgent": "Agent",
   "sidebarGroupSkill": "Skill",
   "sidebarGroupCustom": "Custom",
+  "sidebarComfortableDensity": "Comfortable density",
+  "sidebarCompactDensity": "Compact density",
   "sidebarPin": "Pin",
   "sidebarUnpin": "Unpin",
   "sidebarSetCustomGroup": "Set custom group",

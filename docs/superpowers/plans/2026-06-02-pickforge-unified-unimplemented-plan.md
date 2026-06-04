@@ -694,7 +694,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T8 — First-run onboarding and demo mode
 
-**Status:** Partial / review actions remaining
+**Status:** Partial / validator action remaining
 **Why:** A great app should prove its value in the first five minutes, even before the user's own environment is perfectly configured.
 
 **Tasks**
@@ -723,8 +723,10 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Capture pre-forge git status and current branch for the project.
 - [x] Warn before forging into a dirty worktree unless the user acknowledges.
 - [x] After agent changes, show changed files and a concise diff summary.
-- [ ] Add actions: open changed file, copy diff, run configured validator, discard instructions.
 - [x] Add action: copy diff.
+- [x] Add action: open changed file.
+- [ ] Add action: run configured validator.
+- [x] Add action: discard instructions.
 - [x] Detect untracked files separately and never delete/move them.
 - [ ] Add optional "create checkpoint commit" or "stash before forge" workflow later.
 - [ ] Surface hot reload/test/analyze result alongside the diff.
@@ -738,6 +740,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Added Forge panel widget coverage for the dirty-worktree confirmation dialog and post-forge project changes summary with changed files, branch, diff stat, and copy-diff action visible. Verified with focused Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
+- 2026-06-04: Added project-change review actions to open changed files through `ProjectFileOpener` and show non-destructive discard instructions; verified with focused Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 

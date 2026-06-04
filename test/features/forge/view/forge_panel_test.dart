@@ -149,9 +149,10 @@ class _CleanProcessRunner implements ProcessRunner {
 }
 
 class _GitProcessRunner implements ProcessRunner {
-  const _GitProcessRunner({this.stdoutByArgs = const {}});
+  _GitProcessRunner({this.stdoutByArgs = const {}});
 
   final Map<String, String> stdoutByArgs;
+  final commands = <String>[];
 
   @override
   Future<ProcessResult> run(
@@ -160,6 +161,7 @@ class _GitProcessRunner implements ProcessRunner {
     String? cwd,
     Map<String, String>? env,
   }) async {
+    commands.add('$executable ${arguments.join(' ')}');
     return ProcessResult(
       1,
       0,
@@ -441,7 +443,7 @@ void main() {
 
     await getIt.unregister<ProcessRunner>();
     getIt.registerSingleton<ProcessRunner>(
-      const _GitProcessRunner(
+      _GitProcessRunner(
         stdoutByArgs: {
           'status --porcelain=v1':
               'M  lib/a.dart\n M lib/b.dart\n?? notes.txt\n',
@@ -494,7 +496,7 @@ void main() {
 
     await getIt.unregister<ProcessRunner>();
     getIt.registerSingleton<ProcessRunner>(
-      const _GitProcessRunner(
+      _GitProcessRunner(
         stdoutByArgs: {
           'status --porcelain=v1':
               'M  lib/a.dart\n M lib/b.dart\n?? scratch.txt\n',
@@ -530,5 +532,62 @@ void main() {
     expect(find.textContaining('lib/a.dart'), findsWidgets);
     expect(find.textContaining('lib/b.dart'), findsWidgets);
     expect(find.textContaining('scratch.txt'), findsOneWidget);
+  });
+
+  testWidgets('ForgePanel opens changed files and shows discard instructions',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final runner = _GitProcessRunner(
+      stdoutByArgs: {
+        'status --porcelain=v1': 'M  lib/a.dart\n M lib/b.dart\n',
+        'rev-parse --abbrev-ref HEAD': 'feature/review\n',
+        'diff --stat HEAD': ' lib/a.dart | 2 ++\n lib/b.dart | 1 +\n',
+      },
+    );
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(runner);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Open changed file').first);
+    await tester.pumpAndSettle();
+
+    expect(
+      runner.commands
+          .any((command) => command.contains('/tmp/test/lib/a.dart')),
+      isTrue,
+    );
+    expect(find.text('Opened a.dart'), findsOneWidget);
+
+    await tester.tap(find.text('Discard instructions'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Discard changes safely'), findsOneWidget);
+    expect(
+      find.textContaining('Pickforge never discards changes for you'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('git restore <file>'), findsOneWidget);
+    expect(find.textContaining('git clean -n'), findsOneWidget);
   });
 }

@@ -85,6 +85,22 @@
   },
   "forgeCopyDiff": "Copy diff",
   "forgeDiffCopied": "Diff copied",
+  "forgeOpenChangedFile": "Open changed file",
+  "forgeChangedFileOpened": "Opened {file}",
+  "@forgeChangedFileOpened": {
+    "placeholders": {
+      "file": {}
+    }
+  },
+  "forgeChangedFileOpenFailed": "Could not open {file}",
+  "@forgeChangedFileOpenFailed": {
+    "placeholders": {
+      "file": {}
+    }
+  },
+  "forgeDiscardInstructions": "Discard instructions",
+  "forgeDiscardInstructionsTitle": "Discard changes safely",
+  "forgeDiscardInstructionsMessage": "Pickforge never discards changes for you. Review the diff first, then use git restore <file> for tracked files. For untracked files, run git clean -n before deleting anything.",
   "forgePickUserCodeHint": "Pick a widget from your app source.",
   "historyTitle": "Recent forges",
   "pickHistoryTitle": "Pick history",

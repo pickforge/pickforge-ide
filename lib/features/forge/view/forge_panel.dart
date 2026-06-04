@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/agent/context_attachment.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/projects/git_status_service.dart';
+import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -412,13 +414,28 @@ class _GitChangesCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.labelMedium,
                     ),
                   ),
-                  OutlinedButton.icon(
-                    style: _forgeCompactOutlinedStyle(context),
-                    onPressed: () => unawaited(
-                      _copyGitDiff(context, service, projectRoot),
-                    ),
-                    icon: const Icon(Icons.copy, size: 14),
-                    label: Text(l10n.forgeCopyDiff),
+                  Wrap(
+                    spacing: PickforgeSpacing.xs,
+                    runSpacing: PickforgeSpacing.xs,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      OutlinedButton.icon(
+                        style: _forgeCompactOutlinedStyle(context),
+                        onPressed: () => unawaited(
+                          _copyGitDiff(context, service, projectRoot),
+                        ),
+                        icon: const Icon(Icons.copy, size: 14),
+                        label: Text(l10n.forgeCopyDiff),
+                      ),
+                      OutlinedButton.icon(
+                        style: _forgeCompactOutlinedStyle(context),
+                        onPressed: () => unawaited(
+                          _showDiscardInstructions(context),
+                        ),
+                        icon: const Icon(Icons.undo, size: 14),
+                        label: Text(l10n.forgeDiscardInstructions),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -429,7 +446,7 @@ class _GitChangesCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               for (final file in summary.changedFiles.take(5))
-                Text('• $file', overflow: TextOverflow.ellipsis),
+                _ChangedFileRow(projectRoot: projectRoot, file: file),
               if (summary.stat.trim().isNotEmpty) ...[
                 const SizedBox(height: PickforgeSpacing.xs),
                 Text(
@@ -443,6 +460,35 @@ class _GitChangesCard extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _ChangedFileRow extends StatelessWidget {
+  const _ChangedFileRow({required this.projectRoot, required this.file});
+
+  final String projectRoot;
+  final String file;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '• $file',
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        _TinyTagButton(
+          tooltip: l10n.forgeOpenChangedFile,
+          icon: Icons.open_in_new,
+          onPressed: () => unawaited(
+            _openChangedFile(context, projectRoot, file),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -667,6 +713,14 @@ GitStatusService? _gitStatusServiceOrNull() {
   }
 }
 
+ProjectFileOpener? _projectFileOpenerOrNull() {
+  try {
+    return ProjectFileOpener(runner: getIt<ProcessRunner>());
+  } on Object {
+    return null;
+  }
+}
+
 SkillStore _skillStore() {
   if (getIt.isRegistered<SkillStore>()) return getIt<SkillStore>();
   return SkillStore();
@@ -716,6 +770,48 @@ Future<void> _copyGitDiff(
   if (!context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text(l10n.forgeDiffCopied)),
+  );
+}
+
+Future<void> _openChangedFile(
+  BuildContext context,
+  String projectRoot,
+  String file,
+) async {
+  final opener = _projectFileOpenerOrNull();
+  if (opener == null) return;
+  final l10n = AppLocalizations.of(context);
+  final path =
+      p.isAbsolute(file) ? file : p.normalize(p.join(projectRoot, file));
+  try {
+    await opener.open(path);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.forgeChangedFileOpened(_basename(file)))),
+    );
+  } on Object {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.forgeChangedFileOpenFailed(_basename(file)))),
+    );
+  }
+}
+
+Future<void> _showDiscardInstructions(BuildContext context) {
+  final l10n = AppLocalizations.of(context);
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(l10n.forgeDiscardInstructionsTitle),
+      content: SelectableText(l10n.forgeDiscardInstructionsMessage),
+      actions: [
+        OutlinedButton(
+          style: _forgeCompactOutlinedStyle(context),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+        ),
+      ],
+    ),
   );
 }
 

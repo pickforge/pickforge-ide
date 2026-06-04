@@ -1032,15 +1032,19 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T9 — Visual regression suite
 
-**Status:** Not started
-**Why:** The app's differentiator is UX polish; screenshots should prevent accidental regressions.
+**Status:** Completed
+**Why:** Linux-canonical golden coverage now protects the primary polished surfaces, with deterministic font/theme setup, CI failure artifacts, and documented cross-OS policy.
 
 **Tasks**
 
-- [ ] Add golden coverage for onboarding, sidebar list/grid, file explorer, terminal, inspector selected/empty states, settings, dialogs.
-- [ ] Add deterministic fonts/theme setup for goldens.
-- [ ] Add failure artifacts in CI.
-- [ ] Decide tolerance policy across Linux/macOS.
+- [x] Add golden coverage for onboarding, sidebar list/grid, file explorer, terminal, inspector selected/empty states, settings, dialogs.
+- [x] Add deterministic fonts/theme setup for goldens.
+- [x] Add failure artifacts in CI.
+- [x] Decide tolerance policy across Linux/macOS.
+
+**Latest evidence**
+
+- 2026-06-04: Added `test/goldens/visual_regression_test.dart` with golden baselines for onboarding, sidebar list/grid, project file explorer, demo terminal/workbench, inspector empty/selected states, settings, and the `.pickforge` gitignore dialog. Added deterministic golden font/theme setup in `test/support/golden_test_harness.dart`, documented the Linux-exact/macOS-skipped policy in `test/goldens/README.md`, and configured CI to upload Flutter golden `failures/` artifacts on test failure. Verified with `fvm flutter test --update-goldens test/goldens/visual_regression_test.dart --reporter=compact`, `fvm flutter test test/goldens/visual_regression_test.dart --reporter=compact`, visual inspection of generated baselines, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ## 15. Deprecated or stale plan items not carried forward
 

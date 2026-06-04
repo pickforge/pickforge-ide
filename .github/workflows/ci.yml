@@ -35,6 +35,16 @@ jobs:
         run: fvm flutter analyze
       - name: Test
         run: fvm flutter test --coverage --reporter=compact
+      - name: Upload Flutter test failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flutter-test-failures-${{ matrix.os }}
+          path: |
+            test/**/failures/**
+            failures/**
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload coverage (ubuntu only)
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v6

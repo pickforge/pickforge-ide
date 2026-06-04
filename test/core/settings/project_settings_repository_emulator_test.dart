@@ -123,6 +123,18 @@ void main() {
     expect(got.extraArgs, ['--flavor', 'dev', '--dart-define=FOO=bar']);
   });
 
+  test('getRunArgs recovers from corrupted extra args JSON', () async {
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/p',
+      targetFile: 'lib/main_dev.dart',
+      flutterRunArgs: '{not json',
+    );
+
+    final got = await repo.getRunArgs('/p');
+    expect(got.targetFile, 'lib/main_dev.dart');
+    expect(got.extraArgs, isEmpty);
+  });
+
   test('getRunArgs returns empty when none set', () async {
     final got = await repo.getRunArgs('/p');
     expect(got.targetFile, isNull);
@@ -150,6 +162,19 @@ void main() {
   });
 
   test('getEmulatorLaunchOptions returns defaults when none set', () async {
+    expect(
+      await repo.getEmulatorLaunchOptions('/p'),
+      const EmulatorLaunchOptions(),
+    );
+  });
+
+  test('getEmulatorLaunchOptions recovers from corrupted stored JSON',
+      () async {
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/p',
+      emulatorLaunchOptions: '{"gpuMode":"unknown"}',
+    );
+
     expect(
       await repo.getEmulatorLaunchOptions('/p'),
       const EmulatorLaunchOptions(),
@@ -199,6 +224,26 @@ void main() {
       () async {
     expect(
       await repo.getEmulatorIdleShutdownSettings('/p'),
+      const EmulatorIdleShutdownSettings(),
+    );
+  });
+
+  test('getEmulatorIdleShutdownSettings recovers partial and corrupted JSON',
+      () async {
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/partial',
+      emulatorIdleShutdown: '{"enabled":true}',
+    );
+    final partial = await repo.getEmulatorIdleShutdownSettings('/partial');
+    expect(partial.enabled, isTrue);
+    expect(partial.requireConfirmation, isTrue);
+
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/corrupt',
+      emulatorIdleShutdown: '{"enabled":"yes"}',
+    );
+    expect(
+      await repo.getEmulatorIdleShutdownSettings('/corrupt'),
       const EmulatorIdleShutdownSettings(),
     );
   });

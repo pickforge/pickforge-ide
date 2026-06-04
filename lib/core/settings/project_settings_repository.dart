@@ -162,9 +162,7 @@ class ProjectSettingsRepository {
     final row = await _db.projectSettingsDao.loadFor(projectRoot);
     if (row == null) return const RunArgs();
     final extras = row.flutterRunArgs;
-    final list = extras == null
-        ? const <String>[]
-        : (jsonDecode(extras) as List<dynamic>).cast<String>();
+    final list = extras == null ? const <String>[] : _decodeStringList(extras);
     return RunArgs(targetFile: row.targetFile, extraArgs: list);
   }
 
@@ -182,9 +180,13 @@ class ProjectSettingsRepository {
     final row = await _db.projectSettingsDao.loadFor(projectRoot);
     final json = row?.emulatorLaunchOptions;
     if (json == null) return const EmulatorLaunchOptions();
-    return EmulatorLaunchOptions.fromJson(
-      (jsonDecode(json) as Map<String, dynamic>).cast<String, Object?>(),
-    );
+    final decoded = _decodeObject(json);
+    if (decoded == null) return const EmulatorLaunchOptions();
+    try {
+      return EmulatorLaunchOptions.fromJson(decoded);
+    } on Object {
+      return const EmulatorLaunchOptions();
+    }
   }
 
   Future<void> setEmulatorLaunchOptions(
@@ -209,9 +211,13 @@ class ProjectSettingsRepository {
     final row = await _db.projectSettingsDao.loadFor(projectRoot);
     final json = row?.emulatorIdleShutdown;
     if (json == null) return const EmulatorIdleShutdownSettings();
-    return EmulatorIdleShutdownSettings.fromJson(
-      (jsonDecode(json) as Map<String, dynamic>).cast<String, Object?>(),
-    );
+    final decoded = _decodeObject(json);
+    if (decoded == null) return const EmulatorIdleShutdownSettings();
+    try {
+      return EmulatorIdleShutdownSettings.fromJson(decoded);
+    } on Object {
+      return const EmulatorIdleShutdownSettings();
+    }
   }
 
   Future<void> setEmulatorIdleShutdownSettings(
@@ -228,4 +234,24 @@ class ProjectSettingsRepository {
 
   Future<void> markFirstRunCelebrated(String projectRoot) =>
       _db.projectSettingsDao.markFirstRunCelebrated(projectRoot);
+}
+
+List<String> _decodeStringList(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return const [];
+    return decoded.whereType<String>().toList(growable: false);
+  } on Object {
+    return const [];
+  }
+}
+
+Map<String, Object?>? _decodeObject(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return null;
+    return decoded.cast<String, Object?>();
+  } on Object {
+    return null;
+  }
 }

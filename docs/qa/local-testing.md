@@ -28,6 +28,9 @@ without an explicit web-safe entrypoint.
   Service under Xvfb.
 - `scripts/dogfood_preflight.sh` records local agent, Android, and Flutter tool
   availability under `build/dogfood/`.
+- `scripts/dirty_git_dogfood_setup.sh --source <git-project>` creates a
+  disposable worktree with staged, unstaged, and untracked files for visible
+  dirty-worktree Forge review.
 - `docs/qa/manual-dogfood.md` describes the visible desktop and native-host
   checks that cannot be completed by headless CI.
 

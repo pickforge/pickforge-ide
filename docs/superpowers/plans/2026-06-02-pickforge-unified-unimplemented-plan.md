@@ -766,7 +766,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add optional "create checkpoint commit" or "stash before forge" workflow later.
 - [x] Surface hot reload/test/analyze result alongside the diff.
 
-**Blocked:** Visible/manual dogfood with a real dirty project remains pending.
+**Blocked:** Visible/manual dogfood with a real dirty project remains pending; `scripts/dirty_git_dogfood_setup.sh` now prepares a disposable staged/unstaged/untracked worktree for that pass.
 
 **Validation**
 
@@ -784,6 +784,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Added a dirty-worktree **Create checkpoint** action that runs `git add -u` plus `git commit -m "chore: pickforge checkpoint"` before forging, preserving untracked files unless users handle them manually. Verified with focused GitStatusService and Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (591 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/emulator_e2e.sh Pixel_10`.
 - 2026-06-04: Added real-repository GitStatusService coverage that creates staged, unstaged, and untracked files, creates a checkpoint commit, and verifies untracked files remain untouched. Verified with `fvm flutter test --reporter=compact test/core/projects/git_status_service_test.dart` and `fvm flutter test --reporter=compact` (593 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`).
 - 2026-06-04: Added ForgePanel widget coverage backed by a temporary real git repository with staged, unstaged, and untracked files. The test verifies real git status/diff parsing, drives the dirty-worktree checkpoint dialog, creates the checkpoint through the panel, and confirms untracked files remain untouched. Verified with focused ForgePanel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (619 passed, 3 skipped emulator-gated tests), and `scripts/emulator_e2e.sh Pixel_10`.
+- 2026-06-04: Added `scripts/dirty_git_dogfood_setup.sh` so visible manual dogfood can use a disposable git worktree from a real app, seeded with staged, unstaged, and untracked files, without mutating the original checkout. Verified against `/home/dev/Development/Personal/MyGamesList/app`; the generated dogfood worktree had the expected dirty status and cleanup path. The manual Pickforge UI pass remains unchecked until run from the visible app.
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 

@@ -73,7 +73,10 @@ they do not replace manual dogfood on real desktop hosts.
 
 - [ ] Hot reload from Pickforge refreshes the widget tree and keeps selection state understandable.
 - [ ] Selecting a new widget post-reload still works.
-- [ ] Dirty project warning appears before forge when the target repo has uncommitted changes.
+- [ ] Dirty project warning appears before forge when the target repo has
+  uncommitted changes; use
+  `scripts/dirty_git_dogfood_setup.sh --source <git-project>` for a disposable
+  staged/unstaged/untracked project.
 - [ ] After agent edits, changed files and diff summary are visible.
 - [ ] Copy diff, open changed file, and discard-instructions actions work.
 

@@ -62,22 +62,32 @@ product change.
    Codex, and OpenCode profile launch plus Pickforge prompt delivery through
    the embedded PTY adapter. The script writes transcripts and copied context
    artifacts under `build/dogfood/agent-profile-pty/`.
-9. Start Pickforge from the visible desktop session:
+9. To validate dirty-worktree review without altering the real app checkout,
+   prepare a disposable dogfood project:
+
+   ```bash
+   scripts/dirty_git_dogfood_setup.sh --source /home/dev/Development/Personal/MyGamesList/app
+   ```
+
+   Use the printed project root when checking the dirty-worktree warning,
+   checkpoint action, and untracked-file preservation.
+10. Start Pickforge from the visible desktop session:
 
    ```bash
    fvm flutter run -d linux
    ```
 
-10. Add `fixtures/sample_flutter_app` as a Pickforge project.
-11. Bind `Pixel_10` or attach to the sample app's VM Service.
-12. Pick a user-code widget and verify the inspector metadata and screenshot.
-13. Select/create a chat for the active project.
-14. Press **Forge it** and verify the prompt appears in the visible embedded
+11. Add `fixtures/sample_flutter_app`, the dirty-git dogfood project, or another
+    throwaway Flutter app as a Pickforge project.
+12. Bind `Pixel_10` or attach to the sample app's VM Service.
+13. Pick a user-code widget and verify the inspector metadata and screenshot.
+14. Select/create a chat for the active project.
+15. Press **Forge it** and verify the prompt appears in the visible embedded
    terminal.
-15. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
+16. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
     `.pickforge/initial-prompt.md`, and available screenshots in the sample
     project.
-16. Repeat visible Forge prompt delivery for any agent profile not covered by
+17. Repeat visible Forge prompt delivery for any agent profile not covered by
     `scripts/agent_profile_pty_smoke.sh`, or when validating model response and
     file-edit behavior rather than PTY launch/prompt delivery.
 

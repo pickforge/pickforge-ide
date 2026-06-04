@@ -12,6 +12,7 @@ import 'package:pickforge/features/emulator/view/device_picker_menu.dart';
 import 'package:pickforge/features/emulator/view/manual_url_form.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
+import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class ConnectionPill extends StatelessWidget {
   const ConnectionPill({super.key});
@@ -440,38 +441,126 @@ class _PrimaryAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return switch (state) {
       NoDevicePicked() => const SizedBox.shrink(),
-      Cold() => TextButton(onPressed: cubit.bootAvd, child: const Text('Boot')),
-      Booting() =>
-        TextButton(onPressed: cubit.cancelBoot, child: const Text('Cancel')),
+      Cold() => _PillActionButton(
+          icon: Icons.play_arrow,
+          label: 'Boot',
+          onPressed: cubit.bootAvd,
+          primary: true,
+        ),
+      Booting() => _PillActionButton(
+          icon: Icons.close,
+          label: 'Cancel',
+          onPressed: cubit.cancelBoot,
+        ),
       Idle(:final shutdownPrompt) => shutdownPrompt
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextButton(
+                _PillActionButton(
+                  icon: Icons.pause_circle_outline,
+                  label: 'Keep',
                   onPressed: cubit.dismissIdleShutdownPrompt,
-                  child: const Text('Keep'),
                 ),
-                TextButton(
+                const SizedBox(width: PickforgeSpacing.xs),
+                _PillActionButton(
+                  icon: Icons.power_settings_new,
+                  label: 'Shutdown',
                   onPressed: cubit.confirmIdleShutdown,
-                  child: const Text('Shutdown'),
+                  danger: true,
                 ),
               ],
             )
-          : TextButton(onPressed: cubit.runApp, child: const Text('Run app')),
-      RecoveryPending(:final canAdopt) => TextButton(
+          : _PillActionButton(
+              icon: Icons.terminal,
+              label: 'Run app',
+              onPressed: cubit.runApp,
+              primary: true,
+            ),
+      RecoveryPending(:final canAdopt) => _PillActionButton(
+          icon: canAdopt ? Icons.restore : Icons.cleaning_services,
+          label: canAdopt ? 'Adopt' : 'Cleanup',
           onPressed:
               canAdopt ? cubit.adoptRecoveredRun : cubit.cleanupRecoveredRun,
-          child: Text(canAdopt ? 'Adopt' : 'Cleanup'),
         ),
       Running(:final recovered) => recovered
-          ? TextButton(
+          ? _PillActionButton(
+              icon: Icons.cleaning_services,
+              label: 'Cleanup',
               onPressed: cubit.cleanupRecoveredRun,
-              child: const Text('Cleanup'),
             )
-          : TextButton(onPressed: cubit.hotReload, child: const Text('Reload')),
+          : _PillActionButton(
+              icon: Icons.refresh,
+              label: 'Reload',
+              onPressed: cubit.hotReload,
+              primary: true,
+            ),
       Reconnecting() => const SizedBox.shrink(),
-      EmulatorError() =>
-        TextButton(onPressed: cubit.bootAvd, child: const Text('Retry')),
+      EmulatorError() => _PillActionButton(
+          icon: Icons.refresh,
+          label: 'Retry',
+          onPressed: cubit.bootAvd,
+        ),
     };
+  }
+}
+
+class _PillActionButton extends StatelessWidget {
+  const _PillActionButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.primary = false,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+  final bool primary;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+    );
+    final style = primary
+        ? FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(0, 30),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.sm,
+              vertical: PickforgeSpacing.xs,
+            ),
+            shape: shape,
+          )
+        : OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(0, 30),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.sm,
+              vertical: PickforgeSpacing.xs,
+            ),
+            foregroundColor: danger ? colorScheme.error : null,
+            shape: shape,
+          );
+    final child = Icon(icon, size: 15);
+    if (primary) {
+      return FilledButton.icon(
+        style: style,
+        onPressed: onPressed,
+        icon: child,
+        label: Text(label),
+      );
+    }
+    return OutlinedButton.icon(
+      style: style,
+      onPressed: onPressed,
+      icon: child,
+      label: Text(label),
+    );
   }
 }

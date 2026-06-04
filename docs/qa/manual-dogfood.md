@@ -64,17 +64,18 @@ product change.
 
 ## Missing Tool Cases
 
-Run these against the built desktop bundle in a disposable shell so the normal
-user environment is not modified:
+Run the diagnostics smoke first. It uses a controlled PATH and disables
+login-shell PATH merging so missing-tool cases are deterministic:
 
 ```bash
-scripts/desktop_build_smoke.sh
-empty_path="$(mktemp -d)"
-PATH="$empty_path" build/linux/x64/debug/bundle/pickforge
+scripts/missing_tool_smoke.sh
 ```
 
-To make one tool available while hiding the rest, symlink only that command into
-the temporary PATH before launching the bundle.
+Then run the same scenarios against the built desktop bundle in a disposable
+visible shell so the normal user environment is not modified. Set
+`PICKFORGE_INHERITED_ENV_ONLY=1` when testing PATH permutations; otherwise the
+app intentionally resolves the user's login-shell PATH and may find tools that
+the disposable shell hides.
 
 Verify setup checks and terminal startup failures are recoverable for:
 

@@ -10,9 +10,21 @@ import 'dart:io';
 /// once and reading its `env` output, then merging the result over the
 /// process's own environment.
 class UserShellEnvironment {
-  UserShellEnvironment._();
+  UserShellEnvironment({
+    Map<String, String>? environment,
+    Future<ProcessResult> Function(String executable, List<String> arguments)?
+        shellRunner,
+    bool Function(String path)? fileExists,
+  })  : _environment = environment,
+        _shellRunner = shellRunner,
+        _fileExists = fileExists;
 
-  static final UserShellEnvironment instance = UserShellEnvironment._();
+  static final UserShellEnvironment instance = UserShellEnvironment();
+
+  final Map<String, String>? _environment;
+  final Future<ProcessResult> Function(String executable, List<String> args)?
+      _shellRunner;
+  final bool Function(String path)? _fileExists;
 
   Future<Map<String, String>>? _pending;
   Map<String, String>? _cache;
@@ -23,13 +35,14 @@ class UserShellEnvironment {
   }
 
   Future<Map<String, String>> _resolve() async {
-    final base = Map<String, String>.from(Platform.environment);
-    if (Platform.isWindows) {
+    final base = Map<String, String>.from(_environment ?? Platform.environment);
+    if (Platform.isWindows || base['PICKFORGE_INHERITED_ENV_ONLY'] == '1') {
       _cache = base;
       return base;
     }
     final shell = base['SHELL'];
-    if (shell == null || shell.isEmpty || !File(shell).existsSync()) {
+    final exists = _fileExists ?? (path) => File(path).existsSync();
+    if (shell == null || shell.isEmpty || !exists(shell)) {
       _cache = base;
       return base;
     }
@@ -38,10 +51,9 @@ class UserShellEnvironment {
       // login startup files (bashrc / zshrc / profile / etc.) and print the
       // resulting environment. A 3-second budget keeps us responsive even if
       // a misbehaving rc hangs.
-      final result = await Process.run(
-        shell,
-        ['-ilc', 'env'],
-      ).timeout(const Duration(seconds: 3));
+      final runner = _shellRunner ?? Process.run;
+      final result = await runner(shell, ['-ilc', 'env'])
+          .timeout(const Duration(seconds: 3));
       if (result.exitCode != 0) {
         _cache = base;
         return base;

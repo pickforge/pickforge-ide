@@ -30,4 +30,44 @@ void main() {
     final r = TranscriptReplayer(projectRoot: tmp.path, chatId: 'missing');
     expect(await r.replay().toList(), isEmpty);
   });
+
+  test('replay handles large transcripts in bounded chunks', () async {
+    final dir = Directory(p.join(tmp.path, '.pickforge', 'chats', 'large'))
+      ..createSync(recursive: true);
+    const size = 2 * 1024 * 1024 + 123;
+    const chunkBytes = 8192;
+    final bytes = List<int>.generate(size, (index) => index % 251);
+    File(p.join(dir.path, 'transcript.log')).writeAsBytesSync(bytes);
+
+    final r = TranscriptReplayer(
+      projectRoot: tmp.path,
+      chatId: 'large',
+      chunkBytes: chunkBytes,
+    );
+    final stopwatch = Stopwatch()..start();
+    var totalBytes = 0;
+    var maxChunkBytes = 0;
+    var chunkCount = 0;
+    var checksum = 0;
+
+    await for (final chunk in r.replay()) {
+      chunkCount++;
+      totalBytes += chunk.length;
+      if (chunk.length > maxChunkBytes) maxChunkBytes = chunk.length;
+      for (final byte in chunk) {
+        checksum = (checksum + byte) & 0x7fffffff;
+      }
+    }
+    stopwatch.stop();
+
+    final expectedChecksum = bytes.fold<int>(
+      0,
+      (sum, byte) => (sum + byte) & 0x7fffffff,
+    );
+    expect(totalBytes, size);
+    expect(maxChunkBytes, lessThanOrEqualTo(chunkBytes));
+    expect(chunkCount, (size / chunkBytes).ceil());
+    expect(checksum, expectedChecksum);
+    expect(stopwatch.elapsedMilliseconds, lessThan(2000));
+  });
 }

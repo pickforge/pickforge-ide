@@ -998,7 +998,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [x] Add benchmark-style tests or instrumentation for large sidebar state.
 - [x] Add fixture project with many files for explorer tests.
-- [ ] Add transcript replay stress test.
+- [x] Add transcript replay stress test.
 - [ ] Add performance counters in diagnostics.
 - [ ] Define and enforce file scan excludes.
 
@@ -1006,6 +1006,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Added a benchmark-style regression test for `buildWorkspaceSidebarSections` with 100 projects and 2,000 chats across project, recent, pinned, agent, skill, and custom grouping modes. The test enforces a conservative 500ms ceiling for the pure section-building path. Verified with `test/features/workbench/cubit/workspace_sidebar_sections_test.dart`.
 - 2026-06-04: Added a generated large-project fixture test for `ProjectFileTreeScanner` with 600 scanned source/test files and 450 ignored files under `.git`, `.dart_tool`, and `build`. The test verifies sorted output, common excludes, and a conservative 2500ms scanner budget. Verified with `test/core/projects/project_file_tree_scanner_test.dart`.
+- 2026-06-04: Added a transcript replay stress test with a 2 MiB log, 8 KiB chunks, checksum verification, max-chunk enforcement, and a conservative 2000ms replay budget. Verified with `test/core/terminal/transcript_replayer_test.dart`.
 
 ### P9.T8 — Storage migration and backward-compatibility suite
 

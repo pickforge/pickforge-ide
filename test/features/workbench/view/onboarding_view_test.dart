@@ -52,6 +52,8 @@ void main() {
     expect(find.text('Explore demo mode'), findsOneWidget);
     expect(find.text('Open sample Flutter app'), findsOneWidget);
     expect(find.text('Dismiss for now'), findsOneWidget);
+    expect(find.byType(Card), findsNothing);
+    expect(find.byType(TextButton), findsNothing);
 
     await tester.tap(find.text('Pick folder'));
     await tester.pumpAndSettle();
@@ -86,6 +88,7 @@ void main() {
     expect(find.text('Demo workspace'), findsOneWidget);
     expect(find.text('CounterPage'), findsOneWidget);
     expect(find.text('Open demo workspace'), findsOneWidget);
+    expect(find.byType(Chip), findsNothing);
 
     await tester.ensureVisible(find.text('Open demo workspace'));
     await tester.pumpAndSettle();

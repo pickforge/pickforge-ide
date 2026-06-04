@@ -14,6 +14,7 @@ import 'package:pickforge/core/settings/onboarding_preferences.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class OnboardingView extends StatefulWidget {
   const OnboardingView({
@@ -107,46 +108,47 @@ class _OnboardingViewState extends State<OnboardingView> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(32),
+          padding: const EdgeInsets.all(PickforgeSpacing.xxl),
           child: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(Icons.folder_open, size: 64),
-                const SizedBox(height: 24),
+                const SizedBox(height: PickforgeSpacing.xl),
                 Text(
                   l10n.onboardingHeading,
                   style: Theme.of(context).textTheme.headlineSmall,
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: PickforgeSpacing.xl),
                 FilledButton.icon(
                   onPressed: _onPick,
                   icon: const Icon(Icons.add),
                   label: Text(l10n.workbenchPickFolder),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: PickforgeSpacing.md),
                 OutlinedButton.icon(
                   onPressed: () => setState(() => _demoMode = !_demoMode),
                   icon: const Icon(Icons.smart_toy_outlined),
                   label: Text(l10n.onboardingDemoButton),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: PickforgeSpacing.md),
                 OutlinedButton.icon(
                   onPressed: () => unawaited(_openSampleProject()),
                   icon: const Icon(Icons.folder_special_outlined),
                   label: Text(l10n.onboardingOpenSampleApp),
                 ),
-                const SizedBox(height: 12),
-                TextButton.icon(
+                const SizedBox(height: PickforgeSpacing.md),
+                OutlinedButton.icon(
+                  style: _onboardingCompactButtonStyle(),
                   onPressed: () => unawaited(_dismissOnboarding()),
                   icon: const Icon(Icons.close),
                   label: Text(l10n.onboardingDismissButton),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: PickforgeSpacing.xl),
                 _FirstRunChecklist(l10n: l10n),
                 if (_diagnosticsServiceOrNull() case final diagnostics?) ...[
-                  const SizedBox(height: 24),
+                  const SizedBox(height: PickforgeSpacing.xl),
                   _SetupChecksCard(
                     key: ValueKey(_setupChecksKey),
                     diagnostics: diagnostics,
@@ -156,14 +158,14 @@ class _OnboardingViewState extends State<OnboardingView> {
                   ),
                 ],
                 if (_demoMode) ...[
-                  const SizedBox(height: 24),
+                  const SizedBox(height: PickforgeSpacing.xl),
                   _DemoModeCard(
                     l10n: l10n,
                     onOpenDemo: _openDemoWorkspace,
                   ),
                 ],
                 if (_error != null) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: PickforgeSpacing.lg),
                   Text(
                     _error!,
                     style: TextStyle(
@@ -190,6 +192,80 @@ class _OnboardingViewState extends State<OnboardingView> {
   }
 }
 
+class _OnboardingPanel extends StatelessWidget {
+  const _OnboardingPanel({
+    required this.child,
+    this.background,
+    this.borderColor,
+  });
+
+  final Widget child;
+  final Color? background;
+  final Color? borderColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 460),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(PickforgeSpacing.lg),
+        decoration: BoxDecoration(
+          color: background ??
+              colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+          border: Border.all(
+            color: borderColor ??
+                colorScheme.outlineVariant.withValues(alpha: 0.52),
+          ),
+          borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _OnboardingTag extends StatelessWidget {
+  const _OnboardingTag(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.36),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.56),
+        ),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: PickforgeSpacing.sm,
+          vertical: PickforgeSpacing.xs,
+        ),
+        child: Text(label, style: Theme.of(context).textTheme.labelSmall),
+      ),
+    );
+  }
+}
+
+ButtonStyle _onboardingCompactButtonStyle() => OutlinedButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size(0, 32),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(
+        horizontal: PickforgeSpacing.md,
+        vertical: PickforgeSpacing.sm,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      ),
+    );
+
 class _FirstRunChecklist extends StatelessWidget {
   const _FirstRunChecklist({required this.l10n});
 
@@ -204,33 +280,29 @@ class _FirstRunChecklist extends StatelessWidget {
       l10n.onboardingChecklistPickWidget,
       l10n.onboardingChecklistForge,
     ];
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 460),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                l10n.onboardingChecklistTitle,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              for (final item in items)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.check_circle_outline, size: 16),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(item)),
-                    ],
-                  ),
-                ),
-            ],
+    return _OnboardingPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            l10n.onboardingChecklistTitle,
+            style: Theme.of(context).textTheme.titleMedium,
           ),
-        ),
+          const SizedBox(height: PickforgeSpacing.sm),
+          for (final item in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                vertical: PickforgeSpacing.xs,
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline, size: 16),
+                  const SizedBox(width: PickforgeSpacing.sm),
+                  Expanded(child: Text(item)),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -251,89 +323,85 @@ class _SetupChecksCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 460),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: FutureBuilder<DiagnosticsSnapshot>(
-            future: diagnostics.snapshot(),
-            builder: (context, snapshot) {
-              final data = snapshot.data;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return _OnboardingPanel(
+      child: FutureBuilder<DiagnosticsSnapshot>(
+        future: diagnostics.snapshot(),
+        builder: (context, snapshot) {
+          final data = snapshot.data;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l10n.onboardingSetupChecksTitle,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: PickforgeSpacing.sm),
+              OverflowBar(
+                alignment: MainAxisAlignment.end,
+                spacing: PickforgeSpacing.sm,
                 children: [
-                  Text(
-                    l10n.onboardingSetupChecksTitle,
-                    style: Theme.of(context).textTheme.titleMedium,
+                  OutlinedButton.icon(
+                    style: _onboardingCompactButtonStyle(),
+                    onPressed: onOpenSettings,
+                    icon: const Icon(Icons.settings_outlined, size: 16),
+                    label: Text(l10n.onboardingOpenSettings),
                   ),
-                  const SizedBox(height: 8),
-                  OverflowBar(
-                    alignment: MainAxisAlignment.end,
-                    spacing: 8,
-                    children: [
-                      TextButton.icon(
-                        onPressed: onOpenSettings,
-                        icon: const Icon(Icons.settings_outlined, size: 16),
-                        label: Text(l10n.onboardingOpenSettings),
-                      ),
-                      TextButton.icon(
-                        onPressed: onRetry,
-                        icon: const Icon(Icons.refresh, size: 16),
-                        label: Text(l10n.onboardingRetrySetupChecks),
-                      ),
-                    ],
+                  OutlinedButton.icon(
+                    style: _onboardingCompactButtonStyle(),
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: Text(l10n.onboardingRetrySetupChecks),
                   ),
-                  const SizedBox(height: 8),
-                  if (!snapshot.hasData)
-                    const LinearProgressIndicator(minHeight: 1)
-                  else ...[
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsFlutter,
-                      available: data!.flutterAvailable,
-                      command: 'fvm flutter doctor',
-                    ),
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsAdb,
-                      available: data.adbAvailable,
-                      command: 'adb version',
-                    ),
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsEmulator,
-                      available: data.emulatorAvailable,
-                      command: 'emulator -list-avds',
-                    ),
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsClaude,
-                      available: data.claudeAvailable,
-                      command: 'claude --version',
-                    ),
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsCodex,
-                      available: data.codexAvailable,
-                      command: 'codex --version',
-                    ),
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsOpenCode,
-                      available: data.openCodeAvailable,
-                      command: 'opencode --version',
-                    ),
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsCursor,
-                      available: data.cursorAvailable,
-                      command: 'agent --version',
-                    ),
-                    _SetupCheckRow(
-                      label: l10n.diagnosticsGemini,
-                      available: data.geminiAvailable,
-                      command: 'gemini --version',
-                    ),
-                  ],
                 ],
-              );
-            },
-          ),
-        ),
+              ),
+              const SizedBox(height: PickforgeSpacing.sm),
+              if (!snapshot.hasData)
+                const LinearProgressIndicator(minHeight: 2)
+              else ...[
+                _SetupCheckRow(
+                  label: l10n.diagnosticsFlutter,
+                  available: data!.flutterAvailable,
+                  command: 'fvm flutter doctor',
+                ),
+                _SetupCheckRow(
+                  label: l10n.diagnosticsAdb,
+                  available: data.adbAvailable,
+                  command: 'adb version',
+                ),
+                _SetupCheckRow(
+                  label: l10n.diagnosticsEmulator,
+                  available: data.emulatorAvailable,
+                  command: 'emulator -list-avds',
+                ),
+                _SetupCheckRow(
+                  label: l10n.diagnosticsClaude,
+                  available: data.claudeAvailable,
+                  command: 'claude --version',
+                ),
+                _SetupCheckRow(
+                  label: l10n.diagnosticsCodex,
+                  available: data.codexAvailable,
+                  command: 'codex --version',
+                ),
+                _SetupCheckRow(
+                  label: l10n.diagnosticsOpenCode,
+                  available: data.openCodeAvailable,
+                  command: 'opencode --version',
+                ),
+                _SetupCheckRow(
+                  label: l10n.diagnosticsCursor,
+                  available: data.cursorAvailable,
+                  command: 'agent --version',
+                ),
+                _SetupCheckRow(
+                  label: l10n.diagnosticsGemini,
+                  available: data.geminiAvailable,
+                  command: 'gemini --version',
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -355,7 +423,7 @@ class _SetupCheckRow extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: PickforgeSpacing.xs),
       child: Row(
         children: [
           Icon(
@@ -363,14 +431,14 @@ class _SetupCheckRow extends StatelessWidget {
             size: 16,
             color: available ? cs.primary : cs.error,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: PickforgeSpacing.sm),
           Expanded(child: Text(label)),
           Text(
             available ? l10n.diagnosticsAvailable : l10n.diagnosticsMissing,
             style: TextStyle(color: available ? cs.primary : cs.error),
           ),
           if (!available) ...[
-            const SizedBox(width: 4),
+            const SizedBox(width: PickforgeSpacing.xs),
             IconButton(
               tooltip: l10n.onboardingCopySetupCommand,
               icon: const Icon(Icons.copy, size: 16),
@@ -393,49 +461,46 @@ class _DemoModeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 460),
-      child: Card(
-        color: Theme.of(context).colorScheme.secondaryContainer,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(Icons.preview_outlined),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    final colorScheme = Theme.of(context).colorScheme;
+    return _OnboardingPanel(
+      background: colorScheme.secondaryContainer.withValues(alpha: 0.5),
+      borderColor: colorScheme.secondary.withValues(alpha: 0.45),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.preview_outlined),
+          const SizedBox(width: PickforgeSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.onboardingDemoTitle,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: PickforgeSpacing.xs),
+                Text(l10n.onboardingDemoDescription),
+                const SizedBox(height: PickforgeSpacing.md),
+                Wrap(
+                  spacing: PickforgeSpacing.sm,
+                  runSpacing: PickforgeSpacing.sm,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Text(
-                      l10n.onboardingDemoTitle,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(l10n.onboardingDemoDescription),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        const Chip(label: Text('sample_flutter_app')),
-                        const Chip(label: Text('CounterPage')),
-                        const Chip(label: Text('Pixel 10')),
-                        const Chip(label: Text('Codex chat')),
-                        FilledButton.icon(
-                          onPressed: onOpenDemo,
-                          icon: const Icon(Icons.open_in_new),
-                          label: Text(l10n.onboardingOpenDemoWorkspace),
-                        ),
-                      ],
+                    const _OnboardingTag('sample_flutter_app'),
+                    const _OnboardingTag('CounterPage'),
+                    const _OnboardingTag('Pixel 10'),
+                    const _OnboardingTag('Codex chat'),
+                    FilledButton.icon(
+                      onPressed: onOpenDemo,
+                      icon: const Icon(Icons.open_in_new),
+                      label: Text(l10n.onboardingOpenDemoWorkspace),
                     ),
                   ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

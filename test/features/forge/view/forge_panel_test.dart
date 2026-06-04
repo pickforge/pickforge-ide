@@ -178,6 +178,11 @@ void main() {
     );
 
     expect(find.text('Forge it'), findsOneWidget);
+    expect(find.byType(Card), findsNothing);
+    expect(find.byType(Chip), findsNothing);
+    expect(find.byType(InputChip), findsNothing);
+    expect(find.byType(ActionChip), findsNothing);
+    expect(find.byType(TextButton), findsNothing);
   });
 
   testWidgets('ForgePanel button disabled when selection is null',

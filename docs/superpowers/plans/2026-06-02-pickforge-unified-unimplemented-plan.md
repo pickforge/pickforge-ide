@@ -539,12 +539,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T1 — Design-system polish pass
 
-**Status:** Partial / audit, inspector, history, settings, onboarding, and motion polish landed
-**Why:** The inspector details panel now uses localized labels for empty states, ancestors, source, and recent rebuilds, and the panel/chip/source styling no longer relies on hardcoded Material grey colors. Pick history and run history now use compact themed headers, rows, and empty states instead of default `AppBar`/`Card`/`ListTile` layouts. Settings and device-run controls now use compact Pickforge section surfaces, field rows, toggles, and buttons instead of stock cards/list tiles/chips/text buttons. Connection pill primary actions now use compact icon buttons instead of plain `TextButton`s. Onboarding now uses compact token-based panels and tags instead of stock cards/chips/text buttons. The Material-default audit is recorded below. App shell pane animation, connection pill content/status-dot animation, no-selection placeholder pulse, and chat auto-scroll now honor reduced motion; forge density polish and the localization sweep remain open.
+**Status:** Partial / density and motion polish complete; localization sweep remains
+**Why:** The inspector details panel now uses localized labels for empty states, ancestors, source, and recent rebuilds, and the panel/chip/source styling no longer relies on hardcoded Material grey colors. Pick history and run history now use compact themed headers, rows, and empty states instead of default `AppBar`/`Card`/`ListTile` layouts. Settings and device-run controls now use compact Pickforge section surfaces, field rows, toggles, and buttons instead of stock cards/list tiles/chips/text buttons. Connection pill primary actions now use compact icon buttons instead of plain `TextButton`s. Onboarding now uses compact token-based panels and tags instead of stock cards/chips/text buttons. Forge now uses compact token-based surfaces, tags, and action buttons instead of stock cards/chips/text buttons. App shell pane animation, connection pill content/status-dot animation, no-selection placeholder pulse, and chat auto-scroll now honor reduced motion; the localization sweep remains open.
 **Tasks**
 
 - [x] Audit Material-default UI remnants.
-- [ ] Tighten density, spacing, typography, colors, and empty states.
+- [x] Tighten density, spacing, typography, colors, and empty states.
 - [x] Confirm reduce-motion behavior for all animations.
 - [ ] Add missing localized strings.
 
@@ -554,13 +554,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Reworked Settings and Device & Run into compact token-based sections, normalized typography letter spacing to zero, and removed audited stock `Card`/`SwitchListTile`/`ChoiceChip`/`ActionChip`/`TextButton` remnants from the settings feature; verified with focused settings/theme tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Replaced connection pill `TextButton` primary actions with compact icon `FilledButton`/`OutlinedButton` controls; verified with focused connection pill tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Reworked onboarding checklist/setup/demo surfaces into compact token-based panels and tags, replacing stock `Card`/`Chip`/`TextButton` patterns; verified with focused onboarding tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
+- 2026-06-04: Reworked Forge panel context tray, dirty-worktree summary, preview/forge actions, and dialogs into compact token-based surfaces, tags, and buttons; verified with focused Forge tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 **Audit findings — 2026-06-04**
 
 - History and run-history views still use default `Scaffold`/`AppBar`/`Card` composition and dense hardcoded label text.
 - Settings and device-run density remnants were resolved on 2026-06-04; hardcoded labels remain for the localization sweep.
 - Connection pill action button density remnants were resolved on 2026-06-04; hardcoded menu/action labels remain for the localization sweep.
-- Forge still uses several stock `Card`/`Chip` patterns that need a Pickforge-specific density and surface pass.
+- Forge density remnants were resolved on 2026-06-04.
 - Demo/onboarding density remnants were resolved on 2026-06-04; intentional sample literals remain for the localization sweep review.
 
 ### P6.T2 — Command palette expansion

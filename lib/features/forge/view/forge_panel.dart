@@ -19,6 +19,7 @@ import 'package:pickforge/features/forge/cubit/forge_state.dart';
 import 'package:pickforge/features/forge/widgets/agent_picker.dart';
 import 'package:pickforge/features/forge/widgets/skill_picker.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class ForgePanel extends StatelessWidget {
   const ForgePanel({
@@ -137,7 +138,8 @@ class _ForgePanelBody extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                     ],
-                    TextButton(
+                    OutlinedButton.icon(
+                      style: _forgeCompactOutlinedStyle(context),
                       onPressed: selection == null
                           ? null
                           : () => unawaited(
@@ -150,10 +152,12 @@ class _ForgePanelBody extends StatelessWidget {
                                   attachmentState?.customNote ?? '',
                                 ),
                               ),
-                      child: Text(l10n.forgePreviewButton),
+                      icon: const Icon(Icons.article_outlined, size: 16),
+                      label: Text(l10n.forgePreviewButton),
                     ),
-                    const SizedBox(width: 8),
-                    FilledButton(
+                    const SizedBox(width: PickforgeSpacing.sm),
+                    FilledButton.icon(
+                      style: _forgeCompactFilledStyle(),
                       onPressed: (!canForge || state.launching)
                           ? null
                           : () => unawaited(
@@ -169,7 +173,8 @@ class _ForgePanelBody extends StatelessWidget {
                                   deviceTarget.platform,
                                 ),
                               ),
-                      child: Text(l10n.forgeItButton),
+                      icon: const Icon(Icons.auto_fix_high, size: 16),
+                      label: Text(l10n.forgeItButton),
                     ),
                   ],
                 ),
@@ -177,7 +182,7 @@ class _ForgePanelBody extends StatelessWidget {
               if (selection != null ||
                   attachments.isNotEmpty ||
                   attachmentState?.lastBlockedReason != null) ...[
-                const SizedBox(height: 6),
+                const SizedBox(height: PickforgeSpacing.sm),
                 _ContextTray(
                   selection: selection,
                   attachmentState: attachmentState,
@@ -185,7 +190,7 @@ class _ForgePanelBody extends StatelessWidget {
                   largeContextBytes: _largeContextBytes,
                 ),
               ],
-              const SizedBox(height: 6),
+              const SizedBox(height: PickforgeSpacing.sm),
               _GitChangesCard(projectRoot: projectRoot),
             ],
           ),
@@ -216,6 +221,168 @@ class _SkillSourceButton extends StatelessWidget {
   }
 }
 
+class _ForgeSurface extends StatelessWidget {
+  const _ForgeSurface({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(PickforgeSpacing.sm),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.54),
+        ),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _ContextTag extends StatelessWidget {
+  const _ContextTag({
+    required this.label,
+    this.icon,
+    this.warning = false,
+    this.onPressed,
+    this.onDeleted,
+    this.trailing,
+  });
+
+  final String label;
+  final IconData? icon;
+  final bool warning;
+  final VoidCallback? onPressed;
+  final VoidCallback? onDeleted;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final accent = warning ? colorScheme.error : colorScheme.primary;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PickforgeSpacing.sm,
+        vertical: PickforgeSpacing.xs,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 15, color: warning ? accent : null),
+            const SizedBox(width: PickforgeSpacing.xs),
+          ],
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: warning ? accent : null,
+                  ),
+            ),
+          ),
+          if (onDeleted != null) ...[
+            const SizedBox(width: PickforgeSpacing.xs),
+            InkResponse(
+              radius: 12,
+              onTap: onDeleted,
+              child: Icon(Icons.close, size: 14, color: accent),
+            ),
+          ],
+          if (trailing != null) ...[
+            const SizedBox(width: PickforgeSpacing.xs),
+            trailing!,
+          ],
+        ],
+      ),
+    );
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+          onTap: onPressed,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: warning
+                  ? colorScheme.errorContainer.withValues(alpha: 0.36)
+                  : colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
+              border: Border.all(
+                color: warning
+                    ? accent.withValues(alpha: 0.42)
+                    : colorScheme.outlineVariant.withValues(alpha: 0.58),
+              ),
+              borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+            ),
+            child: content,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TinyTagButton extends StatelessWidget {
+  const _TinyTagButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      icon: Icon(icon, size: 14),
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 24, height: 24),
+      onPressed: onPressed,
+    );
+  }
+}
+
+ButtonStyle _forgeCompactOutlinedStyle(
+  BuildContext context, {
+  bool danger = false,
+}) =>
+    OutlinedButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size(0, 32),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(
+        horizontal: PickforgeSpacing.md,
+        vertical: PickforgeSpacing.sm,
+      ),
+      foregroundColor: danger ? Theme.of(context).colorScheme.error : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      ),
+    );
+
+ButtonStyle _forgeCompactFilledStyle() => FilledButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size(0, 32),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(
+        horizontal: PickforgeSpacing.md,
+        vertical: PickforgeSpacing.sm,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      ),
+    );
+
 class _GitChangesCard extends StatelessWidget {
   const _GitChangesCard({required this.projectRoot});
 
@@ -233,49 +400,46 @@ class _GitChangesCard extends StatelessWidget {
         if (summary == null || !summary.hasChanges) {
           return const SizedBox.shrink();
         }
-        return Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        l10n.forgeProjectChangesTitle,
-                        style: Theme.of(context).textTheme.labelMedium,
-                      ),
+        return _ForgeSurface(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      l10n.forgeProjectChangesTitle,
+                      style: Theme.of(context).textTheme.labelMedium,
                     ),
-                    TextButton.icon(
-                      onPressed: () => unawaited(
-                        _copyGitDiff(context, service, projectRoot),
-                      ),
-                      icon: const Icon(Icons.copy, size: 14),
-                      label: Text(l10n.forgeCopyDiff),
+                  ),
+                  OutlinedButton.icon(
+                    style: _forgeCompactOutlinedStyle(context),
+                    onPressed: () => unawaited(
+                      _copyGitDiff(context, service, projectRoot),
                     ),
-                  ],
-                ),
-                if (summary.branchName case final branch?)
-                  Text(l10n.forgeDirtyWorktreeBranch(branch)),
-                Text(
-                  l10n.forgeChangedFiles(summary.changedFiles.length),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                for (final file in summary.changedFiles.take(5))
-                  Text('• $file', overflow: TextOverflow.ellipsis),
-                if (summary.stat.trim().isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    summary.stat,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
+                    icon: const Icon(Icons.copy, size: 14),
+                    label: Text(l10n.forgeCopyDiff),
                   ),
                 ],
+              ),
+              if (summary.branchName case final branch?)
+                Text(l10n.forgeDirtyWorktreeBranch(branch)),
+              Text(
+                l10n.forgeChangedFiles(summary.changedFiles.length),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              for (final file in summary.changedFiles.take(5))
+                Text('• $file', overflow: TextOverflow.ellipsis),
+              if (summary.stat.trim().isNotEmpty) ...[
+                const SizedBox(height: PickforgeSpacing.xs),
+                Text(
+                  summary.stat,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
-            ),
+            ],
           ),
         );
       },
@@ -315,20 +479,29 @@ class _ContextTray extends StatelessWidget {
             style: Theme.of(context).textTheme.labelSmall,
           ),
           if (selection case final selected?)
-            Chip(
-              label: Text(
-                l10n.forgeSelectedWidgetChip(selected.node.className),
-              ),
+            _ContextTag(
+              icon: Icons.widgets_outlined,
+              label: l10n.forgeSelectedWidgetChip(selected.node.className),
             ),
           if (selection?.screenshotPath case final path?)
-            Chip(label: Text(l10n.forgeScreenshotChip(_basename(path)))),
+            _ContextTag(
+              icon: Icons.screenshot_monitor_outlined,
+              label: l10n.forgeScreenshotChip(_basename(path)),
+            ),
           if (selection?.adbScreenshotPath case final path?)
-            Chip(label: Text(l10n.forgeDeviceScreenshotChip(_basename(path)))),
+            _ContextTag(
+              icon: Icons.phone_android_outlined,
+              label: l10n.forgeDeviceScreenshotChip(_basename(path)),
+            ),
           if (runLogCount > 0)
-            Chip(label: Text(l10n.forgeRunLogsChip(runLogCount))),
+            _ContextTag(
+              icon: Icons.receipt_long_outlined,
+              label: l10n.forgeRunLogsChip(runLogCount),
+            ),
           if (attachmentState?.customNote.isNotEmpty ?? false)
-            InputChip(
-              label: Text(l10n.forgeCustomNoteChip),
+            _ContextTag(
+              icon: Icons.sticky_note_2_outlined,
+              label: l10n.forgeCustomNoteChip,
               onPressed: cubit == null
                   ? null
                   : () => unawaited(
@@ -341,11 +514,13 @@ class _ContextTray extends StatelessWidget {
               onDeleted: cubit == null ? null : () => cubit.setCustomNote(''),
             )
           else
-            ActionChip(
-              label: Text(l10n.forgeAddCustomNote),
+            OutlinedButton.icon(
+              style: _forgeCompactOutlinedStyle(context),
               onPressed: cubit == null
                   ? null
                   : () => unawaited(_editCustomNote(context, cubit, '')),
+              icon: const Icon(Icons.add_comment_outlined, size: 16),
+              label: Text(l10n.forgeAddCustomNote),
             ),
           for (var i = 0; i < attachments.length; i++)
             _AttachmentChip(
@@ -390,31 +565,23 @@ class _AttachmentChip extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     final label =
         '${attachment.relativePath} (${_formatBytes(attachment.byteLength)})';
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      ),
-      child: Row(
+    return _ContextTag(
+      icon: Icons.attach_file,
+      label: label,
+      onDeleted: cubit == null ? null : () => cubit!.remove(attachment.path),
+      trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          InputChip(
-            label: Text(label),
-            onDeleted:
-                cubit == null ? null : () => cubit!.remove(attachment.path),
-          ),
-          IconButton(
+          _TinyTagButton(
             tooltip: l10n.forgeMoveAttachmentUp,
-            icon: const Icon(Icons.arrow_upward, size: 14),
-            visualDensity: VisualDensity.compact,
+            icon: Icons.arrow_upward,
             onPressed: canMoveUp && cubit != null
                 ? () => cubit!.moveUp(attachment.path)
                 : null,
           ),
-          IconButton(
+          _TinyTagButton(
             tooltip: l10n.forgeMoveAttachmentDown,
-            icon: const Icon(Icons.arrow_downward, size: 14),
-            visualDensity: VisualDensity.compact,
+            icon: Icons.arrow_downward,
             onPressed: canMoveDown && cubit != null
                 ? () => cubit!.moveDown(attachment.path)
                 : null,
@@ -433,9 +600,10 @@ class _ContextWarning extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InputChip(
-      avatar: const Icon(Icons.warning_amber, size: 16),
-      label: Text(text),
+    return _ContextTag(
+      icon: Icons.warning_amber,
+      label: text,
+      warning: true,
       onDeleted: onDismiss,
     );
   }
@@ -526,7 +694,8 @@ Future<void> _showSkillSource(
         ],
       ),
       actions: [
-        TextButton(
+        OutlinedButton(
+          style: _forgeCompactOutlinedStyle(context),
           onPressed: () => Navigator.of(context).pop(),
           child: Text(MaterialLocalizations.of(context).closeButtonLabel),
         ),
@@ -571,7 +740,8 @@ Future<void> _editCustomNote(
         ),
       ),
       actions: [
-        TextButton(
+        OutlinedButton(
+          style: _forgeCompactOutlinedStyle(dialogContext),
           onPressed: () => Navigator.of(dialogContext).pop(),
           child: Text(
             MaterialLocalizations.of(dialogContext).cancelButtonLabel,
@@ -633,7 +803,10 @@ Future<void> _showPreview(
               }
               return const SizedBox(
                 height: 120,
-                child: Center(child: CircularProgressIndicator()),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
               );
             }
             final data = snapshot.data!;
@@ -653,7 +826,8 @@ Future<void> _showPreview(
         ),
       ),
       actions: [
-        TextButton(
+        OutlinedButton(
+          style: _forgeCompactOutlinedStyle(context),
           onPressed: () => Navigator.of(context).pop(),
           child: Text(MaterialLocalizations.of(context).closeButtonLabel),
         ),
@@ -716,7 +890,8 @@ Future<bool> _confirmDirtyWorktree(
         ],
       ),
       actions: [
-        TextButton(
+        OutlinedButton(
+          style: _forgeCompactOutlinedStyle(context),
           onPressed: () => Navigator.of(context).pop(false),
           child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),

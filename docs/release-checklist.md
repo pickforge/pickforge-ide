@@ -16,6 +16,8 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `scripts/linux_deb_smoke.sh --skip-build` after the Linux package is created.
 - [ ] `scripts/linux_deb_container_install_smoke.sh --skip-build` on Linux with Docker or Podman.
 - [ ] `scripts/linux_deb_signing_smoke.sh --skip-build` with an ephemeral key.
+- [ ] `scripts/package_linux_appimage.sh --skip-build` after the Linux release build.
+- [ ] `scripts/linux_appimage_smoke.sh --skip-build` after the Linux release build.
 - [ ] `scripts/missing_tool_smoke.sh` on Linux.
 - [ ] `scripts/linux_visible_diagnostics_smoke.sh` from a visible Linux desktop session.
 - [ ] `scripts/emulator_e2e.sh Pixel_10` on a prepared Android runner.
@@ -100,6 +102,7 @@ they do not replace manual dogfood on real desktop hosts.
 - `scripts/linux_deb_smoke.sh --skip-build` passed against `build/dist/linux/pickforge_0.1.0+1_amd64.deb`. It verified the `.deb` checksum, Debian members/control metadata, extracted app bundle, launcher symlink, desktop/icon files, and first-run liveness from a clean HOME under Xvfb. Headless Xvfb did not expose a discoverable window and the screenshot was blank, matching the known headless limitation.
 - `scripts/linux_deb_container_install_smoke.sh --skip-build --image ubuntu:26.04` passed against the locally built `build/dist/linux/pickforge_0.1.0+1_amd64.deb`. The default Ubuntu 24.04 baseline correctly fails for the local CachyOS-built artifact because `librive_native_plugin.so` requires `GLIBC_2.43`; release CI is pinned to Ubuntu 24.04 and runs the default smoke after building there.
 - `scripts/linux_deb_signing_smoke.sh --skip-build` passed with an ephemeral GPG key. It created and verified detached armored signatures for both the Linux `.deb` and its SHA-256 checksum.
+- `scripts/linux_appimage_smoke.sh --skip-build` passed against `build/dist/linux/Pickforge-0.1.0+1-x86_64.AppImage`. It generated the AppImage with `appimagetool`, verified checksum and extracted AppDir contents, and proved first-run liveness under Xvfb.
 - Remaining Linux signoff gaps: true visible sudo install on a fresh VM or clean machine, plus configuring the protected release signing key secret before public tags. Cursor/Gemini real-agent passes remain pending until those binaries are installed locally.
 
 ### macOS

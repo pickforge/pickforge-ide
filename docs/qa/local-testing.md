@@ -18,6 +18,9 @@ without an explicit web-safe entrypoint.
 - `scripts/linux_deb_container_install_smoke.sh` installs the Linux `.deb` in a
   clean Ubuntu container with Docker or Podman, verifies package metadata/files
   and linkage, then checks first-run liveness under Xvfb.
+- `scripts/linux_appimage_smoke.sh --skip-build` packages the Linux desktop
+  bundle as an AppImage when needed, extracts it, verifies AppDir contents, and
+  checks first-run liveness under Xvfb.
 - `scripts/emulator_e2e.sh Pixel_10` runs the opt-in Android emulator E2Es and
   writes artifacts under `build/e2e/android/`.
 - `scripts/desktop_build_smoke.sh` builds the current host's desktop target in

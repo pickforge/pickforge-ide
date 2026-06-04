@@ -35,7 +35,9 @@ native-host dogfood before release signoff.
 
 ## Linux
 
-- Ship an AppImage for broad desktop testing.
+- Ship an AppImage for broad desktop testing with
+  `scripts/package_linux_appimage.sh`, then validate it with
+  `scripts/linux_appimage_smoke.sh --skip-build`.
 - Build a `.deb` package for Debian/Ubuntu users with
   `scripts/package_linux_deb.sh`.
 - Build Linux release artifacts on Ubuntu 24.04 so `.deb` binaries do not pick

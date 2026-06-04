@@ -112,6 +112,51 @@ void main() {
       'commit -m chore: pickforge checkpoint',
     ]);
   });
+
+  test(
+      'checkpoint handles a real repo with staged unstaged and untracked files',
+      () async {
+    final repo = await Directory.systemTemp.createTemp('pickforge-git-status-');
+    addTearDown(() => repo.delete(recursive: true));
+    await _git(repo, ['init']);
+    await _git(repo, ['config', 'user.email', 'pickforge@example.test']);
+    await _git(repo, ['config', 'user.name', 'Pickforge Test']);
+
+    final staged = File('${repo.path}/staged.txt');
+    final unstaged = File('${repo.path}/unstaged.txt');
+    await staged.writeAsString('before\n');
+    await unstaged.writeAsString('before\n');
+    await _git(repo, ['add', '.']);
+    await _git(repo, ['commit', '-m', 'initial']);
+
+    await staged.writeAsString('after\n');
+    await _git(repo, ['add', 'staged.txt']);
+    await unstaged.writeAsString('after\n');
+    await File('${repo.path}/untracked.txt').writeAsString('new\n');
+
+    final service = GitStatusService(RealProcessRunner());
+    final before = await service.status(repo.path);
+    expect(before.staged, 1);
+    expect(before.unstaged, 1);
+    expect(before.untracked, 1);
+
+    final checkpoint = await service.createCheckpointCommit(repo.path);
+    expect(checkpoint.created, isTrue);
+    expect(checkpoint.commitHash, isNotNull);
+
+    final after = await service.status(repo.path);
+    expect(after.staged, 0);
+    expect(after.unstaged, 0);
+    expect(after.untracked, 1);
+    expect(File('${repo.path}/untracked.txt').existsSync(), isTrue);
+  });
+}
+
+Future<void> _git(Directory repo, List<String> args) async {
+  final result = await Process.run('git', args, workingDirectory: repo.path);
+  if (result.exitCode != 0) {
+    fail('git ${args.join(' ')} failed: ${result.stderr}');
+  }
 }
 
 class _FakeRunner implements ProcessRunner {

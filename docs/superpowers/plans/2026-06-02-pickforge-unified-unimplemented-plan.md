@@ -762,6 +762,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [x] Unit tests for git status parsing.
 - [x] Widget tests for dirty worktree warning and post-forge diff summary.
+- [x] Integration test with a real git repo containing staged, unstaged, and untracked files.
 - [ ] Manual dogfood with a real git repo containing staged, unstaged, and untracked files.
 
 **Latest evidence**
@@ -771,6 +772,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Added schema v8 `project_settings.validator_command`, Settings UI for an explicit per-project validator command, a manual **Run validator** action in the Project changes card, and pass/fail/output rendering alongside the diff. Verified with focused project-validator, Drift DAO/migration/schema, Settings Cubit/view, Forge panel, and settings golden tests; `fvm dart format --set-exit-if-changed .`; `fvm flutter analyze`; `fvm flutter test --reporter=compact` (586 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`); and `scripts/emulator_e2e.sh Pixel_10`.
 - 2026-06-04: Added last hot reload/restart outcome fields to running emulator state and surfaced pass/fail/duration/hint in the Project changes card beside the diff. The configured validator action covers explicit test/analyze commands in the same review surface. Verified with focused EmulatorSessionCubit and Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (588 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/emulator_e2e.sh Pixel_10`.
 - 2026-06-04: Added a dirty-worktree **Create checkpoint** action that runs `git add -u` plus `git commit -m "chore: pickforge checkpoint"` before forging, preserving untracked files unless users handle them manually. Verified with focused GitStatusService and Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (591 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/emulator_e2e.sh Pixel_10`.
+- 2026-06-04: Added real-repository GitStatusService coverage that creates staged, unstaged, and untracked files, creates a checkpoint commit, and verifies untracked files remain untouched. Verified with `fvm flutter test --reporter=compact test/core/projects/git_status_service_test.dart` and `fvm flutter test --reporter=compact` (593 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`).
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 

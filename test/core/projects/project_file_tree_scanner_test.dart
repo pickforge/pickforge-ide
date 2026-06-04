@@ -82,6 +82,36 @@ void main() {
     expect(nodes.single.children.single.isDirectory, isFalse);
   });
 
+  test('enforces common file scan excludes', () async {
+    Directory(p.join(tmp.path, 'lib')).createSync();
+    File(p.join(tmp.path, 'lib', 'main.dart')).writeAsStringSync('void main()');
+    for (final relativePath in ProjectFileTreeScanner.commonExcludes) {
+      final excludedDir = Directory(
+        p.joinAll([tmp.path, ...p.posix.split(relativePath)]),
+      )..createSync(recursive: true);
+      File(p.join(excludedDir.path, 'generated.txt')).writeAsStringSync(
+        'ignored',
+      );
+    }
+
+    final nodes = await const ProjectFileTreeScanner(
+      maxEntriesPerDirectory: 1000,
+    ).scan(tmp.path, showHidden: true);
+    final relativePaths =
+        _flatten(nodes).map((node) => node.relativePath).toSet();
+
+    expect(relativePaths, contains('lib/main.dart'));
+    for (final excluded in ProjectFileTreeScanner.commonExcludes) {
+      expect(
+        relativePaths.any(
+          (path) => path == excluded || path.startsWith('$excluded/'),
+        ),
+        isFalse,
+        reason: '$excluded should be excluded',
+      );
+    }
+  });
+
   test('scans large fixture project within bounded budget', () async {
     _writeLargeFixture(tmp);
 

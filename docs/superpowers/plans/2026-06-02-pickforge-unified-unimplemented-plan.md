@@ -983,7 +983,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T7 — Performance and scalability budgets
 
-**Status:** Partial / scalability tests added
+**Status:** Completed
 **Why:** The app must stay fast on real projects with thousands of files, many chats, and large transcripts.
 
 **Budgets**
@@ -1000,7 +1000,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add fixture project with many files for explorer tests.
 - [x] Add transcript replay stress test.
 - [x] Add performance counters in diagnostics.
-- [ ] Define and enforce file scan excludes.
+- [x] Define and enforce file scan excludes.
 
 **Latest evidence**
 
@@ -1008,6 +1008,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Added a generated large-project fixture test for `ProjectFileTreeScanner` with 600 scanned source/test files and 450 ignored files under `.git`, `.dart_tool`, and `build`. The test verifies sorted output, common excludes, and a conservative 2500ms scanner budget. Verified with `test/core/projects/project_file_tree_scanner_test.dart`.
 - 2026-06-04: Added a transcript replay stress test with a 2 MiB log, 8 KiB chunks, checksum verification, max-chunk enforcement, and a conservative 2000ms replay budget. Verified with `test/core/terminal/transcript_replayer_test.dart`.
 - 2026-06-04: Added bounded diagnostics performance counters, support-bundle output, settings UI rows, and `fileExplorer.scan` recording from `ProjectFileExplorerCubit`. Verified with `test/core/diagnostics/diagnostics_service_test.dart`, `test/features/workbench/cubit/project_file_explorer_cubit_test.dart`, and `test/features/settings/view/settings_view_test.dart`.
+- 2026-06-04: Expanded `ProjectFileTreeScanner.commonExcludes` for heavyweight generated directories including `.fvm`, `coverage`, `node_modules`, Android build outputs, and Flutter platform ephemeral folders. Added a regression test that creates every common exclude and verifies the scanner omits each path and descendants even when hidden files are shown. Verified with `test/core/projects/project_file_tree_scanner_test.dart`.
 
 ### P9.T8 — Storage migration and backward-compatibility suite
 

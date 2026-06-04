@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,7 @@ import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
+import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
@@ -39,6 +41,8 @@ class _FakeRunSession extends Mock implements RunSession {}
 class _Recovery extends Mock implements RunSessionRecoveryStore {}
 
 class _Shutdown extends Mock implements AvdShutdownController {}
+
+class _Screenshot extends Mock implements AdbScreenshotCapturer {}
 
 void main() {
   late _MS settings;
@@ -1177,6 +1181,76 @@ void main() {
       isA<Running>().having((s) => s.lastReloadAt, 'lastReloadAt', isNotNull),
     ],
   );
+
+  test('successful reload captures after screenshot without overwriting before',
+      () async {
+    final project = await Directory.systemTemp.createTemp('pf-project-');
+    addTearDown(() => project.delete(recursive: true));
+    final screenshot = _Screenshot();
+
+    when(() => settings.getRunArgs(project.path))
+        .thenAnswer((_) async => const RunArgs());
+    when(
+      () => run.start(
+        projectRoot: project.path,
+        serial: 'emulator-5554',
+        targetFile: any(named: 'targetFile'),
+        extraArgs: any(named: 'extraArgs'),
+      ),
+    ).thenAnswer((_) async => session);
+    when(
+      () => screenshot.capture(
+        outputDir: any(named: 'outputDir'),
+        serial: 'emulator-5554',
+        platform: androidEmulatorPlatform,
+        outputName: AdbScreenshotCapturer.afterHotReloadOutputName,
+      ),
+    ).thenAnswer(
+      (_) async =>
+          '${project.path}/.pickforge/${AdbScreenshotCapturer.afterHotReloadOutputName}',
+    );
+
+    final cubit = EmulatorSessionCubit(
+      projectRoot: project.path,
+      settings: settings,
+      discovery: disc,
+      launcher: launcher,
+      poller: poller,
+      runController: run,
+      logRepo: log,
+      vmClient: vm,
+      screenshotCapturer: screenshot,
+    );
+    addTearDown(cubit.close);
+    cubit.emit(
+      const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
+    );
+
+    await cubit.runApp();
+    events
+      ..add(const RunSessionEvent.vmServiceReady(uri: 'ws://x/ws'))
+      ..add(
+        const RunSessionEvent.reloadCompleted(
+          success: true,
+          fullRestart: false,
+          durationMs: 120,
+        ),
+      );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    verify(
+      () => screenshot.capture(
+        outputDir: '${project.path}/.pickforge',
+        serial: 'emulator-5554',
+        platform: androidEmulatorPlatform,
+        outputName: AdbScreenshotCapturer.afterHotReloadOutputName,
+      ),
+    ).called(1);
+    expect(
+      File('${project.path}/.pickforge/device-screen.png').existsSync(),
+      isFalse,
+    );
+  });
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'stopped event records run summary',

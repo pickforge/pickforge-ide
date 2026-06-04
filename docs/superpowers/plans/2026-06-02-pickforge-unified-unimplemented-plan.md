@@ -527,11 +527,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P5.T4 — Screenshot before/after loop
 
-**Status:** Deferred
+**Status:** Partial / before-after captures wired
+**Why:** Pick-time inspector screenshots already write `.pickforge/screenshot.png`; successful hot reload/restart events now capture `.pickforge/device-screen-after-hot-reload.png` without overwriting the forge-time `device-screen.png`, and IPC project context exposes the after-reload image.
 **Tasks**
 
-- [ ] Capture before screenshot at pick time.
-- [ ] Capture after screenshot post hot reload.
+- [x] Capture before screenshot at pick time.
+- [x] Capture after screenshot post hot reload.
 - [ ] Optionally prompt agent to self-check visual result.
 
 ## 11. Product polish and UX

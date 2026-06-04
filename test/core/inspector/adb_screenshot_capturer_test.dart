@@ -95,6 +95,48 @@ void main() {
       }
     });
 
+    test('captures screenshot with custom output name', () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        if (args.contains('devices')) {
+          return ProcessResult(
+            0,
+            0,
+            'List of devices attached\nemulator-5554\tdevice\n',
+            '',
+          );
+        }
+        if (args.contains('screencap')) {
+          return ProcessResult(0, 0, pngHeader, '');
+        }
+        return ProcessResult(0, 0, '/usr/bin/adb', '');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(
+        detector,
+        processRunner: runner,
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync('adb_test_');
+      try {
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          outputName: AdbScreenshotCapturer.afterHotReloadOutputName,
+        );
+
+        expect(result, isNotNull);
+        expect(
+          result,
+          contains(AdbScreenshotCapturer.afterHotReloadOutputName),
+        );
+        expect(File(result!).readAsBytesSync(), equals(pngHeader));
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
     test('captures from provided physical device serial', () async {
       final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
       final calls = <List<String>>[];

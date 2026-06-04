@@ -472,6 +472,7 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
           } else {
             _hotReloadCount++;
           }
+          unawaited(_captureAfterHotReloadScreenshot());
         } else {
           _errorCount++;
           _lastError = hint ??
@@ -816,6 +817,24 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     };
   }
 
+  Future<void> _captureAfterHotReloadScreenshot() async {
+    final capturer = screenshotCapturer;
+    if (capturer == null) return;
+    final target = _screenshotTarget();
+    if (target == null || target.platform == flutterWebPlatform) return;
+    try {
+      final dir = await PickforgeProjectDirectory.ensure(projectRoot);
+      await capturer.capture(
+        outputDir: dir.path,
+        serial: target.serial,
+        platform: target.platform,
+        outputName: AdbScreenshotCapturer.afterHotReloadOutputName,
+      );
+    } on Object {
+      return;
+    }
+  }
+
   ({String? serial, String? platform})? _screenshotTarget() {
     return switch (state) {
       Idle(:final avd, :final serial) => (
@@ -854,7 +873,11 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         ].map((name) => _textContextFile(dir, name)),
       ),
       'screenshots': await Future.wait(
-        const ['screenshot.png', 'device-screen.png'].map(
+        const [
+          'screenshot.png',
+          AdbScreenshotCapturer.defaultOutputName,
+          AdbScreenshotCapturer.afterHotReloadOutputName,
+        ].map(
           (name) => _binaryContextFile(dir, name),
         ),
       ),

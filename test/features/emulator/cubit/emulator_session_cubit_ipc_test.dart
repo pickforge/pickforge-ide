@@ -129,6 +129,9 @@ void main() {
     await File('${pickforge.path}/widget-context.md').writeAsString('widget');
     await File('${pickforge.path}/initial-prompt.md').writeAsString('prompt');
     await File('${pickforge.path}/screenshot.png').writeAsBytes([1, 2, 3]);
+    await File(
+      '${pickforge.path}/${AdbScreenshotCapturer.afterHotReloadOutputName}',
+    ).writeAsBytes([4, 5, 6]);
 
     final endpoint = await _createEndpoint();
     final ipc = EmulatorIpcServer(socketPath: endpoint.path);
@@ -224,6 +227,8 @@ void main() {
     final contextResult = context['result'] as Map<String, dynamic>;
     final contextFiles =
         (contextResult['files'] as List<dynamic>).cast<Map<String, dynamic>>();
+    final contextScreenshots = (contextResult['screenshots'] as List<dynamic>)
+        .cast<Map<String, dynamic>>();
 
     expect(historyResult, hasLength(1));
     expect(historyRow['widgetClass'], 'ElevatedButton');
@@ -234,6 +239,15 @@ void main() {
           .where((file) => file['name'] == 'widget-context.md')
           .single['content'],
       'widget',
+    );
+    expect(
+      contextScreenshots
+          .where(
+            (file) =>
+                file['name'] == AdbScreenshotCapturer.afterHotReloadOutputName,
+          )
+          .single['bytes'],
+      3,
     );
     expect(capture, isNot(contains('error')), reason: capture.toString());
     expect(capture['result'], {

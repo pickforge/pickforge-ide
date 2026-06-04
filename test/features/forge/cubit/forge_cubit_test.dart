@@ -35,6 +35,7 @@ class _NullAdb extends Fake implements AdbScreenshotCapturer {
     required String outputDir,
     String? serial,
     String? platform,
+    String outputName = AdbScreenshotCapturer.defaultOutputName,
   }) async =>
       null;
 }

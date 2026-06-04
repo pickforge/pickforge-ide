@@ -22,6 +22,9 @@ class AdbScreenshotCapturer {
     AdbProcessRunner? processRunner,
   }) : _processRunner = processRunner ?? Process.run;
 
+  static const defaultOutputName = 'device-screen.png';
+  static const afterHotReloadOutputName = 'device-screen-after-hot-reload.png';
+
   final BinaryDetector _detector;
   final AdbProcessRunner _processRunner;
 
@@ -30,19 +33,33 @@ class AdbScreenshotCapturer {
     required String outputDir,
     String? serial,
     String? platform,
+    String outputName = defaultOutputName,
   }) async {
     if (platform == iosSimulatorPlatform) {
-      return _captureIosSimulator(outputDir: outputDir, simulatorId: serial);
+      return _captureIosSimulator(
+        outputDir: outputDir,
+        simulatorId: serial,
+        outputName: outputName,
+      );
     }
     if (platform == flutterDesktopPlatform) {
-      return _captureDesktop(outputDir: outputDir, targetId: serial);
+      return _captureDesktop(
+        outputDir: outputDir,
+        targetId: serial,
+        outputName: outputName,
+      );
     }
     if (platform == flutterWebPlatform) return null;
-    return _captureAndroid(outputDir: outputDir, serial: serial);
+    return _captureAndroid(
+      outputDir: outputDir,
+      serial: serial,
+      outputName: outputName,
+    );
   }
 
   Future<String?> _captureAndroid({
     required String outputDir,
+    required String outputName,
     String? serial,
   }) async {
     // 1. Check adb on PATH
@@ -64,7 +81,7 @@ class AdbScreenshotCapturer {
     if (pngBytes is! List<int> || pngBytes.isEmpty) return null;
 
     // 4. Write to file
-    final outputPath = await _outputPath(outputDir);
+    final outputPath = await _outputPath(outputDir, outputName: outputName);
     await File(outputPath).writeAsBytes(pngBytes);
 
     // 5. Return path
@@ -86,6 +103,7 @@ class AdbScreenshotCapturer {
 
   Future<String?> _captureIosSimulator({
     required String outputDir,
+    required String outputName,
     String? simulatorId,
   }) async {
     final xcrunOnPath = await _detector.isBinaryOnPath('xcrun');
@@ -94,7 +112,7 @@ class AdbScreenshotCapturer {
     final id = simulatorId ?? await _firstBootedIosSimulatorId();
     if (id == null) return null;
 
-    final outputPath = await _outputPath(outputDir);
+    final outputPath = await _outputPath(outputDir, outputName: outputName);
     final result = await _processRunner(
       'xcrun',
       ['simctl', 'io', id, 'screenshot', outputPath],
@@ -135,6 +153,7 @@ class AdbScreenshotCapturer {
 
   Future<String?> _captureDesktop({
     required String outputDir,
+    required String outputName,
     String? targetId,
   }) async {
     final flutterOnPath = await _detector.isBinaryOnPath('flutter');
@@ -143,7 +162,7 @@ class AdbScreenshotCapturer {
     final id = targetId ?? _hostDesktopTargetId();
     if (id == null) return null;
 
-    final outputPath = await _outputPath(outputDir);
+    final outputPath = await _outputPath(outputDir, outputName: outputName);
     final result = await _processRunner(
       'flutter',
       ['screenshot', '-d', id, '-o', outputPath],
@@ -162,10 +181,20 @@ class AdbScreenshotCapturer {
     return null;
   }
 
-  Future<String> _outputPath(String outputDir) async {
+  Future<String> _outputPath(
+    String outputDir, {
+    required String outputName,
+  }) async {
+    if (outputName.isEmpty || p.basename(outputName) != outputName) {
+      throw ArgumentError.value(
+        outputName,
+        'outputName',
+        'must be a file name',
+      );
+    }
     final outputDirObj = p.basename(outputDir) == '.pickforge'
         ? await PickforgeProjectDirectory.ensureDirectory(Directory(outputDir))
         : await Directory(outputDir).create(recursive: true);
-    return p.join(outputDirObj.path, 'device-screen.png');
+    return p.join(outputDirObj.path, outputName);
   }
 }

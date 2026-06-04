@@ -43,8 +43,12 @@ class _AnimatedPillContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final duration = ReduceMotion.duration(
+      context,
+      const Duration(milliseconds: 180),
+    );
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
+      duration: duration,
       transitionBuilder: (child, animation) => FadeTransition(
         opacity: animation,
         child: SizeTransition(
@@ -125,6 +129,11 @@ class _StatusDotState extends State<_StatusDot>
     _scale = Tween<double>(begin: 1, end: 1.4).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
     _syncAnimation();
   }
 
@@ -147,6 +156,12 @@ class _StatusDotState extends State<_StatusDot>
   void _syncAnimation() {
     if (!mounted) return;
     _lastReloadAt = _reloadAt(widget.state);
+    if (ReduceMotion.of(context)) {
+      _controller
+        ..stop()
+        ..value = 0;
+      return;
+    }
     switch (widget.state) {
       case Booting():
         _controller

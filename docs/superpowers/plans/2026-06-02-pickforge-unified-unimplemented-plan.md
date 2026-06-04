@@ -540,13 +540,17 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 ### P6.T1 — Design-system polish pass
 
 **Status:** Partial / audit and inspector polish started
-**Why:** The inspector details panel now uses localized labels for empty states, ancestors, source, and recent rebuilds, and the panel/chip/source styling no longer relies on hardcoded Material grey colors. Pick history and run history now use compact themed headers, rows, and empty states instead of default `AppBar`/`Card`/`ListTile` layouts. The Material-default audit is recorded below; the broader density pass, motion confirmation, and localization sweep remain open.
+**Why:** The inspector details panel now uses localized labels for empty states, ancestors, source, and recent rebuilds, and the panel/chip/source styling no longer relies on hardcoded Material grey colors. Pick history and run history now use compact themed headers, rows, and empty states instead of default `AppBar`/`Card`/`ListTile` layouts. The Material-default audit is recorded below. App shell pane animation, connection pill content/status-dot animation, no-selection placeholder pulse, and chat auto-scroll now honor reduced motion; the broader density pass and localization sweep remain open.
 **Tasks**
 
 - [x] Audit Material-default UI remnants.
 - [ ] Tighten density, spacing, typography, colors, and empty states.
-- [ ] Confirm reduce-motion behavior for all animations.
+- [x] Confirm reduce-motion behavior for all animations.
 - [ ] Add missing localized strings.
+
+**Latest evidence**
+
+- 2026-06-04: Added reduced-motion handling for connection pill `AnimatedSwitcher` and status-dot controller, no-selection placeholder pulse, and chat auto-scroll; verified with focused motion/widget tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 **Audit findings — 2026-06-04**
 

@@ -29,6 +29,7 @@ import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/motion/reduce_motion.dart';
 import 'package:xterm/xterm.dart';
 
 class ChatWorkbenchPanel extends StatefulWidget {
@@ -205,7 +206,11 @@ class _HeadlessChatPaneState extends State<_HeadlessChatPane> {
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scroll.hasClients) return;
+      if (!mounted || !_scroll.hasClients) return;
+      if (ReduceMotion.of(context)) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        return;
+      }
       unawaited(
         _scroll.animateTo(
           _scroll.position.maxScrollExtent,

@@ -16,12 +16,19 @@ class _FakeCubit extends Cubit<EmulatorSessionState>
 }
 
 void main() {
-  Future<void> pump(WidgetTester tester, EmulatorSessionState state) async {
+  Future<void> pump(
+    WidgetTester tester,
+    EmulatorSessionState state, {
+    bool disableAnimations = false,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: BlocProvider<EmulatorSessionCubit>.value(
-          value: _FakeCubit(state),
-          child: const Scaffold(body: ConnectionPill()),
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: disableAnimations),
+          child: BlocProvider<EmulatorSessionCubit>.value(
+            value: _FakeCubit(state),
+            child: const Scaffold(body: ConnectionPill()),
+          ),
         ),
       ),
     );
@@ -145,6 +152,23 @@ void main() {
     expect(find.byType(ScaleTransition), findsWidgets);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets('Reduced motion removes switcher and status dot animations',
+      (tester) async {
+    await pump(
+      tester,
+      EmulatorSessionState.running(
+        vmServiceUri: 'ws://x',
+        stats: RunStats(),
+        lastReloadAt: DateTime(2026),
+      ),
+      disableAnimations: true,
+    );
+    final switcher =
+        tester.widget<AnimatedSwitcher>(find.byType(AnimatedSwitcher));
+    expect(switcher.duration, Duration.zero);
+    expect(find.byKey(const Key('reload-pulse-dot')), findsNothing);
   });
 
   testWidgets('Running with lastReloadAt pulses status dot', (tester) async {

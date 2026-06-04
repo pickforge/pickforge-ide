@@ -790,6 +790,51 @@ void main() {
     expect(find.textContaining('scratch.txt'), findsOneWidget);
   });
 
+  testWidgets('ForgePanel wraps project change actions in narrow panels',
+      (tester) async {
+    tester.view.physicalSize = const Size(360, 760);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(
+      _GitProcessRunner(
+        stdoutByArgs: {
+          'status --porcelain=v1':
+              'M  lib/a.dart\n M lib/b.dart\n?? scratch.txt\n',
+          'rev-parse --abbrev-ref HEAD': 'feature/review\n',
+          'diff --stat HEAD': ' lib/a.dart | 2 ++\n lib/b.dart | 1 +\n',
+        },
+      ),
+    );
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            child: ForgePanel(
+              selection: _sampleWidget,
+              projectRoot: '/tmp/test',
+              chatId: 'chat-1',
+              cubit: cubit,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Project changes'), findsOneWidget);
+    expect(find.text('Copy diff'), findsOneWidget);
+  });
+
   testWidgets('ForgePanel shows latest hot reload result beside diff',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 700);

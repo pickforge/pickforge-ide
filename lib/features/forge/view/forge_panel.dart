@@ -481,47 +481,41 @@ class _GitChangesCardState extends State<_GitChangesCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
+              Text(
+                l10n.forgeProjectChangesTitle,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+              const SizedBox(height: PickforgeSpacing.sm),
+              Wrap(
+                spacing: PickforgeSpacing.xs,
+                runSpacing: PickforgeSpacing.xs,
                 children: [
-                  Expanded(
-                    child: Text(
-                      l10n.forgeProjectChangesTitle,
-                      style: Theme.of(context).textTheme.labelMedium,
+                  OutlinedButton.icon(
+                    style: _forgeCompactOutlinedStyle(context),
+                    onPressed: () => unawaited(
+                      _copyGitDiff(context, service, widget.projectRoot),
                     ),
+                    icon: const Icon(Icons.copy, size: 14),
+                    label: Text(l10n.forgeCopyDiff),
                   ),
-                  Wrap(
-                    spacing: PickforgeSpacing.xs,
-                    runSpacing: PickforgeSpacing.xs,
-                    alignment: WrapAlignment.end,
-                    children: [
-                      OutlinedButton.icon(
-                        style: _forgeCompactOutlinedStyle(context),
-                        onPressed: () => unawaited(
-                          _copyGitDiff(context, service, widget.projectRoot),
-                        ),
-                        icon: const Icon(Icons.copy, size: 14),
-                        label: Text(l10n.forgeCopyDiff),
-                      ),
-                      if (validatorCommand != null)
-                        OutlinedButton.icon(
-                          style: _forgeCompactOutlinedStyle(context),
-                          onPressed: _validatorRunning
-                              ? null
-                              : () => unawaited(
-                                    _runValidator(validatorCommand),
-                                  ),
-                          icon: const Icon(Icons.fact_check_outlined, size: 14),
-                          label: Text(l10n.forgeRunValidator),
-                        ),
-                      OutlinedButton.icon(
-                        style: _forgeCompactOutlinedStyle(context),
-                        onPressed: () => unawaited(
-                          _showDiscardInstructions(context),
-                        ),
-                        icon: const Icon(Icons.undo, size: 14),
-                        label: Text(l10n.forgeDiscardInstructions),
-                      ),
-                    ],
+                  if (validatorCommand != null)
+                    OutlinedButton.icon(
+                      style: _forgeCompactOutlinedStyle(context),
+                      onPressed: _validatorRunning
+                          ? null
+                          : () => unawaited(
+                                _runValidator(validatorCommand),
+                              ),
+                      icon: const Icon(Icons.fact_check_outlined, size: 14),
+                      label: Text(l10n.forgeRunValidator),
+                    ),
+                  OutlinedButton.icon(
+                    style: _forgeCompactOutlinedStyle(context),
+                    onPressed: () => unawaited(
+                      _showDiscardInstructions(context),
+                    ),
+                    icon: const Icon(Icons.undo, size: 14),
+                    label: Text(l10n.forgeDiscardInstructions),
                   ),
                 ],
               ),

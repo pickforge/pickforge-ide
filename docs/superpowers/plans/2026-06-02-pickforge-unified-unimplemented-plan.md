@@ -573,7 +573,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Reworked onboarding checklist/setup/demo surfaces into compact token-based panels and tags, replacing stock `Card`/`Chip`/`TextButton` patterns; verified with focused onboarding tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Reworked Forge panel context tray, dirty-worktree summary, preview/forge actions, and dialogs into compact token-based surfaces, tags, and buttons; verified with focused Forge tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Localized the remaining audited settings/device-run, connection pill/menu/action, manual URL, run logs, chat empty/role, and widget-picker placeholder copy; verified with focused localization widget tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
-- 2026-06-04: Increased the desktop default window size to `1800x1100` with a `900x640` minimum so the workbench opens with the sidebar, terminal, inspector, and Forge controls visible without manual resizing. Verified by restarting the Linux desktop app, capturing a desktop screenshot, and running `fvm dart format --set-exit-if-changed lib/core/window/window_bootstrap.dart` plus `fvm flutter analyze`.
+- 2026-06-04: Increased the desktop default window size to `2160x1280` with a `900x640` minimum so the workbench opens with the sidebar, terminal, inspector, and Forge controls visible without manual resizing on a large desktop. Verified by restarting the Linux desktop app, capturing a desktop screenshot, and running `fvm dart format --set-exit-if-changed lib/core/window/window_bootstrap.dart` plus `fvm flutter analyze`.
 
 **Audit findings — 2026-06-04**
 
@@ -750,7 +750,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T9 — Agent change review and git safety
 
-**Status:** Partial / manual dogfood pending
+**Status:** Completed
 **Why:** The agent edits the user's project. Pickforge should make changes visible, reversible, and safe without becoming a full IDE.
 
 **Tasks**
@@ -766,14 +766,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add optional "create checkpoint commit" or "stash before forge" workflow later.
 - [x] Surface hot reload/test/analyze result alongside the diff.
 
-**Blocked:** Visible/manual dogfood with a real dirty project remains pending; `scripts/dirty_git_dogfood_setup.sh` now prepares a disposable staged/unstaged/untracked worktree for that pass.
+**Done:** Visible/manual dogfood now covers a real dirty project through the disposable worktree prepared by `scripts/dirty_git_dogfood_setup.sh`.
 
 **Validation**
 
 - [x] Unit tests for git status parsing.
 - [x] Widget tests for dirty worktree warning and post-forge diff summary.
 - [x] Integration test with a real git repo containing staged, unstaged, and untracked files.
-- [ ] Manual dogfood with a real git repo containing staged, unstaged, and untracked files.
+- [x] Manual dogfood with a real git repo containing staged, unstaged, and untracked files.
 
 **Latest evidence**
 
@@ -784,7 +784,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Added a dirty-worktree **Create checkpoint** action that runs `git add -u` plus `git commit -m "chore: pickforge checkpoint"` before forging, preserving untracked files unless users handle them manually. Verified with focused GitStatusService and Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (591 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/emulator_e2e.sh Pixel_10`.
 - 2026-06-04: Added real-repository GitStatusService coverage that creates staged, unstaged, and untracked files, creates a checkpoint commit, and verifies untracked files remain untouched. Verified with `fvm flutter test --reporter=compact test/core/projects/git_status_service_test.dart` and `fvm flutter test --reporter=compact` (593 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`).
 - 2026-06-04: Added ForgePanel widget coverage backed by a temporary real git repository with staged, unstaged, and untracked files. The test verifies real git status/diff parsing, drives the dirty-worktree checkpoint dialog, creates the checkpoint through the panel, and confirms untracked files remain untouched. Verified with focused ForgePanel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (619 passed, 3 skipped emulator-gated tests), and `scripts/emulator_e2e.sh Pixel_10`.
-- 2026-06-04: Added `scripts/dirty_git_dogfood_setup.sh` so visible manual dogfood can use a disposable git worktree from a real app, seeded with staged, unstaged, and untracked files, without mutating the original checkout. Verified against `/home/dev/Development/Personal/MyGamesList/app`; the generated dogfood worktree had the expected dirty status and cleanup path. The manual Pickforge UI pass remains unchecked until run from the visible app.
+- 2026-06-04: Added `scripts/dirty_git_dogfood_setup.sh` so visible manual dogfood can use a disposable git worktree from a real app, seeded with staged, unstaged, and untracked files, without mutating the original checkout. Verified against `/home/dev/Development/Personal/MyGamesList/app`; the generated dogfood worktree had the expected dirty status and cleanup path.
+- 2026-06-04: Completed visible dirty-worktree dogfood against the disposable `/tmp/pickforge-dirty-git-project` copy of MyGamesList running on `emulator-5554`. Pickforge selected the app-owned `ElevatedButton` at `/tmp/pickforge-dirty-git-project/lib/features/auth/sign_in/sign_in_screen.dart:150`, showed the staged/unstaged/untracked dirty warning, preserved `pickforge-dirty-dogfood-untracked.txt`, and created checkpoint commit `f57d309` after local disposable git identity was configured. The first checkpoint attempt failed only because the disposable repo had no git author identity; the captured failure output is in `build/dogfood/dirty-git/manual-checkpoint-commit.txt`. Evidence artifacts include `build/dogfood/dirty-git/pickforge-after-reattach.png`, `build/dogfood/dirty-git/pickforge-dirty-dialog.png`, `build/dogfood/dirty-git/pickforge-after-successful-checkpoint-forge.png`, `.pickforge/widget-context.md`, `.pickforge/initial-prompt.md`, `.pickforge/screenshot.png`, `.pickforge/device-screen.png`, and `.pickforge/chats/dirty-dogfood-1780603207/transcript.log` with the `[Pickforge sent prompt]` marker.
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 

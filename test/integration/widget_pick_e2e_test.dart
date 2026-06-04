@@ -82,6 +82,11 @@ void main() {
         expect(selected.screenshotPath, isNotNull);
         expect(File(selected.screenshotPath!).existsSync(), isTrue);
         expect(File(selected.screenshotPath!).lengthSync(), greaterThan(0));
+        await _writeWidgetPickArtifacts(
+          selected: selected,
+          projectRoot: projectRoot.path,
+          serial: ready.serial,
+        );
       } finally {
         await session?.stop();
         await projectRoot.delete(recursive: true);
@@ -160,6 +165,31 @@ Future<SelectedWidget?> _tapUntilUserSelection({
     }
   }
   return latest;
+}
+
+Future<void> _writeWidgetPickArtifacts({
+  required SelectedWidget selected,
+  required String projectRoot,
+  required String serial,
+}) async {
+  const artifactDir = String.fromEnvironment('PICKFORGE_E2E_ARTIFACT_DIR');
+  if (artifactDir.isEmpty) return;
+
+  final dir = Directory(artifactDir)..createSync(recursive: true);
+  final screenshot = selected.screenshotPath;
+  if (screenshot != null && File(screenshot).existsSync()) {
+    await File(screenshot).copy(p.join(dir.path, 'inspector-screenshot.png'));
+  }
+  await File(p.join(dir.path, 'widget-pick.txt')).writeAsString(
+    [
+      'serial=$serial',
+      'projectRoot=$projectRoot',
+      'className=${selected.node.className}',
+      'location=${selected.node.creationLocation}',
+      'screenshotPath=${selected.screenshotPath}',
+    ].join('\n'),
+    flush: true,
+  );
 }
 
 Future<SelectedWidget?> _waitForUserSelection(

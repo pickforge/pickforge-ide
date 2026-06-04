@@ -875,14 +875,18 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T1 — Emulator E2E in CI or scheduled/manual workflow
 
-**Status:** Partial
-**Why:** E2E test exists but skips unless `PICKFORGE_E2E_AVD` is set.
+**Status:** Completed
+**Why:** Required PR CI remains non-emulator; manual self-hosted workflow and an artifact-producing runner script cover Android E2E.
 
 **Tasks**
 
-- [ ] Decide whether GitHub-hosted runners can reliably run emulator E2E.
-- [ ] If not, create documented manual/scheduled runner flow.
-- [ ] Capture logs and screenshots as artifacts.
+- [x] Decide whether GitHub-hosted runners can reliably run emulator E2E.
+- [x] If not, create documented manual/scheduled runner flow.
+- [x] Capture logs and screenshots as artifacts.
+
+**Latest evidence**
+
+- 2026-06-04: Added `scripts/emulator_e2e.sh`, `docs/qa/emulator-e2e.md`, `.github/workflows/emulator-e2e.yml`, and E2E artifact hooks in both integration tests. Verified with `bash -n scripts/emulator_e2e.sh`, `scripts/emulator_e2e.sh Pixel_10` producing logs and inspector screenshot under `build/e2e/android/`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, and `fvm flutter test --reporter=compact`.
 
 ### P9.T2 — CI hardening
 

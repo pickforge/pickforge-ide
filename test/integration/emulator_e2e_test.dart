@@ -1,7 +1,10 @@
 @Tags(['emulator'])
 library;
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
@@ -24,6 +27,7 @@ void main() {
       final launcher = AvdLauncher(runner);
       final poller = BootReadinessPoller(runner);
       final run = RunSessionController(runner);
+      final eventLines = <String>[];
 
       await launcher.launch(avdId);
       final ready = await poller
@@ -40,6 +44,10 @@ void main() {
         serial: ready.serial,
         extraArgs: const [],
       );
+      final eventSub = session.events.listen(
+        (event) => eventLines.add('${DateTime.now().toIso8601String()} $event'),
+      );
+      addTearDown(eventSub.cancel);
       await session.events.firstWhere(
         (event) => event.maybeWhen(
           vmServiceReady: (_) => true,
@@ -49,7 +57,24 @@ void main() {
       expect(session.vmServiceUri, isNotNull);
       expect(await session.hotReload(), true);
       await session.stop();
+      await _writeArtifact(
+        'emulator-e2e.log',
+        [
+          'avd=$avdId',
+          'serial=${ready.serial}',
+          'vmServiceUri=${session.vmServiceUri}',
+          '',
+          ...eventLines,
+        ].join('\n'),
+      );
     },
     timeout: const Timeout(Duration(minutes: 8)),
   );
+}
+
+Future<void> _writeArtifact(String filename, String contents) async {
+  const artifactDir = String.fromEnvironment('PICKFORGE_E2E_ARTIFACT_DIR');
+  if (artifactDir.isEmpty) return;
+  final dir = Directory(artifactDir)..createSync(recursive: true);
+  await File(p.join(dir.path, filename)).writeAsString(contents, flush: true);
 }

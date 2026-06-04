@@ -1,50 +1,94 @@
-# Pickforge — Release Dogfood Checklist
+# Pickforge Release Dogfood Checklist
 
-Run through this list before tagging a release. Manual steps only — automated
-coverage lives in CI.
+Run this checklist before tagging a release. Automated checks are required, but
+they do not replace manual dogfood on real desktop hosts.
 
-## Cold-install smoke
+## Automated Preflight
 
-- [ ] Fresh VM / clean machine (Linux, macOS).
-- [ ] Install the built artifact. App launches, 480x720 window, dark theme, always-on-top.
+- [ ] `fvm dart run build_runner build --delete-conflicting-outputs`
+- [ ] `fvm dart format --set-exit-if-changed .`
+- [ ] `fvm flutter analyze`
+- [ ] `fvm flutter test --reporter=compact`
+- [ ] `scripts/linux_smoke.sh` on Linux.
+- [ ] `scripts/emulator_e2e.sh Pixel_10` on a prepared Android runner.
+- [ ] Review CI artifacts for golden failures, Linux smoke output, and emulator E2E logs/screenshots.
 
-## Connection
+## Cold-Install Smoke
 
-- [ ] Add the sample Flutter app or a real Flutter app as a Pickforge project.
-- [ ] Select/bind an Android AVD in project settings.
-- [ ] Start the app from Pickforge or attach with the manual VM Service URL.
+- [ ] Fresh VM or clean machine for Linux.
+- [ ] Fresh VM or clean machine for macOS before public release.
+- [ ] Install the built desktop artifact.
+- [ ] App launches, keeps the expected desktop window behavior, and starts on onboarding or the last workspace.
+- [ ] Demo mode opens without Android tooling and shows fake project, device, widget, explorer, and chat data.
+
+## Project And Target Binding
+
+- [ ] Add `fixtures/sample_flutter_app` or a real Flutter app as a Pickforge project.
+- [ ] Bind an Android AVD to the project settings.
+- [ ] Start the app from Pickforge or attach with a manual VM Service URL.
 - [ ] Connection/status pill reaches `Running`.
-- [ ] Disconnect + reconnect → no crash, project binding is remembered next launch.
-- [ ] Kill the app mid-session → Pickforge shows a recoverable error or reconnecting state, then recovers after restart.
+- [ ] Disconnect and reconnect without a crash.
+- [ ] Restart Pickforge and confirm the project binding is remembered.
+- [ ] Kill the target app mid-session and confirm Pickforge shows a recoverable error or reconnecting state, then recovers after restart.
 
-## Widget pick → Forge it
+## Widget Pick To Forge
 
-- [ ] Tap a user-code widget in emulator → appears in the details panel.
-- [ ] Tap a framework widget → Forge it disabled with "Pick a widget from your app source." hint.
-- [ ] Forge it with each agent (Claude Code, Codex, OpenCode) at least once.
-- [ ] Prompt is delivered into the visible active embedded terminal chat.
-- [ ] Verify `.pickforge/` is created in the project with expected files + `.gitignore`.
-- [ ] Verify the user's existing `CLAUDE.md` / `AGENTS.md` is untouched.
+- [ ] Tap a user-code widget in the target app and verify it appears in the inspector details panel.
+- [ ] Tap a framework widget and verify **Forge it** is disabled with the user-code eligibility hint.
+- [ ] Select an active chat for the active project.
+- [ ] Press **Forge it** and verify the prompt appears in the visible active embedded terminal session.
+- [ ] Forge once with each installed agent profile: Claude Code (`claude`), Codex (`codex`), OpenCode (`opencode`), Cursor (`agent`), and Gemini (`gemini`).
+- [ ] For each missing agent binary, verify setup checks show a recoverable missing-binary state.
 
-## Hot reload
+## Context Files
 
-- [ ] After the agent edits and hot-reloads, Pickforge refreshes the tree.
+- [ ] Verify `.pickforge/.gitignore` exists and ignores generated context by default.
+- [ ] Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`, and `.pickforge/initial-prompt.md` are written for the latest forge request.
+- [ ] Verify `.pickforge/screenshot.png` is present when inspector screenshot capture succeeds.
+- [ ] With `adb` available, verify `.pickforge/device-screen.png` is written and referenced in the prompt.
+- [ ] With `adb` unavailable, verify forge still works without device-screen capture.
+- [ ] After hot reload, verify `.pickforge/device-screen-after-hot-reload.png` is captured when the target supports it.
+- [ ] Verify the user's existing `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` files are untouched.
+
+## Workspace UX
+
+- [ ] Left pane list and grid modes render real projects/chats with grouping, pinning, and density settings.
+- [ ] Project file explorer respects ignore rules and can open/reveal/copy project files.
+- [ ] Context attachments tray shows selected widget, screenshots, logs, files, and custom notes.
+- [ ] Command palette opens with Ctrl+K / Cmd+K and runs project, chat, device, settings, run, hot reload, and forge actions.
+- [ ] Settings view reads and writes project-scoped defaults.
+
+## Hot Reload And Review
+
+- [ ] Hot reload from Pickforge refreshes the widget tree and keeps selection state understandable.
 - [ ] Selecting a new widget post-reload still works.
+- [ ] Dirty project warning appears before forge when the target repo has uncommitted changes.
+- [ ] After agent edits, changed files and diff summary are visible.
+- [ ] Copy diff, open changed file, and discard-instructions actions work.
 
-## adb (Android only)
+## Keyboard And Accessibility
 
-- [ ] With `adb` available: `.pickforge/device-screen.png` is written and referenced in the prompt.
-- [ ] With `adb` unavailable: no error, `.pickforge/screenshot.png` still present.
+- [ ] Keyboard-only pass covers sidebar, file explorer, inspector, settings, dialogs, command palette, terminal focus, and forge.
+- [ ] High-contrast dark theme remains readable.
+- [ ] Larger text scale does not overflow primary panes and dialogs.
+- [ ] Icon-only controls have accessible labels or tooltips.
 
-## Misc
+## Latest Recorded Results
 
-- [ ] ⌘K / Ctrl+K opens the command palette.
-- [ ] Pick history data is recorded when available; full History UI is post-MVP and non-blocking.
-- [ ] Settings view reads and writes defaults per project.
+### Linux - 2026-06-04
 
-## MVP dogfood signoff
+- Automated checks passed: `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, `scripts/linux_smoke.sh`, and `scripts/emulator_e2e.sh Pixel_10`.
+- `scripts/linux_smoke.sh` reached `DemoWorkspaceView` through the Flutter VM Service and wrote `build/smoke/linux/flutter-run.log`, `build/smoke/linux/inspector-root.json`, and `build/smoke/linux/first-frame.png`.
+- `scripts/emulator_e2e.sh Pixel_10` passed both emulator and widget-pick E2Es and wrote logs plus the inspector screenshot under `build/e2e/android/`.
+- Blocker: full visible Linux desktop click-through for project binding and embedded-terminal prompt delivery was not completed in this headless Xvfb environment; the root screenshot artifact is captured but blank without a lightweight window manager.
 
-- [ ] Linux dogfood pass completed.
+### macOS
+
+- Pending native macOS host dogfood before public release.
+
+## Release Signoff
+
+- [ ] Linux dogfood pass completed on a real desktop session.
 - [ ] macOS dogfood pass completed before public release.
 - [ ] Blockers recorded as issues or follow-up plan items.
 

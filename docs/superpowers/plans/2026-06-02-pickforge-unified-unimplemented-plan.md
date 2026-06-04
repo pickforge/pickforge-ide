@@ -904,13 +904,19 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T3 — Release checklist execution
 
-**Status:** Not done
+**Status:** Partial / Linux automated results recorded
 **Tasks**
 
-- [ ] Update checklist to current app.
+- [x] Update checklist to current app.
 - [ ] Run it on Linux.
 - [ ] Run it on macOS before public release.
-- [ ] Record results and blockers.
+- [x] Record results and blockers.
+
+**Latest evidence**
+
+- 2026-06-04: Updated `docs/release-checklist.md` for current automated preflight, demo/project/device binding, current agent profiles, `.pickforge/` context outputs, workspace UX, hot reload/review, keyboard/accessibility, and release signoff. Recorded Linux automated results from `scripts/linux_smoke.sh` and `scripts/emulator_e2e.sh Pixel_10`, plus the headless Xvfb blocker for full visible desktop click-through.
+
+**Blocked:** Full Linux checklist signoff still requires a real desktop session for project binding and visible embedded-terminal prompt delivery. macOS checklist execution requires a native macOS host.
 
 ### P9.T4 — Local app testing strategy
 

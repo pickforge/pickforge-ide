@@ -58,21 +58,20 @@ void main() {
 
     when(() => mockAgentRegistry.get(AgentProfileId.opencode))
         .thenReturn(mockAgent);
-    when(
-      () => mockAgent.buildInitialPrompt(
-        pickforgeDirRelative: any(named: 'pickforgeDirRelative'),
-        skillFilename: any(named: 'skillFilename'),
-        widgetContextFilename: any(named: 'widgetContextFilename'),
-        screenshotFilename: any(named: 'screenshotFilename'),
-        deviceScreenFilename: any(named: 'deviceScreenFilename'),
-      ),
-    ).thenReturn('1. Read skill\n2. Read widget');
+    when(() => mockAgent.projectContextFile).thenReturn('AGENTS.md');
     when(
       () => mockSkillStore.loadSkill(
         any(),
         projectRoot: any(named: 'projectRoot'),
       ),
     ).thenAnswer((_) async => '# Skill');
+    when(
+      () => mockSkillStore.loadPromptTemplate(
+        agentId: any(named: 'agentId'),
+        skill: any(named: 'skill'),
+        projectRoot: any(named: 'projectRoot'),
+      ),
+    ).thenAnswer((_) async => '{{read_files_numbered}}');
     when(() => mockWidgetRenderer.render(any())).thenReturn('# Widget');
 
     launcher = AgentLauncher(
@@ -109,7 +108,11 @@ void main() {
 
       final ctx = await launcher.prepareContext(req);
 
-      expect(ctx.initialPrompt, '1. Read skill\n2. Read widget');
+      expect(
+        ctx.initialPrompt,
+        '1. Read .pickforge/skill-active.md\n'
+        '2. Read .pickforge/widget-context.md',
+      );
       expect(ctx.written.skillPath, endsWith('skill-active.md'));
       expect(ctx.written.widgetContextPath, endsWith('widget-context.md'));
       expect(ctx.written.initialPromptPath, endsWith('initial-prompt.md'));
@@ -120,7 +123,8 @@ void main() {
       );
       expect(
         File(ctx.written.initialPromptPath).readAsStringSync(),
-        '1. Read skill\n2. Read widget',
+        '1. Read .pickforge/skill-active.md\n'
+        '2. Read .pickforge/widget-context.md',
       );
     } finally {
       tempDir.deleteSync(recursive: true);
@@ -199,14 +203,17 @@ void main() {
       final ctx = await launcher.prepareContext(req);
 
       verify(
-        () => mockAgent.buildInitialPrompt(
-          pickforgeDirRelative: '.pickforge',
-          skillFilename: 'skill-active.md',
-          widgetContextFilename: 'widget-context.md',
-          screenshotFilename: 'screenshot.png',
-          deviceScreenFilename: 'device-screen.png',
+        () => mockSkillStore.loadPromptTemplate(
+          agentId: 'opencode',
+          skill: SkillId.editWidget,
+          projectRoot: tempDir.path,
         ),
       ).called(1);
+      expect(ctx.initialPrompt, contains('3. Read .pickforge/screenshot.png'));
+      expect(
+        ctx.initialPrompt,
+        contains('4. Read .pickforge/device-screen.png'),
+      );
       expect(ctx.initialPrompt, contains('Visual self-check'));
       expect(
         ctx.initialPrompt,

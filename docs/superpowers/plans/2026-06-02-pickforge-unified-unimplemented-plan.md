@@ -746,7 +746,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 
-**Status:** Partial / in progress
+**Status:** Completed
 **Why:** Users should trust what Pickforge sends to agents, especially when project files and screenshots can be attached.
 
 **Tasks**
@@ -757,7 +757,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Block or warn on suspicious attachments.
 - [x] Add size/token budget estimate.
 - [x] Let users edit the final instruction while preserving generated context.
-- [ ] Add prompt templates per skill and agent profile.
+- [x] Add prompt templates per skill and agent profile.
 
 **Validation**
 
@@ -769,6 +769,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Added editable final-instruction handling in the Forge context preview; edited instructions are written to `initial-prompt.md` and sent while generated skill/widget context remains unchanged. Verified with focused AgentLauncher/Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
+- 2026-06-04: Added bundled prompt templates for each supported agent/skill pair plus project-local prompt-template overrides, rendered prompt placeholders through `AgentLauncher`, and covered template rendering/source resolution in tests. Verified with focused prompt/skill/launcher/ForgeCubit tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ### P6.T11 — In-app diagnostics and local support bundle
 

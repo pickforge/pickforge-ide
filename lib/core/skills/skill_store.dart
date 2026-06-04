@@ -62,6 +62,49 @@ class SkillStore {
     );
   }
 
+  Future<String> loadPromptTemplate({
+    required String agentId,
+    required SkillId skill,
+    required String projectRoot,
+  }) async {
+    final source = resolvePromptTemplateSource(
+      agentId: agentId,
+      skill: skill,
+      projectRoot: projectRoot,
+    );
+    if (source.isProjectOverride) {
+      return File(source.location).readAsStringSync();
+    }
+
+    return _effectiveBundle.loadString(source.location);
+  }
+
+  SkillSource resolvePromptTemplateSource({
+    required String agentId,
+    required SkillId skill,
+    required String projectRoot,
+  }) {
+    final templatesDir = '$projectRoot/.pickforge/prompt-templates';
+    final projectCandidates = [
+      '$templatesDir/$agentId-${skill.value}.md.tmpl',
+      '$templatesDir/$agentId.md.tmpl',
+      '$templatesDir/default.md.tmpl',
+    ];
+    for (final path in projectCandidates) {
+      if (File(path).existsSync()) {
+        return SkillSource(
+          type: SkillSourceType.projectOverride,
+          location: path,
+        );
+      }
+    }
+
+    return SkillSource(
+      type: SkillSourceType.bundledAsset,
+      location: 'assets/prompts/$agentId-${skill.value}.md.tmpl',
+    );
+  }
+
   /// Loads an agent template.
   ///
   /// When [forClaude] is true, loads `CLAUDE.md.tmpl`;

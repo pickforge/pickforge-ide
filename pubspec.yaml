@@ -85,4 +85,5 @@ flutter:
   assets:
     - assets/skills/
     - assets/agents/
+    - assets/prompts/
     - assets/animations/

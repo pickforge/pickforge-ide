@@ -101,6 +101,8 @@ const _frameworkWidget = SelectedWidget(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   setUpAll(() {
     registerFallbackValue(_FakeForgeRequest());
     registerFallbackValue(_FakeSelectedWidget());

@@ -2,6 +2,7 @@ import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/context_attachment_renderer.dart';
 import 'package:pickforge/core/agent/models.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
+import 'package:pickforge/core/agent/prompt_template_renderer.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
@@ -37,6 +38,7 @@ class AgentLauncher {
     required this.skillStore,
     required this.widgetRenderer,
     this.attachmentRenderer = const ContextAttachmentRenderer(),
+    this.promptTemplateRenderer = const PromptTemplateRenderer(),
   });
 
   final AgentProfileRegistry agentRegistry;
@@ -44,6 +46,7 @@ class AgentLauncher {
   final SkillStore skillStore;
   final WidgetContextRenderer widgetRenderer;
   final ContextAttachmentRenderer attachmentRenderer;
+  final PromptTemplateRenderer promptTemplateRenderer;
 
   Future<ForgeContextPreview> buildPreview(ForgeRequest req) async {
     final agent = agentRegistry.get(req.agentId);
@@ -60,15 +63,26 @@ class AgentLauncher {
         '${widgetRenderer.render(req.widget)}$attachments$customNote';
 
     final hasDeviceScreen = req.widget.adbScreenshotPath != null;
+    final promptTemplate = await skillStore.loadPromptTemplate(
+      agentId: req.agentId.value,
+      skill: req.skill,
+      projectRoot: req.projectRoot,
+    );
     final initialPrompt = _withVisualSelfCheck(
-      agent.buildInitialPrompt(
-        pickforgeDirRelative: '.pickforge',
-        skillFilename: 'skill-active.md',
-        widgetContextFilename: 'widget-context.md',
-        screenshotFilename:
-            req.widget.screenshotPath != null ? 'screenshot.png' : null,
-        deviceScreenFilename:
-            hasDeviceScreen ? AdbScreenshotCapturer.defaultOutputName : null,
+      promptTemplateRenderer.render(
+        promptTemplate,
+        PromptTemplateVariables(
+          agentId: req.agentId.value,
+          skillId: req.skill.value,
+          projectContextFile: agent.projectContextFile,
+          pickforgeDirRelative: '.pickforge',
+          skillFilename: 'skill-active.md',
+          widgetContextFilename: 'widget-context.md',
+          screenshotFilename:
+              req.widget.screenshotPath != null ? 'screenshot.png' : null,
+          deviceScreenFilename:
+              hasDeviceScreen ? AdbScreenshotCapturer.defaultOutputName : null,
+        ),
       ),
       enabled: hasDeviceScreen,
     );

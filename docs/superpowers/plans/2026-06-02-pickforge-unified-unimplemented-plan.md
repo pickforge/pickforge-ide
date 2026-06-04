@@ -1012,7 +1012,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T8 — Storage migration and backward-compatibility suite
 
-**Status:** Partial / migration coverage updated
+**Status:** Partial / storage policy documented
 **Why:** Drift migrations exist, but future confidence needs versioned fixtures and explicit compatibility testing.
 
 **Tasks**
@@ -1020,13 +1020,14 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Keep schema snapshots for each released DB version.
 - [x] Add migration tests from every release schema to latest.
 - [x] Add corrupted/partial settings recovery tests.
-- [ ] Add backup-before-migration policy once real users exist.
-- [ ] Document data retention and `.pickforge/` disk layout invariants.
+- [x] Add backup-before-migration policy once real users exist.
+- [x] Document data retention and `.pickforge/` disk layout invariants.
 
 **Latest evidence**
 
 - 2026-06-04: Added missing v5-to-v6 Drift migration coverage for `project_settings.emulator_idle_shutdown`, preserving an existing `emulator_launch_options` value. Together with existing v1, v2, v3, and v4 migration tests, the suite now covers every released schema version opening on the current schema. Verified with `test/core/drift/migration_v5_to_v6_test.dart`.
 - 2026-06-04: Added defensive recovery for corrupted database-backed JSON settings: malformed run args now preserve target file with empty extra args, invalid emulator launch options return defaults, and partial/corrupted idle shutdown JSON falls back safely. Verified with `test/core/settings/project_settings_repository_emulator_test.dart` and `test/core/settings/project_settings_repository_test.dart`.
+- 2026-06-04: Documented Drift storage boundaries, `.pickforge/` disk layout, transcript/run retention, support-bundle exclusions, and backup-before-migration policy for user-facing schema bumps in `docs/architecture/storage.md`; linked it from `README.md`.
 
 ### P9.T9 — Visual regression suite
 

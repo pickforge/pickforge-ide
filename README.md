@@ -43,6 +43,9 @@ Pickforge **never** modifies your `CLAUDE.md`, `AGENTS.md`, or any of your own
 files. If `.pickforge/` already exists and wasn't created by Pickforge, it
 refuses to proceed.
 
+Detailed storage, retention, and migration-backup policy lives in
+[`docs/architecture/storage.md`](docs/architecture/storage.md).
+
 ## Install
 
 Download from [Releases](https://github.com/pickforge/pickforge/releases)

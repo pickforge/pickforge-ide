@@ -53,4 +53,24 @@ void main() {
     await db.projectSettingsDao.setPaneSizes('/tmp/x', '[260,300]');
     expect(await db.projectSettingsDao.paneSizes('/tmp/x'), '[260,300]');
   });
+
+  test('validatorCommand is preserved and can be cleared', () async {
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/tmp/x',
+      validatorCommand: 'fvm flutter analyze',
+    );
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/tmp/x',
+      defaultAgentId: 'codex',
+    );
+    var row = await db.projectSettingsDao.loadFor('/tmp/x');
+    expect(row?.validatorCommand, 'fvm flutter analyze');
+
+    await db.projectSettingsDao.upsert(
+      projectRoot: '/tmp/x',
+      validatorCommand: null,
+    );
+    row = await db.projectSettingsDao.loadFor('/tmp/x');
+    expect(row?.validatorCommand, isNull);
+  });
 }

@@ -90,6 +90,15 @@
   },
   "forgeCopyDiff": "Copy diff",
   "forgeDiffCopied": "Diff copied",
+  "forgeRunValidator": "Run validator",
+  "forgeValidatorRunning": "Running validator…",
+  "forgeValidatorPassed": "Validator passed",
+  "forgeValidatorFailed": "Validator failed ({exitCode})",
+  "@forgeValidatorFailed": {
+    "placeholders": {
+      "exitCode": {}
+    }
+  },
   "forgeOpenChangedFile": "Open changed file",
   "forgeChangedFileOpened": "Opened {file}",
   "@forgeChangedFileOpened": {
@@ -231,6 +240,10 @@
   "settingsNoProject": "Select a project to configure project settings.",
   "settingsDefaultAgent": "Default agent",
   "settingsEmbeddedTerminal": "Embedded Terminal",
+  "settingsProjectValidator": "Project validator",
+  "settingsValidatorCommand": "Command",
+  "settingsValidatorCommandHelper": "Runs manually from Project changes using the project root as the working directory.",
+  "settingsValidatorCommandSave": "Save",
   "settingsFontFamily": "Font family",
   "settingsFontSize": "Font size",
   "settingsTheme": "Theme",

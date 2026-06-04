@@ -14,6 +14,7 @@ import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
@@ -125,6 +126,8 @@ class _ThrowingAdb extends Fake implements AdbScreenshotCapturer {}
 
 class _NoopPool extends Fake implements PtySessionPool {}
 
+class _ProjectSettings extends Mock implements ProjectSettingsRepository {}
+
 class _SessionCubit extends Cubit<EmulatorSessionState>
     with Mock
     implements EmulatorSessionCubit {
@@ -158,6 +161,7 @@ class _GitProcessRunner implements ProcessRunner {
 
   final Map<String, String> stdoutByArgs;
   final commands = <String>[];
+  final cwds = <String?>[];
 
   @override
   Future<ProcessResult> run(
@@ -167,6 +171,7 @@ class _GitProcessRunner implements ProcessRunner {
     Map<String, String>? env,
   }) async {
     commands.add('$executable ${arguments.join(' ')}');
+    cwds.add(cwd);
     return ProcessResult(
       1,
       0,
@@ -192,6 +197,11 @@ void main() {
     await configureDependencies();
     await getIt.unregister<ProcessRunner>();
     getIt.registerSingleton<ProcessRunner>(_CleanProcessRunner());
+    final settings = _ProjectSettings();
+    when(() => settings.getValidatorCommand(any()))
+        .thenAnswer((_) async => null);
+    await getIt.unregister<ProjectSettingsRepository>();
+    getIt.registerSingleton<ProjectSettingsRepository>(settings);
   });
 
   tearDown(getIt.reset);
@@ -719,5 +729,63 @@ void main() {
     );
     expect(find.textContaining('git restore <file>'), findsOneWidget);
     expect(find.textContaining('git clean -n'), findsOneWidget);
+  });
+
+  testWidgets('ForgePanel runs configured validator from project changes',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final runner = _GitProcessRunner(
+      stdoutByArgs: {
+        'status --porcelain=v1': ' M lib/b.dart\n',
+        'rev-parse --abbrev-ref HEAD': 'feature/review\n',
+        'diff --stat HEAD': ' lib/b.dart | 1 +\n',
+        '-lc fvm flutter analyze': 'No issues found!',
+      },
+    );
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(runner);
+
+    final settings = _ProjectSettings();
+    when(() => settings.getValidatorCommand('/tmp/test'))
+        .thenAnswer((_) async => 'fvm flutter analyze');
+    await getIt.unregister<ProjectSettingsRepository>();
+    getIt.registerSingleton<ProjectSettingsRepository>(settings);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Run validator'), findsOneWidget);
+
+    await tester.tap(find.text('Run validator'));
+    await tester.pumpAndSettle();
+
+    expect(
+      runner.commands.any(
+        (command) => command.contains('fvm flutter analyze'),
+      ),
+      isTrue,
+    );
+    expect(runner.cwds, contains('/tmp/test'));
+    expect(find.text('Validator passed'), findsOneWidget);
+    expect(find.textContaining('No issues found!'), findsOneWidget);
   });
 }

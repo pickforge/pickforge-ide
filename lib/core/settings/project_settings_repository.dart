@@ -174,6 +174,22 @@ class ProjectSettingsRepository {
     );
   }
 
+  Future<String?> getValidatorCommand(String projectRoot) async {
+    final row = await _db.projectSettingsDao.loadFor(projectRoot);
+    final command = row?.validatorCommand?.trim();
+    return command == null || command.isEmpty ? null : command;
+  }
+
+  Future<void> setValidatorCommand(String projectRoot, String? command) {
+    final trimmed = command?.trim();
+    return _db.projectSettingsDao.upsert(
+      projectRoot: projectRoot,
+      validatorCommand: Value(
+        trimmed == null || trimmed.isEmpty ? null : trimmed,
+      ),
+    );
+  }
+
   Future<EmulatorLaunchOptions> getEmulatorLaunchOptions(
     String projectRoot,
   ) async {

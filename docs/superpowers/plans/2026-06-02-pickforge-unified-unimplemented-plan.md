@@ -740,7 +740,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T9 — Agent change review and git safety
 
-**Status:** Partial / in progress
+**Status:** Partial / validator complete
 **Why:** The agent edits the user's project. Pickforge should make changes visible, reversible, and safe without becoming a full IDE.
 
 **Tasks**
@@ -750,13 +750,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] After agent changes, show changed files and a concise diff summary.
 - [x] Add action: copy diff.
 - [x] Add action: open changed file.
-- [ ] Add action: run configured validator.
+- [x] Add action: run configured validator.
 - [x] Add action: discard instructions.
 - [x] Detect untracked files separately and never delete/move them.
 - [ ] Add optional "create checkpoint commit" or "stash before forge" workflow later.
 - [ ] Surface hot reload/test/analyze result alongside the diff.
 
-**Blocked:** Running a configured validator needs a project-level validator command/source decision; no validator setting exists in the current project settings model, so this remains unchecked rather than adding an implicit destructive or surprising command.
+**Blocked:** Optional checkpoint/stash workflow remains deferred. Hot reload result surfacing is still not wired from emulator/run-session state; manually configured validator output now covers explicit test/analyze commands.
 
 **Validation**
 
@@ -768,6 +768,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Added Forge panel widget coverage for the dirty-worktree confirmation dialog and post-forge project changes summary with changed files, branch, diff stat, and copy-diff action visible. Verified with focused Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Added project-change review actions to open changed files through `ProjectFileOpener` and show non-destructive discard instructions; verified with focused Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
+- 2026-06-04: Added schema v8 `project_settings.validator_command`, Settings UI for an explicit per-project validator command, a manual **Run validator** action in the Project changes card, and pass/fail/output rendering alongside the diff. Verified with focused project-validator, Drift DAO/migration/schema, Settings Cubit/view, Forge panel, and settings golden tests; `fvm dart format --set-exit-if-changed .`; `fvm flutter analyze`; `fvm flutter test --reporter=compact` (586 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`); and `scripts/emulator_e2e.sh Pixel_10`.
 
 ### P6.T10 — Context preview, redaction, and prompt quality
 

@@ -224,6 +224,7 @@ void stubDeterministicDeviceSettings({
 }) {
   when(() => settings.getDefaultAgentId(any()))
       .thenAnswer((_) async => 'codex');
+  when(() => settings.getValidatorCommand(any())).thenAnswer((_) async => null);
   when(() => terminal.load()).thenAnswer(
     (_) async => const EmbeddedTerminalSettings(
       fontFamily: 'JetBrainsMono',

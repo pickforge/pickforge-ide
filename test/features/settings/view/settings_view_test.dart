@@ -76,6 +76,8 @@ void main() {
       (_) async => EmbeddedTerminalSettings.defaults,
     );
     when(() => settings.getDefaultAgentId(any())).thenAnswer((_) async => null);
+    when(() => settings.getValidatorCommand(any()))
+        .thenAnswer((_) async => null);
     when(() => settings.getEmulatorBinding(any()))
         .thenAnswer((_) async => null);
     when(() => settings.getRunArgs(any()))
@@ -162,7 +164,9 @@ void main() {
     await tester.pump();
 
     verify(() => settings.getDefaultAgentId('/workspace/app')).called(1);
+    verify(() => settings.getValidatorCommand('/workspace/app')).called(1);
     verify(() => settings.getRunArgs('/workspace/app')).called(1);
+    expect(find.text('Project validator'), findsOneWidget);
     expect(find.text('Diagnostics'), findsOneWidget);
     expect(find.text('App version'), findsOneWidget);
     expect(find.text('9.8.7+6'), findsOneWidget);
@@ -205,6 +209,61 @@ void main() {
       contains('SocketException: apiKey=[REDACTED]'),
     );
     expect(find.text('Error details copied'), findsOneWidget);
+  });
+
+  testWidgets('saves project validator command', (tester) async {
+    final projectsCubit = _ProjectsCubit(
+      ProjectsReady(
+        projects: [_project('/workspace/app')],
+        activeProjectRoot: '/workspace/app',
+      ),
+    );
+    when(() => settings.getValidatorCommand('/workspace/app'))
+        .thenAnswer((_) async => 'fvm flutter analyze');
+    when(
+      () => settings.setValidatorCommand('/workspace/app', 'fvm flutter test'),
+    ).thenAnswer((_) async {});
+    final settingsCubit = SettingsCubit(settings, terminal);
+    final deviceRunCubit = DeviceRunSettingsCubit(
+      settings: settings,
+      discovery: discovery,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: BlocProvider<ProjectsCubit>.value(
+          value: projectsCubit,
+          child: Scaffold(
+            body: SettingsView(
+              settingsCubit: settingsCubit,
+              deviceRunSettingsCubit: deviceRunCubit,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.widgetWithText(TextField, 'fvm flutter analyze'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'fvm flutter analyze'),
+      'fvm flutter test',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pump();
+
+    verify(
+      () => settings.setValidatorCommand(
+        '/workspace/app',
+        'fvm flutter test',
+      ),
+    ).called(1);
   });
 
   testWidgets('shows empty state when no project is selected', (tester) async {

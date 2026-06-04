@@ -10,6 +10,8 @@ import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/projects/git_status_service.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
+import 'package:pickforge/core/projects/project_validator_runner.dart';
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -442,23 +444,38 @@ ButtonStyle _forgeCompactFilledStyle() => FilledButton.styleFrom(
       ),
     );
 
-class _GitChangesCard extends StatelessWidget {
+class _GitChangesCard extends StatefulWidget {
   const _GitChangesCard({required this.projectRoot});
 
   final String projectRoot;
 
   @override
+  State<_GitChangesCard> createState() => _GitChangesCardState();
+}
+
+class _GitChangesCardState extends State<_GitChangesCard> {
+  ProjectValidatorRunResult? _validatorResult;
+  bool _validatorRunning = false;
+
+  @override
   Widget build(BuildContext context) {
     final service = _gitStatusServiceOrNull();
     if (service == null) return const SizedBox.shrink();
+    final settings = _projectSettingsOrNull();
     final l10n = AppLocalizations.of(context);
-    return FutureBuilder<GitDiffSummary?>(
-      future: service.diffSummary(projectRoot),
+    return FutureBuilder<_ProjectReviewData>(
+      future: _loadProjectReviewData(
+        service,
+        settings,
+        widget.projectRoot,
+      ),
       builder: (context, snapshot) {
-        final summary = snapshot.data;
+        final data = snapshot.data;
+        final summary = data?.summary;
         if (summary == null || !summary.hasChanges) {
           return const SizedBox.shrink();
         }
+        final validatorCommand = data?.validatorCommand;
         return _ForgeSurface(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -479,11 +496,22 @@ class _GitChangesCard extends StatelessWidget {
                       OutlinedButton.icon(
                         style: _forgeCompactOutlinedStyle(context),
                         onPressed: () => unawaited(
-                          _copyGitDiff(context, service, projectRoot),
+                          _copyGitDiff(context, service, widget.projectRoot),
                         ),
                         icon: const Icon(Icons.copy, size: 14),
                         label: Text(l10n.forgeCopyDiff),
                       ),
+                      if (validatorCommand != null)
+                        OutlinedButton.icon(
+                          style: _forgeCompactOutlinedStyle(context),
+                          onPressed: _validatorRunning
+                              ? null
+                              : () => unawaited(
+                                    _runValidator(validatorCommand),
+                                  ),
+                          icon: const Icon(Icons.fact_check_outlined, size: 14),
+                          label: Text(l10n.forgeRunValidator),
+                        ),
                       OutlinedButton.icon(
                         style: _forgeCompactOutlinedStyle(context),
                         onPressed: () => unawaited(
@@ -503,7 +531,7 @@ class _GitChangesCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               for (final file in summary.changedFiles.take(5))
-                _ChangedFileRow(projectRoot: projectRoot, file: file),
+                _ChangedFileRow(projectRoot: widget.projectRoot, file: file),
               if (summary.stat.trim().isNotEmpty) ...[
                 const SizedBox(height: PickforgeSpacing.xs),
                 Text(
@@ -513,12 +541,142 @@ class _GitChangesCard extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
+              if (_validatorRunning || _validatorResult != null) ...[
+                const SizedBox(height: PickforgeSpacing.sm),
+                _ValidatorResultView(
+                  running: _validatorRunning,
+                  result: _validatorResult,
+                ),
+              ],
             ],
           ),
         );
       },
     );
   }
+
+  Future<void> _runValidator(String command) async {
+    final runner = _projectValidatorRunnerOrNull();
+    if (runner == null) return;
+    setState(() {
+      _validatorRunning = true;
+      _validatorResult = null;
+    });
+    final result = await runner.run(
+      projectRoot: widget.projectRoot,
+      command: command,
+    );
+    if (!mounted) return;
+    setState(() {
+      _validatorRunning = false;
+      _validatorResult = result;
+    });
+  }
+}
+
+class _ProjectReviewData {
+  const _ProjectReviewData({
+    required this.summary,
+    required this.validatorCommand,
+  });
+
+  final GitDiffSummary? summary;
+  final String? validatorCommand;
+}
+
+Future<_ProjectReviewData> _loadProjectReviewData(
+  GitStatusService service,
+  ProjectSettingsRepository? settings,
+  String projectRoot,
+) async {
+  final results = await Future.wait<Object?>([
+    service.diffSummary(projectRoot),
+    if (settings != null)
+      settings.getValidatorCommand(projectRoot)
+    else
+      Future<String?>.value(),
+  ]);
+  return _ProjectReviewData(
+    summary: results[0] as GitDiffSummary?,
+    validatorCommand: results[1] as String?,
+  );
+}
+
+class _ValidatorResultView extends StatelessWidget {
+  const _ValidatorResultView({
+    required this.running,
+    required this.result,
+  });
+
+  final bool running;
+  final ProjectValidatorRunResult? result;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    if (running) {
+      return Row(
+        children: [
+          const SizedBox.square(
+            dimension: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: PickforgeSpacing.sm),
+          Text(l10n.forgeValidatorRunning),
+        ],
+      );
+    }
+    final result = this.result;
+    if (result == null) return const SizedBox.shrink();
+    final output = _truncateValidatorOutput(result.combinedOutput);
+    final statusText = result.passed
+        ? l10n.forgeValidatorPassed
+        : l10n.forgeValidatorFailed(result.exitCode?.toString() ?? 'start');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(PickforgeSpacing.sm),
+      decoration: BoxDecoration(
+        color: result.passed
+            ? colorScheme.primaryContainer.withValues(alpha: 0.24)
+            : colorScheme.errorContainer.withValues(alpha: 0.28),
+        border: Border.all(
+          color: result.passed
+              ? colorScheme.primary.withValues(alpha: 0.28)
+              : colorScheme.error.withValues(alpha: 0.34),
+        ),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            statusText,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: result.passed ? colorScheme.primary : colorScheme.error,
+            ),
+          ),
+          if (output.isNotEmpty) ...[
+            const SizedBox(height: PickforgeSpacing.xs),
+            SelectableText(
+              output,
+              maxLines: 6,
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _truncateValidatorOutput(String output) {
+  const max = 1200;
+  final trimmed = output.trim();
+  if (trimmed.length <= max) return trimmed;
+  return '${trimmed.substring(0, max)}...';
 }
 
 class _ChangedFileRow extends StatelessWidget {
@@ -777,6 +935,22 @@ GitStatusService? _gitStatusServiceOrNull() {
 ProjectFileOpener? _projectFileOpenerOrNull() {
   try {
     return ProjectFileOpener(runner: getIt<ProcessRunner>());
+  } on Object {
+    return null;
+  }
+}
+
+ProjectSettingsRepository? _projectSettingsOrNull() {
+  try {
+    return getIt<ProjectSettingsRepository>();
+  } on Object {
+    return null;
+  }
+}
+
+ProjectValidatorRunner? _projectValidatorRunnerOrNull() {
+  try {
+    return ProjectValidatorRunner(runner: getIt<ProcessRunner>());
   } on Object {
     return null;
   }

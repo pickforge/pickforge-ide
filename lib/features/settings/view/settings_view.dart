@@ -127,6 +127,16 @@ class _SettingsViewState extends State<SettingsView> {
                       ],
                     ),
                     const SizedBox(height: PickforgeSpacing.lg),
+                    SettingsSection(
+                      title: l10n.settingsProjectValidator,
+                      children: [
+                        _ValidatorCommandField(
+                          projectRoot: projectRoot,
+                          command: state.validatorCommand,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: PickforgeSpacing.lg),
                     DeviceRunSettings(
                       key: ValueKey(projectRoot),
                       projectRoot: projectRoot,
@@ -296,6 +306,85 @@ class _SettingsViewState extends State<SettingsView> {
         },
       ),
     );
+  }
+}
+
+class _ValidatorCommandField extends StatefulWidget {
+  const _ValidatorCommandField({
+    required this.projectRoot,
+    required this.command,
+  });
+
+  final String projectRoot;
+  final String? command;
+
+  @override
+  State<_ValidatorCommandField> createState() => _ValidatorCommandFieldState();
+}
+
+class _ValidatorCommandFieldState extends State<_ValidatorCommandField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.command ?? '');
+  }
+
+  @override
+  void didUpdateWidget(_ValidatorCommandField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.command != widget.command &&
+        _controller.text != (widget.command ?? '')) {
+      _controller.text = widget.command ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return SettingsField(
+      label: l10n.settingsValidatorCommand,
+      alignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              decoration: settingsInputDecoration(
+                helperText: l10n.settingsValidatorCommandHelper,
+              ),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _save(context),
+            ),
+          ),
+          const SizedBox(width: PickforgeSpacing.sm),
+          OutlinedButton.icon(
+            style: settingsCompactButtonStyle(),
+            onPressed: () => _save(context),
+            icon: const Icon(Icons.save_outlined, size: 16),
+            label: Text(l10n.settingsValidatorCommandSave),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _save(BuildContext context) {
+    context
+        .read<SettingsCubit>()
+        .setValidatorCommand(
+          widget.projectRoot,
+          _controller.text,
+        )
+        .ignore();
   }
 }
 

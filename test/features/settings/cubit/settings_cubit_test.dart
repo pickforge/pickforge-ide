@@ -34,6 +34,8 @@ void main() {
       setUp: () {
         when(() => repo.getDefaultAgentId('/root'))
             .thenAnswer((_) async => 'claude-code');
+        when(() => repo.getValidatorCommand('/root'))
+            .thenAnswer((_) async => 'fvm flutter analyze');
         when(() => terminalRepo.load()).thenAnswer(
           (_) async => const EmbeddedTerminalSettings(
             fontFamily: 'JetBrains Mono',
@@ -47,6 +49,11 @@ void main() {
       expect: () => [
         isA<SettingsState>()
             .having((s) => s.defaultAgent, 'agent', 'claude-code')
+            .having(
+              (s) => s.validatorCommand,
+              'validator',
+              'fvm flutter analyze',
+            )
             .having(
               (s) => s.terminal.fontFamily,
               'fontFamily',
@@ -62,6 +69,7 @@ void main() {
           .thenAnswer((_) => first.future);
       when(() => repo.getDefaultAgentId('/second'))
           .thenAnswer((_) => second.future);
+      when(() => repo.getValidatorCommand(any())).thenAnswer((_) async => null);
       when(() => terminalRepo.load())
           .thenAnswer((_) async => EmbeddedTerminalSettings.defaults);
 
@@ -82,6 +90,8 @@ void main() {
       final agent = Completer<String?>();
       when(() => repo.getDefaultAgentId('/root'))
           .thenAnswer((_) => agent.future);
+      when(() => repo.getValidatorCommand('/root'))
+          .thenAnswer((_) async => null);
       when(() => terminalRepo.load())
           .thenAnswer((_) async => EmbeddedTerminalSettings.defaults);
 
@@ -103,6 +113,27 @@ void main() {
       act: (cubit) => cubit.setDefaultAgent('/root', 'codex'),
       expect: () => [
         isA<SettingsState>().having((s) => s.defaultAgent, 'agent', 'codex'),
+      ],
+    );
+
+    blocTest<SettingsCubit, SettingsState>(
+      'setValidatorCommand trims, writes to repo, and emits',
+      build: () => SettingsCubit(repo, terminalRepo),
+      setUp: () {
+        when(
+          () => repo.setValidatorCommand('/root', 'fvm flutter test'),
+        ).thenAnswer((_) async {});
+      },
+      act: (cubit) => cubit.setValidatorCommand(
+        '/root',
+        '  fvm flutter test  ',
+      ),
+      expect: () => [
+        isA<SettingsState>().having(
+          (s) => s.validatorCommand,
+          'validator',
+          'fvm flutter test',
+        ),
       ],
     );
 

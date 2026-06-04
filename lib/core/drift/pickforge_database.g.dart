@@ -76,6 +76,12 @@ class $ProjectSettingsTable extends ProjectSettings
   late final GeneratedColumn<String> targetFile = GeneratedColumn<String>(
       'target_file', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _validatorCommandMeta =
+      const VerificationMeta('validatorCommand');
+  @override
+  late final GeneratedColumn<String> validatorCommand = GeneratedColumn<String>(
+      'validator_command', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _emulatorLaunchOptionsMeta =
       const VerificationMeta('emulatorLaunchOptions');
   @override
@@ -121,6 +127,7 @@ class $ProjectSettingsTable extends ProjectSettings
         connectionMode,
         flutterRunArgs,
         targetFile,
+        validatorCommand,
         emulatorLaunchOptions,
         emulatorIdleShutdown,
         autoBootOnSelect,
@@ -198,6 +205,12 @@ class $ProjectSettingsTable extends ProjectSettings
           targetFile.isAcceptableOrUnknown(
               data['target_file']!, _targetFileMeta));
     }
+    if (data.containsKey('validator_command')) {
+      context.handle(
+          _validatorCommandMeta,
+          validatorCommand.isAcceptableOrUnknown(
+              data['validator_command']!, _validatorCommandMeta));
+    }
     if (data.containsKey('emulator_launch_options')) {
       context.handle(
           _emulatorLaunchOptionsMeta,
@@ -253,6 +266,8 @@ class $ProjectSettingsTable extends ProjectSettings
           DriftSqlType.string, data['${effectivePrefix}flutter_run_args']),
       targetFile: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}target_file']),
+      validatorCommand: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}validator_command']),
       emulatorLaunchOptions: attachedDatabase.typeMapping.read(
           DriftSqlType.string,
           data['${effectivePrefix}emulator_launch_options']),
@@ -285,6 +300,7 @@ class ProjectSettingsRow extends DataClass
   final String connectionMode;
   final String? flutterRunArgs;
   final String? targetFile;
+  final String? validatorCommand;
   final String? emulatorLaunchOptions;
   final String? emulatorIdleShutdown;
   final bool autoBootOnSelect;
@@ -301,6 +317,7 @@ class ProjectSettingsRow extends DataClass
       required this.connectionMode,
       this.flutterRunArgs,
       this.targetFile,
+      this.validatorCommand,
       this.emulatorLaunchOptions,
       this.emulatorIdleShutdown,
       required this.autoBootOnSelect,
@@ -336,6 +353,9 @@ class ProjectSettingsRow extends DataClass
     }
     if (!nullToAbsent || targetFile != null) {
       map['target_file'] = Variable<String>(targetFile);
+    }
+    if (!nullToAbsent || validatorCommand != null) {
+      map['validator_command'] = Variable<String>(validatorCommand);
     }
     if (!nullToAbsent || emulatorLaunchOptions != null) {
       map['emulator_launch_options'] = Variable<String>(emulatorLaunchOptions);
@@ -378,6 +398,9 @@ class ProjectSettingsRow extends DataClass
       targetFile: targetFile == null && nullToAbsent
           ? const Value.absent()
           : Value(targetFile),
+      validatorCommand: validatorCommand == null && nullToAbsent
+          ? const Value.absent()
+          : Value(validatorCommand),
       emulatorLaunchOptions: emulatorLaunchOptions == null && nullToAbsent
           ? const Value.absent()
           : Value(emulatorLaunchOptions),
@@ -404,6 +427,7 @@ class ProjectSettingsRow extends DataClass
       connectionMode: serializer.fromJson<String>(json['connectionMode']),
       flutterRunArgs: serializer.fromJson<String?>(json['flutterRunArgs']),
       targetFile: serializer.fromJson<String?>(json['targetFile']),
+      validatorCommand: serializer.fromJson<String?>(json['validatorCommand']),
       emulatorLaunchOptions:
           serializer.fromJson<String?>(json['emulatorLaunchOptions']),
       emulatorIdleShutdown:
@@ -427,6 +451,7 @@ class ProjectSettingsRow extends DataClass
       'connectionMode': serializer.toJson<String>(connectionMode),
       'flutterRunArgs': serializer.toJson<String?>(flutterRunArgs),
       'targetFile': serializer.toJson<String?>(targetFile),
+      'validatorCommand': serializer.toJson<String?>(validatorCommand),
       'emulatorLaunchOptions':
           serializer.toJson<String?>(emulatorLaunchOptions),
       'emulatorIdleShutdown': serializer.toJson<String?>(emulatorIdleShutdown),
@@ -447,6 +472,7 @@ class ProjectSettingsRow extends DataClass
           String? connectionMode,
           Value<String?> flutterRunArgs = const Value.absent(),
           Value<String?> targetFile = const Value.absent(),
+          Value<String?> validatorCommand = const Value.absent(),
           Value<String?> emulatorLaunchOptions = const Value.absent(),
           Value<String?> emulatorIdleShutdown = const Value.absent(),
           bool? autoBootOnSelect,
@@ -466,6 +492,9 @@ class ProjectSettingsRow extends DataClass
         flutterRunArgs:
             flutterRunArgs.present ? flutterRunArgs.value : this.flutterRunArgs,
         targetFile: targetFile.present ? targetFile.value : this.targetFile,
+        validatorCommand: validatorCommand.present
+            ? validatorCommand.value
+            : this.validatorCommand,
         emulatorLaunchOptions: emulatorLaunchOptions.present
             ? emulatorLaunchOptions.value
             : this.emulatorLaunchOptions,
@@ -500,6 +529,9 @@ class ProjectSettingsRow extends DataClass
           : this.flutterRunArgs,
       targetFile:
           data.targetFile.present ? data.targetFile.value : this.targetFile,
+      validatorCommand: data.validatorCommand.present
+          ? data.validatorCommand.value
+          : this.validatorCommand,
       emulatorLaunchOptions: data.emulatorLaunchOptions.present
           ? data.emulatorLaunchOptions.value
           : this.emulatorLaunchOptions,
@@ -529,6 +561,7 @@ class ProjectSettingsRow extends DataClass
           ..write('connectionMode: $connectionMode, ')
           ..write('flutterRunArgs: $flutterRunArgs, ')
           ..write('targetFile: $targetFile, ')
+          ..write('validatorCommand: $validatorCommand, ')
           ..write('emulatorLaunchOptions: $emulatorLaunchOptions, ')
           ..write('emulatorIdleShutdown: $emulatorIdleShutdown, ')
           ..write('autoBootOnSelect: $autoBootOnSelect, ')
@@ -550,6 +583,7 @@ class ProjectSettingsRow extends DataClass
       connectionMode,
       flutterRunArgs,
       targetFile,
+      validatorCommand,
       emulatorLaunchOptions,
       emulatorIdleShutdown,
       autoBootOnSelect,
@@ -569,6 +603,7 @@ class ProjectSettingsRow extends DataClass
           other.connectionMode == this.connectionMode &&
           other.flutterRunArgs == this.flutterRunArgs &&
           other.targetFile == this.targetFile &&
+          other.validatorCommand == this.validatorCommand &&
           other.emulatorLaunchOptions == this.emulatorLaunchOptions &&
           other.emulatorIdleShutdown == this.emulatorIdleShutdown &&
           other.autoBootOnSelect == this.autoBootOnSelect &&
@@ -587,6 +622,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
   final Value<String> connectionMode;
   final Value<String?> flutterRunArgs;
   final Value<String?> targetFile;
+  final Value<String?> validatorCommand;
   final Value<String?> emulatorLaunchOptions;
   final Value<String?> emulatorIdleShutdown;
   final Value<bool> autoBootOnSelect;
@@ -604,6 +640,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     this.connectionMode = const Value.absent(),
     this.flutterRunArgs = const Value.absent(),
     this.targetFile = const Value.absent(),
+    this.validatorCommand = const Value.absent(),
     this.emulatorLaunchOptions = const Value.absent(),
     this.emulatorIdleShutdown = const Value.absent(),
     this.autoBootOnSelect = const Value.absent(),
@@ -622,6 +659,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     this.connectionMode = const Value.absent(),
     this.flutterRunArgs = const Value.absent(),
     this.targetFile = const Value.absent(),
+    this.validatorCommand = const Value.absent(),
     this.emulatorLaunchOptions = const Value.absent(),
     this.emulatorIdleShutdown = const Value.absent(),
     this.autoBootOnSelect = const Value.absent(),
@@ -640,6 +678,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     Expression<String>? connectionMode,
     Expression<String>? flutterRunArgs,
     Expression<String>? targetFile,
+    Expression<String>? validatorCommand,
     Expression<String>? emulatorLaunchOptions,
     Expression<String>? emulatorIdleShutdown,
     Expression<bool>? autoBootOnSelect,
@@ -658,6 +697,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       if (connectionMode != null) 'connection_mode': connectionMode,
       if (flutterRunArgs != null) 'flutter_run_args': flutterRunArgs,
       if (targetFile != null) 'target_file': targetFile,
+      if (validatorCommand != null) 'validator_command': validatorCommand,
       if (emulatorLaunchOptions != null)
         'emulator_launch_options': emulatorLaunchOptions,
       if (emulatorIdleShutdown != null)
@@ -681,6 +721,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       Value<String>? connectionMode,
       Value<String?>? flutterRunArgs,
       Value<String?>? targetFile,
+      Value<String?>? validatorCommand,
       Value<String?>? emulatorLaunchOptions,
       Value<String?>? emulatorIdleShutdown,
       Value<bool>? autoBootOnSelect,
@@ -698,6 +739,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       connectionMode: connectionMode ?? this.connectionMode,
       flutterRunArgs: flutterRunArgs ?? this.flutterRunArgs,
       targetFile: targetFile ?? this.targetFile,
+      validatorCommand: validatorCommand ?? this.validatorCommand,
       emulatorLaunchOptions:
           emulatorLaunchOptions ?? this.emulatorLaunchOptions,
       emulatorIdleShutdown: emulatorIdleShutdown ?? this.emulatorIdleShutdown,
@@ -743,6 +785,9 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     if (targetFile.present) {
       map['target_file'] = Variable<String>(targetFile.value);
     }
+    if (validatorCommand.present) {
+      map['validator_command'] = Variable<String>(validatorCommand.value);
+    }
     if (emulatorLaunchOptions.present) {
       map['emulator_launch_options'] =
           Variable<String>(emulatorLaunchOptions.value);
@@ -777,6 +822,7 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
           ..write('connectionMode: $connectionMode, ')
           ..write('flutterRunArgs: $flutterRunArgs, ')
           ..write('targetFile: $targetFile, ')
+          ..write('validatorCommand: $validatorCommand, ')
           ..write('emulatorLaunchOptions: $emulatorLaunchOptions, ')
           ..write('emulatorIdleShutdown: $emulatorIdleShutdown, ')
           ..write('autoBootOnSelect: $autoBootOnSelect, ')
@@ -3519,6 +3565,7 @@ typedef $$ProjectSettingsTableCreateCompanionBuilder = ProjectSettingsCompanion
   Value<String> connectionMode,
   Value<String?> flutterRunArgs,
   Value<String?> targetFile,
+  Value<String?> validatorCommand,
   Value<String?> emulatorLaunchOptions,
   Value<String?> emulatorIdleShutdown,
   Value<bool> autoBootOnSelect,
@@ -3538,6 +3585,7 @@ typedef $$ProjectSettingsTableUpdateCompanionBuilder = ProjectSettingsCompanion
   Value<String> connectionMode,
   Value<String?> flutterRunArgs,
   Value<String?> targetFile,
+  Value<String?> validatorCommand,
   Value<String?> emulatorLaunchOptions,
   Value<String?> emulatorIdleShutdown,
   Value<bool> autoBootOnSelect,
@@ -3589,6 +3637,10 @@ class $$ProjectSettingsTableFilterComposer
 
   ColumnFilters<String> get targetFile => $composableBuilder(
       column: $table.targetFile, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get validatorCommand => $composableBuilder(
+      column: $table.validatorCommand,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get emulatorLaunchOptions => $composableBuilder(
       column: $table.emulatorLaunchOptions,
@@ -3653,6 +3705,10 @@ class $$ProjectSettingsTableOrderingComposer
   ColumnOrderings<String> get targetFile => $composableBuilder(
       column: $table.targetFile, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get validatorCommand => $composableBuilder(
+      column: $table.validatorCommand,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get emulatorLaunchOptions => $composableBuilder(
       column: $table.emulatorLaunchOptions,
       builder: (column) => ColumnOrderings(column));
@@ -3712,6 +3768,9 @@ class $$ProjectSettingsTableAnnotationComposer
   GeneratedColumn<String> get targetFile => $composableBuilder(
       column: $table.targetFile, builder: (column) => column);
 
+  GeneratedColumn<String> get validatorCommand => $composableBuilder(
+      column: $table.validatorCommand, builder: (column) => column);
+
   GeneratedColumn<String> get emulatorLaunchOptions => $composableBuilder(
       column: $table.emulatorLaunchOptions, builder: (column) => column);
 
@@ -3764,6 +3823,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             Value<String> connectionMode = const Value.absent(),
             Value<String?> flutterRunArgs = const Value.absent(),
             Value<String?> targetFile = const Value.absent(),
+            Value<String?> validatorCommand = const Value.absent(),
             Value<String?> emulatorLaunchOptions = const Value.absent(),
             Value<String?> emulatorIdleShutdown = const Value.absent(),
             Value<bool> autoBootOnSelect = const Value.absent(),
@@ -3782,6 +3842,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             connectionMode: connectionMode,
             flutterRunArgs: flutterRunArgs,
             targetFile: targetFile,
+            validatorCommand: validatorCommand,
             emulatorLaunchOptions: emulatorLaunchOptions,
             emulatorIdleShutdown: emulatorIdleShutdown,
             autoBootOnSelect: autoBootOnSelect,
@@ -3800,6 +3861,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             Value<String> connectionMode = const Value.absent(),
             Value<String?> flutterRunArgs = const Value.absent(),
             Value<String?> targetFile = const Value.absent(),
+            Value<String?> validatorCommand = const Value.absent(),
             Value<String?> emulatorLaunchOptions = const Value.absent(),
             Value<String?> emulatorIdleShutdown = const Value.absent(),
             Value<bool> autoBootOnSelect = const Value.absent(),
@@ -3818,6 +3880,7 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             connectionMode: connectionMode,
             flutterRunArgs: flutterRunArgs,
             targetFile: targetFile,
+            validatorCommand: validatorCommand,
             emulatorLaunchOptions: emulatorLaunchOptions,
             emulatorIdleShutdown: emulatorIdleShutdown,
             autoBootOnSelect: autoBootOnSelect,

@@ -32,6 +32,7 @@ import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
 import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart';
 import 'package:pickforge/features/workbench/view/chat_workbench_panel.dart';
 import 'package:pickforge/features/workbench/view/inspector_panel.dart';
+import 'package:pickforge/features/workbench/view/workbench_command_palette_scope.dart';
 import 'package:pickforge/features/workbench/view/workbench_left_pane.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 
@@ -102,7 +103,9 @@ class _AppShellViewState extends State<AppShellView> {
                 ProjectsReady(:final activeProjectRoot) => activeProjectRoot,
                 _ => null,
               };
-              if (projectRoot == null) return scaffold;
+              if (projectRoot == null) {
+                return WorkbenchCommandPaletteScope(child: scaffold);
+              }
               return MultiBlocProvider(
                 key: ValueKey(projectRoot),
                 providers: [
@@ -154,7 +157,7 @@ class _AppShellViewState extends State<AppShellView> {
                   vmClient: getIt<VmServiceClient>(),
                   ipcServer: getIt<EmulatorIpcServer>(),
                   inspectorVisible: !layout.rightCollapsed,
-                  child: scaffold,
+                  child: WorkbenchCommandPaletteScope(child: scaffold),
                 ),
               );
             },

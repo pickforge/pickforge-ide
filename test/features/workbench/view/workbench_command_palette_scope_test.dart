@@ -1,0 +1,228 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/drift/pickforge_database.dart';
+import 'package:pickforge/core/emulator/device_models.dart';
+import 'package:pickforge/core/emulator/run_session_models.dart';
+import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
+import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
+import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/chats_state.dart';
+import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
+import 'package:pickforge/features/workbench/cubit/projects_state.dart';
+import 'package:pickforge/features/workbench/view/workbench_command_palette_scope.dart';
+import 'package:pickforge/shared/command_palette/command_palette.dart';
+
+class _ProjectsCubit extends Mock implements ProjectsCubit {}
+
+class _ChatsCubit extends Mock implements ChatsCubit {}
+
+class _EmulatorCubit extends Mock implements EmulatorSessionCubit {}
+
+void main() {
+  testWidgets('workbench palette delegates quick actions', (tester) async {
+    final projects = _ProjectsCubit();
+    final chats = _ChatsCubit();
+    final emulator = _EmulatorCubit();
+    var picked = false;
+
+    _stubProjects(projects);
+    _stubChats(chats);
+    _stubEmulator(
+      emulator,
+      EmulatorSessionState.running(
+        vmServiceUri: 'ws://x/ws',
+        stats: RunStats(),
+        avd: const Avd(id: 'Pixel_10', name: 'Pixel 10', platform: 'android'),
+        serial: 'emulator-5554',
+      ),
+    );
+    when(
+      () => chats.newChat(
+        projectRoot: '/p',
+        defaultAgentId: 'claude-code',
+      ),
+    ).thenAnswer((_) async => 'chat-1');
+    when(() => projects.add('/picked')).thenAnswer((_) async {});
+    when(emulator.hotReload).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      _Harness(
+        projects: projects,
+        chats: chats,
+        emulator: emulator,
+        pickFolder: () async {
+          picked = true;
+          return '/picked';
+        },
+      ),
+    );
+
+    await _openPalette(tester);
+
+    for (final title in [
+      'New Chat',
+      'Add Project',
+      'Hot Reload',
+      'Pick Device',
+      'Open Settings',
+    ]) {
+      await _filterPalette(tester, title);
+      expect(_commandTile(title), findsOneWidget);
+    }
+
+    await _filterPalette(tester, 'New Chat');
+    await tester.tap(_commandTile('New Chat'));
+    await tester.pumpAndSettle();
+
+    verify(
+      () => chats.newChat(
+        projectRoot: '/p',
+        defaultAgentId: 'claude-code',
+      ),
+    ).called(1);
+
+    await _openPalette(tester);
+    await _filterPalette(tester, 'Hot Reload');
+    await tester.tap(_commandTile('Hot Reload'));
+    await tester.pumpAndSettle();
+
+    verify(emulator.hotReload).called(1);
+
+    await _openPalette(tester);
+    await _filterPalette(tester, 'Add Project');
+    await tester.tap(_commandTile('Add Project'));
+    await tester.pumpAndSettle();
+
+    expect(picked, isTrue);
+    verify(() => projects.add('/picked')).called(1);
+  });
+
+  testWidgets('workbench palette runs app from idle state', (tester) async {
+    final projects = _ProjectsCubit();
+    final chats = _ChatsCubit();
+    final emulator = _EmulatorCubit();
+
+    _stubProjects(projects);
+    _stubChats(chats);
+    _stubEmulator(
+      emulator,
+      const EmulatorSessionState.idle(
+        avd: Avd(id: 'Pixel_10', name: 'Pixel 10', platform: 'android'),
+        serial: 'emulator-5554',
+      ),
+    );
+    when(emulator.runApp).thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      _Harness(projects: projects, chats: chats, emulator: emulator),
+    );
+
+    await _openPalette(tester);
+
+    await _filterPalette(tester, 'Run App');
+    expect(_commandTile('Run App'), findsOneWidget);
+    await _filterPalette(tester, 'Hot Reload');
+    expect(_commandTile('Hot Reload'), findsNothing);
+
+    await _filterPalette(tester, 'Run App');
+    await tester.tap(_commandTile('Run App'));
+    await tester.pumpAndSettle();
+
+    verify(emulator.runApp).called(1);
+  });
+}
+
+void _stubProjects(_ProjectsCubit cubit) {
+  final state = ProjectsReady(
+    projects: [
+      ProjectRow(
+        projectRoot: '/p',
+        displayName: 'Project',
+        createdAt: DateTime(2026, 6, 3),
+        lastOpenedAt: DateTime(2026, 6, 3),
+        sortOrder: 0,
+      ),
+    ],
+    activeProjectRoot: '/p',
+  );
+  when(() => cubit.state).thenReturn(state);
+  when(() => cubit.stream).thenAnswer((_) => const Stream.empty());
+}
+
+void _stubChats(_ChatsCubit cubit) {
+  const state = ChatsReady(
+    chatsByProject: {'/p': []},
+    expanded: {'/p'},
+  );
+  when(() => cubit.state).thenReturn(state);
+  when(() => cubit.stream).thenAnswer((_) => const Stream.empty());
+}
+
+void _stubEmulator(
+  _EmulatorCubit cubit,
+  EmulatorSessionState state,
+) {
+  when(() => cubit.state).thenReturn(state);
+  when(() => cubit.stream).thenAnswer((_) => const Stream.empty());
+}
+
+Future<void> _openPalette(WidgetTester tester) async {
+  await tester.tap(find.widgetWithText(ElevatedButton, 'Open'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _filterPalette(WidgetTester tester, String query) async {
+  await tester.enterText(find.byType(TextField), query);
+  await tester.pumpAndSettle();
+}
+
+Finder _commandTile(String title) => find.widgetWithText(ListTile, title);
+
+class _Harness extends StatelessWidget {
+  const _Harness({
+    required this.projects,
+    required this.chats,
+    required this.emulator,
+    this.pickFolder,
+  });
+
+  final ProjectsCubit projects;
+  final ChatsCubit chats;
+  final EmulatorSessionCubit emulator;
+  final Future<String?> Function()? pickFolder;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: MultiBlocProvider(
+        providers: [
+          BlocProvider<ProjectsCubit>.value(value: projects),
+          BlocProvider<ChatsCubit>.value(value: chats),
+          BlocProvider<EmulatorSessionCubit>.value(value: emulator),
+        ],
+        child: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => unawaited(
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => CommandPalette(
+                    commands: buildWorkbenchCommands(
+                      context,
+                      pickFolder: pickFolder ?? (() async => null),
+                    ),
+                  ),
+                ),
+              ),
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

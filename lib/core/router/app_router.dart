@@ -39,10 +39,7 @@ GoRouter buildAppRouter({String? initialLocation}) {
     routes: [
       GoRoute(
         path: AppRoutes.root,
-        builder: (context, __) => _withCommandPalette(
-          context,
-          const AppShellView(),
-        ),
+        builder: (context, __) => const AppShellView(),
       ),
       GoRoute(
         path: AppRoutes.onboarding,
@@ -53,10 +50,7 @@ GoRouter buildAppRouter({String? initialLocation}) {
       ),
       GoRoute(
         path: AppRoutes.workbench,
-        builder: (context, __) => _withCommandPalette(
-          context,
-          const AppShellView(),
-        ),
+        builder: (context, __) => const AppShellView(),
       ),
       GoRoute(
         path: AppRoutes.demo,

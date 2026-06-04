@@ -549,10 +549,11 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T2 — Command palette expansion
 
-**Status:** Deferred after base wiring
+**Status:** Partial / quick actions wired
+**Why:** The workbench command palette now includes quick actions for new chat, add project, run app, hot reload, pick device, and open settings. Search remains limited to command title/hint filtering until transcript/history indexing is implemented.
 **Tasks**
 
-- [ ] Add quick actions: new chat, add project, run app, hot reload, pick device, open settings.
+- [x] Add quick actions: new chat, add project, run app, hot reload, pick device, open settings.
 - [ ] Add fuzzy search across chats/history if history search is implemented.
 
 ### P6.T3 — Search across transcripts and pick history

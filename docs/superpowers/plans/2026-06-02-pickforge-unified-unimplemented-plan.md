@@ -88,11 +88,11 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Tasks**
 
 - [x] Launch the fixture or a real Flutter app in an Android emulator.
-- [ ] Bind it to a Pickforge project.
+- [x] Bind it to a Pickforge project.
 - [x] Confirm the runtime reaches a running VM Service in emulator E2E.
 - [x] Pick a user-code widget and verify inspector selection, source metadata, eligibility, and screenshot state.
 - [ ] Press **Forge it** and verify the prompt appears in the active embedded terminal session.
-- [ ] Verify agent context files under `.pickforge/`.
+- [x] Verify agent context files under `.pickforge/`.
 - [x] Verify hot reload/restart path with emulator E2E.
 
 **Acceptance criteria**
@@ -107,8 +107,11 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-03: Ran `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 test/integration/emulator_e2e_test.dart --reporter=compact` against `emulator-5554` (`Pixel_10`); passed.
 - 2026-06-03: Ran focused Forge/context/PTY tests proving context file writing and prompt delivery to the active session pool; passed.
 - 2026-06-03: Added and ran a `ForgeCubit` regression with real `AgentLauncher`, real `PickforgeContextWriter`, project-local skill override, fake adb, and recording PTY pool; verified `skill-active.md`, `widget-context.md`, `initial-prompt.md`, and prompt delivery to `chat-1`.
+- 2026-06-04: Ran the real Linux desktop app from Ghostty with dogfood wrappers on PATH (`codex --model gpt-5.3-codex-spark`, `opencode --model deepseek/deepseek-v4-flash`, `claude --model sonnet`). Verified `scripts/dogfood_preflight.sh`, project/chat binding to `fixtures/sample_flutter_app`, `Pixel_10` discovery/selection, VM Service connection/adoption, widget selection (`Center` at `lib/main.dart:28`), pick-history recording, inspector screenshot, and Forge context generation.
+- 2026-06-04: Real Forge wrote `.pickforge/skill-active.md`, `.pickforge/widget-context.md`, `.pickforge/initial-prompt.md`, `.pickforge/screenshot.png`, `.pickforge/device-screen.png`, and `.pickforge/ipc.sock-path` after confirming the dirty worktree.
+- 2026-06-04: Fixed dogfood blockers found during the visible desktop pass: unsupported `flutter emulators --machine`, transcript-created `.pickforge/` missing the Pickforge marker, xterm assertions from replay/live ANSI control sequences after hot restart, and binary `adb exec-out screencap -p` stdout decoding.
 
-**Blocked:** Headless Xvfb launches the Linux app far enough to expose VM Service, but this environment has no lightweight X window manager and `import -window root` captures a blank desktop, so the live desktop click-through for project binding and visible terminal prompt remains unchecked.
+**Remaining blocker:** The visible desktop pass did not prove that the generated prompt appears/responds in the active embedded terminal session. The context files were written successfully, but `dogfood-codex` transcript output did not grow during the wait window because the recorder captures PTY output, not prompt stdin. Validate prompt visibility/agent response next in Codex/OpenCode/Claude Code platform passes.
 
 ### P1.T2 — Inspector screenshot capture path
 

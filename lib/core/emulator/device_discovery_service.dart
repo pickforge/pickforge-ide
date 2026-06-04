@@ -12,9 +12,9 @@ class DeviceDiscoveryService {
 
   Future<List<Avd>> listAvds() async {
     try {
-      final res = await _runner.run('flutter', ['emulators', '--machine']);
+      final res = await _runner.run('flutter', ['emulators']);
       if (res.exitCode != 0) return const [];
-      return _parseEmulatorsJson(res.stdout.toString());
+      return _parseEmulatorsText(res.stdout.toString());
     } on ProcessRunnerException {
       return const [];
     }
@@ -122,26 +122,25 @@ class DeviceDiscoveryService {
     }
   }
 
-  List<Avd> _parseEmulatorsJson(String raw) {
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
-      return decoded
-          .whereType<Map<String, dynamic>>()
-          .map(
-            (json) => Avd(
-              id: json['id'] as String? ?? '',
-              name: (json['name'] as String? ?? json['id'] as String? ?? '')
-                  .trim(),
-              platform:
-                  json['platformType'] as String? ?? androidEmulatorPlatform,
-            ),
-          )
-          .where((avd) => avd.id.isNotEmpty)
-          .toList();
-    } on FormatException {
-      return const [];
+  List<Avd> _parseEmulatorsText(String raw) {
+    final separator = RegExp('\\s+${String.fromCharCode(0x2022)}\\s+');
+    final out = <Avd>[];
+    for (final line in raw.split('\n')) {
+      final columns =
+          line.trim().split(separator).map((column) => column.trim()).toList();
+      if (columns.length < 4 || columns.first == 'Id') continue;
+      final id = columns[0];
+      if (id.isEmpty) continue;
+      final name = columns[1].isEmpty ? id : columns[1];
+      out.add(
+        Avd(
+          id: id,
+          name: name,
+          platform: columns[3].isEmpty ? androidEmulatorPlatform : columns[3],
+        ),
+      );
     }
+    return out;
   }
 
   List<RunningAndroidDevice> _parseAdbDevices(String raw) {

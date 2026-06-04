@@ -204,6 +204,21 @@ class _ForgePanelBody extends StatelessWidget {
                         icon: const Icon(Icons.auto_fix_high, size: 16),
                         label: Text(l10n.forgeItButton),
                       ),
+                      if (state.lastError case final error?)
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          child: Text(
+                            error,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

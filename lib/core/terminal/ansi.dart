@@ -26,7 +26,7 @@ class AnsiResult {
 }
 
 final _ansiRegex = RegExp(
-  r'\x1B(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*\x07|\][^\x1B]*\x1B\\|[NOPX^_])',
+  r'\x1B(?:\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]|\][^\x07]*\x07|\][^\x1B]*\x1B\\|[\x20-\x2F]*[\x30-\x7E])',
 );
 
 String stripAnsi(String input) => input.replaceAll(_ansiRegex, '');

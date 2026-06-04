@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/terminal/ansi.dart';
 
 class TranscriptRecorder {
@@ -26,6 +27,7 @@ class TranscriptRecorder {
   IOSink? _spansSink;
 
   Future<void> open() async {
+    await PickforgeProjectDirectory.ensure(projectRoot);
     await Directory(_dir).create(recursive: true);
     _logSink = _log.openWrite(mode: FileMode.append);
     _spansSink = _spans.openWrite(mode: FileMode.append);

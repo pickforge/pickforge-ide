@@ -95,6 +95,55 @@ void main() {
       }
     });
 
+    test('uses binary runner for adb screencap stdout', () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      var binaryCalled = false;
+
+      Future<ProcessResult> textRunner(
+        String executable,
+        List<String> args,
+      ) async {
+        if (args.contains('devices')) {
+          return ProcessResult(
+            0,
+            0,
+            'List of devices attached\nemulator-5554\tdevice\n',
+            '',
+          );
+        }
+        if (args.contains('screencap')) {
+          throw const FormatException('Unexpected extension byte at offset 0');
+        }
+        return ProcessResult(0, 0, '/usr/bin/adb', '');
+      }
+
+      Future<ProcessResult> binaryRunner(
+        String executable,
+        List<String> args,
+      ) async {
+        binaryCalled = true;
+        expect(args, ['-s', 'emulator-5554', 'exec-out', 'screencap', '-p']);
+        return ProcessResult(0, 0, pngHeader, '');
+      }
+
+      final detector = BinaryDetector(processRunner: textRunner);
+      final capturer = AdbScreenshotCapturer(
+        detector,
+        processRunner: textRunner,
+        binaryProcessRunner: binaryRunner,
+      );
+
+      final tempDir = Directory.systemTemp.createTempSync('adb_test_');
+      try {
+        final result = await capturer.capture(outputDir: tempDir.path);
+
+        expect(binaryCalled, isTrue);
+        expect(File(result!).readAsBytesSync(), pngHeader);
+      } finally {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
     test('captures screenshot with custom output name', () async {
       final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 

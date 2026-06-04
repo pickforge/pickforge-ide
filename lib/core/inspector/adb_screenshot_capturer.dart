@@ -20,13 +20,17 @@ class AdbScreenshotCapturer {
   AdbScreenshotCapturer(
     this._detector, {
     AdbProcessRunner? processRunner,
-  }) : _processRunner = processRunner ?? Process.run;
+    AdbProcessRunner? binaryProcessRunner,
+  })  : _processRunner = processRunner ?? _runTextProcess,
+        _binaryProcessRunner =
+            binaryProcessRunner ?? processRunner ?? _runBinaryProcess;
 
   static const defaultOutputName = 'device-screen.png';
   static const afterHotReloadOutputName = 'device-screen-after-hot-reload.png';
 
   final BinaryDetector _detector;
   final AdbProcessRunner _processRunner;
+  final AdbProcessRunner _binaryProcessRunner;
 
   /// Captures a screenshot from the selected Flutter target.
   Future<String?> capture({
@@ -71,7 +75,7 @@ class AdbScreenshotCapturer {
     if (deviceSerial == null) return null;
 
     // 3. Capture screencap
-    final screencapResult = await _processRunner(
+    final screencapResult = await _binaryProcessRunner(
       'adb',
       ['-s', deviceSerial, 'exec-out', 'screencap', '-p'],
     );
@@ -196,5 +200,19 @@ class AdbScreenshotCapturer {
         ? await PickforgeProjectDirectory.ensureDirectory(Directory(outputDir))
         : await Directory(outputDir).create(recursive: true);
     return p.join(outputDirObj.path, outputName);
+  }
+
+  static Future<ProcessResult> _runTextProcess(
+    String executable,
+    List<String> arguments,
+  ) {
+    return Process.run(executable, arguments);
+  }
+
+  static Future<ProcessResult> _runBinaryProcess(
+    String executable,
+    List<String> arguments,
+  ) {
+    return Process.run(executable, arguments, stdoutEncoding: null);
   }
 }

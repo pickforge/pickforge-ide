@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/terminal/ansi.dart';
 
 class TranscriptReplayer {
   TranscriptReplayer({
@@ -18,15 +20,16 @@ class TranscriptReplayer {
       p.join(projectRoot, '.pickforge', 'chats', chatId, 'transcript.log'),
     );
     if (!f.existsSync()) return;
-    final raf = f.openSync();
-    try {
-      while (true) {
-        final chunk = raf.readSync(chunkBytes);
-        if (chunk.isEmpty) break;
-        yield chunk;
-      }
-    } finally {
-      raf.closeSync();
+    final bytes = await f.readAsBytes();
+    final stripped = utf8.encode(
+      stripAnsi(utf8.decode(bytes, allowMalformed: true)),
+    );
+    for (var offset = 0; offset < stripped.length; offset += chunkBytes) {
+      final end = offset + chunkBytes;
+      yield stripped.sublist(
+        offset,
+        end > stripped.length ? stripped.length : end,
+      );
     }
   }
 }

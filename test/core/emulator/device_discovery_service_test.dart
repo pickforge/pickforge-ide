@@ -19,6 +19,7 @@ void main() {
 
   ProcessResult ok(String stdout) => ProcessResult(0, 0, stdout, '');
   ProcessResult fail(String stderr) => ProcessResult(0, 1, '', stderr);
+  final emulatorTable = _flutterEmulatorsText();
   const bootedIosJson = '''
 {
   "devices": {
@@ -80,19 +81,18 @@ void main() {
 ]
 ''';
 
-  test('listAvds parses flutter emulators --machine JSON', () async {
-    final json =
-        await File('test/fixtures/flutter_emulators.json').readAsString();
-    when(() => runner.run('flutter', ['emulators', '--machine']))
-        .thenAnswer((_) async => ok(json));
+  test('listAvds parses flutter emulators table output', () async {
+    when(() => runner.run('flutter', ['emulators']))
+        .thenAnswer((_) async => ok(emulatorTable));
     final avds = await service.listAvds();
     expect(avds, hasLength(2));
     expect(avds.first.id, 'Pixel_5_API_34');
     expect(avds.first.name, 'Pixel 5 API 34');
+    expect(avds.first.platform, androidEmulatorPlatform);
   });
 
   test('listAvds returns empty on non-zero exit', () async {
-    when(() => runner.run('flutter', ['emulators', '--machine']))
+    when(() => runner.run('flutter', ['emulators']))
         .thenAnswer((_) async => fail('boom'));
     expect(await service.listAvds(), isEmpty);
   });
@@ -188,12 +188,10 @@ emulator-5556	offline
   });
 
   test('snapshot composes both lists', () async {
-    final emusJson =
-        await File('test/fixtures/flutter_emulators.json').readAsString();
     final adbRaw =
         await File('test/fixtures/adb_devices_two.txt').readAsString();
-    when(() => runner.run('flutter', ['emulators', '--machine']))
-        .thenAnswer((_) async => ok(emusJson));
+    when(() => runner.run('flutter', ['emulators']))
+        .thenAnswer((_) async => ok(emulatorTable));
     when(() => runner.run('adb', ['devices', '-l']))
         .thenAnswer((_) async => ok(adbRaw));
     when(() => runner.run('adb', ['-s', 'emulator-5554', 'emu', 'avd', 'name']))
@@ -223,4 +221,18 @@ emulator-5556	offline
       flutterWindowsDeviceId,
     ]);
   });
+}
+
+String _flutterEmulatorsText() {
+  final separator = String.fromCharCode(0x2022);
+  return '''
+2 available emulators:
+
+Id           $separator Name           $separator Manufacturer $separator Platform
+
+Pixel_5_API_34 $separator Pixel 5 API 34 $separator Google       $separator android
+Pixel_7_API_35 $separator Pixel 7 API 35 $separator Google       $separator android
+
+To run an emulator, run 'flutter emulators --launch <emulator id>'.
+''';
 }

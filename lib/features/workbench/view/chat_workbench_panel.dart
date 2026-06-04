@@ -13,6 +13,7 @@ import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/process/binary_detector.dart';
+import 'package:pickforge/core/terminal/ansi.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
 import 'package:pickforge/core/terminal/pty_session.dart';
@@ -395,6 +396,7 @@ class _ChatTerminalState extends State<_ChatTerminal> {
   PtySession? _session;
   int? _lastCols;
   int? _lastRows;
+  var _disposed = false;
   late final TerminalTheme _theme;
   late final TerminalStyle _textStyle;
   static const _utf8Decoder = Utf8Decoder(allowMalformed: true);
@@ -433,11 +435,14 @@ class _ChatTerminalState extends State<_ChatTerminal> {
       projectRoot: widget.projectRoot,
       chatId: widget.chat.chatId,
     );
-    unawaited(_init());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed && mounted) unawaited(_init());
+    });
   }
 
   Future<void> _init() async {
     await _recorder.open();
+    if (_disposed || !mounted) return;
 
     // Replay any prior scrollback before attaching the live PTY.
     final replayer = TranscriptReplayer(
@@ -445,7 +450,8 @@ class _ChatTerminalState extends State<_ChatTerminal> {
       chatId: widget.chat.chatId,
     );
     await for (final chunk in replayer.replay()) {
-      _terminal.write(_utf8Decoder.convert(chunk));
+      if (_disposed || !mounted) return;
+      _writeTerminal(_utf8Decoder.convert(chunk));
     }
 
     final pool = getIt<PtySessionPool>();
@@ -455,8 +461,9 @@ class _ChatTerminalState extends State<_ChatTerminal> {
 
     final available =
         await getIt<BinaryDetector>().isBinaryOnPath(invocation.executable);
+    if (_disposed || !mounted) return;
     if (!available) {
-      _terminal.write(
+      _writeTerminal(
         '\r\n\x1b[31mCould not start `${invocation.executable}`: '
         'binary not found on PATH.\x1b[0m\r\n'
         'Install it and make sure it is reachable from a non-interactive '
@@ -476,6 +483,7 @@ class _ChatTerminalState extends State<_ChatTerminal> {
         onOutput: _recorder.append,
       ),
     );
+    if (_disposed || !mounted) return;
 
     if (_lastCols != null && _lastRows != null) {
       _session!.resize(_lastRows!, _lastCols!);
@@ -483,17 +491,18 @@ class _ChatTerminalState extends State<_ChatTerminal> {
 
     _outputSub = _session!.output
         .transform(const Utf8Decoder(allowMalformed: true))
-        .listen(_terminal.write);
+        .listen(_writeTerminal);
 
     _stateSub = _session!.state.listen((s) {
+      if (_disposed || !mounted) return;
       switch (s) {
         case PtyExited(:final code):
-          _terminal.write(
+          _writeTerminal(
             '\r\n\x1b[33m[${invocation.executable} exited '
             'with code $code]\x1b[0m\r\n',
           );
         case PtyFailed(:final message):
-          _terminal.write(
+          _writeTerminal(
             '\r\n\x1b[31m[${invocation.executable} failed: '
             '$message]\x1b[0m\r\n',
           );
@@ -507,9 +516,18 @@ class _ChatTerminalState extends State<_ChatTerminal> {
     _terminal.onOutput = (data) => _session?.write(utf8.encode(data));
   }
 
+  void _writeTerminal(String data) {
+    if (_disposed || !mounted || data.isEmpty) return;
+    final visible = stripAnsi(data);
+    if (visible.isEmpty) return;
+    _terminal.write(visible);
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     _terminal.onResize = null;
+    _terminal.onOutput = null;
     unawaited(_outputSub?.cancel());
     unawaited(_stateSub?.cancel());
     unawaited(_recorder.close());

@@ -31,12 +31,29 @@ void main() {
     expect(await r.replay().toList(), isEmpty);
   });
 
+  test('replay strips stale control sequences before terminal restore',
+      () async {
+    final dir = Directory(p.join(tmp.path, '.pickforge', 'chats', 'stale'))
+      ..createSync(recursive: true);
+    File(p.join(dir.path, 'transcript.log')).writeAsStringSync(
+      '\x1B[>4;0m\x1B[>7u\x1BM\x1B7hello\x1B8',
+    );
+
+    final r = TranscriptReplayer(projectRoot: tmp.path, chatId: 'stale');
+    final chunks = <String>[];
+    await for (final ch in r.replay()) {
+      chunks.add(String.fromCharCodes(ch));
+    }
+
+    expect(chunks.join(), 'hello');
+  });
+
   test('replay handles large transcripts in bounded chunks', () async {
     final dir = Directory(p.join(tmp.path, '.pickforge', 'chats', 'large'))
       ..createSync(recursive: true);
     const size = 2 * 1024 * 1024 + 123;
     const chunkBytes = 8192;
-    final bytes = List<int>.generate(size, (index) => index % 251);
+    final bytes = List<int>.filled(size, 'a'.codeUnitAt(0));
     File(p.join(dir.path, 'transcript.log')).writeAsBytesSync(bytes);
 
     final r = TranscriptReplayer(

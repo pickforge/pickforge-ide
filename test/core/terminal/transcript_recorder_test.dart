@@ -30,6 +30,10 @@ void main() {
     expect(log.existsSync(), isTrue);
     expect(log.readAsStringSync(), 'red plain');
     expect(meta.existsSync(), isTrue);
+    expect(
+      File(p.join(tmp.path, '.pickforge', '.gitignore')).readAsStringSync(),
+      '*\n',
+    );
   });
 
   test('writes binary varint-framed spans sidecar', () async {

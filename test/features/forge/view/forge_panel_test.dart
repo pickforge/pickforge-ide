@@ -1,5 +1,6 @@
 // ignore_for_file: prefer_mixin, reason: Cubit test fakes mix in Mock.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
+import 'package:pickforge/core/projects/git_status_service.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
@@ -179,6 +181,62 @@ class _GitProcessRunner implements ProcessRunner {
       stdoutByArgs[arguments.join(' ')] ?? '',
       '',
     );
+  }
+
+  @override
+  Future<RunningProcess> spawn(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) {
+    throw UnimplementedError();
+  }
+}
+
+class _RunAsyncProcessRunner implements ProcessRunner {
+  _RunAsyncProcessRunner(this._tester);
+
+  final WidgetTester _tester;
+  Future<void> _tail = Future<void>.value();
+
+  Future<void> waitForIdle() async {
+    while (true) {
+      final current = _tail;
+      await current.catchError((_) {});
+      if (identical(current, _tail)) return;
+    }
+  }
+
+  @override
+  Future<ProcessResult> run(
+    String executable,
+    List<String> arguments, {
+    String? cwd,
+    Map<String, String>? env,
+  }) async {
+    final previous = _tail.catchError((_) {});
+    final gate = Completer<void>();
+    _tail = previous.whenComplete(() => gate.future);
+    await previous;
+    try {
+      final result = await _tester.runAsync(
+        () => Process.run(
+          executable,
+          arguments,
+          workingDirectory: cwd,
+          environment: env,
+        ).timeout(const Duration(seconds: 5)),
+      );
+      if (result == null) {
+        throw ProcessRunnerException(executable, 'runAsync returned null');
+      }
+      return result;
+    } on ProcessException catch (e) {
+      throw ProcessRunnerException(executable, e);
+    } finally {
+      gate.complete();
+    }
   }
 
   @override
@@ -956,4 +1014,178 @@ void main() {
     expect(find.text('Validator passed'), findsOneWidget);
     expect(find.textContaining('No issues found!'), findsOneWidget);
   });
+
+  testWidgets('ForgePanel checkpoints a real dirty git repository',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 760);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final repo = Directory.systemTemp.createTempSync(
+      'forge_panel_real_git_test_',
+    );
+    addTearDown(() => repo.deleteSync(recursive: true));
+    final libDir = Directory('${repo.path}/lib')..createSync(recursive: true);
+    final mainFile = File('${libDir.path}/main.dart')
+      ..writeAsStringSync('void main() {}\n');
+    final stagedFile = File('${libDir.path}/staged.dart')
+      ..writeAsStringSync("const staged = 'before';\n");
+    final unstagedFile = File('${libDir.path}/unstaged.dart')
+      ..writeAsStringSync("const unstaged = 'before';\n");
+
+    await _git(tester, repo, ['init', '-b', 'feature/panel-real-git']);
+    await _git(
+      tester,
+      repo,
+      ['config', 'user.email', 'pickforge@example.test'],
+    );
+    await _git(tester, repo, ['config', 'user.name', 'Pickforge Test']);
+    await _git(tester, repo, ['config', 'commit.gpgSign', 'false']);
+    await _git(tester, repo, [
+      'config',
+      'core.hooksPath',
+      '.git/hooks-disabled',
+    ]);
+    await _git(tester, repo, ['add', '.']);
+    await _git(tester, repo, ['commit', '-m', 'initial']);
+
+    stagedFile.writeAsStringSync("const staged = 'after';\n");
+    await _git(tester, repo, ['add', 'lib/staged.dart']);
+    unstagedFile.writeAsStringSync("const unstaged = 'after';\n");
+    final untrackedFile = File('${repo.path}/scratch.txt')
+      ..writeAsStringSync('new\n');
+
+    final runner = _RunAsyncProcessRunner(tester);
+    final service = GitStatusService(runner);
+    final before = await service.status(repo.path);
+    expect(before.staged, 1);
+    expect(before.unstaged, 1);
+    expect(before.untracked, 1);
+    final diffSummary = await service.diffSummary(repo.path);
+    expect(
+      diffSummary?.changedFiles,
+      containsAll(['lib/staged.dart', 'lib/unstaged.dart', 'scratch.txt']),
+    );
+
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(runner);
+
+    final selection = SelectedWidget(
+      node: WidgetNode(
+        id: 'w-real-git',
+        className: 'Text',
+        children: const [],
+        creationLocation: CreationLocation(
+          file: mainFile.path,
+          line: 1,
+          column: 1,
+        ),
+      ),
+      ancestorClasses: const ['MaterialApp'],
+      sourceSnippet: null,
+      screenshotPath: null,
+      adbScreenshotPath: null,
+      propertiesJson: const {},
+    );
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: selection,
+            projectRoot: repo.path,
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await runner.waitForIdle();
+
+    await tester.tap(find.text('Forge it'));
+    await runner.waitForIdle();
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.text('Forge into dirty worktree?'),
+    );
+
+    expect(find.text('Forge into dirty worktree?'), findsOneWidget);
+    expect(find.text('Branch: feature/panel-real-git'), findsWidgets);
+    expect(
+      find.textContaining('Staged: 1, unstaged: 1, untracked: 1'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Create checkpoint'));
+    await runner.waitForIdle();
+    await tester.pump();
+    await _pumpUntil(tester, () => cubit.forgedSelection != null);
+    await _pumpUntilFound(
+      tester,
+      find.textContaining('Checkpoint commit created'),
+    );
+
+    expect(find.textContaining('Checkpoint commit created'), findsOneWidget);
+    expect(cubit.forgedSelection, selection);
+    expect(cubit.forgedProjectRoot, repo.path);
+    expect(cubit.forgedChatId, 'chat-1');
+
+    final after = await service.status(repo.path);
+    expect(after.staged, 0);
+    expect(after.unstaged, 0);
+    expect(after.untracked, 1);
+    expect(untrackedFile.existsSync(), isTrue);
+  });
+}
+
+Future<void> _git(
+  WidgetTester tester,
+  Directory repo,
+  List<String> args,
+) async {
+  final result = await tester.runAsync(
+    () => Process.run(
+      'git',
+      args,
+      workingDirectory: repo.path,
+    ).timeout(const Duration(seconds: 5)),
+  );
+  if (result == null) {
+    fail('git ${args.join(' ')} did not finish');
+  }
+  if (result.exitCode != 0) {
+    fail('git ${args.join(' ')} failed: ${result.stderr}');
+  }
+}
+
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  await _pumpUntil(
+    tester,
+    () => finder.evaluate().isNotEmpty,
+    timeout: timeout,
+  );
+}
+
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() predicate, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final end = tester.binding.clock.fromNowBy(timeout);
+  while (tester.binding.clock.now().isBefore(end)) {
+    if (predicate()) return;
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  fail('Timed out after $timeout.');
 }

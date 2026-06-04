@@ -860,21 +860,29 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P7.T3 — Auto-updater
 
-**Status:** Deferred
+**Status:** Partial / distribution strategy documented
 **Tasks**
 
 - [ ] macOS Sparkle.
-- [ ] Windows winget/scoop or updater strategy.
-- [ ] Linux `.deb`, AppImage, Flathub/Snap strategy.
+- [x] Windows winget/scoop or updater strategy.
+- [x] Linux `.deb`, AppImage, Flathub/Snap strategy.
+
+**Latest evidence**
+
+- 2026-06-04: Documented the update channel and per-platform packaging/update strategy in `docs/architecture/distribution.md`: macOS should use Sparkle 2 only after signing/notarization/appcast readiness, Windows should start with winget and optional Scoop instead of an MVP self-updater, and Linux should prioritize AppImage plus `.deb` with Flathub as the long-term store channel.
 
 ### P7.T4 — Codesigning, notarization, distribution
 
-**Status:** Deferred
+**Status:** Partial / release gates documented
 **Tasks**
 
 - [ ] macOS signing and notarization.
 - [ ] Windows signing and SmartScreen reputation.
 - [ ] Linux packaging/signing.
+
+**Latest evidence**
+
+- 2026-06-04: Added distribution release gates for signing secrets, protected tags, diagnostics build metadata, Linux cold-install dogfood, macOS Gatekeeper validation, Windows SmartScreen review, and update metadata readiness in `docs/architecture/distribution.md`, and linked that review from `docs/release-checklist.md`.
 
 ### P7.T5 — Pickforge Pro backend
 

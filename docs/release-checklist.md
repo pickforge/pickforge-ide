@@ -14,6 +14,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `scripts/emulator_e2e.sh Pixel_10` on a prepared Android runner.
 - [ ] `scripts/dogfood_preflight.sh` before manual dogfood.
 - [ ] Review CI artifacts for golden failures, desktop build failures, Linux smoke output, and emulator E2E logs/screenshots.
+- [ ] Review `docs/architecture/distribution.md` for current package, signing, and update-channel gates.
 
 ## Cold-Install Smoke
 
@@ -98,6 +99,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] Linux dogfood pass completed on a real desktop session.
 - [ ] macOS dogfood pass completed before public release.
 - [ ] Windows dogfood pass completed before public release.
+- [ ] Signing/notarization/package-manager blockers are recorded before tagging public builds.
 - [ ] Blockers recorded as issues or follow-up plan items.
 
 Sign off: _______________________________

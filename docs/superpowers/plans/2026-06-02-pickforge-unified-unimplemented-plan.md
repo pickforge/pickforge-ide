@@ -919,13 +919,17 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P8.T2 — External terminal restoration, only if demanded
 
-**Status:** Deferred / probably unnecessary
+**Status:** Partial / embedded PTY retained
 **Why:** Embedded PTY is the chosen direction.
 
 **Tasks**
 
 - [ ] Restore from git history only if users need external terminal workflows.
-- [ ] Keep embedded PTY default.
+- [x] Keep embedded PTY default.
+
+**Latest evidence**
+
+- 2026-06-04: Reconciled this deferred checkbox against the current implementation: `docs/architecture/embedded-terminal.md` documents the PTY path, `ForgeCubit` sends prompts through `PtySessionPool`, and `ChatWorkbenchPanel` renders the embedded terminal. Verified with focused terminal and Forge tests: `fvm flutter test --reporter=compact test/core/terminal test/features/forge/cubit/forge_cubit_test.dart test/features/forge/view/forge_panel_test.dart` (53 passed). External terminal restoration remains unchecked and conditional on user demand.
 
 ## 14. QA, CI, and release
 

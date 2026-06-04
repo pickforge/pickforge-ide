@@ -1,0 +1,48 @@
+# Local Testing Strategy
+
+Pickforge's production app is a Flutter desktop tool. It uses desktop-only
+capabilities such as local files, PTY sessions, process execution, SQLite, window
+management, and Android tooling. Do not treat the production app as web-runnable
+without an explicit web-safe entrypoint.
+
+## Layers
+
+- Unit tests cover parsers, repositories, command construction, and service
+  boundaries.
+- Widget tests cover panes, Cubits, routing, Forge, file explorer, command
+  palette, accessibility, and settings behavior.
+- Golden tests protect the primary polished surfaces on Linux.
+- `scripts/linux_smoke.sh` launches the Linux desktop target under Xvfb,
+  verifies the demo route through the Flutter VM Service, and writes artifacts
+  under `build/smoke/linux/`.
+- `scripts/emulator_e2e.sh Pixel_10` runs the opt-in Android emulator E2Es and
+  writes artifacts under `build/e2e/android/`.
+
+## Web Demo Harness
+
+The web harness exists only for UI/layout review. It is not a runtime
+correctness test for Pickforge's desktop app and must not import PTY, process,
+SQLite, `dart:io`, window-management, or Android tooling code.
+
+Build the harness with:
+
+```bash
+scripts/web_demo_smoke.sh
+```
+
+The script builds `lib/web_demo.dart` into `build/web-demo/` using Flutter's
+`--target` option. This keeps the desktop `lib/main.dart` out of the web build.
+
+Use the web harness for:
+
+- Layout checks for the fake project, explorer, terminal, and inspector panes.
+- Browser screenshots when a lightweight visual review is useful.
+- Regression checks that the web-safe demo entrypoint remains isolated from
+  desktop-only imports.
+
+Do not use the web harness for:
+
+- VM Service correctness.
+- Android emulator behavior.
+- PTY/headless agent execution.
+- Drift persistence, local files, screenshots from disk, or process execution.

@@ -1012,16 +1012,20 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T8 — Storage migration and backward-compatibility suite
 
-**Status:** Partial
+**Status:** Partial / migration coverage updated
 **Why:** Drift migrations exist, but future confidence needs versioned fixtures and explicit compatibility testing.
 
 **Tasks**
 
 - [ ] Keep schema snapshots for each released DB version.
-- [ ] Add migration tests from every release schema to latest.
+- [x] Add migration tests from every release schema to latest.
 - [ ] Add corrupted/partial settings recovery tests.
 - [ ] Add backup-before-migration policy once real users exist.
 - [ ] Document data retention and `.pickforge/` disk layout invariants.
+
+**Latest evidence**
+
+- 2026-06-04: Added missing v5-to-v6 Drift migration coverage for `project_settings.emulator_idle_shutdown`, preserving an existing `emulator_launch_options` value. Together with existing v1, v2, v3, and v4 migration tests, the suite now covers every released schema version opening on the current schema. Verified with `test/core/drift/migration_v5_to_v6_test.dart`.
 
 ### P9.T9 — Visual regression suite
 

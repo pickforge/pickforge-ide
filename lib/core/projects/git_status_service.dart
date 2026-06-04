@@ -54,6 +54,21 @@ class GitDiffSummary extends Equatable {
   List<Object?> get props => [branchName, changedFiles, stat];
 }
 
+class GitCheckpointResult extends Equatable {
+  const GitCheckpointResult({
+    required this.created,
+    this.commitHash,
+    this.output = '',
+  });
+
+  final bool created;
+  final String? commitHash;
+  final String output;
+
+  @override
+  List<Object?> get props => [created, commitHash, output];
+}
+
 class GitStatusService {
   GitStatusService(this._runner);
 
@@ -118,6 +133,37 @@ class GitStatusService {
     return result.stdout.toString();
   }
 
+  Future<GitCheckpointResult> createCheckpointCommit(
+    String projectRoot, {
+    String message = 'chore: pickforge checkpoint',
+  }) async {
+    final addResult = await _runGit(['add', '-u'], projectRoot);
+    if (addResult == null || addResult.exitCode != 0) {
+      return GitCheckpointResult(
+        created: false,
+        output: _combinedOutput(addResult),
+      );
+    }
+    final commitResult = await _runGit(['commit', '-m', message], projectRoot);
+    if (commitResult == null || commitResult.exitCode != 0) {
+      return GitCheckpointResult(
+        created: false,
+        output: _combinedOutput(commitResult),
+      );
+    }
+    final hashResult = await _runGit(
+      ['rev-parse', '--short', 'HEAD'],
+      projectRoot,
+    );
+    final hash =
+        hashResult?.exitCode == 0 ? hashResult?.stdout.toString().trim() : null;
+    return GitCheckpointResult(
+      created: true,
+      commitHash: hash == null || hash.isEmpty ? null : hash,
+      output: _combinedOutput(commitResult),
+    );
+  }
+
   List<String> parseChangedFiles(String porcelain) {
     final files = <String>[];
     for (final line in porcelain.split('\n')) {
@@ -154,5 +200,13 @@ class GitStatusService {
     } on ProcessRunnerException {
       return null;
     }
+  }
+
+  String _combinedOutput(ProcessResult? result) {
+    if (result == null) return '';
+    return [
+      result.stdout.toString().trim(),
+      result.stderr.toString().trim(),
+    ].where((part) => part.isNotEmpty).join('\n');
   }
 }

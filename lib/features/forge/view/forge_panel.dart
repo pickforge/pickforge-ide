@@ -1336,7 +1336,7 @@ Future<bool> _confirmDirtyWorktree(
   final status = await service.status(projectRoot);
   if (!context.mounted || !status.isRepository || !status.isDirty) return true;
   final l10n = AppLocalizations.of(context);
-  final confirmed = await showDialog<bool>(
+  final action = await showDialog<_DirtyWorktreeAction>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(l10n.forgeDirtyWorktreeTitle),
@@ -1361,15 +1361,38 @@ Future<bool> _confirmDirtyWorktree(
       actions: [
         OutlinedButton(
           style: _forgeCompactOutlinedStyle(context),
-          onPressed: () => Navigator.of(context).pop(false),
+          onPressed: () => Navigator.of(context).pop(_DirtyWorktreeAction.stop),
           child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
+        if (status.staged > 0 || status.unstaged > 0)
+          OutlinedButton(
+            style: _forgeCompactOutlinedStyle(context),
+            onPressed: () =>
+                Navigator.of(context).pop(_DirtyWorktreeAction.checkpoint),
+            child: Text(l10n.forgeDirtyWorktreeCheckpoint),
+          ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
+          onPressed: () =>
+              Navigator.of(context).pop(_DirtyWorktreeAction.continueWithout),
           child: Text(l10n.forgeDirtyWorktreeContinue),
         ),
       ],
     ),
   );
-  return confirmed == true;
+  if (action == _DirtyWorktreeAction.continueWithout) return true;
+  if (action != _DirtyWorktreeAction.checkpoint) return false;
+  final result = await service.createCheckpointCommit(projectRoot);
+  if (!context.mounted) return false;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        result.created
+            ? l10n.forgeCheckpointCreated(result.commitHash ?? 'HEAD')
+            : l10n.forgeCheckpointFailed,
+      ),
+    ),
+  );
+  return result.created;
 }
+
+enum _DirtyWorktreeAction { stop, checkpoint, continueWithout }

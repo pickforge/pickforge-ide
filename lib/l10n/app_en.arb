@@ -81,6 +81,14 @@
     }
   },
   "forgeDirtyWorktreeContinue": "Continue",
+  "forgeDirtyWorktreeCheckpoint": "Create checkpoint",
+  "forgeCheckpointCreated": "Checkpoint commit created ({commit})",
+  "@forgeCheckpointCreated": {
+    "placeholders": {
+      "commit": {}
+    }
+  },
+  "forgeCheckpointFailed": "Could not create checkpoint commit",
   "forgeProjectChangesTitle": "Project changes",
   "forgeChangedFiles": "{count} changed files",
   "@forgeChangedFiles": {

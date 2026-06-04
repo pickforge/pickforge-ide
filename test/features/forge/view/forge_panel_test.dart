@@ -630,6 +630,63 @@ void main() {
     expect(cubit.forgedChatId, 'chat-1');
   });
 
+  testWidgets('ForgePanel creates checkpoint before forging dirty worktree',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final runner = _GitProcessRunner(
+      stdoutByArgs: {
+        'status --porcelain=v1': ' M lib/b.dart\n?? scratch.txt\n',
+        'rev-parse --abbrev-ref HEAD': 'feature/checkpoint\n',
+        'diff --stat HEAD': ' lib/b.dart | 1 +\n',
+        'commit -m chore: pickforge checkpoint':
+            '[feature/checkpoint abc123] chore: pickforge checkpoint\n',
+        'rev-parse --short HEAD': 'abc123\n',
+      },
+    );
+    await getIt.unregister<ProcessRunner>();
+    getIt.registerSingleton<ProcessRunner>(runner);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Forge it'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create checkpoint'), findsOneWidget);
+
+    await tester.tap(find.text('Create checkpoint'));
+    await tester.pumpAndSettle();
+
+    expect(runner.commands, contains('git add -u'));
+    expect(
+      runner.commands,
+      contains('git commit -m chore: pickforge checkpoint'),
+    );
+    expect(find.text('Checkpoint commit created (abc123)'), findsOneWidget);
+    expect(cubit.forgedSelection, _sampleWidget);
+    expect(cubit.forgedProjectRoot, '/tmp/test');
+    expect(cubit.forgedChatId, 'chat-1');
+  });
+
   testWidgets('ForgePanel shows post-forge diff summary', (tester) async {
     tester.view.physicalSize = const Size(1200, 600);
     tester.view.devicePixelRatio = 1.0;

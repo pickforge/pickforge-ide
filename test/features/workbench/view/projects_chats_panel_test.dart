@@ -70,6 +70,7 @@ Widget _harness({
   Key? screenshotKey,
   Size? panelSize,
   bool usePickforgeTheme = false,
+  TextScaler? textScaler,
 }) {
   final sidebar =
       sidebarCubit ?? WorkspaceSidebarCubit(_FakeSidebarSettingsRepository());
@@ -80,38 +81,45 @@ Widget _harness({
   if (panelSize != null) {
     panel = Center(child: SizedBox.fromSize(size: panelSize, child: panel));
   }
+  Widget home = MultiBlocProvider(
+    providers: [
+      BlocProvider.value(value: projectsCubit),
+      BlocProvider.value(value: chatsCubit),
+      BlocProvider.value(value: sidebar),
+    ],
+    child: Builder(
+      builder: (context) {
+        final scaffold = Scaffold(body: panel);
+        if (!withProjectSyncListener) return scaffold;
+        return BlocListener<ProjectsCubit, ProjectsState>(
+          listenWhen: shouldSyncChatsForProjects,
+          listener: (context, state) {
+            if (state is! ProjectsReady) return;
+            unawaited(
+              context.read<ChatsCubit>().syncProjects(
+                    state.projects.map((p) => p.projectRoot).toList(),
+                    defaultExpand: state.activeProjectRoot,
+                  ),
+            );
+          },
+          child: scaffold,
+        );
+      },
+    ),
+  );
+  if (textScaler != null) {
+    home = MediaQuery(
+      data: MediaQueryData(textScaler: textScaler),
+      child: home,
+    );
+  }
   return MaterialApp(
     theme: usePickforgeTheme ? PickforgeTheme.dark() : null,
     darkTheme: usePickforgeTheme ? PickforgeTheme.dark() : null,
     themeMode: usePickforgeTheme ? ThemeMode.dark : ThemeMode.system,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
-    home: MultiBlocProvider(
-      providers: [
-        BlocProvider.value(value: projectsCubit),
-        BlocProvider.value(value: chatsCubit),
-        BlocProvider.value(value: sidebar),
-      ],
-      child: Builder(
-        builder: (context) {
-          final scaffold = Scaffold(body: panel);
-          if (!withProjectSyncListener) return scaffold;
-          return BlocListener<ProjectsCubit, ProjectsState>(
-            listenWhen: shouldSyncChatsForProjects,
-            listener: (context, state) {
-              if (state is! ProjectsReady) return;
-              unawaited(
-                context.read<ChatsCubit>().syncProjects(
-                      state.projects.map((p) => p.projectRoot).toList(),
-                      defaultExpand: state.activeProjectRoot,
-                    ),
-              );
-            },
-            child: scaffold,
-          );
-        },
-      ),
-    ),
+    home: home,
   );
 }
 
@@ -436,6 +444,40 @@ void main() {
     expect(stats.width, 360);
     expect(stats.height, 580);
     expect(stats.opaquePixels, 360 * 580);
+    expect(stats.uniqueColors, greaterThan(24));
+  });
+
+  testWidgets('compact list layout supports large text without overflow',
+      (tester) async {
+    tester.view.physicalSize = const Size(1000, 760);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    const screenshotKey = Key('large-text-sidebar-screenshot');
+    final fixture = await _sidebarFixture(WorkspaceSidebarSettings.defaults);
+
+    await tester.pumpWidget(
+      _harness(
+        projectsCubit: fixture.projectsCubit,
+        chatsCubit: fixture.chatsCubit,
+        sidebarCubit: fixture.sidebarCubit,
+        screenshotKey: screenshotKey,
+        panelSize: const Size(360, 640),
+        usePickforgeTheme: true,
+        textScaler: const TextScaler.linear(1.6),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('alpha_app'), findsOneWidget);
+    expect(find.text('Refine picker overlay'), findsOneWidget);
+
+    final stats = await _captureStats(tester, screenshotKey);
+    expect(stats.width, 360);
+    expect(stats.height, 640);
+    expect(stats.opaquePixels, 360 * 640);
     expect(stats.uniqueColors, greaterThan(24));
   });
 }

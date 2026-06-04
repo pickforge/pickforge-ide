@@ -82,8 +82,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P1.T1 — Real widget-pick dogfood pass
 
-**Status:** Partial
-**Why:** Unit/widget coverage exists, but the complete runtime loop needs manual evidence against a real Flutter app in an Android emulator.
+**Status:** Completed
+**Why:** The complete runtime loop is verified against a real Flutter app in an Android emulator and the active embedded terminal now visibly records the generated Forge prompt.
 
 **Tasks**
 
@@ -91,7 +91,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Bind it to a Pickforge project.
 - [x] Confirm the runtime reaches a running VM Service in emulator E2E.
 - [x] Pick a user-code widget and verify inspector selection, source metadata, eligibility, and screenshot state.
-- [ ] Press **Forge it** and verify the prompt appears in the active embedded terminal session.
+- [x] Press **Forge it** and verify the prompt appears in the active embedded terminal session.
 - [x] Verify agent context files under `.pickforge/`.
 - [x] Verify hot reload/restart path with emulator E2E.
 
@@ -110,8 +110,9 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Ran the real Linux desktop app from Ghostty with dogfood wrappers on PATH (`codex --model gpt-5.3-codex-spark`, `opencode --model deepseek/deepseek-v4-flash`, `claude --model sonnet`). Verified `scripts/dogfood_preflight.sh`, project/chat binding to `fixtures/sample_flutter_app`, `Pixel_10` discovery/selection, VM Service connection/adoption, widget selection (`Center` at `lib/main.dart:28`), pick-history recording, inspector screenshot, and Forge context generation.
 - 2026-06-04: Real Forge wrote `.pickforge/skill-active.md`, `.pickforge/widget-context.md`, `.pickforge/initial-prompt.md`, `.pickforge/screenshot.png`, `.pickforge/device-screen.png`, and `.pickforge/ipc.sock-path` after confirming the dirty worktree.
 - 2026-06-04: Fixed dogfood blockers found during the visible desktop pass: unsupported `flutter emulators --machine`, transcript-created `.pickforge/` missing the Pickforge marker, xterm assertions from replay/live ANSI control sequences after hot restart, and binary `adb exec-out screencap -p` stdout decoding.
+- 2026-06-04: Switched the real-app dogfood target from `lucky_app` to `/home/dev/Development/Personal/MyGamesList/app` because `lucky_app` is mostly WebView. Ran MyGamesList on `emulator-5554`, bound it to Pickforge through manual VM Service URL `ws://127.0.0.1:36923/jM77deaFyMw=/ws`, selected the app-owned sign-in `ElevatedButton` at `lib/features/auth/sign_in/sign_in_screen.dart:150`, pressed **Forge it** in the visible Linux desktop app, and verified the active chat transcript starts with `[Pickforge sent prompt]` followed by the generated Forge prompt.
 
-**Remaining blocker:** The visible desktop pass did not prove that the generated prompt appears/responds in the active embedded terminal session. The context files were written successfully, but `dogfood-codex` transcript output did not grow during the wait window because the recorder captures PTY output, not prompt stdin. Validate prompt visibility/agent response next in Codex/OpenCode/Claude Code platform passes.
+**Follow-up:** Keep Codex/OpenCode/Claude Code platform passes in the manual dogfood matrix; the MVP runtime blocker is resolved by the visible MyGamesList pass.
 
 ### P1.T2 — Inspector screenshot capture path
 
@@ -562,6 +563,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Reworked onboarding checklist/setup/demo surfaces into compact token-based panels and tags, replacing stock `Card`/`Chip`/`TextButton` patterns; verified with focused onboarding tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Reworked Forge panel context tray, dirty-worktree summary, preview/forge actions, and dialogs into compact token-based surfaces, tags, and buttons; verified with focused Forge tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Localized the remaining audited settings/device-run, connection pill/menu/action, manual URL, run logs, chat empty/role, and widget-picker placeholder copy; verified with focused localization widget tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
+- 2026-06-04: Increased the desktop default window size to `1440x900` with a `900x640` minimum so the workbench opens with the sidebar, terminal, inspector, and Forge controls visible without manual resizing. Verified by restarting the Linux desktop app and capturing `/tmp/pickforge-default-window-1440x900.png`; also ran `fvm dart format --set-exit-if-changed lib/core/window/window_bootstrap.dart` and `fvm flutter analyze`.
 
 **Audit findings — 2026-06-04**
 

@@ -48,14 +48,12 @@ void main() {
   test('sendPrompt writes to the named session', () {
     final pool = PtySessionPool();
     final s = _Fake('a');
-    when(() => s.write(any())).thenReturn(null);
+    when(() => s.sendPrompt(any())).thenReturn(null);
     pool
       ..attach(s)
       ..sendPrompt('a', 'hello');
 
-    final captured =
-        verify(() => s.write(captureAny())).captured.single as List<int>;
-    expect(String.fromCharCodes(captured), 'hello\r');
+    verify(() => s.sendPrompt('hello')).called(1);
   });
 
   test('activate returns existing session without spawning a duplicate',

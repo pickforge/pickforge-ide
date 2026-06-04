@@ -92,6 +92,32 @@ void main() {
     expect(seen.single, [111, 107]);
   });
 
+  test('sendPrompt writes stdin and mirrors prompt to output', () async {
+    final seenOutput = <List<int>>[];
+    final seenTranscript = <List<int>>[];
+    final session = PtySession(
+      chatId: 'c_prompt',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+      onOutput: seenTranscript.add,
+    );
+    session.output.listen(seenOutput.add);
+
+    await session.start();
+    session.sendPrompt('fix the selected widget');
+    await pumpEventQueue();
+
+    final stdin =
+        verify(() => process.write(captureAny())).captured.single as List<int>;
+    expect(String.fromCharCodes(stdin), 'fix the selected widget\r');
+    final mirrored = String.fromCharCodes(seenOutput.single);
+    expect(mirrored, contains('[Pickforge sent prompt]'));
+    expect(mirrored, contains('fix the selected widget'));
+    expect(seenTranscript.single, seenOutput.single);
+  });
+
   test('resize forwards rows and columns after start', () async {
     final session = PtySession(
       chatId: 'c5',

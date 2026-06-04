@@ -7,8 +7,8 @@ Future<void> bootstrapWindow() async {
   if (!_isDesktop) return;
   await windowManager.ensureInitialized();
   const options = WindowOptions(
-    size: Size(480, 720),
-    minimumSize: Size(380, 560),
+    size: Size(1440, 900),
+    minimumSize: Size(900, 640),
     title: 'Pickforge',
     titleBarStyle: TitleBarStyle.normal,
     backgroundColor: Color(0xFF0A0A0B),

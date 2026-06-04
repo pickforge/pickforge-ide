@@ -91,6 +91,7 @@ class TranscriptRecorder {
   }
 
   Future<void> _writeMeta() async {
+    await Directory(_dir).create(recursive: true);
     final size = _log.existsSync() ? _log.lengthSync() : 0;
     final json = jsonEncode({
       'schemaVersion': 1,

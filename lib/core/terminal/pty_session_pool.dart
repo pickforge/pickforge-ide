@@ -39,7 +39,7 @@ class PtySessionPool {
   void sendPrompt(String chatId, String prompt) {
     final s = _sessions[chatId];
     if (s == null) return;
-    s.write('$prompt\r'.codeUnits);
+    s.sendPrompt(prompt);
   }
 
   void resize(String chatId, int rows, int cols) =>

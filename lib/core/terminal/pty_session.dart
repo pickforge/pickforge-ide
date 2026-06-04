@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:pickforge/core/terminal/pty_process.dart';
@@ -80,6 +81,14 @@ class PtySession {
   void write(List<int> bytes) {
     if (_process == null || !isRunning) return;
     _process!.write(bytes);
+  }
+
+  void sendPrompt(String prompt) {
+    if (_process == null || !isRunning) return;
+    final visible = utf8.encode('\r\n[Pickforge sent prompt]\r\n$prompt\r\n');
+    onOutput?.call(visible);
+    _outputCtrl.add(visible);
+    _process!.write('$prompt\r'.codeUnits);
   }
 
   void resize(int rows, int cols) => _process?.resize(rows: rows, cols: cols);

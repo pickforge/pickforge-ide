@@ -68,4 +68,19 @@ void main() {
     expect(log.lengthSync(), lessThanOrEqualTo(16));
     await rec.close();
   });
+
+  test('close writes meta even when chat directory is missing', () async {
+    final rec = TranscriptRecorder(
+      projectRoot: tmp.path,
+      chatId: 'c_missing_dir',
+      maxBytes: 1024 * 1024,
+    );
+
+    await rec.close();
+
+    final meta = File(
+      p.join(tmp.path, '.pickforge', 'chats', 'c_missing_dir', 'meta.json'),
+    );
+    expect(meta.existsSync(), isTrue);
+  });
 }

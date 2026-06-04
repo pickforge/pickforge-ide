@@ -38,6 +38,10 @@ native-host dogfood before release signoff.
 - Ship an AppImage for broad desktop testing.
 - Build a `.deb` package for Debian/Ubuntu users with
   `scripts/package_linux_deb.sh`.
+- Sign `.deb` artifacts with `scripts/sign_linux_deb.sh`, which emits detached
+  ASCII-armored signatures for both the package and checksum. Release CI imports
+  `PICKFORGE_GPG_PRIVATE_KEY_BASE64` only when that secret is present; local and
+  PR builds remain unsigned.
 - Treat Flathub as the preferred long-term store channel; Snap is secondary and
   only worth adding if users ask for it.
 - Package metadata must include desktop entry, icon, executable name, license,
@@ -47,6 +51,8 @@ native-host dogfood before release signoff.
 ## Signing And Secrets
 
 - CI should not attempt signing unless release secrets are present.
+- Linux release signing requires `PICKFORGE_GPG_PRIVATE_KEY_BASE64`, optional
+  `PICKFORGE_GPG_PASSPHRASE`, and optional `PICKFORGE_GPG_KEY`.
 - Signing jobs must run only for protected tags.
 - Local and PR builds remain unsigned.
 - Release artifacts must record commit SHA, tag, workflow run, and platform in

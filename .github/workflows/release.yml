@@ -45,6 +45,22 @@ jobs:
       - name: Smoke Linux .deb
         if: matrix.os == 'ubuntu-latest'
         run: scripts/linux_deb_smoke.sh --skip-build
+      - name: Sign Linux .deb
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          PICKFORGE_GPG_PRIVATE_KEY_BASE64: ${{ secrets.PICKFORGE_GPG_PRIVATE_KEY_BASE64 }}
+          PICKFORGE_GPG_PASSPHRASE: ${{ secrets.PICKFORGE_GPG_PASSPHRASE }}
+          PICKFORGE_GPG_KEY: ${{ secrets.PICKFORGE_GPG_KEY }}
+        run: |
+          if [[ -z "${PICKFORGE_GPG_PRIVATE_KEY_BASE64:-}" ]]; then
+            echo "No Linux signing key configured; leaving .deb unsigned."
+            exit 0
+          fi
+          export GNUPGHOME="$(mktemp -d)"
+          trap 'gpgconf --kill all >/dev/null 2>&1 || true; rm -rf "$GNUPGHOME"' EXIT
+          chmod 700 "$GNUPGHOME"
+          printf '%s' "$PICKFORGE_GPG_PRIVATE_KEY_BASE64" | base64 -d | gpg --batch --import
+          scripts/sign_linux_deb.sh
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:

@@ -86,7 +86,7 @@ tar --sort=name --mtime="@0" --owner=0 --group=0 --numeric-owner \
   -C "$pkg_root" --exclude=./DEBIAN -czf "$tmp_dir/data.tar.gz" .
 
 mkdir -p "$out_dir"
-rm -f "$deb_path" "$deb_path.sha256"
+rm -f "$deb_path" "$deb_path.sha256" "$deb_path.asc" "$deb_path.sha256.asc"
 ar rcs "$deb_path" \
   "$tmp_dir/debian-binary" \
   "$tmp_dir/control.tar.gz" \

@@ -13,6 +13,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `scripts/linux_smoke.sh` on Linux.
 - [ ] `scripts/package_linux_deb.sh --skip-build` after the Linux release build.
 - [ ] `scripts/linux_deb_smoke.sh --skip-build` after the Linux package is created.
+- [ ] `scripts/linux_deb_signing_smoke.sh --skip-build` with an ephemeral key.
 - [ ] `scripts/missing_tool_smoke.sh` on Linux.
 - [ ] `scripts/linux_visible_diagnostics_smoke.sh` from a visible Linux desktop session.
 - [ ] `scripts/emulator_e2e.sh Pixel_10` on a prepared Android runner.
@@ -92,7 +93,8 @@ they do not replace manual dogfood on real desktop hosts.
 - `scripts/linux_visible_diagnostics_smoke.sh` passed in a visible KDE Wayland desktop session. It verified onboarding setup checks for all-present tools plus missing `claude`, `codex`, `opencode`, `agent`, `gemini`, and `adb`, and wrote inspector JSON plus screenshots under `build/dogfood/visible-diagnostics/`.
 - `scripts/agent_profile_pty_smoke.sh` passed for installed Claude Code, Codex, and OpenCode. It launched each real CLI through the embedded PTY adapter, generated disposable `.pickforge/` context, verified the Pickforge prompt marker in each transcript, and wrote transcripts/context artifacts under `build/dogfood/agent-profile-pty/`.
 - `scripts/linux_deb_smoke.sh --skip-build` passed against `build/dist/linux/pickforge_0.1.0+1_amd64.deb`. It verified the `.deb` checksum, Debian members/control metadata, extracted app bundle, launcher symlink, desktop/icon files, and first-run liveness from a clean HOME under Xvfb. Headless Xvfb did not expose a discoverable window and the screenshot was blank, matching the known headless limitation.
-- Remaining Linux signoff gaps: true sudo install on a fresh VM or clean machine. Cursor/Gemini real-agent passes remain pending until those binaries are installed locally.
+- `scripts/linux_deb_signing_smoke.sh --skip-build` passed with an ephemeral GPG key. It created and verified detached armored signatures for both the Linux `.deb` and its SHA-256 checksum.
+- Remaining Linux signoff gaps: true sudo install on a fresh VM or clean machine, plus configuring the protected release signing key secret before public tags. Cursor/Gemini real-agent passes remain pending until those binaries are installed locally.
 
 ### macOS
 
@@ -108,6 +110,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] macOS dogfood pass completed before public release.
 - [ ] Windows dogfood pass completed before public release.
 - [ ] Signing/notarization/package-manager blockers are recorded before tagging public builds.
+- [ ] Linux release signing secret is configured or the unsigned-release decision is explicitly approved.
 - [ ] Blockers recorded as issues or follow-up plan items.
 
 Sign off: _______________________________

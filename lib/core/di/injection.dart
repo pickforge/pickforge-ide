@@ -31,6 +31,7 @@ import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/process/binary_detector.dart' hide ProcessRunner;
 import 'package:pickforge/core/skills/skill_store.dart';
+import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
@@ -64,6 +65,13 @@ Future<void> configureDependencies() async {
   if (!getIt.isRegistered<TelemetrySettingsRepository>()) {
     getIt.registerLazySingleton<TelemetrySettingsRepository>(
       () => TelemetrySettingsRepository(getIt<SharedPreferences>()),
+    );
+  }
+  if (!getIt.isRegistered<CrashReportService>()) {
+    getIt.registerLazySingleton<CrashReportService>(
+      () => CrashReportService(
+        settings: getIt<TelemetrySettingsRepository>(),
+      ),
     );
   }
   if (!getIt.isRegistered<EmulatorIpcServer>()) {

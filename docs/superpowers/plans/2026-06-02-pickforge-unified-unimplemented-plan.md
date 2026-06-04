@@ -855,16 +855,17 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P7.T2 — Telemetry and crash reports
 
-**Status:** Partial / privacy-gated provider integration
+**Status:** Completed / privacy-gated Sentry integration
 **Tasks**
 
 - [x] Add opt-in setting.
 - [x] Define event schema with no source-code or prompt leakage.
-- [ ] Integrate Sentry or equivalent only after privacy review.
+- [x] Integrate Sentry or equivalent only after privacy review.
 
 **Latest evidence**
 
 - 2026-06-04: Added a default-off Settings privacy toggle backed by `TelemetrySettingsRepository` and documented the future telemetry/crash event envelope, allowed properties, forbidden data, and provider privacy gate in `docs/architecture/telemetry-and-crash-reports.md`. Verified with focused telemetry/update/DI/settings tests, `fvm flutter analyze`, and `fvm flutter test --reporter=compact` (605 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`).
+- 2026-06-04: Integrated `sentry_flutter` behind both the default-off telemetry setting and build-time `PICKFORGE_SENTRY_DSN`, preserved the keyboard assertion guard while allowing Sentry to install first, and added `beforeSend` redaction that drops user/request/breadcrumb/attachment data and sends only sanitized crash metadata. Documented the Sentry privacy review outcome in `docs/architecture/telemetry-and-crash-reports.md`. Verified with `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, focused telemetry/DI tests, `fvm flutter test --reporter=compact` (626 passed, 3 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/linux_smoke.sh` (passed with the existing non-fatal Xvfb blank-screenshot warning).
 
 ### P7.T3 — Auto-updater
 

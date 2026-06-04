@@ -6,6 +6,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   file_selector_windows
   rive_native
   screen_retriever_windows
+  sentry_flutter
   window_manager
 )
 

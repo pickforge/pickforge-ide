@@ -1,15 +1,42 @@
 # Telemetry and Crash Reports
 
-Telemetry and crash reporting are default-off. Pickforge stores only the local
-opt-in preference until a provider is selected after privacy review.
+Telemetry and crash reporting are default-off. Pickforge initializes Sentry
+only when the local opt-in preference is enabled and a build-time Sentry DSN is
+provided.
 
 ## Opt-In
 
 - The Settings privacy toggle controls `telemetry.enabled`.
 - The default value is `false`.
 - No provider SDK is initialized while the setting is absent or disabled.
-- Enabling the setting only records consent until a reviewed provider
-  integration exists.
+- Enabling the setting still does nothing unless `PICKFORGE_SENTRY_DSN` is set
+  at build time.
+
+## Crash Provider
+
+Sentry is the reviewed crash provider for the first provider integration.
+
+Build-time configuration:
+
+- `PICKFORGE_SENTRY_DSN`: required to initialize Sentry.
+- `PICKFORGE_SENTRY_ENVIRONMENT`: optional, defaults to `local`.
+- `PICKFORGE_RELEASE`: optional release identifier.
+
+Runtime behavior:
+
+- Sentry is not initialized when telemetry is disabled.
+- Sentry is not initialized when the DSN is empty.
+- If Sentry initialization fails before app startup, Pickforge still starts
+  without crash reporting.
+- Native crash handling, sessions, performance tracing, user interaction
+  breadcrumbs, screenshots, view hierarchy capture, package reporting, and
+  default PII are disabled.
+- Breadcrumbs are dropped before collection.
+- Feedback and transactions are dropped before send.
+- Crash events are rebuilt in `beforeSend` with only a generic message,
+  sanitized exception type, redacted exception value, basename-only stack frame
+  filename, function name, line/column, release/environment, and a privacy tag.
+- Attachments, screenshots, and view hierarchy data are cleared in `beforeSend`.
 
 ## Event Schema
 
@@ -50,8 +77,13 @@ Future events must use this envelope:
 - Raw exception messages before redaction.
 - Stable user identifiers unless a future account system has separate consent.
 
-## Provider Gate
+## Privacy Review Outcome
 
-Sentry or an equivalent provider can only be integrated after a privacy review
-chooses the endpoint, retention policy, redaction behavior, and user-facing
-disclosure text.
+The first provider review selected Sentry with strict local gating and
+redaction:
+
+- Endpoint: the build-time `PICKFORGE_SENTRY_DSN`.
+- Retention: controlled in the configured Sentry project.
+- Redaction: implemented by `CrashReportService` before any event is sent.
+- Disclosure: the existing Settings privacy toggle remains the user-facing
+  control; wording should be expanded before enabling a production DSN.

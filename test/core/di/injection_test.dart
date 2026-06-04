@@ -7,6 +7,7 @@ import 'package:pickforge/core/agent/headless/headless_chat_session_pool.dart';
 import 'package:pickforge/core/agent/models.dart';
 import 'package:pickforge/core/di/app_bootstrap.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,6 +42,7 @@ void main() {
       getIt<TelemetrySettingsRepository>(),
       isA<TelemetrySettingsRepository>(),
     );
+    expect(getIt<CrashReportService>(), isA<CrashReportService>());
   });
 
   test('configureDependencies registers agent profiles', () async {

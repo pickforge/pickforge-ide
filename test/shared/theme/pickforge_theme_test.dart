@@ -16,6 +16,30 @@ void main() {
       expect(theme.colorScheme.primary, const Color(0xFFFF7A1A));
     });
 
+    test('dark color pairs meet AA text contrast', () {
+      final scheme = PickforgeTheme.dark().colorScheme;
+      expect(
+        _contrastRatio(scheme.onSurface, scheme.surface),
+        greaterThanOrEqualTo(4.5),
+        reason: 'surface/onSurface',
+      );
+      expect(
+        _contrastRatio(scheme.onPrimary, scheme.primary),
+        greaterThanOrEqualTo(4.5),
+        reason: 'primary/onPrimary',
+      );
+      expect(
+        _contrastRatio(scheme.onSecondary, scheme.secondary),
+        greaterThanOrEqualTo(4.5),
+        reason: 'secondary/onSecondary',
+      );
+      expect(
+        _contrastRatio(scheme.onError, scheme.error),
+        greaterThanOrEqualTo(4.5),
+        reason: 'error/onError',
+      );
+    });
+
     test('uses sans for chrome and mono for code', () {
       final theme = PickforgeTheme.dark();
       expect(theme.textTheme.bodyMedium?.fontFamily, 'Inter');
@@ -28,4 +52,16 @@ void main() {
       );
     });
   });
+}
+
+double _contrastRatio(Color foreground, Color background) {
+  final foregroundLuminance = foreground.computeLuminance();
+  final backgroundLuminance = background.computeLuminance();
+  final lighter = foregroundLuminance > backgroundLuminance
+      ? foregroundLuminance
+      : backgroundLuminance;
+  final darker = foregroundLuminance > backgroundLuminance
+      ? backgroundLuminance
+      : foregroundLuminance;
+  return (lighter + 0.05) / (darker + 0.05);
 }

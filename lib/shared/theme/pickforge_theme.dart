@@ -18,13 +18,13 @@ class PickforgeTheme {
     final colorScheme = ColorScheme(
       brightness: brightness,
       primary: PickforgeColors.ember,
-      onPrimary: Colors.white,
+      onPrimary: PickforgeColors.bg0,
       secondary: PickforgeColors.info,
-      onSecondary: Colors.white,
+      onSecondary: PickforgeColors.bg0,
       surface: isDark ? PickforgeColors.bg0 : const Color(0xFFF7F7F8),
       onSurface: isDark ? PickforgeColors.textHi : const Color(0xFF0A0A0B),
       error: PickforgeColors.error,
-      onError: Colors.white,
+      onError: PickforgeColors.bg0,
     );
 
     return ThemeData(

@@ -964,7 +964,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Add visible focus states across panes.
 - [ ] Verify tab order in sidebar, file explorer, inspector, settings, and dialogs.
 - [ ] Support text scaling without overflow.
-- [ ] Add high-contrast checks for dark theme.
+- [x] Add high-contrast checks for dark theme.
 - [ ] Add semantics labels for icon-only controls.
 
 **Validation**
@@ -977,6 +977,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Added direct workbench shortcuts for Add Project (`Ctrl/Cmd+O`), New Chat (`Ctrl/Cmd+N`), Hot Reload (`Ctrl/Cmd+R`), and F5 as Run App when idle or Hot Reload while running. Added a focus-scoped Forge shortcut (`Ctrl/Cmd+Enter`) inside `ForgePanel`. Verified with `test/features/workbench/view/workbench_command_palette_scope_test.dart` and `test/features/forge/view/forge_panel_test.dart`.
 - 2026-06-04: Added explicit tooltip and semantics labels for Forge context-tray icon-only removal controls: remove note, remove attachment, and dismiss warning. Verified with `test/features/forge/view/forge_panel_test.dart`.
+- 2026-06-04: Added AA contrast tests for dark theme `surface/onSurface`, `primary/onPrimary`, `secondary/onSecondary`, and `error/onError`; updated accent foreground colors to near-black so bright action/error surfaces meet text contrast. Verified with `test/shared/theme/pickforge_theme_test.dart`.
 
 ### P9.T7 — Performance and scalability budgets
 

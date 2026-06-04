@@ -77,3 +77,5 @@ native-host dogfood before release signoff.
   Windows.
 - Update-check endpoint returns valid metadata for the tagged version.
 - Rollback instructions exist before enabling automatic update installation.
+
+Current public-release blockers are tracked in `docs/release-blockers.md`.

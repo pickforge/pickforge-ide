@@ -24,6 +24,7 @@ class DiagnosticsSnapshot extends Equatable {
     required this.cursorAvailable,
     required this.geminiAvailable,
     required this.lastVmError,
+    required this.failures,
   });
 
   final String appVersion;
@@ -39,6 +40,7 @@ class DiagnosticsSnapshot extends Equatable {
   final bool cursorAvailable;
   final bool geminiAvailable;
   final String? lastVmError;
+  final List<DiagnosticsFailureDetails> failures;
 
   @override
   List<Object?> get props => [
@@ -55,7 +57,31 @@ class DiagnosticsSnapshot extends Equatable {
         cursorAvailable,
         geminiAvailable,
         lastVmError,
+        failures,
       ];
+}
+
+enum DiagnosticsFailureKind { connection, run, agent }
+
+class DiagnosticsFailureDetails extends Equatable {
+  const DiagnosticsFailureDetails({
+    required this.kind,
+    required this.timestamp,
+    required this.message,
+  });
+
+  final DiagnosticsFailureKind kind;
+  final DateTime timestamp;
+  final String message;
+
+  String get clipboardText => [
+        'Kind: ${kind.name}',
+        'Time: ${timestamp.toIso8601String()}',
+        'Message: $message',
+      ].join('\n');
+
+  @override
+  List<Object?> get props => [kind, timestamp, message];
 }
 
 class DiagnosticsService {
@@ -73,6 +99,7 @@ class DiagnosticsService {
   final int _maxLogEntries;
   final String _appVersion;
   final List<DiagnosticsLogEntry> _logs = [];
+  final Map<DiagnosticsFailureKind, DiagnosticsFailureDetails> _failures = {};
   String? _lastVmError;
 
   Future<DiagnosticsSnapshot> snapshot() async {
@@ -93,10 +120,17 @@ class DiagnosticsService {
       cursorAvailable: await _commandAvailable('agent', ['--version']),
       geminiAvailable: await _commandAvailable('gemini', ['--version']),
       lastVmError: _lastVmError,
+      failures: failures,
     );
   }
 
   List<DiagnosticsLogEntry> get logs => List.unmodifiable(_logs);
+  List<DiagnosticsFailureDetails> get failures {
+    final values = _failures.values.toList()
+      ..sort((a, b) => a.kind.index.compareTo(b.kind.index));
+    return List.unmodifiable(values);
+  }
+
   String? get lastVmError => _lastVmError;
 
   void recordLog(String level, String message) {
@@ -115,7 +149,25 @@ class DiagnosticsService {
   void recordVmError(String message) {
     final redacted = _redactor.redact(message);
     _lastVmError = redacted;
-    recordLog('error', 'VM Service: $redacted');
+    recordFailure(DiagnosticsFailureKind.connection, redacted);
+  }
+
+  void recordRunError(String message) {
+    recordFailure(DiagnosticsFailureKind.run, message);
+  }
+
+  void recordAgentError(String message) {
+    recordFailure(DiagnosticsFailureKind.agent, message);
+  }
+
+  void recordFailure(DiagnosticsFailureKind kind, String message) {
+    final redacted = _redactor.redact(message);
+    _failures[kind] = DiagnosticsFailureDetails(
+      kind: kind,
+      timestamp: DateTime.now().toUtc(),
+      message: redacted,
+    );
+    recordLog('error', '${_failureLabel(kind)}: $redacted');
   }
 
   Future<String> buildSupportBundle({
@@ -152,6 +204,19 @@ class DiagnosticsService {
         ..writeln('## Last VM error')
         ..writeln()
         ..writeln(_redactor.redact(vmError));
+    }
+
+    if (current.failures.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('## Recent failures')
+        ..writeln();
+      for (final failure in current.failures) {
+        buffer.writeln(
+          '- ${failure.timestamp.toIso8601String()} '
+          '[${_failureLabel(failure.kind)}] ${failure.message}',
+        );
+      }
     }
 
     buffer
@@ -210,6 +275,12 @@ class DiagnosticsService {
   }
 
   String _availability(bool value) => value ? 'available' : 'missing';
+
+  String _failureLabel(DiagnosticsFailureKind kind) => switch (kind) {
+        DiagnosticsFailureKind.connection => 'connection',
+        DiagnosticsFailureKind.run => 'run',
+        DiagnosticsFailureKind.agent => 'agent',
+      };
 }
 
 class _CommandStatus {

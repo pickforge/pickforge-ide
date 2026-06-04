@@ -40,6 +40,9 @@ void main() {
     expect(snapshot.cursorAvailable, isTrue);
     expect(snapshot.geminiAvailable, isFalse);
     expect(snapshot.lastVmError, 'apiKey=[REDACTED]');
+    expect(snapshot.failures, hasLength(1));
+    expect(snapshot.failures.single.kind, DiagnosticsFailureKind.connection);
+    expect(snapshot.failures.single.message, 'apiKey=[REDACTED]');
   });
 
   test('support bundle excludes source and redacts logs', () async {
@@ -63,7 +66,9 @@ void main() {
       appVersion: '1.2.3+4',
     )
       ..recordLog('error', 'token=super-secret')
-      ..recordVmError('password=vm-secret');
+      ..recordVmError('password=vm-secret')
+      ..recordRunError('run token=super-secret')
+      ..recordAgentError('agent apiKey=agent-secret');
 
     final bundle = await service.buildSupportBundle(
       activeProjectRoot: '/home/me/project',
@@ -78,8 +83,13 @@ void main() {
     expect(bundle, contains('- Project: project'));
     expect(bundle, contains('token=[REDACTED]'));
     expect(bundle, contains('password=[REDACTED]'));
+    expect(bundle, contains('## Recent failures'));
+    expect(bundle, contains('[connection] password=[REDACTED]'));
+    expect(bundle, contains('[run] run token=[REDACTED]'));
+    expect(bundle, contains('[agent] agent apiKey=[REDACTED]'));
     expect(bundle, isNot(contains('super-secret')));
     expect(bundle, isNot(contains('vm-secret')));
+    expect(bundle, isNot(contains('agent-secret')));
     expect(bundle, isNot(contains('/home/me/project')));
   });
 }

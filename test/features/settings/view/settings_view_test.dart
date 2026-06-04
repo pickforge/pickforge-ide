@@ -3,6 +3,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -51,12 +52,26 @@ void main() {
   late _TerminalSettingsRepo terminal;
   late _DeviceDiscovery discovery;
   late _DiagnosticsRunner diagnosticsRunner;
+  String? clipboardText;
 
   setUp(() {
     settings = _ProjectSettingsRepo();
     terminal = _TerminalSettingsRepo();
     discovery = _DeviceDiscovery();
     diagnosticsRunner = _DiagnosticsRunner();
+    clipboardText = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      switch (call.method) {
+        case 'Clipboard.setData':
+          final args = call.arguments as Map<Object?, Object?>;
+          clipboardText = args['text'] as String?;
+          return null;
+        case 'Clipboard.getData':
+          return <String, dynamic>{'text': clipboardText};
+      }
+      return null;
+    });
     when(() => terminal.load()).thenAnswer(
       (_) async => EmbeddedTerminalSettings.defaults,
     );
@@ -92,6 +107,11 @@ void main() {
     );
   });
 
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null);
+  });
+
   testWidgets('loads settings for the active project', (tester) async {
     final projectsCubit = _ProjectsCubit(
       ProjectsReady(
@@ -118,7 +138,10 @@ void main() {
               diagnosticsService: DiagnosticsService(
                 diagnosticsRunner,
                 appVersion: '9.8.7+6',
-              )..recordVmError('SocketException: apiKey=secret'),
+              )
+                ..recordVmError('SocketException: apiKey=secret')
+                ..recordRunError('Run failed: token=secret')
+                ..recordAgentError('Agent failed: password=secret'),
             ),
           ),
         ),
@@ -133,7 +156,30 @@ void main() {
     expect(find.text('9.8.7+6'), findsOneWidget);
     expect(find.text('Flutter 3.41.7 • channel stable'), findsOneWidget);
     expect(find.text('Last VM error'), findsOneWidget);
-    expect(find.text('SocketException: apiKey=[REDACTED]'), findsOneWidget);
+    expect(find.text('SocketException: apiKey=[REDACTED]'), findsNWidgets(2));
+    expect(find.text('Recent failures'), findsOneWidget);
+    expect(find.text('Connection'), findsOneWidget);
+    expect(find.text('Run'), findsOneWidget);
+    expect(find.text('Agent'), findsOneWidget);
+    expect(find.text('Run failed: token=[REDACTED]'), findsOneWidget);
+    expect(find.text('Agent failed: password=[REDACTED]'), findsOneWidget);
+
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -1000),
+    );
+    await tester.pump();
+
+    final copyButton = find.byTooltip('Copy error details').first;
+    await tester.tap(copyButton);
+    await tester.pump();
+
+    expect(clipboardText, contains('Kind: connection'));
+    expect(
+      clipboardText,
+      contains('SocketException: apiKey=[REDACTED]'),
+    );
+    expect(find.text('Error details copied'), findsOneWidget);
   });
 
   testWidgets('shows empty state when no project is selected', (tester) async {

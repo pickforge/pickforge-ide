@@ -463,11 +463,16 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
         if (level == LogLevel.error) {
           _errorCount++;
           _lastError = line;
+          _recordRunError(line);
         }
       },
       vmServiceReady: (uri) => unawaited(_handleVmServiceReady(uri)),
-      stopped: (exitCode, reason) =>
-          unawaited(_handleRunStopped(exitCode, reason)),
+      stopped: (exitCode, reason) {
+        if (exitCode != 0) {
+          _recordRunError('Run stopped with exit code $exitCode: $reason');
+        }
+        unawaited(_handleRunStopped(exitCode, reason));
+      },
       reloadCompleted: (success, fullRestart, _, __, hint) {
         if (success) {
           if (fullRestart) {
@@ -478,8 +483,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
           unawaited(_captureAfterHotReloadScreenshot());
         } else {
           _errorCount++;
-          _lastError = hint ??
+          final error = hint ??
               (fullRestart ? 'Hot restart failed' : 'Hot reload failed');
+          _lastError = error;
+          _recordRunError(error);
         }
         final current = state;
         if (current is! Running) return;
@@ -733,6 +740,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
 
   void _recordVmError(String message) {
     diagnostics?.recordVmError(message);
+  }
+
+  void _recordRunError(String message) {
+    diagnostics?.recordRunError(message);
   }
 
   Future<void> _unbindIpc() async {

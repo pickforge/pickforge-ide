@@ -385,6 +385,19 @@ class _DiagnosticsSection extends StatelessWidget {
                 label: l10n.diagnosticsLastVmError,
                 value: data.lastVmError ?? l10n.diagnosticsNoVmError,
               ),
+              if (data.failures.isNotEmpty) ...[
+                const SizedBox(height: PickforgeSpacing.sm),
+                Text(
+                  l10n.diagnosticsRecentFailures,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: PickforgeSpacing.xs),
+                for (final failure in data.failures)
+                  _DiagnosticFailureRow(
+                    label: _failureLabel(l10n, failure.kind),
+                    failure: failure,
+                  ),
+              ],
               const SizedBox(height: PickforgeSpacing.xs),
               OutlinedButton.icon(
                 style: settingsCompactButtonStyle(),
@@ -402,6 +415,13 @@ class _DiagnosticsSection extends StatelessWidget {
   }
 }
 
+String _failureLabel(AppLocalizations l10n, DiagnosticsFailureKind kind) =>
+    switch (kind) {
+      DiagnosticsFailureKind.connection => l10n.diagnosticsFailureConnection,
+      DiagnosticsFailureKind.run => l10n.diagnosticsFailureRun,
+      DiagnosticsFailureKind.agent => l10n.diagnosticsFailureAgent,
+    };
+
 Future<void> _copySupportBundle(
   BuildContext context,
   DiagnosticsService diagnostics,
@@ -417,6 +437,54 @@ Future<void> _copySupportBundle(
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text(l10n.diagnosticsSupportBundleCopied)),
   );
+}
+
+Future<void> _copyErrorDetails(
+  BuildContext context,
+  DiagnosticsFailureDetails failure,
+) async {
+  final l10n = AppLocalizations.of(context);
+  await Clipboard.setData(ClipboardData(text: failure.clipboardText));
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(l10n.diagnosticsErrorDetailsCopied)),
+  );
+}
+
+class _DiagnosticFailureRow extends StatelessWidget {
+  const _DiagnosticFailureRow({
+    required this.label,
+    required this.failure,
+  });
+
+  final String label;
+  final DiagnosticsFailureDetails failure;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: PickforgeSpacing.xs),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 136,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+          ),
+          const SizedBox(width: PickforgeSpacing.md),
+          Expanded(child: Text(failure.message)),
+          IconButton(
+            tooltip: l10n.diagnosticsCopyErrorDetails,
+            onPressed: () => unawaited(_copyErrorDetails(context, failure)),
+            icon: const Icon(Icons.copy, size: 16),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _DiagnosticRow extends StatelessWidget {

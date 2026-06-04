@@ -89,7 +89,7 @@ class ForgeCubit extends Cubit<ForgeState> {
       );
       emit(state.copyWith(launching: false));
     } on Object catch (e) {
-      _recordDiagnostic('error', 'Forge failed: $e');
+      _recordAgentFailure('Forge failed: $e');
       emit(state.copyWith(launching: false, lastError: e.toString()));
     }
   }
@@ -113,9 +113,9 @@ class ForgeCubit extends Cubit<ForgeState> {
     );
   }
 
-  void _recordDiagnostic(String level, String message) {
+  void _recordAgentFailure(String message) {
     if (getIt.isRegistered<DiagnosticsService>()) {
-      getIt<DiagnosticsService>().recordLog(level, message);
+      getIt<DiagnosticsService>().recordAgentError(message);
     }
   }
 

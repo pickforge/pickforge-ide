@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
 import 'package:pickforge/core/emulator/boot_readiness_poller.dart';
@@ -35,6 +36,8 @@ class _MR extends Mock implements RunSessionController {}
 class _MLog extends Mock implements RunSessionLogRepository {}
 
 class _MV extends Mock implements VmServiceClient {}
+
+class _MDiagnostics extends Mock implements DiagnosticsService {}
 
 class _FakeRunSession extends Mock implements RunSession {}
 
@@ -137,7 +140,8 @@ void main() {
   });
   tearDown(() => events.close());
 
-  EmulatorSessionCubit build() => EmulatorSessionCubit(
+  EmulatorSessionCubit build({DiagnosticsService? diagnostics}) =>
+      EmulatorSessionCubit(
         projectRoot: '/p',
         settings: settings,
         discovery: disc,
@@ -146,6 +150,7 @@ void main() {
         runController: run,
         logRepo: log,
         vmClient: vm,
+        diagnostics: diagnostics,
       );
   const avd =
       Avd(id: 'Pixel_5_API_34', name: 'Pixel 5 API 34', platform: 'android');
@@ -1254,14 +1259,16 @@ void main() {
 
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(
     'stopped event records run summary',
-    setUp: () => when(
-      () => run.start(
-        projectRoot: '/p',
-        serial: any(named: 'serial'),
-        targetFile: any(named: 'targetFile'),
-        extraArgs: any(named: 'extraArgs'),
-      ),
-    ).thenAnswer((_) async => session),
+    setUp: () {
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: any(named: 'serial'),
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
     build: build,
     seed: () => const EmulatorSessionState.idle(
       avd: avd,
@@ -1308,6 +1315,39 @@ void main() {
           lastError: 'boom',
         ),
       ).called(1);
+    },
+  );
+
+  late _MDiagnostics runDiagnostics;
+  blocTest<EmulatorSessionCubit, EmulatorSessionState>(
+    'run errors are recorded to diagnostics',
+    setUp: () {
+      when(
+        () => run.start(
+          projectRoot: '/p',
+          serial: any(named: 'serial'),
+          targetFile: any(named: 'targetFile'),
+          extraArgs: any(named: 'extraArgs'),
+        ),
+      ).thenAnswer((_) async => session);
+    },
+    build: () {
+      runDiagnostics = _MDiagnostics();
+      when(() => runDiagnostics.recordRunError(any())).thenReturn(null);
+      return build(diagnostics: runDiagnostics);
+    },
+    seed: () => const EmulatorSessionState.idle(
+      avd: avd,
+      serial: 'emulator-5554',
+    ),
+    act: (c) async {
+      await c.runApp();
+      events
+          .add(const RunSessionEvent.log(line: 'boom', level: LogLevel.error));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    },
+    verify: (_) {
+      verify(() => runDiagnostics.recordRunError('boom')).called(1);
     },
   );
 }

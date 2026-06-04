@@ -120,6 +120,7 @@ void main() {
     diagnostics = _MockDiagnostics();
     when(() => pool.sendPrompt(any(), any())).thenReturn(null);
     when(() => diagnostics.recordLog(any(), any())).thenReturn(null);
+    when(() => diagnostics.recordAgentError(any())).thenReturn(null);
     getIt.registerSingleton<DiagnosticsService>(diagnostics);
   });
 
@@ -343,7 +344,7 @@ void main() {
       verify: (cubit) {
         expect(cubit.state.launching, isFalse);
         expect(cubit.state.lastError, isNotNull);
-        verify(() => diagnostics.recordLog('error', any())).called(1);
+        verify(() => diagnostics.recordAgentError(any())).called(1);
         verifyNever(() => pool.sendPrompt(any(), any()));
       },
     );

@@ -1,11 +1,13 @@
 # Pickforge MCP Integration
 
-Pickforge ships the app-local IPC backend for MCP integrations. The MCP server
-adapter itself should live outside the Flutter desktop app and proxy calls to
-Pickforge through this IPC contract.
+Pickforge ships the app-local IPC backend for MCP integrations plus a small
+stdio MCP adapter at `tool/pickforge_mcp.dart`. The adapter proxies MCP tool
+calls to Pickforge through this IPC contract.
 
 This keeps the desktop app free of agent-host packaging concerns while still
-giving agent profiles one stable project-local discovery mechanism.
+giving agent profiles one stable project-local discovery mechanism. Packaged
+agent-host integrations can either call this adapter or reimplement the same
+IPC proxy contract.
 
 ## Discovery
 
@@ -71,6 +73,30 @@ Compatibility aliases are also supported for existing consumers:
 - `hotRestart`
 - `getVmServiceUri`
 - `getCurrentSelection`
+
+## Bundled Stdio Adapter
+
+Run from a Flutter project root that has an active `.pickforge/ipc.sock-path`:
+
+```bash
+/path/to/pickforge/scripts/pickforge_mcp.sh
+```
+
+Use the wrapper script rather than `fvm dart run` in MCP host configuration:
+some Flutter/FVM hooks print build status to stdout, and MCP stdio requires
+stdout to contain only JSON-RPC messages. The wrapper compiles the adapter under
+`build/mcp/` and redirects compiler output to stderr before executing it.
+
+The adapter implements:
+
+- `initialize`
+- `notifications/initialized`
+- `ping`
+- `tools/list`
+- `tools/call`
+
+Tool calls are forwarded to Pickforge as IPC requests. Tool results are returned
+as MCP text content containing pretty-printed JSON.
 
 ## MCP Adapter Guidance
 

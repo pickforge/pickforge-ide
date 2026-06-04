@@ -435,8 +435,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P4.T1 — Pickforge MCP server
 
-**Status:** Partial / IPC backend complete
-**Why:** Pickforge now exposes the P4.T1 capabilities through the existing project-discovered local IPC socket. The actual MCP stdio/server adapter remains external by design and should proxy this IPC contract.
+**Status:** Completed
+**Why:** Pickforge now exposes the P4.T1 capabilities through the existing project-discovered local IPC socket and includes a dependency-free stdio MCP adapter that proxies `tools/list` and `tools/call` to that IPC contract.
 **Goal:** Let agents re-query Pickforge state after the initial prompt.
 
 **Capabilities**
@@ -453,6 +453,11 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Decide whether MCP server ships inside this repo, separate repo, or both.
 - [x] Document socket/transport discovery.
 - [x] Add agent-profile-specific MCP configuration guidance.
+- [x] Add stdio MCP adapter.
+
+**Latest evidence**
+
+- 2026-06-04: Added `PickforgeMcpServer`, `tool/pickforge_mcp.dart`, and `scripts/pickforge_mcp.sh`, implementing MCP `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call` over stdio while forwarding tool calls to `.pickforge/ipc.sock-path` through the existing `EmulatorIpcClient`. Updated `docs/architecture/pickforge-mcp.md` with adapter usage. Verified with focused MCP/IPC tests, a clean-stdout wrapper smoke check, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`.
 
 ### P4.T2 — Agent expansion
 
@@ -567,7 +572,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Reworked onboarding checklist/setup/demo surfaces into compact token-based panels and tags, replacing stock `Card`/`Chip`/`TextButton` patterns; verified with focused onboarding tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Reworked Forge panel context tray, dirty-worktree summary, preview/forge actions, and dialogs into compact token-based surfaces, tags, and buttons; verified with focused Forge tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 - 2026-06-04: Localized the remaining audited settings/device-run, connection pill/menu/action, manual URL, run logs, chat empty/role, and widget-picker placeholder copy; verified with focused localization widget tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
-- 2026-06-04: Increased the desktop default window size to `1440x900` with a `900x640` minimum so the workbench opens with the sidebar, terminal, inspector, and Forge controls visible without manual resizing. Verified by restarting the Linux desktop app and capturing `/tmp/pickforge-default-window-1440x900.png`; also ran `fvm dart format --set-exit-if-changed lib/core/window/window_bootstrap.dart` and `fvm flutter analyze`.
+- 2026-06-04: Increased the desktop default window size to `1600x1000` with a `900x640` minimum so the workbench opens with the sidebar, terminal, inspector, and Forge controls visible without manual resizing. Verified by restarting the Linux desktop app, capturing a desktop screenshot, and running `fvm dart format --set-exit-if-changed lib/core/window/window_bootstrap.dart` plus `fvm flutter analyze`.
 
 **Audit findings — 2026-06-04**
 

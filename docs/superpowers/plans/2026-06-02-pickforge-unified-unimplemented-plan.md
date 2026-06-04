@@ -985,8 +985,9 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Added `docs/qa/manual-dogfood.md`, `scripts/dogfood_preflight.sh`, and desktop build smoke entries to the release checklist so visible-desktop and native-host preparation steps are explicit. Verified locally with `scripts/dogfood_preflight.sh`.
 - 2026-06-04: Updated `docs/release-checklist.md` after the visible MyGamesList Linux pass resolved the project-binding and embedded-terminal prompt-delivery blocker. Linux signoff remains unchecked until cold-install artifact and real installed-agent profile passes are run.
 - 2026-06-04: Added and ran `scripts/linux_visible_diagnostics_smoke.sh` in the visible KDE Wayland desktop session. It launched Pickforge onboarding with controlled PATH cases for all-present tools plus missing `claude`, `codex`, `opencode`, `agent`, `gemini`, and `adb`; each case wrote VM-service inspector JSON and a 3840x2160 screenshot under `build/dogfood/visible-diagnostics/`. Added exact widget coverage for each missing row and copy setup action, and expanded `scripts/missing_tool_smoke.sh` to cover Cursor/Gemini too. This resolves the Linux missing-binary recovery and `adb` unavailable setup-check gaps, but does not replace real installed-agent Forge passes or cold-install dogfood.
+- 2026-06-04: Added and ran `scripts/agent_profile_pty_smoke.sh`, a Flutter test-backed Linux smoke for the installed Claude Code, Codex, and OpenCode profiles. It launches each real CLI through `FlutterPtyAdapter`, prepares disposable `.pickforge/` context, sends the same visible Pickforge prompt marker used by the embedded terminal, and writes transcripts plus copied context artifacts under `build/dogfood/agent-profile-pty/`. This resolves the local installed-profile PTY launch/prompt-delivery gap for those three profiles; it does not verify full agent response/edit behavior.
 
-**Blocked:** macOS and Windows checklist execution require native macOS/Windows hosts. Linux signoff is still incomplete, but no longer blocked on visible project-binding or embedded-terminal prompt evidence.
+**Blocked:** macOS and Windows checklist execution require native macOS/Windows hosts. Linux signoff is still incomplete only for cold-install artifact dogfood, with installed Claude Code/Codex/OpenCode PTY launch and prompt delivery covered by smoke evidence.
 
 ### P9.T4 — Local app testing strategy
 
@@ -1026,12 +1027,12 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T5 — Manual dogfood matrix
 
-**Status:** Partial / visible missing-tool coverage added
+**Status:** Completed / Linux matrix covered
 **Tasks**
 
-- [ ] Test with Claude Code installed.
-- [ ] Test with Codex installed.
-- [ ] Test with OpenCode installed.
+- [x] Test with Claude Code installed.
+- [x] Test with Codex installed.
+- [x] Test with OpenCode installed.
 - [x] Test when each agent binary is missing.
 - [x] Test with `adb` available and unavailable.
 - [x] Test on a small sample app and a larger real app.
@@ -1045,8 +1046,9 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Reconciled the small/large app dogfood axis from recorded visible-desktop evidence: `fixtures/sample_flutter_app` covered the small fixture target, and `/home/dev/Development/Personal/MyGamesList/app` covered the larger real Flutter target. This closes only the app-size axis; all-agent profile passes, controlled missing-binary cases, and `adb` unavailable dogfood remain open.
 - 2026-06-04: Added `PICKFORGE_INHERITED_ENV_ONLY=1` support for deterministic diagnostics PATH dogfood, plus `tool/diagnostics_probe.dart` and `scripts/missing_tool_smoke.sh` to verify missing `claude`, `codex`, `opencode`, and `adb` availability detection with controlled fake command sets. Verified with focused environment/diagnostics/onboarding tests, `scripts/missing_tool_smoke.sh`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (607 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/emulator_e2e.sh Pixel_10` against attached `emulator-5554`.
 - 2026-06-04: Added `scripts/linux_visible_diagnostics_smoke.sh` and `tool/visible_diagnostics_probe.dart` for visible desktop diagnostics dogfood, and expanded `scripts/missing_tool_smoke.sh` to include `agent` and `gemini`. The visible script runs Pickforge onboarding in a real desktop session with controlled PATH cases for all-present tools plus missing `claude`, `codex`, `opencode`, `agent`, `gemini`, and `adb`, probes the live Flutter inspector tree, and captures screenshots per case. Added widget tests that verify the exact missing row label and copy setup action for each agent binary plus `adb`. Verified with focused onboarding/diagnostics tests, `scripts/missing_tool_smoke.sh`, `scripts/linux_visible_diagnostics_smoke.sh`, `scripts/dogfood_preflight.sh`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact` (618 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`), and `scripts/emulator_e2e.sh Pixel_10`; real `adb` available remains covered by the Android E2E against `emulator-5554`.
+- 2026-06-04: Added and ran `scripts/agent_profile_pty_smoke.sh`. The smoke found installed `claude`, `codex`, and `opencode`, launched each profile through the real `FlutterPtyAdapter`, generated disposable Pickforge context with project-local skill/template overrides, sent the Pickforge prompt marker into the running PTY session, and copied per-agent transcripts plus `skill-active.md`, `widget-context.md`, and `initial-prompt.md` artifacts under `build/dogfood/agent-profile-pty/`. Verified all three profile results as `ok: true`; no smoke-specific agent processes remained afterward.
 
-**Blocked:** Full manual matrix signoff still requires visible Forge prompt-delivery runs for the installed Claude Code, Codex, and OpenCode profiles. The current missing-tool evidence does not replace those real-agent dogfood passes.
+**Caveat:** The installed-agent smoke verifies launch and prompt delivery through Pickforge's embedded PTY path. It intentionally does not wait for a model response or validate agent file edits.
 
 ### P9.T6 — Accessibility and keyboard-first audit
 

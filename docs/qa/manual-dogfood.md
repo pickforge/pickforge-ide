@@ -48,22 +48,28 @@ product change.
 4. Run `scripts/linux_visible_diagnostics_smoke.sh` from the visible desktop
    session to capture setup-check screenshots for available, missing-agent, and
    missing-`adb` cases.
-5. Start Pickforge from the visible desktop session:
+5. Run `scripts/agent_profile_pty_smoke.sh` to validate installed Claude Code,
+   Codex, and OpenCode profile launch plus Pickforge prompt delivery through
+   the embedded PTY adapter. The script writes transcripts and copied context
+   artifacts under `build/dogfood/agent-profile-pty/`.
+6. Start Pickforge from the visible desktop session:
 
    ```bash
    fvm flutter run -d linux
    ```
 
-6. Add `fixtures/sample_flutter_app` as a Pickforge project.
-7. Bind `Pixel_10` or attach to the sample app's VM Service.
-8. Pick a user-code widget and verify the inspector metadata and screenshot.
-9. Select/create a chat for the active project.
-10. Press **Forge it** and verify the prompt appears in the visible embedded
+7. Add `fixtures/sample_flutter_app` as a Pickforge project.
+8. Bind `Pixel_10` or attach to the sample app's VM Service.
+9. Pick a user-code widget and verify the inspector metadata and screenshot.
+10. Select/create a chat for the active project.
+11. Press **Forge it** and verify the prompt appears in the visible embedded
    terminal.
-11. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
+12. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
     `.pickforge/initial-prompt.md`, and available screenshots in the sample
     project.
-12. Repeat the Forge prompt delivery once for each configured agent profile.
+13. Repeat visible Forge prompt delivery for any agent profile not covered by
+    `scripts/agent_profile_pty_smoke.sh`, or when validating model response and
+    file-edit behavior rather than PTY launch/prompt delivery.
 
 ## Missing Tool Cases
 

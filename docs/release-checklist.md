@@ -16,6 +16,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `scripts/linux_visible_diagnostics_smoke.sh` from a visible Linux desktop session.
 - [ ] `scripts/emulator_e2e.sh Pixel_10` on a prepared Android runner.
 - [ ] `scripts/dogfood_preflight.sh` before manual dogfood.
+- [ ] `scripts/agent_profile_pty_smoke.sh` on Linux with installed Claude Code, Codex, and OpenCode CLIs.
 - [ ] Review CI artifacts for golden failures, desktop build failures, Linux smoke output, and emulator E2E logs/screenshots.
 - [ ] Review `docs/architecture/distribution.md` for current package, signing, and update-channel gates.
 
@@ -88,7 +89,8 @@ they do not replace manual dogfood on real desktop hosts.
 - `scripts/emulator_e2e.sh Pixel_10` passed both emulator and widget-pick E2Es and wrote logs plus the inspector screenshot under `build/e2e/android/`.
 - Visible desktop pass completed project binding and embedded-terminal prompt delivery against `/home/dev/Development/Personal/MyGamesList/app` on `emulator-5554`: selected the app-owned sign-in `ElevatedButton`, pressed **Forge it**, verified `.pickforge/` context files, and verified the active transcript starts with `[Pickforge sent prompt]`.
 - `scripts/linux_visible_diagnostics_smoke.sh` passed in a visible KDE Wayland desktop session. It verified onboarding setup checks for all-present tools plus missing `claude`, `codex`, `opencode`, `agent`, `gemini`, and `adb`, and wrote inspector JSON plus screenshots under `build/dogfood/visible-diagnostics/`.
-- Remaining Linux signoff gaps: cold-install artifact pass and real installed-agent profile Forge passes.
+- `scripts/agent_profile_pty_smoke.sh` passed for installed Claude Code, Codex, and OpenCode. It launched each real CLI through the embedded PTY adapter, generated disposable `.pickforge/` context, verified the Pickforge prompt marker in each transcript, and wrote transcripts/context artifacts under `build/dogfood/agent-profile-pty/`.
+- Remaining Linux signoff gaps: cold-install artifact pass. Cursor/Gemini real-agent passes remain pending until those binaries are installed locally.
 
 ### macOS
 

@@ -3,6 +3,7 @@ import 'package:pickforge/core/agent/context_attachment_renderer.dart';
 import 'package:pickforge/core/agent/models.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
+import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
 
 class PreparedContext {
@@ -58,14 +59,18 @@ class AgentLauncher {
     final widgetContext =
         '${widgetRenderer.render(req.widget)}$attachments$customNote';
 
-    final initialPrompt = agent.buildInitialPrompt(
-      pickforgeDirRelative: '.pickforge',
-      skillFilename: 'skill-active.md',
-      widgetContextFilename: 'widget-context.md',
-      screenshotFilename:
-          req.widget.screenshotPath != null ? 'screenshot.png' : null,
-      deviceScreenFilename:
-          req.widget.adbScreenshotPath != null ? 'device-screen.png' : null,
+    final hasDeviceScreen = req.widget.adbScreenshotPath != null;
+    final initialPrompt = _withVisualSelfCheck(
+      agent.buildInitialPrompt(
+        pickforgeDirRelative: '.pickforge',
+        skillFilename: 'skill-active.md',
+        widgetContextFilename: 'widget-context.md',
+        screenshotFilename:
+            req.widget.screenshotPath != null ? 'screenshot.png' : null,
+        deviceScreenFilename:
+            hasDeviceScreen ? AdbScreenshotCapturer.defaultOutputName : null,
+      ),
+      enabled: hasDeviceScreen,
     );
 
     return ForgeContextPreview(
@@ -96,5 +101,16 @@ class AgentLauncher {
     if (trimmed.isEmpty) return '';
     return '\n## Custom Notes\n\n'
         '${attachmentRenderer.redactor.redact(trimmed)}\n';
+  }
+
+  String _withVisualSelfCheck(String prompt, {required bool enabled}) {
+    if (!enabled) return prompt;
+    return '$prompt\n\n'
+        'Visual self-check: if `.pickforge/ipc.sock-path` exists after editing, '
+        'use the Pickforge IPC `hot_reload` method when possible. Pickforge '
+        'will write `${AdbScreenshotCapturer.afterHotReloadOutputName}` after '
+        'a successful reload; compare it with '
+        '`${AdbScreenshotCapturer.defaultOutputName}` before reporting visual '
+        'success.';
   }
 }

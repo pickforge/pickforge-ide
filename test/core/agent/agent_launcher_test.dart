@@ -8,6 +8,7 @@ import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/models.dart';
 import 'package:pickforge/core/agent/pickforge_context_writer.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
+import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
@@ -150,7 +151,7 @@ void main() {
         projectRoot: tempDir.path,
       );
 
-      await launcher.prepareContext(req);
+      final ctx = await launcher.prepareContext(req);
 
       verify(
         () => mockAgent.buildInitialPrompt(
@@ -161,6 +162,15 @@ void main() {
           deviceScreenFilename: 'device-screen.png',
         ),
       ).called(1);
+      expect(ctx.initialPrompt, contains('Visual self-check'));
+      expect(
+        ctx.initialPrompt,
+        contains(AdbScreenshotCapturer.afterHotReloadOutputName),
+      );
+      expect(
+        File(ctx.written.initialPromptPath).readAsStringSync(),
+        contains(AdbScreenshotCapturer.afterHotReloadOutputName),
+      );
     } finally {
       tempDir.deleteSync(recursive: true);
     }

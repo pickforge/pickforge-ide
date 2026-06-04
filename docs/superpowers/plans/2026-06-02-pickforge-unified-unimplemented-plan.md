@@ -731,6 +731,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Add optional "create checkpoint commit" or "stash before forge" workflow later.
 - [ ] Surface hot reload/test/analyze result alongside the diff.
 
+**Blocked:** Running a configured validator needs a project-level validator command/source decision; no validator setting exists in the current project settings model, so this remains unchecked rather than adding an implicit destructive or surprising command.
+
 **Validation**
 
 - [x] Unit tests for git status parsing.
@@ -754,7 +756,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add redaction rules for common secrets: `.env`, tokens, private keys, API keys.
 - [x] Block or warn on suspicious attachments.
 - [x] Add size/token budget estimate.
-- [ ] Let users edit the final instruction while preserving generated context.
+- [x] Let users edit the final instruction while preserving generated context.
 - [ ] Add prompt templates per skill and agent profile.
 
 **Validation**
@@ -763,6 +765,10 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Unit tests for blocked file classes.
 - [x] Snapshot tests for generated prompt preview.
 - Manual review with fixtures containing fake secrets.
+
+**Latest evidence**
+
+- 2026-06-04: Added editable final-instruction handling in the Forge context preview; edited instructions are written to `initial-prompt.md` and sent while generated skill/widget context remains unchanged. Verified with focused AgentLauncher/Forge panel tests, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
 
 ### P6.T11 — In-app diagnostics and local support bundle
 

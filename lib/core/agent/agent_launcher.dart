@@ -80,19 +80,25 @@ class AgentLauncher {
     );
   }
 
-  Future<PreparedContext> prepareContext(ForgeRequest req) async {
+  Future<PreparedContext> prepareContext(
+    ForgeRequest req, {
+    String? initialPromptOverride,
+  }) async {
     final preview = await buildPreview(req);
+    final override = initialPromptOverride?.trim();
+    final initialPrompt =
+        override == null || override.isEmpty ? preview.initialPrompt : override;
 
     final written = await contextWriter.write(
       projectRoot: req.projectRoot,
       skillMarkdown: preview.skillMarkdown,
       widgetContextMarkdown: preview.widgetContextMarkdown,
-      initialPrompt: preview.initialPrompt,
+      initialPrompt: initialPrompt,
     );
 
     return PreparedContext(
       written: written,
-      initialPrompt: preview.initialPrompt,
+      initialPrompt: initialPrompt,
     );
   }
 

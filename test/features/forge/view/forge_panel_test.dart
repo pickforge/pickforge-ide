@@ -66,6 +66,7 @@ class _RecordingForgeCubit extends ForgeCubit {
   String? forgedChatId;
   String? forgedDeviceSerial;
   String? forgedDevicePlatform;
+  String? forgedInitialPromptOverride;
 
   @override
   void selectSkill(SkillId skill) {
@@ -91,12 +92,14 @@ class _RecordingForgeCubit extends ForgeCubit {
     String customNote = '',
     String? deviceSerial,
     String? devicePlatform,
+    String? initialPromptOverride,
   }) async {
     forgedSelection = selection;
     forgedProjectRoot = projectRoot;
     forgedChatId = chatId;
     forgedDeviceSerial = deviceSerial;
     forgedDevicePlatform = devicePlatform;
+    forgedInitialPromptOverride = initialPromptOverride;
   }
 
   @override
@@ -433,6 +436,47 @@ void main() {
 
     expect(find.textContaining('# Skill'), findsOneWidget);
     expect(find.textContaining('# Widget'), findsOneWidget);
+  });
+
+  testWidgets('ForgePanel preview can forge edited final instruction',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final cubit = _RecordingForgeCubit();
+    addTearDown(cubit.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ForgePanel(
+            selection: _sampleWidget,
+            projectRoot: '/tmp/test',
+            chatId: 'chat-1',
+            cubit: cubit,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Preview context'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Final instruction'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextFormField),
+      'Use this edited instruction.',
+    );
+    await tester.tap(find.text('Forge edited instruction'));
+    await tester.pumpAndSettle();
+
+    expect(cubit.forgedInitialPromptOverride, 'Use this edited instruction.');
+    expect(cubit.forgedSelection, _sampleWidget);
+    expect(cubit.forgedProjectRoot, '/tmp/test');
+    expect(cubit.forgedChatId, 'chat-1');
   });
 
   testWidgets('ForgePanel confirms before forging into dirty worktree',

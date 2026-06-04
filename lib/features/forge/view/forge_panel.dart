@@ -152,6 +152,22 @@ class _ForgePanelBody extends StatelessWidget {
                                   projectRoot,
                                   attachments,
                                   attachmentState?.customNote ?? '',
+                                  onForge: (!canForge || state.launching)
+                                      ? null
+                                      : (initialPromptOverride) =>
+                                          _confirmAndForge(
+                                            context,
+                                            cubit,
+                                            selection!,
+                                            projectRoot,
+                                            chatId!,
+                                            attachments,
+                                            attachmentState?.customNote ?? '',
+                                            deviceTarget.serial,
+                                            deviceTarget.platform,
+                                            initialPromptOverride:
+                                                initialPromptOverride,
+                                          ),
                                 ),
                               ),
                       icon: const Icon(Icons.article_outlined, size: 16),
@@ -875,9 +891,11 @@ Future<void> _showPreview(
   SelectedWidget selection,
   String projectRoot,
   List<ContextAttachment> attachments,
-  String customNote,
-) {
+  String customNote, {
+  Future<void> Function(String initialPromptOverride)? onForge,
+}) {
   final l10n = AppLocalizations.of(context);
+  String? editedInitialPrompt;
   final preview = cubit.preview(
     selection: selection,
     projectRoot: projectRoot,
@@ -907,15 +925,45 @@ Future<void> _showPreview(
             }
             final data = snapshot.data!;
             return SingleChildScrollView(
-              child: SelectableText(
-                [
-                  '# Initial Prompt',
-                  data.initialPrompt,
-                  '# Skill',
-                  data.skillMarkdown,
-                  '# Widget Context',
-                  data.widgetContextMarkdown,
-                ].join('\n\n'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(l10n.forgeFinalInstructionLabel),
+                  const SizedBox(height: PickforgeSpacing.xs),
+                  TextFormField(
+                    initialValue: data.initialPrompt,
+                    minLines: 5,
+                    maxLines: 10,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) => editedInitialPrompt = value,
+                  ),
+                  if (onForge != null) ...[
+                    const SizedBox(height: PickforgeSpacing.sm),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton(
+                        onPressed: () {
+                          final prompt =
+                              editedInitialPrompt ?? data.initialPrompt;
+                          Navigator.of(context).pop();
+                          unawaited(onForge(prompt));
+                        },
+                        child: Text(l10n.forgeForgeEditedInstruction),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: PickforgeSpacing.md),
+                  SelectableText(
+                    [
+                      '# Skill',
+                      data.skillMarkdown,
+                      '# Widget Context',
+                      data.widgetContextMarkdown,
+                    ].join('\n\n'),
+                  ),
+                ],
               ),
             );
           },
@@ -941,8 +989,9 @@ Future<void> _confirmAndForge(
   List<ContextAttachment> attachments,
   String customNote,
   String? deviceSerial,
-  String? devicePlatform,
-) async {
+  String? devicePlatform, {
+  String? initialPromptOverride,
+}) async {
   if (!await _confirmDirtyWorktree(context, projectRoot)) return;
   await cubit.forge(
     selection: selection,
@@ -952,6 +1001,7 @@ Future<void> _confirmAndForge(
     customNote: customNote,
     deviceSerial: deviceSerial,
     devicePlatform: devicePlatform,
+    initialPromptOverride: initialPromptOverride,
   );
 }
 

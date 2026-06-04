@@ -11,6 +11,8 @@
   "forgeItButton": "Forge it",
   "forgePreviewButton": "Preview context",
   "forgePreviewTitle": "Forge context preview",
+  "forgeFinalInstructionLabel": "Final instruction",
+  "forgeForgeEditedInstruction": "Forge edited instruction",
   "forgeContextAttachments": "Context attachments",
   "forgeSelectedWidgetChip": "Widget: {className}",
   "@forgeSelectedWidgetChip": {

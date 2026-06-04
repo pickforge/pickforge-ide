@@ -41,6 +41,7 @@ class ForgeCubit extends Cubit<ForgeState> {
     String customNote = '',
     String? deviceSerial,
     String? devicePlatform,
+    String? initialPromptOverride,
   }) async {
     if (!const ForgeEligibilityPolicy().canForge(selection, projectRoot)) {
       emit(
@@ -74,7 +75,12 @@ class ForgeCubit extends Cubit<ForgeState> {
         customNote: customNote,
       );
 
-      final ctx = await _launcher.prepareContext(req);
+      final ctx = initialPromptOverride == null
+          ? await _launcher.prepareContext(req)
+          : await _launcher.prepareContext(
+              req,
+              initialPromptOverride: initialPromptOverride,
+            );
       _sendPrompt(
         agentId: state.agentId,
         chatId: chatId,

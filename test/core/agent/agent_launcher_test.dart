@@ -127,6 +127,51 @@ void main() {
     }
   });
 
+  test(
+      'prepareContext writes edited final instruction without changing context',
+      () async {
+    final tempDir = Directory.systemTemp.createTempSync('agent_launcher_test_');
+    try {
+      final req = ForgeRequest(
+        agentId: AgentProfileId.opencode,
+        skill: SkillId.editWidget,
+        widget: const SelectedWidget(
+          node: WidgetNode(
+            id: 'w-1',
+            className: 'MyWidget',
+            children: [],
+            creationLocation: null,
+          ),
+          ancestorClasses: ['MaterialApp'],
+          sourceSnippet: null,
+          screenshotPath: null,
+          adbScreenshotPath: null,
+          propertiesJson: {},
+        ),
+        terminalId: 'unused',
+        projectRoot: tempDir.path,
+      );
+
+      final ctx = await launcher.prepareContext(
+        req,
+        initialPromptOverride: 'Use this edited instruction.',
+      );
+
+      expect(ctx.initialPrompt, 'Use this edited instruction.');
+      expect(File(ctx.written.skillPath).readAsStringSync(), '# Skill');
+      expect(
+        File(ctx.written.widgetContextPath).readAsStringSync(),
+        '# Widget',
+      );
+      expect(
+        File(ctx.written.initialPromptPath).readAsStringSync(),
+        'Use this edited instruction.',
+      );
+    } finally {
+      tempDir.deleteSync(recursive: true);
+    }
+  });
+
   test('prepareContext includes inspector and device screenshot filenames',
       () async {
     final tempDir = Directory.systemTemp.createTempSync('agent_launcher_test_');

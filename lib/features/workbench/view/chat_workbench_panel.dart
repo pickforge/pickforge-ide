@@ -13,8 +13,8 @@ import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/process/binary_detector.dart';
-import 'package:pickforge/core/terminal/ansi.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
+import 'package:pickforge/core/terminal/live_terminal_output.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
 import 'package:pickforge/core/terminal/pty_session.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
@@ -518,9 +518,7 @@ class _ChatTerminalState extends State<_ChatTerminal> {
 
   void _writeTerminal(String data) {
     if (_disposed || !mounted || data.isEmpty) return;
-    final visible = stripAnsi(data);
-    if (visible.isEmpty) return;
-    _terminal.write(visible);
+    writeLiveTerminalOutput(_terminal, data);
   }
 
   @override

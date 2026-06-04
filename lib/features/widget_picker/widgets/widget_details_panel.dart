@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/features/widget_picker/widgets/screenshot_preview.dart';
+import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/shared/theme/pickforge_typography.dart';
 
 class WidgetDetailsPanel extends StatelessWidget {
@@ -16,6 +17,7 @@ class WidgetDetailsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mono = Theme.of(context).extension<PickforgeMonoTheme>()?.fontFamily;
+    final l10n = AppLocalizations.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -35,13 +37,25 @@ class WidgetDetailsPanel extends StatelessWidget {
               mono: mono,
             ),
           const SizedBox(height: 8),
-          _AncestorChain(ancestors: selected.ancestorClasses, mono: mono),
+          _AncestorChain(
+            ancestors: selected.ancestorClasses,
+            mono: mono,
+            title: l10n.inspectorAncestors,
+          ),
           const SizedBox(height: 16),
           ScreenshotPreview(path: selected.screenshotPath),
           if (rebuildStats case final stats? when stats.widgets.isNotEmpty)
-            _RebuildStatsPanel(stats: stats, mono: mono),
+            _RebuildStatsPanel(
+              stats: stats,
+              mono: mono,
+              title: l10n.inspectorRecentRebuilds,
+            ),
           if (selected.sourceSnippet != null)
-            _SourceSnippet(snippet: selected.sourceSnippet!, mono: mono),
+            _SourceSnippet(
+              snippet: selected.sourceSnippet!,
+              mono: mono,
+              title: l10n.inspectorSource,
+            ),
         ],
       ),
     );
@@ -49,9 +63,14 @@ class WidgetDetailsPanel extends StatelessWidget {
 }
 
 class _RebuildStatsPanel extends StatelessWidget {
-  const _RebuildStatsPanel({required this.stats, this.mono});
+  const _RebuildStatsPanel({
+    required this.stats,
+    required this.title,
+    this.mono,
+  });
 
   final RebuildStats stats;
+  final String title;
   final String? mono;
 
   @override
@@ -72,7 +91,7 @@ class _RebuildStatsPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Recent rebuilds', style: textTheme.titleSmall),
+            Text(title, style: textTheme.titleSmall),
             const SizedBox(height: 8),
             for (final widget in widgets)
               Padding(
@@ -154,9 +173,14 @@ class _CreationLocationBlock extends StatelessWidget {
 }
 
 class _AncestorChain extends StatelessWidget {
-  const _AncestorChain({required this.ancestors, this.mono});
+  const _AncestorChain({
+    required this.ancestors,
+    required this.title,
+    this.mono,
+  });
 
   final List<String> ancestors;
+  final String title;
   final String? mono;
 
   @override
@@ -165,7 +189,7 @@ class _AncestorChain extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Ancestors', style: Theme.of(context).textTheme.titleSmall),
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 4),
         Wrap(
           spacing: 4,
@@ -174,7 +198,13 @@ class _AncestorChain extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade400),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withValues(alpha: 0.34),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child:
@@ -188,9 +218,14 @@ class _AncestorChain extends StatelessWidget {
 }
 
 class _SourceSnippet extends StatelessWidget {
-  const _SourceSnippet({required this.snippet, this.mono});
+  const _SourceSnippet({
+    required this.snippet,
+    required this.title,
+    this.mono,
+  });
 
   final String snippet;
+  final String title;
   final String? mono;
 
   @override
@@ -198,14 +233,14 @@ class _SourceSnippet extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Source', style: Theme.of(context).textTheme.titleSmall),
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 4),
         Container(
           width: double.infinity,
           constraints: const BoxConstraints(maxHeight: 300),
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: Colors.grey.shade100,
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(4),
           ),
           child: SingleChildScrollView(

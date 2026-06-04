@@ -539,7 +539,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T1 — Design-system polish pass
 
-**Status:** Partial
+**Status:** Partial / inspector polish started
+**Why:** The inspector details panel now uses localized labels for empty states, ancestors, source, and recent rebuilds, and the panel/chip/source styling no longer relies on hardcoded Material grey colors. The broader app-wide Material-default audit, density pass, motion confirmation, and localization sweep remain open.
 **Tasks**
 
 - [ ] Audit Material-default UI remnants.

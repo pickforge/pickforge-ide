@@ -694,7 +694,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P6.T8 — First-run onboarding and demo mode
 
-**Status:** Partial / validator action remaining
+**Status:** Completed
 **Why:** A great app should prove its value in the first five minutes, even before the user's own environment is perfectly configured.
 
 **Tasks**
@@ -712,6 +712,10 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - [x] Widget tests for empty, partially configured, and fully configured onboarding states.
 - [x] Desktop smoke test can launch into demo mode without external dependencies.
+
+**Latest evidence**
+
+- 2026-06-04: Reconciled stale status after verifying all P6.T8 tasks and validation boxes were already checked. Current validation includes onboarding widget coverage in `fvm flutter test --reporter=compact` and demo-mode desktop smoke coverage through `scripts/linux_smoke.sh`.
 
 ### P6.T9 — Agent change review and git safety
 

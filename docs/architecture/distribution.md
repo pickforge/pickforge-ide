@@ -38,6 +38,11 @@ native-host dogfood before release signoff.
 - Ship an AppImage for broad desktop testing.
 - Build a `.deb` package for Debian/Ubuntu users with
   `scripts/package_linux_deb.sh`.
+- Build Linux release artifacts on Ubuntu 24.04 so `.deb` binaries do not pick
+  up a newer glibc requirement from a rolling local workstation.
+- Run `scripts/linux_deb_container_install_smoke.sh --skip-build` after
+  packaging to install the `.deb` in a clean Ubuntu 24.04 container and verify
+  package metadata, installed files, dynamic linkage, and first-run liveness.
 - Sign `.deb` artifacts with `scripts/sign_linux_deb.sh`, which emits detached
   ASCII-armored signatures for both the package and checksum. Release CI imports
   `PICKFORGE_GPG_PRIVATE_KEY_BASE64` only when that secret is present; local and

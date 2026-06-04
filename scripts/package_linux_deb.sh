@@ -73,7 +73,7 @@ Priority: optional
 Architecture: $arch
 Maintainer: $maintainer
 Installed-Size: $installed_size
-Depends: libc6, libstdc++6, libglib2.0-0, libgtk-3-0, liblzma5
+Depends: libc6, libstdc++6, libglib2.0-0, libgtk-3-0, libegl1, libgles2, liblzma5, xdg-user-dirs
 Description: Widget-level AI context for Flutter.
  Pickforge is a local Flutter desktop app for selecting widgets in a running
  Flutter app and sending focused context to an embedded agent terminal.

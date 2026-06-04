@@ -890,16 +890,17 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T2 — CI hardening
 
-**Status:** Partial
+**Status:** Completed
 **Tasks**
 
 - [x] Keep format/analyze/test/codegen drift checks green.
-- [ ] Add platform-specific smoke checks where cheap.
+- [x] Add platform-specific smoke checks where cheap.
 - [x] Address GitHub Actions Node 20 deprecation before it becomes blocking.
 
 **Latest evidence**
 
 - 2026-06-04: Updated CI/release workflows to Node 24 action majors, added read-only workflow permissions, job timeouts, compact test output, and kept codegen drift checks in CI. Verified workflow YAML parsing with PyYAML, `fvm dart run build_runner build --delete-conflicting-outputs`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and both Android emulator E2Es against `Pixel_10`.
+- 2026-06-04: Added the existing Linux desktop smoke script to the Ubuntu CI leg with Linux desktop/Xvfb/ImageMagick dependencies and `build/smoke/linux/**` artifact upload. Verified workflow YAML parsing with PyYAML, `bash -n scripts/linux_smoke.sh`, `scripts/linux_smoke.sh`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`.
 
 ### P9.T3 — Release checklist execution
 
@@ -913,7 +914,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T4 — Local app testing strategy
 
-**Status:** Partial / Linux smoke target added
+**Status:** Partial / Linux smoke CI artifacts added
 **Why:** The app needs repeatable validation beyond unit/widget tests. The real runtime is Flutter desktop plus Android emulator/VM Service, so browser-only testing is insufficient.
 
 **Testing layers**
@@ -937,12 +938,13 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [x] Add a Linux desktop smoke test target.
 - [x] Decide whether to use `integration_test` on Linux desktop, screenshot/golden tests, or an external virtual-display launcher.
 - [ ] Add deterministic fake services for VM Service, emulator state, file explorer, and chats.
-- [ ] Add CI artifacts for screenshots on failure.
+- [x] Add CI artifacts for screenshots on failure.
 - [x] Keep real AVD tests opt-in unless CI reliability is proven.
 
 **Latest evidence**
 
 - 2026-06-04: Added `scripts/linux_smoke.sh`, which launches Pickforge on the Linux desktop target inside Xvfb, starts directly on `/demo`, probes the Flutter VM Service inspector root tree for `DemoWorkspaceView`, and saves smoke artifacts under `build/smoke/linux/`. Verified locally with `scripts/linux_smoke.sh`; the VM-service assertion passed, while the root Xvfb screenshot artifact was captured but blank in this headless environment.
+- 2026-06-04: Wired `scripts/linux_smoke.sh` into the Ubuntu CI leg and uploads `build/smoke/linux/**` so smoke failures retain `flutter-run.log`, `inspector-root.json`, and `first-frame.png`.
 
 ### P9.T5 — Manual dogfood matrix
 

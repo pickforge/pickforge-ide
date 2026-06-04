@@ -987,7 +987,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 ### P9.T5 — Manual dogfood matrix
 
-**Status:** Not started
+**Status:** Partial / no-emulator coverage added
 **Tasks**
 
 - [ ] Test with Claude Code installed.
@@ -996,14 +996,15 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Test when each agent binary is missing.
 - [ ] Test with `adb` available and unavailable.
 - [ ] Test on a small sample app and a larger real app.
-- [ ] Test with no emulator connection: chats and project browsing should still work.
+- [x] Test with no emulator connection: chats and project browsing should still work.
 
 **Latest evidence**
 
 - 2026-06-04: Local preflight found Claude Code `2.1.161`, Codex CLI `0.136.0`, OpenCode `1.14.30`, `adb`, `fvm`, and `git` available on PATH; the standalone `emulator` command was missing. Existing diagnostics/onboarding tests cover available/missing tool display, but this is not a substitute for the full manual dogfood matrix.
 - 2026-06-04: Added `scripts/dogfood_preflight.sh` and `docs/qa/manual-dogfood.md` to capture local tool/version/device availability and define the approved manual agent/model matrix: Codex with GPT 5.3 Codex Spark, OpenCode with DeepSeek V4 Flash, and Claude Code with Sonnet 4.6. Pickforge does not pass model flags yet, so the selected models must be configured in the CLIs before manual dogfood. `scripts/dogfood_preflight.sh` found `emulator-5554` and `emulator-5556` attached locally, with `claude`, `codex`, `opencode`, `adb`, `fvm`, and `git` available.
+- 2026-06-04: Added widget coverage proving projects, chats, file browsing, and the no-device connection state render together without an `EmulatorSessionCubit` provider. Current `scripts/dogfood_preflight.sh` found `emulator-5554`, `claude`, `codex`, `opencode`, `adb`, `fvm`, and `git` available; `emulator`, `agent`, and `gemini` were missing. Verified with `fvm flutter analyze` and `fvm flutter test --reporter=compact` (592 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`).
 
-**Blocked:** Full manual matrix signoff requires a visible desktop session, controlled PATH permutations for each missing agent/`adb` case, and both small and larger real Flutter projects. The current headless Linux session can record availability and automated emulator evidence, but cannot complete visible app-level dogfood.
+**Blocked:** Full manual matrix signoff requires controlled visible-desktop runs for each agent profile, controlled PATH permutations for each missing agent/`adb` case, and both small and larger real Flutter projects. The current automated evidence does not replace that app-level dogfood.
 
 ### P9.T6 — Accessibility and keyboard-first audit
 

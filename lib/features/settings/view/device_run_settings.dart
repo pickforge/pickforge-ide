@@ -7,6 +7,8 @@ import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_state.dart';
+import 'package:pickforge/features/settings/widgets/settings_section.dart';
+import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class DeviceRunSettings extends StatelessWidget {
   const DeviceRunSettings({required this.projectRoot, super.key});
@@ -18,76 +20,70 @@ class DeviceRunSettings extends StatelessWidget {
     return BlocBuilder<DeviceRunSettingsCubit, DeviceRunSettingsState>(
       builder: (context, state) {
         final binding = state.binding;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        return SettingsSection(
+          title: 'Device & Run',
           children: [
-            Text(
-              'Device & Run',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
             _DeviceDropdown(projectRoot: projectRoot, state: state),
-            const SizedBox(height: 8),
             if (binding is AvdBinding) ...[
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Auto-boot on select'),
+              SettingsToggleRow(
+                label: 'Auto-boot on select',
                 value: binding.autoBootOnSelect,
                 onChanged: (value) => context
                     .read<DeviceRunSettingsCubit>()
                     .setAutoBoot(projectRoot, enabled: value)
                     .ignore(),
               ),
-              const SizedBox(height: 8),
               _IdleShutdownFields(
                 projectRoot: projectRoot,
                 settings: state.idleShutdownSettings,
               ),
-              const SizedBox(height: 8),
               _EmulatorLaunchOptionsFields(
                 projectRoot: projectRoot,
                 options: state.emulatorLaunchOptions,
               ),
             ],
-            const SizedBox(height: 8),
             _RunArgsFields(
               projectRoot: projectRoot,
               args: state.runArgs,
               targetFiles: state.targetFiles,
               flavors: state.flavors,
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const Text('Connection mode: '),
-                ChoiceChip(
-                  label: const Text('Auto'),
-                  selected: binding is! ManualBinding,
-                  onSelected: (_) {},
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('Manual'),
-                  selected: binding is ManualBinding,
-                  onSelected: (_) => context
-                      .read<DeviceRunSettingsCubit>()
-                      .switchToManual(projectRoot, 'ws://127.0.0.1:5000/ws')
-                      .ignore(),
-                ),
-              ],
+            SettingsField(
+              label: 'Connection mode',
+              child: SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: false, label: Text('Auto')),
+                  ButtonSegment(value: true, label: Text('Manual')),
+                ],
+                selected: {binding is ManualBinding},
+                onSelectionChanged: (selection) {
+                  if (selection.single) {
+                    context
+                        .read<DeviceRunSettingsCubit>()
+                        .switchToManual(projectRoot, 'ws://127.0.0.1:5000/ws')
+                        .ignore();
+                  }
+                },
+              ),
             ),
             if (binding is ManualBinding) ...[
-              const SizedBox(height: 8),
-              const Text('Manual VM Service URL'),
-              SelectableText(binding.vmServiceUrl),
+              SettingsField(
+                label: 'Manual VM Service URL',
+                child: SelectableText(binding.vmServiceUrl),
+              ),
             ],
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => context
-                  .read<DeviceRunSettingsCubit>()
-                  .reset(projectRoot)
-                  .ignore(),
-              child: const Text('Reset device'),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                style: settingsCompactButtonStyle(),
+                onPressed: () => context
+                    .read<DeviceRunSettingsCubit>()
+                    .reset(projectRoot)
+                    .ignore(),
+                icon: const Icon(Icons.restart_alt, size: 16),
+                label: const Text('Reset device'),
+              ),
             ),
           ],
         );
@@ -109,10 +105,9 @@ class _IdleShutdownFields extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        SwitchListTile(
-          key: const Key('emulator-idle-shutdown-enabled'),
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Shutdown when idle'),
+        SettingsToggleRow(
+          switchKey: const Key('emulator-idle-shutdown-enabled'),
+          label: 'Shutdown when idle',
           value: settings.enabled,
           onChanged: (value) => _set(
             context,
@@ -120,10 +115,9 @@ class _IdleShutdownFields extends StatelessWidget {
           ),
         ),
         if (settings.enabled)
-          SwitchListTile(
-            key: const Key('emulator-idle-shutdown-confirm'),
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Ask before shutdown'),
+          SettingsToggleRow(
+            switchKey: const Key('emulator-idle-shutdown-confirm'),
+            label: 'Ask before shutdown',
             value: settings.requireConfirmation,
             onChanged: (value) => _set(
               context,
@@ -156,31 +150,29 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SwitchListTile(
-          key: const Key('emulator-no-audio'),
-          contentPadding: EdgeInsets.zero,
-          title: const Text('No audio'),
+        SettingsToggleRow(
+          switchKey: const Key('emulator-no-audio'),
+          label: 'No audio',
           value: options.noAudio,
           onChanged: (value) => _set(
             context,
             options.copyWith(noAudio: value),
           ),
         ),
-        SwitchListTile(
-          key: const Key('emulator-no-snapshot-load'),
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Cold boot'),
+        SettingsToggleRow(
+          switchKey: const Key('emulator-no-snapshot-load'),
+          label: 'Cold boot',
           value: options.noSnapshotLoad,
           onChanged: (value) => _set(
             context,
             options.copyWith(noSnapshotLoad: value),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: PickforgeSpacing.sm),
         DropdownButtonFormField<EmulatorGpuMode?>(
           key: const Key('emulator-gpu-mode'),
           initialValue: options.gpuMode,
-          decoration: const InputDecoration(labelText: 'GPU mode'),
+          decoration: settingsInputDecoration(labelText: 'GPU mode'),
           items: [
             const DropdownMenuItem<EmulatorGpuMode?>(
               child: Text('Default'),
@@ -197,12 +189,12 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
             options.copyWith(gpuMode: mode),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: PickforgeSpacing.md),
         TextFormField(
           key: ValueKey('emulator-port-${options.port ?? ''}'),
           initialValue: options.port?.toString() ?? '',
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
+          decoration: settingsInputDecoration(
             labelText: 'Console port',
             helperText: 'Even 5554-5682',
           ),
@@ -212,12 +204,12 @@ class _EmulatorLaunchOptionsFields extends StatelessWidget {
             (port) => options.copyWith(port: port),
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: PickforgeSpacing.md),
         TextFormField(
           key: ValueKey('emulator-cores-${options.cores ?? ''}'),
           initialValue: options.cores?.toString() ?? '',
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'CPU cores'),
+          decoration: settingsInputDecoration(labelText: 'CPU cores'),
           onFieldSubmitted: (value) => _setInt(
             context,
             value,
@@ -273,10 +265,12 @@ class _DeviceDropdown extends StatelessWidget {
         _DeviceOption.desktopKey(targetId),
       _ => null,
     };
-    return DropdownButton<_DeviceOption>(
+    return DropdownButtonFormField<_DeviceOption>(
       key: const Key('device-dropdown'),
-      hint: const Text('Select Flutter device'),
-      value: options.where((option) => option.key == selected).firstOrNull,
+      decoration: settingsInputDecoration(labelText: 'Select Flutter device'),
+      initialValue:
+          options.where((option) => option.key == selected).firstOrNull,
+      isExpanded: true,
       items: options
           .map(
             (option) => DropdownMenuItem(
@@ -396,7 +390,7 @@ class _RunArgsFields extends StatelessWidget {
         DropdownButtonFormField<String>(
           key: const Key('run-target-dropdown'),
           initialValue: _targetValue,
-          decoration: const InputDecoration(labelText: 'Target file'),
+          decoration: settingsInputDecoration(labelText: 'Target file'),
           items: _targetOptions
               .map(
                 (target) => DropdownMenuItem(
@@ -410,7 +404,7 @@ class _RunArgsFields extends StatelessWidget {
               .setRunArgs(projectRoot, args.withTargetFile(value))
               .ignore(),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: PickforgeSpacing.md),
         SegmentedButton<FlutterBuildMode>(
           key: const Key('run-build-mode'),
           segments: FlutterBuildMode.values
@@ -427,11 +421,11 @@ class _RunArgsFields extends StatelessWidget {
               .setRunArgs(projectRoot, args.withBuildMode(selection.single))
               .ignore(),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: PickforgeSpacing.md),
         TextFormField(
           key: ValueKey('run-flavor-${parsed.flavor ?? ''}'),
           initialValue: parsed.flavor ?? '',
-          decoration: InputDecoration(
+          decoration: settingsInputDecoration(
             labelText: 'Flavor',
             helperText:
                 flavors.isEmpty ? null : 'Detected: ${flavors.join(', ')}',
@@ -442,29 +436,31 @@ class _RunArgsFields extends StatelessWidget {
               .ignore(),
         ),
         if (flavors.isNotEmpty) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: PickforgeSpacing.sm),
           Wrap(
-            spacing: 8,
+            spacing: PickforgeSpacing.sm,
+            runSpacing: PickforgeSpacing.sm,
             children: flavors
                 .map(
-                  (flavor) => ActionChip(
-                    label: Text(flavor),
+                  (flavor) => OutlinedButton(
+                    style: settingsCompactButtonStyle(),
                     onPressed: () => context
                         .read<DeviceRunSettingsCubit>()
                         .setRunArgs(projectRoot, args.withFlavor(flavor))
                         .ignore(),
+                    child: Text(flavor),
                   ),
                 )
                 .toList(),
           ),
         ],
-        const SizedBox(height: 12),
+        const SizedBox(height: PickforgeSpacing.md),
         TextFormField(
           key: ValueKey(
             'run-extra-${parsed.manualExtraArgs.join('\u0000')}',
           ),
           initialValue: formatExtraArgsText(parsed.manualExtraArgs),
-          decoration: const InputDecoration(
+          decoration: settingsInputDecoration(
             labelText: 'Extra args',
             helperText: 'Advanced flutter run arguments',
           ),

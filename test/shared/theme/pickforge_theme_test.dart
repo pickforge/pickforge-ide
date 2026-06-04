@@ -19,6 +19,9 @@ void main() {
     test('uses sans for chrome and mono for code', () {
       final theme = PickforgeTheme.dark();
       expect(theme.textTheme.bodyMedium?.fontFamily, 'Inter');
+      expect(theme.textTheme.displayLarge?.letterSpacing, 0);
+      expect(theme.textTheme.titleLarge?.letterSpacing, 0);
+      expect(theme.textTheme.labelSmall?.letterSpacing, 0);
       expect(
         theme.extension<PickforgeMonoTheme>()?.fontFamily,
         'JetBrainsMono',

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:pickforge/shared/theme/pickforge_colors.dart';
 
-/// Typography scale. 13px body (dev-tool density), tight letter spacing.
+/// Typography scale. 13px body (dev-tool density), neutral letter spacing.
 TextTheme pickforgeTextTheme({required Brightness brightness}) {
   final text = brightness == Brightness.dark
       ? PickforgeColors.textHi
@@ -11,14 +11,14 @@ TextTheme pickforgeTextTheme({required Brightness brightness}) {
       fontFamily: 'Inter',
       fontSize: 28,
       fontWeight: FontWeight.w600,
-      letterSpacing: -0.5,
+      letterSpacing: 0,
       color: text,
     ),
     titleLarge: TextStyle(
       fontFamily: 'Inter',
       fontSize: 16,
       fontWeight: FontWeight.w600,
-      letterSpacing: -0.2,
+      letterSpacing: 0,
       color: text,
     ),
     bodyMedium: TextStyle(
@@ -32,7 +32,7 @@ TextTheme pickforgeTextTheme({required Brightness brightness}) {
       fontFamily: 'Inter',
       fontSize: 11,
       fontWeight: FontWeight.w500,
-      letterSpacing: 0.4,
+      letterSpacing: 0,
       color: text,
     ),
   );

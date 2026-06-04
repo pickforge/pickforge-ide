@@ -12,9 +12,11 @@ import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
 import 'package:pickforge/features/settings/view/device_run_settings.dart';
+import 'package:pickforge/features/settings/widgets/settings_section.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({
@@ -102,38 +104,44 @@ class _SettingsViewState extends State<SettingsView> {
           };
           if (projectRoot == null) {
             return const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('Select a project to configure project settings.'),
+              padding: EdgeInsets.all(PickforgeSpacing.lg),
+              child: SettingsEmptyState(
+                icon: Icons.tune,
+                message: 'Select a project to configure project settings.',
+              ),
             );
           }
           _loadProject(projectRoot);
           return BlocBuilder<SettingsCubit, SettingsState>(
             builder: (context, state) {
               return SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(PickforgeSpacing.lg),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildAgentDropdown(state, context, projectRoot),
-                    const SizedBox(height: 24),
+                    SettingsSection(
+                      title: 'Default agent',
+                      children: [
+                        _buildAgentDropdown(state, context, projectRoot),
+                      ],
+                    ),
+                    const SizedBox(height: PickforgeSpacing.lg),
                     DeviceRunSettings(
                       key: ValueKey(projectRoot),
                       projectRoot: projectRoot,
                     ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Embedded Terminal',
-                      style: Theme.of(context).textTheme.titleMedium,
+                    const SizedBox(height: PickforgeSpacing.lg),
+                    SettingsSection(
+                      title: 'Embedded Terminal',
+                      children: [
+                        _buildFontFamilyDropdown(state, context),
+                        _buildFontSizeSlider(state, context),
+                        _buildThemeDropdown(state, context),
+                      ],
                     ),
-                    const SizedBox(height: 8),
-                    _buildFontFamilyDropdown(state, context),
-                    const SizedBox(height: 12),
-                    _buildFontSizeSlider(state, context),
-                    const SizedBox(height: 12),
-                    _buildThemeDropdown(state, context),
                     if (_diagnosticsServiceOrNull()
                         case final diagnostics?) ...[
-                      const SizedBox(height: 24),
+                      const SizedBox(height: PickforgeSpacing.lg),
                       _DiagnosticsSection(
                         diagnostics: diagnostics,
                         projectRoot: projectRoot,
@@ -163,28 +171,25 @@ class _SettingsViewState extends State<SettingsView> {
     BuildContext context,
     String projectRoot,
   ) {
-    return Row(
-      children: [
-        const Text('Default agent: '),
-        DropdownButton<AgentProfileId>(
-          value: state.defaultAgent != null
-              ? AgentProfileId.fromValue(state.defaultAgent!)
-              : null,
-          items: AgentProfileId.values
-              .map(
-                (id) => DropdownMenuItem(value: id, child: Text(id.value)),
-              )
-              .toList(),
-          onChanged: (id) {
-            if (id != null) {
-              context
-                  .read<SettingsCubit>()
-                  .setDefaultAgent(projectRoot, id.value)
-                  .ignore();
-            }
-          },
-        ),
-      ],
+    return DropdownButtonFormField<AgentProfileId>(
+      initialValue: state.defaultAgent != null
+          ? AgentProfileId.fromValue(state.defaultAgent!)
+          : null,
+      decoration: settingsInputDecoration(),
+      isExpanded: true,
+      items: AgentProfileId.values
+          .map(
+            (id) => DropdownMenuItem(value: id, child: Text(id.value)),
+          )
+          .toList(),
+      onChanged: (id) {
+        if (id != null) {
+          context
+              .read<SettingsCubit>()
+              .setDefaultAgent(projectRoot, id.value)
+              .ignore();
+        }
+      },
     );
   }
 
@@ -194,92 +199,101 @@ class _SettingsViewState extends State<SettingsView> {
       'JetBrains Mono',
       'Berkeley Mono',
     ];
-    return Row(
-      children: [
-        const Text('Font family: '),
-        DropdownButton<String>(
-          value: families.contains(state.terminal.fontFamily)
-              ? state.terminal.fontFamily
-              : 'monospace',
-          items: families
-              .map((f) => DropdownMenuItem(value: f, child: Text(f)))
-              .toList(),
-          onChanged: (f) {
-            if (f != null) {
-              context
-                  .read<SettingsCubit>()
-                  .setTerminal(
-                    EmbeddedTerminalSettings(
-                      fontFamily: f,
-                      fontSize: state.terminal.fontSize,
-                      themeId: state.terminal.themeId,
-                    ),
-                  )
-                  .ignore();
-            }
-          },
-        ),
-      ],
+    return SettingsField(
+      label: 'Font family',
+      child: DropdownButtonFormField<String>(
+        initialValue: families.contains(state.terminal.fontFamily)
+            ? state.terminal.fontFamily
+            : 'monospace',
+        decoration: settingsInputDecoration(),
+        isExpanded: true,
+        items: families
+            .map((f) => DropdownMenuItem(value: f, child: Text(f)))
+            .toList(),
+        onChanged: (f) {
+          if (f != null) {
+            context
+                .read<SettingsCubit>()
+                .setTerminal(
+                  EmbeddedTerminalSettings(
+                    fontFamily: f,
+                    fontSize: state.terminal.fontSize,
+                    themeId: state.terminal.themeId,
+                  ),
+                )
+                .ignore();
+          }
+        },
+      ),
     );
   }
 
   Widget _buildFontSizeSlider(SettingsState state, BuildContext context) {
-    return Row(
-      children: [
-        const Text('Font size: '),
-        Expanded(
-          child: Slider(
-            value: state.terminal.fontSize,
-            min: 10,
-            max: 18,
-            divisions: 8,
-            label: state.terminal.fontSize.toStringAsFixed(0),
-            onChanged: (v) {
-              context
-                  .read<SettingsCubit>()
-                  .setTerminal(
-                    EmbeddedTerminalSettings(
-                      fontFamily: state.terminal.fontFamily,
-                      fontSize: v,
-                      themeId: state.terminal.themeId,
-                    ),
-                  )
-                  .ignore();
-            },
+    return SettingsField(
+      label: 'Font size',
+      child: Row(
+        children: [
+          Expanded(
+            child: Slider(
+              value: state.terminal.fontSize,
+              min: 10,
+              max: 18,
+              divisions: 8,
+              label: state.terminal.fontSize.toStringAsFixed(0),
+              onChanged: (v) {
+                context
+                    .read<SettingsCubit>()
+                    .setTerminal(
+                      EmbeddedTerminalSettings(
+                        fontFamily: state.terminal.fontFamily,
+                        fontSize: v,
+                        themeId: state.terminal.themeId,
+                      ),
+                    )
+                    .ignore();
+              },
+            ),
           ),
-        ),
-        Text(state.terminal.fontSize.toStringAsFixed(0)),
-      ],
+          const SizedBox(width: PickforgeSpacing.sm),
+          SizedBox(
+            width: 28,
+            child: Text(
+              state.terminal.fontSize.toStringAsFixed(0),
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildThemeDropdown(SettingsState state, BuildContext context) {
-    return Row(
-      children: [
-        const Text('Theme: '),
-        DropdownButton<TerminalThemeId>(
-          value: state.terminal.themeId,
-          items: TerminalThemeId.values
-              .map(
-                (t) => DropdownMenuItem(value: t, child: Text(t.name)),
-              )
-              .toList(),
-          onChanged: (t) {
-            if (t != null) {
-              context
-                  .read<SettingsCubit>()
-                  .setTerminal(
-                    EmbeddedTerminalSettings(
-                      fontFamily: state.terminal.fontFamily,
-                      fontSize: state.terminal.fontSize,
-                      themeId: t,
-                    ),
-                  )
-                  .ignore();
-            }
-          },
-        ),
-      ],
+    return SettingsField(
+      label: 'Theme',
+      child: DropdownButtonFormField<TerminalThemeId>(
+        initialValue: state.terminal.themeId,
+        decoration: settingsInputDecoration(),
+        isExpanded: true,
+        items: TerminalThemeId.values
+            .map(
+              (t) => DropdownMenuItem(value: t, child: Text(t.name)),
+            )
+            .toList(),
+        onChanged: (t) {
+          if (t != null) {
+            context
+                .read<SettingsCubit>()
+                .setTerminal(
+                  EmbeddedTerminalSettings(
+                    fontFamily: state.terminal.fontFamily,
+                    fontSize: state.terminal.fontSize,
+                    themeId: t,
+                  ),
+                )
+                .ignore();
+          }
+        },
+      ),
     );
   }
 }
@@ -300,90 +314,81 @@ class _DiagnosticsSection extends StatelessWidget {
       future: diagnostics.snapshot(),
       builder: (context, snapshot) {
         final data = snapshot.data;
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  l10n.diagnosticsTitle,
-                  style: Theme.of(context).textTheme.titleMedium,
+        return SettingsSection(
+          title: l10n.diagnosticsTitle,
+          children: [
+            if (!snapshot.hasData)
+              const LinearProgressIndicator(minHeight: 2)
+            else ...[
+              _DiagnosticRow(
+                label: l10n.diagnosticsOperatingSystem,
+                value: data!.operatingSystem,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsAdb,
+                value: data.adbAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsGit,
+                value: data.gitAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsFlutter,
+                value: data.flutterAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsEmulator,
+                value: data.emulatorAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsClaude,
+                value: data.claudeAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsCodex,
+                value: data.codexAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsOpenCode,
+                value: data.openCodeAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsCursor,
+                value: data.cursorAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              _DiagnosticRow(
+                label: l10n.diagnosticsGemini,
+                value: data.geminiAvailable
+                    ? l10n.diagnosticsAvailable
+                    : l10n.diagnosticsMissing,
+              ),
+              const SizedBox(height: PickforgeSpacing.xs),
+              OutlinedButton.icon(
+                style: settingsCompactButtonStyle(),
+                onPressed: () => unawaited(
+                  _copySupportBundle(context, diagnostics, projectRoot),
                 ),
-                const SizedBox(height: 12),
-                if (!snapshot.hasData)
-                  const LinearProgressIndicator(minHeight: 1)
-                else ...[
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsOperatingSystem,
-                    value: data!.operatingSystem,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsAdb,
-                    value: data.adbAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsGit,
-                    value: data.gitAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsFlutter,
-                    value: data.flutterAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsEmulator,
-                    value: data.emulatorAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsClaude,
-                    value: data.claudeAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsCodex,
-                    value: data.codexAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsOpenCode,
-                    value: data.openCodeAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsCursor,
-                    value: data.cursorAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  _DiagnosticRow(
-                    label: l10n.diagnosticsGemini,
-                    value: data.geminiAvailable
-                        ? l10n.diagnosticsAvailable
-                        : l10n.diagnosticsMissing,
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => unawaited(
-                      _copySupportBundle(context, diagnostics, projectRoot),
-                    ),
-                    icon: const Icon(Icons.ios_share, size: 16),
-                    label: Text(l10n.diagnosticsCopySupportBundle),
-                  ),
-                ],
-              ],
-            ),
-          ),
+                icon: const Icon(Icons.ios_share, size: 16),
+                label: Text(l10n.diagnosticsCopySupportBundle),
+              ),
+            ],
+          ],
         );
       },
     );
@@ -416,16 +421,17 @@ class _DiagnosticRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: PickforgeSpacing.xs),
       child: Row(
         children: [
           SizedBox(
-            width: 120,
+            width: 136,
             child: Text(
               label,
               style: Theme.of(context).textTheme.labelMedium,
             ),
           ),
+          const SizedBox(width: PickforgeSpacing.md),
           Expanded(child: Text(value)),
         ],
       ),

@@ -522,6 +522,10 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 **Blocked:** True hover preview/highlight needs an embedded mirror/input surface plus a reliable widget-under-coordinate query or app-side overlay channel. The current implementation can map coordinates but cannot ask the Flutter inspector for a passive hover target without entering the target app's select-mode overlay.
 
+**Latest evidence**
+
+- 2026-06-04: Added raw `selected-widget.json` and `inspector-root.json` artifacts to the widget-pick emulator E2E and ran it against `Pixel_10` on `emulator-5554`. The real Flutter inspector summary JSON exposes identity, creation location, and children, but no bounds, rect, size, transform, or render geometry fields; hover query/highlight remains blocked on an embedded mirror/input surface plus a coordinate-to-widget channel.
+
 ### P5.T3 — Widget-tree diffing and rebuild tracking
 
 **Status:** Completed
@@ -917,6 +921,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Added `scripts/emulator_e2e.sh`, `docs/qa/emulator-e2e.md`, `.github/workflows/emulator-e2e.yml`, and E2E artifact hooks in both integration tests. Verified with `bash -n scripts/emulator_e2e.sh`, `scripts/emulator_e2e.sh Pixel_10` producing logs and inspector screenshot under `build/e2e/android/`, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, and `fvm flutter test --reporter=compact`.
+- 2026-06-04: Extended widget-pick E2E artifacts with raw `selected-widget.json` and `inspector-root.json` inspector payloads for future hover/query debugging. Verified with `fvm flutter test --dart-define=PICKFORGE_E2E_AVD=Pixel_10 --dart-define=PICKFORGE_E2E_ARTIFACT_DIR=build/e2e/android/widget-pick test/integration/widget_pick_e2e_test.dart --reporter=compact`, `fvm flutter analyze`, and `fvm flutter test --reporter=compact` (593 passed, 2 skipped emulator E2E tests without `PICKFORGE_E2E_AVD`).
 
 ### P9.T2 — CI hardening
 

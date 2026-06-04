@@ -1,6 +1,7 @@
 @Tags(['emulator'])
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -82,8 +83,10 @@ void main() {
         expect(selected.screenshotPath, isNotNull);
         expect(File(selected.screenshotPath!).existsSync(), isTrue);
         expect(File(selected.screenshotPath!).lengthSync(), greaterThan(0));
+        final rootTree = await ext.getRootWidgetSummaryTree();
         await _writeWidgetPickArtifacts(
           selected: selected,
+          rootTree: rootTree,
           projectRoot: projectRoot.path,
           serial: ready.serial,
         );
@@ -169,6 +172,7 @@ Future<SelectedWidget?> _tapUntilUserSelection({
 
 Future<void> _writeWidgetPickArtifacts({
   required SelectedWidget selected,
+  required Map<String, dynamic>? rootTree,
   required String projectRoot,
   required String serial,
 }) async {
@@ -190,6 +194,17 @@ Future<void> _writeWidgetPickArtifacts({
     ].join('\n'),
     flush: true,
   );
+  const encoder = JsonEncoder.withIndent('  ');
+  await File(p.join(dir.path, 'selected-widget.json')).writeAsString(
+    encoder.convert(selected.propertiesJson),
+    flush: true,
+  );
+  if (rootTree != null) {
+    await File(p.join(dir.path, 'inspector-root.json')).writeAsString(
+      encoder.convert(rootTree),
+      flush: true,
+    );
+  }
 }
 
 Future<SelectedWidget?> _waitForUserSelection(

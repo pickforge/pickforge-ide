@@ -25,6 +25,8 @@ Artifacts are written under `build/e2e/android/`:
 - `emulator/emulator-e2e.log`
 - `widget-pick/flutter-test.log`
 - `widget-pick/widget-pick.txt`
+- `widget-pick/selected-widget.json`
+- `widget-pick/inspector-root.json`
 - `widget-pick/inspector-screenshot.png`
 
 The manual GitHub Actions workflow `.github/workflows/emulator-e2e.yml` expects

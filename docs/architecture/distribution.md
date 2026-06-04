@@ -45,6 +45,9 @@ native-host dogfood before release signoff.
 - Run `scripts/linux_deb_container_install_smoke.sh --skip-build` after
   packaging to install the `.deb` in a clean Ubuntu 24.04 container and verify
   package metadata, installed files, dynamic linkage, and first-run liveness.
+- After installing the package on a visible Linux desktop host, run
+  `scripts/linux_installed_visible_smoke.sh` to launch `/usr/bin/pickforge` with
+  a clean HOME and record post-install window, log, and screenshot evidence.
 - Sign `.deb` artifacts with `scripts/sign_linux_deb.sh`, which emits detached
   ASCII-armored signatures for both the package and checksum. Release CI imports
   `PICKFORGE_GPG_PRIVATE_KEY_BASE64` only when that secret is present; local and

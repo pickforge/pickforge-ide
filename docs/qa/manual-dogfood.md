@@ -56,15 +56,19 @@ product change.
    `.deb` and checksum signing with an ephemeral local GPG key.
 6. Run `scripts/linux_appimage_smoke.sh --skip-build` to validate the AppImage
    package contents and first-run liveness.
-7. Run `scripts/emulator_e2e.sh Pixel_10`.
-8. Run `scripts/linux_visible_diagnostics_smoke.sh` from the visible desktop
+7. After installing the Linux package on a visible desktop host, run
+   `scripts/linux_installed_visible_smoke.sh` to launch `/usr/bin/pickforge`
+   with a clean HOME and collect post-install window, log, and screenshot
+   evidence. Use `--app <path>` only as a dry run for script validation.
+8. Run `scripts/emulator_e2e.sh Pixel_10`.
+9. Run `scripts/linux_visible_diagnostics_smoke.sh` from the visible desktop
    session to capture setup-check screenshots for available, missing-agent, and
    missing-`adb` cases.
-9. Run `scripts/agent_profile_pty_smoke.sh` to validate installed Claude Code,
+10. Run `scripts/agent_profile_pty_smoke.sh` to validate installed Claude Code,
    Codex, and OpenCode profile launch plus Pickforge prompt delivery through
    the embedded PTY adapter. The script writes transcripts and copied context
    artifacts under `build/dogfood/agent-profile-pty/`.
-10. To validate dirty-worktree review without altering the real app checkout,
+11. To validate dirty-worktree review without altering the real app checkout,
    prepare a disposable dogfood project:
 
    ```bash
@@ -73,23 +77,23 @@ product change.
 
    Use the printed project root when checking the dirty-worktree warning,
    checkpoint action, and untracked-file preservation.
-11. Start Pickforge from the visible desktop session:
+12. Start Pickforge from the visible desktop session:
 
    ```bash
    fvm flutter run -d linux
    ```
 
-12. Add `fixtures/sample_flutter_app`, the dirty-git dogfood project, or another
+13. Add `fixtures/sample_flutter_app`, the dirty-git dogfood project, or another
     throwaway Flutter app as a Pickforge project.
-13. Bind `Pixel_10` or attach to the sample app's VM Service.
-14. Pick a user-code widget and verify the inspector metadata and screenshot.
-15. Select/create a chat for the active project.
-16. Press **Forge it** and verify the prompt appears in the visible embedded
+14. Bind `Pixel_10` or attach to the sample app's VM Service.
+15. Pick a user-code widget and verify the inspector metadata and screenshot.
+16. Select/create a chat for the active project.
+17. Press **Forge it** and verify the prompt appears in the visible embedded
    terminal.
-17. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
+18. Verify `.pickforge/skill-active.md`, `.pickforge/widget-context.md`,
     `.pickforge/initial-prompt.md`, and available screenshots in the sample
     project.
-18. Repeat visible Forge prompt delivery for any agent profile not covered by
+19. Repeat visible Forge prompt delivery for any agent profile not covered by
     `scripts/agent_profile_pty_smoke.sh`, or when validating model response and
     file-edit behavior rather than PTY launch/prompt delivery.
 

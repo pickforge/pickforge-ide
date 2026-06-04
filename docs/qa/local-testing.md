@@ -21,6 +21,9 @@ without an explicit web-safe entrypoint.
 - `scripts/linux_appimage_smoke.sh --skip-build` packages the Linux desktop
   bundle as an AppImage when needed, extracts it, verifies AppDir contents, and
   checks first-run liveness under Xvfb.
+- `scripts/linux_installed_visible_smoke.sh` runs an installed Linux Pickforge
+  executable, normally `/usr/bin/pickforge`, from a visible desktop session with
+  a clean HOME and records post-install log, window, and screenshot evidence.
 - `scripts/emulator_e2e.sh Pixel_10` runs the opt-in Android emulator E2Es and
   writes artifacts under `build/e2e/android/`.
 - `scripts/desktop_build_smoke.sh` builds the current host's desktop target in

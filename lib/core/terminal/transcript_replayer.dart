@@ -1,8 +1,6 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:pickforge/core/terminal/ansi.dart';
 
 class TranscriptReplayer {
   TranscriptReplayer({
@@ -21,14 +19,11 @@ class TranscriptReplayer {
     );
     if (!f.existsSync()) return;
     final bytes = await f.readAsBytes();
-    final stripped = utf8.encode(
-      stripAnsi(utf8.decode(bytes, allowMalformed: true)),
-    );
-    for (var offset = 0; offset < stripped.length; offset += chunkBytes) {
+    for (var offset = 0; offset < bytes.length; offset += chunkBytes) {
       final end = offset + chunkBytes;
-      yield stripped.sublist(
+      yield bytes.sublist(
         offset,
-        end > stripped.length ? stripped.length : end,
+        end > bytes.length ? bytes.length : end,
       );
     }
   }

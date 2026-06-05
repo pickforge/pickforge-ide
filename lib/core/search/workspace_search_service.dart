@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/search/search_matcher.dart';
+import 'package:pickforge/core/terminal/ansi.dart';
 
 enum WorkspaceSearchResultKind { chat, pickHistory, transcript }
 
@@ -125,18 +126,22 @@ class WorkspaceSearchService {
         'transcript.log',
       ),
     );
-    final content = _tryReadTail(file)?.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final content = _tryReadTail(file);
     if (content == null) return null;
-    if (content.isEmpty) return null;
-    final lower = content.toLowerCase();
+    final searchable =
+        stripAnsi(content).replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (searchable.isEmpty) return null;
+    final lower = searchable.toLowerCase();
     final queryLower = query.toLowerCase();
     final index = lower.indexOf(queryLower);
-    if (index == -1 && !SearchMatcher.matches(query, [content])) return null;
+    if (index == -1 && !SearchMatcher.matches(query, [searchable])) {
+      return null;
+    }
     final start = index <= 24 ? 0 : index - 24;
-    final end = (start + 120).clamp(0, content.length);
+    final end = (start + 120).clamp(0, searchable.length);
     final prefix = start == 0 ? '' : '...';
-    final suffix = end == content.length ? '' : '...';
-    return '$prefix${content.substring(start, end)}$suffix';
+    final suffix = end == searchable.length ? '' : '...';
+    return '$prefix${searchable.substring(start, end)}$suffix';
   }
 
   String _chatSubtitle(ChatRow chat, Map<String, String> projects) {

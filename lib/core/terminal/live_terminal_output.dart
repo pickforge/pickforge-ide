@@ -8,10 +8,9 @@ void writeLiveTerminalOutput(Terminal terminal, String data) {
 final _sgrRegex = RegExp('\x1B\\[([0-9:;]*)m');
 
 String normalizeLiveTerminalOutput(String data) {
-  if (!data.contains(':') || !data.contains('\x1B[')) return data;
+  if (!data.contains('\x1B[')) return data;
   return data.replaceAllMapped(_sgrRegex, (match) {
     final params = match.group(1)!;
-    if (!params.contains(':')) return match.group(0)!;
     final normalized = _normalizeSgrParams(params);
     if (normalized.isEmpty) return '';
     return '\x1B[${normalized.join(';')}m';
@@ -28,7 +27,14 @@ List<String> _normalizeSgrParams(String params) {
 
 List<String> _normalizeSgrPart(String part) {
   if (part.isEmpty) return const ['0'];
-  if (!part.contains(':')) return [part];
+  if (!part.contains(':')) {
+    final param = int.tryParse(part);
+    return switch (param) {
+      4 || 24 => const ['24'],
+      58 || 59 => const [],
+      _ => [part],
+    };
+  }
 
   final raw = part.split(':');
   final head = int.tryParse(raw.first);
@@ -45,8 +51,7 @@ List<String> _normalizeSgrPart(String part) {
     case 48:
       return _normalizeExtendedColor(head, nums);
     case 4:
-      final style = nums.length > 1 ? nums[1] : 1;
-      return style == 0 ? const ['24'] : const ['4'];
+      return const ['24'];
     case 24:
       return const ['24'];
     case 58:

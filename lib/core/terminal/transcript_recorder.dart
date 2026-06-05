@@ -37,8 +37,9 @@ class TranscriptRecorder {
     final raw = data is String
         ? data
         : utf8.decode(data as List<int>, allowMalformed: true);
+    final rawBytes = data is String ? utf8.encode(data) : data as List<int>;
     final r = parseAnsi(raw);
-    _logSink?.add(utf8.encode(r.text));
+    _logSink?.add(rawBytes);
     for (final s in r.spans) {
       _spansSink?.add(_encodeSpan(s));
     }

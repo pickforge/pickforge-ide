@@ -13,7 +13,7 @@ void main() {
 
   tearDown(() async => tmp.delete(recursive: true));
 
-  test('writes stripped text and meta', () async {
+  test('writes raw terminal output and meta', () async {
     final rec = TranscriptRecorder(
       projectRoot: tmp.path,
       chatId: 'c1',
@@ -28,7 +28,7 @@ void main() {
     final meta =
         File(p.join(tmp.path, '.pickforge', 'chats', 'c1', 'meta.json'));
     expect(log.existsSync(), isTrue);
-    expect(log.readAsStringSync(), 'red plain');
+    expect(log.readAsStringSync(), '\x1B[31mred\x1B[0m plain');
     expect(meta.existsSync(), isTrue);
     expect(
       File(p.join(tmp.path, '.pickforge', '.gitignore')).readAsStringSync(),

@@ -34,7 +34,31 @@ void main() {
     final second = CellData.empty();
     terminal.buffer.lines[0].getCellData(0, first);
     terminal.buffer.lines[0].getCellData(1, second);
-    expect(first.flags & CellAttr.underline, CellAttr.underline);
+    expect(first.flags & CellAttr.underline, 0);
     expect(second.flags & CellAttr.underline, 0);
+  });
+
+  test('suppresses standard underline sequences', () {
+    final terminal = Terminal();
+
+    writeLiveTerminalOutput(terminal, '\x1b[4mA\x1b[24mB');
+
+    final first = CellData.empty();
+    final second = CellData.empty();
+    terminal.buffer.lines[0].getCellData(0, first);
+    terminal.buffer.lines[0].getCellData(1, second);
+    expect(first.flags & CellAttr.underline, 0);
+    expect(second.flags & CellAttr.underline, 0);
+  });
+
+  test('preserves standard truecolor sequences', () {
+    final terminal = Terminal();
+
+    writeLiveTerminalOutput(terminal, '\x1b[38;2;215;119;87mX\x1b[0m');
+
+    final cell = CellData.empty();
+    terminal.buffer.lines[0].getCellData(0, cell);
+    expect(cell.foreground & CellColor.typeMask, CellColor.rgb);
+    expect(cell.foreground & CellColor.valueMask, 0xD77757);
   });
 }

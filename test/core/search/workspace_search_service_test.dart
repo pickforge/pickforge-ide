@@ -48,7 +48,7 @@ void main() {
     );
     await transcript.parent.create(recursive: true);
     await transcript.writeAsString(
-      'The sign in form needs better disabled state copy.',
+      'The sign in form needs better \x1B[33mdisabled state\x1B[0m copy.',
     );
   });
 
@@ -81,6 +81,7 @@ void main() {
         .single;
     expect(transcript.chatId, chatId);
     expect(transcript.subtitle, contains('disabled state'));
+    expect(transcript.subtitle, isNot(contains('\x1B')));
 
     final labelResults = await search.search('release readiness');
     final chat = labelResults

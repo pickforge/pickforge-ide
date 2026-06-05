@@ -406,9 +406,10 @@ class _ChatTerminalState extends State<_ChatTerminal> {
     super.initState();
     _theme = resolveTerminalTheme(EmbeddedTerminalSettings.defaults.themeId);
     _textStyle = TerminalStyle(
-      fontFamily: 'JetBrainsMono',
+      fontFamily: EmbeddedTerminalSettings.defaults.fontFamily,
       fontFamilyFallback: const [
         'JetBrainsMono Nerd Font',
+        'JetBrains Mono',
         'Fira Code',
         'FiraCode Nerd Font',
         'DejaVu Sans Mono',
@@ -419,7 +420,7 @@ class _ChatTerminalState extends State<_ChatTerminal> {
         'monospace',
       ],
       fontSize: EmbeddedTerminalSettings.defaults.fontSize,
-      height: 1.25,
+      height: 1.3,
     );
     _terminal = Terminal(maxLines: 10000, reflowEnabled: false);
     _terminal.onResize = (width, height, _, __) {

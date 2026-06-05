@@ -2,7 +2,7 @@ import 'package:equatable/equatable.dart';
 import 'package:injectable/injectable.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum TerminalThemeId { pickforgeEmber, draculaDark, solarizedDark }
+enum TerminalThemeId { pickforgeEmber, draculaDark, solarizedDark, ghosttyDark }
 
 class EmbeddedTerminalSettings extends Equatable {
   const EmbeddedTerminalSettings({
@@ -12,9 +12,9 @@ class EmbeddedTerminalSettings extends Equatable {
   });
 
   static const defaults = EmbeddedTerminalSettings(
-    fontFamily: 'monospace',
-    fontSize: 13,
-    themeId: TerminalThemeId.pickforgeEmber,
+    fontFamily: 'JetBrainsMono Nerd Font',
+    fontSize: 14,
+    themeId: TerminalThemeId.ghosttyDark,
   );
 
   final String fontFamily;

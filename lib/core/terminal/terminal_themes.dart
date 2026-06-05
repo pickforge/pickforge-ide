@@ -80,8 +80,35 @@ const TerminalTheme _solarizedDark = TerminalTheme(
   searchHitForeground: Color(0xFF000000),
 );
 
+const TerminalTheme _ghosttyDark = TerminalTheme(
+  cursor: Color(0xFFF8F8F2),
+  selection: Color(0x6644475A),
+  foreground: Color(0xFFF8F8F2),
+  background: Color(0xFF282A36),
+  black: Color(0xFF191A21),
+  red: Color(0xFFFF5555),
+  green: Color(0xFF50FA7B),
+  yellow: Color(0xFFFFB86C),
+  blue: Color(0xFFBD93F9),
+  magenta: Color(0xFFFF79C6),
+  cyan: Color(0xFF8BE9FD),
+  white: Color(0xFFF8F8F2),
+  brightBlack: Color(0xFF6272A4),
+  brightRed: Color(0xFFFF6E6E),
+  brightGreen: Color(0xFF69FF94),
+  brightYellow: Color(0xFFFFD866),
+  brightBlue: Color(0xFFD6ACFF),
+  brightMagenta: Color(0xFFFF92DF),
+  brightCyan: Color(0xFFA4FFFF),
+  brightWhite: Color(0xFFFFFFFF),
+  searchHitBackground: Color(0xFFFFFF2B),
+  searchHitBackgroundCurrent: Color(0xFF31FF26),
+  searchHitForeground: Color(0xFF000000),
+);
+
 TerminalTheme resolveTerminalTheme(TerminalThemeId id) => switch (id) {
       TerminalThemeId.pickforgeEmber => _pickforgeEmber,
       TerminalThemeId.draculaDark => _draculaDark,
       TerminalThemeId.solarizedDark => _solarizedDark,
+      TerminalThemeId.ghosttyDark => _ghosttyDark,
     };

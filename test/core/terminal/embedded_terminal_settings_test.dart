@@ -10,8 +10,9 @@ void main() {
       await SharedPreferences.getInstance(),
     );
     final s = await repo.load();
-    expect(s.fontSize, 13.0);
-    expect(s.themeId, TerminalThemeId.pickforgeEmber);
+    expect(s.fontFamily, 'JetBrainsMono Nerd Font');
+    expect(s.fontSize, 14.0);
+    expect(s.themeId, TerminalThemeId.ghosttyDark);
   });
 
   test('save then load round-trips', () async {

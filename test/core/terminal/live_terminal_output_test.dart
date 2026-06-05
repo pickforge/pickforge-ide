@@ -51,6 +51,35 @@ void main() {
     expect(second.flags & CellAttr.underline, 0);
   });
 
+  test('clears underline from split escape sequences', () {
+    final terminal = Terminal();
+
+    writeLiveTerminalOutput(terminal, '\x1b[');
+    writeLiveTerminalOutput(terminal, '4mA\x1b[24mB');
+
+    final first = CellData.empty();
+    final second = CellData.empty();
+    terminal.buffer.lines[0].getCellData(0, first);
+    terminal.buffer.lines[0].getCellData(1, second);
+    expect(first.flags & CellAttr.underline, 0);
+    expect(second.flags & CellAttr.underline, 0);
+    expect(terminal.cursor.isUnderline, isFalse);
+  });
+
+  test('clears underline already present in terminal buffer', () {
+    final terminal = Terminal()..write('\x1b[4mA');
+
+    writeLiveTerminalOutput(terminal, 'B');
+
+    final first = CellData.empty();
+    final second = CellData.empty();
+    terminal.buffer.lines[0].getCellData(0, first);
+    terminal.buffer.lines[0].getCellData(1, second);
+    expect(first.flags & CellAttr.underline, 0);
+    expect(second.flags & CellAttr.underline, 0);
+    expect(terminal.cursor.isUnderline, isFalse);
+  });
+
   test('preserves standard truecolor sequences', () {
     final terminal = Terminal();
 

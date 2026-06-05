@@ -3,6 +3,24 @@ import 'package:xterm/xterm.dart';
 void writeLiveTerminalOutput(Terminal terminal, String data) {
   if (data.isEmpty) return;
   terminal.write(normalizeLiveTerminalOutput(data));
+  removeTerminalUnderlines(terminal);
+}
+
+void removeTerminalUnderlines(Terminal terminal) {
+  terminal.cursor.unsetUnderline();
+  _removeBufferUnderlines(terminal.mainBuffer);
+  _removeBufferUnderlines(terminal.altBuffer);
+}
+
+void _removeBufferUnderlines(Buffer buffer) {
+  buffer.lines.forEach((line) {
+    for (var i = 0; i < line.length; i++) {
+      final attrs = line.getAttributes(i);
+      if (attrs & CellAttr.underline != 0) {
+        line.setAttributes(i, attrs & ~CellAttr.underline);
+      }
+    }
+  });
 }
 
 final _sgrRegex = RegExp('\x1B\\[([0-9:;]*)m');

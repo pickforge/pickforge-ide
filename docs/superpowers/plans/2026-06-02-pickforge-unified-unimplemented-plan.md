@@ -884,6 +884,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Documented the update channel and per-platform packaging/update strategy in `docs/architecture/distribution.md`: macOS should use Sparkle 2 only after signing/notarization/appcast readiness, Windows should start with winget and optional Scoop instead of an MVP self-updater, and Linux should prioritize AppImage plus `.deb` with Flathub as the long-term store channel.
 - 2026-06-05: Added `docs/architecture/sparkle-updates.md`, `docs/distribution/sparkle-appcast.example.xml`, and `scripts/macos_sparkle_appcast_smoke.sh` so Sparkle appcast metadata can be shape-validated from any host before publishing. The `macOS Sparkle` checkbox remains unchecked until a native macOS host validates a signed/notarized app with production EdDSA keys and real update/rollback evidence.
 
+**Blocked:** Runtime Sparkle enablement requires a native macOS host, production EdDSA keys, a signed/notarized artifact, HTTPS appcast hosting, and visible update/rollback evidence.
+
 ### P7.T4 — Codesigning, notarization, distribution
 
 **Status:** Partial / release gates documented
@@ -901,6 +903,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - 2026-06-04: Added `scripts/sign_linux_deb.sh` and `scripts/linux_deb_signing_smoke.sh` for Linux package signing. The release workflow imports `PICKFORGE_GPG_PRIVATE_KEY_BASE64` only when present, then emits and verifies detached armored signatures for both the `.deb` and checksum. Verified locally with an ephemeral GPG key using `scripts/linux_deb_signing_smoke.sh --skip-build`, shell syntax checks, workflow YAML parsing, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`; public release signing still requires configuring the protected signing secret.
 - 2026-06-04: Added `scripts/linux_deb_container_install_smoke.sh`, release CI coverage for clean Ubuntu 24.04 container installation of the Linux `.deb`, and pinned the Linux release build runner to `ubuntu-24.04`. The package now declares `libegl1`, `libgles2`, and `xdg-user-dirs` runtime dependencies in addition to GTK/glibc/libstdc++/lzma. Locally, the smoke passed with `--image ubuntu:26.04` against the CachyOS-built package, while the default Ubuntu 24.04 baseline correctly caught the local package's `GLIBC_2.43` requirement from `librive_native_plugin.so`. Release CI now builds on Ubuntu 24.04 and runs the default smoke there.
 - 2026-06-04: Added `scripts/package_linux_appimage.sh` and `scripts/linux_appimage_smoke.sh` for broad Linux AppImage distribution. The release workflow now packages and smokes the AppImage on the Ubuntu 24.04 Linux leg after the `.deb` checks. Verified locally with `scripts/linux_appimage_smoke.sh --skip-build`, which generated `build/dist/linux/Pickforge-0.1.0+1-x86_64.AppImage`, verified checksum and extracted AppDir contents, and proved first-run liveness under Xvfb; also verified shell syntax, workflow YAML parsing, `fvm dart format --set-exit-if-changed .`, `fvm flutter analyze`, `fvm flutter test --reporter=compact`, and `scripts/emulator_e2e.sh Pixel_10`.
+
+**Blocked:** macOS signing/notarization requires Apple Developer ID credentials and native Gatekeeper validation; Windows signing/SmartScreen reputation requires an Authenticode certificate and native Windows install validation.
 
 ### P7.T5 — Pickforge Pro backend
 
@@ -920,6 +924,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 
 - 2026-06-04: Documented the Supabase-backed Pro direction in `docs/architecture/pro-backend.md`, including local-first boundaries, Google/GitHub auth, RLS-first user/team tables, premium skill-pack storage, explicit opt-in cloud sync, server-side Stripe handling, and release gates for privacy/RLS/billing/offline behavior. No Pro backend code was added; the feature list remains future work.
 
+**Deferred:** Pro features remain outside MVP dogfood scope until the product decision is to build paid/cloud functionality.
+
 ## 13. Architecture refactors
 
 ### P8.T1 — Multi-package architecture
@@ -932,6 +938,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 - [ ] Reassess after MVP dogfood.
 - [ ] Split only if package boundaries reduce complexity.
 - [ ] Avoid premature VGV-style multi-package migration.
+
+**Deferred:** Reassess only after MVP dogfood produces concrete package-boundary pressure; no split is justified by the current implementation.
 
 ### P8.T2 — External terminal restoration, only if demanded
 
@@ -946,6 +954,8 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Reconciled this deferred checkbox against the current implementation: `docs/architecture/embedded-terminal.md` documents the PTY path, `ForgeCubit` sends prompts through `PtySessionPool`, and `ChatWorkbenchPanel` renders the embedded terminal. Verified with focused terminal and Forge tests: `fvm flutter test --reporter=compact test/core/terminal test/features/forge/cubit/forge_cubit_test.dart test/features/forge/view/forge_panel_test.dart` (53 passed). External terminal restoration remains unchecked and conditional on user demand.
+
+**Deferred:** Restore external terminal workflows only if users explicitly need them; embedded PTY remains the supported default.
 
 ## 14. QA, CI, and release
 

@@ -19,7 +19,9 @@ native-host dogfood before release signoff.
 - Use Sparkle 2 for automatic app updates after signing, notarization, and an
   HTTPS appcast are available.
 - Keep Sparkle disabled until the appcast, EdDSA keys, release notes, and
-  rollback process are documented.
+  rollback process pass the runbook in `docs/architecture/sparkle-updates.md`.
+- Validate appcast metadata with `scripts/macos_sparkle_appcast_smoke.sh` before
+  publishing an update feed.
 - Native validation requires a macOS host with Xcode, the Apple Developer ID
   certificate, notarization credentials, and Gatekeeper checks.
 

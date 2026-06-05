@@ -18,6 +18,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] `scripts/linux_deb_signing_smoke.sh --skip-build` with an ephemeral key.
 - [ ] `scripts/package_linux_appimage.sh --skip-build` after the Linux release build.
 - [ ] `scripts/linux_appimage_smoke.sh --skip-build` after the Linux release build.
+- [ ] `scripts/macos_sparkle_appcast_smoke.sh --appcast <release-appcast.xml>` before publishing a macOS update feed.
 - [ ] `scripts/linux_installed_visible_smoke.sh` after installing the Linux package on a visible desktop host.
 - [ ] `scripts/missing_tool_smoke.sh` on Linux.
 - [ ] `scripts/linux_visible_diagnostics_smoke.sh` from a visible Linux desktop session.
@@ -112,6 +113,9 @@ they do not replace manual dogfood on real desktop hosts.
 - Pending native macOS host dogfood before public release. Use
   `docs/qa/native-host-validation.md` for the iOS Simulator and macOS desktop
   evidence required before ticking the macOS checklist items.
+- Sparkle remains disabled until `docs/architecture/sparkle-updates.md` is
+  completed with production EdDSA keys, signed/notarized artifacts, appcast
+  smoke evidence, and rollback evidence.
 
 ### Windows
 

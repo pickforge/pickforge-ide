@@ -882,6 +882,7 @@ These items should be completed before calling Pickforge MVP dogfood-ready.
 **Latest evidence**
 
 - 2026-06-04: Documented the update channel and per-platform packaging/update strategy in `docs/architecture/distribution.md`: macOS should use Sparkle 2 only after signing/notarization/appcast readiness, Windows should start with winget and optional Scoop instead of an MVP self-updater, and Linux should prioritize AppImage plus `.deb` with Flathub as the long-term store channel.
+- 2026-06-05: Added `docs/architecture/sparkle-updates.md`, `docs/distribution/sparkle-appcast.example.xml`, and `scripts/macos_sparkle_appcast_smoke.sh` so Sparkle appcast metadata can be shape-validated from any host before publishing. The `macOS Sparkle` checkbox remains unchecked until a native macOS host validates a signed/notarized app with production EdDSA keys and real update/rollback evidence.
 
 ### P7.T4 — Codesigning, notarization, distribution
 

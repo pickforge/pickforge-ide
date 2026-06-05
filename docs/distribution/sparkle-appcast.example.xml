@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Pickforge Updates</title>
+    <link>https://pickforge.dev/releases/appcast.xml</link>
+    <description>Pickforge macOS release appcast.</description>
+    <language>en</language>
+    <item>
+      <title>Pickforge 0.1.0</title>
+      <link>https://pickforge.dev/releases/0.1.0</link>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+      <sparkle:releaseNotesLink>https://pickforge.dev/releases/0.1.0.html</sparkle:releaseNotesLink>
+      <pubDate>Fri, 05 Jun 2026 12:00:00 +0000</pubDate>
+      <enclosure
+        url="https://pickforge.dev/releases/Pickforge-0.1.0-macos.zip"
+        sparkle:edSignature="7cLALFUHSwvEJWSkV8aMreoBe4fhRa4FncC5NoThKxwThL6FDR7hTiPJh1fo2uagnPogisnQsgFgq6mGkt2RBw=="
+        length="1623481"
+        type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>

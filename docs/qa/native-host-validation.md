@@ -168,7 +168,8 @@ directory.
 - P3.T3: live iOS Simulator VM Service and inspector extension validation.
 - P3.T5: live macOS and Windows desktop VM Service and inspector validation.
 - P7.T3: Sparkle updater enablement, which still requires signed/notarized
-  macOS releases and appcast readiness.
+  macOS releases, production EdDSA keys, passing appcast smoke output, and
+  update/rollback evidence from `docs/architecture/sparkle-updates.md`.
 - P7.T4: macOS signing/notarization and Windows Authenticode/SmartScreen
   validation with real release credentials.
 - P9.T3: public release signoff on macOS and Windows native hosts.

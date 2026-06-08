@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Pickforge
+Name=PickForge
 Comment=Widget-level AI context for Flutter
 Exec=pickforge
 Icon=pickforge

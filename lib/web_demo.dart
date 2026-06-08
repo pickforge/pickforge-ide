@@ -13,7 +13,7 @@ class PickforgeWebDemoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Pickforge Web Demo',
+      title: 'PickForge Web Demo',
       debugShowCheckedModeBanner: false,
       theme: PickforgeTheme.dark(),
       darkTheme: PickforgeTheme.dark(),

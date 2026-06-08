@@ -1,4 +1,4 @@
-# Pickforge — Branding & Logo Playbook
+# PickForge — Branding & Logo Playbook
 
 Reference doc for the brand's visual identity. Kept in the project root alongside `SOCIAL.md` and `EMAIL.md`. Revisit before any public-facing asset ships.
 
@@ -57,7 +57,7 @@ Use these with ChatGPT / Midjourney / Ideogram to *explore concepts*. Image-gen 
 ### Concept A — Selection-box + ember (recommended)
 
 ```
-Minimal vector logo for "Pickforge", a developer tool for Flutter.
+Minimal vector logo for "PickForge", a developer tool for Flutter.
 Single geometric mark: a square selection marquee with four small
 corner handles (classic design-tool selection box), rendered as
 clean hairline strokes. One corner handle — the top-right — is
@@ -80,7 +80,7 @@ and 32px favicon clarity.
 ### Concept B — Anvil + cursor
 
 ```
-Minimal vector logo mark for "Pickforge". A simplified geometric
+Minimal vector logo mark for "PickForge". A simplified geometric
 mouse cursor (arrow) meets a geometric anvil silhouette at a single
 contact point. At that contact point, one small solid dot rendered
 as a glowing ember in warm orange (#FF7A1A).
@@ -99,7 +99,7 @@ padding. Exportable as SVG-equivalent flat shapes.
 ### Concept C — Geometric "P" letter-mark
 
 ```
-Minimal geometric letter-mark logo for "Pickforge". A single letter
+Minimal geometric letter-mark logo for "PickForge". A single letter
 "P" rendered in a bold geometric sans-serif. The bowl of the P is
 opened and restyled as a design-tool selection corner handle (like
 the corner of a marquee selection box). A small solid ember dot in
@@ -135,7 +135,7 @@ Style: Warp terminal, Raycast, Vercel. Designed to read at 16px,
 
 The icon and wordmark are separate assets. Either can stand alone. Together they form the horizontal lockup.
 
-- **Type:** "Pickforge" (sentence case, always).
+- **Type:** "PickForge" (capital P and F, always).
 - **Typeface:** Geist Sans Bold (primary), Inter SemiBold (fallback), Söhne Bold (paid alternative if commissioned).
 - **Letter-spacing:** -2% (slightly tight).
 - **Optical weight:** wordmark stroke should visually balance the icon stroke at the same display size.
@@ -170,7 +170,7 @@ When the concept is locked, produce at least this set of assets:
 - `apple-touch-icon.png` — 180×180.
 - `og-image.png` — 1200×630 for social previews.
 
-Store under `assets/brand/` in the repo (add the folder when we reach the landing-page task).
+Canonical assets now live under `assets/branding/` in this repo and `branding-visual/assets/pickforge/` in the studio brand kit.
 
 ## Practical next step
 

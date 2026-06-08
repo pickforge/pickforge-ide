@@ -96,7 +96,7 @@ class PickforgeApp extends StatelessWidget {
           );
         },
         child: MaterialApp.router(
-          title: 'Pickforge',
+          title: 'PickForge',
           theme: PickforgeTheme.light(),
           darkTheme: PickforgeTheme.dark(),
           themeMode: ThemeMode.dark,

@@ -1,4 +1,4 @@
-# Pickforge — Email Playbook
+# PickForge — Email Playbook
 
 Reference doc for the brand's email setup. Kept in the project root alongside `SOCIAL.md`. Updated as we scale.
 
@@ -63,11 +63,11 @@ Don't create these preemptively. Add when the need appears.
 |---|---|
 | Receive mail at any `*@pickforge.dev` | Yes |
 | Forward to your personal inbox | Yes |
-| Reply as "Pickforge" in personal Gmail with a signature | Yes (manual) |
+| Reply as "PickForge" in personal Gmail with a signature | Yes (manual) |
 | Send *as* `hello@pickforge.dev` | No — requires SMTP setup (see below) |
 | Send transactional mail (password resets, receipts) | No — requires separate provider |
 
-For MVP, receiving is the only real need. Replies come from your personal Gmail signed as "Pickforge / Elberte". Fine for volumes below ~10 messages/day.
+For MVP, receiving is the only real need. Replies come from your personal Gmail signed as "PickForge / Elberte". Fine for volumes below ~10 messages/day.
 
 ## Hosting — upgrade paths
 

@@ -1,20 +1,22 @@
-<p align="center"><strong>Pickforge</strong></p>
+<p align="center">
+  <img src="assets/branding/pickforge-lockup-horizontal.png" alt="PickForge" height="96">
+</p>
 <p align="center"><em>Widget-level AI context for Flutter.</em></p>
 <p align="center"><a href="https://pickforge.dev">pickforge.dev</a></p>
 
 ---
 
-Pickforge is a local **Flutter desktop app** that lets you pick a widget in
+PickForge is a local **Flutter desktop app** that lets you pick a widget in
 your running Flutter app and dispatch its full context — source, ancestor
 chain, screenshots — to an AI coding CLI (Claude Code, Codex, OpenCode) in a
 new terminal. The agent makes a surgical edit; you hot-reload; repeat.
 
-> Pickforge is MIT-licensed open source. You bring your own agent credentials.
+> PickForge is MIT-licensed open source. You bring your own agent credentials.
 > Nothing leaves your machine.
 
 ## Quick start
 
-1. Launch Pickforge. On first run it asks you to **Add your first project** —
+1. Launch PickForge. On first run it asks you to **Add your first project** —
    pick the folder of a Flutter project (one that has a `pubspec.yaml`).
 2. Inside the workbench, hit **+ New chat** to spawn a persistent agent CLI
    session in the embedded terminal pane. Each chat keeps its own scrollback
@@ -35,12 +37,12 @@ Only a single `.pickforge/` folder at your project root:
   widget-context.md    # the selected widget's details
   screenshot.png       # Flutter render (when available)
   device-screen.png    # full device screen with highlight (Android + adb)
-  initial-prompt.md    # what Pickforge piped to your agent
+  initial-prompt.md    # what PickForge piped to your agent
   run-log.json         # session metadata
 ```
 
-Pickforge **never** modifies your `CLAUDE.md`, `AGENTS.md`, or any of your own
-files. If `.pickforge/` already exists and wasn't created by Pickforge, it
+PickForge **never** modifies your `CLAUDE.md`, `AGENTS.md`, or any of your own
+files. If `.pickforge/` already exists and wasn't created by PickForge, it
 refuses to proceed.
 
 Detailed storage, retention, and migration-backup policy lives in
@@ -68,6 +70,10 @@ fvm flutter run -d linux   # or -d macos, -d windows
 | Target platforms (for the app under debug) | Android emulator (MVP). iOS Simulator, Flutter web, and Flutter desktop are planned. |
 | Agents | Claude Code, Codex, OpenCode. More planned. |
 | Terminal | Embedded `xterm` + PTY — no external terminal apps required. Per-chat scrollback persists in `.pickforge/chats/<chatId>/transcript.log`. |
+
+## Branding
+
+Canonical PickForge brand assets live in `assets/branding/`. The set follows the Pickforge Studio v2 system: dark canvas, off-white selection bracket, and one ember accent.
 
 ## Contributing
 

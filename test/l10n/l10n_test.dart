@@ -11,7 +11,7 @@ void main() {
         child: Builder(
           builder: (ctx) {
             final l10n = AppLocalizations.of(ctx);
-            expect(l10n.appName, 'Pickforge');
+            expect(l10n.appName, 'PickForge');
             expect(l10n.forgeItButton, 'Forge it');
             expect(
               l10n.forgePickUserCodeHint,

@@ -995,7 +995,7 @@ void main() {
 
     expect(find.text('Discard changes safely'), findsOneWidget);
     expect(
-      find.textContaining('Pickforge never discards changes for you'),
+      find.textContaining('PickForge never discards changes for you'),
       findsOneWidget,
     );
     expect(find.textContaining('git restore <file>'), findsOneWidget);

@@ -27,7 +27,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(2160, 1280);
-  if (!window.Create(L"pickforge", origin, size)) {
+  if (!window.Create(L"PickForge", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

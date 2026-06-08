@@ -1,12 +1,12 @@
-# Pickforge — Social Media Playbook
+# PickForge — Social Media Playbook
 
-Reference doc for the marketing side of Pickforge. Kept in the project root so it's not forgotten. Updated as we learn what works.
+Reference doc for the marketing side of PickForge. Kept in the project root so it's not forgotten. Updated as we learn what works.
 
 ## Goals
 
 1. **Drive OSS adoption** — stars on GitHub, installs, Discord/issue contributors.
 2. **Make the widget-picker demo inescapable** — the 30-second GIF is the product pitch. Every channel surfaces it.
-3. **Build founder credibility** for a future Pickforge Pro launch without committing to "build in public" posting overhead right now.
+3. **Build founder credibility** for a future PickForge Pro launch without committing to "build in public" posting overhead right now.
 4. **Reserve namespace** across every channel that matters so we can expand later without re-branding.
 
 ## Handle strategy
@@ -88,7 +88,7 @@ Distinct from the "no LinkedIn brand page" call:
 
 **What NOT to do:**
 
-- Don't run a Pickforge LinkedIn *brand page*. One personal post is the commitment; a brand page is a channel you have to feed.
+- Don't run a PickForge LinkedIn *brand page*. One personal post is the commitment; a brand page is a channel you have to feed.
 - Don't do "build in public" LinkedIn updates weekly. Dilutes the launch post's impact.
 - Don't write a manifesto. Short, confident, demo-led.
 
@@ -104,7 +104,7 @@ Order of operations from handle registration to launch:
 6. **Pre-launch (weeks):** Go dark on brand accounts until there's a demo GIF that makes people go *"wait, what is that?"*. Don't post filler content.
 7. **Launch day:**
    - Morning: Push to Product Hunt at 00:01 Pacific (PH reset time).
-   - Morning: Submit to HN ("Show HN: Pickforge – click a widget in your Flutter app, Claude edits it").
+   - Morning: Submit to HN ("Show HN: PickForge – click a widget in your Flutter app, Claude edits it").
    - Morning: Personal LinkedIn post with demo GIF.
    - Morning: X thread from `@pickforge`, founder co-posts from personal account.
    - Afternoon: Post to r/FlutterDev, Flutter Discord, Flutter Community Slack.
@@ -124,11 +124,11 @@ Minimum viable to not disappear:
 For when you're stuck on what to post:
 
 - 15-second "pick a widget, Claude rewrites it" GIFs with different starting widgets.
-- Before/after screenshots of a widget edited by Pickforge.
-- Threads explaining one Pickforge feature at a time (skill library, TerminalProfile detection, .pickforge/ folder rationale).
-- Community spotlights — someone else's Pickforge PR, a blog post about using it.
+- Before/after screenshots of a widget edited by PickForge.
+- Threads explaining one PickForge feature at a time (skill library, TerminalProfile detection, .pickforge/ folder rationale).
+- Community spotlights — someone else's PickForge PR, a blog post about using it.
 - Honest "what didn't work" posts — which are gold on X/HN for credibility.
-- Comparison posts ("why I used Flutter instead of Tauri for Pickforge") — discussion-generating.
+- Comparison posts ("why I used Flutter instead of Tauri for PickForge") — discussion-generating.
 
 ## Dashboard / measurement
 

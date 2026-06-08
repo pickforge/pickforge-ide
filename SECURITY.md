@@ -14,7 +14,7 @@ issue for security reports.
 
 ## Scope
 
-Pickforge runs locally and never sends your code over the network. The main
+PickForge runs locally and never sends your code over the network. The main
 threat model we care about:
 
 - Malicious `.pickforge/` content crafted to subvert the user's agent session.

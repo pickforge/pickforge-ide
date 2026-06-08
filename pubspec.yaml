@@ -1,5 +1,5 @@
 name: pickforge
-description: "Pickforge — widget-level AI context for Flutter."
+description: "PickForge — widget-level AI context for Flutter."
 publish_to: "none"
 version: 0.1.0+1
 
@@ -88,3 +88,4 @@ flutter:
     - assets/agents/
     - assets/prompts/
     - assets/animations/
+    - assets/branding/

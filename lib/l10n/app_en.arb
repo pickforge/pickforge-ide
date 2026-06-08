@@ -1,6 +1,6 @@
 {
   "@@locale": "en",
-  "appName": "Pickforge",
+  "appName": "PickForge",
   "connectTitle": "Connect to your Flutter app",
   "connectUrlLabel": "VM Service WebSocket URL",
   "connectPastePlaceholder": "ws://127.0.0.1:PORT/UUID=/ws",
@@ -146,7 +146,7 @@
   },
   "forgeDiscardInstructions": "Discard instructions",
   "forgeDiscardInstructionsTitle": "Discard changes safely",
-  "forgeDiscardInstructionsMessage": "Pickforge never discards changes for you. Review the diff first, then use git restore <file> for tracked files. For untracked files, run git clean -n before deleting anything.",
+  "forgeDiscardInstructionsMessage": "PickForge never discards changes for you. Review the diff first, then use git restore <file> for tracked files. For untracked files, run git clean -n before deleting anything.",
   "forgePickUserCodeHint": "Pick a widget from your app source.",
   "historyTitle": "Recent forges",
   "pickHistoryTitle": "Pick history",
@@ -491,7 +491,7 @@
   "onboardingRetrySetupChecks": "Retry",
   "onboardingCopySetupCommand": "Copy setup command",
   "onboardingDemoTitle": "Demo workspace",
-  "onboardingDemoDescription": "Preview Pickforge with fake project, widget, emulator, and chat data. No Android tooling or agent CLI required.",
+  "onboardingDemoDescription": "Preview PickForge with fake project, widget, emulator, and chat data. No Android tooling or agent CLI required.",
   "onboardingOpenDemoWorkspace": "Open demo workspace",
   "demoWorkspaceTitle": "Demo workspace",
   "demoProjectName": "sample_flutter_app",
@@ -509,7 +509,7 @@
   "demoTerminalLinePlan": "Plan: tighten spacing, update text style, hot reload",
   "demoTerminalLineReady": "Prompt delivered to active Codex session",
   "gitignoreDialogTitle": "Update .gitignore?",
-  "gitignoreDialogMessage": "Pickforge stores chat transcripts and local settings under .pickforge/. Add it to your project's .gitignore?",
+  "gitignoreDialogMessage": "PickForge stores chat transcripts and local settings under .pickforge/. Add it to your project's .gitignore?",
   "gitignoreDialogConfirm": "Add it",
   "gitignoreDialogSkip": "Skip"
 }

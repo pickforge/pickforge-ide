@@ -13,6 +13,10 @@ bool get skipGoldenPlatform => !Platform.isLinux;
 
 Future<void> loadGoldenFonts() async {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // Brand typefaces — load the real bundled Geist TTFs so goldens render true.
+  await _loadGeist();
+
   final flutterRoot = Platform.environment['FLUTTER_ROOT'];
   if (flutterRoot == null || flutterRoot.isEmpty) return;
 
@@ -22,10 +26,26 @@ Future<void> loadGoldenFonts() async {
   if (!fontsDir.existsSync()) return;
 
   await _loadFamily(fontsDir, 'Roboto');
-  await _loadFamily(fontsDir, 'Inter');
-  await _loadFamily(fontsDir, 'JetBrainsMono');
   await (FontLoader('MaterialIcons')
         ..addFont(_font(fontsDir, 'MaterialIcons-Regular.otf')))
+      .load();
+}
+
+Future<void> _loadGeist() async {
+  final dir = Directory(p.join(Directory.current.path, 'assets', 'fonts'));
+  if (!dir.existsSync()) return;
+  await (FontLoader('Geist')
+        ..addFont(_font(dir, 'geist-v5-latin-regular.ttf'))
+        ..addFont(_font(dir, 'geist-v5-latin-500.ttf'))
+        ..addFont(_font(dir, 'geist-v5-latin-600.ttf'))
+        ..addFont(_font(dir, 'geist-v5-latin-700.ttf'))
+        ..addFont(_font(dir, 'geist-v5-latin-800.ttf')))
+      .load();
+  await (FontLoader('GeistMono')
+        ..addFont(_font(dir, 'geist-mono-v5-latin-regular.ttf'))
+        ..addFont(_font(dir, 'geist-mono-v5-latin-500.ttf'))
+        ..addFont(_font(dir, 'geist-mono-v5-latin-600.ttf'))
+        ..addFont(_font(dir, 'geist-mono-v5-latin-700.ttf')))
       .load();
 }
 

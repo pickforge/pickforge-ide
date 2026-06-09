@@ -25,10 +25,13 @@ class ClaudeCodeProfile extends AgentProfile {
       ];
 
   @override
-  PtyInvocation ptyArgsFor({String? resumeSessionId}) => PtyInvocation(
+  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model}) =>
+      PtyInvocation(
         executable: 'claude',
-        arguments:
-            resumeSessionId != null ? ['--resume', resumeSessionId] : const [],
+        arguments: [
+          if (resumeSessionId != null) ...['--resume', resumeSessionId],
+          if (model != null) ...['--model', model],
+        ],
       );
 
   @override

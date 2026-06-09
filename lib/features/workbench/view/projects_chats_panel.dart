@@ -16,6 +16,11 @@ import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart'
 import 'package:pickforge/features/workbench/cubit/workspace_sidebar_sections.dart';
 import 'package:pickforge/features/workbench/cubit/workspace_sidebar_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
+import 'package:pickforge/shared/motion/pickforge_motion.dart';
+import 'package:pickforge/shared/motion/reduce_motion.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
+import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class ProjectsChatsPanel extends StatelessWidget {
   const ProjectsChatsPanel({
@@ -102,15 +107,15 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 4, 6),
+      padding: const EdgeInsets.fromLTRB(
+        PickforgeSpacing.md,
+        PickforgeSpacing.md,
+        PickforgeSpacing.xs,
+        PickforgeSpacing.sm - 2,
+      ),
       child: Row(
         children: [
-          Expanded(
-            child: Text(
-              label.toUpperCase(),
-              style: Theme.of(context).textTheme.labelSmall,
-            ),
-          ),
+          Expanded(child: MonoEyebrow(label, tick: true)),
           IconButton(
             tooltip: tooltip,
             icon: const Icon(Icons.add, size: 16),
@@ -386,8 +391,12 @@ class _ProjectsList extends StatelessWidget {
       if (i > 0) {
         tiles.add(
           const Padding(
-            padding: EdgeInsets.fromLTRB(8, 8, 8, 8),
-            child: Divider(height: 1, thickness: 1),
+            padding: EdgeInsets.all(PickforgeSpacing.sm),
+            child: Divider(
+              height: 1,
+              thickness: 1,
+              color: PickforgeColors.hairline,
+            ),
           ),
         );
       }
@@ -474,19 +483,25 @@ class _ProjectsGrid extends StatelessWidget {
     final childAspectRatio =
         settings.density == WorkspaceSidebarDensity.compact ? 1.9 : 1.55;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      padding: const EdgeInsets.fromLTRB(
+        PickforgeSpacing.sm,
+        0,
+        PickforgeSpacing.sm,
+        PickforgeSpacing.sm,
+      ),
       children: [
         for (final section in sections) ...[
           Padding(
-            padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
+            padding: const EdgeInsets.fromLTRB(
+              PickforgeSpacing.xs,
+              PickforgeSpacing.md,
+              PickforgeSpacing.xs,
+              PickforgeSpacing.sm - 2,
+            ),
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    section.title,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
+                  child: MonoEyebrow(section.title),
                 ),
                 if (section.project case final project?)
                   IconButton(
@@ -501,8 +516,8 @@ class _ProjectsGrid extends StatelessWidget {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             crossAxisCount: 2,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
+            mainAxisSpacing: PickforgeSpacing.sm - 2,
+            crossAxisSpacing: PickforgeSpacing.sm - 2,
             childAspectRatio: childAspectRatio,
             children: [
               if (section.project case final project?)
@@ -538,19 +553,14 @@ class _GroupHeaderTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return ListTile(
       dense: true,
       leading: Icon(
         expanded ? Icons.expand_more : Icons.chevron_right,
         size: 18,
-        color: cs.onSurfaceVariant,
+        color: PickforgeColors.textMed,
       ),
-      title: Text(
-        title,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
+      title: MonoEyebrow(title),
       onTap: onToggle,
     );
   }
@@ -578,12 +588,16 @@ class _ProjectHeaderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cs = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 2, 6, 2),
+      padding: const EdgeInsets.fromLTRB(
+        PickforgeSpacing.sm - 2,
+        2,
+        PickforgeSpacing.sm - 2,
+        2,
+      ),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () {
@@ -592,18 +606,21 @@ class _ProjectHeaderTile extends StatelessWidget {
               _selectProjectOnly(context, project.projectRoot),
             );
           },
-          hoverColor: cs.onSurface.withValues(alpha: 0.06),
-          splashColor: cs.onSurface.withValues(alpha: 0.10),
+          hoverColor: PickforgeColors.hairline,
+          splashColor: PickforgeColors.hairlineStrong,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.xs,
+              vertical: PickforgeSpacing.xs,
+            ),
             child: Row(
               children: [
                 Icon(
                   expanded ? Icons.expand_more : Icons.chevron_right,
                   size: 18,
-                  color: cs.onSurfaceVariant,
+                  color: PickforgeColors.textMed,
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: PickforgeSpacing.xs),
                 Expanded(
                   child: Text(
                     project.displayName,
@@ -611,7 +628,9 @@ class _ProjectHeaderTile extends StatelessWidget {
                     style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight:
                           isActiveProject ? FontWeight.w600 : FontWeight.normal,
-                      color: isActiveProject ? cs.primary : cs.onSurface,
+                      color: isActiveProject
+                          ? PickforgeColors.ember
+                          : PickforgeColors.textHi,
                     ),
                   ),
                 ),
@@ -714,31 +733,39 @@ class _ProjectEntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cs = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 1, 6, 1),
+      padding: const EdgeInsets.fromLTRB(
+        PickforgeSpacing.xl - 2,
+        1,
+        PickforgeSpacing.sm - 2,
+        1,
+      ),
       child: Material(
-        color:
-            isActive ? cs.primary.withValues(alpha: 0.12) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        color: isActive ? PickforgeColors.surface2 : Colors.transparent,
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () =>
               unawaited(_selectProjectOnly(context, project.projectRoot)),
-          hoverColor: cs.onSurface.withValues(alpha: 0.06),
-          splashColor: cs.onSurface.withValues(alpha: 0.10),
+          hoverColor: PickforgeColors.hairline,
+          splashColor: PickforgeColors.hairlineStrong,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.md,
+              vertical: PickforgeSpacing.sm - 2,
+            ),
             child: Row(
               children: [
                 const Icon(Icons.folder_outlined, size: 16),
-                const SizedBox(width: 8),
+                const SizedBox(width: PickforgeSpacing.sm),
                 Expanded(
                   child: Text(
                     project.displayName,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: isActive ? cs.primary : cs.onSurface,
+                      color: isActive
+                          ? PickforgeColors.ember
+                          : PickforgeColors.textHi,
                       fontWeight:
                           isActive ? FontWeight.w500 : FontWeight.normal,
                     ),
@@ -781,164 +808,192 @@ class _ChatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cs = theme.colorScheme;
     final l10n = AppLocalizations.of(context);
     final status = chat.taskStatus;
     final showStatus = status != ChatTaskStatus.active;
     final labels = chat.taskLabels;
     final brief = chat.taskBrief;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 1, 6, 1),
-      child: Material(
-        color:
-            isActive ? cs.primary.withValues(alpha: 0.12) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          hoverColor: cs.onSurface.withValues(alpha: 0.06),
-          splashColor: cs.onSurface.withValues(alpha: 0.10),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
+      padding: const EdgeInsets.fromLTRB(
+        PickforgeSpacing.xl - 2,
+        1,
+        PickforgeSpacing.sm - 2,
+        1,
+      ),
+      child: SelectionBracket(
+        active: isActive,
+        child: AnimatedContainer(
+          duration: ReduceMotion.duration(context, PickforgeMotion.fast),
+          curve: PickforgeMotion.forge,
+          decoration: BoxDecoration(
+            color: isActive
+                ? PickforgeColors.ember.withValues(alpha: 0.06)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+            border: Border(
+              left: BorderSide(
+                color: isActive ? PickforgeColors.ember : Colors.transparent,
+                width: 2,
+              ),
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onTap,
+              hoverColor: PickforgeColors.hairline,
+              splashColor: PickforgeColors.hairlineStrong,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: PickforgeSpacing.md,
+                  vertical: PickforgeSpacing.sm - 2,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Expanded(
-                            child: Text(
-                              chat.title,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  chat.title,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: isActive
+                                        ? PickforgeColors.ember
+                                        : PickforgeColors.textHi,
+                                    fontWeight: isActive
+                                        ? FontWeight.w500
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ),
+                              if (showStatus) ...[
+                                const SizedBox(width: PickforgeSpacing.sm - 2),
+                                _TaskStatusChip(status: status),
+                              ],
+                            ],
+                          ),
+                          if (brief != null) ...[
+                            const SizedBox(height: 3),
+                            Text(
+                              brief,
+                              maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: isActive ? cs.primary : cs.onSurface,
-                                fontWeight: isActive
-                                    ? FontWeight.w500
-                                    : FontWeight.normal,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: PickforgeColors.textMed,
                               ),
                             ),
-                          ),
-                          if (showStatus) ...[
-                            const SizedBox(width: 6),
-                            _TaskStatusChip(status: status),
+                          ],
+                          if (labels.isNotEmpty) ...[
+                            const SizedBox(height: PickforgeSpacing.xs),
+                            _ChatLabelsRow(labels: labels),
                           ],
                         ],
                       ),
-                      if (brief != null) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          brief,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: cs.onSurfaceVariant,
+                    ),
+                    IconButton(
+                      tooltip: isPinned ? l10n.sidebarUnpin : l10n.sidebarPin,
+                      icon: Icon(
+                        isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                        size: 14,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: onPin,
+                    ),
+                    PopupMenuButton<_ChatAction>(
+                      tooltip:
+                          MaterialLocalizations.of(context).showMenuTooltip,
+                      icon: const Icon(Icons.more_horiz, size: 14),
+                      onSelected: (action) async {
+                        switch (action) {
+                          case _ChatAction.setBrief:
+                            final brief = await _askTaskBrief(
+                              context,
+                              initialValue: chat.taskBrief,
+                            );
+                            if (brief != null) onSetTaskBrief(brief);
+                          case _ChatAction.setLabels:
+                            final labels = await _askLabels(
+                              context,
+                              initialValue: chat.taskLabels,
+                            );
+                            if (labels != null) onSetLabels(labels);
+                          case _ChatAction.setActive:
+                            onSetStatus(ChatTaskStatus.active);
+                          case _ChatAction.setWaiting:
+                            onSetStatus(ChatTaskStatus.waiting);
+                          case _ChatAction.setDone:
+                            onSetStatus(ChatTaskStatus.done);
+                          case _ChatAction.archive:
+                            onSetStatus(ChatTaskStatus.archived);
+                          case _ChatAction.restore:
+                            onSetStatus(ChatTaskStatus.active);
+                          case _ChatAction.setGroup:
+                            final group = await _askCustomGroup(
+                              context,
+                              initialValue: customGroup,
+                            );
+                            if (group != null) onSetCustomGroup(group);
+                          case _ChatAction.clearGroup:
+                            onSetCustomGroup(null);
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: _ChatAction.setBrief,
+                          child: Text(l10n.sidebarSetTaskBrief),
+                        ),
+                        PopupMenuItem(
+                          value: _ChatAction.setLabels,
+                          child: Text(l10n.sidebarSetLabels),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem(
+                          value: _ChatAction.setActive,
+                          child: Text(l10n.sidebarSetStatusActive),
+                        ),
+                        PopupMenuItem(
+                          value: _ChatAction.setWaiting,
+                          child: Text(l10n.sidebarSetStatusWaiting),
+                        ),
+                        PopupMenuItem(
+                          value: _ChatAction.setDone,
+                          child: Text(l10n.sidebarSetStatusDone),
+                        ),
+                        PopupMenuItem(
+                          value: status == ChatTaskStatus.archived
+                              ? _ChatAction.restore
+                              : _ChatAction.archive,
+                          child: Text(
+                            status == ChatTaskStatus.archived
+                                ? l10n.sidebarRestoreChat
+                                : l10n.sidebarArchiveChat,
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        PopupMenuItem(
+                          value: _ChatAction.setGroup,
+                          child: Text(
+                            l10n.sidebarSetCustomGroup,
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: _ChatAction.clearGroup,
+                          child: Text(
+                            l10n.sidebarClearCustomGroup,
                           ),
                         ),
                       ],
-                      if (labels.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        _ChatLabelsRow(labels: labels),
-                      ],
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: isPinned ? l10n.sidebarUnpin : l10n.sidebarPin,
-                  icon: Icon(
-                    isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                    size: 14,
-                  ),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onPin,
-                ),
-                PopupMenuButton<_ChatAction>(
-                  tooltip: MaterialLocalizations.of(context).showMenuTooltip,
-                  icon: const Icon(Icons.more_horiz, size: 14),
-                  onSelected: (action) async {
-                    switch (action) {
-                      case _ChatAction.setBrief:
-                        final brief = await _askTaskBrief(
-                          context,
-                          initialValue: chat.taskBrief,
-                        );
-                        if (brief != null) onSetTaskBrief(brief);
-                      case _ChatAction.setLabels:
-                        final labels = await _askLabels(
-                          context,
-                          initialValue: chat.taskLabels,
-                        );
-                        if (labels != null) onSetLabels(labels);
-                      case _ChatAction.setActive:
-                        onSetStatus(ChatTaskStatus.active);
-                      case _ChatAction.setWaiting:
-                        onSetStatus(ChatTaskStatus.waiting);
-                      case _ChatAction.setDone:
-                        onSetStatus(ChatTaskStatus.done);
-                      case _ChatAction.archive:
-                        onSetStatus(ChatTaskStatus.archived);
-                      case _ChatAction.restore:
-                        onSetStatus(ChatTaskStatus.active);
-                      case _ChatAction.setGroup:
-                        final group = await _askCustomGroup(
-                          context,
-                          initialValue: customGroup,
-                        );
-                        if (group != null) onSetCustomGroup(group);
-                      case _ChatAction.clearGroup:
-                        onSetCustomGroup(null);
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: _ChatAction.setBrief,
-                      child: Text(l10n.sidebarSetTaskBrief),
-                    ),
-                    PopupMenuItem(
-                      value: _ChatAction.setLabels,
-                      child: Text(l10n.sidebarSetLabels),
-                    ),
-                    const PopupMenuDivider(),
-                    PopupMenuItem(
-                      value: _ChatAction.setActive,
-                      child: Text(l10n.sidebarSetStatusActive),
-                    ),
-                    PopupMenuItem(
-                      value: _ChatAction.setWaiting,
-                      child: Text(l10n.sidebarSetStatusWaiting),
-                    ),
-                    PopupMenuItem(
-                      value: _ChatAction.setDone,
-                      child: Text(l10n.sidebarSetStatusDone),
-                    ),
-                    PopupMenuItem(
-                      value: status == ChatTaskStatus.archived
-                          ? _ChatAction.restore
-                          : _ChatAction.archive,
-                      child: Text(
-                        status == ChatTaskStatus.archived
-                            ? l10n.sidebarRestoreChat
-                            : l10n.sidebarArchiveChat,
-                      ),
-                    ),
-                    const PopupMenuDivider(),
-                    PopupMenuItem(
-                      value: _ChatAction.setGroup,
-                      child: Text(
-                        l10n.sidebarSetCustomGroup,
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: _ChatAction.clearGroup,
-                      child: Text(
-                        l10n.sidebarClearCustomGroup,
-                      ),
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -1025,58 +1080,68 @@ class _SidebarCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cs = theme.colorScheme;
     final hasMetadata = status != null || subtitle != null || labels.isNotEmpty;
-    return Material(
-      color: selected
-          ? cs.primary.withValues(alpha: 0.12)
-          : cs.surfaceContainerHighest.withValues(alpha: 0.35),
-      borderRadius: BorderRadius.circular(10),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: hasMetadata
-                ? MainAxisAlignment.start
-                : MainAxisAlignment.center,
-            children: [
-              Row(
-                children: [
-                  Icon(icon, size: 18, color: selected ? cs.primary : null),
-                  const Spacer(),
-                  if (status case final status?)
-                    Flexible(child: _TaskStatusChip(status: status)),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: selected ? cs.primary : cs.onSurface,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+    return SelectionBracket(
+      active: selected,
+      child: Material(
+        color: selected ? PickforgeColors.surface2 : PickforgeColors.surface1,
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          hoverColor: PickforgeColors.hairline,
+          splashColor: PickforgeColors.hairlineStrong,
+          child: Padding(
+            padding: const EdgeInsets.all(PickforgeSpacing.sm),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: hasMetadata
+                  ? MainAxisAlignment.start
+                  : MainAxisAlignment.center,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      icon,
+                      size: 18,
+                      color: selected
+                          ? PickforgeColors.ember
+                          : PickforgeColors.textMed,
+                    ),
+                    const Spacer(),
+                    if (status case final status?)
+                      Flexible(child: _TaskStatusChip(status: status)),
+                  ],
                 ),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 3),
+                const SizedBox(height: PickforgeSpacing.sm - 2),
                 Text(
-                  subtitle!,
-                  maxLines: 1,
+                  title,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: cs.onSurfaceVariant,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: selected
+                        ? PickforgeColors.ember
+                        : PickforgeColors.textHi,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
                   ),
                 ),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: PickforgeColors.textMed,
+                    ),
+                  ),
+                ],
+                if (labels.isNotEmpty) ...[
+                  const SizedBox(height: PickforgeSpacing.xs + 1),
+                  _ChatLabelsRow(labels: labels, maxLabels: 2),
+                ],
               ],
-              if (labels.isNotEmpty) ...[
-                const SizedBox(height: 5),
-                _ChatLabelsRow(labels: labels, maxLabels: 2),
-              ],
-            ],
+            ),
           ),
         ),
       ),
@@ -1091,18 +1156,21 @@ class _TaskStatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final (background, foreground) = switch (status) {
-      ChatTaskStatus.active => (cs.primaryContainer, cs.onPrimaryContainer),
-      ChatTaskStatus.waiting => (cs.tertiaryContainer, cs.onTertiaryContainer),
-      ChatTaskStatus.done => (cs.secondaryContainer, cs.onSecondaryContainer),
-      ChatTaskStatus.archived => (cs.surfaceContainerHighest, cs.outline),
+    final foreground = switch (status) {
+      ChatTaskStatus.active => PickforgeColors.textMed,
+      ChatTaskStatus.waiting => PickforgeColors.warning,
+      ChatTaskStatus.done => PickforgeColors.connected,
+      ChatTaskStatus.archived => PickforgeColors.textLow,
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: PickforgeSpacing.sm - 2,
+        vertical: 2,
+      ),
       decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(6),
+        color: foreground.withValues(alpha: 0.12),
+        border: Border.all(color: PickforgeColors.hairline),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
       ),
       child: Text(
         _statusLabel(AppLocalizations.of(context), status),
@@ -1128,26 +1196,28 @@ class _ChatLabelsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final visible = labels.take(maxLabels).toList(growable: false);
     final remaining = labels.length - visible.length;
     return Wrap(
-      spacing: 4,
-      runSpacing: 4,
+      spacing: PickforgeSpacing.xs,
+      runSpacing: PickforgeSpacing.xs,
       children: [
         for (final label in visible)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.sm - 2,
+              vertical: 2,
+            ),
             decoration: BoxDecoration(
-              border: Border.all(color: cs.outlineVariant),
-              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: PickforgeColors.hairline),
+              borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
             ),
             child: Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: cs.onSurfaceVariant,
+                    color: PickforgeColors.textMed,
                   ),
             ),
           ),
@@ -1155,7 +1225,7 @@ class _ChatLabelsRow extends StatelessWidget {
           Text(
             '+$remaining',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: cs.onSurfaceVariant,
+                  color: PickforgeColors.textMed,
                 ),
           ),
       ],
@@ -1300,7 +1370,12 @@ class _EmptyChatHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(30, 4, 12, 8),
+      padding: const EdgeInsets.fromLTRB(
+        PickforgeSpacing.xl + PickforgeSpacing.sm - 2,
+        PickforgeSpacing.xs,
+        PickforgeSpacing.md,
+        PickforgeSpacing.sm,
+      ),
       child: Text(
         text,
         style: Theme.of(context).textTheme.bodySmall,
@@ -1318,7 +1393,7 @@ class _Empty extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(PickforgeSpacing.xl),
         child: Text(
           text,
           textAlign: TextAlign.center,

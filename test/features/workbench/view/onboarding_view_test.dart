@@ -53,7 +53,8 @@ void main() {
     expect(find.text('Open sample Flutter app'), findsOneWidget);
     expect(find.text('Dismiss for now'), findsOneWidget);
     expect(find.byType(Card), findsNothing);
-    expect(find.byType(TextButton), findsNothing);
+    // "Dismiss for now" is now a low-emphasis TextButton.
+    expect(find.byType(TextButton), findsOneWidget);
 
     await tester.tap(find.text('Pick folder'));
     await tester.pumpAndSettle();

@@ -211,13 +211,9 @@ void main() {
     expect(find.text('fileExplorer.scan'), findsOneWidget);
     expect(find.text('last 42ms, max 42ms, 1 sample'), findsOneWidget);
 
-    await tester.drag(
-      find.byType(SingleChildScrollView),
-      const Offset(0, -1500),
-    );
-    await tester.pump();
-
     final copyButton = find.byTooltip('Copy error details').first;
+    await tester.ensureVisible(copyButton);
+    await tester.pumpAndSettle();
     await tester.tap(copyButton);
     await tester.pump();
 

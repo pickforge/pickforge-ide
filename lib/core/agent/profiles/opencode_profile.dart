@@ -20,8 +20,13 @@ class OpenCodeProfile extends AgentProfile {
   List<String> invocationArgs() => ['--yolo'];
 
   @override
-  PtyInvocation ptyArgsFor({String? resumeSessionId}) =>
-      const PtyInvocation(executable: 'opencode', arguments: <String>[]);
+  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model}) =>
+      PtyInvocation(
+        executable: 'opencode',
+        arguments: [
+          if (model != null) ...['--model', model],
+        ],
+      );
 
   @override
   String buildInitialPrompt({

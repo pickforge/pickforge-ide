@@ -25,6 +25,7 @@ import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/forge/cubit/context_attachments_cubit.dart';
 import 'package:pickforge/features/forge/forge.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _sampleWidget = SelectedWidget(
@@ -312,7 +313,7 @@ void main() {
       ),
     );
 
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    final button = tester.widget<EmberButton>(find.byType(EmberButton));
     expect(button.onPressed, isNull);
   });
 
@@ -335,7 +336,7 @@ void main() {
       ),
     );
 
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    final button = tester.widget<EmberButton>(find.byType(EmberButton));
     expect(button.onPressed, isNull);
   });
 
@@ -360,7 +361,7 @@ void main() {
     );
 
     expect(find.text('Pick a widget from your app source.'), findsOneWidget);
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    final button = tester.widget<EmberButton>(find.byType(EmberButton));
     expect(button.onPressed, isNull);
   });
 
@@ -781,7 +782,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Project changes'), findsOneWidget);
+    expect(find.text('PROJECT CHANGES'), findsOneWidget);
     expect(find.text('Copy diff'), findsOneWidget);
     expect(find.text('Branch: feature/review'), findsOneWidget);
     expect(find.text('3 changed files'), findsOneWidget);
@@ -831,7 +832,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Project changes'), findsOneWidget);
+    expect(find.text('PROJECT CHANGES'), findsOneWidget);
     expect(find.text('Copy diff'), findsOneWidget);
   });
 
@@ -885,7 +886,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Project changes'), findsOneWidget);
+    expect(find.text('PROJECT CHANGES'), findsOneWidget);
     expect(find.text('Hot reload passed (120 ms)'), findsOneWidget);
   });
 

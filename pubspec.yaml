@@ -89,3 +89,30 @@ flutter:
     - assets/prompts/
     - assets/animations/
     - assets/branding/
+  fonts:
+    # Geist + Geist Mono (SIL OFL 1.1) — the PickForge brand typefaces.
+    # Geist = the human voice; Geist Mono = the machine voice (terminal, IDs).
+    - family: Geist
+      fonts:
+        - asset: assets/fonts/geist-v5-latin-300.ttf
+          weight: 300
+        - asset: assets/fonts/geist-v5-latin-regular.ttf
+          weight: 400
+        - asset: assets/fonts/geist-v5-latin-500.ttf
+          weight: 500
+        - asset: assets/fonts/geist-v5-latin-600.ttf
+          weight: 600
+        - asset: assets/fonts/geist-v5-latin-700.ttf
+          weight: 700
+        - asset: assets/fonts/geist-v5-latin-800.ttf
+          weight: 800
+    - family: GeistMono
+      fonts:
+        - asset: assets/fonts/geist-mono-v5-latin-regular.ttf
+          weight: 400
+        - asset: assets/fonts/geist-mono-v5-latin-500.ttf
+          weight: 500
+        - asset: assets/fonts/geist-mono-v5-latin-600.ttf
+          weight: 600
+        - asset: assets/fonts/geist-mono-v5-latin-700.ttf
+          weight: 700

@@ -25,5 +25,9 @@ abstract class AgentProfile {
 
   /// Returns the executable + args used to spawn this agent under a PTY for an
   /// interactive session in the embedded terminal pane.
-  PtyInvocation ptyArgsFor({String? resumeSessionId});
+  ///
+  /// [model] pins the agent to a specific model (e.g. Claude → Haiku 4.5,
+  /// Codex → GPT-5.3 Codex Spark). When null, the agent CLI's own default is
+  /// used. See `AgentModelSettings`.
+  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model});
 }

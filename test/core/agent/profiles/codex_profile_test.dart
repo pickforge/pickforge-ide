@@ -32,6 +32,12 @@ void main() {
       expect(inv.arguments, isEmpty);
     });
 
+    test('ptyArgsFor includes --model when given', () {
+      final inv = profile.ptyArgsFor(model: 'gpt-5.3-codex-spark');
+      expect(inv.executable, 'codex');
+      expect(inv.arguments, ['--model', 'gpt-5.3-codex-spark']);
+    });
+
     test('buildInitialPrompt with all files', () {
       final prompt = profile.buildInitialPrompt(
         pickforgeDirRelative: '.pickforge',

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:multi_split_view/multi_split_view.dart';
+import 'package:pickforge/core/agent/agent_model_settings.dart';
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/headless/chat_message.dart';
 import 'package:pickforge/core/agent/headless/headless_chat_feature_flags.dart';
@@ -397,31 +398,29 @@ class _ChatTerminalState extends State<_ChatTerminal> {
   int? _lastCols;
   int? _lastRows;
   var _disposed = false;
-  late final TerminalTheme _theme;
-  late final TerminalStyle _textStyle;
+  late TerminalTheme _theme;
+  late TerminalStyle _textStyle;
   static const _utf8Decoder = Utf8Decoder(allowMalformed: true);
+
+  // Brand mono first, then Nerd Font + common monos for box-drawing / powerline
+  // glyph coverage that Geist Mono may not carry.
+  static const _fontFallback = <String>[
+    'JetBrainsMono Nerd Font',
+    'JetBrains Mono',
+    'Fira Code',
+    'FiraCode Nerd Font',
+    'DejaVu Sans Mono',
+    'Liberation Mono',
+    'Menlo',
+    'Consolas',
+    'Courier New',
+    'monospace',
+  ];
 
   @override
   void initState() {
     super.initState();
-    _theme = resolveTerminalTheme(EmbeddedTerminalSettings.defaults.themeId);
-    _textStyle = TerminalStyle(
-      fontFamily: EmbeddedTerminalSettings.defaults.fontFamily,
-      fontFamilyFallback: const [
-        'JetBrainsMono Nerd Font',
-        'JetBrains Mono',
-        'Fira Code',
-        'FiraCode Nerd Font',
-        'DejaVu Sans Mono',
-        'Liberation Mono',
-        'Menlo',
-        'Consolas',
-        'Courier New',
-        'monospace',
-      ],
-      fontSize: EmbeddedTerminalSettings.defaults.fontSize,
-      height: 1.3,
-    );
+    _applySettings(EmbeddedTerminalSettings.defaults);
     _terminal = Terminal(maxLines: 10000, reflowEnabled: false);
     _terminal.onResize = (width, height, _, __) {
       _lastCols = width;
@@ -442,6 +441,11 @@ class _ChatTerminalState extends State<_ChatTerminal> {
   }
 
   Future<void> _init() async {
+    // Apply saved terminal settings before any writes so we never rebuild the
+    // TerminalView mid-replay (a setState during replay can race xterm's
+    // buffer attachment and throw during large scrollback replay).
+    await _loadTerminalSettings();
+    if (_disposed || !mounted) return;
     await _recorder.open();
     if (_disposed || !mounted) return;
 
@@ -458,7 +462,13 @@ class _ChatTerminalState extends State<_ChatTerminal> {
     final pool = getIt<PtySessionPool>();
     final agentId = AgentProfileId.fromValue(widget.chat.agentId);
     final agent = getIt<AgentProfileRegistry>().get(agentId);
-    final invocation = agent.ptyArgsFor(resumeSessionId: widget.chat.sessionId);
+    final model = getIt.isRegistered<AgentModelSettingsRepository>()
+        ? getIt<AgentModelSettingsRepository>().modelFor(agentId)
+        : null;
+    final invocation = agent.ptyArgsFor(
+      resumeSessionId: widget.chat.sessionId,
+      model: model,
+    );
 
     final available =
         await getIt<BinaryDetector>().isBinaryOnPath(invocation.executable);
@@ -517,9 +527,31 @@ class _ChatTerminalState extends State<_ChatTerminal> {
     _terminal.onOutput = (data) => _session?.write(utf8.encode(data));
   }
 
+  void _applySettings(EmbeddedTerminalSettings settings) {
+    _theme = resolveTerminalTheme(settings.themeId);
+    _textStyle = TerminalStyle(
+      fontFamily: settings.fontFamily,
+      fontFamilyFallback: _fontFallback,
+      fontSize: settings.fontSize,
+      height: 1.3,
+    );
+  }
+
+  Future<void> _loadTerminalSettings() async {
+    if (!getIt.isRegistered<EmbeddedTerminalSettingsRepository>()) return;
+    final settings = await getIt<EmbeddedTerminalSettingsRepository>().load();
+    if (_disposed || !mounted) return;
+    setState(() => _applySettings(settings));
+  }
+
   void _writeTerminal(String data) {
     if (_disposed || !mounted || data.isEmpty) return;
-    writeLiveTerminalOutput(_terminal, data);
+    try {
+      writeLiveTerminalOutput(_terminal, data);
+    } on Object catch (_) {
+      // Defensive: a renderer hiccup (e.g. a debug-only xterm buffer assertion
+      // during large scrollback replay) must never crash the chat session.
+    }
   }
 
   @override

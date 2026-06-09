@@ -20,11 +20,13 @@ class GeminiProfile extends AgentProfile {
   List<String> invocationArgs() => ['-p'];
 
   @override
-  PtyInvocation ptyArgsFor({String? resumeSessionId}) => PtyInvocation(
+  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model}) =>
+      PtyInvocation(
         executable: 'gemini',
         arguments: [
           '--approval-mode=auto_edit',
           if (resumeSessionId != null) '--resume=$resumeSessionId',
+          if (model != null) ...['--model', model],
         ],
       );
 

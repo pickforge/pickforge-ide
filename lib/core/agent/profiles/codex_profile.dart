@@ -20,8 +20,13 @@ class CodexProfile extends AgentProfile {
   List<String> invocationArgs() => ['--dangerously-skip-permissions'];
 
   @override
-  PtyInvocation ptyArgsFor({String? resumeSessionId}) =>
-      const PtyInvocation(executable: 'codex', arguments: <String>[]);
+  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model}) =>
+      PtyInvocation(
+        executable: 'codex',
+        arguments: [
+          if (model != null) ...['--model', model],
+        ],
+      );
 
   @override
   String buildInitialPrompt({

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:pickforge/core/agent/agent_model_settings.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
@@ -133,6 +134,8 @@ class _SettingsViewState extends State<SettingsView> {
                       ],
                     ),
                     const SizedBox(height: PickforgeSpacing.lg),
+                    const _AgentModelsSection(),
+                    const SizedBox(height: PickforgeSpacing.lg),
                     SettingsSection(
                       title: l10n.settingsProjectValidator,
                       children: [
@@ -246,9 +249,11 @@ class _SettingsViewState extends State<SettingsView> {
 
   Widget _buildFontFamilyDropdown(SettingsState state, BuildContext context) {
     const families = [
-      'monospace',
+      'GeistMono',
       'JetBrains Mono',
+      'JetBrainsMono Nerd Font',
       'Berkeley Mono',
+      'monospace',
     ];
     return SettingsField(
       label: AppLocalizations.of(context).settingsFontFamily,
@@ -345,6 +350,81 @@ class _SettingsViewState extends State<SettingsView> {
           }
         },
       ),
+    );
+  }
+}
+
+class _AgentModelsSection extends StatefulWidget {
+  const _AgentModelsSection();
+
+  @override
+  State<_AgentModelsSection> createState() => _AgentModelsSectionState();
+}
+
+class _AgentModelsSectionState extends State<_AgentModelsSection> {
+  AgentModelSettingsRepository? _repo;
+  late AgentModelSettings _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    if (getIt.isRegistered<AgentModelSettingsRepository>()) {
+      _repo = getIt<AgentModelSettingsRepository>();
+      _settings = _repo!.load();
+    } else {
+      _settings = AgentModelSettings.defaults;
+    }
+  }
+
+  void _set(AgentProfileId id, String slug) {
+    _repo?.setModel(id, slug).ignore();
+    setState(() {
+      _settings = AgentModelSettings({..._settings.models, id: slug});
+    });
+  }
+
+  String _resolved(AgentProfileId id, List<AgentModelOption> options) {
+    final current = _settings.modelFor(id);
+    if (current != null && options.any((o) => o.slug == current)) {
+      return current;
+    }
+    return options.first.slug;
+  }
+
+  String _agentLabel(AgentProfileId id) => switch (id) {
+        AgentProfileId.claudeCode => 'Claude Code',
+        AgentProfileId.codex => 'Codex',
+        AgentProfileId.opencode => 'OpenCode',
+        AgentProfileId.cursor => 'Cursor',
+        AgentProfileId.gemini => 'Gemini',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsSection(
+      title: AppLocalizations.of(context).settingsAgentModels,
+      children: [
+        for (final entry in AgentModelSettings.presets.entries)
+          SettingsField(
+            label: _agentLabel(entry.key),
+            child: DropdownButtonFormField<String>(
+              initialValue: _resolved(entry.key, entry.value),
+              decoration: settingsInputDecoration(),
+              isExpanded: true,
+              items: entry.value
+                  .map(
+                    (o) => DropdownMenuItem(
+                      value: o.slug,
+                      child: Text(o.label),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (slug) {
+                if (slug != null) _set(entry.key, slug);
+              },
+            ),
+          ),
+      ],
     );
   }
 }

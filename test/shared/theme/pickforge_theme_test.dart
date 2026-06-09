@@ -40,15 +40,15 @@ void main() {
       );
     });
 
-    test('uses sans for chrome and mono for code', () {
+    test('uses Geist for chrome and Geist Mono for code', () {
       final theme = PickforgeTheme.dark();
-      expect(theme.textTheme.bodyMedium?.fontFamily, 'Inter');
-      expect(theme.textTheme.displayLarge?.letterSpacing, 0);
-      expect(theme.textTheme.titleLarge?.letterSpacing, 0);
-      expect(theme.textTheme.labelSmall?.letterSpacing, 0);
+      expect(theme.textTheme.bodyMedium?.fontFamily, 'Geist');
+      // Display carries tight (negative) tracking; labels carry wide tracking.
+      expect(theme.textTheme.displayLarge?.letterSpacing, lessThan(0));
+      expect(theme.textTheme.labelSmall?.letterSpacing, greaterThan(0));
       expect(
         theme.extension<PickforgeMonoTheme>()?.fontFamily,
-        'JetBrainsMono',
+        'GeistMono',
       );
     });
   });

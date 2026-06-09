@@ -23,6 +23,8 @@ import 'package:pickforge/features/forge/cubit/forge_state.dart';
 import 'package:pickforge/features/forge/widgets/agent_picker.dart';
 import 'package:pickforge/features/forge/widgets/skill_picker.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class ForgePanel extends StatelessWidget {
@@ -125,15 +127,18 @@ class _ForgePanelBody extends StatelessWidget {
             },
           },
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.sm,
+              vertical: PickforgeSpacing.xs,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
+                    spacing: PickforgeSpacing.sm,
+                    runSpacing: PickforgeSpacing.xs,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       SkillPicker(
@@ -164,7 +169,7 @@ class _ForgePanelBody extends StatelessWidget {
                                     ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: PickforgeSpacing.sm),
                       ],
                       OutlinedButton.icon(
                         style: _forgeCompactOutlinedStyle(context),
@@ -199,13 +204,6 @@ class _ForgePanelBody extends StatelessWidget {
                         icon: const Icon(Icons.article_outlined, size: 16),
                         label: Text(l10n.forgePreviewButton),
                       ),
-                      const SizedBox(width: PickforgeSpacing.sm),
-                      FilledButton.icon(
-                        style: _forgeCompactFilledStyle(),
-                        onPressed: forgeAction,
-                        icon: const Icon(Icons.auto_fix_high, size: 16),
-                        label: Text(l10n.forgeItButton),
-                      ),
                       if (state.lastError case final error?)
                         ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 240),
@@ -223,6 +221,13 @@ class _ForgePanelBody extends StatelessWidget {
                         ),
                     ],
                   ),
+                ),
+                const SizedBox(height: PickforgeSpacing.sm),
+                EmberButton(
+                  label: l10n.forgeItButton,
+                  icon: Icons.auto_fix_high,
+                  expand: true,
+                  onPressed: forgeAction,
                 ),
                 if (selection != null ||
                     attachments.isNotEmpty ||
@@ -274,18 +279,9 @@ class _ForgeSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
+    return HairlinePanel(
       padding: const EdgeInsets.all(PickforgeSpacing.sm),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.54),
-        ),
-        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
-      ),
-      child: child,
+      child: SizedBox(width: double.infinity, child: child),
     );
   }
 }
@@ -431,19 +427,6 @@ ButtonStyle _forgeCompactOutlinedStyle(
       ),
     );
 
-ButtonStyle _forgeCompactFilledStyle() => FilledButton.styleFrom(
-      visualDensity: VisualDensity.compact,
-      minimumSize: const Size(0, 32),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      padding: const EdgeInsets.symmetric(
-        horizontal: PickforgeSpacing.md,
-        vertical: PickforgeSpacing.sm,
-      ),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
-      ),
-    );
-
 class _GitChangesCard extends StatefulWidget {
   const _GitChangesCard({required this.projectRoot});
 
@@ -481,10 +464,7 @@ class _GitChangesCardState extends State<_GitChangesCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                l10n.forgeProjectChangesTitle,
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
+              MonoEyebrow(l10n.forgeProjectChangesTitle),
               const SizedBox(height: PickforgeSpacing.sm),
               Wrap(
                 spacing: PickforgeSpacing.xs,
@@ -636,20 +616,15 @@ class _HotReloadResultView extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final accent =
+        review.success ? PickforgeColors.connected : PickforgeColors.error;
     final hint = review.hint?.trim();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(PickforgeSpacing.sm),
       decoration: BoxDecoration(
-        color: review.success
-            ? colorScheme.primaryContainer.withValues(alpha: 0.24)
-            : colorScheme.errorContainer.withValues(alpha: 0.28),
-        border: Border.all(
-          color: review.success
-              ? colorScheme.primary.withValues(alpha: 0.28)
-              : colorScheme.error.withValues(alpha: 0.34),
-        ),
+        color: accent.withValues(alpha: 0.12),
+        border: Border.all(color: accent.withValues(alpha: 0.32)),
         borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
       ),
       child: Column(
@@ -659,7 +634,7 @@ class _HotReloadResultView extends StatelessWidget {
             review.title(l10n),
             style: theme.textTheme.labelMedium?.copyWith(
               fontWeight: FontWeight.w700,
-              color: review.success ? colorScheme.primary : colorScheme.error,
+              color: accent,
             ),
           ),
           if (hint != null && hint.isNotEmpty) ...[
@@ -689,7 +664,6 @@ class _ValidatorResultView extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     if (running) {
       return Row(
         children: [
@@ -704,6 +678,8 @@ class _ValidatorResultView extends StatelessWidget {
     }
     final result = this.result;
     if (result == null) return const SizedBox.shrink();
+    final accent =
+        result.passed ? PickforgeColors.connected : PickforgeColors.error;
     final output = _truncateValidatorOutput(result.combinedOutput);
     final statusText = result.passed
         ? l10n.forgeValidatorPassed
@@ -712,14 +688,8 @@ class _ValidatorResultView extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(PickforgeSpacing.sm),
       decoration: BoxDecoration(
-        color: result.passed
-            ? colorScheme.primaryContainer.withValues(alpha: 0.24)
-            : colorScheme.errorContainer.withValues(alpha: 0.28),
-        border: Border.all(
-          color: result.passed
-              ? colorScheme.primary.withValues(alpha: 0.28)
-              : colorScheme.error.withValues(alpha: 0.34),
-        ),
+        color: accent.withValues(alpha: 0.12),
+        border: Border.all(color: accent.withValues(alpha: 0.32)),
         borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
       ),
       child: Column(
@@ -729,7 +699,7 @@ class _ValidatorResultView extends StatelessWidget {
             statusText,
             style: theme.textTheme.labelMedium?.copyWith(
               fontWeight: FontWeight.w700,
-              color: result.passed ? colorScheme.primary : colorScheme.error,
+              color: accent,
             ),
           ),
           if (output.isNotEmpty) ...[
@@ -806,13 +776,10 @@ class _ContextTray extends StatelessWidget {
       alignment: Alignment.centerLeft,
       child: Wrap(
         spacing: 6,
-        runSpacing: 4,
+        runSpacing: PickforgeSpacing.xs,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Text(
-            l10n.forgeContextAttachments,
-            style: Theme.of(context).textTheme.labelSmall,
-          ),
+          MonoEyebrow(l10n.forgeContextAttachments),
           if (selection case final selected?)
             _ContextTag(
               icon: Icons.widgets_outlined,

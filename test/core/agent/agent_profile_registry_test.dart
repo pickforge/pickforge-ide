@@ -33,7 +33,7 @@ class _FakeProfile extends AgentProfile {
       '';
 
   @override
-  PtyInvocation ptyArgsFor({String? resumeSessionId}) =>
+  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model}) =>
       const PtyInvocation(executable: 'fake', arguments: <String>[]);
 }
 

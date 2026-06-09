@@ -2,30 +2,34 @@ import 'package:flutter/widgets.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:xterm/xterm.dart';
 
+/// The PickForge brand terminal theme — agent output on the cold canvas.
+/// Background/foreground use the brand surface + text; the cursor is ember,
+/// and the 16-color ANSI palette maps to the brand semantic colors so Claude
+/// and Codex render vividly and legibly while feeling native to PickForge.
 const TerminalTheme _pickforgeEmber = TerminalTheme(
-  cursor: Color(0xFFE8B468),
-  selection: Color(0x55E8B468),
-  foreground: Color(0xFFE6E1DC),
-  background: Color(0xFF15110E),
-  black: Color(0xFF1A1612),
-  red: Color(0xFFE05A4F),
-  green: Color(0xFF8FB573),
-  yellow: Color(0xFFE8B468),
-  blue: Color(0xFF7AA2D6),
-  magenta: Color(0xFFC586C0),
-  cyan: Color(0xFF6FB9C9),
-  white: Color(0xFFD8D2CB),
-  brightBlack: Color(0xFF6E6259),
-  brightRed: Color(0xFFFF7B6B),
-  brightGreen: Color(0xFFAFD78F),
+  cursor: Color(0xFFFF7A1A), // ember
+  selection: Color(0x33FF7A1A), // ember 20%
+  foreground: Color(0xFFF2F2F3), // brand text
+  background: Color(0xFF0A0A0B), // brand surface
+  black: Color(0xFF17171A),
+  red: Color(0xFFFF6B5C), // brand error
+  green: Color(0xFF3DD68C), // brand connected
+  yellow: Color(0xFFF2B53A), // brand warning
+  blue: Color(0xFF7AA2FF), // brand info
+  magenta: Color(0xFFC59CFF),
+  cyan: Color(0xFF5BD0D6),
+  white: Color(0xFFD8D8DC),
+  brightBlack: Color(0xFF6E6E75), // muted
+  brightRed: Color(0xFFFF8A7E),
+  brightGreen: Color(0xFF6FE3AE),
   brightYellow: Color(0xFFFFD08A),
-  brightBlue: Color(0xFF9BBEE8),
-  brightMagenta: Color(0xFFE0AEDB),
-  brightCyan: Color(0xFF8DD3E3),
+  brightBlue: Color(0xFF9DB9FF),
+  brightMagenta: Color(0xFFD6B8FF),
+  brightCyan: Color(0xFF8AE0E6),
   brightWhite: Color(0xFFFFFFFF),
-  searchHitBackground: Color(0xFFFFFF2B),
-  searchHitBackgroundCurrent: Color(0xFF31FF26),
-  searchHitForeground: Color(0xFF000000),
+  searchHitBackground: Color(0x66FF7A1A),
+  searchHitBackgroundCurrent: Color(0xFFFF7A1A),
+  searchHitForeground: Color(0xFF0A0A0B),
 );
 
 const TerminalTheme _draculaDark = TerminalTheme(

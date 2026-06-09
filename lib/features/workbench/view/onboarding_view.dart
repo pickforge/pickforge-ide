@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
@@ -14,6 +15,10 @@ import 'package:pickforge/core/settings/onboarding_preferences.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
+import 'package:pickforge/shared/motion/pickforge_motion.dart';
+import 'package:pickforge/shared/motion/reduce_motion.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
 class OnboardingView extends StatefulWidget {
@@ -105,79 +110,129 @@ class _OnboardingViewState extends State<OnboardingView> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(PickforgeSpacing.xxl),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.folder_open, size: 64),
-                const SizedBox(height: PickforgeSpacing.xl),
-                Text(
-                  l10n.onboardingHeading,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: PickforgeSpacing.xl),
-                FilledButton.icon(
-                  onPressed: _onPick,
-                  icon: const Icon(Icons.add),
-                  label: Text(l10n.workbenchPickFolder),
-                ),
-                const SizedBox(height: PickforgeSpacing.md),
-                OutlinedButton.icon(
-                  onPressed: () => setState(() => _demoMode = !_demoMode),
-                  icon: const Icon(Icons.smart_toy_outlined),
-                  label: Text(l10n.onboardingDemoButton),
-                ),
-                const SizedBox(height: PickforgeSpacing.md),
-                OutlinedButton.icon(
-                  onPressed: () => unawaited(_openSampleProject()),
-                  icon: const Icon(Icons.folder_special_outlined),
-                  label: Text(l10n.onboardingOpenSampleApp),
-                ),
-                const SizedBox(height: PickforgeSpacing.md),
-                OutlinedButton.icon(
-                  style: _onboardingCompactButtonStyle(),
-                  onPressed: () => unawaited(_dismissOnboarding()),
-                  icon: const Icon(Icons.close),
-                  label: Text(l10n.onboardingDismissButton),
-                ),
-                const SizedBox(height: PickforgeSpacing.xl),
-                _FirstRunChecklist(l10n: l10n),
-                if (_diagnosticsServiceOrNull() case final diagnostics?) ...[
-                  const SizedBox(height: PickforgeSpacing.xl),
-                  _SetupChecksCard(
-                    key: ValueKey(_setupChecksKey),
-                    diagnostics: diagnostics,
-                    onRetry: () => setState(() => _setupChecksKey++),
-                    onOpenSettings: widget.openSettings ??
-                        () => context.go(AppRoutes.settings),
-                  ),
-                ],
-                if (_demoMode) ...[
-                  const SizedBox(height: PickforgeSpacing.xl),
-                  _DemoModeCard(
-                    l10n: l10n,
-                    onOpenDemo: _openDemoWorkspace,
-                  ),
-                ],
-                if (_error != null) ...[
-                  const SizedBox(height: PickforgeSpacing.lg),
-                  Text(
-                    _error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ],
+    final reduce = ReduceMotion.of(context);
+    final textTheme = Theme.of(context).textTheme;
+
+    Widget hero = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // The forge mark — an ember bolt framed by the selection bracket.
+        SelectionBracket(
+          inset: 9,
+          armLength: 16,
+          child: Container(
+            padding: const EdgeInsets.all(PickforgeSpacing.lg + 2),
+            decoration: BoxDecoration(
+              color: PickforgeColors.surface1,
+              borderRadius: BorderRadius.circular(PickforgeSpacing.radiusLg),
+              border: Border.all(color: PickforgeColors.hairlineStrong),
+            ),
+            child: const Icon(
+              Icons.bolt,
+              size: 40,
+              color: PickforgeColors.ember,
             ),
           ),
         ),
+        const SizedBox(height: PickforgeSpacing.xl),
+        const MonoEyebrow('Widget-level AI context', tick: true),
+        const SizedBox(height: PickforgeSpacing.md),
+        Text(
+          l10n.onboardingHeading,
+          style: textTheme.displaySmall,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: PickforgeSpacing.xl),
+        EmberButton(
+          label: l10n.workbenchPickFolder,
+          icon: Icons.add,
+          onPressed: _onPick,
+        ),
+        const SizedBox(height: PickforgeSpacing.lg),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: PickforgeSpacing.sm,
+          runSpacing: PickforgeSpacing.sm,
+          children: [
+            OutlinedButton.icon(
+              onPressed: () => setState(() => _demoMode = !_demoMode),
+              icon: const Icon(Icons.smart_toy_outlined, size: 16),
+              label: Text(l10n.onboardingDemoButton),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => unawaited(_openSampleProject()),
+              icon: const Icon(Icons.folder_special_outlined, size: 16),
+              label: Text(l10n.onboardingOpenSampleApp),
+            ),
+            TextButton.icon(
+              onPressed: () => unawaited(_dismissOnboarding()),
+              icon: const Icon(Icons.close, size: 16),
+              label: Text(l10n.onboardingDismissButton),
+            ),
+          ],
+        ),
+        const SizedBox(height: PickforgeSpacing.xl),
+        _FirstRunChecklist(l10n: l10n),
+        if (_diagnosticsServiceOrNull() case final diagnostics?) ...[
+          const SizedBox(height: PickforgeSpacing.lg),
+          _SetupChecksCard(
+            key: ValueKey(_setupChecksKey),
+            diagnostics: diagnostics,
+            onRetry: () => setState(() => _setupChecksKey++),
+            onOpenSettings:
+                widget.openSettings ?? () => context.go(AppRoutes.settings),
+          ),
+        ],
+        if (_demoMode) ...[
+          const SizedBox(height: PickforgeSpacing.lg),
+          _DemoModeCard(l10n: l10n, onOpenDemo: _openDemoWorkspace),
+        ],
+        if (_error != null) ...[
+          const SizedBox(height: PickforgeSpacing.lg),
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ],
+    );
+
+    if (!reduce) {
+      hero = hero
+          .animate()
+          .fadeIn(
+            duration: PickforgeMotion.reveal,
+            curve: PickforgeMotion.forge,
+          )
+          .slideY(
+            begin: 0.04,
+            end: 0,
+            duration: PickforgeMotion.reveal,
+            curve: PickforgeMotion.forge,
+          );
+    }
+
+    return Scaffold(
+      body: Stack(
+        children: [
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: BlueprintGrid(halo: true),
+            ),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(PickforgeSpacing.xxl),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: hero,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -205,22 +260,15 @@ class _OnboardingPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 460),
-      child: Container(
+      constraints: const BoxConstraints(maxWidth: 480),
+      child: SizedBox(
         width: double.infinity,
-        padding: const EdgeInsets.all(PickforgeSpacing.lg),
-        decoration: BoxDecoration(
-          color: background ??
-              colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
-          border: Border.all(
-            color: borderColor ??
-                colorScheme.outlineVariant.withValues(alpha: 0.52),
-          ),
-          borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+        child: HairlinePanel(
+          color: background ?? PickforgeColors.surface1,
+          borderColor: borderColor,
+          child: child,
         ),
-        child: child,
       ),
     );
   }
@@ -284,6 +332,8 @@ class _FirstRunChecklist extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const MonoEyebrow('Get started', tick: true),
+          const SizedBox(height: PickforgeSpacing.sm),
           Text(
             l10n.onboardingChecklistTitle,
             style: Theme.of(context).textTheme.titleMedium,
@@ -296,7 +346,11 @@ class _FirstRunChecklist extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle_outline, size: 16),
+                  const Icon(
+                    Icons.check_circle_outline,
+                    size: 15,
+                    color: PickforgeColors.ember,
+                  ),
                   const SizedBox(width: PickforgeSpacing.sm),
                   Expanded(child: Text(item)),
                 ],

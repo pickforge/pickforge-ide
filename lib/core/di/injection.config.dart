@@ -12,6 +12,7 @@
 import 'package:get_it/get_it.dart' as _i174;
 import 'package:injectable/injectable.dart' as _i526;
 import 'package:pickforge/core/agent/agent_launcher.dart' as _i683;
+import 'package:pickforge/core/agent/agent_model_settings.dart' as _i413;
 import 'package:pickforge/core/agent/agent_profile_registry.dart' as _i360;
 import 'package:pickforge/core/agent/headless/chat_prompt_dispatcher.dart'
     as _i364;
@@ -164,6 +165,8 @@ extension GetItInjectableX on _i174.GetIt {
     gh.factory<_i638.WorkbenchLayoutCubit>(
         () => _i638.WorkbenchLayoutCubit(gh<_i459.ProjectSettingsDao>()));
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
+    gh.lazySingleton<_i413.AgentModelSettingsRepository>(() =>
+        _i413.AgentModelSettingsRepository(gh<_i460.SharedPreferences>()));
     gh.lazySingleton<_i1048.OnboardingPreferences>(
         () => _i1048.OnboardingPreferences(gh<_i460.SharedPreferences>()));
     gh.lazySingleton<_i141.WorkspaceSidebarSettingsRepository>(() =>

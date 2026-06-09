@@ -16,6 +16,7 @@ import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/view/inspector_panel.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
 
 class _MockCubit extends Mock implements WidgetPickerCubit {}
 
@@ -170,7 +171,7 @@ void main() {
     expect(find.text('Recent rebuilds'), findsOneWidget);
     expect(find.text('x4'), findsOneWidget);
     expect(find.text('Forge it'), findsOneWidget);
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    final button = tester.widget<EmberButton>(find.byType(EmberButton));
     expect(button.onPressed, isNotNull);
   });
 
@@ -227,7 +228,7 @@ void main() {
     );
 
     expect(find.text('Forge it'), findsOneWidget);
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    final button = tester.widget<EmberButton>(find.byType(EmberButton));
     expect(button.onPressed, isNull);
   });
 

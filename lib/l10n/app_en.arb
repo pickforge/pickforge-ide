@@ -271,6 +271,7 @@
   "settingsTitle": "Settings",
   "settingsNoProject": "Select a project to configure project settings.",
   "settingsDefaultAgent": "Default agent",
+  "settingsAgentModels": "Agent models",
   "settingsEmbeddedTerminal": "Embedded Terminal",
   "settingsProjectValidator": "Project validator",
   "settingsValidatorCommand": "Command",

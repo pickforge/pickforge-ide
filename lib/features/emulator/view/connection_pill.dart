@@ -12,8 +12,19 @@ import 'package:pickforge/features/emulator/view/device_picker_menu.dart';
 import 'package:pickforge/features/emulator/view/manual_url_form.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
+
+/// Maps a device/session state to its brand status intent (drives dot color).
+StatusIntent _intent(EmulatorSessionState state) => switch (state) {
+      Running() => StatusIntent.live,
+      Idle() => StatusIntent.connected,
+      Booting() || Reconnecting() || RecoveryPending() => StatusIntent.warning,
+      EmulatorError() => StatusIntent.error,
+      Cold() || NoDevicePicked() => StatusIntent.neutral,
+    };
 
 class ConnectionPill extends StatelessWidget {
   const ConnectionPill({super.key});
@@ -77,15 +88,31 @@ class _PillContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    return Padding(
-      padding: const EdgeInsets.all(12),
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: PickforgeSpacing.md,
+        vertical: PickforgeSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: PickforgeColors.surface1,
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusPill),
+        border: Border.all(color: PickforgeColors.hairline),
+      ),
       child: Row(
         children: [
           _StatusDot(state: state),
-          const SizedBox(width: 8),
-          Expanded(child: Text(_label(state, l10n))),
+          const SizedBox(width: PickforgeSpacing.sm),
+          Expanded(
+            child: Text(
+              _label(state, l10n),
+              style: Theme.of(context)
+                  .textTheme
+                  .labelMedium
+                  ?.copyWith(color: PickforgeColors.textHi),
+            ),
+          ),
           if (cubit != null) _PrimaryAction(state: state, cubit: cubit!),
-          const SizedBox(width: 4),
+          const SizedBox(width: PickforgeSpacing.xs),
           if (cubit != null) _Menu(state: state, cubit: cubit!),
         ],
       ),
@@ -191,8 +218,9 @@ class _StatusDotState extends State<_StatusDot>
 
   @override
   Widget build(BuildContext context) {
-    const dot = Icon(Icons.circle, size: 10);
-    if (ReduceMotion.of(context)) return dot;
+    final color = _intent(widget.state).color;
+    final dot = Icon(Icons.circle, size: 10, color: color);
+    if (ReduceMotion.of(context)) return EmberDot(color: color, size: 10);
     return switch (widget.state) {
       Booting() => ScaleTransition(scale: _scale, child: dot),
       Running(:final lastReloadAt) when lastReloadAt != null => ScaleTransition(
@@ -201,7 +229,7 @@ class _StatusDotState extends State<_StatusDot>
           child: dot,
         ),
       Reconnecting() => RotationTransition(turns: _controller, child: dot),
-      _ => dot,
+      _ => EmberDot(color: color, size: 10),
     };
   }
 
@@ -222,7 +250,11 @@ class _Menu extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     return PopupMenuButton<_MenuAction>(
       key: const Key('pill-menu'),
-      icon: const Icon(Icons.expand_more, size: 18),
+      icon: const Icon(
+        Icons.expand_more,
+        size: 18,
+        color: PickforgeColors.textMed,
+      ),
       onSelected: (action) => _onSelected(context, action),
       itemBuilder: (context) => switch (state) {
         NoDevicePicked() => [
@@ -536,7 +568,6 @@ class _PillActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
     );
@@ -559,7 +590,7 @@ class _PillActionButton extends StatelessWidget {
               horizontal: PickforgeSpacing.sm,
               vertical: PickforgeSpacing.xs,
             ),
-            foregroundColor: danger ? colorScheme.error : null,
+            foregroundColor: danger ? PickforgeColors.error : null,
             shape: shape,
           );
     final child = Icon(icon, size: 15);

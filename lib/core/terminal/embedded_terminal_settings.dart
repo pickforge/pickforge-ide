@@ -12,9 +12,9 @@ class EmbeddedTerminalSettings extends Equatable {
   });
 
   static const defaults = EmbeddedTerminalSettings(
-    fontFamily: 'JetBrainsMono Nerd Font',
+    fontFamily: 'GeistMono',
     fontSize: 14,
-    themeId: TerminalThemeId.ghosttyDark,
+    themeId: TerminalThemeId.pickforgeEmber,
   );
 
   final String fontFamily;

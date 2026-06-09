@@ -27,6 +27,38 @@ Pickforge is a local Flutter desktop app for selecting widgets in a running Flut
 - Use `package:pickforge/...` imports for project code.
 - Prefer repository/service seams under `lib/core/` instead of embedding platform, process, database, or VM-service logic in widgets.
 
+## Design system & branding
+
+PickForge has a first-class design system — read
+[`docs/design-system/`](docs/design-system/README.md) before any UI work, and
+keep new UI consistent with it. It implements the brand defined in
+[`../branding-visual/`](../branding-visual).
+
+- **Tokens only — never raw values.** Use `PickforgeColors`, `PickforgeSpacing`,
+  `PickforgeElevation` (`lib/shared/theme/`) and `PickforgeMotion`
+  (`lib/shared/motion/`). No raw hex, font sizes, radii, or `Duration`s in
+  widgets. Type comes from `Theme.of(context).textTheme.*` (Geist) or
+  `PickforgeText.*` (Geist Mono); don't set `fontFamily` by hand.
+- **One ember per composition.** `PickforgeColors.ember` is the only accent —
+  reserve it for the single most important element (primary CTA, active/selected,
+  live status). Everything else is surface / text / hairline / semantic status.
+- **Compose with the signature components** in `lib/shared/components/`
+  (`MonoEyebrow`, `EmberButton`, `StatusPill`, `EmberDot`, `SelectionBracket`,
+  `HairlinePanel`, `BlueprintGrid`) before hand-rolling UI. Section labels are
+  `MonoEyebrow`.
+- **Motion uses one easing** (`PickforgeMotion.forge`) and **every animation
+  honors reduced motion** via `ReduceMotion` (`lib/shared/motion/reduce_motion.dart`).
+- **The theme is the single source of truth** (`PickforgeTheme` in `main.dart`),
+  dark-first; it fully populates the M3 `ColorScheme` so Material defaults never
+  leak. Don't reintroduce raw `ColorScheme`/`TextStyle` defaults.
+- **Embedded terminal:** Claude/Codex must render with correct colors and no
+  stray underlines — see [`docs/design-system/terminal.md`](docs/design-system/terminal.md).
+  Default font `GeistMono`, theme `pickforgeEmber`.
+- **Verify visuals via goldens.** After UI changes run
+  `fvm flutter test test/goldens/ --update-goldens`, then review the PNGs under
+  `test/goldens/baselines/` (they cover every key screen + a component gallery +
+  the terminal) before committing.
+
 ## State, DI, and routing
 
 - Use `flutter_bloc`/Cubit for feature state.

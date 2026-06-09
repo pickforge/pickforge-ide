@@ -41,6 +41,22 @@ void main() {
       expect(inv.arguments, ['--resume', 'sess-42']);
     });
 
+    test('ptyArgsFor includes --model when given', () {
+      final inv = profile.ptyArgsFor(model: 'claude-haiku-4-5');
+      expect(inv.arguments, ['--model', 'claude-haiku-4-5']);
+    });
+
+    test('ptyArgsFor combines resume and model', () {
+      final inv = profile.ptyArgsFor(
+        resumeSessionId: 'sess-42',
+        model: 'claude-haiku-4-5',
+      );
+      expect(
+        inv.arguments,
+        ['--resume', 'sess-42', '--model', 'claude-haiku-4-5'],
+      );
+    });
+
     test('buildInitialPrompt with all files', () {
       final prompt = profile.buildInitialPrompt(
         pickforgeDirRelative: '.pickforge',

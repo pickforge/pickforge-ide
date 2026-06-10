@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:equatable/equatable.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/agent/context_redactor.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 
@@ -452,7 +453,9 @@ class DiagnosticsService {
     if (activeProjectRoot == null || activeProjectRoot.trim().isEmpty) {
       return 'none';
     }
-    return activeProjectRoot.split(Platform.pathSeparator).last;
+    // basename handles both / and \ so labels stay correct for project
+    // roots recorded on another host.
+    return p.basename(activeProjectRoot);
   }
 
   String _availability(bool value) => value ? 'available' : 'missing';

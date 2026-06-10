@@ -12,6 +12,7 @@ void main() {
         'PICKFORGE_INHERITED_ENV_ONLY': '1',
         'SHELL': '/bin/zsh',
       },
+      isWindows: false,
       fileExists: (_) => true,
       shellRunner: (_, __) async {
         shellWasRun = true;
@@ -31,6 +32,7 @@ void main() {
         'PATH': '/tmp/bin',
         'SHELL': '/bin/zsh',
       },
+      isWindows: false,
       fileExists: (_) => true,
       shellRunner: (_, __) async {
         return ProcessResult(

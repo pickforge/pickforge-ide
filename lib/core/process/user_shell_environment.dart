@@ -15,9 +15,11 @@ class UserShellEnvironment {
     Future<ProcessResult> Function(String executable, List<String> arguments)?
         shellRunner,
     bool Function(String path)? fileExists,
+    bool? isWindows,
   })  : _environment = environment,
         _shellRunner = shellRunner,
-        _fileExists = fileExists;
+        _fileExists = fileExists,
+        _isWindows = isWindows ?? Platform.isWindows;
 
   static final UserShellEnvironment instance = UserShellEnvironment();
 
@@ -25,6 +27,7 @@ class UserShellEnvironment {
   final Future<ProcessResult> Function(String executable, List<String> args)?
       _shellRunner;
   final bool Function(String path)? _fileExists;
+  final bool _isWindows;
 
   Future<Map<String, String>>? _pending;
   Map<String, String>? _cache;
@@ -36,7 +39,7 @@ class UserShellEnvironment {
 
   Future<Map<String, String>> _resolve() async {
     final base = Map<String, String>.from(_environment ?? Platform.environment);
-    if (Platform.isWindows || base['PICKFORGE_INHERITED_ENV_ONLY'] == '1') {
+    if (_isWindows || base['PICKFORGE_INHERITED_ENV_ONLY'] == '1') {
       _cache = base;
       return base;
     }

@@ -26,7 +26,15 @@ void main() {
     );
   });
 
-  test('hotReload route delegates to bound RunSession', () async {
+  // The IPC transport binds Unix domain sockets (emulator_ipc_server.dart),
+  // which dart:io does not support on Windows — connect never completes and
+  // the suite hangs until the CI job timeout.
+  final skipOnWindows = Platform.isWindows
+      ? 'Emulator IPC uses Unix domain sockets; unsupported on Windows'
+      : false;
+
+  test('hotReload route delegates to bound RunSession', skip: skipOnWindows,
+      () async {
     final endpoint = await _createEndpoint();
     final server = EmulatorIpcServer(socketPath: endpoint.path);
     final session = _Session();
@@ -49,7 +57,8 @@ void main() {
     verify(session.hotReload).called(1);
   });
 
-  test('hot_reload route delegates to bound RunSession', () async {
+  test('hot_reload route delegates to bound RunSession', skip: skipOnWindows,
+      () async {
     final endpoint = await _createEndpoint();
     final server = EmulatorIpcServer(socketPath: endpoint.path);
     final session = _Session();
@@ -72,7 +81,8 @@ void main() {
     verify(session.hotReload).called(1);
   });
 
-  test('MCP-named project routes return bound provider data', () async {
+  test('MCP-named project routes return bound provider data',
+      skip: skipOnWindows, () async {
     final endpoint = await _createEndpoint();
     final server = EmulatorIpcServer(socketPath: endpoint.path);
     await server.start();
@@ -144,7 +154,8 @@ void main() {
     });
   });
 
-  test('returns error when no run session bound', () async {
+  test('returns error when no run session bound', skip: skipOnWindows,
+      () async {
     final endpoint = await _createEndpoint();
     final server = EmulatorIpcServer(socketPath: endpoint.path);
 

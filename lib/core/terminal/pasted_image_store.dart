@@ -26,7 +26,9 @@ class PastedImageStore {
       suffix++;
     }
     await file.writeAsBytes(bytes);
-    return p.join('.pickforge', 'pastes', p.basename(file.path));
+    // POSIX separators on purpose: the path is typed into the terminal as
+    // prompt text, and forward slashes resolve on every supported host.
+    return p.posix.join('.pickforge', 'pastes', p.basename(file.path));
   }
 
   Future<void> _prune(Directory dir) async {

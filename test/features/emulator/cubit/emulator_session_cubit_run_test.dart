@@ -1199,7 +1199,13 @@ void main() {
   test('successful reload captures after screenshot without overwriting before',
       () async {
     final project = await Directory.systemTemp.createTemp('pf-project-');
-    addTearDown(() => project.delete(recursive: true));
+    addTearDown(() async {
+      try {
+        await project.delete(recursive: true);
+      } on FileSystemException {
+        // Windows can keep handles open briefly; cleanup is best-effort.
+      }
+    });
     final screenshot = _Screenshot();
 
     when(() => settings.getRunArgs(project.path))
@@ -1250,7 +1256,16 @@ void main() {
           durationMs: 120,
         ),
       );
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    // The capture runs asynchronously after the reload event; wait for the
+    // call instead of racing it with a fixed delay (slow CI runners lose).
+    await untilCalled(
+      () => screenshot.capture(
+        outputDir: any(named: 'outputDir'),
+        serial: any(named: 'serial'),
+        platform: any(named: 'platform'),
+        outputName: any(named: 'outputName'),
+      ),
+    );
 
     verify(
       () => screenshot.capture(

@@ -90,10 +90,13 @@ void main() {
     ).captured;
     expect(
       captured[0],
+      // The launcher resolves a real SDK when one is installed (path casing
+      // varies by host: ~/Android/Sdk, ~/Library/Android/sdk, ...), and falls
+      // back to `emulator` on PATH otherwise.
       anyOf(
         'emulator',
-        endsWith('/Android/Sdk/emulator/emulator'),
-        endsWith(r'\Android\Sdk\emulator\emulator.exe'),
+        endsWith('/emulator/emulator'),
+        endsWith(r'\emulator\emulator.exe'),
       ),
     );
     expect(captured[1], [

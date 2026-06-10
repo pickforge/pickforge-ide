@@ -31,7 +31,13 @@ case "$mode" in
     ;;
 esac
 
-fvm flutter build "$target" "--$mode"
+# Git Bash on Windows does not resolve `fvm` to `fvm.bat` (no PATHEXT).
+FVM=fvm
+if ! command -v "$FVM" >/dev/null 2>&1 && command -v fvm.bat >/dev/null 2>&1; then
+  FVM=fvm.bat
+fi
+
+"$FVM" flutter build "$target" "--$mode"
 
 echo "Desktop build smoke passed."
 echo "Target: $target"

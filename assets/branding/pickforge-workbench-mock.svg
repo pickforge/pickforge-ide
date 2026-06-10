@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" fill="none" role="img" aria-label="PickForge workbench mock">
+  <title>PICKFORGE · WORKBENCH</title>
+  <defs>
+    <clipPath id="frame"><rect width="1200" height="720" rx="14"/></clipPath>
+  </defs>
+
+  <!-- window frame -->
+  <rect width="1200" height="720" rx="14" fill="#0A0A0B"/>
+  <rect x="0.5" y="0.5" width="1199" height="719" rx="13.5" stroke="#F2F2F3" stroke-opacity="0.14"/>
+
+  <g clip-path="url(#frame)">
+    <!-- chrome -->
+    <circle cx="28" cy="24" r="5" fill="#F2F2F3" fill-opacity="0.15"/>
+    <circle cx="46" cy="24" r="5" fill="#F2F2F3" fill-opacity="0.15"/>
+    <circle cx="64" cy="24" r="5" fill="#F2F2F3" fill-opacity="0.15"/>
+    <text x="92" y="28" font-family="Geist Mono, JetBrains Mono, monospace" font-size="11" letter-spacing="2" fill="#6E6E75">PICKFORGE · WORKBENCH</text>
+    <g>
+      <rect x="1008" y="12" width="168" height="24" rx="12" fill="#FF7A1A" fill-opacity="0.05" stroke="#FF7A1A" stroke-opacity="0.3"/>
+      <circle cx="1024" cy="24" r="3" fill="#FF7A1A"/>
+      <text x="1034" y="28" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#FF7A1A">WIDGET PICKED</text>
+    </g>
+    <line x1="0" y1="48" x2="1200" y2="48" stroke="#F2F2F3" stroke-opacity="0.08"/>
+
+    <!-- ===== emulator pane ===== -->
+    <rect x="24" y="72" width="400" height="360" rx="10" fill="#0F0F11" stroke="#F2F2F3" stroke-opacity="0.08"/>
+    <text x="44" y="100" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">EMULATOR · ANDROID</text>
+    <text x="404" y="100" text-anchor="end" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75" fill-opacity="0.7">VM SERVICE CONNECTED</text>
+    <!-- phone -->
+    <rect x="144" y="114" width="160" height="292" rx="16" fill="#0A0A0B" stroke="#F2F2F3" stroke-opacity="0.2" stroke-width="1.5"/>
+    <rect x="156" y="130" width="136" height="260" rx="6" fill="#141417"/>
+    <!-- app bar -->
+    <rect x="164" y="140" width="120" height="22" rx="4" fill="#F2F2F3" fill-opacity="0.07"/>
+    <!-- body rows -->
+    <rect x="164" y="172" width="120" height="10" rx="3" fill="#F2F2F3" fill-opacity="0.16"/>
+    <rect x="164" y="190" width="98" height="8" rx="3" fill="#F2F2F3" fill-opacity="0.08"/>
+    <rect x="164" y="204" width="108" height="8" rx="3" fill="#F2F2F3" fill-opacity="0.08"/>
+    <!-- picked widget: button with ember selection bracket -->
+    <rect x="176" y="238" width="96" height="34" rx="8" fill="#F2F2F3" fill-opacity="0.08" stroke="#F2F2F3" stroke-opacity="0.14"/>
+    <rect x="196" y="252" width="56" height="7" rx="3" fill="#F2F2F3" fill-opacity="0.25"/>
+    <g stroke="#FF7A1A" stroke-width="2" stroke-linecap="square" fill="none">
+      <path d="M168 242 V230 H180"/>
+      <path d="M168 268 V280 H180"/>
+      <path d="M268 230 H280 V242"/>
+      <path d="M268 280 H280 V268"/>
+    </g>
+    <!-- more rows -->
+    <rect x="164" y="296" width="112" height="8" rx="3" fill="#F2F2F3" fill-opacity="0.08"/>
+    <rect x="164" y="312" width="90" height="8" rx="3" fill="#F2F2F3" fill-opacity="0.08"/>
+    <rect x="208" y="376" width="32" height="4" rx="2" fill="#F2F2F3" fill-opacity="0.2"/>
+    <text x="224" y="424" text-anchor="middle" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6E6E75" fill-opacity="0.7">picked · ElevatedButton</text>
+
+    <!-- ===== widget context pane ===== -->
+    <rect x="448" y="72" width="360" height="360" rx="10" fill="#0F0F11" stroke="#F2F2F3" stroke-opacity="0.08"/>
+    <text x="468" y="100" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">WIDGET CONTEXT</text>
+    <!-- ancestor chain -->
+    <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="12">
+      <text x="468" y="132" fill="#F2F2F3" fill-opacity="0.45">MaterialApp</text>
+      <text x="484" y="152" fill="#F2F2F3" fill-opacity="0.55">└ Scaffold</text>
+      <text x="500" y="172" fill="#F2F2F3" fill-opacity="0.65">└ Column</text>
+      <text x="516" y="192" fill="#F2F2F3" fill-opacity="0.8">└ Padding</text>
+      <text x="532" y="212" fill="#FF7A1A">└ ElevatedButton</text>
+    </g>
+    <line x1="468" y1="228" x2="788" y2="228" stroke="#F2F2F3" stroke-opacity="0.08"/>
+    <!-- source snippet -->
+    <text x="468" y="250" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">SOURCE · lib/checkout_card.dart:48</text>
+    <rect x="468" y="262" width="320" height="104" rx="6" fill="#0A0A0B" fill-opacity="0.6" stroke="#F2F2F3" stroke-opacity="0.05"/>
+    <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="11.5" fill="#F2F2F3">
+      <text x="482" y="284" fill-opacity="0.8">ElevatedButton(</text>
+      <text x="498" y="302" fill-opacity="0.6">onPressed: _submit,</text>
+      <text x="498" y="320" fill-opacity="0.6">child: Text('Pay now'),</text>
+      <text x="482" y="338" fill-opacity="0.8">)</text>
+    </g>
+    <!-- screenshots row -->
+    <rect x="468" y="382" width="76" height="32" rx="6" fill="#0A0A0B" stroke="#F2F2F3" stroke-opacity="0.14"/>
+    <text x="506" y="402" text-anchor="middle" font-family="Geist Mono, JetBrains Mono, monospace" font-size="9" fill="#6E6E75">render.png</text>
+    <rect x="556" y="382" width="76" height="32" rx="6" fill="#0A0A0B" stroke="#F2F2F3" stroke-opacity="0.14"/>
+    <text x="594" y="402" text-anchor="middle" font-family="Geist Mono, JetBrains Mono, monospace" font-size="9" fill="#6E6E75">device.png</text>
+    <rect x="660" y="382" width="128" height="32" rx="6" fill="#FF7A1A" fill-opacity="0.05" stroke="#FF7A1A" stroke-opacity="0.3"/>
+    <text x="724" y="402" text-anchor="middle" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#FF7A1A">FORGE IT →</text>
+
+    <!-- ===== agent terminal pane ===== -->
+    <rect x="832" y="72" width="344" height="360" rx="10" fill="#0F0F11" stroke="#F2F2F3" stroke-opacity="0.08"/>
+    <text x="852" y="100" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">CHAT · CLAUDE CODE</text>
+    <rect x="852" y="114" width="304" height="294" rx="6" fill="#0A0A0B" fill-opacity="0.6" stroke="#F2F2F3" stroke-opacity="0.05"/>
+    <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="12.5">
+      <text x="868" y="144" fill="#F2F2F3">› widget context dispatched</text>
+      <text x="884" y="162" fill="#F2F2F3" fill-opacity="0.7">.pickforge/initial-prompt.md</text>
+      <text x="868" y="188" fill="#FF7A1A">✓ read checkout_card.dart</text>
+      <text x="868" y="206" fill="#FF7A1A">✓ edit · padding 12 → 16</text>
+      <text x="868" y="232" fill="#F2F2F3">› hot reload</text>
+      <text x="868" y="250" fill="#FF7A1A">✓ reloaded in 0.4s</text>
+      <text x="868" y="276" fill="#F2F2F3" fill-opacity="0.7">● pick the next widget…</text>
+      <text x="868" y="302" fill="#F2F2F3">▌</text>
+    </g>
+
+    <!-- ===== artifacts pane ===== -->
+    <rect x="24" y="456" width="520" height="216" rx="10" fill="#0F0F11" stroke="#F2F2F3" stroke-opacity="0.08"/>
+    <text x="44" y="484" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">.PICKFORGE/ · THE ONLY FOLDER IT WRITES</text>
+    <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="12" fill="#F2F2F3">
+      <text x="44" y="514" fill-opacity="0.6">skill-active.md      current skill directive</text>
+      <text x="44" y="536" fill-opacity="0.6">widget-context.md    selected widget details</text>
+      <text x="44" y="558" fill-opacity="0.6">screenshot.png       flutter render</text>
+      <text x="44" y="580" fill-opacity="0.6">device-screen.png    device + highlight</text>
+      <text x="44" y="602" fill-opacity="0.6">initial-prompt.md    what reached the agent</text>
+      <text x="44" y="624" fill-opacity="0.6">run-log.json         session metadata</text>
+      <text x="44" y="652" fill="#6E6E75">— gitignored · never touches your files</text>
+    </g>
+
+    <!-- ===== loop pane ===== -->
+    <rect x="568" y="456" width="608" height="216" rx="10" fill="#0F0F11" stroke="#F2F2F3" stroke-opacity="0.08"/>
+    <text x="588" y="484" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">THE LOOP</text>
+    <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="12">
+      <rect x="588" y="540" width="108" height="44" rx="8" fill="#0A0A0B" stroke="#F2F2F3" stroke-opacity="0.2"/>
+      <text x="642" y="566" text-anchor="middle" fill="#F2F2F3" fill-opacity="0.85">PICK</text>
+      <line x1="696" y1="562" x2="724" y2="562" stroke="#F2F2F3" stroke-opacity="0.3"/>
+      <path d="M724 562 l-7 -4 v8 z" fill="#F2F2F3" fill-opacity="0.3"/>
+      <rect x="726" y="540" width="108" height="44" rx="8" fill="#FF7A1A" fill-opacity="0.05" stroke="#FF7A1A" stroke-opacity="0.4"/>
+      <text x="780" y="566" text-anchor="middle" fill="#FF7A1A">FORGE</text>
+      <line x1="834" y1="562" x2="862" y2="562" stroke="#F2F2F3" stroke-opacity="0.3"/>
+      <path d="M862 562 l-7 -4 v8 z" fill="#F2F2F3" fill-opacity="0.3"/>
+      <rect x="864" y="540" width="108" height="44" rx="8" fill="#0A0A0B" stroke="#F2F2F3" stroke-opacity="0.2"/>
+      <text x="918" y="566" text-anchor="middle" fill="#F2F2F3" fill-opacity="0.85">EDIT</text>
+      <line x1="972" y1="562" x2="1000" y2="562" stroke="#F2F2F3" stroke-opacity="0.3"/>
+      <path d="M1000 562 l-7 -4 v8 z" fill="#F2F2F3" fill-opacity="0.3"/>
+      <rect x="1002" y="540" width="130" height="44" rx="8" fill="#0A0A0B" stroke="#F2F2F3" stroke-opacity="0.2"/>
+      <text x="1067" y="566" text-anchor="middle" fill="#F2F2F3" fill-opacity="0.85">RELOAD</text>
+    </g>
+    <!-- return arrow -->
+    <path d="M1067 584 V616 H642 V588" stroke="#F2F2F3" stroke-opacity="0.2" stroke-dasharray="3 4" fill="none"/>
+    <path d="M642 588 l-4 7 h8 z" fill="#F2F2F3" fill-opacity="0.2"/>
+    <text x="860" y="648" text-anchor="middle" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6E6E75" fill-opacity="0.7">surgical edits · no context dumps · repeat until shipped</text>
+  </g>
+</svg>

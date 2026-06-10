@@ -229,7 +229,9 @@ class _SettingsViewState extends State<SettingsView> {
       initialValue: state.defaultAgent != null
           ? AgentProfileId.fromValue(state.defaultAgent!)
           : null,
-      decoration: settingsInputDecoration(),
+      decoration: settingsInputDecoration().copyWith(
+        helperText: AppLocalizations.of(context).settingsDefaultAgentHelper,
+      ),
       isExpanded: true,
       items: AgentProfileId.values
           .map(
@@ -404,6 +406,10 @@ class _AgentModelsSectionState extends State<_AgentModelsSection> {
     return SettingsSection(
       title: AppLocalizations.of(context).settingsAgentModels,
       children: [
+        Text(
+          AppLocalizations.of(context).settingsAgentModelsHelper,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
         for (final entry in AgentModelSettings.presets.entries)
           SettingsField(
             label: _agentLabel(entry.key),

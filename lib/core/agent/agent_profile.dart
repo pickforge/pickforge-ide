@@ -1,12 +1,5 @@
 import 'package:pickforge/core/agent/models.dart';
 
-class PtyInvocation {
-  const PtyInvocation({required this.executable, required this.arguments});
-
-  final String executable;
-  final List<String> arguments;
-}
-
 abstract class AgentProfile {
   const AgentProfile();
 
@@ -23,11 +16,14 @@ abstract class AgentProfile {
     required String? deviceScreenFilename,
   });
 
-  /// Returns the executable + args used to spawn this agent under a PTY for an
-  /// interactive session in the embedded terminal pane.
+  /// The shell command a quick-launch chip types into the embedded terminal.
+  /// The user reviews/edits it and presses Enter; PickForge never runs it.
   ///
   /// [model] pins the agent to a specific model (e.g. Claude → Haiku 4.5,
   /// Codex → GPT-5.3 Codex Spark). When null, the agent CLI's own default is
   /// used. See `AgentModelSettings`.
-  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model});
+  String launchCommand({String? model}) => [
+        binary,
+        if (model != null) ...['--model', model],
+      ].join(' ');
 }

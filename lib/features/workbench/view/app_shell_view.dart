@@ -52,6 +52,11 @@ class _AppShellViewState extends State<AppShellView> {
 
   bool _hasRight = false;
 
+  /// The entrance fade plays once per app session. Replaying it on every
+  /// project switch (the shell remounts via `ValueKey(projectRoot)`) flashed
+  /// the bare scaffold — a full black blink.
+  static bool _entrancePlayed = false;
+
   @override
   void initState() {
     super.initState();
@@ -80,7 +85,10 @@ class _AppShellViewState extends State<AppShellView> {
       },
       child: BlocBuilder<WorkbenchLayoutCubit, WorkbenchLayoutState>(
         builder: (context, layout) {
-          final reduce = ReduceMotion.of(context);
+          final reduce = ReduceMotion.of(context) || _entrancePlayed;
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => _entrancePlayed = true,
+          );
           Widget animated(Widget child, {required Duration delay}) {
             if (reduce) return child;
             return child.animate().fadeIn(

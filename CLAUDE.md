@@ -31,7 +31,9 @@ README are binding. In short:
 
 ## Agent models
 
-Spawned agents are pinned to fast models by default (Claude → Haiku 4.5,
-Codex → GPT-5.3 Codex Spark) via `lib/core/agent/agent_model_settings.dart` and
-the Settings → "Agent models" picker. Prefer these (and GPT-5.4 Mini) for
-testing/dogfooding to keep runs cheap.
+The embedded terminal is shell-first (it spawns `$SHELL`, never an agent).
+Quick-launch chips type agent commands pinned to fast models by default
+(Claude → Haiku 4.5, Codex → GPT-5.3 Codex Spark) via
+`lib/core/agent/agent_model_settings.dart` and the Settings → "Agent models"
+picker. Prefer these (and GPT-5.4 Mini) for testing/dogfooding to keep runs
+cheap.

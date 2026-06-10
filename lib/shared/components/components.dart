@@ -8,4 +8,5 @@ export 'ember_pulse.dart';
 export 'hairline_panel.dart';
 export 'mono_eyebrow.dart';
 export 'selection_bracket.dart';
+export 'smooth_scroll.dart';
 export 'status_pill.dart';

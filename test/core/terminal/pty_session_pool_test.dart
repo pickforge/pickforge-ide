@@ -45,15 +45,52 @@ void main() {
     expect(pool.session('b'), isNull);
   });
 
-  test('sendPrompt writes to the named session', () {
+  test('paste falls back to bracketed session paste without a delegate', () {
     final pool = PtySessionPool();
     final s = _Fake('a');
-    when(() => s.sendPrompt(any())).thenReturn(null);
+    when(() => s.pasteText(any())).thenReturn(null);
     pool
       ..attach(s)
-      ..sendPrompt('a', 'hello');
+      ..paste('a', 'hello');
 
-    verify(() => s.sendPrompt('hello')).called(1);
+    verify(() => s.pasteText('hello')).called(1);
+  });
+
+  test('paste prefers a registered delegate over raw session writes', () {
+    final pool = PtySessionPool();
+    final s = _Fake('a');
+    final delegated = <String>[];
+    pool
+      ..attach(s)
+      ..registerPasteDelegate('a', delegated.add)
+      ..paste('a', 'hello');
+
+    expect(delegated, ['hello']);
+    verifyNever(() => s.pasteText(any()));
+  });
+
+  test('paste uses the session again after the delegate unregisters', () {
+    final pool = PtySessionPool();
+    final s = _Fake('a');
+    when(() => s.pasteText(any())).thenReturn(null);
+    pool
+      ..attach(s)
+      ..registerPasteDelegate('a', (_) => fail('unregistered delegate ran'))
+      ..unregisterPasteDelegate('a')
+      ..paste('a', 'hello');
+
+    verify(() => s.pasteText('hello')).called(1);
+  });
+
+  test('typeText forwards to the named session', () {
+    final pool = PtySessionPool();
+    final s = _Fake('a');
+    when(() => s.typeText(any())).thenReturn(null);
+    pool
+      ..attach(s)
+      ..typeText('a', 'claude');
+
+    verify(() => s.typeText('claude')).called(1);
   });
 
   test('activate returns existing session without spawning a duplicate',

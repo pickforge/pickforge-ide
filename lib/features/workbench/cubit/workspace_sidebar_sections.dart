@@ -95,40 +95,45 @@ List<WorkspaceSidebarSection> buildWorkspaceSidebarSections({
       ),
   };
   if (normalizedQuery.isEmpty) return sections;
-  return sections
-      .map(
-    (section) => WorkspaceSidebarSection(
-      id: section.id,
-      title: section.title,
-      project: section.project,
-      entries: section.entries.where((entry) {
-        return entry.title.toLowerCase().contains(normalizedQuery) ||
-            switch (entry.kind) {
-              WorkspaceSidebarEntryKind.project => entry.project!.projectRoot
-                  .toLowerCase()
-                  .contains(normalizedQuery),
-              WorkspaceSidebarEntryKind.chat => entry.chat!.agentId
-                      .toLowerCase()
-                      .contains(normalizedQuery) ||
-                  (entry.chat!.skillId
-                          ?.toLowerCase()
-                          .contains(normalizedQuery) ??
-                      false) ||
-                  entry.chat!.taskStatus.displayName
-                      .toLowerCase()
-                      .contains(normalizedQuery) ||
-                  (entry.chat!.taskBrief
-                          ?.toLowerCase()
-                          .contains(normalizedQuery) ??
-                      false) ||
-                  entry.chat!.taskLabels.any(
-                    (label) => label.toLowerCase().contains(normalizedQuery),
-                  ),
-            };
-      }).toList(),
-    ),
-  )
-      .where((section) {
+  return sections.map(
+    (section) {
+      // A section whose own title matches (e.g. the project name) keeps all
+      // of its entries — searching "lucky_app" should still show its chats.
+      if (section.title.toLowerCase().contains(normalizedQuery)) {
+        return section;
+      }
+      return WorkspaceSidebarSection(
+        id: section.id,
+        title: section.title,
+        project: section.project,
+        entries: section.entries.where((entry) {
+          return entry.title.toLowerCase().contains(normalizedQuery) ||
+              switch (entry.kind) {
+                WorkspaceSidebarEntryKind.project => entry.project!.projectRoot
+                    .toLowerCase()
+                    .contains(normalizedQuery),
+                WorkspaceSidebarEntryKind.chat => entry.chat!.agentId
+                        .toLowerCase()
+                        .contains(normalizedQuery) ||
+                    (entry.chat!.skillId
+                            ?.toLowerCase()
+                            .contains(normalizedQuery) ??
+                        false) ||
+                    entry.chat!.taskStatus.displayName
+                        .toLowerCase()
+                        .contains(normalizedQuery) ||
+                    (entry.chat!.taskBrief
+                            ?.toLowerCase()
+                            .contains(normalizedQuery) ??
+                        false) ||
+                    entry.chat!.taskLabels.any(
+                      (label) => label.toLowerCase().contains(normalizedQuery),
+                    ),
+              };
+        }).toList(),
+      );
+    },
+  ).where((section) {
     return section.entries.isNotEmpty ||
         section.title.toLowerCase().contains(normalizedQuery);
   }).toList();

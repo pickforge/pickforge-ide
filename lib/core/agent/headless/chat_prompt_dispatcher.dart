@@ -31,6 +31,6 @@ class ChatPromptDispatcher {
       );
       return;
     }
-    _ptyPool.sendPrompt(chatId, prompt);
+    _ptyPool.paste(chatId, prompt);
   }
 }

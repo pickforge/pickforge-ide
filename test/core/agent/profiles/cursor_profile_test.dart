@@ -26,16 +26,15 @@ void main() {
       expect(profile.invocationArgs(), ['-p']);
     });
 
-    test('ptyArgsFor returns agent invocation without resume', () {
-      final inv = profile.ptyArgsFor();
-      expect(inv.executable, 'agent');
-      expect(inv.arguments, isEmpty);
+    test('launchCommand is the bare binary without a model', () {
+      expect(profile.launchCommand(), 'agent');
     });
 
-    test('ptyArgsFor includes resume id', () {
-      final inv = profile.ptyArgsFor(resumeSessionId: 'chat-123');
-      expect(inv.executable, 'agent');
-      expect(inv.arguments, ['--resume=chat-123']);
+    test('launchCommand appends --model when given', () {
+      expect(
+        profile.launchCommand(model: 'composer-2'),
+        'agent --model composer-2',
+      );
     });
 
     test('buildInitialPrompt with all files', () {

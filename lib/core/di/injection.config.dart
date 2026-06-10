@@ -79,6 +79,8 @@ import 'package:pickforge/features/settings/cubit/settings_cubit.dart' as _i18;
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart' as _i154;
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart'
     as _i882;
+import 'package:pickforge/features/workbench/cubit/terminal_panes_cubit.dart'
+    as _i721;
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart'
     as _i638;
 import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart'
@@ -136,6 +138,8 @@ extension GetItInjectableX on _i174.GetIt {
         () => const _i680.FlutterRunTargetScanner());
     gh.lazySingleton<_i685.PtySessionPool>(() => _i685.PtySessionPool());
     gh.lazySingleton<_i292.VmServiceClient>(() => _i292.VmServiceClient());
+    gh.lazySingleton<_i721.TerminalPaneLayoutStore>(
+        () => _i721.TerminalPaneLayoutStore());
     gh.lazySingleton<_i1070.ProjectsDao>(
         () => driftDaoModule.projectsDao(gh<_i631.PickforgeDatabase>()));
     gh.lazySingleton<_i905.ChatsDao>(

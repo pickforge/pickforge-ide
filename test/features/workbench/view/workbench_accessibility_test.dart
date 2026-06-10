@@ -145,6 +145,7 @@ Future<void> _pumpExplorer(
     projectRoot: deterministicAlphaRoot,
     scanner: const DeterministicProjectFileScanner(deterministicFileTree),
     opener: ProjectFileOpener(runner: const NoopEmulatorProcessRunner()),
+    rootExists: (_) => true,
   );
   addTearDown(cubit.close);
   await cubit.load();

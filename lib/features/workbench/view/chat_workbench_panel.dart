@@ -1,11 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:multi_split_view/multi_split_view.dart';
-import 'package:pickforge/core/agent/agent_model_settings.dart';
-import 'package:pickforge/core/agent/agent_profile_registry.dart';
 import 'package:pickforge/core/agent/headless/chat_message.dart';
 import 'package:pickforge/core/agent/headless/headless_chat_feature_flags.dart';
 import 'package:pickforge/core/agent/headless/headless_chat_session.dart';
@@ -13,16 +10,6 @@ import 'package:pickforge/core/agent/headless/headless_chat_session_pool.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
-import 'package:pickforge/core/process/binary_detector.dart';
-import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
-import 'package:pickforge/core/terminal/live_terminal_output.dart';
-import 'package:pickforge/core/terminal/pty_process.dart';
-import 'package:pickforge/core/terminal/pty_session.dart';
-import 'package:pickforge/core/terminal/pty_session_pool.dart';
-import 'package:pickforge/core/terminal/pty_session_state.dart';
-import 'package:pickforge/core/terminal/terminal_themes.dart';
-import 'package:pickforge/core/terminal/transcript_recorder.dart';
-import 'package:pickforge/core/terminal/transcript_replayer.dart';
 import 'package:pickforge/features/emulator/view/run_logs_pane.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
@@ -30,9 +17,9 @@ import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
+import 'package:pickforge/features/workbench/view/terminal_pane_host.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
-import 'package:xterm/xterm.dart';
 
 class ChatWorkbenchPanel extends StatefulWidget {
   const ChatWorkbenchPanel({super.key});
@@ -124,7 +111,7 @@ class _ActiveChatPane extends StatelessWidget {
         agentId: agentId,
       );
     }
-    return _ChatTerminal(chat: chat, projectRoot: chat.projectRoot);
+    return TerminalPaneHost(chat: chat, projectRoot: chat.projectRoot);
   }
 }
 
@@ -373,208 +360,5 @@ class _HeadlessMessageBubble extends StatelessWidget {
       ChatMessageRole.system => l10n.chatRoleSystem,
       ChatMessageRole.error => l10n.chatRoleError,
     };
-  }
-}
-
-class _ChatTerminal extends StatefulWidget {
-  const _ChatTerminal({
-    required this.chat,
-    required this.projectRoot,
-  });
-
-  final ChatRow chat;
-  final String projectRoot;
-
-  @override
-  State<_ChatTerminal> createState() => _ChatTerminalState();
-}
-
-class _ChatTerminalState extends State<_ChatTerminal> {
-  late final Terminal _terminal;
-  late final TranscriptRecorder _recorder;
-  StreamSubscription<String>? _outputSub;
-  StreamSubscription<PtySessionState>? _stateSub;
-  PtySession? _session;
-  int? _lastCols;
-  int? _lastRows;
-  var _disposed = false;
-  late TerminalTheme _theme;
-  late TerminalStyle _textStyle;
-  static const _utf8Decoder = Utf8Decoder(allowMalformed: true);
-
-  // Brand mono first, then Nerd Font + common monos for box-drawing / powerline
-  // glyph coverage that Geist Mono may not carry.
-  static const _fontFallback = <String>[
-    'JetBrainsMono Nerd Font',
-    'JetBrains Mono',
-    'Fira Code',
-    'FiraCode Nerd Font',
-    'DejaVu Sans Mono',
-    'Liberation Mono',
-    'Menlo',
-    'Consolas',
-    'Courier New',
-    'monospace',
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _applySettings(EmbeddedTerminalSettings.defaults);
-    _terminal = Terminal(maxLines: 10000, reflowEnabled: false);
-    _terminal.onResize = (width, height, _, __) {
-      _lastCols = width;
-      _lastRows = height;
-      // Defer the PTY ioctl out of the layout phase to avoid any chance of
-      // synchronous re-entry into the widget framework during build/layout.
-      final session = _session;
-      if (session == null) return;
-      scheduleMicrotask(() => session.resize(height, width));
-    };
-    _recorder = TranscriptRecorder(
-      projectRoot: widget.projectRoot,
-      chatId: widget.chat.chatId,
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_disposed && mounted) unawaited(_init());
-    });
-  }
-
-  Future<void> _init() async {
-    // Apply saved terminal settings before any writes so we never rebuild the
-    // TerminalView mid-replay (a setState during replay can race xterm's
-    // buffer attachment and throw during large scrollback replay).
-    await _loadTerminalSettings();
-    if (_disposed || !mounted) return;
-    await _recorder.open();
-    if (_disposed || !mounted) return;
-
-    // Replay any prior scrollback before attaching the live PTY.
-    final replayer = TranscriptReplayer(
-      projectRoot: widget.projectRoot,
-      chatId: widget.chat.chatId,
-    );
-    await for (final chunk in replayer.replay()) {
-      if (_disposed || !mounted) return;
-      _writeTerminal(_utf8Decoder.convert(chunk));
-    }
-
-    final pool = getIt<PtySessionPool>();
-    final agentId = AgentProfileId.fromValue(widget.chat.agentId);
-    final agent = getIt<AgentProfileRegistry>().get(agentId);
-    final model = getIt.isRegistered<AgentModelSettingsRepository>()
-        ? getIt<AgentModelSettingsRepository>().modelFor(agentId)
-        : null;
-    final invocation = agent.ptyArgsFor(
-      resumeSessionId: widget.chat.sessionId,
-      model: model,
-    );
-
-    final available =
-        await getIt<BinaryDetector>().isBinaryOnPath(invocation.executable);
-    if (_disposed || !mounted) return;
-    if (!available) {
-      _writeTerminal(
-        '\r\n\x1b[31mCould not start `${invocation.executable}`: '
-        'binary not found on PATH.\x1b[0m\r\n'
-        'Install it and make sure it is reachable from a non-interactive '
-        'shell (e.g. add its directory to ~/.profile or /etc/environment).\r\n',
-      );
-      return;
-    }
-
-    _session = await pool.activate(
-      chatId: widget.chat.chatId,
-      create: () => PtySession(
-        chatId: widget.chat.chatId,
-        executable: invocation.executable,
-        arguments: invocation.arguments,
-        workingDirectory: widget.projectRoot,
-        factory: getIt<PtyProcessFactory>(),
-        onOutput: _recorder.append,
-      ),
-    );
-    if (_disposed || !mounted) return;
-
-    if (_lastCols != null && _lastRows != null) {
-      _session!.resize(_lastRows!, _lastCols!);
-    }
-
-    _outputSub = _session!.output
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .listen(_writeTerminal);
-
-    _stateSub = _session!.state.listen((s) {
-      if (_disposed || !mounted) return;
-      switch (s) {
-        case PtyExited(:final code):
-          _writeTerminal(
-            '\r\n\x1b[33m[${invocation.executable} exited '
-            'with code $code]\x1b[0m\r\n',
-          );
-        case PtyFailed(:final message):
-          _writeTerminal(
-            '\r\n\x1b[31m[${invocation.executable} failed: '
-            '$message]\x1b[0m\r\n',
-          );
-        case PtyParked():
-        case PtySpawning():
-        case PtyRunning():
-          break;
-      }
-    });
-
-    _terminal.onOutput = (data) => _session?.write(utf8.encode(data));
-  }
-
-  void _applySettings(EmbeddedTerminalSettings settings) {
-    _theme = resolveTerminalTheme(settings.themeId);
-    _textStyle = TerminalStyle(
-      fontFamily: settings.fontFamily,
-      fontFamilyFallback: _fontFallback,
-      fontSize: settings.fontSize,
-      height: 1.3,
-    );
-  }
-
-  Future<void> _loadTerminalSettings() async {
-    if (!getIt.isRegistered<EmbeddedTerminalSettingsRepository>()) return;
-    final settings = await getIt<EmbeddedTerminalSettingsRepository>().load();
-    if (_disposed || !mounted) return;
-    setState(() => _applySettings(settings));
-  }
-
-  void _writeTerminal(String data) {
-    if (_disposed || !mounted || data.isEmpty) return;
-    try {
-      writeLiveTerminalOutput(_terminal, data);
-    } on Object catch (_) {
-      // Defensive: a renderer hiccup (e.g. a debug-only xterm buffer assertion
-      // during large scrollback replay) must never crash the chat session.
-    }
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    _terminal.onResize = null;
-    _terminal.onOutput = null;
-    unawaited(_outputSub?.cancel());
-    unawaited(_stateSub?.cancel());
-    unawaited(_recorder.close());
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ColoredBox(
-      color: _theme.background,
-      child: TerminalView(
-        _terminal,
-        theme: _theme,
-        textStyle: _textStyle,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      ),
-    );
   }
 }

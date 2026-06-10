@@ -270,8 +270,10 @@
   "runHistoryRunning": "running",
   "settingsTitle": "Settings",
   "settingsNoProject": "Select a project to configure project settings.",
-  "settingsDefaultAgent": "Default agent",
+  "settingsDefaultAgent": "Preferred agent",
+  "settingsDefaultAgentHelper": "Highlighted first on the terminal quick-launch strip.",
   "settingsAgentModels": "Agent models",
+  "settingsAgentModelsHelper": "Model flag the quick-launch chips include in the typed command.",
   "settingsEmbeddedTerminal": "Embedded Terminal",
   "settingsProjectValidator": "Project validator",
   "settingsValidatorCommand": "Command",
@@ -281,6 +283,24 @@
   "settingsUpdateCheckEnabled": "Check for updates",
   "settingsPrivacy": "Privacy",
   "settingsTelemetryEnabled": "Share anonymous diagnostics",
+  "terminalCopy": "Copy",
+  "terminalPaste": "Paste",
+  "terminalQuickLaunch": "Quick launch",
+  "terminalPaneSplit": "Split terminal",
+  "terminalPaneSplitLeft": "Split left",
+  "terminalPaneSplitRight": "Split right",
+  "terminalPaneSplitUp": "Split up",
+  "terminalPaneSplitDown": "Split down",
+  "terminalPaneFullscreen": "Fullscreen",
+  "terminalPaneExitFullscreen": "Exit fullscreen",
+  "terminalPaneClose": "Close terminal",
+  "terminalPaneWorktree": "worktree",
+  "terminalBinaryMissingTooltip": "{binary} not found on PATH",
+  "@terminalBinaryMissingTooltip": {
+    "placeholders": {
+      "binary": {}
+    }
+  },
   "settingsFontFamily": "Font family",
   "settingsFontSize": "Font size",
   "settingsTheme": "Theme",
@@ -477,11 +497,17 @@
   "explorerCopyRelativePath": "Copy relative path",
   "explorerCopyAbsolutePath": "Copy absolute path",
   "explorerEmpty": "No files found",
+  "explorerMissingRoot": "Project folder not found: {path}",
+  "@explorerMissingRoot": {
+    "placeholders": {
+      "path": {}
+    }
+  },
   "onboardingHeading": "Add your first Flutter project",
   "onboardingChecklistTitle": "First-run checklist",
   "onboardingChecklistAddProject": "Add a Flutter project",
   "onboardingChecklistPickDevice": "Pick an emulator or manual VM Service URL",
-  "onboardingChecklistCreateChat": "Create an agent chat",
+  "onboardingChecklistCreateChat": "Open a project terminal",
   "onboardingChecklistPickWidget": "Pick a widget from your app",
   "onboardingChecklistForge": "Forge and hot reload",
   "onboardingDemoButton": "Explore demo mode",

@@ -6,6 +6,21 @@ void writeLiveTerminalOutput(Terminal terminal, String data) {
   removeTerminalUnderlines(terminal);
 }
 
+/// Replayed transcripts can leave the terminal in modes the recorded session
+/// enabled (mouse reporting, alt screen, bracketed paste, hidden cursor).
+/// The freshly spawned shell never asked for those, so undo them before
+/// attaching live output.
+void resetReplayedTerminalModes(Terminal terminal) {
+  terminal.write(
+    '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l'
+    '\x1b[?1049l\x1b[?47l'
+    '\x1b[?2004l'
+    '\x1b[?25h'
+    '\x1b[?7h'
+    '\x1b[0m',
+  );
+}
+
 void removeTerminalUnderlines(Terminal terminal) {
   terminal.cursor.unsetUnderline();
   _removeBufferUnderlines(terminal.mainBuffer);

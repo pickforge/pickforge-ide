@@ -44,6 +44,28 @@ void main() {
     );
   });
 
+  test('a query matching the project name keeps all of its chats', () {
+    final sections = buildWorkspaceSidebarSections(
+      projects: [_project('/lucky_app'), _project('/other')],
+      chatsByProject: {
+        '/lucky_app': [
+          _chat('c1', '/lucky_app', 'Chat 1'),
+          _chat('c2', '/lucky_app', 'Chat 2'),
+        ],
+        '/other': [_chat('c3', '/other', 'Chat 3')],
+      },
+      settings: WorkspaceSidebarSettings.defaults,
+      query: 'lucky',
+    );
+
+    final lucky = sections.singleWhere((s) => s.title == 'lucky_app');
+    expect(
+      lucky.entries.map((e) => e.chat?.chatId),
+      containsAll(['c1', 'c2']),
+    );
+    expect(sections.map((s) => s.title), isNot(contains('other')));
+  });
+
   test('separates pinned and unpinned entries', () {
     final sections = buildWorkspaceSidebarSections(
       projects: [_project('/app')],

@@ -26,16 +26,15 @@ void main() {
       expect(profile.invocationArgs(), ['-p']);
     });
 
-    test('ptyArgsFor returns gemini invocation without resume', () {
-      final inv = profile.ptyArgsFor();
-      expect(inv.executable, 'gemini');
-      expect(inv.arguments, ['--approval-mode=auto_edit']);
+    test('launchCommand keeps the approval-mode flag without a model', () {
+      expect(profile.launchCommand(), 'gemini --approval-mode=auto_edit');
     });
 
-    test('ptyArgsFor includes resume id', () {
-      final inv = profile.ptyArgsFor(resumeSessionId: 'latest');
-      expect(inv.executable, 'gemini');
-      expect(inv.arguments, ['--approval-mode=auto_edit', '--resume=latest']);
+    test('launchCommand appends --model when given', () {
+      expect(
+        profile.launchCommand(model: 'gemini-3.5-flash'),
+        'gemini --approval-mode=auto_edit --model gemini-3.5-flash',
+      );
     });
 
     test('buildInitialPrompt with all files', () {

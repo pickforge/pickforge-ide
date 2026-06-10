@@ -90,4 +90,33 @@ void main() {
     expect(cell.foreground & CellColor.typeMask, CellColor.rgb);
     expect(cell.foreground & CellColor.valueMask, 0xD77757);
   });
+
+  group('resetReplayedTerminalModes', () {
+    test('disables mouse reporting left on by a replayed TUI session', () {
+      final terminal = Terminal()..write('\x1b[?1002h\x1b[?1006h');
+      expect(terminal.mouseMode, isNot(MouseMode.none));
+
+      resetReplayedTerminalModes(terminal);
+
+      expect(terminal.mouseMode, MouseMode.none);
+    });
+
+    test('leaves the alt screen left active by a replayed TUI session', () {
+      final terminal = Terminal()..write('\x1b[?1049h');
+      expect(terminal.isUsingAltBuffer, isTrue);
+
+      resetReplayedTerminalModes(terminal);
+
+      expect(terminal.isUsingAltBuffer, isFalse);
+    });
+
+    test('clears bracketed paste so the live shell owns the mode', () {
+      final terminal = Terminal()..write('\x1b[?2004h');
+      expect(terminal.bracketedPasteMode, isTrue);
+
+      resetReplayedTerminalModes(terminal);
+
+      expect(terminal.bracketedPasteMode, isFalse);
+    });
+  });
 }

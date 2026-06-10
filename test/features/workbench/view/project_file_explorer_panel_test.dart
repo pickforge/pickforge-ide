@@ -31,6 +31,7 @@ void main() {
         ],
       ),
       opener: _FakeOpener(),
+      rootExists: (_) => true,
     );
     await cubit.load();
 

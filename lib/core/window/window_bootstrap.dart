@@ -11,7 +11,7 @@ Future<void> bootstrapWindow() async {
     minimumSize: Size(900, 640),
     title: 'Pickforge',
     titleBarStyle: TitleBarStyle.normal,
-    backgroundColor: Color(0xFF0A0A0B),
+    backgroundColor: Color(0xFF151110),
     center: true,
   );
   await windowManager.waitUntilReadyToShow(options, () async {

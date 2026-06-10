@@ -1,7 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:pickforge/core/projects/project_file_tree.dart';
 
-enum ProjectFileExplorerStatus { initial, loading, ready, error }
+enum ProjectFileExplorerStatus { initial, loading, ready, missingRoot, error }
 
 class ProjectFileExplorerState extends Equatable {
   const ProjectFileExplorerState({

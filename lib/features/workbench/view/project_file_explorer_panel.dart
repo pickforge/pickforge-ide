@@ -70,6 +70,10 @@ class ProjectFileExplorerPanel extends StatelessWidget {
             ),
             if (state.status == ProjectFileExplorerStatus.loading)
               const LinearProgressIndicator(minHeight: 1)
+            else if (state.status == ProjectFileExplorerStatus.missingRoot)
+              _ExplorerMessage(
+                text: l10n.explorerMissingRoot(state.error ?? ''),
+              )
             else if (state.status == ProjectFileExplorerStatus.error)
               _ExplorerMessage(text: state.error ?? 'Explorer failed')
             else if (visibleNodes.isEmpty)

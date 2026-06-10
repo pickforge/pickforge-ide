@@ -13,20 +13,33 @@ class ProjectFileExplorerCubit extends Cubit<ProjectFileExplorerState> {
     required ProjectFileTreeScanner scanner,
     required ProjectFileOpener opener,
     DiagnosticsService? diagnostics,
+    bool Function(String path)? rootExists,
   })  : _projectRoot = projectRoot,
         _scanner = scanner,
         _opener = opener,
         _diagnostics = diagnostics,
+        _rootExists = rootExists ?? ((path) => Directory(path).existsSync()),
         super(const ProjectFileExplorerState());
 
   final String _projectRoot;
   final ProjectFileTreeScanner _scanner;
   final ProjectFileOpener _opener;
   final DiagnosticsService? _diagnostics;
+  final bool Function(String path) _rootExists;
   StreamSubscription<FileSystemEvent>? _watchSubscription;
   Timer? _reloadDebounce;
 
   Future<void> load() async {
+    if (!_rootExists(_projectRoot)) {
+      emit(
+        state.copyWith(
+          status: ProjectFileExplorerStatus.missingRoot,
+          nodes: const [],
+          error: _projectRoot,
+        ),
+      );
+      return;
+    }
     emit(state.copyWith(status: ProjectFileExplorerStatus.loading));
     final stopwatch = Stopwatch()..start();
     try {
@@ -68,9 +81,14 @@ class ProjectFileExplorerCubit extends Cubit<ProjectFileExplorerState> {
   Future<void> watch() async {
     await _watchSubscription?.cancel();
     try {
-      _watchSubscription = Directory(_projectRoot)
-          .watch(recursive: true)
-          .listen((_) => _scheduleReload());
+      _watchSubscription =
+          Directory(_projectRoot).watch(recursive: true).listen(
+                (_) => _scheduleReload(),
+                // A vanished project root surfaces as an async stream error;
+                // never let it escape as an unhandled exception.
+                onError: (Object _) {},
+                cancelOnError: true,
+              );
     } on Object {
       _watchSubscription = null;
     }

@@ -487,7 +487,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(tester.takeException(), isNull);
-    expect(find.text('design_system'), findsWidgets);
+    // The project renders as the tappable section header (uppercased
+    // eyebrow), no longer as a grid card among the chats.
+    expect(find.text('DESIGN_SYSTEM'), findsOneWidget);
+    expect(find.text('design_system'), findsNothing);
     expect(find.text('Color token pass'), findsOneWidget);
 
     final stats = await _captureStats(tester, screenshotKey);

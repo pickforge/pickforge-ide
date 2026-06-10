@@ -4,7 +4,7 @@ These instructions apply to the entire repository. They are inferred from the cu
 
 ## Project overview
 
-Pickforge is a local Flutter desktop app for selecting widgets in a running Flutter app, writing widget context into `.pickforge/`, and sending that context to an embedded agent CLI terminal.
+Pickforge is a local Flutter desktop app for selecting widgets in a running Flutter app, writing widget context into `.pickforge/`, and pasting that context into an embedded terminal. The terminal is shell-first: it runs the user's `$SHELL` in the project root, with quick-launch chips that type agent CLI commands (claude/codex/…) for the user to run.
 
 ## Tooling
 

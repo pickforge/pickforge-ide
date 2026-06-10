@@ -341,7 +341,7 @@ class PickforgeTheme {
     errorContainer: Color(0xFFFFDAD5),
     onErrorContainer: Color(0xFF5A1610),
     surface: Color(0xFFF7F7F8),
-    onSurface: Color(0xFF0A0A0B),
+    onSurface: Color(0xFF151110),
     onSurfaceVariant: Color(0xFF55555C),
     surfaceContainerLowest: Color(0xFFFFFFFF),
     surfaceContainerLow: Color(0xFFF2F2F4),

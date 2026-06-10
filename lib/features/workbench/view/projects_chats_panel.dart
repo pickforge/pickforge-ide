@@ -400,63 +400,92 @@ class _ProjectsList extends StatelessWidget {
           ),
         );
       }
+      final Widget header;
       if (section.project case final project?) {
-        tiles.add(
-          _ProjectHeaderTile(
-            project: project,
-            expanded: !collapsed,
-            isActiveProject: project.projectRoot == activeProjectRoot,
-            isPinned: sidebar.pinnedProjectRoots.contains(project.projectRoot),
-            onToggle: () => context
-                .read<WorkspaceSidebarCubit>()
-                .toggleGroupCollapsed(section.id),
-            onPin: () => context
-                .read<WorkspaceSidebarCubit>()
-                .toggleProjectPinned(project.projectRoot),
-            onAddChat: () => onAddChat(project.projectRoot),
-          ),
+        header = _ProjectHeaderTile(
+          project: project,
+          expanded: !collapsed,
+          isActiveProject: project.projectRoot == activeProjectRoot,
+          isPinned: sidebar.pinnedProjectRoots.contains(project.projectRoot),
+          onToggle: () => context
+              .read<WorkspaceSidebarCubit>()
+              .toggleGroupCollapsed(section.id),
+          onPin: () => context
+              .read<WorkspaceSidebarCubit>()
+              .toggleProjectPinned(project.projectRoot),
+          onAddChat: () => onAddChat(project.projectRoot),
         );
-        if (!collapsed) {
-          if (section.entries.isEmpty) {
-            tiles.add(_EmptyChatHint(text: l10n.workbenchNoChats));
-          } else {
-            for (final entry in section.entries) {
-              tiles.add(
+      } else {
+        header = _GroupHeaderTile(
+          title: section.title,
+          expanded: !collapsed,
+          onToggle: () => context
+              .read<WorkspaceSidebarCubit>()
+              .toggleGroupCollapsed(section.id),
+        );
+      }
+      tiles.add(
+        _CollapsibleSection(
+          header: header,
+          collapsed: collapsed,
+          children: [
+            if (section.project != null && section.entries.isEmpty)
+              _EmptyChatHint(text: l10n.workbenchNoChats)
+            else
+              for (final entry in section.entries)
                 _SidebarEntryTile(
                   entry: entry,
                   activeProjectRoot: activeProjectRoot,
                   activeChatId: activeChatId,
                   onSelectChat: onSelectChat,
                 ),
-              );
-            }
-          }
-        }
-      } else {
-        tiles.add(
-          _GroupHeaderTile(
-            title: section.title,
-            expanded: !collapsed,
-            onToggle: () => context
-                .read<WorkspaceSidebarCubit>()
-                .toggleGroupCollapsed(section.id),
-          ),
-        );
-        if (!collapsed) {
-          for (final entry in section.entries) {
-            tiles.add(
-              _SidebarEntryTile(
-                entry: entry,
-                activeProjectRoot: activeProjectRoot,
-                activeChatId: activeChatId,
-                onSelectChat: onSelectChat,
-              ),
-            );
-          }
-        }
-      }
+          ],
+        ),
+      );
     }
-    return ListView(children: tiles);
+    return SmoothScroll(
+      builder: (context, controller, physics) => ListView(
+        controller: controller,
+        physics: physics,
+        children: tiles,
+      ),
+    );
+  }
+}
+
+/// Section body that eases open/closed instead of snapping.
+class _CollapsibleSection extends StatelessWidget {
+  const _CollapsibleSection({
+    required this.header,
+    required this.collapsed,
+    required this.children,
+  });
+
+  final Widget header;
+  final bool collapsed;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        header,
+        ClipRect(
+          child: AnimatedSize(
+            duration: ReduceMotion.duration(context, PickforgeMotion.standard),
+            curve: PickforgeMotion.forge,
+            alignment: Alignment.topCenter,
+            child: collapsed
+                ? const SizedBox(width: double.infinity)
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: children,
+                  ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -482,60 +511,124 @@ class _ProjectsGrid extends StatelessWidget {
     final settings = context.watch<WorkspaceSidebarCubit>().state.settings;
     final childAspectRatio =
         settings.density == WorkspaceSidebarDensity.compact ? 1.9 : 1.55;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(
-        PickforgeSpacing.sm,
-        0,
-        PickforgeSpacing.sm,
-        PickforgeSpacing.sm,
-      ),
-      children: [
-        for (final section in sections) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              PickforgeSpacing.xs,
-              PickforgeSpacing.md,
-              PickforgeSpacing.xs,
-              PickforgeSpacing.sm - 2,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: MonoEyebrow(section.title),
+    return SmoothScroll(
+      builder: (context, controller, physics) => ListView(
+        controller: controller,
+        physics: physics,
+        padding: const EdgeInsets.fromLTRB(
+          PickforgeSpacing.sm,
+          0,
+          PickforgeSpacing.sm,
+          PickforgeSpacing.sm,
+        ),
+        children: [
+          for (final section in sections) ...[
+            // The project IS the section: its header selects it; only chats
+            // render as grid cards so the project never reads as one of them.
+            if (section.project case final project?)
+              _GridProjectHeader(
+                project: project,
+                isActive: project.projectRoot == activeProjectRoot,
+                addTooltip: l10n.workbenchNewChat,
+                onAddChat: () => onAddChat(project.projectRoot),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  PickforgeSpacing.xs,
+                  PickforgeSpacing.md,
+                  PickforgeSpacing.xs,
+                  PickforgeSpacing.sm - 2,
                 ),
-                if (section.project case final project?)
-                  IconButton(
-                    tooltip: l10n.workbenchNewChat,
-                    icon: const Icon(Icons.add, size: 16),
-                    onPressed: () => onAddChat(project.projectRoot),
+                child: MonoEyebrow(section.title),
+              ),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              mainAxisSpacing: PickforgeSpacing.sm - 2,
+              crossAxisSpacing: PickforgeSpacing.sm - 2,
+              childAspectRatio: childAspectRatio,
+              children: [
+                for (final entry in section.entries)
+                  _EntryGridCard(
+                    entry: entry,
+                    activeProjectRoot: activeProjectRoot,
+                    activeChatId: activeChatId,
+                    onSelectChat: onSelectChat,
                   ),
               ],
             ),
-          ),
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 2,
-            mainAxisSpacing: PickforgeSpacing.sm - 2,
-            crossAxisSpacing: PickforgeSpacing.sm - 2,
-            childAspectRatio: childAspectRatio,
-            children: [
-              if (section.project case final project?)
-                _ProjectGridCard(
-                  project: project,
-                  isActive: project.projectRoot == activeProjectRoot,
-                ),
-              for (final entry in section.entries)
-                _EntryGridCard(
-                  entry: entry,
-                  activeProjectRoot: activeProjectRoot,
-                  activeChatId: activeChatId,
-                  onSelectChat: onSelectChat,
-                ),
-            ],
-          ),
+          ],
         ],
-      ],
+      ),
+    );
+  }
+}
+
+class _GridProjectHeader extends StatelessWidget {
+  const _GridProjectHeader({
+    required this.project,
+    required this.isActive,
+    required this.addTooltip,
+    required this.onAddChat,
+  });
+
+  final ProjectRow project;
+  final bool isActive;
+  final String addTooltip;
+  final VoidCallback onAddChat;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        0,
+        PickforgeSpacing.md,
+        0,
+        PickforgeSpacing.sm - 2,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () =>
+              unawaited(_selectProjectOnly(context, project.projectRoot)),
+          hoverColor: PickforgeColors.hairline,
+          splashColor: PickforgeColors.hairlineStrong,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.xs,
+              vertical: PickforgeSpacing.xs,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.folder_outlined,
+                  size: 14,
+                  color: isActive
+                      ? PickforgeColors.ember
+                      : PickforgeColors.textLow,
+                ),
+                const SizedBox(width: PickforgeSpacing.sm - 2),
+                Expanded(
+                  child: MonoEyebrow(
+                    project.displayName,
+                    color: isActive ? PickforgeColors.ember : null,
+                  ),
+                ),
+                IconButton(
+                  tooltip: addTooltip,
+                  icon: const Icon(Icons.add, size: 16),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onAddChat,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -816,9 +909,9 @@ class _ChatTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         PickforgeSpacing.xl - 2,
-        1,
-        PickforgeSpacing.sm - 2,
-        1,
+        2,
+        PickforgeSpacing.md + 2,
+        2,
       ),
       child: SelectionBracket(
         active: isActive,
@@ -826,16 +919,8 @@ class _ChatTile extends StatelessWidget {
           duration: ReduceMotion.duration(context, PickforgeMotion.fast),
           curve: PickforgeMotion.forge,
           decoration: BoxDecoration(
-            color: isActive
-                ? PickforgeColors.ember.withValues(alpha: 0.06)
-                : Colors.transparent,
+            color: PickforgeColors.itemFill,
             borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
-            border: Border(
-              left: BorderSide(
-                color: isActive ? PickforgeColors.ember : Colors.transparent,
-                width: 2,
-              ),
-            ),
           ),
           child: Material(
             color: Colors.transparent,
@@ -1002,23 +1087,6 @@ class _ChatTile extends StatelessWidget {
   }
 }
 
-class _ProjectGridCard extends StatelessWidget {
-  const _ProjectGridCard({required this.project, required this.isActive});
-
-  final ProjectRow project;
-  final bool isActive;
-
-  @override
-  Widget build(BuildContext context) {
-    return _SidebarCard(
-      icon: Icons.folder_outlined,
-      title: project.displayName,
-      selected: isActive,
-      onTap: () => unawaited(_selectProjectOnly(context, project.projectRoot)),
-    );
-  }
-}
-
 class _EntryGridCard extends StatelessWidget {
   const _EntryGridCard({
     required this.entry,
@@ -1038,6 +1106,7 @@ class _EntryGridCard extends StatelessWidget {
       WorkspaceSidebarEntryKind.project => _SidebarCard(
           icon: Icons.folder_outlined,
           title: entry.project!.displayName,
+          isProject: true,
           selected: entry.project!.projectRoot == activeProjectRoot,
           onTap: () => unawaited(
             _selectProjectOnly(context, entry.project!.projectRoot),
@@ -1064,6 +1133,7 @@ class _SidebarCard extends StatelessWidget {
     required this.title,
     required this.selected,
     required this.onTap,
+    this.isProject = false,
     this.subtitle,
     this.status,
     this.labels = const [],
@@ -1071,6 +1141,7 @@ class _SidebarCard extends StatelessWidget {
 
   final IconData icon;
   final String title;
+  final bool isProject;
   final String? subtitle;
   final ChatTaskStatus? status;
   final List<String> labels;
@@ -1084,9 +1155,18 @@ class _SidebarCard extends StatelessWidget {
     return SelectionBracket(
       active: selected,
       child: Material(
-        color: selected ? PickforgeColors.surface2 : PickforgeColors.surface1,
-        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+        color: isProject
+            ? Colors.transparent
+            : selected
+                ? PickforgeColors.surface2
+                : PickforgeColors.surface1,
         clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+          side: isProject
+              ? const BorderSide(color: PickforgeColors.hairlineStrong)
+              : BorderSide.none,
+        ),
         child: InkWell(
           onTap: onTap,
           hoverColor: PickforgeColors.hairline,
@@ -1109,20 +1189,28 @@ class _SidebarCard extends StatelessWidget {
                           : PickforgeColors.textMed,
                     ),
                     const Spacer(),
-                    if (status case final status?)
+                    if (isProject)
+                      const MonoEyebrow(
+                        'Project',
+                        color: PickforgeColors.textLow,
+                      )
+                    else if (status case final status?)
                       Flexible(child: _TaskStatusChip(status: status)),
                   ],
                 ),
                 const SizedBox(height: PickforgeSpacing.sm - 2),
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: selected
-                        ? PickforgeColors.ember
-                        : PickforgeColors.textHi,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                Flexible(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: selected
+                          ? PickforgeColors.ember
+                          : PickforgeColors.textHi,
+                      fontWeight:
+                          selected ? FontWeight.w600 : FontWeight.normal,
+                    ),
                   ),
                 ),
                 if (subtitle != null) ...[
@@ -1138,7 +1226,7 @@ class _SidebarCard extends StatelessWidget {
                 ],
                 if (labels.isNotEmpty) ...[
                   const SizedBox(height: PickforgeSpacing.xs + 1),
-                  _ChatLabelsRow(labels: labels, maxLabels: 2),
+                  Flexible(child: _ChatLabelsRow(labels: labels, maxLabels: 2)),
                 ],
               ],
             ),

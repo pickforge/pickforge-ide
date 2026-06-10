@@ -29,31 +29,14 @@ void main() {
       );
     });
 
-    test('ptyArgsFor returns claude invocation without resume', () {
-      final inv = profile.ptyArgsFor();
-      expect(inv.executable, 'claude');
-      expect(inv.arguments, isEmpty);
+    test('launchCommand is the bare binary without a model', () {
+      expect(profile.launchCommand(), 'claude');
     });
 
-    test('ptyArgsFor includes --resume <id> when given', () {
-      final inv = profile.ptyArgsFor(resumeSessionId: 'sess-42');
-      expect(inv.executable, 'claude');
-      expect(inv.arguments, ['--resume', 'sess-42']);
-    });
-
-    test('ptyArgsFor includes --model when given', () {
-      final inv = profile.ptyArgsFor(model: 'claude-haiku-4-5');
-      expect(inv.arguments, ['--model', 'claude-haiku-4-5']);
-    });
-
-    test('ptyArgsFor combines resume and model', () {
-      final inv = profile.ptyArgsFor(
-        resumeSessionId: 'sess-42',
-        model: 'claude-haiku-4-5',
-      );
+    test('launchCommand appends --model when given', () {
       expect(
-        inv.arguments,
-        ['--resume', 'sess-42', '--model', 'claude-haiku-4-5'],
+        profile.launchCommand(model: 'claude-haiku-4-5'),
+        'claude --model claude-haiku-4-5',
       );
     });
 

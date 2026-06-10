@@ -23,12 +23,28 @@ void main() {
       projectRoot: '/app',
       scanner: scanner,
       opener: _FakeOpener(),
+      rootExists: (_) => true,
     );
 
     await cubit.load();
 
     expect(cubit.state.status, ProjectFileExplorerStatus.ready);
     expect(cubit.state.nodes.single.name, 'lib');
+  });
+
+  test('load reports a missing project root instead of an empty tree',
+      () async {
+    final cubit = ProjectFileExplorerCubit(
+      projectRoot: '/gone',
+      scanner: _FakeScanner(const []),
+      opener: _FakeOpener(),
+      rootExists: (_) => false,
+    );
+
+    await cubit.load();
+
+    expect(cubit.state.status, ProjectFileExplorerStatus.missingRoot);
+    expect(cubit.state.error, '/gone');
   });
 
   test('load records scan performance counter', () async {
@@ -38,6 +54,7 @@ void main() {
       scanner: _FakeScanner(const []),
       opener: _FakeOpener(),
       diagnostics: diagnostics,
+      rootExists: (_) => true,
     );
 
     await cubit.load();

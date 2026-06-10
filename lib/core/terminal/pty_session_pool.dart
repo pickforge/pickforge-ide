@@ -4,6 +4,7 @@ import 'package:pickforge/core/terminal/pty_session.dart';
 @lazySingleton
 class PtySessionPool {
   final _sessions = <String, PtySession>{};
+  final _pasteDelegates = <String, void Function(String)>{};
 
   PtySession? session(String chatId) => _sessions[chatId];
 
@@ -36,11 +37,28 @@ class PtySessionPool {
     return session;
   }
 
-  void sendPrompt(String chatId, String prompt) {
-    final s = _sessions[chatId];
-    if (s == null) return;
-    s.sendPrompt(prompt);
+  /// The live terminal widget registers its mode-aware paste (xterm tracks
+  /// whether the foreground app enabled bracketed paste); without one the
+  /// session-level always-bracketed paste is used.
+  void registerPasteDelegate(String chatId, void Function(String) delegate) {
+    _pasteDelegates[chatId] = delegate;
   }
+
+  void unregisterPasteDelegate(String chatId) {
+    _pasteDelegates.remove(chatId);
+  }
+
+  void paste(String chatId, String text) {
+    final delegate = _pasteDelegates[chatId];
+    if (delegate != null) {
+      delegate(text);
+      return;
+    }
+    _sessions[chatId]?.pasteText(text);
+  }
+
+  void typeText(String chatId, String text) =>
+      _sessions[chatId]?.typeText(text);
 
   void resize(String chatId, int rows, int cols) =>
       _sessions[chatId]?.resize(rows, cols);

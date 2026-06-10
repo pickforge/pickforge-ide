@@ -14,8 +14,8 @@ class _RecordingPtyPool extends PtySessionPool {
   final prompts = <String, String>{};
 
   @override
-  void sendPrompt(String chatId, String prompt) {
-    prompts[chatId] = prompt;
+  void paste(String chatId, String text) {
+    prompts[chatId] = text;
   }
 }
 

@@ -20,16 +20,6 @@ class CursorProfile extends AgentProfile {
   List<String> invocationArgs() => ['-p'];
 
   @override
-  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model}) =>
-      PtyInvocation(
-        executable: 'agent',
-        arguments: [
-          if (resumeSessionId != null) '--resume=$resumeSessionId',
-          if (model != null) ...['--model', model],
-        ],
-      );
-
-  @override
   String buildInitialPrompt({
     required String pickforgeDirRelative,
     required String skillFilename,

@@ -26,10 +26,15 @@ void main() {
       expect(profile.invocationArgs(), ['--yolo']);
     });
 
-    test('ptyArgsFor returns opencode invocation', () {
-      final inv = profile.ptyArgsFor();
-      expect(inv.executable, 'opencode');
-      expect(inv.arguments, isEmpty);
+    test('launchCommand is the bare binary without a model', () {
+      expect(profile.launchCommand(), 'opencode');
+    });
+
+    test('launchCommand appends --model when given', () {
+      expect(
+        profile.launchCommand(model: 'anthropic/claude-haiku-4-5'),
+        'opencode --model anthropic/claude-haiku-4-5',
+      );
     });
 
     test('buildInitialPrompt with all files', () {

@@ -26,16 +26,15 @@ void main() {
       expect(profile.invocationArgs(), ['--dangerously-skip-permissions']);
     });
 
-    test('ptyArgsFor returns codex invocation', () {
-      final inv = profile.ptyArgsFor();
-      expect(inv.executable, 'codex');
-      expect(inv.arguments, isEmpty);
+    test('launchCommand is the bare binary without a model', () {
+      expect(profile.launchCommand(), 'codex');
     });
 
-    test('ptyArgsFor includes --model when given', () {
-      final inv = profile.ptyArgsFor(model: 'gpt-5.3-codex-spark');
-      expect(inv.executable, 'codex');
-      expect(inv.arguments, ['--model', 'gpt-5.3-codex-spark']);
+    test('launchCommand appends --model when given', () {
+      expect(
+        profile.launchCommand(model: 'gpt-5.3-codex-spark'),
+        'codex --model gpt-5.3-codex-spark',
+      );
     });
 
     test('buildInitialPrompt with all files', () {

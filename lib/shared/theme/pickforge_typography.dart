@@ -14,7 +14,7 @@ const String kPickforgeMono = 'GeistMono';
 TextTheme pickforgeTextTheme({required Brightness brightness}) {
   final hi = brightness == Brightness.dark
       ? PickforgeColors.textHi
-      : const Color(0xFF0A0A0B);
+      : const Color(0xFF151110);
   final med = brightness == Brightness.dark
       ? PickforgeColors.textMed
       : const Color(0xFF55555C);

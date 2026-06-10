@@ -23,7 +23,10 @@ class PtySession {
   final List<String> arguments;
   final String workingDirectory;
   final Map<String, String>? environment;
-  final void Function(List<int> bytes)? onOutput;
+
+  /// Transcript sink. Rebindable: a remounted pane reattaches its fresh
+  /// recorder to the pooled session it inherits.
+  void Function(List<int> bytes)? onOutput;
   final PtyProcessFactory _factory;
   final Duration _spawnTimeout;
 
@@ -65,7 +68,7 @@ class PtySession {
       _emit(
         const PtyFailed(
           PtyFailReason.spawnTimeout,
-          'Agent did not start in time',
+          'Process did not start in time',
         ),
       );
     } on io.ProcessException catch (e) {
@@ -83,12 +86,23 @@ class PtySession {
     _process!.write(bytes);
   }
 
-  void sendPrompt(String prompt) {
-    if (_process == null || !isRunning) return;
-    final visible = utf8.encode('\r\n[Pickforge sent prompt]\r\n$prompt\r\n');
-    onOutput?.call(visible);
-    _outputCtrl.add(visible);
-    _process!.write('$prompt\r'.codeUnits);
+  /// Types [text] as if the user had typed it: raw bytes, no submission.
+  void typeText(String text) => write(utf8.encode(text));
+
+  /// Pastes [text] without submitting it. Bracketed paste keeps multi-line
+  /// content from executing line-by-line in shells and lands whole in TUI
+  /// composers; the end-bracket sequence is stripped from the payload so
+  /// pasted content cannot escape the bracket and inject keystrokes.
+  void pasteText(String text, {bool bracketed = true}) {
+    final sanitized = text
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\x1b[200~', '')
+        .replaceAll('\x1b[201~', '');
+    write(
+      utf8.encode(
+        bracketed ? '\x1b[200~$sanitized\x1b[201~' : sanitized,
+      ),
+    );
   }
 
   void resize(int rows, int cols) => _process?.resize(rows: rows, cols: cols);
@@ -110,6 +124,8 @@ class PtySession {
 
   void _emit(PtySessionState s) {
     _last = s;
-    _stateCtrl.add(s);
+    // The process exit callback can fire after dispose() closed the
+    // controller (e.g. a shell killed during teardown).
+    if (!_stateCtrl.isClosed) _stateCtrl.add(s);
   }
 }

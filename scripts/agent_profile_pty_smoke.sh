@@ -21,7 +21,7 @@ if [[ ! -f "$lib_dir/libflutter_pty.so" ]]; then
   fvm flutter build linux --debug
 fi
 
-out_dir="build/dogfood/agent-profile-pty"
+out_dir="build/dogfood/shell-pty"
 keep_project=0
 flutter_args=()
 while [[ $# -gt 0 ]]; do
@@ -49,6 +49,6 @@ export PICKFORGE_AGENT_PTY_SMOKE_OUT_DIR="$out_dir"
 export PICKFORGE_AGENT_PTY_SMOKE_KEEP_PROJECT="$keep_project"
 export PICKFORGE_AGENT_PTY_SMOKE=1
 export LD_LIBRARY_PATH="$lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fvm flutter test test/integration/agent_profile_pty_smoke_test.dart \
+fvm flutter test test/integration/shell_pty_smoke_test.dart \
   --reporter=compact \
   "${flutter_args[@]}"

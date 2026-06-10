@@ -134,6 +134,9 @@ class ForgeCubit extends Cubit<ForgeState> {
       );
       return;
     }
-    _pool.sendPrompt(chatId, prompt);
+    // Paste, don't submit: the embedded terminal runs the user's shell, and
+    // whatever is foregrounded (shell prompt or agent TUI) must not execute
+    // a prose prompt on its own.
+    _pool.paste(chatId, prompt);
   }
 }

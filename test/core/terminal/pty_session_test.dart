@@ -92,30 +92,79 @@ void main() {
     expect(seen.single, [111, 107]);
   });
 
-  test('sendPrompt writes stdin and mirrors prompt to output', () async {
+  test('typeText writes raw bytes with no carriage return or echo', () async {
     final seenOutput = <List<int>>[];
-    final seenTranscript = <List<int>>[];
     final session = PtySession(
-      chatId: 'c_prompt',
+      chatId: 'c_type',
       executable: 'agent',
       arguments: const [],
       workingDirectory: '/tmp',
       factory: factory,
-      onOutput: seenTranscript.add,
+      onOutput: seenOutput.add,
     );
-    session.output.listen(seenOutput.add);
 
     await session.start();
-    session.sendPrompt('fix the selected widget');
+    session.typeText('claude --model haiku');
     await pumpEventQueue();
 
     final stdin =
         verify(() => process.write(captureAny())).captured.single as List<int>;
-    expect(String.fromCharCodes(stdin), 'fix the selected widget\r');
-    final mirrored = String.fromCharCodes(seenOutput.single);
-    expect(mirrored, contains('[Pickforge sent prompt]'));
-    expect(mirrored, contains('fix the selected widget'));
-    expect(seenTranscript.single, seenOutput.single);
+    expect(String.fromCharCodes(stdin), 'claude --model haiku');
+    expect(seenOutput, isEmpty);
+  });
+
+  test('pasteText wraps in bracketed paste with no trailing return', () async {
+    final session = PtySession(
+      chatId: 'c_paste',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+    );
+
+    await session.start();
+    session.pasteText('fix the\nselected widget');
+
+    final stdin =
+        verify(() => process.write(captureAny())).captured.single as List<int>;
+    expect(
+      String.fromCharCodes(stdin),
+      '\x1b[200~fix the\nselected widget\x1b[201~',
+    );
+  });
+
+  test('pasteText strips paste-bracket escapes and normalizes CRLF', () async {
+    final session = PtySession(
+      chatId: 'c_paste2',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+    );
+
+    await session.start();
+    session.pasteText('a\r\nb\x1b[201~; rm -rf /\x1b[200~c');
+
+    final stdin =
+        verify(() => process.write(captureAny())).captured.single as List<int>;
+    expect(String.fromCharCodes(stdin), '\x1b[200~a\nb; rm -rf /c\x1b[201~');
+  });
+
+  test('pasteText without bracketing writes sanitized text only', () async {
+    final session = PtySession(
+      chatId: 'c_paste3',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+    );
+
+    await session.start();
+    session.pasteText('plain text', bracketed: false);
+
+    final stdin =
+        verify(() => process.write(captureAny())).captured.single as List<int>;
+    expect(String.fromCharCodes(stdin), 'plain text');
   });
 
   test('resize forwards rows and columns after start', () async {

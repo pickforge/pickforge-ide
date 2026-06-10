@@ -20,15 +20,11 @@ class GeminiProfile extends AgentProfile {
   List<String> invocationArgs() => ['-p'];
 
   @override
-  PtyInvocation ptyArgsFor({String? resumeSessionId, String? model}) =>
-      PtyInvocation(
-        executable: 'gemini',
-        arguments: [
-          '--approval-mode=auto_edit',
-          if (resumeSessionId != null) '--resume=$resumeSessionId',
-          if (model != null) ...['--model', model],
-        ],
-      );
+  String launchCommand({String? model}) => [
+        binary,
+        '--approval-mode=auto_edit',
+        if (model != null) ...['--model', model],
+      ].join(' ');
 
   @override
   String buildInitialPrompt({

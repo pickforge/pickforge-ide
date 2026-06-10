@@ -45,7 +45,7 @@ class _RecordingPool extends PtySessionPool {
   String? prompt;
 
   @override
-  void sendPrompt(String chatId, String prompt) {
+  void paste(String chatId, String prompt) {
     this.chatId = chatId;
     this.prompt = prompt;
   }
@@ -118,7 +118,7 @@ void main() {
     adb = _MockAdb();
     pool = _MockPool();
     diagnostics = _MockDiagnostics();
-    when(() => pool.sendPrompt(any(), any())).thenReturn(null);
+    when(() => pool.paste(any(), any())).thenReturn(null);
     when(() => diagnostics.recordLog(any(), any())).thenReturn(null);
     when(() => diagnostics.recordAgentError(any())).thenReturn(null);
     getIt.registerSingleton<DiagnosticsService>(diagnostics);
@@ -186,7 +186,7 @@ void main() {
       ],
       verify: (_) {
         verify(() => launcher.prepareContext(any())).called(1);
-        verify(() => pool.sendPrompt('chat-1', 'do the thing')).called(1);
+        verify(() => pool.paste('chat-1', 'do the thing')).called(1);
       },
     );
 
@@ -322,7 +322,7 @@ void main() {
     );
 
     blocTest<ForgeCubit, ForgeState>(
-      'forge failure emits error state and skips sendPrompt',
+      'forge failure emits error state and skips paste',
       build: () {
         when(
           () => adb.capture(
@@ -345,7 +345,7 @@ void main() {
         expect(cubit.state.launching, isFalse);
         expect(cubit.state.lastError, isNotNull);
         verify(() => diagnostics.recordAgentError(any())).called(1);
-        verifyNever(() => pool.sendPrompt(any(), any()));
+        verifyNever(() => pool.paste(any(), any()));
       },
     );
 
@@ -371,7 +371,7 @@ void main() {
           ),
         );
         verifyNever(() => launcher.prepareContext(any()));
-        verifyNever(() => pool.sendPrompt(any(), any()));
+        verifyNever(() => pool.paste(any(), any()));
       },
     );
   });

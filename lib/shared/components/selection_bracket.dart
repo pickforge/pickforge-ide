@@ -28,7 +28,9 @@ class SelectionBracket extends StatelessWidget {
   /// Length of each L arm in logical px.
   final double armLength;
 
-  /// Distance the brackets sit outside the child's box.
+  /// Distance the brackets sit outside the child's box. Negative values draw
+  /// the corners inside the box — use this in dense lists where there is no
+  /// room around the child (the arms would bleed into neighbors and clip).
   final double inset;
 
   final Color color;

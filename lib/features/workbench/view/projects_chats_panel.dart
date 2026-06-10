@@ -911,6 +911,9 @@ class _ChatTile extends StatelessWidget {
       ),
       child: SelectionBracket(
         active: isActive,
+        // Inner bracket: list rows sit 2px apart, so outside arms would
+        // overlap the neighboring tiles and clip at the panel edge.
+        inset: -4,
         child: AnimatedContainer(
           duration: ReduceMotion.duration(context, PickforgeMotion.fast),
           curve: PickforgeMotion.forge,
@@ -1148,6 +1151,9 @@ class _SidebarCard extends StatelessWidget {
     final hasMetadata = status != null || subtitle != null || labels.isNotEmpty;
     return SelectionBracket(
       active: selected,
+      // Inner bracket — grid tiles touch their grid gap, same clipping issue
+      // as the list rows.
+      inset: -4,
       child: Material(
         color: isProject
             ? Colors.transparent

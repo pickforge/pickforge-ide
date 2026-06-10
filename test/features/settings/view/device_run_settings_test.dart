@@ -69,7 +69,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Device & Run'), findsOneWidget);
+    expect(find.text('DEVICE & RUN'), findsOneWidget);
     await tester.tap(find.byKey(const Key('device-dropdown')));
     await tester.pumpAndSettle();
     expect(find.text('Pixel 5'), findsOneWidget);

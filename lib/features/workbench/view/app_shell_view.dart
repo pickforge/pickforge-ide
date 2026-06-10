@@ -36,6 +36,7 @@ import 'package:pickforge/features/workbench/view/inspector_panel.dart';
 import 'package:pickforge/features/workbench/view/workbench_command_palette_scope.dart';
 import 'package:pickforge/features/workbench/view/workbench_left_pane.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
 
 class AppShellView extends StatefulWidget {
   const AppShellView({super.key});
@@ -322,9 +323,8 @@ class _PaneFocusFrame extends StatelessWidget {
             decoration: BoxDecoration(
               border: Border.all(
                 color: focusNode.hasFocus
-                    ? Theme.of(context).colorScheme.secondary
+                    ? PickforgeColors.emberDeep
                     : Colors.transparent,
-                width: 2,
               ),
             ),
             child: child,

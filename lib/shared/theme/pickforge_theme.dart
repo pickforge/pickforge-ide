@@ -55,18 +55,20 @@ class PickforgeTheme {
       filledButtonTheme: FilledButtonThemeData(style: _emberButtonStyle(text)),
       elevatedButtonTheme:
           ElevatedButtonThemeData(style: _emberButtonStyle(text)),
+      // Secondary actions are quiet — off-white on hairline. Ember is reserved
+      // for the single primary action of a composition (one ember per surface).
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStateProperty.resolveWith(
             (s) => s.contains(WidgetState.hovered)
-                ? PickforgeColors.emberSoft
-                : PickforgeColors.ember,
+                ? PickforgeColors.textHi
+                : PickforgeColors.textMed,
           ),
           textStyle: WidgetStatePropertyAll(text.labelLarge),
           side: WidgetStateProperty.resolveWith(
             (s) => BorderSide(
               color: s.contains(WidgetState.hovered)
-                  ? PickforgeColors.ember.withValues(alpha: 0.5)
+                  ? const Color(0x40FFFFFF)
                   : PickforgeColors.hairlineStrong,
             ),
           ),
@@ -79,18 +81,18 @@ class PickforgeTheme {
               vertical: PickforgeSpacing.sm + 2,
             ),
           ),
-          overlayColor: const WidgetStatePropertyAll(Color(0x11FF7A1A)),
+          overlayColor: const WidgetStatePropertyAll(Color(0x0AFFFFFF)),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStateProperty.resolveWith(
             (s) => s.contains(WidgetState.hovered)
-                ? PickforgeColors.emberSoft
-                : PickforgeColors.ember,
+                ? PickforgeColors.textHi
+                : PickforgeColors.textMed,
           ),
           textStyle: WidgetStatePropertyAll(text.labelLarge),
-          overlayColor: const WidgetStatePropertyAll(Color(0x11FF7A1A)),
+          overlayColor: const WidgetStatePropertyAll(Color(0x0AFFFFFF)),
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
@@ -235,6 +237,15 @@ class PickforgeTheme {
           borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
         ),
       ),
+      toggleButtonsTheme: ToggleButtonsThemeData(
+        color: PickforgeColors.textMed,
+        selectedColor: PickforgeColors.textHi,
+        fillColor: PickforgeColors.surface2,
+        hoverColor: PickforgeColors.hairline,
+        borderColor: PickforgeColors.hairlineStrong,
+        selectedBorderColor: PickforgeColors.hairlineStrong,
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+      ),
       scrollbarTheme: const ScrollbarThemeData(
         thumbColor: WidgetStatePropertyAll(Color(0x22FFFFFF)),
         thickness: WidgetStatePropertyAll(6),
@@ -341,7 +352,7 @@ class PickforgeTheme {
     errorContainer: Color(0xFFFFDAD5),
     onErrorContainer: Color(0xFF5A1610),
     surface: Color(0xFFF7F7F8),
-    onSurface: Color(0xFF151110),
+    onSurface: Color(0xFF0A0A0B),
     onSurfaceVariant: Color(0xFF55555C),
     surfaceContainerLowest: Color(0xFFFFFFFF),
     surfaceContainerLow: Color(0xFFF2F2F4),

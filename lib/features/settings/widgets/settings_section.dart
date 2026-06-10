@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:pickforge/shared/components/mono_eyebrow.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 
+/// A branded settings panel — mono eyebrow header on a hairline card. The
+/// panel is quiet (surface-1 + hairline); ember never lives in the chrome.
 class SettingsSection extends StatelessWidget {
   const SettingsSection({
     required this.title,
@@ -13,32 +17,36 @@ class SettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(PickforgeSpacing.md),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.56),
-        ),
-        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+        color: PickforgeColors.surface1,
+        border: Border.all(color: PickforgeColors.hairline),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusLg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: PickforgeSpacing.lg,
+              vertical: PickforgeSpacing.md,
+            ),
+            child: MonoEyebrow(title),
+          ),
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.all(PickforgeSpacing.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var index = 0; index < children.length; index++) ...[
+                  if (index > 0) const SizedBox(height: PickforgeSpacing.md),
+                  children[index],
+                ],
+              ],
             ),
           ),
-          if (children.isNotEmpty) const SizedBox(height: PickforgeSpacing.md),
-          for (var index = 0; index < children.length; index++) ...[
-            if (index > 0) const SizedBox(height: PickforgeSpacing.sm),
-            children[index],
-          ],
         ],
       ),
     );
@@ -60,7 +68,7 @@ class SettingsField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final labelStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-          fontWeight: FontWeight.w600,
+          color: PickforgeColors.textMed,
         );
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -145,11 +153,9 @@ class SettingsEmptyState extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(PickforgeSpacing.lg),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.48),
-        ),
-        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+        color: PickforgeColors.surface1,
+        border: Border.all(color: PickforgeColors.hairline),
+        borderRadius: BorderRadius.circular(PickforgeSpacing.radiusLg),
       ),
       child: Row(
         children: [

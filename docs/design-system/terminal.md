@@ -61,7 +61,7 @@ Nerd-Font chain (`JetBrainsMono Nerd Font`, …) for box-drawing / powerline
 glyphs Geist Mono may lack.
 
 The `pickforgeEmber` theme puts agent output on the brand canvas: background
-`#151110` (the warm brand surface), foreground `#F2F2F3`, **ember cursor**, and an ANSI palette mapped to
+`#0A0A0B` (the brand surface), foreground `#F2F2F3`, **ember cursor**, and an ANSI palette mapped to
 the brand semantic colors (red=error, green=connected, yellow=warning,
 blue=info) so Claude/Codex stay vivid and legible.
 

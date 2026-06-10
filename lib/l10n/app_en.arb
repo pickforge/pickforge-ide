@@ -335,6 +335,9 @@
   "diagnosticsCopySupportBundle": "Copy support bundle",
   "diagnosticsSupportBundleCopied": "Support bundle copied",
   "inspectorNoWidgetSelected": "No widget selected",
+  "inspectorEmptyHint": "Run your app and pick a widget on the device. Its source, ancestors, and context land here.",
+  "chatEmptyHint": "Each chat is a shell with quick-launch agents. Your code, your machine, your rules.",
+  "inspectorDisconnectedHint": "Connect an emulator or paste a VM Service URL to start picking widgets.",
   "inspectorNoPickerConnected": "No widget picker connected",
   "inspectorRecentRebuilds": "Recent rebuilds",
   "inspectorAncestors": "Ancestors",
@@ -504,6 +507,7 @@
     }
   },
   "onboardingHeading": "Add your first Flutter project",
+  "onboardingTagline": "Pick a widget in your running app. Your agent gets its full context. Local-first, open source.",
   "onboardingChecklistTitle": "First-run checklist",
   "onboardingChecklistAddProject": "Add a Flutter project",
   "onboardingChecklistPickDevice": "Pick an emulator or manual VM Service URL",

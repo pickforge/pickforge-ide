@@ -14,6 +14,7 @@ import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
 
 class InspectorPanel extends StatelessWidget {
   const InspectorPanel({super.key, this.cubit, this.historyRecorder});
@@ -90,7 +91,12 @@ class _Inner extends StatelessWidget {
                 const Divider(height: 1),
                 Expanded(
                   child: selection == null
-                      ? Center(child: Text(l10n.inspectorNoWidgetSelected))
+                      ? ForgeEmptyState(
+                          icon: Icons.center_focus_strong_outlined,
+                          eyebrow: 'Inspector',
+                          title: l10n.inspectorNoWidgetSelected,
+                          hint: l10n.inspectorEmptyHint,
+                        )
                       : WidgetDetailsPanel(
                           selected: selection,
                           rebuildStats: state.latestRebuildStats,
@@ -174,7 +180,12 @@ class _DisconnectedPlaceholder extends StatelessWidget {
           const ConnectionPill(),
           const Divider(height: 1),
           Expanded(
-            child: Center(child: Text(l10n.inspectorNoPickerConnected)),
+            child: ForgeEmptyState(
+              icon: Icons.sensors_off_outlined,
+              eyebrow: 'Inspector',
+              title: l10n.inspectorNoPickerConnected,
+              hint: l10n.inspectorDisconnectedHint,
+            ),
           ),
         ],
       ),

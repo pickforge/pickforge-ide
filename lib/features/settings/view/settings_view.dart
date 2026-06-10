@@ -19,7 +19,9 @@ import 'package:pickforge/features/settings/widgets/settings_section.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
+import 'package:pickforge/shared/theme/pickforge_typography.dart';
 
 class SettingsView extends StatefulWidget {
   const SettingsView({
@@ -123,63 +125,71 @@ class _SettingsViewState extends State<SettingsView> {
           return BlocBuilder<SettingsCubit, SettingsState>(
             builder: (context, state) {
               return SingleChildScrollView(
-                padding: const EdgeInsets.all(PickforgeSpacing.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SettingsSection(
-                      title: l10n.settingsDefaultAgent,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: PickforgeSpacing.xl,
+                  vertical: PickforgeSpacing.xl,
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildAgentDropdown(state, context, projectRoot),
-                      ],
-                    ),
-                    const SizedBox(height: PickforgeSpacing.lg),
-                    const _AgentModelsSection(),
-                    const SizedBox(height: PickforgeSpacing.lg),
-                    SettingsSection(
-                      title: l10n.settingsProjectValidator,
-                      children: [
-                        _ValidatorCommandField(
-                          projectRoot: projectRoot,
-                          command: state.validatorCommand,
+                        SettingsSection(
+                          title: l10n.settingsDefaultAgent,
+                          children: [
+                            _buildAgentDropdown(state, context, projectRoot),
+                          ],
                         ),
+                        const SizedBox(height: PickforgeSpacing.lg),
+                        const _AgentModelsSection(),
+                        const SizedBox(height: PickforgeSpacing.lg),
+                        SettingsSection(
+                          title: l10n.settingsProjectValidator,
+                          children: [
+                            _ValidatorCommandField(
+                              projectRoot: projectRoot,
+                              command: state.validatorCommand,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: PickforgeSpacing.lg),
+                        DeviceRunSettings(
+                          key: ValueKey(projectRoot),
+                          projectRoot: projectRoot,
+                        ),
+                        const SizedBox(height: PickforgeSpacing.lg),
+                        SettingsSection(
+                          title: l10n.settingsEmbeddedTerminal,
+                          children: [
+                            _buildFontFamilyDropdown(state, context),
+                            _buildFontSizeSlider(state, context),
+                            _buildThemeDropdown(state, context),
+                          ],
+                        ),
+                        if (_updateSettingsRepositoryOrNull()
+                            case final updateSettings?) ...[
+                          const SizedBox(height: PickforgeSpacing.lg),
+                          _UpdateSettingsSection(repository: updateSettings),
+                        ],
+                        if (_telemetrySettingsRepositoryOrNull()
+                            case final telemetrySettings?) ...[
+                          const SizedBox(height: PickforgeSpacing.lg),
+                          _TelemetrySettingsSection(
+                            repository: telemetrySettings,
+                          ),
+                        ],
+                        if (_diagnosticsServiceOrNull()
+                            case final diagnostics?) ...[
+                          const SizedBox(height: PickforgeSpacing.lg),
+                          _DiagnosticsSection(
+                            diagnostics: diagnostics,
+                            projectRoot: projectRoot,
+                          ),
+                        ],
                       ],
                     ),
-                    const SizedBox(height: PickforgeSpacing.lg),
-                    DeviceRunSettings(
-                      key: ValueKey(projectRoot),
-                      projectRoot: projectRoot,
-                    ),
-                    const SizedBox(height: PickforgeSpacing.lg),
-                    SettingsSection(
-                      title: l10n.settingsEmbeddedTerminal,
-                      children: [
-                        _buildFontFamilyDropdown(state, context),
-                        _buildFontSizeSlider(state, context),
-                        _buildThemeDropdown(state, context),
-                      ],
-                    ),
-                    if (_updateSettingsRepositoryOrNull()
-                        case final updateSettings?) ...[
-                      const SizedBox(height: PickforgeSpacing.lg),
-                      _UpdateSettingsSection(repository: updateSettings),
-                    ],
-                    if (_telemetrySettingsRepositoryOrNull()
-                        case final telemetrySettings?) ...[
-                      const SizedBox(height: PickforgeSpacing.lg),
-                      _TelemetrySettingsSection(
-                        repository: telemetrySettings,
-                      ),
-                    ],
-                    if (_diagnosticsServiceOrNull()
-                        case final diagnostics?) ...[
-                      const SizedBox(height: PickforgeSpacing.lg),
-                      _DiagnosticsSection(
-                        diagnostics: diagnostics,
-                        projectRoot: projectRoot,
-                      ),
-                    ],
-                  ],
+                  ),
                 ),
               );
             },
@@ -868,7 +878,15 @@ class _DiagnosticRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: PickforgeSpacing.md),
-          Expanded(child: Text(value)),
+          Expanded(
+            child: Text(
+              value,
+              style: PickforgeText.mono.copyWith(
+                fontSize: 12,
+                color: PickforgeColors.textMed,
+              ),
+            ),
+          ),
         ],
       ),
     );

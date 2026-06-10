@@ -180,12 +180,12 @@ void main() {
     verify(() => settings.getDefaultAgentId('/workspace/app')).called(1);
     verify(() => settings.getValidatorCommand('/workspace/app')).called(1);
     verify(() => settings.getRunArgs('/workspace/app')).called(1);
-    expect(find.text('Project validator'), findsOneWidget);
-    expect(find.text('Updates'), findsOneWidget);
+    expect(find.text('PROJECT VALIDATOR'), findsOneWidget);
+    expect(find.text('UPDATES'), findsOneWidget);
     expect(find.text('Check for updates'), findsOneWidget);
-    expect(find.text('Privacy'), findsOneWidget);
+    expect(find.text('PRIVACY'), findsOneWidget);
     expect(find.text('Share anonymous diagnostics'), findsOneWidget);
-    expect(find.text('Diagnostics'), findsOneWidget);
+    expect(find.text('DIAGNOSTICS'), findsOneWidget);
     expect(find.text('App version'), findsOneWidget);
     expect(find.text('9.8.7+6'), findsOneWidget);
     expect(find.text('Build commit'), findsOneWidget);

@@ -4,6 +4,9 @@ import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/features/workbench/view/project_file_explorer_panel.dart';
 import 'package:pickforge/features/workbench/view/projects_chats_panel.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
+import 'package:pickforge/shared/theme/pickforge_spacing.dart';
+import 'package:pickforge/shared/theme/pickforge_typography.dart';
 
 class WorkbenchLeftPane extends StatelessWidget {
   const WorkbenchLeftPane({super.key});
@@ -29,7 +32,36 @@ class WorkbenchLeftPane extends StatelessWidget {
             ),
           ),
         ],
+        const _BrandLine(),
       ],
+    );
+  }
+}
+
+/// The brand bottom line from the desktop-shell recipe in
+/// `branding-visual/APPLICATION-EXAMPLES.md` — mono, muted, hairline-topped.
+class _BrandLine extends StatelessWidget {
+  const _BrandLine();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: PickforgeSpacing.md,
+        vertical: PickforgeSpacing.sm - 2,
+      ),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: PickforgeColors.hairline)),
+      ),
+      child: Text(
+        '© PICKFORGE · PICKFORGE.DEV · MIT',
+        style: PickforgeText.eyebrow.copyWith(
+          color: PickforgeColors.textLow,
+          fontSize: 9,
+        ),
+        textAlign: TextAlign.center,
+      ),
     );
   }
 }

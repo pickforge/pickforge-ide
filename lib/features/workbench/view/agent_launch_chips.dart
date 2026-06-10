@@ -124,7 +124,7 @@ class _LaunchChipState extends State<_LaunchChip> {
       text = PickforgeColors.textLow;
     } else if (accent) {
       border = PickforgeColors.ember;
-      text = PickforgeColors.ember;
+      text = PickforgeColors.textHi;
     } else {
       border =
           _hovered ? PickforgeColors.hairlineStrong : PickforgeColors.hairline;

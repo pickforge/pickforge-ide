@@ -79,10 +79,13 @@ class _HaloPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
+    // A localized pocket of warmth, not a wash — most of the canvas stays
+    // black so the single ember in the content can read as fire.
     final paint = Paint()
       ..shader = const RadialGradient(
-        radius: 0.6,
-        colors: [PickforgeColors.emberGlow, Color(0x00FF7A1A)],
+        center: Alignment(0, -0.25),
+        radius: 0.45,
+        colors: [Color(0x21FF7A1A), Color(0x00FF7A1A)],
       ).createShader(rect);
     canvas.drawRect(rect, paint);
   }

@@ -608,14 +608,14 @@ class _GridProjectHeader extends StatelessWidget {
                   Icons.folder_outlined,
                   size: 14,
                   color: isActive
-                      ? PickforgeColors.ember
+                      ? PickforgeColors.textHi
                       : PickforgeColors.textLow,
                 ),
                 const SizedBox(width: PickforgeSpacing.sm - 2),
                 Expanded(
                   child: MonoEyebrow(
                     project.displayName,
-                    color: isActive ? PickforgeColors.ember : null,
+                    color: isActive ? PickforgeColors.textHi : null,
                   ),
                 ),
                 IconButton(
@@ -721,9 +721,7 @@ class _ProjectHeaderTile extends StatelessWidget {
                     style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight:
                           isActiveProject ? FontWeight.w600 : FontWeight.normal,
-                      color: isActiveProject
-                          ? PickforgeColors.ember
-                          : PickforgeColors.textHi,
+                      color: PickforgeColors.textHi,
                     ),
                   ),
                 ),
@@ -856,9 +854,7 @@ class _ProjectEntryTile extends StatelessWidget {
                     project.displayName,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: isActive
-                          ? PickforgeColors.ember
-                          : PickforgeColors.textHi,
+                      color: PickforgeColors.textHi,
                       fontWeight:
                           isActive ? FontWeight.w500 : FontWeight.normal,
                     ),
@@ -949,9 +945,7 @@ class _ChatTile extends StatelessWidget {
                                   chat.title,
                                   overflow: TextOverflow.ellipsis,
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: isActive
-                                        ? PickforgeColors.ember
-                                        : PickforgeColors.textHi,
+                                    color: PickforgeColors.textHi,
                                     fontWeight: isActive
                                         ? FontWeight.w500
                                         : FontWeight.normal,
@@ -1205,9 +1199,7 @@ class _SidebarCard extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: selected
-                          ? PickforgeColors.ember
-                          : PickforgeColors.textHi,
+                      color: PickforgeColors.textHi,
                       fontWeight:
                           selected ? FontWeight.w600 : FontWeight.normal,
                     ),

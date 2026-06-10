@@ -20,6 +20,7 @@ import 'package:pickforge/shared/motion/pickforge_motion.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
+import 'package:pickforge/shared/theme/pickforge_typography.dart';
 
 class OnboardingView extends StatefulWidget {
   const OnboardingView({
@@ -116,7 +117,8 @@ class _OnboardingViewState extends State<OnboardingView> {
     Widget hero = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // The forge mark — an ember bolt framed by the selection bracket.
+        // The forge mark — the selection bracket is the logo's DNA; its ember
+        // corner is the mark's one ember. The bolt stays off-white.
         SelectionBracket(
           inset: 9,
           armLength: 16,
@@ -130,17 +132,27 @@ class _OnboardingViewState extends State<OnboardingView> {
             child: const Icon(
               Icons.bolt,
               size: 40,
-              color: PickforgeColors.ember,
+              color: PickforgeColors.textHi,
             ),
           ),
         ),
         const SizedBox(height: PickforgeSpacing.xl),
-        const MonoEyebrow('Widget-level AI context', tick: true),
+        const MonoEyebrow('Widget-level AI context'),
         const SizedBox(height: PickforgeSpacing.md),
         Text(
           l10n.onboardingHeading,
-          style: textTheme.displaySmall,
+          style: textTheme.displayMedium,
           textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: PickforgeSpacing.md),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Text(
+            l10n.onboardingTagline,
+            style: textTheme.bodyMedium
+                ?.copyWith(color: PickforgeColors.textMed, height: 1.5),
+            textAlign: TextAlign.center,
+          ),
         ),
         const SizedBox(height: PickforgeSpacing.xl),
         EmberButton(
@@ -339,19 +351,19 @@ class _FirstRunChecklist extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: PickforgeSpacing.sm),
-          for (final item in items)
+          for (final (index, item) in items.indexed)
             Padding(
               padding: const EdgeInsets.symmetric(
                 vertical: PickforgeSpacing.xs,
               ),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.check_circle_outline,
-                    size: 15,
-                    color: PickforgeColors.ember,
+                  Text(
+                    '0${index + 1}',
+                    style: PickforgeText.eyebrow
+                        .copyWith(color: PickforgeColors.textLow),
                   ),
-                  const SizedBox(width: PickforgeSpacing.sm),
+                  const SizedBox(width: PickforgeSpacing.md),
                   Expanded(child: Text(item)),
                 ],
               ),
@@ -483,13 +495,15 @@ class _SetupCheckRow extends StatelessWidget {
           Icon(
             available ? Icons.check_circle : Icons.error_outline,
             size: 16,
-            color: available ? cs.primary : cs.error,
+            color: available ? PickforgeColors.connected : cs.error,
           ),
           const SizedBox(width: PickforgeSpacing.sm),
           Expanded(child: Text(label)),
           Text(
             available ? l10n.diagnosticsAvailable : l10n.diagnosticsMissing,
-            style: TextStyle(color: available ? cs.primary : cs.error),
+            style: TextStyle(
+              color: available ? PickforgeColors.connected : cs.error,
+            ),
           ),
           if (!available) ...[
             const SizedBox(width: PickforgeSpacing.xs),

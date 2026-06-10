@@ -21,6 +21,7 @@ import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workspace_sidebar_cubit.dart';
 import 'package:pickforge/features/workbench/view/app_shell_view.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _MockDao extends Mock implements ProjectSettingsDao {}
@@ -91,9 +92,7 @@ void main() {
     expect(find.byKey(const Key('workbench-middle')), findsOneWidget);
     expect(find.byKey(const Key('workbench-right')), findsOneWidget);
 
-    final focusedColor = Theme.of(tester.element(find.byType(AppShellView)))
-        .colorScheme
-        .secondary;
+    const focusedColor = PickforgeColors.emberDeep;
     expect(
       _paneBorderColor(tester, const Key('workbench-left-focus-frame')),
       Colors.transparent,

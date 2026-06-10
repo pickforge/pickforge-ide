@@ -11,19 +11,19 @@ class PickforgeColors {
   const PickforgeColors._();
 
   // ── Surfaces (the canvas) ────────────────────────────────────────────────
-  // Warm near-blacks: grey with a faint ember undertone, softer than pure
-  // black against the bright ember accent.
-  /// Base page background. The brand warm near-black.
-  static const surface = Color(0xFF151110);
+  // Cold near-blacks straight from DESIGN-TOKENS.md: the cinematic canvas
+  // that makes the single ember read as fire.
+  /// Base page background. The brand black (`--color-surface`).
+  static const surface = Color(0xFF0A0A0B);
 
-  /// First elevation — cards, panels, sidebars.
-  static const surface1 = Color(0xFF1A1513);
+  /// First elevation — cards, panels, sidebars (`--color-surface-1`).
+  static const surface1 = Color(0xFF0F0F11);
 
-  /// Second elevation — raised panels, hover fills, terminal chrome.
-  static const surface2 = Color(0xFF201A17);
+  /// Second elevation — raised panels, hover fills (`--color-surface-2`).
+  static const surface2 = Color(0xFF141417);
 
-  /// Third elevation — popovers, menus, tooltips (slightly lifted off s2).
-  static const surface3 = Color(0xFF27201C);
+  /// Third elevation — popovers, menus, tooltips.
+  static const surface3 = Color(0xFF1B1B1F);
 
   // Back-compat aliases (older code referenced bg0/bg1/bg2). Keep in sync.
   static const Color bg0 = surface;

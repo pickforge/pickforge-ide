@@ -83,6 +83,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Explore demo mode'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Explore demo mode'));
     await tester.pumpAndSettle();
 
@@ -120,6 +122,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Open sample Flutter app'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Open sample Flutter app'));
     await tester.pumpAndSettle();
 
@@ -146,6 +150,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Dismiss for now'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Dismiss for now'));
     await tester.pumpAndSettle();
 

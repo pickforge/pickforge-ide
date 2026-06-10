@@ -10,7 +10,7 @@ const TerminalTheme _pickforgeEmber = TerminalTheme(
   cursor: Color(0xFFFF7A1A), // ember
   selection: Color(0x33FF7A1A), // ember 20%
   foreground: Color(0xFFF2F2F3), // brand text
-  background: Color(0xFF151110), // brand surface
+  background: Color(0xFF0A0A0B), // brand surface
   black: Color(0xFF17171A),
   red: Color(0xFFFF6B5C), // brand error
   green: Color(0xFF3DD68C), // brand connected
@@ -29,7 +29,7 @@ const TerminalTheme _pickforgeEmber = TerminalTheme(
   brightWhite: Color(0xFFFFFFFF),
   searchHitBackground: Color(0x66FF7A1A),
   searchHitBackgroundCurrent: Color(0xFFFF7A1A),
-  searchHitForeground: Color(0xFF151110),
+  searchHitForeground: Color(0xFF0A0A0B),
 );
 
 const TerminalTheme _draculaDark = TerminalTheme(

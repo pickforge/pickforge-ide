@@ -118,6 +118,16 @@ class _Gallery extends StatelessWidget {
                   child: BlueprintGrid(halo: true),
                 ),
               ),
+              const SizedBox(width: PickforgeSpacing.xl),
+              const SizedBox(
+                width: 220,
+                child: ForgeEmptyState(
+                  icon: Icons.center_focus_strong_outlined,
+                  eyebrow: 'Inspector',
+                  title: 'No widget selected',
+                  hint: 'Pick a widget on the device.',
+                ),
+              ),
             ],
           ),
         ],

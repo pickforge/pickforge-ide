@@ -19,6 +19,7 @@ import 'package:pickforge/features/workbench/cubit/workbench_layout_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/workbench_layout_state.dart';
 import 'package:pickforge/features/workbench/view/terminal_pane_host.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
+import 'package:pickforge/shared/components/components.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 
 class ChatWorkbenchPanel extends StatefulWidget {
@@ -123,8 +124,18 @@ class _EmptyChat extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     return ColoredBox(
       color: Theme.of(context).colorScheme.surface,
-      child: Center(
-        child: Text(l10n.chatSelectOrCreate),
+      child: Stack(
+        children: [
+          const Positioned.fill(
+            child: IgnorePointer(child: BlueprintGrid()),
+          ),
+          ForgeEmptyState(
+            icon: Icons.terminal_outlined,
+            eyebrow: 'Terminal',
+            title: l10n.chatSelectOrCreate,
+            hint: l10n.chatEmptyHint,
+          ),
+        ],
       ),
     );
   }

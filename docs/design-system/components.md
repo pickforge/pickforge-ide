@@ -79,15 +79,33 @@ ember halo (a backdrop — exempt from the one-ember rule).
 const BlueprintGrid(halo: true)   // behind hero content in a Stack
 ```
 
+## ForgeEmptyState
+
+The branded empty state — a bracket-framed glyph, mono eyebrow, title, and a
+muted hint. Ember-free by design: an empty panel is never the composition's
+focal point. Used by the inspector (no widget / disconnected) and the empty
+workbench canvas.
+
+```dart
+ForgeEmptyState(
+  icon: Icons.center_focus_strong_outlined,
+  eyebrow: 'Inspector',
+  title: l10n.inspectorNoWidgetSelected,
+  hint: l10n.inspectorEmptyHint,
+  action: OutlinedButton(...),   // optional, keep it quiet
+)
+```
+
 ## Composition example (onboarding hero)
 
 ```dart
 Stack(children: [
   const Positioned.fill(child: IgnorePointer(child: BlueprintGrid(halo: true))),
   Center(child: Column(children: [
-    SelectionBracket(child: emberForgeMark),
-    const MonoEyebrow('Widget-level AI context', tick: true),
-    Text(heading, style: textTheme.displaySmall),
+    SelectionBracket(child: forgeMark),   // the bracket corner is the ember
+    const MonoEyebrow('Widget-level AI context'),
+    Text(heading, style: textTheme.displayMedium),
+    Text(tagline, style: bodyMedium.copyWith(color: PickforgeColors.textMed)),
     EmberButton(label: 'Pick folder', icon: Icons.add, onPressed: pick),
   ])),
 ]);

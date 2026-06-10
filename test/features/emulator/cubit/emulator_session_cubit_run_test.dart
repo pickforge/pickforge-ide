@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/emulator/avd_launcher.dart';
 import 'package:pickforge/core/emulator/avd_shutdown_controller.dart';
@@ -1253,7 +1254,7 @@ void main() {
 
     verify(
       () => screenshot.capture(
-        outputDir: '${project.path}/.pickforge',
+        outputDir: p.join(project.path, '.pickforge'),
         serial: 'emulator-5554',
         platform: androidEmulatorPlatform,
         outputName: AdbScreenshotCapturer.afterHotReloadOutputName,

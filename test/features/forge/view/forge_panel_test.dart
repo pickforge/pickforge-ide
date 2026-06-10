@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/models/agent_profile_id.dart';
 import 'package:pickforge/core/di/injection.dart';
@@ -984,9 +985,9 @@ void main() {
     await tester.tap(find.byTooltip('Open changed file').first);
     await tester.pumpAndSettle();
 
+    final openedPath = p.normalize(p.join('/tmp/test', 'lib', 'a.dart'));
     expect(
-      runner.commands
-          .any((command) => command.contains('/tmp/test/lib/a.dart')),
+      runner.commands.any((command) => command.contains(openedPath)),
       isTrue,
     );
     expect(find.text('Opened a.dart'), findsOneWidget);
@@ -1014,7 +1015,9 @@ void main() {
         'status --porcelain=v1': ' M lib/b.dart\n',
         'rev-parse --abbrev-ref HEAD': 'feature/review\n',
         'diff --stat HEAD': ' lib/b.dart | 1 +\n',
+        // POSIX and Windows shell invocations of the validator runner.
         '-lc fvm flutter analyze': 'No issues found!',
+        '/C fvm flutter analyze': 'No issues found!',
       },
     );
     await getIt.unregister<ProcessRunner>();

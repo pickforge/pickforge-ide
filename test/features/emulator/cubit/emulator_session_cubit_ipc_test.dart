@@ -121,7 +121,11 @@ void main() {
   });
 
   test('project IPC routes expose logs, context, history, and screenshots',
-      () async {
+      // The IPC transport binds Unix domain sockets, which dart:io does not
+      // support on Windows — the client connect hangs until the job timeout.
+      skip: Platform.isWindows
+          ? 'Emulator IPC uses Unix domain sockets; unsupported on Windows'
+          : false, () async {
     final project = await Directory.systemTemp.createTemp('pf-project-');
     addTearDown(() => project.delete(recursive: true));
     final pickforge = await PickforgeProjectDirectory.ensure(project.path);

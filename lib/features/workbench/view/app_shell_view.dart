@@ -35,6 +35,7 @@ import 'package:pickforge/features/workbench/view/chat_workbench_panel.dart';
 import 'package:pickforge/features/workbench/view/inspector_panel.dart';
 import 'package:pickforge/features/workbench/view/workbench_command_palette_scope.dart';
 import 'package:pickforge/features/workbench/view/workbench_left_pane.dart';
+import 'package:pickforge/shared/components/forge_background.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 import 'package:pickforge/shared/theme/pickforge_colors.dart';
 
@@ -102,17 +103,32 @@ class _AppShellViewState extends State<AppShellView> {
           _syncAreas(layout, animated);
 
           final scaffold = Scaffold(
-            body: MultiSplitView(
-              controller: _controller,
-              onDividerDragEnd: (_) {
-                final left = _controller.getArea(0).size ?? layout.leftWidth;
-                final right = _controller.areasCount > 2
-                    ? (_controller.getArea(2).size ?? layout.rightWidth)
-                    : layout.rightWidth;
-                context
-                    .read<WorkbenchLayoutCubit>()
-                    .updateSizes(left: left, right: right);
-              },
+            body: ForgeBackground(
+              // Thin transparent dividers: the panes sit nearly flush (their
+              // own hairline frames separate them) and the divider remains
+              // only as a grab handle.
+              child: MultiSplitViewTheme(
+                data: MultiSplitViewThemeData(
+                  dividerThickness: 5,
+                  dividerPainter: DividerPainters.background(
+                    color: Colors.transparent,
+                    highlightedColor: PickforgeColors.emberGlow,
+                  ),
+                ),
+                child: MultiSplitView(
+                  controller: _controller,
+                  onDividerDragEnd: (_) {
+                    final left =
+                        _controller.getArea(0).size ?? layout.leftWidth;
+                    final right = _controller.areasCount > 2
+                        ? (_controller.getArea(2).size ?? layout.rightWidth)
+                        : layout.rightWidth;
+                    context
+                        .read<WorkbenchLayoutCubit>()
+                        .updateSizes(left: left, right: right);
+                  },
+                ),
+              ),
             ),
           );
           return BlocBuilder<ProjectsCubit, ProjectsState>(
@@ -318,13 +334,16 @@ class _PaneFocusFrame extends StatelessWidget {
         animation: focusNode,
         child: child,
         builder: (context, child) {
+          // Every pane keeps a visible frame; focus only re-tints it. A
+          // transparent unfocused border left the pane edges floating on the
+          // backdrop with no boundary at all.
           return DecoratedBox(
             key: frameKey,
             decoration: BoxDecoration(
               border: Border.all(
                 color: focusNode.hasFocus
                     ? PickforgeColors.emberDeep
-                    : Colors.transparent,
+                    : PickforgeColors.hairlineStrong,
               ),
             ),
             child: child,

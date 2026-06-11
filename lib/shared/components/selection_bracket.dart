@@ -17,7 +17,7 @@ class SelectionBracket extends StatelessWidget {
     this.active = true,
     this.armLength = 10,
     this.inset = 3,
-    this.color = PickforgeColors.textHi,
+    this.color,
     this.emberCorner = true,
     this.radius = PickforgeSpacing.radiusMd,
   });
@@ -33,7 +33,9 @@ class SelectionBracket extends StatelessWidget {
   /// room around the child (the arms would bleed into neighbors and clip).
   final double inset;
 
-  final Color color;
+  /// Bracket arm color. Defaults to the active palette's
+  /// [PickforgeColors.textHi].
+  final Color? color;
 
   /// Paint the top-right corner in ember (the mark's signature).
   final bool emberCorner;
@@ -55,7 +57,7 @@ class SelectionBracket extends StatelessWidget {
                 painter: _BracketPainter(
                   armLength: armLength,
                   inset: inset,
-                  color: color,
+                  color: color ?? PickforgeColors.textHi,
                   emberCorner: emberCorner,
                 ),
               ),

@@ -12,7 +12,7 @@ class MonoEyebrow extends StatelessWidget {
     super.key,
     this.color,
     this.tick = false,
-    this.tickColor = PickforgeColors.ember,
+    this.tickColor,
   });
 
   final String text;
@@ -20,7 +20,9 @@ class MonoEyebrow extends StatelessWidget {
 
   /// Draws a small ember tick before the label.
   final bool tick;
-  final Color tickColor;
+
+  /// Tick color. Defaults to the active palette's [PickforgeColors.ember].
+  final Color? tickColor;
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +37,7 @@ class MonoEyebrow extends StatelessWidget {
           width: 3,
           height: 10,
           decoration: BoxDecoration(
-            color: tickColor,
+            color: tickColor ?? PickforgeColors.ember,
             borderRadius: BorderRadius.circular(1),
           ),
         ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:injectable/injectable.dart';
 import 'package:pickforge/core/terminal/pty_session.dart';
 
@@ -27,11 +29,11 @@ class PtySessionPool {
 
   Future<PtySession> activate({
     required String chatId,
-    required PtySession Function() create,
+    required FutureOr<PtySession> Function() create,
   }) async {
     final existing = _sessions[chatId];
     if (existing != null) return existing;
-    final session = create();
+    final session = await create();
     attach(session);
     await session.start();
     return session;

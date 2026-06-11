@@ -173,7 +173,12 @@ class _DisconnectedPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     return ColoredBox(
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      // Slightly translucent: lets the forge backdrop warm the panel's
+      // (mostly empty) canvas without costing text contrast.
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerLow
+          .withValues(alpha: 0.55),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

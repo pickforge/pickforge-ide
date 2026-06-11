@@ -13,7 +13,6 @@ import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/core/settings/onboarding_preferences.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
-import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/shared/components/components.dart';
 import 'package:pickforge/shared/motion/pickforge_motion.dart';
@@ -55,17 +54,7 @@ class _OnboardingViewState extends State<OnboardingView> {
     final picked = await picker();
     if (picked == null) return;
     if (!mounted) return;
-    try {
-      await context.read<ProjectsCubit>().add(picked);
-      if (!mounted) return;
-      final s = context.read<ProjectsCubit>().state;
-      if (s is ProjectsError) {
-        setState(() => _error = s.message);
-      }
-    } on Object catch (e) {
-      if (!mounted) return;
-      setState(() => _error = e.toString());
-    }
+    await _addProject(picked);
   }
 
   Future<void> _openSampleProject() async {
@@ -76,12 +65,9 @@ class _OnboardingViewState extends State<OnboardingView> {
 
   Future<void> _addProject(String root) async {
     try {
-      await context.read<ProjectsCubit>().add(root);
+      final error = await context.read<ProjectsCubit>().add(root);
       if (!mounted) return;
-      final s = context.read<ProjectsCubit>().state;
-      if (s is ProjectsError) {
-        setState(() => _error = s.message);
-      }
+      setState(() => _error = error);
     } on Object catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -129,7 +115,7 @@ class _OnboardingViewState extends State<OnboardingView> {
               borderRadius: BorderRadius.circular(PickforgeSpacing.radiusLg),
               border: Border.all(color: PickforgeColors.hairlineStrong),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.bolt,
               size: 40,
               color: PickforgeColors.textHi,

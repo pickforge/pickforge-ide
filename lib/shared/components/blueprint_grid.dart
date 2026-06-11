@@ -9,14 +9,17 @@ class BlueprintGrid extends StatelessWidget {
     super.key,
     this.child,
     this.cell = 32,
-    this.lineColor = PickforgeColors.hairline,
+    this.lineColor,
     this.halo = false,
     this.fade = true,
   });
 
   final Widget? child;
   final double cell;
-  final Color lineColor;
+
+  /// Grid line color. Defaults to the active palette's
+  /// [PickforgeColors.hairline].
+  final Color? lineColor;
 
   /// Paints a soft ember radial halo behind the center.
   final bool halo;
@@ -27,7 +30,11 @@ class BlueprintGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
-      painter: _BlueprintPainter(cell: cell, lineColor: lineColor, fade: fade),
+      painter: _BlueprintPainter(
+        cell: cell,
+        lineColor: lineColor ?? PickforgeColors.hairline,
+        fade: fade,
+      ),
       foregroundPainter: halo ? _HaloPainter() : null,
       child: child,
     );

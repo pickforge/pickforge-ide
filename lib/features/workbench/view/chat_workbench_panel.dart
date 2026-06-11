@@ -122,8 +122,10 @@ class _EmptyChat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    // Transparent over the forge backdrop: the empty-chat hero is where the
+    // ember glow and drifting embers get to breathe.
     return ColoredBox(
-      color: Theme.of(context).colorScheme.surface,
+      color: Colors.transparent,
       child: Stack(
         children: [
           const Positioned.fill(

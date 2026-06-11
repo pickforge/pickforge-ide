@@ -19,7 +19,6 @@ import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
-import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -33,7 +32,10 @@ class _MockDao extends Mock implements ProjectSettingsDao {}
 
 class _MockSettings extends Mock implements ProjectSettingsRepository {}
 
-class _MockProjectsRepo extends Mock implements ProjectsRepository {}
+class _MockProjectsRepo extends Mock implements ProjectsRepository {
+  @override
+  Future<List<ProjectRow>> archivedProjects() async => [];
+}
 
 class _NeverRunner implements ProcessRunner {
   @override
@@ -89,7 +91,7 @@ void main() {
 
     final cubit = ChatsCubit(repo, settings);
     await cubit.syncProjects(['/p']);
-    final projectsCubit = ProjectsCubit(_MockProjectsRepo(), PtySessionPool());
+    final projectsCubit = ProjectsCubit(_MockProjectsRepo());
 
     await tester.pumpWidget(
       MaterialApp(
@@ -137,7 +139,7 @@ void main() {
 
     final projectsRepo = _MockProjectsRepo();
     when(() => projectsRepo.list()).thenAnswer((_) async => [_project('/p')]);
-    final projectsCubit = ProjectsCubit(projectsRepo, PtySessionPool());
+    final projectsCubit = ProjectsCubit(projectsRepo);
     await projectsCubit.load();
 
     await tester.pumpWidget(
@@ -170,7 +172,7 @@ void main() {
 
     final cubit = ChatsCubit(repo, settings);
     await cubit.syncProjects(['/p']);
-    final projectsCubit = ProjectsCubit(_MockProjectsRepo(), PtySessionPool());
+    final projectsCubit = ProjectsCubit(_MockProjectsRepo());
     final layout = WorkbenchLayoutCubit(_MockDao())..toggleRunLogs();
 
     await tester.pumpWidget(
@@ -209,7 +211,7 @@ void main() {
     when(() => projectsRepo.list())
         .thenAnswer((_) async => [_project('/a'), _project('/b')]);
     when(() => projectsRepo.touch('/b')).thenAnswer((_) async {});
-    final projectsCubit = ProjectsCubit(projectsRepo, PtySessionPool());
+    final projectsCubit = ProjectsCubit(projectsRepo);
     await projectsCubit.load();
     await projectsCubit.selectProject('/b');
 

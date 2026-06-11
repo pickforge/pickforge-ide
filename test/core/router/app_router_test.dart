@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/core/settings/onboarding_preferences.dart';
@@ -13,7 +14,10 @@ import 'package:pickforge/features/workbench/view/onboarding_view.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _MockProjectsRepository extends Mock implements ProjectsRepository {}
+class _MockProjectsRepository extends Mock implements ProjectsRepository {
+  @override
+  Future<List<ProjectRow>> archivedProjects() async => [];
+}
 
 void main() {
   setUp(() async {

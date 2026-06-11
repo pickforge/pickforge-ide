@@ -57,6 +57,17 @@ selected / focused element. Animates in/out via `active`, reduced-motion aware.
 SelectionBracket(active: isActive, child: chatRow)
 ```
 
+## EmberSweepBorder
+
+A rounded frame whose ember highlight slowly travels around the edge — the
+"live forge" treatment for the ONE active surface in a composition (e.g. the
+focused terminal pane). Inactive surfaces fall back to a quiet hairline frame.
+Reduced-motion freezes the sweep into a static ember border.
+
+```dart
+EmberSweepBorder(active: isFocused, child: pane)
+```
+
 ## HairlinePanel
 
 The base card/panel — hairline border on a surface fill.

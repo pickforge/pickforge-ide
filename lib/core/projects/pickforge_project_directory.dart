@@ -15,6 +15,14 @@ class PickforgeProjectDirectory {
   const PickforgeProjectDirectory._();
 
   static Future<Directory> ensure(String projectRoot) {
+    // Never resurrect a project folder the user moved or deleted: creating
+    // `.pickforge` recursively under a missing root silently rebuilds the
+    // whole old path tree.
+    if (!Directory(projectRoot).existsSync()) {
+      throw PickforgeDirConflictException(
+        'Project folder does not exist: $projectRoot',
+      );
+    }
     return ensureDirectory(Directory(p.join(projectRoot, '.pickforge')));
   }
 

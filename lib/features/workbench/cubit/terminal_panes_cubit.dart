@@ -53,6 +53,13 @@ class TerminalPanesCubit extends Cubit<TerminalPanesState> {
   final String chatId;
   final TerminalPaneLayoutStore? _store;
   var _paneCounter = 0;
+  final _freshPaneIds = <String>{};
+
+  /// True exactly once for a pane just created by [split]. Pane ids recycle
+  /// ('pane-1' again after a close or an app restart), so a brand-new split
+  /// must be told apart from a restored pane: the restored one replays its
+  /// transcript, the fresh one must start with a clean scrollback.
+  bool consumeFreshPane(String paneId) => _freshPaneIds.remove(paneId);
 
   void focusPane(String paneId) {
     if (state.leaf(paneId) == null || state.focusedPaneId == paneId) return;
@@ -63,6 +70,7 @@ class TerminalPanesCubit extends Cubit<TerminalPanesState> {
   void split(String targetPaneId, PaneSplitDirection direction) {
     if (state.leaf(targetPaneId) == null) return;
     final leaf = PaneLeaf(id: _nextPaneId(), name: _nextName());
+    _freshPaneIds.add(leaf.id);
     final root = _insert(state.root, targetPaneId, leaf, direction);
     _emit(
       state.copyWith(

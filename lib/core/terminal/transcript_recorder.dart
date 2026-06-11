@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/terminal/ansi.dart';
+import 'package:pickforge/core/terminal/live_terminal_output.dart';
 
 class TranscriptRecorder {
   TranscriptRecorder({
@@ -29,8 +30,34 @@ class TranscriptRecorder {
   Future<void> open() async {
     await PickforgeProjectDirectory.ensure(projectRoot);
     await Directory(_dir).create(recursive: true);
+    final hadHistory = _log.existsSync() && _log.lengthSync() > 0;
     _logSink = _log.openWrite(mode: FileMode.append);
     _spansSink = _spans.openWrite(mode: FileMode.append);
+    if (hadHistory) {
+      // A new session means a fresh shell: every mode the old scrollback may
+      // have left enabled (mouse reporting, alt screen, ...) is off now.
+      // Stamping that into the log keeps every future replay consistent with
+      // the live PTY, no matter how the previous session ended.
+      _logSink!.add(utf8.encode(terminalModeResets.join()));
+    }
+  }
+
+  /// Removes the recorded transcript so the next session starts with a clean
+  /// scrollback. Used when a pane id is recycled — a brand-new split must not
+  /// replay a dead pane's output.
+  static Future<void> deleteTranscript({
+    required String projectRoot,
+    required String chatId,
+  }) async {
+    final dir = p.join(projectRoot, '.pickforge', 'chats', chatId);
+    for (final name in const ['transcript.log', 'transcript.spans.bin']) {
+      final f = File(p.join(dir, name));
+      try {
+        if (f.existsSync()) await f.delete();
+      } on FileSystemException {
+        // Best-effort hygiene; never fail the caller over a locked file.
+      }
+    }
   }
 
   void append(Object data) {

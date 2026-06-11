@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:logging/logging.dart';
 import 'package:multi_split_view/multi_split_view.dart';
 import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
@@ -20,6 +22,7 @@ import 'package:pickforge/core/terminal/terminal_paste_controller.dart';
 import 'package:pickforge/core/terminal/terminal_themes.dart';
 import 'package:pickforge/core/terminal/transcript_recorder.dart';
 import 'package:pickforge/core/terminal/transcript_replayer.dart';
+import 'package:pickforge/features/workbench/cubit/chat_attention_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/terminal_panes_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/terminal_panes_state.dart';
 import 'package:pickforge/features/workbench/view/agent_launch_chips.dart';
@@ -28,6 +31,7 @@ import 'package:pickforge/shared/components/components.dart';
 import 'package:pickforge/shared/motion/pickforge_motion.dart';
 import 'package:pickforge/shared/motion/reduce_motion.dart';
 import 'package:pickforge/shared/theme/pickforge_colors.dart';
+import 'package:pickforge/shared/theme/pickforge_elevation.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 import 'package:pickforge/shared/theme/pickforge_typography.dart';
 import 'package:xterm/xterm.dart';
@@ -75,10 +79,19 @@ class _TerminalPaneHostState extends State<TerminalPaneHost> {
     return BlocProvider.value(
       value: _cubit,
       child: BlocBuilder<TerminalPanesCubit, TerminalPanesState>(
+        // Rebuild the split tree only when its STRUCTURE changes. A focus
+        // change must never rebuild it: recreating the MultiSplitView tree
+        // reparents every live terminal (GlobalKeys), which flashes the
+        // canvas black and drops the keyboard focus the user just clicked
+        // for. Per-pane focus styling lives in _buildLeaf's own builder.
+        buildWhen: (prev, curr) =>
+            prev.root != curr.root ||
+            prev.fullscreenPaneId != curr.fullscreenPaneId,
         builder: (context, state) {
-          final theme = Theme.of(context);
+          // Transparent: the chips strip and pane gaps sit directly on the
+          // forge backdrop; the terminal itself paints its own background.
           return ColoredBox(
-            color: theme.colorScheme.surface,
+            color: Colors.transparent,
             child: Column(
               children: [
                 ValueListenableBuilder<bool>(
@@ -118,34 +131,50 @@ class _TerminalPaneHostState extends State<TerminalPaneHost> {
         return _buildLeaf(node, state);
       case PaneSplit(:final axis, :final children):
         final signature = children.map((c) => c.id).join('|');
-        return MultiSplitView(
-          key: ValueKey('split-${node.id}-$signature'),
-          axis: axis,
-          initialAreas: [
-            for (final child in children)
-              Area(builder: (_, __) => _buildNode(child, state)),
-          ],
+        // Thin, transparent dividers: the rounded panes sit nearly flush and
+        // the divider is only a grab handle, not a visible gap.
+        return MultiSplitViewTheme(
+          data: MultiSplitViewThemeData(
+            dividerThickness: 5,
+            dividerPainter: DividerPainters.background(
+              color: Colors.transparent,
+              highlightedColor: PickforgeColors.emberGlow,
+            ),
+          ),
+          child: MultiSplitView(
+            key: ValueKey('split-${node.id}-$signature'),
+            axis: axis,
+            initialAreas: [
+              for (final child in children)
+                Area(builder: (_, __) => _buildNode(child, state)),
+            ],
+          ),
         );
     }
   }
 
-  Widget _buildLeaf(PaneLeaf leaf, TerminalPanesState state) {
-    return TerminalPane(
-      // GlobalObjectKey keeps the live terminal alive when splits reshuffle
-      // the tree around it.
-      key: GlobalObjectKey('terminal-pane-${widget.chat.chatId}-${leaf.id}'),
-      chatId: widget.chat.chatId,
-      projectRoot: widget.projectRoot,
-      pane: leaf,
-      isFocused: state.focusedPaneId == leaf.id,
-      isFullscreen: state.fullscreenPaneId == leaf.id,
-      canClose: state.leaves.length > 1,
-      onRunningChanged: (paneId, {required running}) {
-        if (!mounted) return;
-        if (_cubit.state.focusedPaneId == paneId) {
-          _focusedRunning.value = running;
-        }
-      },
+  Widget _buildLeaf(PaneLeaf leaf, TerminalPanesState _) {
+    // Fresh state per leaf: the Area builder closures the split view holds
+    // onto outlive any single build, so focus/fullscreen flags must be read
+    // live, not captured.
+    return BlocBuilder<TerminalPanesCubit, TerminalPanesState>(
+      builder: (context, state) => TerminalPane(
+        // GlobalObjectKey keeps the live terminal alive when splits reshuffle
+        // the tree around it.
+        key: GlobalObjectKey('terminal-pane-${widget.chat.chatId}-${leaf.id}'),
+        chatId: widget.chat.chatId,
+        projectRoot: widget.projectRoot,
+        pane: leaf,
+        isFocused: state.focusedPaneId == leaf.id,
+        isFullscreen: state.fullscreenPaneId == leaf.id,
+        canClose: state.leaves.length > 1,
+        onRunningChanged: (paneId, {required running}) {
+          if (!mounted) return;
+          if (_cubit.state.focusedPaneId == paneId) {
+            _focusedRunning.value = running;
+          }
+        },
+      ),
     );
   }
 }
@@ -176,7 +205,6 @@ class TerminalPane extends StatefulWidget {
 
 class _TerminalPaneState extends State<TerminalPane> {
   late final Terminal _terminal;
-  late final TranscriptRecorder _recorder;
   final _focusNode = FocusNode();
   final _controller = TerminalController();
   final _pasteController = TerminalPasteController();
@@ -185,16 +213,22 @@ class _TerminalPaneState extends State<TerminalPane> {
   PtySession? _session;
   int? _lastCols;
   int? _lastRows;
+  Timer? _resizeDebounce;
   var _disposed = false;
   var _running = false;
   GitBranchInfo? _branch;
   Timer? _branchTimer;
   PaneSplitDirection? _dropHint;
+  EmbeddedTerminalSettings _settings = EmbeddedTerminalSettings.defaults;
   late TerminalTheme _theme;
   late TerminalStyle _textStyle;
   static const _utf8Decoder = Utf8Decoder(allowMalformed: true);
 
   String get _sessionId => paneSessionId(widget.chatId, widget.pane.id);
+
+  ChatAttentionCubit? get _attention => getIt.isRegistered<ChatAttentionCubit>()
+      ? getIt<ChatAttentionCubit>()
+      : null;
 
   // Brand mono first, then Nerd Font + common monos for box-drawing /
   // powerline glyph coverage that Geist Mono may not carry.
@@ -219,16 +253,17 @@ class _TerminalPaneState extends State<TerminalPane> {
     _terminal.onResize = (width, height, _, __) {
       _lastCols = width;
       _lastRows = height;
-      // Defer the PTY ioctl out of the layout phase to avoid any chance of
-      // synchronous re-entry into the widget framework during build/layout.
-      final session = _session;
-      if (session == null) return;
-      scheduleMicrotask(() => session.resize(height, width));
+      // Coalesce the resize flood a divider drag produces: one PTY ioctl per
+      // layout frame means one SIGWINCH per frame, and the shell reprints
+      // its prompt for each — stacking dozens of prompt lines on release.
+      // The trailing call also keeps the ioctl out of the layout phase.
+      _resizeDebounce?.cancel();
+      _resizeDebounce = Timer(const Duration(milliseconds: 120), () {
+        final session = _session;
+        if (_disposed || session == null) return;
+        session.resize(height, width);
+      });
     };
-    _recorder = TranscriptRecorder(
-      projectRoot: widget.projectRoot,
-      chatId: _sessionId,
-    );
     _focusNode.addListener(_onFocusChanged);
     unawaited(_probeBranch());
     _branchTimer = Timer.periodic(
@@ -243,6 +278,7 @@ class _TerminalPaneState extends State<TerminalPane> {
   void _onFocusChanged() {
     if (!_focusNode.hasFocus || _disposed || !mounted) return;
     context.read<TerminalPanesCubit>().focusPane(widget.pane.id);
+    _attention?.setActiveSession(_sessionId);
     _registerPasteDelegate();
   }
 
@@ -262,43 +298,92 @@ class _TerminalPaneState extends State<TerminalPane> {
   }
 
   Future<void> _init() async {
+    // A missing project root means the user moved or deleted the folder.
+    // Spawning here would recreate the old path (recorder dirs, shell cwd) —
+    // surface the problem instead; the sidebar offers relocate/remove.
+    if (!Directory(widget.projectRoot).existsSync()) {
+      Logger('pty.pane').warning(
+        'not spawning $_sessionId: project folder missing '
+        '(${widget.projectRoot})',
+      );
+      _writeTerminal(
+        '\x1b[31m[project folder not found: '
+        '${widget.projectRoot}]\x1b[0m\r\n',
+      );
+      return;
+    }
+
+    // Pane ids recycle across closes and restarts; a pane just created by a
+    // split must not replay the transcript a dead namesake left behind.
+    final freshSplit =
+        context.read<TerminalPanesCubit>().consumeFreshPane(widget.pane.id);
+
     // Apply saved terminal settings before any writes so we never rebuild the
     // TerminalView mid-replay (a setState during replay can race xterm's
     // buffer attachment and throw during large scrollback replay).
     await _loadTerminalSettings();
     if (_disposed || !mounted) return;
-    await _recorder.open();
-    if (_disposed || !mounted) return;
 
-    // Replay any prior scrollback before attaching the live PTY.
-    final replayer = TranscriptReplayer(
-      projectRoot: widget.projectRoot,
-      chatId: _sessionId,
-    );
-    await for (final chunk in replayer.replay()) {
+    if (freshSplit) {
+      await TranscriptRecorder.deleteTranscript(
+        projectRoot: widget.projectRoot,
+        chatId: _sessionId,
+      );
       if (_disposed || !mounted) return;
-      _writeTerminal(_utf8Decoder.convert(chunk));
+    } else {
+      // Replay any prior scrollback before attaching the live PTY.
+      final replayer = TranscriptReplayer(
+        projectRoot: widget.projectRoot,
+        chatId: _sessionId,
+      );
+      await for (final chunk in replayer.replay()) {
+        if (_disposed || !mounted) return;
+        _writeTerminal(_utf8Decoder.convert(chunk));
+      }
     }
-    resetReplayedTerminalModes(_terminal);
 
     final pool = getIt<PtySessionPool>();
+    // A live pooled session (chat switched away and back) is exactly where
+    // the replay left the terminal — a running TUI is legitimately on the
+    // alt screen with its modes active, and resetting them would desync the
+    // widget from the still-running program. Only a fresh spawn needs the
+    // previous life's modes undone.
+    final pooled = pool.session(_sessionId);
+    if (pooled == null || !pooled.isRunning) {
+      resetReplayedTerminalModes(_terminal);
+    }
+
     final shell = ShellInvocationResolver().resolve();
 
     _session = await pool.activate(
       chatId: _sessionId,
-      create: () => PtySession(
-        chatId: _sessionId,
-        executable: shell.executable,
-        arguments: shell.arguments,
-        workingDirectory: widget.projectRoot,
-        factory: getIt<PtyProcessFactory>(),
-        onOutput: _recorder.append,
-      ),
+      // The recorder belongs to the session, not the pane: it keeps
+      // recording while the chat is in the background so reopening replays
+      // the work that finished there, and it closes when the session does.
+      create: () async {
+        final recorder = TranscriptRecorder(
+          projectRoot: widget.projectRoot,
+          chatId: _sessionId,
+        );
+        await recorder.open();
+        return PtySession(
+          chatId: _sessionId,
+          executable: shell.executable,
+          arguments: shell.arguments,
+          workingDirectory: widget.projectRoot,
+          factory: getIt<PtyProcessFactory>(),
+          onOutput: recorder.append,
+          onDispose: recorder.close,
+        );
+      },
     );
     if (_disposed || !mounted) return;
-    // A pooled session predating this pane keeps recording into the fresh
-    // transcript sink.
-    _session!.onOutput = _recorder.append;
+    _attention?.track(
+      session: _session!,
+      sessionId: _sessionId,
+      chatId: widget.chatId,
+      paneId: widget.pane.id,
+    );
 
     if (_lastCols != null && _lastRows != null) {
       _session!.resize(_lastRows!, _lastCols!);
@@ -333,7 +418,11 @@ class _TerminalPaneState extends State<TerminalPane> {
       }
     });
 
-    _terminal.onOutput = (data) => _session?.write(utf8.encode(data));
+    _terminal.onOutput = (data) {
+      // Keystrokes mean the user is here: drop this pane's attention flag.
+      _attention?.markSeen(_sessionId);
+      _session?.write(utf8.encode(data));
+    };
     if (widget.isFocused) {
       _registerPasteDelegate();
       widget.onRunningChanged(widget.pane.id, running: _running);
@@ -341,6 +430,7 @@ class _TerminalPaneState extends State<TerminalPane> {
   }
 
   void _applySettings(EmbeddedTerminalSettings settings) {
+    _settings = settings;
     _theme = resolveTerminalTheme(settings.themeId);
     _textStyle = TerminalStyle(
       fontFamily: settings.fontFamily,
@@ -348,6 +438,21 @@ class _TerminalPaneState extends State<TerminalPane> {
       fontSize: settings.fontSize,
       height: 1.3,
     );
+  }
+
+  static const _minFontSize = 8.0;
+  static const _maxFontSize = 32.0;
+
+  /// Ctrl +/−/0 zoom. The terminal reflows itself (rows/cols shrink as the
+  /// font grows and the PTY is resized to match), so nothing can overflow.
+  void _setFontSize(double size) {
+    final clamped = size.clamp(_minFontSize, _maxFontSize);
+    if (clamped == _settings.fontSize) return;
+    final updated = _settings.copyWith(fontSize: clamped);
+    setState(() => _applySettings(updated));
+    if (getIt.isRegistered<EmbeddedTerminalSettingsRepository>()) {
+      unawaited(getIt<EmbeddedTerminalSettingsRepository>().save(updated));
+    }
   }
 
   Future<void> _loadTerminalSettings() async {
@@ -370,12 +475,13 @@ class _TerminalPaneState extends State<TerminalPane> {
   @override
   void dispose() {
     _disposed = true;
+    _attention?.clearActiveSession(_sessionId);
     _branchTimer?.cancel();
+    _resizeDebounce?.cancel();
     _terminal.onResize = null;
     _terminal.onOutput = null;
     unawaited(_outputSub?.cancel());
     unawaited(_stateSub?.cancel());
-    unawaited(_recorder.close());
     _focusNode
       ..removeListener(_onFocusChanged)
       ..dispose();
@@ -423,6 +529,25 @@ class _TerminalPaneState extends State<TerminalPane> {
             event.logicalKey == LogicalKeyboardKey.keyC) ||
         (keys.isMetaPressed && event.logicalKey == LogicalKeyboardKey.keyC);
     if (copy && _copySelection()) return KeyEventResult.handled;
+    if (keys.isControlPressed || keys.isMetaPressed) {
+      final key = event.logicalKey;
+      if (key == LogicalKeyboardKey.equal ||
+          key == LogicalKeyboardKey.add ||
+          key == LogicalKeyboardKey.numpadAdd) {
+        _setFontSize(_settings.fontSize + 1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.minus ||
+          key == LogicalKeyboardKey.numpadSubtract) {
+        _setFontSize(_settings.fontSize - 1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.digit0 ||
+          key == LogicalKeyboardKey.numpad0) {
+        _setFontSize(EmbeddedTerminalSettings.defaults.fontSize);
+        return KeyEventResult.handled;
+      }
+    }
     return KeyEventResult.ignored;
   }
 
@@ -483,80 +608,169 @@ class _TerminalPaneState extends State<TerminalPane> {
         setState(() => _dropHint = null);
         cubit.move(details.data, widget.pane.id, direction);
       },
-      builder: (context, candidates, _) => Stack(
-        children: [
-          Positioned.fill(
-            child: Column(
-              children: [
-                _PaneHeader(
-                  pane: widget.pane,
-                  branch: _branch,
-                  isFocused: widget.isFocused,
-                  isFullscreen: widget.isFullscreen,
-                  canClose: widget.canClose,
-                  onSplit: (direction) =>
-                      cubit.split(widget.pane.id, direction),
-                  onFullscreen: () => cubit.toggleFullscreen(widget.pane.id),
-                  onClose: () {
-                    unawaited(getIt<PtySessionPool>().detach(_sessionId));
-                    cubit.closePane(widget.pane.id);
-                  },
-                ),
-                Expanded(
-                  child: ColoredBox(
-                    color: _theme.background,
-                    child: TerminalView(
-                      _terminal,
-                      controller: _controller,
-                      focusNode: _focusNode,
-                      theme: _theme,
-                      textStyle: _textStyle,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      // No default shortcuts: plain Ctrl+V / Ctrl+A must
-                      // reach the shell and TUIs; copy/paste live in
-                      // _onTerminalKey.
-                      shortcuts: const {},
-                      onKeyEvent: _onTerminalKey,
-                      onSecondaryTapUp: (details, _) =>
-                          unawaited(_showContextMenu(details.globalPosition)),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (candidates.isNotEmpty && _dropHint != null)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: AnimatedAlign(
-                  duration:
-                      ReduceMotion.duration(context, PickforgeMotion.fast),
-                  curve: PickforgeMotion.forge,
-                  alignment: switch (_dropHint!) {
-                    PaneSplitDirection.left => Alignment.centerLeft,
-                    PaneSplitDirection.right => Alignment.centerRight,
-                    PaneSplitDirection.up => Alignment.topCenter,
-                    PaneSplitDirection.down => Alignment.bottomCenter,
-                  },
-                  child: FractionallySizedBox(
-                    widthFactor: _dropHint!.axis == Axis.horizontal ? 0.5 : 1,
-                    heightFactor: _dropHint!.axis == Axis.vertical ? 0.5 : 1,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: PickforgeColors.emberGlow,
-                        border: Border.all(color: PickforgeColors.ember),
+      builder: (context, candidates, _) => EmberSweepBorder(
+        active: widget.isFocused,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Column(
+                  children: [
+                    StreamBuilder<ChatAttentionState>(
+                      stream: _attention?.stream,
+                      initialData: _attention?.state,
+                      builder: (context, snapshot) => _PaneHeader(
+                        pane: widget.pane,
+                        branch: _branch,
+                        isFocused: widget.isFocused,
+                        isFullscreen: widget.isFullscreen,
+                        canClose: widget.canClose,
+                        hasAttention: snapshot.data?.paneHasAttention(
+                              widget.chatId,
+                              widget.pane.id,
+                            ) ??
+                            false,
+                        onSplit: (direction) =>
+                            cubit.split(widget.pane.id, direction),
+                        onFullscreen: () =>
+                            cubit.toggleFullscreen(widget.pane.id),
+                        onClose: () {
+                          final sessionId = _sessionId;
+                          final projectRoot = widget.projectRoot;
+                          final isSplitPane = widget.pane.id != 'main';
+                          // The recorder closes with the detach; only then
+                          // drop the transcript so a future pane recycling
+                          // this id starts clean. The main pane's transcript
+                          // is the chat's own scrollback and stays.
+                          unawaited(
+                            getIt<PtySessionPool>()
+                                .detach(sessionId)
+                                .then((_) async {
+                              if (isSplitPane) {
+                                await TranscriptRecorder.deleteTranscript(
+                                  projectRoot: projectRoot,
+                                  chatId: sessionId,
+                                );
+                              }
+                            }),
+                          );
+                          cubit.closePane(widget.pane.id);
+                        },
                       ),
                     ),
-                  ),
+                    Expanded(
+                      child: ColoredBox(
+                        color: _theme.background,
+                        child: TerminalView(
+                          _terminal,
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          theme: _theme,
+                          textStyle: _textStyle,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          // No default shortcuts: plain Ctrl+V / Ctrl+A must
+                          // reach the shell and TUIs; copy/paste live in
+                          // _onTerminalKey.
+                          shortcuts: const {},
+                          onKeyEvent: _onTerminalKey,
+                          onSecondaryTapUp: (details, _) => unawaited(
+                            _showContextMenu(details.globalPosition),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-        ],
+              if (candidates.isNotEmpty && _dropHint != null)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedAlign(
+                      duration:
+                          ReduceMotion.duration(context, PickforgeMotion.fast),
+                      curve: PickforgeMotion.forge,
+                      alignment: switch (_dropHint!) {
+                        PaneSplitDirection.left => Alignment.centerLeft,
+                        PaneSplitDirection.right => Alignment.centerRight,
+                        PaneSplitDirection.up => Alignment.topCenter,
+                        PaneSplitDirection.down => Alignment.bottomCenter,
+                      },
+                      child: FractionallySizedBox(
+                        widthFactor:
+                            _dropHint!.axis == Axis.horizontal ? 0.5 : 1,
+                        heightFactor:
+                            _dropHint!.axis == Axis.vertical ? 0.5 : 1,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: PickforgeColors.emberGlow,
+                            border: Border.all(color: PickforgeColors.ember),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
+  }
+}
+
+/// Pane header action: a small raised chip so the controls read as buttons
+/// against the dense terminal chrome. With [onPressed] null and no consuming
+/// gesture, taps fall through to an enclosing trigger (the split menu).
+class _HeaderIconButton extends StatelessWidget {
+  const _HeaderIconButton({
+    required this.icon,
+    this.onPressed,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
+      side: BorderSide(color: PickforgeColors.hairline),
+    );
+    Widget button = Material(
+      color: PickforgeColors.itemFill,
+      shape: shape,
+      child: SizedBox(
+        width: 22,
+        height: 22,
+        child: Icon(icon, size: 13, color: PickforgeColors.textMed),
+      ),
+    );
+    if (onPressed != null) {
+      button = Material(
+        color: PickforgeColors.itemFill,
+        shape: shape,
+        child: InkWell(
+          onTap: onPressed,
+          customBorder: shape,
+          hoverColor: PickforgeColors.surface3,
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: Icon(icon, size: 13, color: PickforgeColors.textMed),
+          ),
+        ),
+      );
+    }
+    if (tooltip case final tooltip?) {
+      button = Tooltip(message: tooltip, child: button);
+    }
+    return button;
   }
 }
 
@@ -567,6 +781,7 @@ class _PaneHeader extends StatelessWidget {
     required this.isFocused,
     required this.isFullscreen,
     required this.canClose,
+    required this.hasAttention,
     required this.onSplit,
     required this.onFullscreen,
     required this.onClose,
@@ -577,6 +792,11 @@ class _PaneHeader extends StatelessWidget {
   final bool isFocused;
   final bool isFullscreen;
   final bool canClose;
+
+  /// This pane finished work and is waiting for the user — glow until the
+  /// pane is focused or typed into.
+  final bool hasAttention;
+
   final void Function(PaneSplitDirection direction) onSplit;
   final VoidCallback onFullscreen;
   final VoidCallback onClose;
@@ -584,21 +804,34 @@ class _PaneHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final header = Container(
+    final header = AnimatedContainer(
+      duration: ReduceMotion.duration(context, PickforgeMotion.fast),
+      curve: PickforgeMotion.forge,
       height: 30,
       padding: const EdgeInsets.symmetric(horizontal: PickforgeSpacing.sm),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: PickforgeColors.surface1,
-        border: Border(bottom: BorderSide(color: PickforgeColors.hairline)),
+        border: Border(
+          bottom: BorderSide(
+            color: hasAttention
+                ? PickforgeColors.ember.withValues(alpha: 0.55)
+                : PickforgeColors.hairline,
+          ),
+        ),
+        boxShadow: hasAttention ? PickforgeElevation.emberSoft : null,
       ),
       child: Row(
         children: [
-          const Icon(
+          Icon(
             Icons.drag_indicator,
             size: 12,
             color: PickforgeColors.textLow,
           ),
           const SizedBox(width: PickforgeSpacing.xs),
+          if (hasAttention) ...[
+            const EmberDot(size: 6, pulsing: true),
+            const SizedBox(width: PickforgeSpacing.xs),
+          ],
           MonoEyebrow(
             pane.name,
             color: isFocused ? PickforgeColors.ember : PickforgeColors.textMed,
@@ -620,11 +853,6 @@ class _PaneHeader extends StatelessWidget {
           const Spacer(),
           PopupMenuButton<PaneSplitDirection>(
             tooltip: l10n.terminalPaneSplit,
-            icon: const Icon(
-              Icons.splitscreen_outlined,
-              size: 14,
-              color: PickforgeColors.textMed,
-            ),
             onSelected: onSplit,
             itemBuilder: (context) => [
               PopupMenuItem(
@@ -644,27 +872,20 @@ class _PaneHeader extends StatelessWidget {
                 child: Text(l10n.terminalPaneSplitDown),
               ),
             ],
+            child: const _HeaderIconButton(icon: Icons.splitscreen_outlined),
           ),
-          IconButton(
+          const SizedBox(width: PickforgeSpacing.xs),
+          _HeaderIconButton(
             tooltip: isFullscreen
                 ? l10n.terminalPaneExitFullscreen
                 : l10n.terminalPaneFullscreen,
-            visualDensity: VisualDensity.compact,
-            icon: Icon(
-              isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-              size: 14,
-              color: PickforgeColors.textMed,
-            ),
+            icon: isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
             onPressed: onFullscreen,
           ),
-          IconButton(
+          const SizedBox(width: PickforgeSpacing.xs),
+          _HeaderIconButton(
             tooltip: l10n.terminalPaneClose,
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(
-              Icons.close,
-              size: 14,
-              color: PickforgeColors.textMed,
-            ),
+            icon: Icons.close,
             onPressed: canClose ? onClose : null,
           ),
         ],

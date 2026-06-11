@@ -354,6 +354,15 @@ void main() {
       find.widgetWithText(TextField, 'fvm flutter analyze'),
       'fvm flutter test',
     );
+    // The page header pushed the validator section below the fold; scroll
+    // it into view, then let the ballistic scroll activity finish (content
+    // ignores pointers while it is running).
+    await tester.dragUntilVisible(
+      find.text('Save'),
+      find.byType(SingleChildScrollView).first,
+      const Offset(0, -120),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Save'));
     await tester.pump();
 

@@ -32,10 +32,38 @@ void main() {
     expect(all.single.projectRoot, p.canonicalize(tmp.path));
   });
 
-  test('add rejects folder without pubspec.yaml', () async {
-    final empty = await Directory.systemTemp.createTemp('pf_empty');
-    await expectLater(repo.add(empty.path), throwsA(isA<ProjectAddError>()));
-    await empty.delete();
+  test('add accepts any existing folder (not Flutter-only)', () async {
+    final plain = await Directory.systemTemp.createTemp('pf_plain');
+    addTearDown(() => plain.delete(recursive: true));
+    final added = await repo.add(plain.path);
+    expect(added.projectRoot, p.canonicalize(plain.path));
+  });
+
+  test('add rejects a folder that does not exist', () async {
+    await expectLater(
+      repo.add(p.join(tmp.path, 'nope')),
+      throwsA(isA<ProjectAddError>()),
+    );
+  });
+
+  test('archive hides a project from list and restore brings it back',
+      () async {
+    final added = await repo.add(tmp.path);
+    await repo.archive(added.projectRoot);
+    expect(await repo.list(), isEmpty);
+    expect(await repo.archivedProjects(), hasLength(1));
+    await repo.restore(added.projectRoot);
+    expect(await repo.list(), hasLength(1));
+    expect(await repo.archivedProjects(), isEmpty);
+  });
+
+  test('relocate re-points the project at the moved folder', () async {
+    final added = await repo.add(tmp.path);
+    final moved = await Directory.systemTemp.createTemp('pf_moved');
+    addTearDown(() => moved.delete(recursive: true));
+    await repo.relocate(added.projectRoot, moved.path);
+    final all = await repo.list();
+    expect(all.single.projectRoot, p.canonicalize(moved.path));
   });
 
   test('remove deletes the row', () async {

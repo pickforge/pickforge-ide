@@ -1830,9 +1830,21 @@ class $ProjectsTable extends Projects
       type: DriftSqlType.int,
       requiredDuringInsert: false,
       defaultValue: const Constant(0));
+  static const VerificationMeta _archivedAtMeta =
+      const VerificationMeta('archivedAt');
   @override
-  List<GeneratedColumn> get $columns =>
-      [projectRoot, displayName, createdAt, lastOpenedAt, sortOrder];
+  late final GeneratedColumn<DateTime> archivedAt = GeneratedColumn<DateTime>(
+      'archived_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        projectRoot,
+        displayName,
+        createdAt,
+        lastOpenedAt,
+        sortOrder,
+        archivedAt
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -1877,6 +1889,12 @@ class $ProjectsTable extends Projects
       context.handle(_sortOrderMeta,
           sortOrder.isAcceptableOrUnknown(data['sort_order']!, _sortOrderMeta));
     }
+    if (data.containsKey('archived_at')) {
+      context.handle(
+          _archivedAtMeta,
+          archivedAt.isAcceptableOrUnknown(
+              data['archived_at']!, _archivedAtMeta));
+    }
     return context;
   }
 
@@ -1896,6 +1914,8 @@ class $ProjectsTable extends Projects
           DriftSqlType.dateTime, data['${effectivePrefix}last_opened_at'])!,
       sortOrder: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}sort_order'])!,
+      archivedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}archived_at']),
     );
   }
 
@@ -1911,12 +1931,17 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
   final DateTime createdAt;
   final DateTime lastOpenedAt;
   final int sortOrder;
+
+  /// Soft delete: archived projects leave the workspace but stay restorable
+  /// from Settings.
+  final DateTime? archivedAt;
   const ProjectRow(
       {required this.projectRoot,
       required this.displayName,
       required this.createdAt,
       required this.lastOpenedAt,
-      required this.sortOrder});
+      required this.sortOrder,
+      this.archivedAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -1925,6 +1950,9 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
     map['created_at'] = Variable<DateTime>(createdAt);
     map['last_opened_at'] = Variable<DateTime>(lastOpenedAt);
     map['sort_order'] = Variable<int>(sortOrder);
+    if (!nullToAbsent || archivedAt != null) {
+      map['archived_at'] = Variable<DateTime>(archivedAt);
+    }
     return map;
   }
 
@@ -1935,6 +1963,9 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
       createdAt: Value(createdAt),
       lastOpenedAt: Value(lastOpenedAt),
       sortOrder: Value(sortOrder),
+      archivedAt: archivedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(archivedAt),
     );
   }
 
@@ -1947,6 +1978,7 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       lastOpenedAt: serializer.fromJson<DateTime>(json['lastOpenedAt']),
       sortOrder: serializer.fromJson<int>(json['sortOrder']),
+      archivedAt: serializer.fromJson<DateTime?>(json['archivedAt']),
     );
   }
   @override
@@ -1958,6 +1990,7 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'lastOpenedAt': serializer.toJson<DateTime>(lastOpenedAt),
       'sortOrder': serializer.toJson<int>(sortOrder),
+      'archivedAt': serializer.toJson<DateTime?>(archivedAt),
     };
   }
 
@@ -1966,13 +1999,15 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
           String? displayName,
           DateTime? createdAt,
           DateTime? lastOpenedAt,
-          int? sortOrder}) =>
+          int? sortOrder,
+          Value<DateTime?> archivedAt = const Value.absent()}) =>
       ProjectRow(
         projectRoot: projectRoot ?? this.projectRoot,
         displayName: displayName ?? this.displayName,
         createdAt: createdAt ?? this.createdAt,
         lastOpenedAt: lastOpenedAt ?? this.lastOpenedAt,
         sortOrder: sortOrder ?? this.sortOrder,
+        archivedAt: archivedAt.present ? archivedAt.value : this.archivedAt,
       );
   ProjectRow copyWithCompanion(ProjectsCompanion data) {
     return ProjectRow(
@@ -1985,6 +2020,8 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
           ? data.lastOpenedAt.value
           : this.lastOpenedAt,
       sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
+      archivedAt:
+          data.archivedAt.present ? data.archivedAt.value : this.archivedAt,
     );
   }
 
@@ -1995,14 +2032,15 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
           ..write('displayName: $displayName, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastOpenedAt: $lastOpenedAt, ')
-          ..write('sortOrder: $sortOrder')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('archivedAt: $archivedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(projectRoot, displayName, createdAt, lastOpenedAt, sortOrder);
+  int get hashCode => Object.hash(
+      projectRoot, displayName, createdAt, lastOpenedAt, sortOrder, archivedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2011,7 +2049,8 @@ class ProjectRow extends DataClass implements Insertable<ProjectRow> {
           other.displayName == this.displayName &&
           other.createdAt == this.createdAt &&
           other.lastOpenedAt == this.lastOpenedAt &&
-          other.sortOrder == this.sortOrder);
+          other.sortOrder == this.sortOrder &&
+          other.archivedAt == this.archivedAt);
 }
 
 class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
@@ -2020,6 +2059,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
   final Value<DateTime> createdAt;
   final Value<DateTime> lastOpenedAt;
   final Value<int> sortOrder;
+  final Value<DateTime?> archivedAt;
   final Value<int> rowid;
   const ProjectsCompanion({
     this.projectRoot = const Value.absent(),
@@ -2027,6 +2067,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
     this.createdAt = const Value.absent(),
     this.lastOpenedAt = const Value.absent(),
     this.sortOrder = const Value.absent(),
+    this.archivedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ProjectsCompanion.insert({
@@ -2035,6 +2076,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
     required DateTime createdAt,
     required DateTime lastOpenedAt,
     this.sortOrder = const Value.absent(),
+    this.archivedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : projectRoot = Value(projectRoot),
         displayName = Value(displayName),
@@ -2046,6 +2088,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
     Expression<DateTime>? createdAt,
     Expression<DateTime>? lastOpenedAt,
     Expression<int>? sortOrder,
+    Expression<DateTime>? archivedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -2054,6 +2097,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
       if (createdAt != null) 'created_at': createdAt,
       if (lastOpenedAt != null) 'last_opened_at': lastOpenedAt,
       if (sortOrder != null) 'sort_order': sortOrder,
+      if (archivedAt != null) 'archived_at': archivedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -2064,6 +2108,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
       Value<DateTime>? createdAt,
       Value<DateTime>? lastOpenedAt,
       Value<int>? sortOrder,
+      Value<DateTime?>? archivedAt,
       Value<int>? rowid}) {
     return ProjectsCompanion(
       projectRoot: projectRoot ?? this.projectRoot,
@@ -2071,6 +2116,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
       createdAt: createdAt ?? this.createdAt,
       lastOpenedAt: lastOpenedAt ?? this.lastOpenedAt,
       sortOrder: sortOrder ?? this.sortOrder,
+      archivedAt: archivedAt ?? this.archivedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2093,6 +2139,9 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
     if (sortOrder.present) {
       map['sort_order'] = Variable<int>(sortOrder.value);
     }
+    if (archivedAt.present) {
+      map['archived_at'] = Variable<DateTime>(archivedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2107,6 +2156,7 @@ class ProjectsCompanion extends UpdateCompanion<ProjectRow> {
           ..write('createdAt: $createdAt, ')
           ..write('lastOpenedAt: $lastOpenedAt, ')
           ..write('sortOrder: $sortOrder, ')
+          ..write('archivedAt: $archivedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4380,6 +4430,7 @@ typedef $$ProjectsTableCreateCompanionBuilder = ProjectsCompanion Function({
   required DateTime createdAt,
   required DateTime lastOpenedAt,
   Value<int> sortOrder,
+  Value<DateTime?> archivedAt,
   Value<int> rowid,
 });
 typedef $$ProjectsTableUpdateCompanionBuilder = ProjectsCompanion Function({
@@ -4388,6 +4439,7 @@ typedef $$ProjectsTableUpdateCompanionBuilder = ProjectsCompanion Function({
   Value<DateTime> createdAt,
   Value<DateTime> lastOpenedAt,
   Value<int> sortOrder,
+  Value<DateTime?> archivedAt,
   Value<int> rowid,
 });
 
@@ -4436,6 +4488,9 @@ class $$ProjectsTableFilterComposer
   ColumnFilters<int> get sortOrder => $composableBuilder(
       column: $table.sortOrder, builder: (column) => ColumnFilters(column));
 
+  ColumnFilters<DateTime> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => ColumnFilters(column));
+
   Expression<bool> chatsRefs(
       Expression<bool> Function($$ChatsTableFilterComposer f) f) {
     final $$ChatsTableFilterComposer composer = $composerBuilder(
@@ -4482,6 +4537,9 @@ class $$ProjectsTableOrderingComposer
 
   ColumnOrderings<int> get sortOrder => $composableBuilder(
       column: $table.sortOrder, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => ColumnOrderings(column));
 }
 
 class $$ProjectsTableAnnotationComposer
@@ -4507,6 +4565,9 @@ class $$ProjectsTableAnnotationComposer
 
   GeneratedColumn<int> get sortOrder =>
       $composableBuilder(column: $table.sortOrder, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get archivedAt => $composableBuilder(
+      column: $table.archivedAt, builder: (column) => column);
 
   Expression<T> chatsRefs<T extends Object>(
       Expression<T> Function($$ChatsTableAnnotationComposer a) f) {
@@ -4558,6 +4619,7 @@ class $$ProjectsTableTableManager extends RootTableManager<
             Value<DateTime> createdAt = const Value.absent(),
             Value<DateTime> lastOpenedAt = const Value.absent(),
             Value<int> sortOrder = const Value.absent(),
+            Value<DateTime?> archivedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ProjectsCompanion(
@@ -4566,6 +4628,7 @@ class $$ProjectsTableTableManager extends RootTableManager<
             createdAt: createdAt,
             lastOpenedAt: lastOpenedAt,
             sortOrder: sortOrder,
+            archivedAt: archivedAt,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -4574,6 +4637,7 @@ class $$ProjectsTableTableManager extends RootTableManager<
             required DateTime createdAt,
             required DateTime lastOpenedAt,
             Value<int> sortOrder = const Value.absent(),
+            Value<DateTime?> archivedAt = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ProjectsCompanion.insert(
@@ -4582,6 +4646,7 @@ class $$ProjectsTableTableManager extends RootTableManager<
             createdAt: createdAt,
             lastOpenedAt: lastOpenedAt,
             sortOrder: sortOrder,
+            archivedAt: archivedAt,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

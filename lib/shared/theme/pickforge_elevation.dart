@@ -61,6 +61,6 @@ class PickforgeElevation {
   /// one-ember rule). Use behind hero / forge surfaces.
   static RadialGradient emberHalo({double radius = 0.8}) => RadialGradient(
         radius: radius,
-        colors: const [PickforgeColors.emberGlow, Color(0x00FF7A1A)],
+        colors: [PickforgeColors.emberGlow, const Color(0x00FF7A1A)],
       );
 }

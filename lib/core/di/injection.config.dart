@@ -54,6 +54,7 @@ import 'package:pickforge/core/emulator/run_session_controller.dart' as _i849;
 import 'package:pickforge/core/emulator/run_session_log_repository.dart'
     as _i227;
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart' as _i704;
+import 'package:pickforge/core/logging/log_settings.dart' as _i735;
 import 'package:pickforge/core/process/binary_detector.dart' as _i993;
 import 'package:pickforge/core/projects/projects_repository.dart' as _i613;
 import 'package:pickforge/core/settings/flutter_run_target_scanner.dart'
@@ -171,6 +172,8 @@ extension GetItInjectableX on _i174.GetIt {
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
     gh.lazySingleton<_i413.AgentModelSettingsRepository>(() =>
         _i413.AgentModelSettingsRepository(gh<_i460.SharedPreferences>()));
+    gh.lazySingleton<_i735.LogSettingsRepository>(
+        () => _i735.LogSettingsRepository(gh<_i460.SharedPreferences>()));
     gh.lazySingleton<_i1048.OnboardingPreferences>(
         () => _i1048.OnboardingPreferences(gh<_i460.SharedPreferences>()));
     gh.lazySingleton<_i141.WorkspaceSidebarSettingsRepository>(() =>
@@ -229,10 +232,8 @@ extension GetItInjectableX on _i174.GetIt {
               gh<_i418.HeadlessChatSessionPool>(),
               gh<_i597.HeadlessChatFeatureFlags>(),
             ));
-    gh.factory<_i882.ProjectsCubit>(() => _i882.ProjectsCubit(
-          gh<_i613.ProjectsRepository>(),
-          gh<_i685.PtySessionPool>(),
-        ));
+    gh.factory<_i882.ProjectsCubit>(
+        () => _i882.ProjectsCubit(gh<_i613.ProjectsRepository>()));
     gh.factory<_i888.ForgeCubit>(() => _i888.ForgeCubit(
           gh<_i683.AgentLauncher>(),
           gh<_i704.AdbScreenshotCapturer>(),

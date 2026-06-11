@@ -21,6 +21,18 @@ class EmbeddedTerminalSettings extends Equatable {
   final double fontSize;
   final TerminalThemeId themeId;
 
+  EmbeddedTerminalSettings copyWith({
+    String? fontFamily,
+    double? fontSize,
+    TerminalThemeId? themeId,
+  }) {
+    return EmbeddedTerminalSettings(
+      fontFamily: fontFamily ?? this.fontFamily,
+      fontSize: fontSize ?? this.fontSize,
+      themeId: themeId ?? this.themeId,
+    );
+  }
+
   @override
   List<Object?> get props => [fontFamily, fontSize, themeId];
 }

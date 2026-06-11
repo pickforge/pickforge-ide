@@ -243,6 +243,14 @@ class DiagnosticsService {
   final Map<String, DiagnosticsPerformanceCounter> _performanceCounters = {};
   String? _lastVmError;
 
+  /// Every redacted record is forwarded here in addition to the in-memory
+  /// ring buffer. App logging points this at the run-log file so failures
+  /// and legacy `recordLog` call sites land on disk too.
+  void Function(String level, String message)? onRecord;
+
+  String get appVersion => _appVersion;
+  DiagnosticsBuildMetadata get buildMetadata => _buildMetadata;
+
   Future<DiagnosticsSnapshot> snapshot() async {
     final flutter = await _commandStatus('fvm', ['flutter', '--version']);
     return DiagnosticsSnapshot(
@@ -283,16 +291,18 @@ class DiagnosticsService {
   String? get lastVmError => _lastVmError;
 
   void recordLog(String level, String message) {
+    final redacted = _redactor.redact(message);
     _logs.add(
       DiagnosticsLogEntry(
         timestamp: DateTime.now().toUtc(),
         level: level,
-        message: _redactor.redact(message),
+        message: redacted,
       ),
     );
     if (_logs.length > _maxLogEntries) {
       _logs.removeRange(0, _logs.length - _maxLogEntries);
     }
+    onRecord?.call(level, redacted);
   }
 
   void recordVmError(String message) {
@@ -344,6 +354,7 @@ class DiagnosticsService {
   Future<String> buildSupportBundle({
     String? activeProjectRoot,
     String? lastVmError,
+    String? runLogTail,
   }) async {
     final current = await snapshot();
     final vmError =
@@ -419,6 +430,13 @@ class DiagnosticsService {
           '[${entry.level}] ${entry.message}',
         );
       }
+    }
+    if (_nonEmptyValue(runLogTail) case final tail?) {
+      buffer
+        ..writeln()
+        ..writeln('## Current run log (tail)')
+        ..writeln()
+        ..writeln(tail);
     }
     return buffer.toString();
   }

@@ -2,12 +2,15 @@ import 'dart:io';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:injectable/injectable.dart';
+import 'package:logging/logging.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
+
+final _log = Logger('chats');
 
 @injectable
 class ChatsCubit extends Cubit<ChatsState> {
@@ -93,6 +96,7 @@ class ChatsCubit extends Cubit<ChatsState> {
       defaultAgentId: defaultAgentId,
       skillId: skillId,
     );
+    _log.info('chat created: $id in $projectRoot');
     final s = state;
     if (s is ChatsReady) {
       final list = await _repo.list(projectRoot);
@@ -173,11 +177,13 @@ class ChatsCubit extends Cubit<ChatsState> {
     if (s is! ChatsReady) return;
     final root = _projectOfChat(s, chatId);
     await _repo.remove(chatId);
+    _log.info('chat deleted: $chatId');
     if (root != null) {
       final dir = Directory(p.join(root, '.pickforge', 'chats', chatId));
       try {
         if (dir.existsSync()) await dir.delete(recursive: true);
       } on FileSystemException catch (e) {
+        _log.warning('deleting transcript for $chatId failed: ${e.message}');
         emit(ChatsError('Failed to delete transcript: ${e.message}'));
         return;
       }

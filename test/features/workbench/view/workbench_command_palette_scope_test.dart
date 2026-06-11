@@ -48,7 +48,7 @@ void main() {
         defaultAgentId: 'claude-code',
       ),
     ).thenAnswer((_) async => 'chat-1');
-    when(() => projects.add('/picked')).thenAnswer((_) async {});
+    when(() => projects.add('/picked')).thenAnswer((_) async => null);
     when(emulator.hotReload).thenAnswer((_) async {});
 
     await tester.pumpWidget(
@@ -125,7 +125,7 @@ void main() {
         defaultAgentId: 'claude-code',
       ),
     ).thenAnswer((_) async => 'chat-1');
-    when(() => projects.add('/picked')).thenAnswer((_) async {});
+    when(() => projects.add('/picked')).thenAnswer((_) async => null);
     when(emulator.hotReload).thenAnswer((_) async {});
 
     await tester.pumpWidget(

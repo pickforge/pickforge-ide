@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:pickforge/core/chats/chat_metadata.dart';
+import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/gitignore_helper.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
+import 'package:pickforge/features/workbench/cubit/chat_attention_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -37,7 +39,11 @@ class ProjectsChatsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     return ColoredBox(
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      // Slightly translucent so the forge backdrop warms the sidebar edges.
+      color: Theme.of(context)
+          .colorScheme
+          .surfaceContainerLow
+          .withValues(alpha: 0.85),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -89,7 +95,12 @@ class ProjectsChatsPanel extends StatelessWidget {
     final picked = await picker();
     if (picked == null) return;
     if (!context.mounted) return;
-    await context.read<ProjectsCubit>().add(picked);
+    final error = await context.read<ProjectsCubit>().add(picked);
+    if (error != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+    }
   }
 }
 
@@ -390,8 +401,8 @@ class _ProjectsList extends StatelessWidget {
       final collapsed = sidebar.collapsedGroupIds.contains(section.id);
       if (i > 0) {
         tiles.add(
-          const Padding(
-            padding: EdgeInsets.all(PickforgeSpacing.sm),
+          Padding(
+            padding: const EdgeInsets.all(PickforgeSpacing.sm),
             child: Divider(
               height: 1,
               thickness: 1,
@@ -404,6 +415,10 @@ class _ProjectsList extends StatelessWidget {
       if (section.project case final project?) {
         header = _ProjectHeaderTile(
           project: project,
+          chatIds: [
+            for (final entry in section.entries)
+              if (entry.chat?.chatId case final id?) id,
+          ],
           expanded: !collapsed,
           isActiveProject: project.projectRoot == activeProjectRoot,
           isPinned: sidebar.pinnedProjectRoots.contains(project.projectRoot),
@@ -528,6 +543,10 @@ class _ProjectsGrid extends StatelessWidget {
             if (section.project case final project?)
               _GridProjectHeader(
                 project: project,
+                chatIds: [
+                  for (final entry in section.entries)
+                    if (entry.chat?.chatId case final id?) id,
+                ],
                 isActive: project.projectRoot == activeProjectRoot,
                 addTooltip: l10n.workbenchNewChat,
                 onAddChat: () => onAddChat(project.projectRoot),
@@ -569,18 +588,24 @@ class _ProjectsGrid extends StatelessWidget {
 class _GridProjectHeader extends StatelessWidget {
   const _GridProjectHeader({
     required this.project,
+    required this.chatIds,
     required this.isActive,
     required this.addTooltip,
     required this.onAddChat,
   });
 
   final ProjectRow project;
+
+  /// This project's chats, for the header-level attention dot.
+  final List<String> chatIds;
+
   final bool isActive;
   final String addTooltip;
   final VoidCallback onAddChat;
 
   @override
   Widget build(BuildContext context) {
+    final isMissing = _projectRootMissing(context, project.projectRoot);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         0,
@@ -593,8 +618,14 @@ class _GridProjectHeader extends StatelessWidget {
         borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () =>
-              unawaited(_selectProjectOnly(context, project.projectRoot)),
+          onTap: () {
+            if (isMissing) {
+              unawaited(_showMissingProjectDialog(context, project));
+              return;
+            }
+            unawaited(_selectProjectOnly(context, project.projectRoot));
+          },
+          mouseCursor: SystemMouseCursors.click,
           hoverColor: PickforgeColors.hairline,
           splashColor: PickforgeColors.hairlineStrong,
           child: Padding(
@@ -605,11 +636,13 @@ class _GridProjectHeader extends StatelessWidget {
             child: Row(
               children: [
                 Icon(
-                  Icons.folder_outlined,
+                  isMissing ? Icons.folder_off_outlined : Icons.folder_outlined,
                   size: 14,
-                  color: isActive
-                      ? PickforgeColors.textHi
-                      : PickforgeColors.textLow,
+                  color: isMissing
+                      ? PickforgeColors.error
+                      : isActive
+                          ? PickforgeColors.textHi
+                          : PickforgeColors.textLow,
                 ),
                 const SizedBox(width: PickforgeSpacing.sm - 2),
                 Expanded(
@@ -618,12 +651,14 @@ class _GridProjectHeader extends StatelessWidget {
                     color: isActive ? PickforgeColors.textHi : null,
                   ),
                 ),
+                _ChatAttentionDot(chatIds: chatIds),
                 IconButton(
                   tooltip: addTooltip,
                   icon: const Icon(Icons.add, size: 16),
                   visualDensity: VisualDensity.compact,
-                  onPressed: onAddChat,
+                  onPressed: isMissing ? null : onAddChat,
                 ),
+                _ProjectMenuButton(project: project),
               ],
             ),
           ),
@@ -662,6 +697,7 @@ class _GroupHeaderTile extends StatelessWidget {
 class _ProjectHeaderTile extends StatelessWidget {
   const _ProjectHeaderTile({
     required this.project,
+    required this.chatIds,
     required this.expanded,
     required this.isActiveProject,
     required this.isPinned,
@@ -671,6 +707,11 @@ class _ProjectHeaderTile extends StatelessWidget {
   });
 
   final ProjectRow project;
+
+  /// This project's chats — the header shows the attention dot when any of
+  /// them needs the user (visible even while the section is collapsed).
+  final List<String> chatIds;
+
   final bool expanded;
   final bool isActiveProject;
   final bool isPinned;
@@ -681,6 +722,7 @@ class _ProjectHeaderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isMissing = _projectRootMissing(context, project.projectRoot);
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         PickforgeSpacing.sm - 2,
@@ -694,11 +736,16 @@ class _ProjectHeaderTile extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () {
+            if (isMissing) {
+              unawaited(_showMissingProjectDialog(context, project));
+              return;
+            }
             onToggle();
             unawaited(
               _selectProjectOnly(context, project.projectRoot),
             );
           },
+          mouseCursor: SystemMouseCursors.click,
           hoverColor: PickforgeColors.hairline,
           splashColor: PickforgeColors.hairlineStrong,
           child: Padding(
@@ -709,9 +756,15 @@ class _ProjectHeaderTile extends StatelessWidget {
             child: Row(
               children: [
                 Icon(
-                  expanded ? Icons.expand_more : Icons.chevron_right,
+                  isMissing
+                      ? Icons.folder_off_outlined
+                      : expanded
+                          ? Icons.expand_more
+                          : Icons.chevron_right,
                   size: 18,
-                  color: PickforgeColors.textMed,
+                  color: isMissing
+                      ? PickforgeColors.error
+                      : PickforgeColors.textMed,
                 ),
                 const SizedBox(width: PickforgeSpacing.xs),
                 Expanded(
@@ -721,15 +774,18 @@ class _ProjectHeaderTile extends StatelessWidget {
                     style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight:
                           isActiveProject ? FontWeight.w600 : FontWeight.normal,
-                      color: PickforgeColors.textHi,
+                      color: isMissing
+                          ? PickforgeColors.textLow
+                          : PickforgeColors.textHi,
                     ),
                   ),
                 ),
+                _ChatAttentionDot(chatIds: chatIds),
                 IconButton(
                   tooltip: AppLocalizations.of(context).workbenchNewChat,
                   icon: const Icon(Icons.add, size: 16),
                   visualDensity: VisualDensity.compact,
-                  onPressed: onAddChat,
+                  onPressed: isMissing ? null : onAddChat,
                 ),
                 IconButton(
                   tooltip: isPinned
@@ -742,6 +798,7 @@ class _ProjectHeaderTile extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                   onPressed: onPin,
                 ),
+                _ProjectMenuButton(project: project),
               ],
             ),
           ),
@@ -838,6 +895,7 @@ class _ProjectEntryTile extends StatelessWidget {
         child: InkWell(
           onTap: () =>
               unawaited(_selectProjectOnly(context, project.projectRoot)),
+          mouseCursor: SystemMouseCursors.click,
           hoverColor: PickforgeColors.hairline,
           splashColor: PickforgeColors.hairlineStrong,
           child: Padding(
@@ -865,6 +923,38 @@ class _ProjectEntryTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// A pulsing ember dot when any pane in any of [chatIds] finished work and
+/// is waiting for the user — one chat for chat tiles, a project's chats for
+/// its header. Self-contained: resolves the app-wide attention cubit lazily
+/// so widget tests without DI simply render nothing.
+class _ChatAttentionDot extends StatelessWidget {
+  const _ChatAttentionDot({required this.chatIds});
+
+  final List<String> chatIds;
+
+  @override
+  Widget build(BuildContext context) {
+    if (chatIds.isEmpty || !getIt.isRegistered<ChatAttentionCubit>()) {
+      return const SizedBox.shrink();
+    }
+    final attention = getIt<ChatAttentionCubit>();
+    return StreamBuilder<ChatAttentionState>(
+      stream: attention.stream,
+      initialData: attention.state,
+      builder: (context, snapshot) {
+        final state = snapshot.data;
+        if (state == null || !chatIds.any(state.chatHasAttention)) {
+          return const SizedBox.shrink();
+        }
+        return const Padding(
+          padding: EdgeInsets.only(right: PickforgeSpacing.xs),
+          child: EmberDot(size: 6, pulsing: true),
+        );
+      },
     );
   }
 }
@@ -927,6 +1017,7 @@ class _ChatTile extends StatelessWidget {
             clipBehavior: Clip.antiAlias,
             child: InkWell(
               onTap: onTap,
+              mouseCursor: SystemMouseCursors.click,
               hoverColor: PickforgeColors.hairline,
               splashColor: PickforgeColors.hairlineStrong,
               child: Padding(
@@ -943,6 +1034,7 @@ class _ChatTile extends StatelessWidget {
                         children: [
                           Row(
                             children: [
+                              _ChatAttentionDot(chatIds: [chat.chatId]),
                               Expanded(
                                 child: Text(
                                   chat.title,
@@ -1112,6 +1204,7 @@ class _EntryGridCard extends StatelessWidget {
       WorkspaceSidebarEntryKind.chat => _SidebarCard(
           icon: Icons.chat_bubble_outline,
           title: entry.chat!.title,
+          chatId: entry.chat!.chatId,
           subtitle: entry.chat!.taskBrief,
           status: entry.chat!.taskStatus == ChatTaskStatus.active
               ? null
@@ -1131,6 +1224,7 @@ class _SidebarCard extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.isProject = false,
+    this.chatId,
     this.subtitle,
     this.status,
     this.labels = const [],
@@ -1139,6 +1233,7 @@ class _SidebarCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final bool isProject;
+  final String? chatId;
   final String? subtitle;
   final ChatTaskStatus? status;
   final List<String> labels;
@@ -1155,20 +1250,25 @@ class _SidebarCard extends StatelessWidget {
       // as the list rows.
       inset: -4,
       child: Material(
+        // Chat cards share the list view's translucent lift (`itemFill` +
+        // hairline) so every card's extent reads against the backdrop.
         color: isProject
             ? Colors.transparent
             : selected
                 ? PickforgeColors.surface2
-                : PickforgeColors.surface1,
+                : PickforgeColors.itemFill,
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
-          side: isProject
-              ? const BorderSide(color: PickforgeColors.hairlineStrong)
-              : BorderSide.none,
+          side: BorderSide(
+            color: isProject
+                ? PickforgeColors.hairlineStrong
+                : PickforgeColors.hairline,
+          ),
         ),
         child: InkWell(
           onTap: onTap,
+          mouseCursor: SystemMouseCursors.click,
           hoverColor: PickforgeColors.hairline,
           splashColor: PickforgeColors.hairlineStrong,
           child: Padding(
@@ -1189,8 +1289,10 @@ class _SidebarCard extends StatelessWidget {
                           : PickforgeColors.textMed,
                     ),
                     const Spacer(),
+                    if (chatId case final chatId?)
+                      _ChatAttentionDot(chatIds: [chatId]),
                     if (isProject)
-                      const MonoEyebrow(
+                      MonoEyebrow(
                         'Project',
                         color: PickforgeColors.textLow,
                       )
@@ -1446,6 +1548,115 @@ Future<void> _selectProjectOnly(
   await context.read<ProjectsCubit>().selectProject(projectRoot);
   if (!context.mounted) return;
   await context.read<ChatsCubit>().activateProject(projectRoot);
+}
+
+bool _projectRootMissing(BuildContext context, String projectRoot) {
+  return context.select<ProjectsCubit, bool>((cubit) {
+    final state = cubit.state;
+    return state is ProjectsReady && state.missingRoots.contains(projectRoot);
+  });
+}
+
+enum _ProjectAction { archive, delete }
+
+class _ProjectMenuButton extends StatelessWidget {
+  const _ProjectMenuButton({required this.project});
+
+  final ProjectRow project;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return PopupMenuButton<_ProjectAction>(
+      tooltip: MaterialLocalizations.of(context).showMenuTooltip,
+      icon: const Icon(Icons.more_horiz, size: 16),
+      onSelected: (action) async {
+        final cubit = context.read<ProjectsCubit>();
+        switch (action) {
+          case _ProjectAction.archive:
+            await cubit.archive(project.projectRoot);
+          case _ProjectAction.delete:
+            final confirmed = await _confirmProjectDelete(context, project);
+            if (confirmed ?? false) await cubit.remove(project.projectRoot);
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: _ProjectAction.archive,
+          child: Text(l10n.sidebarArchiveProject),
+        ),
+        PopupMenuItem(
+          value: _ProjectAction.delete,
+          child: Text(l10n.sidebarDeleteProject),
+        ),
+      ],
+    );
+  }
+}
+
+Future<bool?> _confirmProjectDelete(BuildContext context, ProjectRow project) {
+  final l10n = AppLocalizations.of(context);
+  return showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(l10n.projectDeleteConfirmTitle),
+      content: Text(l10n.projectDeleteConfirmMessage(project.displayName)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text(l10n.projectDeleteConfirm),
+        ),
+      ],
+    ),
+  );
+}
+
+/// The stored folder no longer exists (moved or deleted outside the app).
+/// Offers to re-point the project at its new location or remove it.
+Future<void> _showMissingProjectDialog(
+  BuildContext context,
+  ProjectRow project,
+) async {
+  final l10n = AppLocalizations.of(context);
+  final cubit = context.read<ProjectsCubit>();
+  final action = await showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(l10n.projectMissingTitle),
+      content: Text(l10n.projectMissingMessage(project.projectRoot)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: Text(MaterialLocalizations.of(ctx).cancelButtonLabel),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop('remove'),
+          child: Text(l10n.projectMissingRemove),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop('locate'),
+          child: Text(l10n.projectMissingLocate),
+        ),
+      ],
+    ),
+  );
+  switch (action) {
+    case 'locate':
+      final picked = await getDirectoryPath();
+      if (picked == null) return;
+      final error = await cubit.relocate(project.projectRoot, picked);
+      if (error != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error)),
+        );
+      }
+    case 'remove':
+      await cubit.remove(project.projectRoot);
+  }
 }
 
 class _EmptyChatHint extends StatelessWidget {

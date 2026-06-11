@@ -13,7 +13,6 @@ import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
-import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -26,7 +25,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class _MockDao extends Mock implements ProjectSettingsDao {}
 
-class _MockProjectsRepo extends Mock implements ProjectsRepository {}
+class _MockProjectsRepo extends Mock implements ProjectsRepository {
+  @override
+  Future<List<ProjectRow>> archivedProjects() async => [];
+}
 
 class _MockChatsRepo extends Mock implements ChatsRepository {}
 
@@ -76,7 +78,7 @@ void main() {
           child: MultiBlocProvider(
             providers: [
               BlocProvider.value(value: layoutCubit),
-              BlocProvider.value(value: ProjectsCubit(pRepo, PtySessionPool())),
+              BlocProvider.value(value: ProjectsCubit(pRepo)),
               BlocProvider.value(value: ChatsCubit(cRepo, settings)),
               BlocProvider<WidgetPickerCubit>.value(value: picker),
             ],
@@ -92,10 +94,11 @@ void main() {
     expect(find.byKey(const Key('workbench-middle')), findsOneWidget);
     expect(find.byKey(const Key('workbench-right')), findsOneWidget);
 
-    const focusedColor = PickforgeColors.emberDeep;
+    final focusedColor = PickforgeColors.emberDeep;
+    // Unfocused panes keep a visible hairline frame; focus re-tints it.
     expect(
       _paneBorderColor(tester, const Key('workbench-left-focus-frame')),
-      Colors.transparent,
+      PickforgeColors.hairlineStrong,
     );
 
     await _sendControlShiftShortcut(tester, LogicalKeyboardKey.keyE);

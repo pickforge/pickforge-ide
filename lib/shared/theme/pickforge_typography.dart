@@ -64,24 +64,24 @@ class PickforgeText {
   const PickforgeText._();
 
   /// Uppercase monospace eyebrow — widest tracking (~0.18em @ 10px ≈ 1.8px).
-  static const TextStyle eyebrow = TextStyle(
-    fontFamily: kPickforgeMono,
-    fontSize: 10,
-    fontWeight: FontWeight.w500,
-    letterSpacing: 1.8,
-    height: 1.2,
-    color: PickforgeColors.muted,
-  );
+  static TextStyle get eyebrow => TextStyle(
+        fontFamily: kPickforgeMono,
+        fontSize: 10,
+        fontWeight: FontWeight.w500,
+        letterSpacing: 1.8,
+        height: 1.2,
+        color: PickforgeColors.muted,
+      );
 
   /// Inline mono — IDs, paths, tabular values.
-  static const TextStyle mono = TextStyle(
-    fontFamily: kPickforgeMono,
-    fontSize: 12,
-    fontWeight: FontWeight.w400,
-    height: 1.4,
-    fontFeatures: [FontFeature.tabularFigures()],
-    color: PickforgeColors.textMed,
-  );
+  static TextStyle get mono => TextStyle(
+        fontFamily: kPickforgeMono,
+        fontSize: 12,
+        fontWeight: FontWeight.w400,
+        height: 1.4,
+        fontFeatures: const [FontFeature.tabularFigures()],
+        color: PickforgeColors.textMed,
+      );
 }
 
 /// Theme extension carrying the monospace family for code/terminal surfaces.

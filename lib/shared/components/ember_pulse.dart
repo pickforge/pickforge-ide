@@ -10,12 +10,13 @@ import 'package:pickforge/shared/theme/pickforge_colors.dart';
 class EmberDot extends StatefulWidget {
   const EmberDot({
     super.key,
-    this.color = PickforgeColors.ember,
+    this.color,
     this.size = 8,
     this.pulsing = false,
   });
 
-  final Color color;
+  /// Dot color. Defaults to the active palette's [PickforgeColors.ember].
+  final Color? color;
   final double size;
   final bool pulsing;
 
@@ -61,11 +62,12 @@ class _EmberDotState extends State<EmberDot>
 
   @override
   Widget build(BuildContext context) {
+    final color = widget.color ?? PickforgeColors.ember;
     final dot = Container(
       width: widget.size,
       height: widget.size,
       decoration: BoxDecoration(
-        color: widget.color,
+        color: color,
         shape: BoxShape.circle,
       ),
     );
@@ -88,7 +90,7 @@ class _EmberDotState extends State<EmberDot>
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: widget.color.withValues(alpha: (1 - t) * 0.6),
+                      color: color.withValues(alpha: (1 - t) * 0.6),
                     ),
                   ),
                 );

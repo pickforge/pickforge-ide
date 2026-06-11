@@ -3,13 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
-import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
 
 class _MockRepo extends Mock implements ProjectsRepository {}
-
-class _MockPtyPool extends Mock implements PtySessionPool {}
 
 ProjectRow _row(String root) => ProjectRow(
       projectRoot: root,
@@ -21,11 +18,9 @@ ProjectRow _row(String root) => ProjectRow(
 
 void main() {
   late _MockRepo repo;
-  late _MockPtyPool ptyPool;
   setUp(() {
     repo = _MockRepo();
-    ptyPool = _MockPtyPool();
-    when(ptyPool.parkAll).thenAnswer((_) async {});
+    when(() => repo.archivedProjects()).thenAnswer((_) async => []);
   });
 
   blocTest<ProjectsCubit, ProjectsState>(
@@ -33,7 +28,7 @@ void main() {
     setUp: () {
       when(() => repo.list()).thenAnswer((_) async => [_row('/p')]);
     },
-    build: () => ProjectsCubit(repo, ptyPool),
+    build: () => ProjectsCubit(repo),
     act: (c) => c.load(),
     expect: () => [
       isA<ProjectsLoading>(),
@@ -44,15 +39,14 @@ void main() {
   );
 
   blocTest<ProjectsCubit, ProjectsState>(
-    'add invokes repo, reloads and selects the added project',
+    'add invokes repo and selects the added project',
     setUp: () {
       when(() => repo.add('/x')).thenAnswer((_) async => _row('/x'));
       when(() => repo.list()).thenAnswer((_) async => [_row('/x')]);
     },
-    build: () => ProjectsCubit(repo, ptyPool),
+    build: () => ProjectsCubit(repo),
     act: (c) => c.add('/x'),
     expect: () => [
-      isA<ProjectsLoading>(),
       isA<ProjectsReady>()
           .having((s) => s.projects.length, 'count', 1)
           .having((s) => s.activeProjectRoot, 'active', '/x'),
@@ -65,7 +59,7 @@ void main() {
       when(() => repo.list()).thenAnswer((_) async => [_row('/a'), _row('/b')]);
       when(() => repo.touch('/b')).thenAnswer((_) async {});
     },
-    build: () => ProjectsCubit(repo, ptyPool),
+    build: () => ProjectsCubit(repo),
     act: (c) async {
       await c.load();
       await c.selectProject('/b');
@@ -76,41 +70,52 @@ void main() {
     ],
     verify: (_) {
       verify(() => repo.touch('/b')).called(1);
-      verify(ptyPool.parkAll).called(1);
     },
   );
 
   blocTest<ProjectsCubit, ProjectsState>(
-    'selectProject does not park PTYs when selecting active project again',
-    setUp: () {
-      when(() => repo.list()).thenAnswer((_) async => [_row('/a')]);
-      when(() => repo.touch('/a')).thenAnswer((_) async {});
-    },
-    build: () => ProjectsCubit(repo, ptyPool),
-    act: (c) async {
-      await c.load();
-      await c.selectProject('/a');
-    },
-    verify: (_) {
-      verifyNever(ptyPool.parkAll);
-    },
-  );
-
-  blocTest<ProjectsCubit, ProjectsState>(
-    'add error surfaces ProjectsError',
+    'add error returns the message and recovers to a usable Ready state',
     setUp: () {
       when(() => repo.add('/bad'))
-          .thenThrow(ProjectAddError('no pubspec.yaml'));
+          .thenThrow(ProjectAddError('Folder does not exist: /bad'));
+      when(() => repo.list()).thenAnswer((_) async => [_row('/p')]);
     },
-    build: () => ProjectsCubit(repo, ptyPool),
-    act: (c) => c.add('/bad'),
+    build: () => ProjectsCubit(repo),
+    act: (c) async {
+      final error = await c.add('/bad');
+      expect(error, contains('Folder does not exist'));
+    },
     expect: () => [
       isA<ProjectsLoading>(),
-      isA<ProjectsError>().having(
-        (e) => e.message,
-        'message',
-        contains('no pubspec.yaml'),
-      ),
+      isA<ProjectsReady>()
+          .having((s) => s.projects.length, 'count', 1)
+          .having((s) => s.activeProjectRoot, 'active', '/p'),
+    ],
+  );
+
+  blocTest<ProjectsCubit, ProjectsState>(
+    'archive hides the project and switches the active selection',
+    setUp: () {
+      var archived = false;
+      when(() => repo.list()).thenAnswer(
+        (_) async => archived ? [_row('/b')] : [_row('/a'), _row('/b')],
+      );
+      when(() => repo.archive('/a')).thenAnswer((_) async => archived = true);
+      when(() => repo.archivedProjects()).thenAnswer(
+        (_) async => archived ? [_row('/a')] : [],
+      );
+    },
+    build: () => ProjectsCubit(repo),
+    act: (c) async {
+      await c.load();
+      await c.archive('/a');
+    },
+    skip: 2,
+    expect: () => [
+      isA<ProjectsReady>()
+          .having((s) => s.projects.length, 'count', 1)
+          .having((s) => s.activeProjectRoot, 'active', '/b')
+          .having((s) => s.archivedProjects.length, 'archived', 1),
     ],
   );
 }

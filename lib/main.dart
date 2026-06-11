@@ -3,7 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:pickforge/core/appearance/appearance_settings.dart';
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/logging/app_logging.dart';
+import 'package:pickforge/core/logging/log_settings.dart';
 import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
@@ -18,6 +21,16 @@ import 'package:pickforge/shared/theme/pickforge_theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await configureDependencies();
+  if (getIt.isRegistered<AppLogging>()) {
+    final logging = getIt<AppLogging>();
+    await logging.start(
+      verbosity: await getIt<LogSettingsRepository>().load(),
+    );
+    // Before the assertion guard: later-installed handlers run first, so
+    // the guard filters its known-noise assertion before anything is
+    // logged.
+    logging.installErrorHooks();
+  }
   await getIt<CrashReportService>().run(
     appRunner: () async {
       _installHardwareKeyboardAssertionGuard();
@@ -63,8 +76,42 @@ Future<void> _startUpdateCheck() async {
   }
 }
 
-class PickforgeApp extends StatelessWidget {
+class PickforgeApp extends StatefulWidget {
   const PickforgeApp({super.key});
+
+  @override
+  State<PickforgeApp> createState() => _PickforgeAppState();
+}
+
+class _PickforgeAppState extends State<PickforgeApp>
+    with WidgetsBindingObserver {
+  late final AppearanceController _appearance = getIt<AppearanceController>();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    _appearance.onPlatformBrightnessChanged();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Last chance to land buffered log lines before the process dies.
+    if (state == AppLifecycleState.detached &&
+        getIt.isRegistered<AppLogging>()) {
+      unawaited(getIt<AppLogging>().flush());
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -95,15 +142,18 @@ class PickforgeApp extends StatelessWidget {
                 ),
           );
         },
-        child: MaterialApp.router(
-          title: 'PickForge',
-          debugShowCheckedModeBanner: false,
-          theme: PickforgeTheme.light(),
-          darkTheme: PickforgeTheme.dark(),
-          themeMode: ThemeMode.dark,
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          routerConfig: buildAppRouter(),
+        child: ValueListenableBuilder<AppearanceSettings>(
+          valueListenable: _appearance,
+          builder: (context, appearance, _) => MaterialApp.router(
+            title: 'PickForge',
+            debugShowCheckedModeBanner: false,
+            theme: PickforgeTheme.light(),
+            darkTheme: PickforgeTheme.dark(),
+            themeMode: _appearance.themeMode,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            routerConfig: buildAppRouter(),
+          ),
         ),
       ),
     );

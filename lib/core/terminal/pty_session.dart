@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:logging/logging.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
 import 'package:pickforge/core/terminal/pty_session_state.dart';
+
+final _log = Logger('pty.session');
 
 class PtySession {
   PtySession({
@@ -14,6 +17,7 @@ class PtySession {
     required PtyProcessFactory factory,
     this.environment,
     this.onOutput,
+    this.onDispose,
     Duration spawnTimeout = const Duration(seconds: 8),
   })  : _factory = factory,
         _spawnTimeout = spawnTimeout;
@@ -24,14 +28,20 @@ class PtySession {
   final String workingDirectory;
   final Map<String, String>? environment;
 
-  /// Transcript sink. Rebindable: a remounted pane reattaches its fresh
-  /// recorder to the pooled session it inherits.
+  /// Transcript sink. Lives with the session: a pooled session keeps
+  /// recording while its pane is unmounted, so reopening the chat replays
+  /// everything that happened in the background.
   void Function(List<int> bytes)? onOutput;
+
+  /// Owned-resource teardown (e.g. the transcript recorder), awaited at the
+  /// end of [dispose].
+  Future<void> Function()? onDispose;
   final PtyProcessFactory _factory;
   final Duration _spawnTimeout;
 
   final _stateCtrl = StreamController<PtySessionState>.broadcast();
   final _outputCtrl = StreamController<List<int>>.broadcast();
+  final _inputCtrl = StreamController<void>.broadcast();
   PtyProcess? _process;
   PtySessionState _last = const PtyParked();
 
@@ -42,6 +52,10 @@ class PtySession {
       });
 
   Stream<List<int>> get output => _outputCtrl.stream;
+
+  /// Fires whenever the user (or a quick-launch chip / paste) writes to the
+  /// session — the signal that work was actually requested here.
+  Stream<void> get input => _inputCtrl.stream;
 
   PtySessionState get currentState => _last;
 
@@ -62,9 +76,16 @@ class PtySession {
         onOutput?.call(bytes);
         _outputCtrl.add(bytes);
       });
-      unawaited(_process!.exitCode.then((c) => _emit(PtyExited(c))));
+      unawaited(
+        _process!.exitCode.then((c) {
+          _log.info('[$chatId] $executable exited with code $c');
+          _emit(PtyExited(c));
+        }),
+      );
+      _log.info('[$chatId] spawned $executable (cwd: $workingDirectory)');
       _emit(const PtyRunning());
     } on TimeoutException {
+      _log.warning('[$chatId] $executable did not start in time');
       _emit(
         const PtyFailed(
           PtyFailReason.spawnTimeout,
@@ -75,14 +96,17 @@ class PtySession {
       final reason = e.message.contains('No such file')
           ? PtyFailReason.binaryNotFound
           : PtyFailReason.unknown;
+      _log.warning('[$chatId] $executable failed to spawn: ${e.message}');
       _emit(PtyFailed(reason, e.message));
     } on Object catch (e) {
+      _log.warning('[$chatId] $executable failed to spawn: $e');
       _emit(PtyFailed(PtyFailReason.unknown, e.toString()));
     }
   }
 
   void write(List<int> bytes) {
     if (_process == null || !isRunning) return;
+    if (!_inputCtrl.isClosed) _inputCtrl.add(null);
     _process!.write(bytes);
   }
 
@@ -120,6 +144,8 @@ class PtySession {
     await stop();
     await _stateCtrl.close();
     await _outputCtrl.close();
+    await _inputCtrl.close();
+    await onDispose?.call();
   }
 
   void _emit(PtySessionState s) {

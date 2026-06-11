@@ -56,41 +56,49 @@ List<WorkspaceSidebarSection> buildWorkspaceSidebarSections({
   String query = '',
 }) {
   final normalizedQuery = query.trim().toLowerCase();
+  // Archived chats never appear in the workspace sidebar — they are managed
+  // (restored or permanently deleted) from Settings.
+  final visibleChats = {
+    for (final entry in chatsByProject.entries)
+      entry.key: [
+        for (final chat in entry.value)
+          if (chat.taskStatus != ChatTaskStatus.archived) chat,
+      ],
+  };
   final sections = switch (settings.groupingMode) {
-    WorkspaceSidebarGroupingMode.project =>
-      _byProject(projects, chatsByProject),
+    WorkspaceSidebarGroupingMode.project => _byProject(projects, visibleChats),
     WorkspaceSidebarGroupingMode.recentActivity => _byRecent(
         projects,
-        chatsByProject,
+        visibleChats,
       ),
     WorkspaceSidebarGroupingMode.pinned => _byPinned(
         projects,
-        chatsByProject,
+        visibleChats,
         settings,
       ),
     WorkspaceSidebarGroupingMode.agent => _byChatField(
         idPrefix: 'agent',
         titleFor: (chat) => chat.agentId,
-        chatsByProject: chatsByProject,
+        chatsByProject: visibleChats,
         projects: projects,
       ),
     WorkspaceSidebarGroupingMode.skill => _byChatField(
         idPrefix: 'skill',
         titleFor: (chat) => chat.skillId ?? 'No skill',
-        chatsByProject: chatsByProject,
+        chatsByProject: visibleChats,
         projects: projects,
       ),
     WorkspaceSidebarGroupingMode.status => _byStatus(
         projects,
-        chatsByProject,
+        visibleChats,
       ),
     WorkspaceSidebarGroupingMode.label => _byLabel(
         projects,
-        chatsByProject,
+        visibleChats,
       ),
     WorkspaceSidebarGroupingMode.custom => _byCustom(
         projects,
-        chatsByProject,
+        visibleChats,
         settings,
       ),
   };
@@ -185,23 +193,34 @@ List<WorkspaceSidebarSection> _byPinned(
   Map<String, List<ChatRow>> chatsByProject,
   WorkspaceSidebarSettings settings,
 ) {
-  final allChats = _allChats(chatsByProject);
-  final pinnedEntries = [
-    for (final project in projects)
-      if (settings.pinnedProjectRoots.contains(project.projectRoot))
-        WorkspaceSidebarEntry.project(project),
-    for (final chat in allChats)
-      if (settings.pinnedChatIds.contains(chat.chatId))
-        WorkspaceSidebarEntry.chat(chat),
-  ];
-  final otherEntries = [
-    for (final project in projects)
-      if (!settings.pinnedProjectRoots.contains(project.projectRoot))
-        WorkspaceSidebarEntry.project(project),
-    for (final chat in allChats)
-      if (!settings.pinnedChatIds.contains(chat.chatId))
-        WorkspaceSidebarEntry.chat(chat),
-  ];
+  // Pinned chats stay grouped under their own project's row. Flattening all
+  // pinned chats after all pinned projects made every pinned chat read as a
+  // child of whichever pinned project happened to render last.
+  final pinnedEntries = <WorkspaceSidebarEntry>[];
+  final otherEntries = <WorkspaceSidebarEntry>[];
+  for (final project in projects) {
+    final chats = chatsByProject[project.projectRoot] ?? const <ChatRow>[];
+    final projectPinned =
+        settings.pinnedProjectRoots.contains(project.projectRoot);
+    final pinnedChats = [
+      for (final chat in chats)
+        if (settings.pinnedChatIds.contains(chat.chatId)) chat,
+    ];
+    final otherChats = [
+      for (final chat in chats)
+        if (!settings.pinnedChatIds.contains(chat.chatId)) chat,
+    ];
+    if (projectPinned || pinnedChats.isNotEmpty) {
+      pinnedEntries
+        ..add(WorkspaceSidebarEntry.project(project))
+        ..addAll(pinnedChats.map(WorkspaceSidebarEntry.chat));
+    }
+    if (!projectPinned || otherChats.isNotEmpty) {
+      otherEntries
+        ..add(WorkspaceSidebarEntry.project(project))
+        ..addAll(otherChats.map(WorkspaceSidebarEntry.chat));
+    }
+  }
   return [
     WorkspaceSidebarSection(
       id: 'pinned',
@@ -250,14 +269,21 @@ List<WorkspaceSidebarSection> _byStatus(
   List<ProjectRow> projects,
   Map<String, List<ChatRow>> chatsByProject,
 ) {
+  // Archived is filtered out upstream; an always-empty section would only
+  // add noise here.
+  const statuses = [
+    ChatTaskStatus.active,
+    ChatTaskStatus.waiting,
+    ChatTaskStatus.done,
+  ];
   final grouped = <ChatTaskStatus, List<ChatRow>>{
-    for (final status in ChatTaskStatus.values) status: <ChatRow>[],
+    for (final status in statuses) status: <ChatRow>[],
   };
   for (final chat in _allChats(chatsByProject)) {
-    grouped[chat.taskStatus]!.add(chat);
+    grouped[chat.taskStatus]?.add(chat);
   }
   return [
-    for (final status in ChatTaskStatus.values)
+    for (final status in statuses)
       WorkspaceSidebarSection(
         id: 'status:${status.name}',
         title: status.displayName,

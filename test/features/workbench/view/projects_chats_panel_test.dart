@@ -15,7 +15,6 @@ import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
-import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -26,7 +25,10 @@ import 'package:pickforge/l10n/generated/app_localizations.dart';
 import 'package:pickforge/main.dart' show shouldSyncChatsForProjects;
 import 'package:pickforge/shared/theme/pickforge_theme.dart';
 
-class _MockProjectsRepo extends Mock implements ProjectsRepository {}
+class _MockProjectsRepo extends Mock implements ProjectsRepository {
+  @override
+  Future<List<ProjectRow>> archivedProjects() async => [];
+}
 
 class _MockChatsRepo extends Mock implements ChatsRepository {}
 
@@ -204,7 +206,7 @@ Future<_SidebarFixture> _sidebarFixture(
   final sidebarCubit = WorkspaceSidebarCubit(sidebarRepo);
   await sidebarCubit.load();
 
-  final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+  final projectsCubit = ProjectsCubit(pRepo);
   final chatsCubit = ChatsCubit(cRepo, projectSettings);
   await projectsCubit.load();
   await chatsCubit.syncProjects(
@@ -275,7 +277,7 @@ void main() {
     final settings = _MockSettings();
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
-    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final projectsCubit = ProjectsCubit(pRepo);
     final chatsCubit = ChatsCubit(cRepo, settings);
     await projectsCubit.load();
 
@@ -301,7 +303,7 @@ void main() {
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
-    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final projectsCubit = ProjectsCubit(pRepo);
     final chatsCubit = ChatsCubit(cRepo, settings);
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a']);
@@ -338,7 +340,7 @@ void main() {
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
-    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final projectsCubit = ProjectsCubit(pRepo);
     final chatsCubit = ChatsCubit(cRepo, settings);
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a']);
@@ -371,7 +373,7 @@ void main() {
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
-    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final projectsCubit = ProjectsCubit(pRepo);
     final chatsCubit = ChatsCubit(cRepo, settings);
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a', '/b']);
@@ -410,7 +412,7 @@ void main() {
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
-    final projectsCubit = ProjectsCubit(pRepo, PtySessionPool());
+    final projectsCubit = ProjectsCubit(pRepo);
     final chatsCubit = ChatsCubit(cRepo, settings);
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a', '/b']);

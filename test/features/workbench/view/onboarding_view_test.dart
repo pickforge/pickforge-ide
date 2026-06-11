@@ -11,7 +11,6 @@ import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
-import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/view/onboarding_view.dart';
 import 'package:pickforge/l10n/generated/app_localizations.dart';
@@ -33,7 +32,7 @@ void main() {
     when(() => repo.add('/picked')).thenAnswer((_) async => _row('/picked'));
     when(() => repo.list()).thenAnswer((_) async => [_row('/picked')]);
 
-    final cubit = ProjectsCubit(repo, PtySessionPool());
+    final cubit = ProjectsCubit(repo);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -65,7 +64,7 @@ void main() {
   testWidgets('demo mode can be previewed without adding a project',
       (tester) async {
     final repo = _MockRepo();
-    final cubit = ProjectsCubit(repo, PtySessionPool());
+    final cubit = ProjectsCubit(repo);
     var openedDemo = false;
 
     await tester.pumpWidget(
@@ -105,7 +104,7 @@ void main() {
     final repo = _MockRepo();
     when(() => repo.add('/sample')).thenAnswer((_) async => _row('/sample'));
     when(() => repo.list()).thenAnswer((_) async => [_row('/sample')]);
-    final cubit = ProjectsCubit(repo, PtySessionPool());
+    final cubit = ProjectsCubit(repo);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -132,7 +131,7 @@ void main() {
 
   testWidgets('dismiss button calls dismiss callback', (tester) async {
     final repo = _MockRepo();
-    final cubit = ProjectsCubit(repo, PtySessionPool());
+    final cubit = ProjectsCubit(repo);
     var dismissed = false;
 
     await tester.pumpWidget(
@@ -160,7 +159,7 @@ void main() {
 
   testWidgets('setup checks show available and missing tools', (tester) async {
     final repo = _MockRepo();
-    final cubit = ProjectsCubit(repo, PtySessionPool());
+    final cubit = ProjectsCubit(repo);
     var openedSettings = false;
 
     await tester.pumpWidget(
@@ -216,7 +215,7 @@ void main() {
     testWidgets('setup checks recover when ${entry.key} is missing',
         (tester) async {
       final repo = _MockRepo();
-      final cubit = ProjectsCubit(repo, PtySessionPool());
+      final cubit = ProjectsCubit(repo);
       final exitCodes = {
         'fvm': 0,
         'adb': 0,

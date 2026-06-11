@@ -506,6 +506,18 @@
       "path": {}
     }
   },
+  "settingsAppearance": "Appearance",
+  "settingsThemeMode": "Theme",
+  "settingsThemeModeSystem": "System",
+  "settingsThemeModeDark": "Dark",
+  "settingsThemeModeLight": "Light",
+  "settingsForgeBackdrop": "Forge backdrop",
+  "settingsForgeBackdropHelper": "Warms the workbench canvas with a soft ember glow rising from below.",
+  "settingsAnimatedEmbers": "Drifting embers",
+  "settingsAnimatedEmbersHelper": "Tiny embers float up through the canvas. Disabled automatically when the system asks to reduce motion.",
+  "settingsNotifications": "Notifications",
+  "settingsChatReadySound": "Chat-ready sound",
+  "settingsChatReadySoundHelper": "Plays the forge bell when a background chat finishes and waits for input.",
   "onboardingHeading": "Add your first Flutter project",
   "onboardingTagline": "Pick a widget in your running app. Your agent gets its full context. Local-first, open source.",
   "onboardingChecklistTitle": "First-run checklist",
@@ -542,5 +554,50 @@
   "gitignoreDialogTitle": "Update .gitignore?",
   "gitignoreDialogMessage": "PickForge stores chat transcripts and local settings under .pickforge/. Add it to your project's .gitignore?",
   "gitignoreDialogConfirm": "Add it",
-  "gitignoreDialogSkip": "Skip"
+  "gitignoreDialogSkip": "Skip",
+  "sidebarArchiveProject": "Archive project",
+  "sidebarDeleteProject": "Delete project\u2026",
+  "projectDeleteConfirmTitle": "Delete project?",
+  "projectDeleteConfirmMessage": "\"{name}\" and all of its chats will be removed from PickForge. Files on disk are not touched.",
+  "@projectDeleteConfirmMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "projectDeleteConfirm": "Delete",
+  "projectMissingTitle": "Project folder not found",
+  "projectMissingMessage": "{path} no longer exists. Locate the moved folder or remove the project from PickForge.",
+  "@projectMissingMessage": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "projectMissingLocate": "Locate folder\u2026",
+  "projectMissingRemove": "Remove project",
+  "settingsArchivedTitle": "Archived",
+  "settingsArchivedProjects": "Projects",
+  "settingsArchivedChats": "Chats",
+  "settingsArchivedEmpty": "Nothing archived. Archived chats and projects appear here.",
+  "settingsRestore": "Restore",
+  "settingsDeleteForever": "Delete forever",
+  "chatDeleteConfirmTitle": "Delete chat forever?",
+  "chatDeleteConfirmMessage": "\"{title}\" and its transcript will be permanently deleted.",
+  "@chatDeleteConfirmMessage": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatDeleteConfirm": "Delete",
+  "settingsLogsTitle": "Logs",
+  "settingsLogVerbosity": "Verbosity",
+  "settingsLogVerbosityNormal": "Normal",
+  "settingsLogVerbosityVerbose": "Verbose",
+  "settingsLogVerbosityHint": "Verbose adds fine-grained tracing. Use it while reproducing a bug, then switch back.",
+  "settingsOpenLogsFolder": "Open logs folder"
 }

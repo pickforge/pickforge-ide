@@ -79,7 +79,55 @@ void main() {
     );
 
     expect(sections.first.title, 'Pinned');
-    expect(sections.first.entries.single.chat?.chatId, 'c1');
+    // A pinned chat stays grouped under its own project's entry.
+    expect(sections.first.entries.first.project?.projectRoot, '/app');
+    expect(sections.first.entries.last.chat?.chatId, 'c1');
+  });
+
+  test('pinned chats stay scoped to their own project', () {
+    final sections = buildWorkspaceSidebarSections(
+      projects: [_project('/test_app'), _project('/app_test')],
+      chatsByProject: {
+        '/test_app': [_chat('c2', '/test_app', 'Chat 2')],
+        '/app_test': [
+          _chat('c5', '/app_test', 'Chat 5'),
+          _chat('c7', '/app_test', 'Chat 7'),
+        ],
+      },
+      settings: const WorkspaceSidebarSettings(
+        groupingMode: WorkspaceSidebarGroupingMode.pinned,
+        pinnedChatIds: {'c2', 'c5', 'c7'},
+        pinnedProjectRoots: {'/app_test'},
+      ),
+    );
+
+    final pinned = sections.first;
+    final ids = pinned.entries.map((e) => e.id).toList();
+    // Each chat follows its own project entry, never another project's.
+    expect(ids, [
+      'project:/test_app',
+      'chat:c2',
+      'project:/app_test',
+      'chat:c5',
+      'chat:c7',
+    ]);
+  });
+
+  test('archived chats are hidden from every grouping', () {
+    final sections = buildWorkspaceSidebarSections(
+      projects: [_project('/app')],
+      chatsByProject: {
+        '/app': [
+          _chat('c1', '/app', 'Live chat'),
+          _chat('c2', '/app', 'Old chat', status: ChatTaskStatus.archived),
+        ],
+      },
+      settings: WorkspaceSidebarSettings.defaults,
+    );
+
+    final ids = sections.expand((s) => s.entries).map((e) => e.chat?.chatId);
+    expect(ids, contains('c1'));
+    expect(ids, isNot(contains('c2')));
   });
 
   test('groups chats by task status', () {

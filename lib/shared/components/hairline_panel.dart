@@ -13,7 +13,7 @@ class HairlinePanel extends StatelessWidget {
     super.key,
     this.padding = const EdgeInsets.all(PickforgeSpacing.lg),
     this.radius = PickforgeSpacing.radiusLg,
-    this.color = PickforgeColors.surface1,
+    this.color,
     this.glass = false,
     this.strong = false,
     this.borderColor,
@@ -23,7 +23,9 @@ class HairlinePanel extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
   final double radius;
-  final Color color;
+
+  /// Fill color. Defaults to the active palette's [PickforgeColors.surface1].
+  final Color? color;
   final bool glass;
   final bool strong;
   final Color? borderColor;
@@ -34,9 +36,9 @@ class HairlinePanel extends StatelessWidget {
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: glass ? null : color,
+        color: glass ? null : color ?? PickforgeColors.surface1,
         gradient: glass
-            ? const LinearGradient(
+            ? LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [PickforgeColors.surface1, PickforgeColors.surface2],

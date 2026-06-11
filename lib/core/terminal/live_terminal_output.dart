@@ -6,19 +6,41 @@ void writeLiveTerminalOutput(Terminal terminal, String data) {
   removeTerminalUnderlines(terminal);
 }
 
+/// Everything a freshly spawned shell implies about terminal modes: mouse
+/// reporting off, main screen, bracketed paste off, cursor visible, wrap on,
+/// attributes reset. Shared between the live reset below and the transcript
+/// recorder, which stamps it into the log whenever a new session opens over
+/// old scrollback — so a replayed transcript can never strand the terminal
+/// in a dead TUI's modes (stale mouse reporting turns every click into
+/// escape-sequence garbage and breaks text selection).
+const terminalModeResets = [
+  '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l',
+  '\x1b[?1049l',
+  '\x1b[?47l',
+  '\x1b[?2004l',
+  '\x1b[?25h',
+  '\x1b[?7h',
+  '\x1b[0m',
+];
+
 /// Replayed transcripts can leave the terminal in modes the recorded session
 /// enabled (mouse reporting, alt screen, bracketed paste, hidden cursor).
 /// The freshly spawned shell never asked for those, so undo them before
 /// attaching live output.
+///
+/// Each reset is written separately and defensively: replaying a transcript
+/// that ends mid-TUI can leave xterm's buffer in a state where a mode switch
+/// (notably leaving the alt screen) throws internally. One bad reset must
+/// not abort the rest — and never the caller, which still has to attach the
+/// live PTY.
 void resetReplayedTerminalModes(Terminal terminal) {
-  terminal.write(
-    '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l'
-    '\x1b[?1049l\x1b[?47l'
-    '\x1b[?2004l'
-    '\x1b[?25h'
-    '\x1b[?7h'
-    '\x1b[0m',
-  );
+  for (final reset in terminalModeResets) {
+    try {
+      terminal.write(reset);
+    } on Object {
+      // Defensive: see doc comment.
+    }
+  }
 }
 
 void removeTerminalUnderlines(Terminal terminal) {

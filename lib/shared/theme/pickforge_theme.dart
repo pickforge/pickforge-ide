@@ -8,20 +8,31 @@ export 'package:pickforge/shared/theme/pickforge_typography.dart'
 
 /// PickForge theme. Comprehensively overrides Material 3 so the brand's color,
 /// type, spacing and motion never leak Material defaults into the UI.
+///
+/// Both modes build from a [PickforgePalette]: dark is the canonical brand
+/// canvas, light is the token inversion map from DARK-LIGHT-MODE.md.
 class PickforgeTheme {
   const PickforgeTheme._();
 
-  static ThemeData dark() => _build(Brightness.dark);
-  static ThemeData light() => _build(Brightness.light);
+  static ThemeData dark() => _build(PickforgePalette.dark);
+  static ThemeData light() => _build(PickforgePalette.light);
 
-  static ThemeData _build(Brightness brightness) {
-    final isDark = brightness == Brightness.dark;
-    final scheme = isDark ? _darkScheme : _lightScheme;
-    final text = pickforgeTextTheme(brightness: brightness);
+  /// Desktop Flutter resolves button cursors to the platform arrow
+  /// (`adaptiveClickable`); PickForge wants the explicit hand on every
+  /// interactive control instead, so hover always signals clickability.
+  static const WidgetStateProperty<MouseCursor> clickCursor =
+      WidgetStateProperty<MouseCursor>.fromMap({
+    WidgetState.disabled: SystemMouseCursors.basic,
+    WidgetState.any: SystemMouseCursors.click,
+  });
+
+  static ThemeData _build(PickforgePalette p) {
+    final scheme = _scheme(p);
+    final text = pickforgeTextTheme(brightness: p.brightness);
 
     return ThemeData(
       useMaterial3: true,
-      brightness: brightness,
+      brightness: p.brightness,
       colorScheme: scheme,
       scaffoldBackgroundColor: scheme.surface,
       canvasColor: scheme.surface,
@@ -30,19 +41,19 @@ class PickforgeTheme {
       extensions: const [PickforgeMonoTheme(fontFamily: kPickforgeMono)],
       splashFactory: NoSplash.splashFactory,
       highlightColor: Colors.transparent,
-      hoverColor: PickforgeColors.hairline,
+      hoverColor: p.hairline,
       visualDensity: VisualDensity.compact,
-      dividerColor: PickforgeColors.hairline,
-      dividerTheme: const DividerThemeData(
-        color: PickforgeColors.hairline,
+      dividerColor: p.hairline,
+      dividerTheme: DividerThemeData(
+        color: p.hairline,
         thickness: 1,
         space: 1,
       ),
       iconTheme: IconThemeData(color: scheme.onSurfaceVariant, size: 18),
-      textSelectionTheme: const TextSelectionThemeData(
-        cursorColor: PickforgeColors.ember,
-        selectionColor: Color(0x33FF7A1A),
-        selectionHandleColor: PickforgeColors.ember,
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: p.ember,
+        selectionColor: p.ember.withValues(alpha: 0.2),
+        selectionHandleColor: p.ember,
       ),
       appBarTheme: AppBarTheme(
         backgroundColor: scheme.surface,
@@ -52,24 +63,23 @@ class PickforgeTheme {
         titleTextStyle: text.titleLarge,
         centerTitle: false,
       ),
-      filledButtonTheme: FilledButtonThemeData(style: _emberButtonStyle(text)),
+      filledButtonTheme:
+          FilledButtonThemeData(style: _emberButtonStyle(p, text)),
       elevatedButtonTheme:
-          ElevatedButtonThemeData(style: _emberButtonStyle(text)),
+          ElevatedButtonThemeData(style: _emberButtonStyle(p, text)),
       // Secondary actions are quiet — off-white on hairline. Ember is reserved
       // for the single primary action of a composition (one ember per surface).
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStateProperty.resolveWith(
-            (s) => s.contains(WidgetState.hovered)
-                ? PickforgeColors.textHi
-                : PickforgeColors.textMed,
+            (s) => s.contains(WidgetState.hovered) ? p.textHi : p.textMed,
           ),
           textStyle: WidgetStatePropertyAll(text.labelLarge),
           side: WidgetStateProperty.resolveWith(
             (s) => BorderSide(
               color: s.contains(WidgetState.hovered)
-                  ? const Color(0x40FFFFFF)
-                  : PickforgeColors.hairlineStrong,
+                  ? p.textHi.withValues(alpha: 0.25)
+                  : p.hairlineStrong,
             ),
           ),
           shape: const WidgetStatePropertyAll(
@@ -81,28 +91,29 @@ class PickforgeTheme {
               vertical: PickforgeSpacing.sm + 2,
             ),
           ),
-          overlayColor: const WidgetStatePropertyAll(Color(0x0AFFFFFF)),
+          overlayColor: WidgetStatePropertyAll(p.itemFill),
+          mouseCursor: clickCursor,
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStateProperty.resolveWith(
-            (s) => s.contains(WidgetState.hovered)
-                ? PickforgeColors.textHi
-                : PickforgeColors.textMed,
+            (s) => s.contains(WidgetState.hovered) ? p.textHi : p.textMed,
           ),
           textStyle: WidgetStatePropertyAll(text.labelLarge),
-          overlayColor: const WidgetStatePropertyAll(Color(0x0AFFFFFF)),
+          overlayColor: WidgetStatePropertyAll(p.itemFill),
+          mouseCursor: clickCursor,
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStateProperty.resolveWith(
             (s) => s.contains(WidgetState.hovered)
-                ? PickforgeColors.textHi
+                ? p.textHi
                 : scheme.onSurfaceVariant,
           ),
-          overlayColor: const WidgetStatePropertyAll(PickforgeColors.hairline),
+          overlayColor: WidgetStatePropertyAll(p.hairline),
+          mouseCursor: clickCursor,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -113,13 +124,13 @@ class PickforgeTheme {
           horizontal: PickforgeSpacing.md,
           vertical: PickforgeSpacing.sm + 2,
         ),
-        hintStyle: text.bodyMedium?.copyWith(color: PickforgeColors.textLow),
+        hintStyle: text.bodyMedium?.copyWith(color: p.textLow),
         helperStyle: text.labelSmall,
-        border: _inputBorder(PickforgeColors.hairline),
-        enabledBorder: _inputBorder(PickforgeColors.hairline),
-        focusedBorder: _inputBorder(PickforgeColors.ember, width: 1.5),
-        errorBorder: _inputBorder(PickforgeColors.error),
-        focusedErrorBorder: _inputBorder(PickforgeColors.error, width: 1.5),
+        border: _inputBorder(p.hairline),
+        enabledBorder: _inputBorder(p.hairline),
+        focusedBorder: _inputBorder(p.ember, width: 1.5),
+        errorBorder: _inputBorder(p.error),
+        focusedErrorBorder: _inputBorder(p.error, width: 1.5),
       ),
       dropdownMenuTheme: DropdownMenuThemeData(
         textStyle: text.bodyMedium,
@@ -129,7 +140,7 @@ class PickforgeTheme {
           shape: WidgetStatePropertyAll(
             RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
-              side: const BorderSide(color: PickforgeColors.hairline),
+              side: BorderSide(color: p.hairline),
             ),
           ),
         ),
@@ -141,7 +152,7 @@ class PickforgeTheme {
           shape: WidgetStatePropertyAll(
             RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
-              side: const BorderSide(color: PickforgeColors.hairline),
+              side: BorderSide(color: p.hairline),
             ),
           ),
         ),
@@ -153,16 +164,16 @@ class PickforgeTheme {
         textStyle: text.bodyMedium,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
-          side: const BorderSide(color: PickforgeColors.hairline),
+          side: BorderSide(color: p.hairline),
         ),
       ),
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(PickforgeSpacing.radiusSm),
-          border: Border.all(color: PickforgeColors.hairline),
+          border: Border.all(color: p.hairline),
         ),
-        textStyle: text.labelMedium?.copyWith(color: PickforgeColors.textHi),
+        textStyle: text.labelMedium?.copyWith(color: p.textHi),
         waitDuration: const Duration(milliseconds: 400),
       ),
       dialogTheme: DialogThemeData(
@@ -171,7 +182,7 @@ class PickforgeTheme {
         elevation: 24,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PickforgeSpacing.radiusLg),
-          side: const BorderSide(color: PickforgeColors.hairline),
+          side: BorderSide(color: p.hairline),
         ),
         titleTextStyle: text.titleLarge,
         contentTextStyle: text.bodyMedium,
@@ -179,101 +190,108 @@ class PickforgeTheme {
       snackBarTheme: SnackBarThemeData(
         backgroundColor: scheme.surfaceContainerHighest,
         contentTextStyle: text.bodyMedium,
-        actionTextColor: PickforgeColors.ember,
+        actionTextColor: p.ember,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
-          side: const BorderSide(color: PickforgeColors.hairline),
+          side: BorderSide(color: p.hairline),
         ),
       ),
-      sliderTheme: const SliderThemeData(
-        activeTrackColor: PickforgeColors.ember,
-        inactiveTrackColor: PickforgeColors.surface3,
-        thumbColor: PickforgeColors.ember,
-        overlayColor: Color(0x22FF7A1A),
+      sliderTheme: SliderThemeData(
+        activeTrackColor: p.ember,
+        inactiveTrackColor: p.surface3,
+        thumbColor: p.ember,
+        overlayColor: p.ember.withValues(alpha: 0.13),
         trackHeight: 3,
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected)
-              ? PickforgeColors.surface
-              : PickforgeColors.textMed,
+          (s) => s.contains(WidgetState.selected) ? p.surface : p.textMed,
         ),
         trackColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected)
-              ? PickforgeColors.ember
-              : PickforgeColors.surface3,
+          (s) => s.contains(WidgetState.selected) ? p.ember : p.surface3,
         ),
-        trackOutlineColor:
-            const WidgetStatePropertyAll(PickforgeColors.hairline),
+        trackOutlineColor: WidgetStatePropertyAll(p.hairline),
       ),
       checkboxTheme: CheckboxThemeData(
         fillColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected)
-              ? PickforgeColors.ember
-              : Colors.transparent,
+          (s) =>
+              s.contains(WidgetState.selected) ? p.ember : Colors.transparent,
         ),
-        checkColor: const WidgetStatePropertyAll(PickforgeColors.surface),
-        side: const BorderSide(color: PickforgeColors.hairlineStrong),
+        checkColor: WidgetStatePropertyAll(p.surface),
+        side: BorderSide(color: p.hairlineStrong),
       ),
       radioTheme: RadioThemeData(
         fillColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected)
-              ? PickforgeColors.ember
-              : PickforgeColors.textLow,
+          (s) => s.contains(WidgetState.selected) ? p.ember : p.textLow,
         ),
       ),
-      progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: PickforgeColors.ember,
-        linearTrackColor: PickforgeColors.surface3,
-        circularTrackColor: PickforgeColors.surface3,
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: p.ember,
+        linearTrackColor: p.surface3,
+        circularTrackColor: p.surface3,
       ),
       listTileTheme: ListTileThemeData(
         iconColor: scheme.onSurfaceVariant,
         textColor: scheme.onSurface,
         dense: true,
         minLeadingWidth: 0,
+        mouseCursor: clickCursor,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
         ),
       ),
       toggleButtonsTheme: ToggleButtonsThemeData(
-        color: PickforgeColors.textMed,
-        selectedColor: PickforgeColors.textHi,
-        fillColor: PickforgeColors.surface2,
-        hoverColor: PickforgeColors.hairline,
-        borderColor: PickforgeColors.hairlineStrong,
-        selectedBorderColor: PickforgeColors.hairlineStrong,
+        color: p.textMed,
+        selectedColor: p.textHi,
+        fillColor: p.surface2,
+        hoverColor: p.hairline,
+        borderColor: p.hairlineStrong,
+        selectedBorderColor: p.hairlineStrong,
         borderRadius: BorderRadius.circular(PickforgeSpacing.radiusMd),
       ),
-      scrollbarTheme: const ScrollbarThemeData(
-        thumbColor: WidgetStatePropertyAll(Color(0x22FFFFFF)),
-        thickness: WidgetStatePropertyAll(6),
-        radius: Radius.circular(8),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          backgroundColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected)
+                ? p.surface2
+                : Colors.transparent,
+          ),
+          foregroundColor: WidgetStateProperty.resolveWith(
+            (s) => s.contains(WidgetState.selected) ? p.textHi : p.textMed,
+          ),
+          textStyle: WidgetStatePropertyAll(text.labelMedium),
+          side: WidgetStatePropertyAll(BorderSide(color: p.hairlineStrong)),
+          visualDensity: VisualDensity.compact,
+        ),
+      ),
+      scrollbarTheme: ScrollbarThemeData(
+        thumbColor: WidgetStatePropertyAll(
+          p.textHi.withValues(alpha: 0.13),
+        ),
+        thickness: const WidgetStatePropertyAll(6),
+        radius: const Radius.circular(8),
         crossAxisMargin: 2,
       ),
     );
   }
 
-  static ButtonStyle _emberButtonStyle(TextTheme text) => ButtonStyle(
+  static ButtonStyle _emberButtonStyle(PickforgePalette p, TextTheme text) =>
+      ButtonStyle(
         backgroundColor: WidgetStateProperty.resolveWith(
           (s) {
-            if (s.contains(WidgetState.disabled)) {
-              return PickforgeColors.surface3;
-            }
-            if (s.contains(WidgetState.pressed)) {
-              return PickforgeColors.emberDeep;
-            }
-            if (s.contains(WidgetState.hovered)) {
-              return PickforgeColors.emberSoft;
-            }
-            return PickforgeColors.ember;
+            if (s.contains(WidgetState.disabled)) return p.surface3;
+            if (s.contains(WidgetState.pressed)) return p.emberDeep;
+            if (s.contains(WidgetState.hovered)) return p.emberSoft;
+            return p.ember;
           },
         ),
         foregroundColor: WidgetStateProperty.resolveWith(
           (s) => s.contains(WidgetState.disabled)
-              ? PickforgeColors.textLow
-              : PickforgeColors.surface,
+              ? p.textLow
+              : (p.brightness == Brightness.dark
+                  ? p.surface
+                  : const Color(0xFFFFFFFF)),
         ),
         textStyle: WidgetStatePropertyAll(text.labelLarge),
         elevation: const WidgetStatePropertyAll(0),
@@ -286,6 +304,7 @@ class PickforgeTheme {
           ),
         ),
         overlayColor: const WidgetStatePropertyAll(Color(0x1A000000)),
+        mouseCursor: clickCursor,
       );
 
   static OutlineInputBorder _inputBorder(Color color, {double width = 1}) =>
@@ -294,80 +313,49 @@ class PickforgeTheme {
         borderSide: BorderSide(color: color, width: width),
       );
 
-  // ── Color schemes ─────────────────────────────────────────────────────────
-  static const ColorScheme _darkScheme = ColorScheme(
-    brightness: Brightness.dark,
-    primary: PickforgeColors.ember,
-    onPrimary: PickforgeColors.surface,
-    primaryContainer: Color(0xFF2A1607),
-    onPrimaryContainer: PickforgeColors.emberSoft,
-    secondary: PickforgeColors.info,
-    onSecondary: PickforgeColors.surface,
-    secondaryContainer: Color(0xFF13203A),
-    onSecondaryContainer: PickforgeColors.info,
-    tertiary: PickforgeColors.connected,
-    onTertiary: PickforgeColors.surface,
-    tertiaryContainer: Color(0xFF0E2A1E),
-    onTertiaryContainer: PickforgeColors.connected,
-    error: PickforgeColors.error,
-    onError: PickforgeColors.surface,
-    errorContainer: Color(0xFF3A1512),
-    onErrorContainer: PickforgeColors.error,
-    surface: PickforgeColors.surface,
-    onSurface: PickforgeColors.textHi,
-    onSurfaceVariant: PickforgeColors.textMed,
-    surfaceContainerLowest: PickforgeColors.surface,
-    surfaceContainerLow: PickforgeColors.surface1,
-    surfaceContainer: PickforgeColors.surface1,
-    surfaceContainerHigh: PickforgeColors.surface2,
-    surfaceContainerHighest: PickforgeColors.surface3,
-    surfaceDim: PickforgeColors.surface,
-    surfaceBright: PickforgeColors.surface2,
-    outline: PickforgeColors.hairlineStrong,
-    outlineVariant: PickforgeColors.hairline,
-    shadow: Color(0xFF000000),
-    scrim: Color(0xCC000000),
-    inverseSurface: PickforgeColors.textHi,
-    onInverseSurface: PickforgeColors.surface,
-    inversePrimary: PickforgeColors.emberDeep,
-    surfaceTint: Colors.transparent,
-  );
-
-  static const ColorScheme _lightScheme = ColorScheme(
-    brightness: Brightness.light,
-    primary: PickforgeColors.ember,
-    onPrimary: Color(0xFFFFFFFF),
-    primaryContainer: Color(0xFFFFE3CC),
-    onPrimaryContainer: PickforgeColors.emberDeep,
-    secondary: Color(0xFF3A5BD6),
-    onSecondary: Color(0xFFFFFFFF),
-    secondaryContainer: Color(0xFFDDE4FF),
-    onSecondaryContainer: Color(0xFF14215A),
-    tertiary: Color(0xFF1FA76A),
-    onTertiary: Color(0xFFFFFFFF),
-    tertiaryContainer: Color(0xFFCFF2E2),
-    onTertiaryContainer: Color(0xFF0B3D28),
-    error: Color(0xFFD0453B),
-    onError: Color(0xFFFFFFFF),
-    errorContainer: Color(0xFFFFDAD5),
-    onErrorContainer: Color(0xFF5A1610),
-    surface: Color(0xFFF7F7F8),
-    onSurface: Color(0xFF0A0A0B),
-    onSurfaceVariant: Color(0xFF55555C),
-    surfaceContainerLowest: Color(0xFFFFFFFF),
-    surfaceContainerLow: Color(0xFFF2F2F4),
-    surfaceContainer: Color(0xFFECECEF),
-    surfaceContainerHigh: Color(0xFFE6E6EA),
-    surfaceContainerHighest: Color(0xFFE0E0E5),
-    surfaceDim: Color(0xFFDDDDE2),
-    surfaceBright: Color(0xFFFFFFFF),
-    outline: Color(0x1F0A0A0B),
-    outlineVariant: Color(0x140A0A0B),
-    shadow: Color(0xFF000000),
-    scrim: Color(0x99000000),
-    inverseSurface: Color(0xFF1B1B1F),
-    onInverseSurface: Color(0xFFF2F2F3),
-    inversePrimary: PickforgeColors.emberSoft,
-    surfaceTint: Colors.transparent,
-  );
+  // ── Color scheme (derived from the palette) ───────────────────────────────
+  static ColorScheme _scheme(PickforgePalette p) {
+    final isDark = p.brightness == Brightness.dark;
+    return ColorScheme(
+      brightness: p.brightness,
+      primary: p.ember,
+      onPrimary: isDark ? p.surface : const Color(0xFFFFFFFF),
+      primaryContainer:
+          isDark ? const Color(0xFF2A1607) : const Color(0xFFFFE3CC),
+      onPrimaryContainer: isDark ? p.emberSoft : p.emberDeep,
+      secondary: p.info,
+      onSecondary: isDark ? p.surface : const Color(0xFFFFFFFF),
+      secondaryContainer:
+          isDark ? const Color(0xFF13203A) : const Color(0xFFDDE4FF),
+      onSecondaryContainer: isDark ? p.info : const Color(0xFF14215A),
+      tertiary: p.connected,
+      onTertiary: isDark ? p.surface : const Color(0xFFFFFFFF),
+      tertiaryContainer:
+          isDark ? const Color(0xFF0E2A1E) : const Color(0xFFCFF2E2),
+      onTertiaryContainer: isDark ? p.connected : const Color(0xFF0B3D28),
+      error: p.error,
+      onError: isDark ? p.surface : const Color(0xFFFFFFFF),
+      errorContainer:
+          isDark ? const Color(0xFF3A1512) : const Color(0xFFFFDAD5),
+      onErrorContainer: isDark ? p.error : const Color(0xFF5A1610),
+      surface: p.surface,
+      onSurface: p.textHi,
+      onSurfaceVariant: p.textMed,
+      surfaceContainerLowest: p.surface,
+      surfaceContainerLow: p.surface1,
+      surfaceContainer: p.surface1,
+      surfaceContainerHigh: p.surface2,
+      surfaceContainerHighest: p.surface3,
+      surfaceDim: p.surface,
+      surfaceBright: p.surface2,
+      outline: p.hairlineStrong,
+      outlineVariant: p.hairline,
+      shadow: const Color(0xFF000000),
+      scrim: isDark ? const Color(0xCC000000) : const Color(0x99000000),
+      inverseSurface: p.textHi,
+      onInverseSurface: p.surface,
+      inversePrimary: isDark ? p.emberDeep : p.emberSoft,
+      surfaceTint: Colors.transparent,
+    );
+  }
 }

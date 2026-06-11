@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:injectable/injectable.dart';
+import 'package:logging/logging.dart';
 import 'package:pickforge/core/drift/dao/agent_run_log_dao.dart';
 import 'package:pickforge/core/drift/dao/chats_dao.dart';
 import 'package:pickforge/core/drift/dao/pick_history_dao.dart';
@@ -41,7 +42,7 @@ class PickforgeDatabase extends _$PickforgeDatabase {
   PickforgeDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -56,6 +57,7 @@ class PickforgeDatabase extends _$PickforgeDatabase {
           );
         },
         onUpgrade: (m, from, to) async {
+          Logger('db').info('migrating schema v$from -> v$to');
           if (from < 2) {
             await m.createTable(projects);
             await m.createTable(chats);
@@ -171,6 +173,23 @@ class PickforgeDatabase extends _$PickforgeDatabase {
                   projectSettings,
                   projectSettings.validatorCommand,
                 );
+              }
+            }
+          }
+          if (from >= 2 && from < 9) {
+            // from < 2 already created the projects table with the current
+            // schema (including archived_at).
+            final projectTables = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type = 'table' "
+              "AND name = 'projects'",
+            ).get();
+            if (projectTables.isNotEmpty) {
+              final columns = await customSelect(
+                'PRAGMA table_info(projects);',
+              ).get();
+              final names = columns.map((r) => r.read<String>('name')).toSet();
+              if (!names.contains('archived_at')) {
+                await m.addColumn(projects, projects.archivedAt);
               }
             }
           }

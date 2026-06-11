@@ -88,7 +88,7 @@ class _Gallery extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: PickforgeSpacing.xs),
-                      const Text('lib/main.dart:42', style: PickforgeText.mono),
+                      Text('lib/main.dart:42', style: PickforgeText.mono),
                     ],
                   ),
                 ),
@@ -109,13 +109,13 @@ class _Gallery extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: PickforgeSpacing.xl),
-              const SizedBox(
+              SizedBox(
                 width: 150,
                 height: 86,
                 child: HairlinePanel(
                   padding: EdgeInsets.zero,
                   color: PickforgeColors.surface,
-                  child: BlueprintGrid(halo: true),
+                  child: const BlueprintGrid(halo: true),
                 ),
               ),
               const SizedBox(width: PickforgeSpacing.xl),
@@ -126,6 +126,28 @@ class _Gallery extends StatelessWidget {
                   eyebrow: 'Inspector',
                   title: 'No widget selected',
                   hint: 'Pick a widget on the device.',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: PickforgeSpacing.xl),
+          Row(
+            children: [
+              EmberSweepBorder(
+                child: Container(
+                  width: 150,
+                  height: 86,
+                  alignment: Alignment.center,
+                  child: const Text('Active pane'),
+                ),
+              ),
+              const SizedBox(width: PickforgeSpacing.xl),
+              const EmberSweepBorder(
+                active: false,
+                child: SizedBox(
+                  width: 150,
+                  height: 86,
+                  child: Center(child: Text('Idle pane')),
                 ),
               ),
             ],

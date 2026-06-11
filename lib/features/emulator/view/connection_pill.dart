@@ -250,7 +250,7 @@ class _Menu extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     return PopupMenuButton<_MenuAction>(
       key: const Key('pill-menu'),
-      icon: const Icon(
+      icon: Icon(
         Icons.expand_more,
         size: 18,
         color: PickforgeColors.textMed,

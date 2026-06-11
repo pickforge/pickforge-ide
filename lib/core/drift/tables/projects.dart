@@ -8,6 +8,10 @@ class Projects extends Table {
   DateTimeColumn get lastOpenedAt => dateTime()();
   IntColumn get sortOrder => integer().withDefault(const Constant(0))();
 
+  /// Soft delete: archived projects leave the workspace but stay restorable
+  /// from Settings.
+  DateTimeColumn get archivedAt => dateTime().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => {projectRoot};
 }

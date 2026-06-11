@@ -92,6 +92,24 @@ void main() {
     expect(seen.single, [111, 107]);
   });
 
+  test('dispose runs onDispose so session-owned resources close', () async {
+    var closed = false;
+    final session = PtySession(
+      chatId: 'c5',
+      executable: 'agent',
+      arguments: const [],
+      workingDirectory: '/tmp',
+      factory: factory,
+      onDispose: () async => closed = true,
+    );
+
+    await session.start();
+    exitCompleter.complete(0);
+    await session.dispose();
+
+    expect(closed, isTrue);
+  });
+
   test('typeText writes raw bytes with no carriage return or echo', () async {
     final seenOutput = <List<int>>[];
     final session = PtySession(

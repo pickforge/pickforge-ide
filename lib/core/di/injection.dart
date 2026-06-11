@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:get_it/get_it.dart';
 import 'package:injectable/injectable.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import 'package:pickforge/core/agent/agent_launcher.dart';
 import 'package:pickforge/core/agent/agent_profile_registry.dart';
@@ -19,6 +21,7 @@ import 'package:pickforge/core/agent/profiles/cursor_profile.dart';
 import 'package:pickforge/core/agent/profiles/gemini_profile.dart';
 import 'package:pickforge/core/agent/profiles/opencode_profile.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
+import 'package:pickforge/core/appearance/appearance_settings.dart';
 import 'package:pickforge/core/di/injection.config.dart';
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/dao/chats_dao.dart';
@@ -29,12 +32,17 @@ import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
+import 'package:pickforge/core/logging/app_logging.dart';
+import 'package:pickforge/core/logging/log_file_writer.dart';
+import 'package:pickforge/core/notifications/forge_chime.dart';
+import 'package:pickforge/core/notifications/notification_settings.dart';
 import 'package:pickforge/core/process/binary_detector.dart' hide ProcessRunner;
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
+import 'package:pickforge/features/workbench/cubit/chat_attention_cubit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final GetIt getIt = GetIt.instance;
@@ -49,6 +57,23 @@ Future<void> configureDependencies() async {
     getIt.registerLazySingleton<DiagnosticsService>(
       () => DiagnosticsService(getIt<ProcessRunner>()),
     );
+  }
+  if (!getIt.isRegistered<AppLogging>()) {
+    try {
+      final supportDir = await getApplicationSupportDirectory();
+      getIt.registerSingleton<AppLogging>(
+        AppLogging(
+          writer: LogFileWriter(
+            directory: Directory(p.join(supportDir.path, 'logs')),
+          ),
+          diagnostics: getIt<DiagnosticsService>(),
+        ),
+        dispose: (logging) => logging.dispose(),
+      );
+    } on Object {
+      // No path_provider implementation (tests, headless harnesses): the
+      // app runs without a file log. Logging must never block startup.
+    }
   }
   if (!getIt.isRegistered<UpdateCheckSettingsRepository>()) {
     getIt.registerLazySingleton<UpdateCheckSettingsRepository>(
@@ -72,6 +97,36 @@ Future<void> configureDependencies() async {
       () => CrashReportService(
         settings: getIt<TelemetrySettingsRepository>(),
       ),
+    );
+  }
+  if (!getIt.isRegistered<NotificationSettingsRepository>()) {
+    getIt.registerLazySingleton<NotificationSettingsRepository>(
+      () => NotificationSettingsRepository(getIt<SharedPreferences>()),
+    );
+  }
+  if (!getIt.isRegistered<ForgeChime>()) {
+    getIt.registerLazySingleton<ForgeChime>(
+      () => ForgeChime(runner: getIt<ProcessRunner>()),
+    );
+  }
+  if (!getIt.isRegistered<ChatAttentionCubit>()) {
+    getIt.registerLazySingleton<ChatAttentionCubit>(
+      () => ChatAttentionCubit(
+        chime: getIt<ForgeChime>(),
+        settings: getIt<NotificationSettingsRepository>(),
+      ),
+      dispose: (cubit) => cubit.close(),
+    );
+  }
+  if (!getIt.isRegistered<AppearanceSettingsRepository>()) {
+    getIt.registerLazySingleton<AppearanceSettingsRepository>(
+      () => AppearanceSettingsRepository(getIt<SharedPreferences>()),
+    );
+  }
+  if (!getIt.isRegistered<AppearanceController>()) {
+    getIt.registerLazySingleton<AppearanceController>(
+      () => AppearanceController(getIt<AppearanceSettingsRepository>())..init(),
+      dispose: (controller) => controller.dispose(),
     );
   }
   if (!getIt.isRegistered<EmulatorIpcServer>()) {

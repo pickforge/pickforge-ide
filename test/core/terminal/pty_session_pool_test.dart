@@ -118,4 +118,21 @@ void main() {
     expect(pool.session('b'), same(created));
     expect(created.started, isTrue);
   });
+
+  test('activate awaits an async create (session-owned resources open first)',
+      () async {
+    final pool = PtySessionPool();
+    final created = _Fake('c');
+
+    final result = await pool.activate(
+      chatId: 'c',
+      create: () async {
+        await Future<void>.delayed(Duration.zero);
+        return created;
+      },
+    );
+
+    expect(result, same(created));
+    expect(created.started, isTrue);
+  });
 }

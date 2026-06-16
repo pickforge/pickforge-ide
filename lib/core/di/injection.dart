@@ -41,6 +41,8 @@ import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/storage/context_storage_migrator.dart';
 import 'package:pickforge/core/storage/context_storage_service.dart';
+import 'package:pickforge/core/targets/target_adapter.dart';
+import 'package:pickforge/core/targets/target_adapter_registry.dart';
 import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
@@ -295,4 +297,14 @@ abstract class DriftDaoModule {
   @lazySingleton
   RunSessionLogDao runSessionLogDao(PickforgeDatabase db) =>
       RunSessionLogDao(db);
+}
+
+@module
+abstract class TargetsModule {
+  // 2A registers the registry with an empty adapter list; 2B populates it
+  // with GenericProjectAdapter (lowest-priority fallback) and M3 adds the
+  // FlutterTargetAdapter.
+  @lazySingleton
+  TargetAdapterRegistry targetAdapterRegistry() =>
+      TargetAdapterRegistry(const <TargetAdapter>[]);
 }

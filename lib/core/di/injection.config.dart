@@ -67,6 +67,7 @@ import 'package:pickforge/core/settings/workspace_sidebar_settings.dart'
 import 'package:pickforge/core/skills/skill_store.dart' as _i895;
 import 'package:pickforge/core/storage/context_storage_migrator.dart' as _i542;
 import 'package:pickforge/core/storage/context_storage_service.dart' as _i204;
+import 'package:pickforge/core/targets/target_adapter_registry.dart' as _i580;
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart'
     as _i195;
 import 'package:pickforge/core/terminal/flutter_pty_adapter.dart' as _i93;
@@ -107,6 +108,7 @@ extension GetItInjectableX on _i174.GetIt {
     final agentLauncherModule = _$AgentLauncherModule();
     final binaryDetectorModule = _$BinaryDetectorModule();
     final storageModule = _$StorageModule();
+    final targetsModule = _$TargetsModule();
     final driftDaoModule = _$DriftDaoModule();
     final adbScreenshotModule = _$AdbScreenshotModule();
     final skillsModule = _$SkillsModule();
@@ -136,6 +138,8 @@ extension GetItInjectableX on _i174.GetIt {
         () => headlessChatModule.headlessChatFeatureFlags);
     gh.lazySingleton<_i542.ContextStorageMigrator>(
         () => storageModule.contextStorageMigrator);
+    gh.lazySingleton<_i580.TargetAdapterRegistry>(
+        () => targetsModule.targetAdapterRegistry());
     gh.lazySingleton<_i631.PickforgeDatabase>(() => _i631.PickforgeDatabase());
     gh.lazySingleton<_i680.FlutterRunTargetScanner>(
         () => const _i680.FlutterRunTargetScanner());
@@ -265,6 +269,8 @@ class _$AgentLauncherModule extends _i74.AgentLauncherModule {}
 class _$BinaryDetectorModule extends _i74.BinaryDetectorModule {}
 
 class _$StorageModule extends _i74.StorageModule {}
+
+class _$TargetsModule extends _i74.TargetsModule {}
 
 class _$DriftDaoModule extends _i74.DriftDaoModule {}
 

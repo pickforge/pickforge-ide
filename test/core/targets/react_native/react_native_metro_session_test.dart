@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
+import 'package:pickforge/core/targets/react_native/react_native_command.dart';
 import 'package:pickforge/core/targets/react_native/react_native_metro_session.dart';
 import 'package:pickforge/core/targets/react_native/react_native_project_detector.dart';
 
@@ -173,6 +174,41 @@ void main() {
       events.any((e) => e.maybeMap(stopped: (_) => true, orElse: () => false)),
       isTrue,
     );
+  });
+
+  test('discoverDebugTargets queries the launched host and port', () async {
+    final runner = _FakeRunner();
+    final proc = _FakeProc();
+    when(
+      () => runner.spawn(
+        'npx',
+        any<List<String>>(),
+        cwd: any(named: 'cwd'),
+        env: any(named: 'env'),
+      ),
+    ).thenAnswer((_) async => proc);
+
+    final requested = <Uri>[];
+    final controller = ReactNativeMetroSessionController(
+      runner,
+      metroHttpFetcher: (uri) async {
+        requested.add(uri);
+        return '[{"id":"1","type":"node","vm":"Hermes",'
+            '"webSocketDebuggerUrl":"ws://x/1"}]';
+      },
+    );
+    final session = await controller.start(
+      project: _project,
+      options: const ReactNativeMetroOptions(port: 9000, host: '0.0.0.0'),
+    );
+    unawaited(session.events.drain<void>());
+
+    final targets = await session.discoverDebugTargets();
+    expect(targets.single.isReactNativeHermesDebuggerTarget, isTrue);
+    expect(requested.first.host, '127.0.0.1');
+    expect(requested.first.port, 9000);
+
+    await session.stop();
   });
 
   test('stop kills the process and flips isRunning', () async {

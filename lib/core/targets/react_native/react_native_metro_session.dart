@@ -6,6 +6,7 @@ import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/targets/react_native/react_native_command.dart';
 import 'package:pickforge/core/targets/react_native/react_native_command_builder.dart';
 import 'package:pickforge/core/targets/react_native/react_native_log_parser.dart';
+import 'package:pickforge/core/targets/react_native/react_native_metro_cdp_discovery.dart';
 import 'package:pickforge/core/targets/react_native/react_native_project_detector.dart';
 import 'package:pickforge/core/targets/target_session.dart';
 
@@ -25,15 +26,27 @@ class ReactNativeMetroSession implements TargetSession {
   ReactNativeMetroSession._(
     this._process,
     this._parser, {
+    required String host,
+    required int port,
+    required MetroHttpFetcher metroHttpFetcher,
     Duration drainTimeout = const Duration(seconds: 2),
-  })  : _drainTimeout = drainTimeout,
+    Duration cdpTimeout = const Duration(seconds: 2),
+  })  : _host = host,
+        _port = port,
+        _metroHttpFetcher = metroHttpFetcher,
+        _drainTimeout = drainTimeout,
+        _cdpTimeout = cdpTimeout,
         _controller = StreamController<RunSessionEvent>() {
     _wire();
   }
 
   final RunningProcess _process;
   final ReactNativeLogParser _parser;
+  final String _host;
+  final int _port;
+  final MetroHttpFetcher _metroHttpFetcher;
   final Duration _drainTimeout;
+  final Duration _cdpTimeout;
   final StreamController<RunSessionEvent> _controller;
   bool _running = true;
 
@@ -49,6 +62,17 @@ class ReactNativeMetroSession implements TargetSession {
   int get pid => _process.pid;
 
   Future<int> get exitCode => _process.exitCode;
+
+  /// Best-effort CDP/DevTools targets from this session's Metro inspector.
+  /// Returns an empty list when Metro is not yet reachable.
+  Future<List<MetroCdpTarget>> discoverDebugTargets() {
+    return MetroCdpDiscovery(
+      host: _host,
+      port: _port,
+      fetcher: _metroHttpFetcher,
+      timeout: _cdpTimeout,
+    ).discoverTargets();
+  }
 
   @override
   Future<void> stop() async {
@@ -126,15 +150,21 @@ class ReactNativeMetroSessionController {
     this._runner, {
     ReactNativeCommandBuilder commands = const ReactNativeCommandBuilder(),
     ReactNativeLogParser parser = const ReactNativeLogParser(),
+    MetroHttpFetcher metroHttpFetcher = defaultMetroHttpFetcher,
     Duration drainTimeout = const Duration(seconds: 2),
+    Duration cdpTimeout = const Duration(seconds: 2),
   })  : _commands = commands,
         _parser = parser,
-        _drainTimeout = drainTimeout;
+        _metroHttpFetcher = metroHttpFetcher,
+        _drainTimeout = drainTimeout,
+        _cdpTimeout = cdpTimeout;
 
   final ProcessRunner _runner;
   final ReactNativeCommandBuilder _commands;
   final ReactNativeLogParser _parser;
+  final MetroHttpFetcher _metroHttpFetcher;
   final Duration _drainTimeout;
+  final Duration _cdpTimeout;
 
   Future<ReactNativeMetroSession> start({
     required ReactNativeProjectInfo project,
@@ -150,7 +180,11 @@ class ReactNativeMetroSessionController {
     return ReactNativeMetroSession._(
       process,
       _parser,
+      host: options.host,
+      port: options.port,
+      metroHttpFetcher: _metroHttpFetcher,
       drainTimeout: _drainTimeout,
+      cdpTimeout: _cdpTimeout,
     );
   }
 }

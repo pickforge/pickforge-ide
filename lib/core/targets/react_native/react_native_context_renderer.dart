@@ -15,19 +15,21 @@ class ReactNativeContextRenderer {
       ..writeln()
       ..writeln('## Selected element')
       ..writeln('- Role: ${node.role.name}')
-      ..writeln('- Class: ${node.className}');
+      ..writeln('- Class: ${_inline(node.className)}');
     if (node.text != null) {
-      buffer.writeln('- Text: ${node.text}');
+      buffer.writeln('- Text: ${_inline(node.text!)}');
     }
     if (node.contentDescription != null) {
-      buffer.writeln('- Accessibility label: ${node.contentDescription}');
+      buffer.writeln(
+        '- Accessibility label: ${_inline(node.contentDescription!)}',
+      );
     }
     if (node.resourceId != null) {
-      buffer.writeln('- Resource id / testID: ${node.resourceId}');
+      buffer.writeln('- Resource id / testID: ${_inline(node.resourceId!)}');
     }
     final screenshot = context.targetSelection.screenshotPath;
     if (screenshot != null) {
-      buffer.writeln('- Screenshot: $screenshot');
+      buffer.writeln('- Screenshot: ${_inline(screenshot)}');
     }
 
     if (context.ancestorHierarchy.isNotEmpty) {
@@ -35,9 +37,12 @@ class ReactNativeContextRenderer {
         ..writeln()
         ..writeln('## Ancestors (root → parent)');
       for (final ancestor in context.ancestorHierarchy) {
-        final id =
-            ancestor.resourceId != null ? ' (${ancestor.resourceId})' : '';
-        buffer.writeln('- ${ancestor.role.name} ${ancestor.className}$id');
+        final id = ancestor.resourceId != null
+            ? ' (${_inline(ancestor.resourceId!)})'
+            : '';
+        buffer.writeln(
+          '- ${ancestor.role.name} ${_inline(ancestor.className)}$id',
+        );
       }
     }
 
@@ -49,11 +54,11 @@ class ReactNativeContextRenderer {
     } else {
       for (final candidate in context.likelySourceFiles) {
         final location = candidate.line != null
-            ? '${candidate.path}:${candidate.line}'
-            : candidate.path;
+            ? '${_inline(candidate.path)}:${candidate.line}'
+            : _inline(candidate.path);
         buffer.writeln(
           '- $location — ${candidate.confidence.name} confidence '
-          '(${candidate.signal.name}: "${candidate.matchedValue}")',
+          '(${candidate.signal.name}: "${_inline(candidate.matchedValue)}")',
         );
       }
     }
@@ -75,6 +80,10 @@ class ReactNativeContextRenderer {
       ..writeln('> ${context.disclaimer}');
     return buffer.toString();
   }
+
+  // Collapse CR/LF in an inline value so it can't inject markdown headings,
+  // bullets, or fake sections into the agent-facing output.
+  String _inline(String value) => value.replaceAll(RegExp(r'[\r\n]+'), ' ');
 
   String _fenceFor(List<String> lines) {
     var longestRun = 0;

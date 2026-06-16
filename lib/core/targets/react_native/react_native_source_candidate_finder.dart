@@ -73,7 +73,6 @@ class ReactNativeSourceCandidateFinder {
     final candidates = <ReactNativeSourceCandidate>[];
 
     await for (final file in _sourceFiles(Directory(projectRoot))) {
-      if (candidates.length >= _maxCandidates) break;
       List<String> lines;
       try {
         if (await file.length() > _maxFileBytes) continue;
@@ -99,10 +98,14 @@ class ReactNativeSourceCandidateFinder {
       }
     }
 
+    // Sort by confidence FIRST, then cap, so a high-confidence match is never
+    // dropped just because it was found late in the traversal.
     candidates.sort(
       (a, b) => a.confidence.index.compareTo(b.confidence.index),
     );
-    return candidates;
+    return candidates.length <= _maxCandidates
+        ? candidates
+        : candidates.sublist(0, _maxCandidates);
   }
 
   // Below this length a term (e.g. `id`, `ok`) matches too much to be useful.
@@ -137,13 +140,13 @@ class ReactNativeSourceCandidateFinder {
     return terms;
   }
 
-  /// `com.app:id/login` → `login`; a bare id is returned unchanged.
+  /// The bare id after the last `/` (`com.app:id/login` → `login`); a
+  /// slash-free value is returned unchanged. The min-length guard then applies
+  /// to this bare value.
   String? _bareResourceId(String? resourceId) {
     if (resourceId == null || resourceId.isEmpty) return null;
-    final marker = resourceId.indexOf(':id/');
-    final bare = marker == -1
-        ? resourceId
-        : resourceId.substring(marker + ':id/'.length);
+    final slash = resourceId.lastIndexOf('/');
+    final bare = slash == -1 ? resourceId : resourceId.substring(slash + 1);
     return bare.isEmpty ? null : bare;
   }
 

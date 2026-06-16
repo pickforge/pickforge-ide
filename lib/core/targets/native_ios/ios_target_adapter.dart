@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:pickforge/core/targets/native_ios/ios_project_detector.dart';
 import 'package:pickforge/core/targets/target_adapter.dart';
 import 'package:pickforge/core/targets/target_capability.dart';
@@ -6,16 +8,20 @@ import 'package:pickforge/core/targets/target_detection.dart';
 /// The native iOS (Xcode / iOS Simulator) target.
 ///
 /// Detection is filesystem-only and works on any OS, but all RUNTIME features
-/// (xcodebuild / `xcrun simctl`) are macOS-only — later slices declare those
-/// capabilities only behind `Platform.isMacOS`. It never declares
+/// (xcodebuild / `xcrun simctl`) are macOS-only, so build/screenshot/log
+/// capabilities are declared ONLY when running on macOS. It never declares
 /// `mapSelectionToSource`: iOS source mapping is best-effort search, not exact.
-/// 7A backs detection only.
 class IosTargetAdapter implements TargetAdapter {
   const IosTargetAdapter({
     IosProjectDetector detector = const IosProjectDetector(),
-  }) : _detector = detector;
+    bool? isMacOS,
+  })  : _detector = detector,
+        _isMacOSOverride = isMacOS;
 
   final IosProjectDetector _detector;
+  final bool? _isMacOSOverride;
+
+  bool get _isMacOS => _isMacOSOverride ?? Platform.isMacOS;
 
   @override
   String get id => 'native_ios';
@@ -28,9 +34,17 @@ class IosTargetAdapter implements TargetAdapter {
   @override
   int get priority => 55;
 
+  /// Detection works anywhere; the xcodebuild/simctl-backed runtime features
+  /// (7B) are only offered on macOS where they can actually run.
   @override
-  TargetCapabilities get capabilities =>
-      const TargetCapabilities({TargetCapability.detect});
+  TargetCapabilities get capabilities => _isMacOS
+      ? const TargetCapabilities({
+          TargetCapability.detect,
+          TargetCapability.launch,
+          TargetCapability.captureScreenshot,
+          TargetCapability.streamLogs,
+        })
+      : const TargetCapabilities({TargetCapability.detect});
 
   @override
   Future<TargetDetection?> detect(String projectRoot) async {

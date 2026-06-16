@@ -96,16 +96,31 @@ void main() {
   });
 
   group('IosTargetAdapter', () {
-    test('identity and detect-only capabilities at 7A', () {
+    test('identity and never declares exact source mapping', () {
       expect(adapter.id, 'native_ios');
       expect(adapter.displayName, 'Native iOS');
       expect(adapter.priority, 55);
       expect(adapter.capabilities.has(TargetCapability.detect), isTrue);
-      expect(adapter.capabilities.has(TargetCapability.launch), isFalse);
       expect(
         adapter.capabilities.has(TargetCapability.mapSelectionToSource),
         isFalse,
       );
+    });
+
+    test('runtime capabilities are offered only on macOS', () {
+      const onMac = IosTargetAdapter(isMacOS: true);
+      bool mac(TargetCapability c) => onMac.capabilities.has(c);
+      expect(mac(TargetCapability.detect), isTrue);
+      expect(mac(TargetCapability.launch), isTrue);
+      expect(mac(TargetCapability.captureScreenshot), isTrue);
+      expect(mac(TargetCapability.streamLogs), isTrue);
+
+      const offMac = IosTargetAdapter(isMacOS: false);
+      bool other(TargetCapability c) => offMac.capabilities.has(c);
+      expect(other(TargetCapability.detect), isTrue);
+      expect(other(TargetCapability.launch), isFalse);
+      expect(other(TargetCapability.captureScreenshot), isFalse);
+      expect(other(TargetCapability.streamLogs), isFalse);
     });
 
     test('detect surfaces the xcode artifacts in the details', () async {

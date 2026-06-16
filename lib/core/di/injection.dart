@@ -41,6 +41,7 @@ import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
 import 'package:pickforge/core/storage/context_storage_migrator.dart';
 import 'package:pickforge/core/storage/context_storage_service.dart';
+import 'package:pickforge/core/targets/flutter_target_adapter.dart';
 import 'package:pickforge/core/targets/generic_project_adapter.dart';
 import 'package:pickforge/core/targets/target_adapter_registry.dart';
 import 'package:pickforge/core/telemetry/crash_report_service.dart';
@@ -302,8 +303,10 @@ abstract class DriftDaoModule {
 @module
 abstract class TargetsModule {
   // 2B populates the registry with GenericProjectAdapter (lowest-priority
-  // fallback); M3 adds the FlutterTargetAdapter.
+  // fallback); 3A adds the FlutterTargetAdapter. Order doesn't matter — the
+  // registry sorts by descending priority.
   @lazySingleton
-  TargetAdapterRegistry targetAdapterRegistry() =>
-      TargetAdapterRegistry(const [GenericProjectAdapter()]);
+  TargetAdapterRegistry targetAdapterRegistry() => TargetAdapterRegistry(
+        const [FlutterTargetAdapter(), GenericProjectAdapter()],
+      );
 }

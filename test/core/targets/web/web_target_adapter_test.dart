@@ -120,12 +120,12 @@ void main() {
   });
 
   group('WebTargetAdapter', () {
-    test('identity and detect-only capabilities at 8A', () {
+    test('identity and honest capabilities', () {
       expect(adapter.id, 'web');
       expect(adapter.displayName, 'Web');
       expect(adapter.priority, 50);
       expect(adapter.capabilities.has(TargetCapability.detect), isTrue);
-      expect(adapter.capabilities.has(TargetCapability.launch), isFalse);
+      expect(adapter.capabilities.has(TargetCapability.launch), isTrue); // 8B
       expect(
         adapter.capabilities.has(TargetCapability.mapSelectionToSource),
         isFalse,

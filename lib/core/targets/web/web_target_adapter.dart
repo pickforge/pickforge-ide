@@ -27,8 +27,11 @@ class WebTargetAdapter implements TargetAdapter {
   int get priority => 50;
 
   @override
-  TargetCapabilities get capabilities =>
-      const TargetCapabilities({TargetCapability.detect});
+  TargetCapabilities get capabilities => const TargetCapabilities({
+        TargetCapability.detect,
+        // 8B: dev-server launch via the project's package-manager script.
+        TargetCapability.launch,
+      });
 
   @override
   Future<TargetDetection?> detect(String projectRoot) async {

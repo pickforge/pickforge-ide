@@ -54,6 +54,7 @@ class EmulatorIpcServer {
   EmulatorIpcProvider? _screenshotProvider;
   EmulatorIpcProvider? _runLogsProvider;
   EmulatorIpcProvider? _projectContextProvider;
+  EmulatorIpcProvider? _targetCapabilitiesProvider;
 
   String get socketPath => _transport.endpoint;
 
@@ -87,6 +88,11 @@ class EmulatorIpcServer {
   // ignore: use_setters_to_change_properties, reason: Binds a callback target.
   void bindProjectContextProvider(EmulatorIpcProvider? provider) {
     _projectContextProvider = provider;
+  }
+
+  // ignore: use_setters_to_change_properties, reason: Binds a callback target.
+  void bindTargetCapabilitiesProvider(EmulatorIpcProvider? provider) {
+    _targetCapabilitiesProvider = provider;
   }
 
   Future<Map<String, Object?>> _dispatch(String line) async {
@@ -129,7 +135,11 @@ class EmulatorIpcServer {
         case 'get_current_selection':
           result = await _selectionProvider?.call();
         case 'list_pickforge_history':
+        case 'list_pick_history':
           result = await _pickHistoryProvider?.call() ?? const [];
+        case 'list_target_capabilities':
+          result = await _targetCapabilitiesProvider?.call() ??
+              const {'capabilities': <Object?>[]};
         case 'capture_screenshot':
         case 'capture_target_screenshot':
           result = await _screenshotProvider?.call() ??

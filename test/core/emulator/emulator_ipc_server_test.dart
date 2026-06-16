@@ -231,6 +231,69 @@ void main() {
     });
   });
 
+  test('list_pick_history aliases history; capabilities default when unbound',
+      skip: skipOnWindows, () async {
+    final endpoint = await _createEndpoint();
+    final server = EmulatorIpcServer(socketPath: endpoint.path);
+    await server.start();
+    addTearDown(server.stop);
+    addTearDown(endpoint.dispose);
+
+    server.bindPickHistoryProvider(
+      () => [
+        {'widgetClass': 'EmberButton'},
+      ],
+    );
+
+    const client = EmulatorIpcClient();
+    final legacy = await client.send(
+      server.socketPath,
+      {'id': 1, 'method': 'list_pickforge_history'},
+    );
+    final generic = await client.send(
+      server.socketPath,
+      {'id': 2, 'method': 'list_pick_history'},
+    );
+    final caps = await client.send(
+      server.socketPath,
+      {'id': 3, 'method': 'list_target_capabilities'},
+    );
+
+    expect(generic['result'], legacy['result']);
+    expect(generic['result'], [
+      {'widgetClass': 'EmberButton'},
+    ]);
+    // No capabilities provider bound → honest empty default.
+    expect(caps['result'], {'capabilities': <Object?>[]});
+  });
+
+  test('list_target_capabilities returns the bound provider data',
+      skip: skipOnWindows, () async {
+    final endpoint = await _createEndpoint();
+    final server = EmulatorIpcServer(socketPath: endpoint.path);
+    await server.start();
+    addTearDown(server.stop);
+    addTearDown(endpoint.dispose);
+
+    server.bindTargetCapabilitiesProvider(
+      () => {
+        'targetId': 'react_native_android',
+        'capabilities': ['detect', 'inspectSelection', 'streamLogs'],
+        'sourceContextTier': 'bestEffortHints',
+      },
+    );
+
+    final reply = await const EmulatorIpcClient().send(
+      server.socketPath,
+      {'id': 1, 'method': 'list_target_capabilities'},
+    );
+    expect(reply['result'], {
+      'targetId': 'react_native_android',
+      'capabilities': ['detect', 'inspectSelection', 'streamLogs'],
+      'sourceContextTier': 'bestEffortHints',
+    });
+  });
+
   test('returns error when no run session bound', skip: skipOnWindows,
       () async {
     final endpoint = await _createEndpoint();

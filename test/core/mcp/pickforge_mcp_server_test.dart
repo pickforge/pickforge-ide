@@ -39,6 +39,8 @@ void main() {
         'get_selected_widget',
         'get_current_selection',
         'list_pickforge_history',
+        'list_pick_history',
+        'list_target_capabilities',
         'capture_screenshot',
         'capture_target_screenshot',
         'hot_reload',

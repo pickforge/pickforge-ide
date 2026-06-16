@@ -198,6 +198,21 @@ const List<Map<String, Object?>> _tools = [
     'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
   },
   {
+    'name': 'list_pick_history',
+    'title': 'List pick history',
+    'description': 'Return recent target picks (generic alias of '
+        'list_pickforge_history).',
+    'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
+  },
+  {
+    'name': 'list_target_capabilities',
+    'title': 'List target capabilities',
+    'description':
+        'Return the active target adapter capabilities so agents can '
+            'tell what operations and source-context tier are available.',
+    'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
+  },
+  {
     'name': 'capture_screenshot',
     'title': 'Capture screenshot',
     'description': 'Capture the active target screen into the context dir.',

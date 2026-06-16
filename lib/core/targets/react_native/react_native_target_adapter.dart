@@ -29,8 +29,11 @@ class ReactNativeTargetAdapter implements TargetAdapter {
   int get priority => 80;
 
   @override
-  TargetCapabilities get capabilities =>
-      const TargetCapabilities({TargetCapability.detect});
+  TargetCapabilities get capabilities => const TargetCapabilities({
+        TargetCapability.detect,
+        // 4B: Metro run + log streaming infrastructure.
+        TargetCapability.streamLogs,
+      });
 
   /// Claims a project only when it is React Native AND has an `android/`
   /// sub-project this Android adapter can actually drive.

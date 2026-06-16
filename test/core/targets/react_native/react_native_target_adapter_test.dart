@@ -124,9 +124,9 @@ void main() {
       bool can(TargetCapability c) => adapter.capabilities.has(c);
       expect(adapter.id, 'react_native_android');
       expect(adapter.priority, 80);
-      // 4A backs detection only; later slices grow the set with their backing.
+      // Capabilities grow as each slice lands its backing infrastructure.
       expect(can(TargetCapability.detect), isTrue);
-      expect(can(TargetCapability.streamLogs), isFalse);
+      expect(can(TargetCapability.streamLogs), isTrue); // 4B Metro logs
       expect(can(TargetCapability.launch), isFalse);
       expect(can(TargetCapability.stop), isFalse);
       expect(can(TargetCapability.captureScreenshot), isFalse);

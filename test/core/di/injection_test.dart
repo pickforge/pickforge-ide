@@ -72,7 +72,13 @@ void main() {
 
     expect(
       getIt<TargetAdapterRegistry>().all.map((adapter) => adapter.id),
-      ['flutter', 'react_native_android', 'native_android', 'generic'],
+      [
+        'flutter',
+        'react_native_android',
+        'native_android',
+        'native_ios',
+        'generic',
+      ],
     );
   });
 

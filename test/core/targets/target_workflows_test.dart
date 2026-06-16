@@ -82,6 +82,26 @@ void main() {
     );
   });
 
+  test('support level badges map from capabilities', () {
+    final flutter = const FlutterTargetAdapter().capabilities;
+    expect(policy.supportLevel(flutter), TargetSupportLevel.deep);
+    expect(policy.supportLevel(flutter).label, 'Deep support');
+
+    final android = const NativeAndroidTargetAdapter().capabilities;
+    expect(policy.supportLevel(android), TargetSupportLevel.useful);
+
+    final runOnly = _caps({
+      TargetCapability.detect,
+      TargetCapability.launch,
+      TargetCapability.captureScreenshot,
+    });
+    expect(policy.supportLevel(runOnly), TargetSupportLevel.experimental);
+
+    final generic = const GenericProjectAdapter().capabilities;
+    expect(policy.supportLevel(generic), TargetSupportLevel.manualOnly);
+    expect(policy.supportLevel(generic).label, 'Manual-only');
+  });
+
   test('workflow labels are user-facing', () {
     expect(TargetWorkflow.explainUi.label, 'Explain selected UI');
     expect(

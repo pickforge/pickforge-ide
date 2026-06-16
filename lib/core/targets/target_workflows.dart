@@ -24,6 +24,18 @@ extension TargetWorkflowLabel on TargetWorkflow {
       };
 }
 
+/// The user-facing support level shown for a target in the suite UI.
+enum TargetSupportLevel { deep, useful, experimental, manualOnly }
+
+extension TargetSupportLevelLabel on TargetSupportLevel {
+  String get label => switch (this) {
+        TargetSupportLevel.deep => 'Deep support',
+        TargetSupportLevel.useful => 'Useful support',
+        TargetSupportLevel.experimental => 'Experimental',
+        TargetSupportLevel.manualOnly => 'Manual-only',
+      };
+}
+
 /// How trustworthy the source context is for a target — drives prompt language
 /// so agents don't overstate certainty.
 enum TargetSourceContextTier {
@@ -63,6 +75,24 @@ class TargetWorkflowPolicy {
       workflows.add(TargetWorkflow.runLogsTriage);
     }
     return workflows;
+  }
+
+  /// The support-level badge for a target: deep (exact source mapping), useful
+  /// (selection + best-effort hints), experimental (run/screenshot/logs but no
+  /// selection), or manual-only (detection only).
+  TargetSupportLevel supportLevel(TargetCapabilities capabilities) {
+    if (capabilities.has(TargetCapability.mapSelectionToSource)) {
+      return TargetSupportLevel.deep;
+    }
+    if (capabilities.has(TargetCapability.inspectSelection)) {
+      return TargetSupportLevel.useful;
+    }
+    if (capabilities.has(TargetCapability.launch) ||
+        capabilities.has(TargetCapability.captureScreenshot) ||
+        capabilities.has(TargetCapability.streamLogs)) {
+      return TargetSupportLevel.experimental;
+    }
+    return TargetSupportLevel.manualOnly;
   }
 
   TargetSourceContextTier sourceContextTier(TargetCapabilities capabilities) {

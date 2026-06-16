@@ -43,6 +43,7 @@ import 'package:pickforge/core/storage/context_storage_migrator.dart';
 import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/targets/flutter_target_adapter.dart';
 import 'package:pickforge/core/targets/generic_project_adapter.dart';
+import 'package:pickforge/core/targets/react_native/react_native_target_adapter.dart';
 import 'package:pickforge/core/targets/target_adapter_registry.dart';
 import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
@@ -302,11 +303,15 @@ abstract class DriftDaoModule {
 
 @module
 abstract class TargetsModule {
-  // 2B populates the registry with GenericProjectAdapter (lowest-priority
-  // fallback); 3A adds the FlutterTargetAdapter. Order doesn't matter — the
+  // Flutter (deep support, priority 100), React Native Android (useful
+  // support, 80), and the generic fallback (0). Order doesn't matter — the
   // registry sorts by descending priority.
   @lazySingleton
   TargetAdapterRegistry targetAdapterRegistry() => TargetAdapterRegistry(
-        const [FlutterTargetAdapter(), GenericProjectAdapter()],
+        const [
+          FlutterTargetAdapter(),
+          ReactNativeTargetAdapter(),
+          GenericProjectAdapter(),
+        ],
       );
 }

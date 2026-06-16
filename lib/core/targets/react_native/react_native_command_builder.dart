@@ -16,6 +16,7 @@ class ReactNativeCommandBuilder {
     required ReactNativeProjectInfo project,
     ReactNativeMetroOptions options = const ReactNativeMetroOptions(),
   }) {
+    if (project.isExpo) return expoStart(project: project, options: options);
     return ReactNativeCommand(
       executable: 'npx',
       arguments: [
@@ -62,6 +63,46 @@ class ReactNativeCommandBuilder {
       ],
       cwd: project.projectRoot,
     );
+  }
+
+  /// Starts the Expo dev server (`<runner> expo start --port [--clear]`).
+  ReactNativeCommand expoStart({
+    required ReactNativeProjectInfo project,
+    ReactNativeMetroOptions options = const ReactNativeMetroOptions(),
+  }) {
+    return ReactNativeCommand(
+      executable: _expoExecutable(project.packageManager),
+      arguments: [
+        'expo',
+        'start',
+        '--port',
+        '${options.port}',
+        if (options.resetCache) '--clear',
+      ],
+      cwd: project.projectRoot,
+    );
+  }
+
+  /// Builds/installs/launches the Expo Android app (`<runner> expo run:android`).
+  ///
+  /// No device target: Expo's `--device` resolves a device NAME (AVD/model),
+  /// not an ADB serial, so PickForge can't pass its serial here — Expo selects
+  /// the device (a known MVP limitation for multi-device setups).
+  ReactNativeCommand expoRunAndroid({
+    required ReactNativeProjectInfo project,
+  }) {
+    return ReactNativeCommand(
+      executable: _expoExecutable(project.packageManager),
+      arguments: const ['expo', 'run:android'],
+      cwd: project.projectRoot,
+    );
+  }
+
+  // npm invokes the local bin via `npx`; the other managers run it directly.
+  String _expoExecutable(ReactNativePackageManager pm) {
+    return pm == ReactNativePackageManager.npm
+        ? 'npx'
+        : _packageManagerExecutable(pm);
   }
 
   String _packageManagerExecutable(ReactNativePackageManager pm) {

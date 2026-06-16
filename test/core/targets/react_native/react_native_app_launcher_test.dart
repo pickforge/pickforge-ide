@@ -8,12 +8,16 @@ import 'package:pickforge/core/targets/react_native/react_native_project_detecto
 
 class _FakeRunner extends Mock implements ProcessRunner {}
 
-ReactNativeProjectInfo _project({bool androidScript = true}) {
+ReactNativeProjectInfo _project({
+  bool androidScript = true,
+  ExpoProjectInfo? expo,
+}) {
   return ReactNativeProjectInfo(
     projectRoot: '/app',
     packageManager: ReactNativePackageManager.pnpm,
     hasAndroidProject: true,
     hasAndroidScript: androidScript,
+    expo: expo,
   );
 }
 
@@ -79,6 +83,18 @@ void main() {
       '@react-native-community/cli',
       'run-android',
     ]);
+  });
+
+  test('routes an Expo project through expo run:android (serial ignored)',
+      () async {
+    final launcher = ReactNativeAppLauncher(runner);
+    final result = await launcher.launch(
+      project: _project(expo: const ExpoProjectInfo()),
+      serial: 'emulator-5554',
+    );
+
+    expect(result.usedProjectScript, isFalse);
+    expect(result.command.arguments, ['expo', 'run:android']);
   });
 
   test('reports failure when the launch command exits non-zero', () async {

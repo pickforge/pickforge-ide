@@ -157,6 +157,22 @@ void main() {
       expect(detection.details?['hasAndroidScript'], 'false');
     });
 
+    test('surfaces Expo facts in the detection details', () async {
+      final dir = await Directory.systemTemp.createTemp('rn_expo_adapter');
+      addTearDown(() => dir.delete(recursive: true));
+      await File(p.join(dir.path, 'package.json')).writeAsString(
+        jsonEncode({
+          'dependencies': {'react-native': '*', 'expo': '51.0.0'},
+        }),
+      );
+      await File(p.join(dir.path, 'app.json')).writeAsString('{}\n');
+      await Directory(p.join(dir.path, 'android')).create();
+
+      final detection = await adapter.detect(dir.path);
+      expect(detection!.details?['isExpo'], 'true');
+      expect(detection.details?['expoConfigPath'], 'app.json');
+    });
+
     test('does not claim an RN project without an android/ dir', () async {
       final dir = await _rnProject(android: false);
       addTearDown(() => dir.delete(recursive: true));

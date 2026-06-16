@@ -8,6 +8,24 @@ import 'package:path/path.dart' as p;
 /// its lockfile.
 enum ReactNativePackageManager { pnpm, yarn, npm, bun }
 
+/// Expo-specific facts about a React Native project (Expo IS React Native, so
+/// this rides on [ReactNativeProjectInfo] rather than a separate adapter).
+///
+/// Only present when the project declares the `expo` dependency — a bare RN CLI
+/// project also ships an `app.json`, so the config file alone is NOT an Expo
+/// signal. [configPath] just records which Expo config file exists, if any.
+class ExpoProjectInfo extends Equatable {
+  const ExpoProjectInfo({this.configPath});
+
+  /// `app.json` / `app.config.js` / `app.config.ts`, or null.
+  final String? configPath;
+
+  bool get hasConfig => configPath != null;
+
+  @override
+  List<Object?> get props => [configPath];
+}
+
 /// What a React Native project root looks like to PickForge.
 ///
 /// Produced by [ReactNativeProjectDetector]; only non-null when the project
@@ -19,12 +37,16 @@ class ReactNativeProjectInfo extends Equatable {
     required this.packageManager,
     required this.hasAndroidProject,
     required this.hasAndroidScript,
+    this.expo,
   });
 
   final String projectRoot;
   final ReactNativePackageManager packageManager;
   final bool hasAndroidProject;
   final bool hasAndroidScript;
+  final ExpoProjectInfo? expo;
+
+  bool get isExpo => expo != null;
 
   @override
   List<Object?> get props => [
@@ -32,6 +54,7 @@ class ReactNativeProjectInfo extends Equatable {
         packageManager,
         hasAndroidProject,
         hasAndroidScript,
+        expo,
       ];
 }
 
@@ -56,22 +79,38 @@ class ReactNativeProjectDetector {
     }
     if (decoded is! Map<String, dynamic>) return null;
 
-    if (!_declaresReactNative(decoded)) return null;
+    final hasReactNativeDep = _hasDependency(decoded, 'react-native');
+    final hasExpoDep = _hasDependency(decoded, 'expo');
+    // Expo IS React Native, so an Expo dependency counts even when the project
+    // relies on the transitive `react-native` dependency.
+    if (!hasReactNativeDep && !hasExpoDep) return null;
+
+    // Expo only when the `expo` dependency is declared; the config file just
+    // enriches which Expo config exists (a bare RN project also has app.json).
+    final expo = hasExpoDep
+        ? ExpoProjectInfo(configPath: _expoConfigPath(projectRoot))
+        : null;
 
     return ReactNativeProjectInfo(
       projectRoot: projectRoot,
       packageManager: _detectPackageManager(projectRoot),
       hasAndroidProject: Directory(p.join(projectRoot, 'android')).existsSync(),
       hasAndroidScript: _hasAndroidScript(decoded),
+      expo: expo,
     );
   }
 
-  bool _declaresReactNative(Map<String, dynamic> packageJson) {
+  String? _expoConfigPath(String projectRoot) {
+    for (final name in const ['app.json', 'app.config.js', 'app.config.ts']) {
+      if (File(p.join(projectRoot, name)).existsSync()) return name;
+    }
+    return null;
+  }
+
+  bool _hasDependency(Map<String, dynamic> packageJson, String name) {
     for (final key in const ['dependencies', 'devDependencies']) {
       final deps = packageJson[key];
-      if (deps is Map<String, dynamic> && deps.containsKey('react-native')) {
-        return true;
-      }
+      if (deps is Map<String, dynamic> && deps.containsKey(name)) return true;
     }
     return false;
   }

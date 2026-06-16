@@ -6,12 +6,14 @@ import 'package:pickforge/core/targets/react_native/react_native_project_detecto
 ReactNativeProjectInfo _project({
   ReactNativePackageManager pm = ReactNativePackageManager.yarn,
   bool androidScript = true,
+  ExpoProjectInfo? expo,
 }) {
   return ReactNativeProjectInfo(
     projectRoot: '/app',
     packageManager: pm,
     hasAndroidProject: true,
     hasAndroidScript: androidScript,
+    expo: expo,
   );
 }
 
@@ -79,6 +81,48 @@ void main() {
         builder.androidRun(project: _project(androidScript: false)),
         isNull,
       );
+    });
+  });
+
+  group('expo', () {
+    const expo = ExpoProjectInfo(configPath: 'app.json');
+
+    test('expoStart uses the package runner and --port', () {
+      final command = builder.expoStart(
+        project: _project(pm: ReactNativePackageManager.npm, expo: expo),
+      );
+      expect(command.executable, 'npx');
+      expect(command.arguments, ['expo', 'start', '--port', '8081']);
+    });
+
+    test('expoStart maps reset-cache to --clear', () {
+      final command = builder.expoStart(
+        project: _project(expo: expo),
+        options: const ReactNativeMetroOptions(resetCache: true),
+      );
+      expect(command.executable, 'yarn');
+      expect(command.arguments, [
+        'expo',
+        'start',
+        '--port',
+        '8081',
+        '--clear',
+      ]);
+    });
+
+    test('metroStart delegates to expoStart for an Expo project', () {
+      final command = builder.metroStart(
+        project: _project(pm: ReactNativePackageManager.pnpm, expo: expo),
+      );
+      expect(command.executable, 'pnpm');
+      expect(command.arguments, ['expo', 'start', '--port', '8081']);
+    });
+
+    test('expoRunAndroid builds without an unusable ADB serial device flag',
+        () {
+      final command = builder.expoRunAndroid(project: _project(expo: expo));
+      expect(command.executable, 'yarn');
+      expect(command.arguments, ['expo', 'run:android']);
     });
   });
 

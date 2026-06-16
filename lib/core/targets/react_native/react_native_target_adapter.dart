@@ -47,12 +47,15 @@ class ReactNativeTargetAdapter implements TargetAdapter {
   Future<TargetDetection?> detect(String projectRoot) async {
     final info = await _detector.detect(projectRoot);
     if (info == null || !info.hasAndroidProject) return null;
+    final expoConfigPath = info.expo?.configPath;
     return TargetDetection(
       targetId: id,
       confidence: DetectionConfidence.exact,
       details: {
         'packageManager': info.packageManager.name,
         'hasAndroidScript': info.hasAndroidScript.toString(),
+        'isExpo': info.isExpo.toString(),
+        if (expoConfigPath != null) 'expoConfigPath': expoConfigPath,
       },
     );
   }

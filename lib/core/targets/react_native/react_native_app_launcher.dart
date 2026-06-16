@@ -48,10 +48,18 @@ class ReactNativeAppLauncher {
     required ReactNativeProjectInfo project,
     String? serial,
   }) async {
-    final projectScript =
-        serial == null ? _commands.androidRun(project: project) : null;
-    final command = projectScript ??
-        _commands.localCliRunAndroid(project: project, serial: serial);
+    final ReactNativeCommand command;
+    var usedProjectScript = false;
+    if (project.isExpo) {
+      // Expo selects the device itself; the ADB serial isn't usable here.
+      command = _commands.expoRunAndroid(project: project);
+    } else {
+      final projectScript =
+          serial == null ? _commands.androidRun(project: project) : null;
+      command = projectScript ??
+          _commands.localCliRunAndroid(project: project, serial: serial);
+      usedProjectScript = projectScript != null;
+    }
     final result = await _runner.run(
       command.executable,
       command.arguments,
@@ -61,7 +69,7 @@ class ReactNativeAppLauncher {
     return ReactNativeLaunchResult(
       command: command,
       exitCode: result.exitCode,
-      usedProjectScript: projectScript != null,
+      usedProjectScript: usedProjectScript,
     );
   }
 }

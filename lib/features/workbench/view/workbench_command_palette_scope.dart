@@ -9,6 +9,7 @@ import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/router/app_router.dart';
 import 'package:pickforge/core/search/workspace_search_service.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
@@ -197,7 +198,10 @@ Future<List<PickforgeCommand>> _searchWorkspace(
   String query,
 ) async {
   if (!getIt.isRegistered<PickforgeDatabase>()) return const [];
-  final search = WorkspaceSearchService(getIt<PickforgeDatabase>());
+  final search = WorkspaceSearchService(
+    getIt<PickforgeDatabase>(),
+    getIt<ContextStorageService>(),
+  );
   final results = await search.search(query);
   if (!context.mounted) return const [];
   return [

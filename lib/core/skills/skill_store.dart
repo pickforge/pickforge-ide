@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:pickforge/core/skills/models.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 
 enum SkillSourceType { projectOverride, bundledAsset }
 
@@ -19,24 +20,26 @@ class SkillSource {
 
 /// Loads skill markdown files and agent templates.
 ///
-/// Prefers project-local overrides in `.pickforge/skills/` before falling back
-/// to bundled assets in `assets/skills/`.
+/// Prefers project-local overrides in the resolved context dir's `skills/`
+/// before falling back to bundled assets in `assets/skills/`.
 ///
 /// Not annotated with `@lazySingleton` — wired via `@module` in injection.dart.
 class SkillStore {
-  SkillStore([AssetBundle? bundle]) : _bundle = bundle;
+  SkillStore(this._storage, [AssetBundle? bundle]) : _bundle = bundle;
 
+  final ContextStorageService _storage;
   final AssetBundle? _bundle;
 
   AssetBundle get _effectiveBundle => _bundle ?? rootBundle;
 
-  /// Loads a skill by [id], preferring a project-local override at
-  /// `.pickforge/skills/{id.value}.md`, falling back to the bundled asset.
+  /// Loads a skill by [id], preferring a project-local override in the resolved
+  /// `skills/{id.value}.md`, falling back to the bundled asset.
   Future<String> loadSkill(
     SkillId id, {
     required String projectRoot,
   }) async {
-    final source = resolveSkillSource(id, projectRoot: projectRoot);
+    final resolved = await _storage.resolve(projectRoot);
+    final source = resolveSkillSource(id, skillsDir: resolved.skillsDir);
     if (source.isProjectOverride) {
       return File(source.location).readAsStringSync();
     }
@@ -46,9 +49,9 @@ class SkillStore {
 
   SkillSource resolveSkillSource(
     SkillId id, {
-    required String projectRoot,
+    required String skillsDir,
   }) {
-    final overridePath = '$projectRoot/.pickforge/skills/${id.value}.md';
+    final overridePath = '$skillsDir/${id.value}.md';
     if (File(overridePath).existsSync()) {
       return SkillSource(
         type: SkillSourceType.projectOverride,
@@ -67,10 +70,11 @@ class SkillStore {
     required SkillId skill,
     required String projectRoot,
   }) async {
+    final resolved = await _storage.resolve(projectRoot);
     final source = resolvePromptTemplateSource(
       agentId: agentId,
       skill: skill,
-      projectRoot: projectRoot,
+      templatesDir: resolved.promptTemplatesDir,
     );
     if (source.isProjectOverride) {
       return File(source.location).readAsStringSync();
@@ -82,9 +86,8 @@ class SkillStore {
   SkillSource resolvePromptTemplateSource({
     required String agentId,
     required SkillId skill,
-    required String projectRoot,
+    required String templatesDir,
   }) {
-    final templatesDir = '$projectRoot/.pickforge/prompt-templates';
     final projectCandidates = [
       '$templatesDir/$agentId-${skill.value}.md.tmpl',
       '$templatesDir/$agentId.md.tmpl',

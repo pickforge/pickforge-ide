@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:injectable/injectable.dart';
 import 'package:path/path.dart' as p;
-import 'package:pickforge/core/projects/pickforge_project_directory.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 
 export 'package:pickforge/core/projects/pickforge_project_directory.dart'
     show PickforgeDirConflictException;
@@ -25,6 +25,10 @@ class WrittenContext {
 
 @lazySingleton
 class PickforgeContextWriter {
+  PickforgeContextWriter(this._storage);
+
+  final ContextStorageService _storage;
+
   Future<WrittenContext> write({
     required String projectRoot,
     required String skillMarkdown,
@@ -33,7 +37,8 @@ class PickforgeContextWriter {
     List<int>? widgetScreenshotPng,
     List<int>? deviceScreenPng,
   }) async {
-    final dir = await PickforgeProjectDirectory.ensure(projectRoot);
+    final resolved = await _storage.ensure(projectRoot);
+    final dir = Directory(resolved.contextDir);
 
     final skill = File(p.join(dir.path, 'skill-active.md'));
     final widget = File(p.join(dir.path, 'widget-context.md'));

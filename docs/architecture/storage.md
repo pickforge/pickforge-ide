@@ -9,12 +9,35 @@ or exports them.
 Pickforge writes to two places:
 
 - The app database managed by Drift, named `pickforge`.
-- The active project's `<projectRoot>/.pickforge/` directory.
+- The active project's **resolved context directory**.
+
+Where the context directory lives is a per-project choice (Settings → Context
+storage), resolved by `ContextStorageService.resolve`:
+
+1. **Home** (default) — `<PickforgeHome>/projects/<projectId>/` where
+   `PickforgeHome` is `$PICKFORGE_HOME` or `~/.pickforge`. The context dir is
+   `<base>/context`, with `runs/`, `chats/`, `pastes/`, `skills/`, and
+   `prompt-templates/` as siblings. Nothing is written into the repo.
+2. **Project-local** — `<projectRoot>/.pickforge/`. Opt-in per project.
+3. **Custom** — `<customPath>/projects/<projectId>/`, same layout as Home.
+
+Resolution precedence is: an explicit `location:` argument, then the persisted
+per-project override, then auto-detect (an existing project-local `.pickforge/`
+marker → project-local, otherwise Home).
 
 Pickforge must not modify project source files, `CLAUDE.md`, `AGENTS.md`, or
-other user-owned context files. If `<projectRoot>/.pickforge/` already exists
-without Pickforge's exact `.gitignore` marker (`*` plus newline), Pickforge must
-refuse to use it instead of overwriting unknown data.
+other user-owned context files. The `.gitignore` marker rule applies to
+**project-local mode only**: if `<projectRoot>/.pickforge/` already exists
+without Pickforge's exact marker (`*` plus newline), Pickforge refuses to use it
+instead of overwriting unknown data. Home and custom directories live outside
+the repo and carry no marker.
+
+Switching a project's storage mode offers to copy existing chats, runs, and
+context files from the old resolved location to the new one. The copy is
+best-effort and additive: originals are never deleted and existing destination
+files are never clobbered, so switching back still shows the old data. Active
+terminals and runs keep their inherited paths until respawned — there is no live
+migration of running sessions.
 
 ## Drift Data
 
@@ -30,10 +53,10 @@ Run-session history is capped by `RunSessionLogRepository.recordStart` and
 project. Support bundles must continue to exclude source files, prompts,
 screenshots, transcripts, and secrets by default.
 
-## `.pickforge/` Layout
+## Context directory layout
 
-The project-local directory is private runtime state and is ignored by Git by
-default:
+In **project-local** mode the directory is `<projectRoot>/.pickforge/`, private
+runtime state ignored by Git by default:
 
 ```text
 .pickforge/
@@ -57,6 +80,12 @@ default:
       log.jsonl
       session.json
 ```
+
+In **home** and **custom** modes the same content lives under
+`<base>/projects/<projectId>/`, with the root context files in `<base>/context/`
+and `chats/`, `runs/`, `pastes/`, `skills/`, and `prompt-templates/` as siblings
+of `context/`. There is no `.gitignore` marker because the directory is outside
+the repo.
 
 Root context files such as `skill-active.md`, `widget-context.md`, and
 `initial-prompt.md` are overwritten for the latest Forge request. Chat
@@ -85,5 +114,7 @@ schema. Backup failures must block migration unless the user explicitly chooses
 to continue. A failed migration must never delete the original database or the
 project-local `.pickforge/` directory.
 
-No automated cleanup may remove `.pickforge/` as a whole. Cleanup code may only
-delete files that it owns and can identify by path and schema.
+No automated cleanup may remove the resolved context directory as a whole — not
+the project-local `.pickforge/`, nor a home/custom `projects/<projectId>/`
+directory. Cleanup code may only delete files that it owns and can identify by
+path and schema.

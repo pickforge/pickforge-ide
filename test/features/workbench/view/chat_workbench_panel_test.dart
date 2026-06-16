@@ -19,6 +19,7 @@ import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -89,7 +90,8 @@ void main() {
     final settings = _MockSettings();
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
-    final cubit = ChatsCubit(repo, settings);
+    final cubit =
+        ChatsCubit(repo, settings, ContextStorageService.forTesting());
     await cubit.syncProjects(['/p']);
     final projectsCubit = ProjectsCubit(_MockProjectsRepo());
 
@@ -134,7 +136,8 @@ void main() {
     final settings = _MockSettings();
     when(() => settings.getLastChatId('/p')).thenAnswer((_) async => 'chat-1');
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
-    final chatsCubit = ChatsCubit(repo, settings);
+    final chatsCubit =
+        ChatsCubit(repo, settings, ContextStorageService.forTesting());
     await chatsCubit.syncProjects(['/p'], defaultExpand: '/p');
 
     final projectsRepo = _MockProjectsRepo();
@@ -170,7 +173,8 @@ void main() {
     final settings = _MockSettings();
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
-    final cubit = ChatsCubit(repo, settings);
+    final cubit =
+        ChatsCubit(repo, settings, ContextStorageService.forTesting());
     await cubit.syncProjects(['/p']);
     final projectsCubit = ProjectsCubit(_MockProjectsRepo());
     final layout = WorkbenchLayoutCubit(_MockDao())..toggleRunLogs();
@@ -203,7 +207,8 @@ void main() {
     final settings = _MockSettings();
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
-    final chatsCubit = ChatsCubit(repo, settings);
+    final chatsCubit =
+        ChatsCubit(repo, settings, ContextStorageService.forTesting());
     await chatsCubit.syncProjects(['/a', '/b']);
     await chatsCubit.selectChat('a-chat');
 

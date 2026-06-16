@@ -42,7 +42,7 @@ class PickforgeDatabase extends _$PickforgeDatabase {
   PickforgeDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -190,6 +190,30 @@ class PickforgeDatabase extends _$PickforgeDatabase {
               final names = columns.map((r) => r.read<String>('name')).toSet();
               if (!names.contains('archived_at')) {
                 await m.addColumn(projects, projects.archivedAt);
+              }
+            }
+          }
+          if (from < 10) {
+            final settingsTables = await customSelect(
+              "SELECT name FROM sqlite_master WHERE type = 'table' "
+              "AND name = 'project_settings'",
+            ).get();
+            if (settingsTables.isNotEmpty) {
+              final columns = await customSelect(
+                'PRAGMA table_info(project_settings);',
+              ).get();
+              final names = columns.map((r) => r.read<String>('name')).toSet();
+              if (!names.contains('context_storage_mode')) {
+                await m.addColumn(
+                  projectSettings,
+                  projectSettings.contextStorageMode,
+                );
+              }
+              if (!names.contains('context_storage_custom_path')) {
+                await m.addColumn(
+                  projectSettings,
+                  projectSettings.contextStorageCustomPath,
+                );
               }
             }
           }

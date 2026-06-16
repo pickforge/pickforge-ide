@@ -22,6 +22,9 @@ class ProjectSettings extends Table {
   BoolColumn get firstRunCelebrated =>
       boolean().withDefault(const Constant(false))();
 
+  TextColumn get contextStorageMode => text().nullable()();
+  TextColumn get contextStorageCustomPath => text().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => {projectRoot};
 }

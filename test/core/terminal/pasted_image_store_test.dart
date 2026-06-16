@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/storage/context_storage_service.dart';
+import 'package:pickforge/core/storage/project_id.dart';
 import 'package:pickforge/core/terminal/pasted_image_store.dart';
 
 void main() {
@@ -14,9 +16,23 @@ void main() {
 
   tearDown(() => projectRoot.delete(recursive: true));
 
-  test('saves the image under .pickforge/pastes and returns a relative path',
+  // A `.pickforge/.gitignore` marker resolves the project to project-local
+  // storage, which must remain byte-identical to the legacy layout.
+  void markProjectLocal() {
+    File(p.join(projectRoot.path, '.pickforge', '.gitignore'))
+      ..parent.createSync(recursive: true)
+      ..writeAsStringSync('*\n');
+  }
+
+  PastedImageStore projectLocalStore() {
+    markProjectLocal();
+    return PastedImageStore(ContextStorageService.forTesting());
+  }
+
+  test(
+      'project-local: saves under .pickforge/pastes and returns a relative path',
       () async {
-    const store = PastedImageStore();
+    final store = projectLocalStore();
     final bytes = Uint8List.fromList([1, 2, 3, 4]);
 
     final relPath = await store.save(bytes, projectRoot: projectRoot.path);
@@ -28,8 +44,8 @@ void main() {
     expect(file.readAsBytesSync(), bytes);
   });
 
-  test('consecutive saves do not collide', () async {
-    const store = PastedImageStore();
+  test('project-local: consecutive saves do not collide', () async {
+    final store = projectLocalStore();
     final a = await store.save(
       Uint8List.fromList([1]),
       projectRoot: projectRoot.path,
@@ -44,8 +60,8 @@ void main() {
     expect(File(p.join(projectRoot.path, b)).existsSync(), isTrue);
   });
 
-  test('prunes pastes older than seven days on save', () async {
-    const store = PastedImageStore();
+  test('project-local: prunes pastes older than seven days on save', () async {
+    final store = projectLocalStore();
     final dir = Directory(p.join(projectRoot.path, '.pickforge', 'pastes'))
       ..createSync(recursive: true);
     final stale = File(p.join(dir.path, 'paste-old.png'))
@@ -57,5 +73,33 @@ void main() {
     await store.save(Uint8List.fromList([1]), projectRoot: projectRoot.path);
 
     expect(stale.existsSync(), isFalse);
+  });
+
+  test('home mode: saves under <home>/projects/<id>/pastes (absolute path)',
+      () async {
+    final tmpHome = await Directory.systemTemp.createTemp('pickforge-home-');
+    addTearDown(() => tmpHome.delete(recursive: true));
+    final store = PastedImageStore(
+      ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': tmpHome.path},
+      ),
+    );
+    final bytes = Uint8List.fromList([9, 8, 7]);
+
+    final pathOut = await store.save(bytes, projectRoot: projectRoot.path);
+
+    final id = ProjectId.forRoot(projectRoot.path);
+    final expectedDir = p.join(tmpHome.path, 'projects', id, 'pastes');
+    expect(p.isAbsolute(pathOut), isTrue);
+    expect(p.dirname(pathOut), expectedDir);
+    expect(p.basename(pathOut), startsWith('paste-'));
+    final file = File(pathOut);
+    expect(file.existsSync(), isTrue);
+    expect(file.readAsBytesSync(), bytes);
+    // Nothing leaked into the project tree.
+    expect(
+      Directory(p.join(projectRoot.path, '.pickforge')).existsSync(),
+      isFalse,
+    );
   });
 }

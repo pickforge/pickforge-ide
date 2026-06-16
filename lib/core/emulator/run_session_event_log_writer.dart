@@ -3,10 +3,12 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/emulator/run_session_models.dart';
-import 'package:pickforge/core/projects/pickforge_project_directory.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 
 class RunSessionEventLogWriter {
-  const RunSessionEventLogWriter();
+  RunSessionEventLogWriter(this._storage);
+
+  final ContextStorageService _storage;
 
   Future<File> append({
     required String projectRoot,
@@ -14,8 +16,8 @@ class RunSessionEventLogWriter {
     required RunSessionEvent event,
     DateTime? timestamp,
   }) async {
-    final pickforgeDir = await PickforgeProjectDirectory.ensure(projectRoot);
-    final runDir = Directory(p.join(pickforgeDir.path, 'runs', sessionId));
+    final resolved = await _storage.ensure(projectRoot);
+    final runDir = Directory(p.join(resolved.runsDir, sessionId));
     await runDir.create(recursive: true);
     final file = File(p.join(runDir.path, 'log.jsonl'));
     final line = jsonEncode({

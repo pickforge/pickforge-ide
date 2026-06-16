@@ -11,6 +11,9 @@ import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/git/git_branch_probe.dart';
+import 'package:pickforge/core/process/user_shell_environment.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
+import 'package:pickforge/core/storage/pickforge_env_vars.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/terminal/live_terminal_output.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
@@ -207,7 +210,9 @@ class _TerminalPaneState extends State<TerminalPane> {
   late final Terminal _terminal;
   final _focusNode = FocusNode();
   final _controller = TerminalController();
-  final _pasteController = TerminalPasteController();
+  final _pasteController = TerminalPasteController(
+    storage: getIt<ContextStorageService>(),
+  );
   StreamSubscription<String>? _outputSub;
   StreamSubscription<PtySessionState>? _stateSub;
   PtySession? _session;
@@ -324,9 +329,13 @@ class _TerminalPaneState extends State<TerminalPane> {
     await _loadTerminalSettings();
     if (_disposed || !mounted) return;
 
+    final resolved =
+        await getIt<ContextStorageService>().resolve(widget.projectRoot);
+    if (_disposed || !mounted) return;
+
     if (freshSplit) {
       await TranscriptRecorder.deleteTranscript(
-        projectRoot: widget.projectRoot,
+        chatsDir: resolved.chatsDir,
         chatId: _sessionId,
       );
       if (_disposed || !mounted) return;
@@ -335,6 +344,7 @@ class _TerminalPaneState extends State<TerminalPane> {
       final replayer = TranscriptReplayer(
         projectRoot: widget.projectRoot,
         chatId: _sessionId,
+        storage: getIt<ContextStorageService>(),
       );
       await for (final chunk in replayer.replay()) {
         if (_disposed || !mounted) return;
@@ -364,13 +374,29 @@ class _TerminalPaneState extends State<TerminalPane> {
         final recorder = TranscriptRecorder(
           projectRoot: widget.projectRoot,
           chatId: _sessionId,
+          storage: getIt<ContextStorageService>(),
         );
         await recorder.open();
+        final shellEnv = getIt.isRegistered<UserShellEnvironment>()
+            ? getIt<UserShellEnvironment>()
+            : UserShellEnvironment.instance;
+        final base = await shellEnv.load();
+        final sockFile = File(resolved.ipcSockPath);
+        final environment = {
+          ...base,
+          ...pickforgeEnvVars(
+            resolved,
+            activeIpcEndpoint: sockFile.existsSync()
+                ? sockFile.readAsStringSync().trim()
+                : null,
+          ),
+        };
         return PtySession(
           chatId: _sessionId,
           executable: shell.executable,
           arguments: shell.arguments,
           workingDirectory: widget.projectRoot,
+          environment: environment,
           factory: getIt<PtyProcessFactory>(),
           onOutput: recorder.append,
           onDispose: recorder.close,
@@ -648,8 +674,12 @@ class _TerminalPaneState extends State<TerminalPane> {
                                 .detach(sessionId)
                                 .then((_) async {
                               if (isSplitPane) {
+                                final chatsDir =
+                                    (await getIt<ContextStorageService>()
+                                            .resolve(projectRoot))
+                                        .chatsDir;
                                 await TranscriptRecorder.deleteTranscript(
-                                  projectRoot: projectRoot,
+                                  chatsDir: chatsDir,
                                   chatId: sessionId,
                                 );
                               }

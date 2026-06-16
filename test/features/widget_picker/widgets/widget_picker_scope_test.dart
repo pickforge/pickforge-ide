@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:pickforge/core/di/injection.dart';
 import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:vm_service/vm_service.dart';
@@ -21,6 +24,27 @@ class _FakeResponse extends Fake implements Response {
 }
 
 void main() {
+  late Directory storageHome;
+
+  setUp(() async {
+    storageHome = await Directory.systemTemp.createTemp('pf-picker-home-');
+    if (getIt.isRegistered<ContextStorageService>()) {
+      await getIt.unregister<ContextStorageService>();
+    }
+    getIt.registerSingleton<ContextStorageService>(
+      ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': storageHome.path},
+      ),
+    );
+  });
+
+  tearDown(() async {
+    if (getIt.isRegistered<ContextStorageService>()) {
+      await getIt.unregister<ContextStorageService>();
+    }
+    await storageHome.delete(recursive: true);
+  });
+
   testWidgets('binds and clears IPC selection provider', (tester) async {
     final ipc = _RecordingIpcServer();
     final client = VmServiceClient.forTesting(

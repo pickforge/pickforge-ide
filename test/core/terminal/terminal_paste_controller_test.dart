@@ -2,20 +2,30 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/terminal_paste_controller.dart';
 
 void main() {
   late Directory projectRoot;
+  late ContextStorageService storage;
   final typed = <String>[];
   final pasted = <String>[];
 
   setUp(() async {
     projectRoot = await Directory.systemTemp.createTemp('pickforge-paste-');
+    storage = ContextStorageService.forTesting();
     typed.clear();
     pasted.clear();
   });
 
   tearDown(() => projectRoot.delete(recursive: true));
+
+  void markProjectLocal() {
+    File(p.join(projectRoot.path, '.pickforge', '.gitignore'))
+      ..parent.createSync(recursive: true)
+      ..writeAsStringSync('*\n');
+  }
 
   Future<void> paste(TerminalPasteController controller) => controller.paste(
         projectRoot: projectRoot.path,
@@ -25,7 +35,9 @@ void main() {
 
   test('clipboard image is saved and its path typed with a trailing space',
       () async {
+    markProjectLocal();
     final controller = TerminalPasteController(
+      storage: storage,
       readClipboardImage: () async => Uint8List.fromList([1, 2, 3]),
       readClipboardText: () async => fail('image must win over text'),
     );
@@ -40,6 +52,7 @@ void main() {
 
   test('clipboard text is pasted, not typed', () async {
     final controller = TerminalPasteController(
+      storage: storage,
       readClipboardImage: () async => null,
       readClipboardText: () async => 'hello\nworld',
     );
@@ -52,6 +65,7 @@ void main() {
 
   test('an empty clipboard is a no-op', () async {
     final controller = TerminalPasteController(
+      storage: storage,
       readClipboardImage: () async => null,
       readClipboardText: () async => null,
     );
@@ -64,6 +78,7 @@ void main() {
 
   test('a failing image reader falls back to text', () async {
     final controller = TerminalPasteController(
+      storage: storage,
       readClipboardImage: () async => throw StateError('no clipboard'),
       readClipboardText: () async => 'fallback',
     );

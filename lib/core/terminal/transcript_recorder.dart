@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:pickforge/core/projects/pickforge_project_directory.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/ansi.dart';
 import 'package:pickforge/core/terminal/live_terminal_output.dart';
 
@@ -11,28 +11,43 @@ class TranscriptRecorder {
   TranscriptRecorder({
     required this.projectRoot,
     required this.chatId,
+    ContextStorageService? storage,
     this.maxBytes = 5 * 1024 * 1024,
     int? truncateAt,
-  }) : truncateAt = truncateAt ?? (maxBytes + (1024 * 1024));
+  })  : _storage = storage ?? ContextStorageService(),
+        truncateAt = truncateAt ?? (maxBytes + (1024 * 1024));
 
   final String projectRoot;
   final String chatId;
+  final ContextStorageService _storage;
   final int maxBytes;
   final int truncateAt;
 
-  late final String _dir = p.join(projectRoot, '.pickforge', 'chats', chatId);
-  late final File _log = File(p.join(_dir, 'transcript.log'));
-  late final File _spans = File(p.join(_dir, 'transcript.spans.bin'));
-  late final File _meta = File(p.join(_dir, 'meta.json'));
+  _TranscriptFiles? _files;
   IOSink? _logSink;
   IOSink? _spansSink;
 
+  Future<_TranscriptFiles> _ensureDir() async {
+    final existing = _files;
+    if (existing != null) return existing;
+    final resolved = await _storage.ensure(projectRoot);
+    final dir = p.join(resolved.chatsDir, chatId);
+    await Directory(dir).create(recursive: true);
+    final files = _TranscriptFiles(
+      log: File(p.join(dir, 'transcript.log')),
+      spans: File(p.join(dir, 'transcript.spans.bin')),
+      meta: File(p.join(dir, 'meta.json')),
+    );
+    _files = files;
+    return files;
+  }
+
   Future<void> open() async {
-    await PickforgeProjectDirectory.ensure(projectRoot);
-    await Directory(_dir).create(recursive: true);
-    final hadHistory = _log.existsSync() && _log.lengthSync() > 0;
-    _logSink = _log.openWrite(mode: FileMode.append);
-    _spansSink = _spans.openWrite(mode: FileMode.append);
+    final files = await _ensureDir();
+    final log = files.log;
+    final hadHistory = log.existsSync() && log.lengthSync() > 0;
+    _logSink = log.openWrite(mode: FileMode.append);
+    _spansSink = files.spans.openWrite(mode: FileMode.append);
     if (hadHistory) {
       // A new session means a fresh shell: every mode the old scrollback may
       // have left enabled (mouse reporting, alt screen, ...) is off now.
@@ -46,10 +61,10 @@ class TranscriptRecorder {
   /// scrollback. Used when a pane id is recycled — a brand-new split must not
   /// replay a dead pane's output.
   static Future<void> deleteTranscript({
-    required String projectRoot,
+    required String chatsDir,
     required String chatId,
   }) async {
-    final dir = p.join(projectRoot, '.pickforge', 'chats', chatId);
+    final dir = p.join(chatsDir, chatId);
     for (final name in const ['transcript.log', 'transcript.spans.bin']) {
       final f = File(p.join(dir, name));
       try {
@@ -110,22 +125,35 @@ class TranscriptRecorder {
   }
 
   Future<void> _maybeTruncate() async {
-    if (!_log.existsSync()) return;
-    final size = _log.lengthSync();
+    final log = _files?.log;
+    if (log == null || !log.existsSync()) return;
+    final size = log.lengthSync();
     if (size <= truncateAt) return;
-    final bytes = _log.readAsBytesSync();
+    final bytes = log.readAsBytesSync();
     final keep = bytes.sublist(bytes.length - maxBytes);
-    await _log.writeAsBytes(keep, flush: true);
+    await log.writeAsBytes(keep, flush: true);
   }
 
   Future<void> _writeMeta() async {
-    await Directory(_dir).create(recursive: true);
-    final size = _log.existsSync() ? _log.lengthSync() : 0;
+    final files = await _ensureDir();
+    final size = files.log.existsSync() ? files.log.lengthSync() : 0;
     final json = jsonEncode({
       'schemaVersion': 1,
       'bytes': size,
       'updatedAt': DateTime.now().toIso8601String(),
     });
-    await _meta.writeAsString(json, flush: true);
+    await files.meta.writeAsString(json, flush: true);
   }
+}
+
+class _TranscriptFiles {
+  const _TranscriptFiles({
+    required this.log,
+    required this.spans,
+    required this.meta,
+  });
+
+  final File log;
+  final File spans;
+  final File meta;
 }

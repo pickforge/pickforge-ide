@@ -9,17 +9,19 @@ import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/forge/cubit/forge_state.dart';
 
 @injectable
 class ForgeCubit extends Cubit<ForgeState> {
-  ForgeCubit(this._launcher, this._adb, this._pool)
+  ForgeCubit(this._launcher, this._adb, this._pool, this._storage)
       : super(ForgeState.initial());
 
   final AgentLauncher _launcher;
   final AdbScreenshotCapturer _adb;
   final PtySessionPool _pool;
+  final ContextStorageService _storage;
 
   void selectSkill(SkillId skill) {
     emit(state.copyWith(skill: skill));
@@ -55,8 +57,10 @@ class ForgeCubit extends Cubit<ForgeState> {
 
     emit(state.copyWith(launching: true, lastError: null));
     try {
+      final resolved = await _storage.resolve(projectRoot);
       final adbPath = await _adb.capture(
-        outputDir: '$projectRoot/.pickforge',
+        outputDir: resolved.contextDir,
+        isProjectLocal: resolved.isProjectLocal,
         serial: deviceSerial,
         platform: devicePlatform,
       );

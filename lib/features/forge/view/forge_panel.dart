@@ -12,7 +12,9 @@ import 'package:pickforge/core/projects/git_status_service.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/projects/project_validator_runner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/skills/models.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
@@ -146,10 +148,9 @@ class _ForgePanelBody extends StatelessWidget {
                         onChanged: cubit.selectSkill,
                       ),
                       _SkillSourceButton(
-                        source: _skillStore().resolveSkillSource(
-                          state.skill,
-                          projectRoot: projectRoot,
-                        ),
+                        store: _skillStore(),
+                        skill: state.skill,
+                        projectRoot: projectRoot,
                       ),
                       AgentPicker(
                         value: state.agentId,
@@ -252,22 +253,44 @@ class _ForgePanelBody extends StatelessWidget {
 }
 
 class _SkillSourceButton extends StatelessWidget {
-  const _SkillSourceButton({required this.source});
+  const _SkillSourceButton({
+    required this.store,
+    required this.skill,
+    required this.projectRoot,
+  });
 
-  final SkillSource source;
+  final SkillStore store;
+  final SkillId skill;
+  final String projectRoot;
+
+  Future<SkillSource> _resolve() async {
+    final storage = getIt.isRegistered<ContextStorageService>()
+        ? getIt<ContextStorageService>()
+        : ContextStorageService();
+    final skillsDir = (await storage.resolve(projectRoot)).skillsDir;
+    return store.resolveSkillSource(skill, skillsDir: skillsDir);
+  }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    return IconButton(
-      tooltip: l10n.forgeSkillSourceTooltip,
-      onPressed: () => unawaited(_showSkillSource(context, source)),
-      icon: Icon(
-        source.isProjectOverride
-            ? Icons.folder_special_outlined
-            : Icons.inventory_2_outlined,
-        size: 18,
-      ),
+    return FutureBuilder<SkillSource>(
+      future: _resolve(),
+      builder: (context, snapshot) {
+        final source = snapshot.data;
+        return IconButton(
+          tooltip: l10n.forgeSkillSourceTooltip,
+          onPressed: source == null
+              ? null
+              : () => unawaited(_showSkillSource(context, source)),
+          icon: Icon(
+            source?.isProjectOverride ?? false
+                ? Icons.folder_special_outlined
+                : Icons.inventory_2_outlined,
+            size: 18,
+          ),
+        );
+      },
     );
   }
 }
@@ -1023,7 +1046,10 @@ ProjectValidatorRunner? _projectValidatorRunnerOrNull() {
 
 SkillStore _skillStore() {
   if (getIt.isRegistered<SkillStore>()) return getIt<SkillStore>();
-  return SkillStore();
+  final storage = getIt.isRegistered<ContextStorageService>()
+      ? getIt<ContextStorageService>()
+      : ContextStorageService();
+  return SkillStore(storage);
 }
 
 Future<void> _showSkillSource(

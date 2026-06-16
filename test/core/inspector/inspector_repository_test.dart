@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:pickforge/core/inspector/inspector_repository.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/inspector/source_snippet_extractor.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/inspector_extensions.dart';
 
 class _MockExt extends Mock implements InspectorExtensions {}
@@ -113,11 +114,7 @@ void main() {
     expect(snapshot?.children.single.className, 'Text');
   });
 
-  test('fetchSelection writes inspector screenshot under .pickforge', () async {
-    final tmp = await Directory.systemTemp.createTemp('pf_inspector_');
-    addTearDown(() => tmp.delete(recursive: true));
-    repo = InspectorRepository(ext, src, projectRoot: tmp.path);
-
+  void stubSelectionWithScreenshot(Directory tmp) {
     when(ext.getSelectedWidget).thenAnswer(
       (_) async => {
         'valueId': 'x',
@@ -142,6 +139,28 @@ void main() {
         maxPixelRatio: any(named: 'maxPixelRatio'),
       ),
     ).thenAnswer((_) async => [1, 2, 3]);
+  }
+
+  test(
+      'parity: project-local marker pins inspector screenshot under .pickforge',
+      () async {
+    final tmp = await Directory.systemTemp.createTemp('pf_inspector_');
+    addTearDown(() => tmp.delete(recursive: true));
+    final home = await Directory.systemTemp.createTemp('pf_inspector_home_');
+    addTearDown(() => home.delete(recursive: true));
+    Directory(p.join(tmp.path, '.pickforge')).createSync(recursive: true);
+    File(p.join(tmp.path, '.pickforge', '.gitignore')).writeAsStringSync('*\n');
+
+    repo = InspectorRepository(
+      ext,
+      src,
+      projectRoot: tmp.path,
+      storage: ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': home.path},
+      ),
+    );
+
+    stubSelectionWithScreenshot(tmp);
 
     final selected = await repo.fetchSelection();
 
@@ -163,5 +182,35 @@ void main() {
         maxPixelRatio: 2,
       ),
     ).called(1);
+  });
+
+  test('home mode: inspector screenshot lands under <home>/projects/<id>',
+      () async {
+    final tmp = await Directory.systemTemp.createTemp('pf_inspector_');
+    addTearDown(() => tmp.delete(recursive: true));
+    final home = await Directory.systemTemp.createTemp('pf_inspector_home_');
+    addTearDown(() => home.delete(recursive: true));
+
+    repo = InspectorRepository(
+      ext,
+      src,
+      projectRoot: tmp.path,
+      storage: ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': home.path},
+      ),
+    );
+
+    stubSelectionWithScreenshot(tmp);
+
+    final selected = await repo.fetchSelection();
+
+    expect(Directory(p.join(tmp.path, '.pickforge')).existsSync(), isFalse);
+    final projects = Directory(p.join(home.path, 'projects'));
+    final projectDir = projects.listSync().whereType<Directory>().single;
+    expect(
+      selected!.screenshotPath,
+      p.join(projectDir.path, 'context', 'screenshot.png'),
+    );
+    expect(File(selected.screenshotPath!).readAsBytesSync(), [1, 2, 3]);
   });
 }

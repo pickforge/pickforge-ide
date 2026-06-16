@@ -10,11 +10,14 @@ import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
+import 'package:pickforge/core/storage/context_storage_migrator.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
+import 'package:pickforge/features/settings/view/context_storage_settings.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/widget_picker/cubit/widget_picker_cubit.dart';
 import 'package:pickforge/features/widget_picker/cubit/widget_picker_state.dart';
@@ -282,7 +285,15 @@ void main() {
         terminal: terminal,
         discovery: discovery,
       );
-      final settingsCubit = SettingsCubit(settings, terminal);
+      final settingsCubit = SettingsCubit(
+        settings,
+        terminal,
+        ContextStorageService.forTesting(
+          environment: const {'HOME': '/home/forge'},
+          isWindows: false,
+        ),
+        const ContextStorageMigrator(),
+      );
       final deviceRunCubit = DeviceRunSettingsCubit(
         settings: settings,
         discovery: discovery,
@@ -311,6 +322,55 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       await expectGolden(key, 'settings');
+    },
+    skip: skipGoldenPlatform,
+  );
+
+  testWidgets(
+    'context storage settings matches golden',
+    (tester) async {
+      const key = ValueKey('storage-settings-golden');
+      final settings = _SettingsRepo();
+      final terminal = _TerminalSettingsRepo();
+      final discovery = _DeviceDiscovery();
+      stubDeterministicDeviceSettings(
+        settings: settings,
+        terminal: terminal,
+        discovery: discovery,
+      );
+      when(() => settings.getContextStorageLocation(any()))
+          .thenAnswer((_) async => null);
+      final settingsCubit = SettingsCubit(
+        settings,
+        terminal,
+        ContextStorageService.forTesting(
+          environment: const {'HOME': '/home/forge'},
+          isWindows: false,
+          settings: settings,
+        ),
+        const ContextStorageMigrator(),
+      );
+      addTearDown(settingsCubit.close);
+      await settingsCubit.load(deterministicAlphaRoot);
+
+      await pumpGoldenSurface(
+        tester,
+        boundaryKey: key,
+        child: _pane(
+          width: 720,
+          child: BlocProvider<SettingsCubit>.value(
+            value: settingsCubit,
+            child: const Padding(
+              padding: EdgeInsets.all(24),
+              child: ContextStorageSettings(
+                projectRoot: deterministicAlphaRoot,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await expectGolden(key, 'context_storage_settings');
     },
     skip: skipGoldenPlatform,
   );
@@ -412,6 +472,7 @@ Widget _inspectorProviders({
           _AgentLauncher(),
           _AdbCapturer(),
           PtySessionPool(),
+          ContextStorageService(),
         ),
       ),
   ];

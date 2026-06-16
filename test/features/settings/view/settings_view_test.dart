@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/diagnostics/diagnostics_service.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/emulator/device_discovery_service.dart';
@@ -16,11 +17,15 @@ import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
+import 'package:pickforge/core/storage/context_storage_location.dart';
+import 'package:pickforge/core/storage/context_storage_migrator.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
+import 'package:pickforge/features/settings/view/context_storage_settings.dart';
 import 'package:pickforge/features/settings/view/settings_view.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_state.dart';
@@ -57,7 +62,12 @@ void main() {
   late _DiagnosticsRunner diagnosticsRunner;
   late UpdateCheckSettingsRepository updates;
   late TelemetrySettingsRepository telemetry;
+  late ContextStorageService storage;
+  const migrator = ContextStorageMigrator();
   String? clipboardText;
+
+  SettingsCubit buildSettingsCubit() =>
+      SettingsCubit(settings, terminal, storage, migrator);
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -70,6 +80,11 @@ void main() {
     );
     telemetry = TelemetrySettingsRepository(
       await SharedPreferences.getInstance(),
+    );
+    storage = ContextStorageService.forTesting(
+      environment: const {'HOME': '/home/forge'},
+      isWindows: false,
+      settings: settings,
     );
     clipboardText = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -89,6 +104,8 @@ void main() {
     );
     when(() => settings.getDefaultAgentId(any())).thenAnswer((_) async => null);
     when(() => settings.getValidatorCommand(any()))
+        .thenAnswer((_) async => null);
+    when(() => settings.getContextStorageLocation(any()))
         .thenAnswer((_) async => null);
     when(() => settings.getEmulatorBinding(any()))
         .thenAnswer((_) async => null);
@@ -133,7 +150,7 @@ void main() {
         activeProjectRoot: '/workspace/app',
       ),
     );
-    final settingsCubit = SettingsCubit(settings, terminal);
+    final settingsCubit = buildSettingsCubit();
     final deviceRunCubit = DeviceRunSettingsCubit(
       settings: settings,
       discovery: discovery,
@@ -232,7 +249,7 @@ void main() {
         activeProjectRoot: '/workspace/app',
       ),
     );
-    final settingsCubit = SettingsCubit(settings, terminal);
+    final settingsCubit = buildSettingsCubit();
     final deviceRunCubit = DeviceRunSettingsCubit(
       settings: settings,
       discovery: discovery,
@@ -275,7 +292,7 @@ void main() {
         activeProjectRoot: '/workspace/app',
       ),
     );
-    final settingsCubit = SettingsCubit(settings, terminal);
+    final settingsCubit = buildSettingsCubit();
     final deviceRunCubit = DeviceRunSettingsCubit(
       settings: settings,
       discovery: discovery,
@@ -322,7 +339,7 @@ void main() {
     when(
       () => settings.setValidatorCommand('/workspace/app', 'fvm flutter test'),
     ).thenAnswer((_) async {});
-    final settingsCubit = SettingsCubit(settings, terminal);
+    final settingsCubit = buildSettingsCubit();
     final deviceRunCubit = DeviceRunSettingsCubit(
       settings: settings,
       discovery: discovery,
@@ -385,7 +402,7 @@ void main() {
           value: projectsCubit,
           child: Scaffold(
             body: SettingsView(
-              settingsCubit: SettingsCubit(settings, terminal),
+              settingsCubit: buildSettingsCubit(),
               deviceRunSettingsCubit: DeviceRunSettingsCubit(
                 settings: settings,
                 discovery: discovery,
@@ -401,5 +418,211 @@ void main() {
       findsOneWidget,
     );
     verifyNever(() => settings.getDefaultAgentId(any()));
+  });
+
+  group('context storage section', () {
+    late Directory project;
+
+    setUp(() async {
+      project = await Directory.systemTemp.createTemp('pf_project');
+      storage = ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': project.path},
+        isWindows: false,
+        settings: settings,
+      );
+      when(() => settings.setContextStorageLocation(any(), any()))
+          .thenAnswer((_) async {});
+    });
+
+    tearDown(() async {
+      await project.delete(recursive: true);
+    });
+
+    void writeMarker(String root) {
+      final dir = Directory(p.join(root, '.pickforge'))
+        ..createSync(recursive: true);
+      File(p.join(dir.path, '.gitignore')).writeAsStringSync('*\n');
+    }
+
+    Future<SettingsCubit> pumpStorage(
+      WidgetTester tester, {
+      Future<String?> Function()? pickFolder,
+    }) async {
+      final cubit = buildSettingsCubit();
+      addTearDown(cubit.close);
+      await cubit.load(project.path);
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child ?? const SizedBox.shrink(),
+          ),
+          home: Scaffold(
+            body: BlocProvider<SettingsCubit>.value(
+              value: cubit,
+              child: SingleChildScrollView(
+                child: ContextStorageSettings(
+                  projectRoot: project.path,
+                  pickFolder: pickFolder ?? () async => null,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      return cubit;
+    }
+
+    testWidgets('home is selected for a clean project', (tester) async {
+      await pumpStorage(tester);
+
+      final segmented = tester.widget<SegmentedButton<ContextStorageMode>>(
+        find.byKey(const Key('context-storage-mode')),
+      );
+      expect(segmented.selected, {ContextStorageMode.pickforgeHome});
+      expect(find.text('CONTEXT STORAGE'), findsOneWidget);
+    });
+
+    testWidgets('project-local shows the repo-write warning', (tester) async {
+      // Seed the persisted override so load() resolves straight into
+      // project-local mode — no live switch, no copy dialog.
+      writeMarker(project.path);
+      when(() => settings.getContextStorageLocation(project.path))
+          .thenAnswer((_) async => const ContextStorageLocation.projectLocal());
+
+      await pumpStorage(tester);
+
+      expect(
+        find.text('Writes a .pickforge/ folder into the project repository.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('custom mode shows the chosen folder path', (tester) async {
+      const customPath = '/tmp/pf-custom-fixture';
+      when(() => settings.getContextStorageLocation(project.path)).thenAnswer(
+        (_) async => const ContextStorageLocation.custom(customPath),
+      );
+
+      final cubit = buildSettingsCubit();
+      addTearDown(cubit.close);
+      await cubit.load(project.path);
+      // The override resolves into custom mode at load.
+      expect(cubit.state.contextStorageMode, ContextStorageMode.customPath);
+      expect(cubit.state.contextStorageCustomPath, customPath);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child ?? const SizedBox.shrink(),
+          ),
+          home: Scaffold(
+            body: BlocProvider<SettingsCubit>.value(
+              value: cubit,
+              child: SingleChildScrollView(
+                child: ContextStorageSettings(
+                  projectRoot: project.path,
+                  pickFolder: () async => null,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('context-storage-choose-folder')),
+        findsOneWidget,
+      );
+      expect(find.text(customPath), findsOneWidget);
+    });
+
+    testWidgets('custom path inside the repo shows a warning', (tester) async {
+      final inside = p.join(project.path, 'context-data');
+      when(() => settings.getContextStorageLocation(project.path)).thenAnswer(
+        (_) async => ContextStorageLocation.custom(inside),
+      );
+
+      final cubit = buildSettingsCubit();
+      addTearDown(cubit.close);
+      await cubit.load(project.path);
+      expect(cubit.state.contextStorageMode, ContextStorageMode.customPath);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child ?? const SizedBox.shrink(),
+          ),
+          home: Scaffold(
+            body: BlocProvider<SettingsCubit>.value(
+              value: cubit,
+              child: SingleChildScrollView(
+                child: ContextStorageSettings(
+                  projectRoot: project.path,
+                  pickFolder: () async => null,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('context-storage-custom-inside-repo')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('custom path outside the repo shows no warning',
+        (tester) async {
+      const outside = '/tmp/pf-outside-fixture';
+      when(() => settings.getContextStorageLocation(project.path)).thenAnswer(
+        (_) async => const ContextStorageLocation.custom(outside),
+      );
+
+      final cubit = buildSettingsCubit();
+      addTearDown(cubit.close);
+      await cubit.load(project.path);
+      expect(cubit.state.contextStorageMode, ContextStorageMode.customPath);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child ?? const SizedBox.shrink(),
+          ),
+          home: Scaffold(
+            body: BlocProvider<SettingsCubit>.value(
+              value: cubit,
+              child: SingleChildScrollView(
+                child: ContextStorageSettings(
+                  projectRoot: project.path,
+                  pickFolder: () async => null,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('context-storage-custom-inside-repo')),
+        findsNothing,
+      );
+    });
   });
 }

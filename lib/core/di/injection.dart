@@ -37,7 +37,10 @@ import 'package:pickforge/core/logging/log_file_writer.dart';
 import 'package:pickforge/core/notifications/forge_chime.dart';
 import 'package:pickforge/core/notifications/notification_settings.dart';
 import 'package:pickforge/core/process/binary_detector.dart' hide ProcessRunner;
+import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
+import 'package:pickforge/core/storage/context_storage_migrator.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
@@ -49,6 +52,17 @@ final GetIt getIt = GetIt.instance;
 
 @InjectableInit()
 Future<void> configureDependencies() async {
+  // Registered before getIt.init() so the generated graph can resolve it, yet
+  // built lazily and WITHOUT pulling the Drift database (and its path_provider
+  // lookup) at construction time — the database is only touched when resolve()
+  // actually runs, by which point the app is fully initialised.
+  if (!getIt.isRegistered<ContextStorageService>()) {
+    getIt.registerLazySingleton<ContextStorageService>(
+      () => ContextStorageService(
+        settingsProvider: getIt.get<ProjectSettingsRepository>,
+      ),
+    );
+  }
   await getIt.init();
   if (!getIt.isRegistered<ProcessRunner>()) {
     getIt.registerSingleton<ProcessRunner>(RealProcessRunner());
@@ -220,7 +234,14 @@ abstract class HeadlessChatModule {
 @module
 abstract class SkillsModule {
   @singleton
-  SkillStore get skillStore => SkillStore();
+  SkillStore skillStore(ContextStorageService storage) => SkillStore(storage);
+}
+
+@module
+abstract class StorageModule {
+  @lazySingleton
+  ContextStorageMigrator get contextStorageMigrator =>
+      const ContextStorageMigrator();
 }
 
 @module
@@ -235,12 +256,14 @@ abstract class AgentLauncherModule {
     PickforgeContextWriter contextWriter,
     SkillStore skillStore,
     WidgetContextRenderer widgetRenderer,
+    ContextStorageService storage,
   ) =>
       AgentLauncher(
         agentRegistry: agentRegistry,
         contextWriter: contextWriter,
         skillStore: skillStore,
         widgetRenderer: widgetRenderer,
+        storage: storage,
       );
 }
 

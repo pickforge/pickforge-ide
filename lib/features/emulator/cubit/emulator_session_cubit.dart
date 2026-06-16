@@ -17,9 +17,9 @@ import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
-import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/core/vm_service/vm_service_connection_state.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -35,19 +35,22 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     required this.runController,
     required this.logRepo,
     required this.vmClient,
+    required this.storage,
     this.logsCubit,
     this.ipcServer,
     this.pickHistoryDao,
     this.screenshotCapturer,
-    this.eventLogWriter = const RunSessionEventLogWriter(),
+    RunSessionEventLogWriter? eventLogWriter,
     this.recoveryStore,
     this.shutdownController,
     this.diagnostics,
-  }) : super(const EmulatorSessionState.noDevicePicked()) {
+  })  : eventLogWriter = eventLogWriter ?? RunSessionEventLogWriter(storage),
+        super(const EmulatorSessionState.noDevicePicked()) {
     _bindIpcProjectProviders();
   }
 
   final String projectRoot;
+  final ContextStorageService storage;
   final ProjectSettingsRepository settings;
   final DeviceDiscoveryService discovery;
   final AvdLauncher launcher;
@@ -737,8 +740,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final server = ipcServer;
     if (server == null) return null;
     server.bindActiveRunSession(session);
-    final dir = await PickforgeProjectDirectory.ensure(projectRoot);
-    File('${dir.path}/ipc.sock-path').writeAsStringSync(server.socketPath);
+    final resolved = await storage.ensure(projectRoot);
+    File(resolved.ipcSockPath).writeAsStringSync(server.socketPath);
     return server.socketPath;
   }
 
@@ -754,7 +757,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final server = ipcServer;
     if (server == null) return;
     server.bindActiveRunSession(null);
-    final file = File('$projectRoot/.pickforge/ipc.sock-path');
+    final resolved = await storage.resolve(projectRoot);
+    final file = File(resolved.ipcSockPath);
     if (file.existsSync()) {
       file.deleteSync();
     }
@@ -830,9 +834,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     if (target.platform == flutterWebPlatform) {
       return const {'ok': false, 'path': null, 'reason': 'unsupported_target'};
     }
-    final dir = await PickforgeProjectDirectory.ensure(projectRoot);
+    final resolved = await storage.ensure(projectRoot);
     final path = await capturer.capture(
-      outputDir: dir.path,
+      outputDir: resolved.contextDir,
+      isProjectLocal: resolved.isProjectLocal,
       serial: target.serial,
       platform: target.platform,
     );
@@ -849,9 +854,10 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
     final target = _screenshotTarget();
     if (target == null || target.platform == flutterWebPlatform) return;
     try {
-      final dir = await PickforgeProjectDirectory.ensure(projectRoot);
+      final resolved = await storage.ensure(projectRoot);
       await capturer.capture(
-        outputDir: dir.path,
+        outputDir: resolved.contextDir,
+        isProjectLocal: resolved.isProjectLocal,
         serial: target.serial,
         platform: target.platform,
         outputName: AdbScreenshotCapturer.afterHotReloadOutputName,
@@ -886,7 +892,8 @@ class EmulatorSessionCubit extends Cubit<EmulatorSessionState> {
   }
 
   Future<Map<String, Object?>> _projectContextForIpc() async {
-    final dir = Directory('$projectRoot/.pickforge');
+    final resolved = await storage.resolve(projectRoot);
+    final dir = Directory(resolved.contextDir);
     return {
       'projectRoot': projectRoot,
       'pickforgeDir': dir.path,

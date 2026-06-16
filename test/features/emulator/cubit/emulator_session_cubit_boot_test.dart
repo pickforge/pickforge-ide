@@ -10,6 +10,7 @@ import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -69,6 +70,9 @@ void main() {
         runController: run,
         logRepo: log,
         vmClient: vm,
+        storage: ContextStorageService.forTesting(
+          environment: {'PICKFORGE_HOME': '/tmp/pf-test-home-boot'},
+        ),
       );
   const avd =
       Avd(id: 'Pixel_5_API_34', name: 'Pixel 5 API 34', platform: 'android');

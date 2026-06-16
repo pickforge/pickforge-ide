@@ -44,12 +44,30 @@ calls the `create` callback the UI provides and starts the new session.
 - The pool deliberately knows nothing about agent profiles, transcript files,
   or UI state — those concerns live in `ChatWorkbenchPanel` and the recorder.
 
+## Resolved context storage
+
+Transcripts and run artifacts are written under the project's **resolved context
+directory**, not always `.pickforge/`. `ContextStorageService.resolve` picks the
+location per project (Home by default, or opt-in project-local / custom — see
+`docs/architecture/storage.md`). The embedded PTY exports the resolved layout to
+every shell (and the agents it spawns) via these environment variables:
+
+| Variable | Meaning |
+|---|---|
+| `PICKFORGE_HOME` | The PickForge home (`$PICKFORGE_HOME` or `~/.pickforge`). |
+| `PICKFORGE_PROJECT_ROOT` | Absolute project root for the active terminal. |
+| `PICKFORGE_CONTEXT_DIR` | Absolute resolved context directory. |
+| `PICKFORGE_STORAGE_MODE` | `home`, `project-local`, or `custom`. |
+| `PICKFORGE_IPC_ENDPOINT` | Live IPC socket/pipe — only while a run session is active. |
+
 ## Transcript on disk
 
-Per-chat layout under each project root:
+Per-chat layout under the resolved context directory (shown here for
+project-local mode; in home/custom mode `chats/` is a sibling of `context/`
+under `<base>/projects/<projectId>/`):
 
 ```
-.pickforge/
+<contextDir>/
   chats/
     <chatId>/
       transcript.log         # ANSI-stripped UTF-8, head-truncated at maxBytes
@@ -72,7 +90,7 @@ WidgetPicker selection ──▶ ForgeCubit.forge(chatId) ──▶ AgentLaunche
                                                                 │
                                                                 ▼
                                                   PickforgeContextWriter writes
-                                                  .pickforge/{skill,widget,initial}.md
+                                                  <context dir>/{skill,widget,initial}.md
                                                                 │
                                                                 ▼
                                                   PtySessionPool.sendPrompt(

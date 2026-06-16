@@ -3,7 +3,7 @@ class PromptTemplateVariables {
     required this.agentId,
     required this.skillId,
     required this.projectContextFile,
-    required this.pickforgeDirRelative,
+    required this.pickforgeContextDir,
     required this.skillFilename,
     required this.widgetContextFilename,
     required this.screenshotFilename,
@@ -13,7 +13,7 @@ class PromptTemplateVariables {
   final String agentId;
   final String skillId;
   final String projectContextFile;
-  final String pickforgeDirRelative;
+  final String pickforgeContextDir;
   final String skillFilename;
   final String widgetContextFilename;
   final String? screenshotFilename;
@@ -30,7 +30,7 @@ class PromptTemplateVariables {
         'agent_id': agentId,
         'skill_id': skillId,
         'project_context_file': projectContextFile,
-        'pickforge_dir': pickforgeDirRelative,
+        'pickforge_dir': pickforgeContextDir,
         'skill_file': skillFilename,
         'skill_path': skillPath,
         'widget_context_file': widgetContextFilename,
@@ -75,9 +75,8 @@ class PromptTemplateVariables {
       .map((entry) => '${entry.key + 1}. Read ${entry.value}')
       .join('\n');
 
-  String _relativePath(String filename) => pickforgeDirRelative.isEmpty
-      ? filename
-      : '$pickforgeDirRelative/$filename';
+  String _relativePath(String filename) =>
+      pickforgeContextDir.isEmpty ? filename : '$pickforgeContextDir/$filename';
 }
 
 class PromptTemplateRenderer {

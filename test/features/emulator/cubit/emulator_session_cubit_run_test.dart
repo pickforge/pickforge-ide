@@ -20,6 +20,7 @@ import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -60,6 +61,7 @@ void main() {
   late _Shutdown shutdown;
   late _FakeRunSession session;
   late StreamController<RunSessionEvent> events;
+  late ContextStorageService storage;
 
   setUpAll(() {
     registerFallbackValue(
@@ -89,6 +91,9 @@ void main() {
     shutdown = _Shutdown();
     session = _FakeRunSession();
     events = StreamController<RunSessionEvent>.broadcast();
+    storage = ContextStorageService.forTesting(
+      environment: {'PICKFORGE_HOME': '/tmp/pf-test-home-run'},
+    );
     when(() => session.events).thenAnswer((_) => events.stream);
     when(() => session.appId).thenReturn('app-1');
     when(() => session.vmServiceUri).thenReturn('ws://x/ws');
@@ -152,6 +157,7 @@ void main() {
         logRepo: log,
         vmClient: vm,
         diagnostics: diagnostics,
+        storage: storage,
       );
   const avd =
       Avd(id: 'Pixel_5_API_34', name: 'Pixel 5 API 34', platform: 'android');
@@ -230,6 +236,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       recoveryStore: recovery,
+      storage: storage,
     ),
     act: (c) => c.bootstrap(),
     expect: () => [
@@ -267,6 +274,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       recoveryStore: recovery,
+      storage: storage,
     ),
     act: (c) async {
       await c.bootstrap();
@@ -309,6 +317,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       recoveryStore: recovery,
+      storage: storage,
     ),
     act: (c) async {
       await c.bootstrap();
@@ -595,6 +604,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       recoveryStore: recovery,
+      storage: storage,
     ),
     seed: () =>
         const EmulatorSessionState.idle(avd: avd, serial: 'emulator-5554'),
@@ -897,6 +907,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       shutdownController: shutdown,
+      storage: storage,
     ),
     seed: () => const EmulatorSessionState.idle(
       avd: avd,
@@ -930,6 +941,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       shutdownController: shutdown,
+      storage: storage,
     ),
     seed: () => EmulatorSessionState.idle(
       avd: avd,
@@ -989,6 +1001,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       shutdownController: shutdown,
+      storage: storage,
     ),
     seed: () => const EmulatorSessionState.idle(
       avd: avd,
@@ -1035,6 +1048,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       shutdownController: shutdown,
+      storage: storage,
     ),
     seed: () => const EmulatorSessionState.idle(
       avd: physicalAvd,
@@ -1084,6 +1098,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       shutdownController: shutdown,
+      storage: storage,
     ),
     seed: () => const EmulatorSessionState.idle(
       avd: webAvd,
@@ -1133,6 +1148,7 @@ void main() {
       logRepo: log,
       vmClient: vm,
       shutdownController: shutdown,
+      storage: storage,
     ),
     seed: () => const EmulatorSessionState.idle(
       avd: desktopAvd,
@@ -1206,6 +1222,11 @@ void main() {
         // Windows can keep handles open briefly; cleanup is best-effort.
       }
     });
+    final home = await Directory.systemTemp.createTemp('pf-project-home-');
+    addTearDown(() => home.delete(recursive: true));
+    // Project-local marker pins the legacy <root>/.pickforge layout.
+    Directory('${project.path}/.pickforge').createSync(recursive: true);
+    File('${project.path}/.pickforge/.gitignore').writeAsStringSync('*\n');
     final screenshot = _Screenshot();
 
     when(() => settings.getRunArgs(project.path))
@@ -1221,6 +1242,7 @@ void main() {
     when(
       () => screenshot.capture(
         outputDir: any(named: 'outputDir'),
+        isProjectLocal: any(named: 'isProjectLocal'),
         serial: 'emulator-5554',
         platform: androidEmulatorPlatform,
         outputName: AdbScreenshotCapturer.afterHotReloadOutputName,
@@ -1240,6 +1262,9 @@ void main() {
       logRepo: log,
       vmClient: vm,
       screenshotCapturer: screenshot,
+      storage: ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': home.path},
+      ),
     );
     addTearDown(cubit.close);
     cubit.emit(
@@ -1261,6 +1286,7 @@ void main() {
     await untilCalled(
       () => screenshot.capture(
         outputDir: any(named: 'outputDir'),
+        isProjectLocal: any(named: 'isProjectLocal'),
         serial: any(named: 'serial'),
         platform: any(named: 'platform'),
         outputName: any(named: 'outputName'),
@@ -1270,6 +1296,7 @@ void main() {
     verify(
       () => screenshot.capture(
         outputDir: p.join(project.path, '.pickforge'),
+        isProjectLocal: any(named: 'isProjectLocal'),
         serial: 'emulator-5554',
         platform: androidEmulatorPlatform,
         outputName: AdbScreenshotCapturer.afterHotReloadOutputName,

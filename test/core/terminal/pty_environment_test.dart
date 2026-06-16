@@ -19,4 +19,23 @@ void main() {
     expect(env.containsKey('NO_COLOR'), isFalse);
     expect(env.containsKey('ANSI_COLORS_DISABLED'), isFalse);
   });
+
+  test('preserves PICKFORGE_* discovery vars', () {
+    final env = normalizePtyEnvironment(const {
+      'PICKFORGE_HOME': '/home/.pickforge',
+      'PICKFORGE_PROJECT_ROOT': '/home/dev/app',
+      'PICKFORGE_CONTEXT_DIR': '/home/.pickforge/projects/app-x/context',
+      'PICKFORGE_STORAGE_MODE': 'home',
+      'PICKFORGE_IPC_ENDPOINT': '/run/pickforge.sock',
+    });
+
+    expect(env['PICKFORGE_HOME'], '/home/.pickforge');
+    expect(env['PICKFORGE_PROJECT_ROOT'], '/home/dev/app');
+    expect(
+      env['PICKFORGE_CONTEXT_DIR'],
+      '/home/.pickforge/projects/app-x/context',
+    );
+    expect(env['PICKFORGE_STORAGE_MODE'], 'home');
+    expect(env['PICKFORGE_IPC_ENDPOINT'], '/run/pickforge.sock');
+  });
 }

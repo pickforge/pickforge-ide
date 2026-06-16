@@ -12,6 +12,7 @@ import 'package:pickforge/core/emulator/run_session_controller.dart';
 import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/core/vm_service/vm_service_connection_state.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
@@ -56,6 +57,9 @@ void main() {
         logRepo: _MLog(),
         vmClient: vm,
         diagnostics: diagnostics,
+        storage: ContextStorageService.forTesting(
+          environment: {'PICKFORGE_HOME': '/tmp/pf-test-home-reconnect'},
+        ),
       );
   const avd = Avd(id: 'X', name: 'X', platform: 'android');
   blocTest<EmulatorSessionCubit, EmulatorSessionState>(

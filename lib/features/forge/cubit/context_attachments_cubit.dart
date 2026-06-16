@@ -1,21 +1,38 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/agent/context_attachment.dart';
 import 'package:pickforge/core/agent/context_attachment_policy.dart';
+import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/forge/cubit/context_attachments_state.dart';
 
 class ContextAttachmentsCubit extends Cubit<ContextAttachmentsState> {
   ContextAttachmentsCubit({
     required String projectRoot,
     ContextAttachmentPolicy policy = const ContextAttachmentPolicy(),
+    ContextStorageService? storage,
   })  : _policy = policy,
         _projectRoot = p.normalize(p.absolute(projectRoot)),
-        super(const ContextAttachmentsState());
+        _storage = storage ??
+            (getIt.isRegistered<ContextStorageService>()
+                ? getIt<ContextStorageService>()
+                : ContextStorageService()),
+        super(const ContextAttachmentsState()) {
+    unawaited(_resolveContextDir());
+  }
 
   final String _projectRoot;
   final ContextAttachmentPolicy _policy;
+  final ContextStorageService _storage;
+  String? _contextDir;
+
+  Future<void> _resolveContextDir() async {
+    final resolved = await _storage.resolve(_projectRoot);
+    _contextDir = resolved.contextDir;
+  }
 
   void attach(String path) {
     final absolute = p.normalize(p.absolute(path));
@@ -26,7 +43,11 @@ class ContextAttachmentsCubit extends Cubit<ContextAttachmentsState> {
           r'\',
           '/',
         );
-    final blockedReason = _policy.blockedReason(relative);
+    final blockedReason = _policy.blockedReason(
+      relative,
+      projectRoot: _projectRoot,
+      contextDir: _contextDir,
+    );
     if (blockedReason != null) {
       emit(
         state.copyWith(

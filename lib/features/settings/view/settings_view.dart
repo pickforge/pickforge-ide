@@ -23,6 +23,7 @@ import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/update/update_check_service.dart';
 import 'package:pickforge/features/settings/cubit/device_run_settings_cubit.dart';
 import 'package:pickforge/features/settings/cubit/settings_cubit.dart';
+import 'package:pickforge/features/settings/view/context_storage_settings.dart';
 import 'package:pickforge/features/settings/view/device_run_settings.dart';
 import 'package:pickforge/features/settings/widgets/settings_section.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
@@ -191,6 +192,11 @@ class _SettingsViewState extends State<SettingsView> {
                               command: state.validatorCommand,
                             ),
                           ],
+                        ),
+                        const SizedBox(height: PickforgeSpacing.lg),
+                        ContextStorageSettings(
+                          key: ValueKey('storage-$projectRoot'),
+                          projectRoot: projectRoot,
                         ),
                         const SizedBox(height: PickforgeSpacing.lg),
                         DeviceRunSettings(

@@ -7,6 +7,7 @@ import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
 import 'package:pickforge/core/inspector/inspector_repository.dart';
 import 'package:pickforge/core/inspector/selection_stream.dart';
 import 'package:pickforge/core/inspector/source_snippet_extractor.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/inspector_extensions.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/core/vm_service/vm_service_connection_state.dart';
@@ -116,6 +117,7 @@ class _WidgetPickerScopeState extends State<WidgetPickerScope> {
         InspectorExtensions(service, isolateId: isolateId),
         const SourceSnippetExtractor(),
         projectRoot: widget.projectRoot,
+        storage: getIt<ContextStorageService>(),
       );
       final cubit = WidgetPickerCubit(repo, SelectionStream(repo));
       await _replaceCubit(cubit);

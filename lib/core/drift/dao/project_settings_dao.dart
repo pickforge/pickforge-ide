@@ -94,6 +94,21 @@ class ProjectSettingsDao extends DatabaseAccessor<PickforgeDatabase>
     );
   }
 
+  Future<void> setContextStorage(
+    String projectRoot, {
+    required String? mode,
+    required String? customPath,
+  }) {
+    return (update(projectSettings)
+          ..where((t) => t.projectRoot.equals(projectRoot)))
+        .write(
+      ProjectSettingsCompanion(
+        contextStorageMode: Value(mode),
+        contextStorageCustomPath: Value(customPath),
+      ),
+    );
+  }
+
   Value<String?> _nullableTextValue(Object? value) {
     if (value is Value) {
       return value.present

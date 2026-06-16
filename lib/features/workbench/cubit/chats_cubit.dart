@@ -8,16 +8,19 @@ import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 
 final _log = Logger('chats');
 
 @injectable
 class ChatsCubit extends Cubit<ChatsState> {
-  ChatsCubit(this._repo, this._settings) : super(const ChatsInitial());
+  ChatsCubit(this._repo, this._settings, this._storage)
+      : super(const ChatsInitial());
 
   final ChatsRepository _repo;
   final ProjectSettingsRepository _settings;
+  final ContextStorageService _storage;
 
   Future<void> syncProjects(
     List<String> projectRoots, {
@@ -179,7 +182,8 @@ class ChatsCubit extends Cubit<ChatsState> {
     await _repo.remove(chatId);
     _log.info('chat deleted: $chatId');
     if (root != null) {
-      final dir = Directory(p.join(root, '.pickforge', 'chats', chatId));
+      final resolved = await _storage.resolve(root);
+      final dir = Directory(p.join(resolved.chatsDir, chatId));
       try {
         if (dir.existsSync()) await dir.delete(recursive: true);
       } on FileSystemException catch (e) {

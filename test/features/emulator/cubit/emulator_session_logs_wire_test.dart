@@ -13,6 +13,7 @@ import 'package:pickforge/core/emulator/run_session_log_repository.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -35,6 +36,13 @@ class _VmClient extends Mock implements VmServiceClient {}
 class _RunSession extends Mock implements RunSession {}
 
 class _RecordingEventLogWriter extends RunSessionEventLogWriter {
+  _RecordingEventLogWriter()
+      : super(
+          ContextStorageService.forTesting(
+            environment: {'PICKFORGE_HOME': '/tmp/pf-test-home-logs'},
+          ),
+        );
+
   final events = <RunSessionEvent>[];
   String? projectRoot;
   String? sessionId;
@@ -110,6 +118,9 @@ void main() {
       vmClient: vm,
       logsCubit: logs,
       eventLogWriter: eventLogWriter,
+      storage: ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': '/tmp/pf-test-home-logs'},
+      ),
     );
     addTearDown(cubit.close);
     addTearDown(events.close);

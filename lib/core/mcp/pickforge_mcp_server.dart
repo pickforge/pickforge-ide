@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/emulator/emulator_ipc_server.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 
 typedef PickforgeIpcSender = Future<Map<String, dynamic>> Function(
   String endpoint,
@@ -14,11 +15,17 @@ class PickforgeMcpServer {
   PickforgeMcpServer({
     required String projectRoot,
     PickforgeIpcSender? ipcSender,
+    ContextStorageService? storage,
+    Map<String, String>? environment,
   })  : _projectRoot = projectRoot,
-        _ipcSender = ipcSender ?? const EmulatorIpcClient().send;
+        _ipcSender = ipcSender ?? const EmulatorIpcClient().send,
+        _storage = storage ?? ContextStorageService(),
+        _environment = environment ?? Platform.environment;
 
   final String _projectRoot;
   final PickforgeIpcSender _ipcSender;
+  final ContextStorageService _storage;
+  final Map<String, String> _environment;
   var _nextIpcId = 1;
 
   static const _protocolVersion = '2025-06-18';
@@ -116,7 +123,24 @@ class PickforgeMcpServer {
   }
 
   Future<String?> _readEndpoint() async {
-    final file = File(p.join(_projectRoot, '.pickforge', 'ipc.sock-path'));
+    // 1. An explicit endpoint env var is already the live socket — use it.
+    final explicit = _environment['PICKFORGE_IPC_ENDPOINT']?.trim();
+    if (explicit != null && explicit.isNotEmpty) return explicit;
+
+    // 2. A context dir env var points at the discovery file directly, with no
+    //    need to re-resolve storage.
+    final contextDir = _environment['PICKFORGE_CONTEXT_DIR']?.trim();
+    if (contextDir != null && contextDir.isNotEmpty) {
+      return _readSockFile(p.join(contextDir, 'ipc.sock-path'));
+    }
+
+    // 3. Fall back to resolving the project's storage layout.
+    final resolved = await _storage.resolve(_projectRoot);
+    return _readSockFile(resolved.ipcSockPath);
+  }
+
+  Future<String?> _readSockFile(String path) async {
+    final file = File(path);
     if (!file.existsSync()) return null;
     final endpoint = (await file.readAsString()).trim();
     return endpoint.isEmpty ? null : endpoint;
@@ -169,7 +193,7 @@ const List<Map<String, Object?>> _tools = [
   {
     'name': 'capture_screenshot',
     'title': 'Capture screenshot',
-    'description': 'Capture the active target screen into .pickforge.',
+    'description': 'Capture the active target screen into the context dir.',
     'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
   },
   {
@@ -187,7 +211,7 @@ const List<Map<String, Object?>> _tools = [
   {
     'name': 'get_project_context',
     'title': 'Get project context',
-    'description': 'Return .pickforge context text and screenshot metadata.',
+    'description': 'Return project context text and screenshot metadata.',
     'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
   },
 ];

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/emulator/run_session_recovery_store.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 
 class _Probe extends RunProcessProbe {
   _Probe(this.inspections);
@@ -25,14 +26,28 @@ class _Probe extends RunProcessProbe {
 
 void main() {
   late Directory project;
+  late Directory home;
+  late ContextStorageService storage;
 
   setUp(() async {
     project = await Directory.systemTemp.createTemp('pf-recovery-');
+    home = await Directory.systemTemp.createTemp('pf-recovery-home-');
+    storage = ContextStorageService.forTesting(
+      environment: {'PICKFORGE_HOME': home.path},
+    );
+    // Mark project-local so the existing assertions pin the legacy
+    // <root>/.pickforge/runs layout byte-identically.
+    Directory(p.join(project.path, '.pickforge')).createSync(recursive: true);
+    File(p.join(project.path, '.pickforge', '.gitignore'))
+        .writeAsStringSync('*\n');
   });
 
   tearDown(() async {
     if (project.existsSync()) {
       await project.delete(recursive: true);
+    }
+    if (home.existsSync()) {
+      await home.delete(recursive: true);
     }
   });
 
@@ -51,7 +66,7 @@ void main() {
         cwd: project.path,
       ),
     });
-    final store = RunSessionRecoveryStore(probe: probe);
+    final store = RunSessionRecoveryStore(storage, probe: probe);
 
     await store.persist(metadata);
 
@@ -70,7 +85,7 @@ void main() {
     final probe = _Probe({
       4242: const RunProcessInspection(running: false),
     });
-    final store = RunSessionRecoveryStore(probe: probe);
+    final store = RunSessionRecoveryStore(storage, probe: probe);
     await store.persist(metadata);
 
     expect(await store.findRecoverable(project.path), isNull);
@@ -98,7 +113,7 @@ void main() {
         cwd: project.path,
       ),
     });
-    final store = RunSessionRecoveryStore(probe: probe);
+    final store = RunSessionRecoveryStore(storage, probe: probe);
     await store.persist(metadata);
 
     await store.cleanup(metadata);
@@ -115,12 +130,46 @@ void main() {
         cwd: Directory.systemTemp.path,
       ),
     });
-    final store = RunSessionRecoveryStore(probe: probe);
+    final store = RunSessionRecoveryStore(storage, probe: probe);
     await store.persist(metadata);
 
     await store.cleanup(metadata);
 
     expect(probe.terminated, isEmpty);
+  });
+
+  test('home mode: persist + findRecoverable under <home>/projects/<id>/runs',
+      () async {
+    final clean = await Directory.systemTemp.createTemp('pf-recovery-clean-');
+    addTearDown(() => clean.delete(recursive: true));
+    final metadata = _metadata(clean.path);
+    final probe = _Probe({
+      4242: RunProcessInspection(
+        running: true,
+        commandLine: const [
+          'flutter',
+          'run',
+          '--machine',
+          '-d',
+          'emulator-5554',
+        ],
+        cwd: clean.path,
+      ),
+    });
+    final store = RunSessionRecoveryStore(storage, probe: probe);
+
+    await store.persist(metadata);
+
+    expect(Directory(p.join(clean.path, '.pickforge')).existsSync(), isFalse);
+    final projects = Directory(p.join(home.path, 'projects'));
+    final projectDir = projects.listSync().whereType<Directory>().single;
+    expect(
+      File(
+        p.join(projectDir.path, 'runs', 'session-1', 'session.json'),
+      ).existsSync(),
+      isTrue,
+    );
+    expect(await store.findRecoverable(clean.path), metadata);
   });
 }
 

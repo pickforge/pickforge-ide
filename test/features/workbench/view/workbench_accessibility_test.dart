@@ -13,6 +13,8 @@ import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
+import 'package:pickforge/core/storage/context_storage_migrator.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart';
@@ -213,6 +215,7 @@ Future<void> _pumpInspector(
               _AgentLauncher(),
               _AdbCapturer(),
               PtySessionPool(),
+              ContextStorageService(),
             ),
           ),
         ],
@@ -260,7 +263,12 @@ Future<void> _pumpSettings(
           ),
         ),
         child: SettingsView(
-          settingsCubit: SettingsCubit(settings, terminal),
+          settingsCubit: SettingsCubit(
+            settings,
+            terminal,
+            ContextStorageService(),
+            const ContextStorageMigrator(),
+          ),
           deviceRunSettingsCubit: DeviceRunSettingsCubit(
             settings: settings,
             discovery: discovery,

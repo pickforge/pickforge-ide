@@ -13,6 +13,7 @@ import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/widget_picker/widget_picker.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -79,7 +80,13 @@ void main() {
             providers: [
               BlocProvider.value(value: layoutCubit),
               BlocProvider.value(value: ProjectsCubit(pRepo)),
-              BlocProvider.value(value: ChatsCubit(cRepo, settings)),
+              BlocProvider.value(
+                value: ChatsCubit(
+                  cRepo,
+                  settings,
+                  ContextStorageService.forTesting(),
+                ),
+              ),
               BlocProvider<WidgetPickerCubit>.value(value: picker),
             ],
             child: const AppShellView(),

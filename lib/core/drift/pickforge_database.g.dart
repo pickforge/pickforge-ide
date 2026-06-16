@@ -114,6 +114,18 @@ class $ProjectSettingsTable extends ProjectSettings
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("first_run_celebrated" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _contextStorageModeMeta =
+      const VerificationMeta('contextStorageMode');
+  @override
+  late final GeneratedColumn<String> contextStorageMode =
+      GeneratedColumn<String>('context_storage_mode', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _contextStorageCustomPathMeta =
+      const VerificationMeta('contextStorageCustomPath');
+  @override
+  late final GeneratedColumn<String> contextStorageCustomPath =
+      GeneratedColumn<String>('context_storage_custom_path', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         projectRoot,
@@ -131,7 +143,9 @@ class $ProjectSettingsTable extends ProjectSettings
         emulatorLaunchOptions,
         emulatorIdleShutdown,
         autoBootOnSelect,
-        firstRunCelebrated
+        firstRunCelebrated,
+        contextStorageMode,
+        contextStorageCustomPath
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -235,6 +249,19 @@ class $ProjectSettingsTable extends ProjectSettings
           firstRunCelebrated.isAcceptableOrUnknown(
               data['first_run_celebrated']!, _firstRunCelebratedMeta));
     }
+    if (data.containsKey('context_storage_mode')) {
+      context.handle(
+          _contextStorageModeMeta,
+          contextStorageMode.isAcceptableOrUnknown(
+              data['context_storage_mode']!, _contextStorageModeMeta));
+    }
+    if (data.containsKey('context_storage_custom_path')) {
+      context.handle(
+          _contextStorageCustomPathMeta,
+          contextStorageCustomPath.isAcceptableOrUnknown(
+              data['context_storage_custom_path']!,
+              _contextStorageCustomPathMeta));
+    }
     return context;
   }
 
@@ -278,6 +305,11 @@ class $ProjectSettingsTable extends ProjectSettings
           DriftSqlType.bool, data['${effectivePrefix}auto_boot_on_select'])!,
       firstRunCelebrated: attachedDatabase.typeMapping.read(
           DriftSqlType.bool, data['${effectivePrefix}first_run_celebrated'])!,
+      contextStorageMode: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}context_storage_mode']),
+      contextStorageCustomPath: attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}context_storage_custom_path']),
     );
   }
 
@@ -305,6 +337,8 @@ class ProjectSettingsRow extends DataClass
   final String? emulatorIdleShutdown;
   final bool autoBootOnSelect;
   final bool firstRunCelebrated;
+  final String? contextStorageMode;
+  final String? contextStorageCustomPath;
   const ProjectSettingsRow(
       {required this.projectRoot,
       this.vmServiceUrl,
@@ -321,7 +355,9 @@ class ProjectSettingsRow extends DataClass
       this.emulatorLaunchOptions,
       this.emulatorIdleShutdown,
       required this.autoBootOnSelect,
-      required this.firstRunCelebrated});
+      required this.firstRunCelebrated,
+      this.contextStorageMode,
+      this.contextStorageCustomPath});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -365,6 +401,13 @@ class ProjectSettingsRow extends DataClass
     }
     map['auto_boot_on_select'] = Variable<bool>(autoBootOnSelect);
     map['first_run_celebrated'] = Variable<bool>(firstRunCelebrated);
+    if (!nullToAbsent || contextStorageMode != null) {
+      map['context_storage_mode'] = Variable<String>(contextStorageMode);
+    }
+    if (!nullToAbsent || contextStorageCustomPath != null) {
+      map['context_storage_custom_path'] =
+          Variable<String>(contextStorageCustomPath);
+    }
     return map;
   }
 
@@ -409,6 +452,12 @@ class ProjectSettingsRow extends DataClass
           : Value(emulatorIdleShutdown),
       autoBootOnSelect: Value(autoBootOnSelect),
       firstRunCelebrated: Value(firstRunCelebrated),
+      contextStorageMode: contextStorageMode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(contextStorageMode),
+      contextStorageCustomPath: contextStorageCustomPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(contextStorageCustomPath),
     );
   }
 
@@ -434,6 +483,10 @@ class ProjectSettingsRow extends DataClass
           serializer.fromJson<String?>(json['emulatorIdleShutdown']),
       autoBootOnSelect: serializer.fromJson<bool>(json['autoBootOnSelect']),
       firstRunCelebrated: serializer.fromJson<bool>(json['firstRunCelebrated']),
+      contextStorageMode:
+          serializer.fromJson<String?>(json['contextStorageMode']),
+      contextStorageCustomPath:
+          serializer.fromJson<String?>(json['contextStorageCustomPath']),
     );
   }
   @override
@@ -457,6 +510,9 @@ class ProjectSettingsRow extends DataClass
       'emulatorIdleShutdown': serializer.toJson<String?>(emulatorIdleShutdown),
       'autoBootOnSelect': serializer.toJson<bool>(autoBootOnSelect),
       'firstRunCelebrated': serializer.toJson<bool>(firstRunCelebrated),
+      'contextStorageMode': serializer.toJson<String?>(contextStorageMode),
+      'contextStorageCustomPath':
+          serializer.toJson<String?>(contextStorageCustomPath),
     };
   }
 
@@ -476,7 +532,9 @@ class ProjectSettingsRow extends DataClass
           Value<String?> emulatorLaunchOptions = const Value.absent(),
           Value<String?> emulatorIdleShutdown = const Value.absent(),
           bool? autoBootOnSelect,
-          bool? firstRunCelebrated}) =>
+          bool? firstRunCelebrated,
+          Value<String?> contextStorageMode = const Value.absent(),
+          Value<String?> contextStorageCustomPath = const Value.absent()}) =>
       ProjectSettingsRow(
         projectRoot: projectRoot ?? this.projectRoot,
         vmServiceUrl:
@@ -503,6 +561,12 @@ class ProjectSettingsRow extends DataClass
             : this.emulatorIdleShutdown,
         autoBootOnSelect: autoBootOnSelect ?? this.autoBootOnSelect,
         firstRunCelebrated: firstRunCelebrated ?? this.firstRunCelebrated,
+        contextStorageMode: contextStorageMode.present
+            ? contextStorageMode.value
+            : this.contextStorageMode,
+        contextStorageCustomPath: contextStorageCustomPath.present
+            ? contextStorageCustomPath.value
+            : this.contextStorageCustomPath,
       );
   ProjectSettingsRow copyWithCompanion(ProjectSettingsCompanion data) {
     return ProjectSettingsRow(
@@ -544,6 +608,12 @@ class ProjectSettingsRow extends DataClass
       firstRunCelebrated: data.firstRunCelebrated.present
           ? data.firstRunCelebrated.value
           : this.firstRunCelebrated,
+      contextStorageMode: data.contextStorageMode.present
+          ? data.contextStorageMode.value
+          : this.contextStorageMode,
+      contextStorageCustomPath: data.contextStorageCustomPath.present
+          ? data.contextStorageCustomPath.value
+          : this.contextStorageCustomPath,
     );
   }
 
@@ -565,7 +635,9 @@ class ProjectSettingsRow extends DataClass
           ..write('emulatorLaunchOptions: $emulatorLaunchOptions, ')
           ..write('emulatorIdleShutdown: $emulatorIdleShutdown, ')
           ..write('autoBootOnSelect: $autoBootOnSelect, ')
-          ..write('firstRunCelebrated: $firstRunCelebrated')
+          ..write('firstRunCelebrated: $firstRunCelebrated, ')
+          ..write('contextStorageMode: $contextStorageMode, ')
+          ..write('contextStorageCustomPath: $contextStorageCustomPath')
           ..write(')'))
         .toString();
   }
@@ -587,7 +659,9 @@ class ProjectSettingsRow extends DataClass
       emulatorLaunchOptions,
       emulatorIdleShutdown,
       autoBootOnSelect,
-      firstRunCelebrated);
+      firstRunCelebrated,
+      contextStorageMode,
+      contextStorageCustomPath);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -607,7 +681,9 @@ class ProjectSettingsRow extends DataClass
           other.emulatorLaunchOptions == this.emulatorLaunchOptions &&
           other.emulatorIdleShutdown == this.emulatorIdleShutdown &&
           other.autoBootOnSelect == this.autoBootOnSelect &&
-          other.firstRunCelebrated == this.firstRunCelebrated);
+          other.firstRunCelebrated == this.firstRunCelebrated &&
+          other.contextStorageMode == this.contextStorageMode &&
+          other.contextStorageCustomPath == this.contextStorageCustomPath);
 }
 
 class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
@@ -627,6 +703,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
   final Value<String?> emulatorIdleShutdown;
   final Value<bool> autoBootOnSelect;
   final Value<bool> firstRunCelebrated;
+  final Value<String?> contextStorageMode;
+  final Value<String?> contextStorageCustomPath;
   final Value<int> rowid;
   const ProjectSettingsCompanion({
     this.projectRoot = const Value.absent(),
@@ -645,6 +723,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     this.emulatorIdleShutdown = const Value.absent(),
     this.autoBootOnSelect = const Value.absent(),
     this.firstRunCelebrated = const Value.absent(),
+    this.contextStorageMode = const Value.absent(),
+    this.contextStorageCustomPath = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   ProjectSettingsCompanion.insert({
@@ -664,6 +744,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     this.emulatorIdleShutdown = const Value.absent(),
     this.autoBootOnSelect = const Value.absent(),
     this.firstRunCelebrated = const Value.absent(),
+    this.contextStorageMode = const Value.absent(),
+    this.contextStorageCustomPath = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : projectRoot = Value(projectRoot);
   static Insertable<ProjectSettingsRow> custom({
@@ -683,6 +765,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     Expression<String>? emulatorIdleShutdown,
     Expression<bool>? autoBootOnSelect,
     Expression<bool>? firstRunCelebrated,
+    Expression<String>? contextStorageMode,
+    Expression<String>? contextStorageCustomPath,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -705,6 +789,10 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       if (autoBootOnSelect != null) 'auto_boot_on_select': autoBootOnSelect,
       if (firstRunCelebrated != null)
         'first_run_celebrated': firstRunCelebrated,
+      if (contextStorageMode != null)
+        'context_storage_mode': contextStorageMode,
+      if (contextStorageCustomPath != null)
+        'context_storage_custom_path': contextStorageCustomPath,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -726,6 +814,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       Value<String?>? emulatorIdleShutdown,
       Value<bool>? autoBootOnSelect,
       Value<bool>? firstRunCelebrated,
+      Value<String?>? contextStorageMode,
+      Value<String?>? contextStorageCustomPath,
       Value<int>? rowid}) {
     return ProjectSettingsCompanion(
       projectRoot: projectRoot ?? this.projectRoot,
@@ -745,6 +835,9 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
       emulatorIdleShutdown: emulatorIdleShutdown ?? this.emulatorIdleShutdown,
       autoBootOnSelect: autoBootOnSelect ?? this.autoBootOnSelect,
       firstRunCelebrated: firstRunCelebrated ?? this.firstRunCelebrated,
+      contextStorageMode: contextStorageMode ?? this.contextStorageMode,
+      contextStorageCustomPath:
+          contextStorageCustomPath ?? this.contextStorageCustomPath,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -802,6 +895,13 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
     if (firstRunCelebrated.present) {
       map['first_run_celebrated'] = Variable<bool>(firstRunCelebrated.value);
     }
+    if (contextStorageMode.present) {
+      map['context_storage_mode'] = Variable<String>(contextStorageMode.value);
+    }
+    if (contextStorageCustomPath.present) {
+      map['context_storage_custom_path'] =
+          Variable<String>(contextStorageCustomPath.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -827,6 +927,8 @@ class ProjectSettingsCompanion extends UpdateCompanion<ProjectSettingsRow> {
           ..write('emulatorIdleShutdown: $emulatorIdleShutdown, ')
           ..write('autoBootOnSelect: $autoBootOnSelect, ')
           ..write('firstRunCelebrated: $firstRunCelebrated, ')
+          ..write('contextStorageMode: $contextStorageMode, ')
+          ..write('contextStorageCustomPath: $contextStorageCustomPath, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3620,6 +3722,8 @@ typedef $$ProjectSettingsTableCreateCompanionBuilder = ProjectSettingsCompanion
   Value<String?> emulatorIdleShutdown,
   Value<bool> autoBootOnSelect,
   Value<bool> firstRunCelebrated,
+  Value<String?> contextStorageMode,
+  Value<String?> contextStorageCustomPath,
   Value<int> rowid,
 });
 typedef $$ProjectSettingsTableUpdateCompanionBuilder = ProjectSettingsCompanion
@@ -3640,6 +3744,8 @@ typedef $$ProjectSettingsTableUpdateCompanionBuilder = ProjectSettingsCompanion
   Value<String?> emulatorIdleShutdown,
   Value<bool> autoBootOnSelect,
   Value<bool> firstRunCelebrated,
+  Value<String?> contextStorageMode,
+  Value<String?> contextStorageCustomPath,
   Value<int> rowid,
 });
 
@@ -3706,6 +3812,14 @@ class $$ProjectSettingsTableFilterComposer
 
   ColumnFilters<bool> get firstRunCelebrated => $composableBuilder(
       column: $table.firstRunCelebrated,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get contextStorageMode => $composableBuilder(
+      column: $table.contextStorageMode,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get contextStorageCustomPath => $composableBuilder(
+      column: $table.contextStorageCustomPath,
       builder: (column) => ColumnFilters(column));
 }
 
@@ -3774,6 +3888,14 @@ class $$ProjectSettingsTableOrderingComposer
   ColumnOrderings<bool> get firstRunCelebrated => $composableBuilder(
       column: $table.firstRunCelebrated,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get contextStorageMode => $composableBuilder(
+      column: $table.contextStorageMode,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get contextStorageCustomPath => $composableBuilder(
+      column: $table.contextStorageCustomPath,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$ProjectSettingsTableAnnotationComposer
@@ -3832,6 +3954,12 @@ class $$ProjectSettingsTableAnnotationComposer
 
   GeneratedColumn<bool> get firstRunCelebrated => $composableBuilder(
       column: $table.firstRunCelebrated, builder: (column) => column);
+
+  GeneratedColumn<String> get contextStorageMode => $composableBuilder(
+      column: $table.contextStorageMode, builder: (column) => column);
+
+  GeneratedColumn<String> get contextStorageCustomPath => $composableBuilder(
+      column: $table.contextStorageCustomPath, builder: (column) => column);
 }
 
 class $$ProjectSettingsTableTableManager extends RootTableManager<
@@ -3878,6 +4006,8 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             Value<String?> emulatorIdleShutdown = const Value.absent(),
             Value<bool> autoBootOnSelect = const Value.absent(),
             Value<bool> firstRunCelebrated = const Value.absent(),
+            Value<String?> contextStorageMode = const Value.absent(),
+            Value<String?> contextStorageCustomPath = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ProjectSettingsCompanion(
@@ -3897,6 +4027,8 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             emulatorIdleShutdown: emulatorIdleShutdown,
             autoBootOnSelect: autoBootOnSelect,
             firstRunCelebrated: firstRunCelebrated,
+            contextStorageMode: contextStorageMode,
+            contextStorageCustomPath: contextStorageCustomPath,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -3916,6 +4048,8 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             Value<String?> emulatorIdleShutdown = const Value.absent(),
             Value<bool> autoBootOnSelect = const Value.absent(),
             Value<bool> firstRunCelebrated = const Value.absent(),
+            Value<String?> contextStorageMode = const Value.absent(),
+            Value<String?> contextStorageCustomPath = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               ProjectSettingsCompanion.insert(
@@ -3935,6 +4069,8 @@ class $$ProjectSettingsTableTableManager extends RootTableManager<
             emulatorIdleShutdown: emulatorIdleShutdown,
             autoBootOnSelect: autoBootOnSelect,
             firstRunCelebrated: firstRunCelebrated,
+            contextStorageMode: contextStorageMode,
+            contextStorageCustomPath: contextStorageCustomPath,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

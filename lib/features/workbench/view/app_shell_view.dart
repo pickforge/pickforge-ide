@@ -20,6 +20,7 @@ import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/projects/project_file_opener.dart';
 import 'package:pickforge/core/projects/project_file_tree_scanner.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/run_logs_cubit.dart';
@@ -175,13 +176,16 @@ class _AppShellViewState extends State<AppShellView> {
                         runController: getIt<RunSessionController>(),
                         logRepo: getIt<RunSessionLogRepository>(),
                         vmClient: getIt<VmServiceClient>(),
+                        storage: getIt<ContextStorageService>(),
                         logsCubit: context.read<RunLogsCubit>(),
                         ipcServer: getIt<EmulatorIpcServer>(),
                         diagnostics: getIt<DiagnosticsService>(),
                         pickHistoryDao:
                             getIt<PickforgeDatabase>().pickHistoryDao,
                         screenshotCapturer: getIt<AdbScreenshotCapturer>(),
-                        recoveryStore: const RunSessionRecoveryStore(),
+                        recoveryStore: RunSessionRecoveryStore(
+                          getIt<ContextStorageService>(),
+                        ),
                         shutdownController: getIt<AvdShutdownController>(),
                       );
                       unawaited(cubit.bootstrap());

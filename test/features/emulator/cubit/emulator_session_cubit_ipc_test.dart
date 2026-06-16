@@ -17,6 +17,7 @@ import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/projects/pickforge_project_directory.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/run_args.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/vm_service_client.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -46,6 +47,11 @@ void main() {
   test('runApp binds IPC session and writes sock path', () async {
     final project = await Directory.systemTemp.createTemp('pf-project-');
     addTearDown(() => project.delete(recursive: true));
+    final home = await Directory.systemTemp.createTemp('pf-project-home-');
+    addTearDown(() => home.delete(recursive: true));
+    // Project-local marker pins the legacy <root>/.pickforge/ipc.sock-path.
+    Directory('${project.path}/.pickforge').createSync(recursive: true);
+    File('${project.path}/.pickforge/.gitignore').writeAsStringSync('*\n');
 
     final settings = _Settings();
     final run = _RunController();
@@ -104,6 +110,9 @@ void main() {
       logRepo: logRepo,
       vmClient: vm,
       ipcServer: ipc,
+      storage: ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': home.path},
+      ),
     );
     addTearDown(cubit.close);
     cubit.emit(
@@ -128,6 +137,8 @@ void main() {
           : false, () async {
     final project = await Directory.systemTemp.createTemp('pf-project-');
     addTearDown(() => project.delete(recursive: true));
+    final home = await Directory.systemTemp.createTemp('pf-project-home-');
+    addTearDown(() => home.delete(recursive: true));
     final pickforge = await PickforgeProjectDirectory.ensure(project.path);
     await File('${pickforge.path}/skill-active.md').writeAsString('skill');
     await File('${pickforge.path}/widget-context.md').writeAsString('widget');
@@ -179,6 +190,7 @@ void main() {
     when(
       () => screenshot.capture(
         outputDir: any(named: 'outputDir'),
+        isProjectLocal: any(named: 'isProjectLocal'),
         serial: any(named: 'serial'),
         platform: any(named: 'platform'),
       ),
@@ -197,6 +209,9 @@ void main() {
       ipcServer: ipc,
       pickHistoryDao: db.pickHistoryDao,
       screenshotCapturer: screenshot,
+      storage: ContextStorageService.forTesting(
+        environment: {'PICKFORGE_HOME': home.path},
+      ),
     );
     addTearDown(cubit.close);
     cubit.emit(
@@ -262,6 +277,7 @@ void main() {
     verify(
       () => screenshot.capture(
         outputDir: pickforge.path,
+        isProjectLocal: any(named: 'isProjectLocal'),
         serial: 'emulator-5554',
         platform: androidEmulatorPlatform,
       ),

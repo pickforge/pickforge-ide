@@ -4,16 +4,22 @@ import 'package:path/path.dart' as p;
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/inspector/source_snippet_extractor.dart';
 import 'package:pickforge/core/inspector/widget_tree_decoder.dart';
-import 'package:pickforge/core/projects/pickforge_project_directory.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/vm_service/inspector_extensions.dart';
 
 class InspectorRepository {
-  InspectorRepository(this._ext, this._source, {String? projectRoot})
-      : _projectRoot = projectRoot;
+  InspectorRepository(
+    this._ext,
+    this._source, {
+    String? projectRoot,
+    ContextStorageService? storage,
+  })  : _projectRoot = projectRoot,
+        _storage = storage ?? ContextStorageService();
 
   final InspectorExtensions _ext;
   final SourceSnippetExtractor _source;
   final String? _projectRoot;
+  final ContextStorageService _storage;
 
   Future<void> enableSelectMode() => _ext.setSelectMode(enabled: true);
   Future<void> disableSelectMode() => _ext.setSelectMode(enabled: false);
@@ -71,8 +77,8 @@ class InspectorRepository {
         maxPixelRatio: 2,
       );
       if (bytes.isEmpty) return null;
-      final dir = await PickforgeProjectDirectory.ensure(projectRoot);
-      final file = File(p.join(dir.path, 'screenshot.png'));
+      final resolved = await _storage.ensure(projectRoot);
+      final file = File(p.join(resolved.contextDir, 'screenshot.png'));
       await file.writeAsBytes(bytes, flush: true);
       return file.path;
     } on Object {

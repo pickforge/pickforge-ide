@@ -19,6 +19,7 @@ class ContextAttachmentRenderer {
   Future<String> render({
     required String projectRoot,
     required List<String> paths,
+    String? contextDir,
   }) async {
     if (paths.isEmpty) return '';
     final root = p.normalize(p.absolute(projectRoot));
@@ -52,7 +53,11 @@ class ContextAttachmentRenderer {
       final file = File(absolute);
       if (!file.existsSync()) continue;
       final relative = p.relative(absolute, from: root).replaceAll(r'\', '/');
-      final blockedReason = policy.blockedReason(relative);
+      final blockedReason = policy.blockedReason(
+        relative,
+        projectRoot: root,
+        contextDir: contextDir,
+      );
       if (blockedReason != null) {
         buf
           ..writeln('### `$relative`')

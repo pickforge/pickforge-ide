@@ -6,6 +6,8 @@ import 'package:pickforge/core/agent/prompt_template_renderer.dart';
 import 'package:pickforge/core/agent/widget_context_renderer.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
+import 'package:pickforge/core/storage/resolved_context_directory.dart';
 
 class PreparedContext {
   PreparedContext({required this.written, required this.initialPrompt});
@@ -37,6 +39,7 @@ class AgentLauncher {
     required this.contextWriter,
     required this.skillStore,
     required this.widgetRenderer,
+    required this.storage,
     this.attachmentRenderer = const ContextAttachmentRenderer(),
     this.promptTemplateRenderer = const PromptTemplateRenderer(),
   });
@@ -45,11 +48,13 @@ class AgentLauncher {
   final PickforgeContextWriter contextWriter;
   final SkillStore skillStore;
   final WidgetContextRenderer widgetRenderer;
+  final ContextStorageService storage;
   final ContextAttachmentRenderer attachmentRenderer;
   final PromptTemplateRenderer promptTemplateRenderer;
 
   Future<ForgeContextPreview> buildPreview(ForgeRequest req) async {
     final agent = agentRegistry.get(req.agentId);
+    final resolved = await storage.resolve(req.projectRoot);
     final skillContent = await skillStore.loadSkill(
       req.skill,
       projectRoot: req.projectRoot,
@@ -57,6 +62,7 @@ class AgentLauncher {
     final attachments = await attachmentRenderer.render(
       projectRoot: req.projectRoot,
       paths: req.attachmentPaths,
+      contextDir: resolved.contextDir,
     );
     final customNote = _renderCustomNote(req.customNote);
     final widgetContext =
@@ -75,7 +81,7 @@ class AgentLauncher {
           agentId: req.agentId.value,
           skillId: req.skill.value,
           projectContextFile: agent.projectContextFile,
-          pickforgeDirRelative: '.pickforge',
+          pickforgeContextDir: resolved.contextDir,
           skillFilename: 'skill-active.md',
           widgetContextFilename: 'widget-context.md',
           screenshotFilename:
@@ -84,6 +90,7 @@ class AgentLauncher {
               hasDeviceScreen ? AdbScreenshotCapturer.defaultOutputName : null,
         ),
       ),
+      resolved: resolved,
       enabled: hasDeviceScreen,
     );
 
@@ -123,14 +130,19 @@ class AgentLauncher {
         '${attachmentRenderer.redactor.redact(trimmed)}\n';
   }
 
-  String _withVisualSelfCheck(String prompt, {required bool enabled}) {
+  String _withVisualSelfCheck(
+    String prompt, {
+    required ResolvedContextDirectory resolved,
+    required bool enabled,
+  }) {
     if (!enabled) return prompt;
     return '$prompt\n\n'
-        'Visual self-check: if `.pickforge/ipc.sock-path` exists after editing, '
+        'Visual self-check: if `${resolved.ipcSockPath}` exists after editing, '
         'use the Pickforge IPC `hot_reload` method when possible. Pickforge '
-        'will write `${AdbScreenshotCapturer.afterHotReloadOutputName}` after '
-        'a successful reload; compare it with '
-        '`${AdbScreenshotCapturer.defaultOutputName}` before reporting visual '
-        'success.';
+        'will write '
+        '`${resolved.contextDir}/${AdbScreenshotCapturer.afterHotReloadOutputName}` '
+        'after a successful reload; compare it with '
+        '`${resolved.contextDir}/${AdbScreenshotCapturer.defaultOutputName}` '
+        'before reporting visual success.';
   }
 }

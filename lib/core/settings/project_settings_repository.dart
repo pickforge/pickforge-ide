@@ -7,6 +7,7 @@ import 'package:pickforge/core/emulator/emulator_idle_shutdown_settings.dart';
 import 'package:pickforge/core/emulator/emulator_launch_options.dart';
 import 'package:pickforge/core/settings/emulator_binding.dart';
 import 'package:pickforge/core/settings/run_args.dart';
+import 'package:pickforge/core/storage/context_storage_location.dart';
 
 @lazySingleton
 class ProjectSettingsRepository {
@@ -52,6 +53,32 @@ class ProjectSettingsRepository {
     await _db.projectSettingsDao
         .upsert(projectRoot: projectRoot); // ensure row exists
     await _db.projectSettingsDao.setPaneSizes(projectRoot, json);
+  }
+
+  /// The persisted per-project storage override, or null when the project has
+  /// no explicit choice (resolution then falls back to auto-detect).
+  Future<ContextStorageLocation?> getContextStorageLocation(
+    String projectRoot,
+  ) async {
+    final row = await _db.projectSettingsDao.loadFor(projectRoot);
+    if (row == null) return null;
+    return ContextStorageLocation.fromWire(
+      row.contextStorageMode,
+      customPath: row.contextStorageCustomPath,
+    );
+  }
+
+  Future<void> setContextStorageLocation(
+    String projectRoot,
+    ContextStorageLocation? location,
+  ) async {
+    await _db.projectSettingsDao
+        .upsert(projectRoot: projectRoot); // ensure row exists
+    await _db.projectSettingsDao.setContextStorage(
+      projectRoot,
+      mode: location?.wireName,
+      customPath: location?.customPath,
+    );
   }
 
   Future<EmulatorBinding?> getEmulatorBinding(String projectRoot) async {

@@ -20,6 +20,7 @@ import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/projects/git_status_service.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_cubit.dart';
 import 'package:pickforge/features/emulator/cubit/emulator_session_state.dart';
@@ -67,7 +68,12 @@ const _frameworkWidget = SelectedWidget(
 
 class _RecordingForgeCubit extends ForgeCubit {
   _RecordingForgeCubit()
-      : super(_ThrowingLauncher(), _ThrowingAdb(), _NoopPool());
+      : super(
+          _ThrowingLauncher(),
+          _ThrowingAdb(),
+          _NoopPool(),
+          ContextStorageService(),
+        );
 
   SelectedWidget? forgedSelection;
   String? forgedProjectRoot;
@@ -375,6 +381,11 @@ void main() {
       'forge_panel_skill_source_test_',
     );
     addTearDown(() => tempDir.deleteSync(recursive: true));
+    // The project-local marker keeps storage resolution under
+    // `<root>/.pickforge`, so the override below is the active skills dir.
+    File('${tempDir.path}/.pickforge/.gitignore')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('*\n');
     final overrideDir = Directory(
       '${tempDir.path}/.pickforge/skills',
     )..createSync(recursive: true);

@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:pasteboard/pasteboard.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/pasted_image_store.dart';
 
 typedef ClipboardImageReader = Future<Uint8List?> Function();
@@ -10,12 +11,13 @@ typedef ClipboardTextReader = Future<String?> Function();
 /// mode-aware paste.
 class TerminalPasteController {
   TerminalPasteController({
+    required ContextStorageService storage,
     ClipboardImageReader? readClipboardImage,
     ClipboardTextReader? readClipboardText,
-    PastedImageStore store = const PastedImageStore(),
+    PastedImageStore? store,
   })  : _readImage = readClipboardImage ?? _systemClipboardImage,
         _readText = readClipboardText ?? _systemClipboardText,
-        _store = store;
+        _store = store ?? PastedImageStore(storage);
 
   final ClipboardImageReader _readImage;
   final ClipboardTextReader _readText;

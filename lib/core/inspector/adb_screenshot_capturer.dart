@@ -33,8 +33,13 @@ class AdbScreenshotCapturer {
   final AdbProcessRunner _binaryProcessRunner;
 
   /// Captures a screenshot from the selected Flutter target.
+  ///
+  /// [isProjectLocal] selects how [outputDir] is created: project-local context
+  /// dirs are guarded by the marker rule; home/custom context dirs are created
+  /// plainly.
   Future<String?> capture({
     required String outputDir,
+    bool isProjectLocal = true,
     String? serial,
     String? platform,
     String outputName = defaultOutputName,
@@ -42,6 +47,7 @@ class AdbScreenshotCapturer {
     if (platform == iosSimulatorPlatform) {
       return _captureIosSimulator(
         outputDir: outputDir,
+        isProjectLocal: isProjectLocal,
         simulatorId: serial,
         outputName: outputName,
       );
@@ -49,6 +55,7 @@ class AdbScreenshotCapturer {
     if (platform == flutterDesktopPlatform) {
       return _captureDesktop(
         outputDir: outputDir,
+        isProjectLocal: isProjectLocal,
         targetId: serial,
         outputName: outputName,
       );
@@ -56,6 +63,7 @@ class AdbScreenshotCapturer {
     if (platform == flutterWebPlatform) return null;
     return _captureAndroid(
       outputDir: outputDir,
+      isProjectLocal: isProjectLocal,
       serial: serial,
       outputName: outputName,
     );
@@ -63,6 +71,7 @@ class AdbScreenshotCapturer {
 
   Future<String?> _captureAndroid({
     required String outputDir,
+    required bool isProjectLocal,
     required String outputName,
     String? serial,
   }) async {
@@ -85,7 +94,11 @@ class AdbScreenshotCapturer {
     if (pngBytes is! List<int> || pngBytes.isEmpty) return null;
 
     // 4. Write to file
-    final outputPath = await _outputPath(outputDir, outputName: outputName);
+    final outputPath = await _outputPath(
+      outputDir,
+      isProjectLocal: isProjectLocal,
+      outputName: outputName,
+    );
     await File(outputPath).writeAsBytes(pngBytes);
 
     // 5. Return path
@@ -107,6 +120,7 @@ class AdbScreenshotCapturer {
 
   Future<String?> _captureIosSimulator({
     required String outputDir,
+    required bool isProjectLocal,
     required String outputName,
     String? simulatorId,
   }) async {
@@ -116,7 +130,11 @@ class AdbScreenshotCapturer {
     final id = simulatorId ?? await _firstBootedIosSimulatorId();
     if (id == null) return null;
 
-    final outputPath = await _outputPath(outputDir, outputName: outputName);
+    final outputPath = await _outputPath(
+      outputDir,
+      isProjectLocal: isProjectLocal,
+      outputName: outputName,
+    );
     final result = await _processRunner(
       'xcrun',
       ['simctl', 'io', id, 'screenshot', outputPath],
@@ -157,6 +175,7 @@ class AdbScreenshotCapturer {
 
   Future<String?> _captureDesktop({
     required String outputDir,
+    required bool isProjectLocal,
     required String outputName,
     String? targetId,
   }) async {
@@ -166,7 +185,11 @@ class AdbScreenshotCapturer {
     final id = targetId ?? _hostDesktopTargetId();
     if (id == null) return null;
 
-    final outputPath = await _outputPath(outputDir, outputName: outputName);
+    final outputPath = await _outputPath(
+      outputDir,
+      isProjectLocal: isProjectLocal,
+      outputName: outputName,
+    );
     final result = await _processRunner(
       'flutter',
       ['screenshot', '-d', id, '-o', outputPath],
@@ -187,6 +210,7 @@ class AdbScreenshotCapturer {
 
   Future<String> _outputPath(
     String outputDir, {
+    required bool isProjectLocal,
     required String outputName,
   }) async {
     if (outputName.isEmpty || p.basename(outputName) != outputName) {
@@ -196,7 +220,7 @@ class AdbScreenshotCapturer {
         'must be a file name',
       );
     }
-    final outputDirObj = p.basename(outputDir) == '.pickforge'
+    final outputDirObj = isProjectLocal
         ? await PickforgeProjectDirectory.ensureDirectory(Directory(outputDir))
         : await Directory(outputDir).create(recursive: true);
     return p.join(outputDirObj.path, outputName);

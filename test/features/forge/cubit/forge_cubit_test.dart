@@ -17,6 +17,7 @@ import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
 import 'package:pickforge/features/forge/cubit/forge_cubit.dart';
 import 'package:pickforge/features/forge/cubit/forge_state.dart';
@@ -33,6 +34,7 @@ class _NullAdb extends Fake implements AdbScreenshotCapturer {
   @override
   Future<String?> capture({
     required String outputDir,
+    bool isProjectLocal = true,
     String? serial,
     String? platform,
     String outputName = AdbScreenshotCapturer.defaultOutputName,
@@ -112,12 +114,16 @@ void main() {
   late _MockAdb adb;
   late _MockPool pool;
   late _MockDiagnostics diagnostics;
+  late ContextStorageService storage;
 
   setUp(() {
     launcher = _MockLauncher();
     adb = _MockAdb();
     pool = _MockPool();
     diagnostics = _MockDiagnostics();
+    storage = ContextStorageService.forTesting(
+      environment: {'PICKFORGE_HOME': '/tmp/pf-test-home-forge'},
+    );
     when(() => pool.paste(any(), any())).thenReturn(null);
     when(() => diagnostics.recordLog(any(), any())).thenReturn(null);
     when(() => diagnostics.recordAgentError(any())).thenReturn(null);
@@ -126,7 +132,7 @@ void main() {
 
   tearDown(getIt.reset);
 
-  ForgeCubit buildCubit() => ForgeCubit(launcher, adb, pool);
+  ForgeCubit buildCubit() => ForgeCubit(launcher, adb, pool, storage);
 
   group('ForgeCubit', () {
     test('initial state matches ForgeState.initial()', () {
@@ -167,6 +173,7 @@ void main() {
         when(
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
+            isProjectLocal: any(named: 'isProjectLocal'),
             serial: any(named: 'serial'),
             platform: any(named: 'platform'),
           ),
@@ -196,6 +203,7 @@ void main() {
         when(
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
+            isProjectLocal: any(named: 'isProjectLocal'),
             serial: any(named: 'serial'),
             platform: any(named: 'platform'),
           ),
@@ -239,15 +247,18 @@ void main() {
           .writeAsString('# Edit widget skill');
 
       final pool = _RecordingPool();
+      final storage = ContextStorageService();
       final cubit = ForgeCubit(
         AgentLauncher(
           agentRegistry: AgentProfileRegistry(const [ClaudeCodeProfile()]),
-          contextWriter: PickforgeContextWriter(),
-          skillStore: SkillStore(),
+          contextWriter: PickforgeContextWriter(storage),
+          skillStore: SkillStore(storage),
           widgetRenderer: const WidgetContextRenderer(),
+          storage: storage,
         ),
         _NullAdb(),
         pool,
+        storage,
       );
       addTearDown(cubit.close);
 
@@ -289,37 +300,59 @@ void main() {
       expect(pool.prompt, initialPrompt.readAsStringSync());
     });
 
-    blocTest<ForgeCubit, ForgeState>(
-      'forge forwards selected device serial to adb screenshot',
-      build: () {
-        when(
-          () => adb.capture(
-            outputDir: any(named: 'outputDir'),
-            serial: any(named: 'serial'),
-            platform: any(named: 'platform'),
+    test('forge forwards selected device serial to adb screenshot', () async {
+      final project = await Directory.systemTemp.createTemp('pf_forge_serial_');
+      addTearDown(() => project.delete(recursive: true));
+      Directory(p.join(project.path, '.pickforge')).createSync(recursive: true);
+      File(p.join(project.path, '.pickforge', '.gitignore'))
+          .writeAsStringSync('*\n');
+      final widget = SelectedWidget(
+        node: WidgetNode(
+          id: 'w1',
+          className: 'Text',
+          children: const [],
+          creationLocation: CreationLocation(
+            file: p.join(project.path, 'lib', 'main.dart'),
+            line: 1,
+            column: 1,
           ),
-        ).thenAnswer((_) async => null);
-        when(() => launcher.prepareContext(any()))
-            .thenAnswer((_) async => _stubContext());
-        return buildCubit();
-      },
-      act: (cubit) => cubit.forge(
-        selection: _sampleWidget,
-        projectRoot: '/tmp/test',
+        ),
+        ancestorClasses: const ['MaterialApp'],
+        sourceSnippet: null,
+        screenshotPath: null,
+        adbScreenshotPath: null,
+        propertiesJson: const {},
+      );
+      when(
+        () => adb.capture(
+          outputDir: any(named: 'outputDir'),
+          isProjectLocal: any(named: 'isProjectLocal'),
+          serial: any(named: 'serial'),
+          platform: any(named: 'platform'),
+        ),
+      ).thenAnswer((_) async => null);
+      when(() => launcher.prepareContext(any()))
+          .thenAnswer((_) async => _stubContext());
+      final cubit = ForgeCubit(launcher, adb, pool, ContextStorageService());
+      addTearDown(cubit.close);
+
+      await cubit.forge(
+        selection: widget,
+        projectRoot: project.path,
         chatId: 'chat-1',
         deviceSerial: 'R58M1234567',
         devicePlatform: 'android-physical',
-      ),
-      verify: (_) {
-        verify(
-          () => adb.capture(
-            outputDir: '/tmp/test/.pickforge',
-            serial: 'R58M1234567',
-            platform: 'android-physical',
-          ),
-        ).called(1);
-      },
-    );
+      );
+
+      verify(
+        () => adb.capture(
+          outputDir: p.join(project.path, '.pickforge'),
+          isProjectLocal: any(named: 'isProjectLocal'),
+          serial: 'R58M1234567',
+          platform: 'android-physical',
+        ),
+      ).called(1);
+    });
 
     blocTest<ForgeCubit, ForgeState>(
       'forge failure emits error state and skips paste',
@@ -327,6 +360,7 @@ void main() {
         when(
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
+            isProjectLocal: any(named: 'isProjectLocal'),
             serial: any(named: 'serial'),
             platform: any(named: 'platform'),
           ),
@@ -366,6 +400,7 @@ void main() {
         verifyNever(
           () => adb.capture(
             outputDir: any(named: 'outputDir'),
+            isProjectLocal: any(named: 'isProjectLocal'),
             serial: any(named: 'serial'),
             platform: any(named: 'platform'),
           ),

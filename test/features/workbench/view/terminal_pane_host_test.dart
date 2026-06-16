@@ -8,6 +8,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:pickforge/core/di/injection.dart';
+import 'package:pickforge/core/process/user_shell_environment.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart';
 import 'package:pickforge/core/terminal/pty_process.dart';
 import 'package:pickforge/core/terminal/pty_session.dart';
@@ -42,6 +44,8 @@ class _FakePtyProcess implements PtyProcess {
 }
 
 class _FakeFactory implements PtyProcessFactory {
+  Map<String, String>? lastEnvironment;
+
   @override
   Future<PtyProcess> start({
     required String executable,
@@ -50,20 +54,45 @@ class _FakeFactory implements PtyProcessFactory {
     Map<String, String>? environment,
     int rows = 24,
     int cols = 80,
-  }) async =>
-      _FakePtyProcess();
+  }) async {
+    lastEnvironment = environment;
+    return _FakePtyProcess();
+  }
 }
 
 void main() {
   late Directory projectRoot;
   late TerminalPanesCubit cubit;
+  late _FakeFactory factory;
 
   setUp(() async {
     projectRoot = await Directory.systemTemp.createTemp('pickforge-panes-');
+    // Project-local marker keeps transcript IO under <root>/.pickforge as
+    // before; the temp PICKFORGE_HOME guards the real home from any fallback.
+    Directory('${projectRoot.path}/.pickforge').createSync(recursive: true);
+    File('${projectRoot.path}/.pickforge/.gitignore').writeAsStringSync('*\n');
+    final storageHome =
+        await Directory.systemTemp.createTemp('pickforge-panes-home-');
+    addTearDown(() => storageHome.delete(recursive: true));
     await getIt.reset();
+    factory = _FakeFactory();
     getIt
       ..registerSingleton<PtySessionPool>(PtySessionPool())
-      ..registerSingleton<PtyProcessFactory>(_FakeFactory());
+      ..registerSingleton<PtyProcessFactory>(factory)
+      ..registerSingleton<ContextStorageService>(
+        ContextStorageService.forTesting(
+          environment: {'PICKFORGE_HOME': storageHome.path},
+        ),
+      )
+      // A real UserShellEnvironment would spawn `$SHELL -ilc env`, whose 3s
+      // timeout Timer outlives the fake-async test body. The inherited-env-only
+      // path returns synchronously without spawning anything.
+      ..registerSingleton<UserShellEnvironment>(
+        UserShellEnvironment(
+          environment: const {'PATH': '/usr/bin'},
+          isWindows: true,
+        ),
+      );
     cubit = TerminalPanesCubit(chatId: 'chat-1');
   });
 
@@ -289,6 +318,30 @@ void main() {
     // The spawned session owns a real transcript recorder; drive its close
     // (real IO + fake-zone event delivery) to completion here so tearDown's
     // parkAll has nothing left to await.
+    final parked = getIt<PtySessionPool>().parkAll();
+    await settleRealIo(tester);
+    await tester.runAsync(() => parked);
+  });
+
+  testWidgets('spawned PTY inherits PICKFORGE_* discovery env vars',
+      (tester) async {
+    await pumpPanes(tester);
+    await settleRealIo(tester);
+
+    final env = factory.lastEnvironment;
+    expect(env, isNotNull);
+    expect(env!['PICKFORGE_PROJECT_ROOT'], projectRoot.path);
+    expect(
+      env['PICKFORGE_CONTEXT_DIR'],
+      p.join(projectRoot.path, '.pickforge'),
+    );
+    expect(env['PICKFORGE_STORAGE_MODE'], 'project-local');
+    expect(env.containsKey('PICKFORGE_HOME'), isTrue);
+    // No active run session wrote ipc.sock-path, so the endpoint is omitted.
+    expect(env.containsKey('PICKFORGE_IPC_ENDPOINT'), isFalse);
+    // The base shell env survives the merge.
+    expect(env['PATH'], '/usr/bin');
+
     final parked = getIt<PtySessionPool>().parkAll();
     await settleRealIo(tester);
     await tester.runAsync(() => parked);

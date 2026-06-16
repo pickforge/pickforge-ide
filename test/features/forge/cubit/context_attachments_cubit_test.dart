@@ -2,7 +2,32 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/storage/context_storage_location.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
+import 'package:pickforge/core/storage/resolved_context_directory.dart';
 import 'package:pickforge/features/forge/cubit/context_attachments_cubit.dart';
+
+class _FixedContextStorageService extends ContextStorageService {
+  _FixedContextStorageService(this._contextDir);
+
+  final String _contextDir;
+
+  @override
+  Future<ResolvedContextDirectory> resolve(
+    String projectRoot, {
+    ContextStorageLocation? location,
+  }) async {
+    return ResolvedContextDirectory(
+      projectRoot: projectRoot,
+      projectId: 'test',
+      storageLocation: const ContextStorageLocation.custom('/tmp/store'),
+      contextDir: _contextDir,
+      runsDir: p.join(_contextDir, 'runs'),
+      chatsDir: p.join(_contextDir, 'chats'),
+      isProjectLocal: false,
+    );
+  }
+}
 
 void main() {
   late Directory tmp;
@@ -85,6 +110,24 @@ void main() {
       cubit.state.attachments.map((attachment) => attachment.relativePath),
       ['a.dart', 'b.dart'],
     );
+  });
+
+  test('blocks files under the resolved context dir in home/custom mode',
+      () async {
+    final contextDir = p.join(tmp.path, 'nested-context');
+    final internal = File(p.join(contextDir, 'widget-context.md'));
+    internal.parent.createSync(recursive: true);
+    internal.writeAsStringSync('internal');
+
+    final cubit = ContextAttachmentsCubit(
+      projectRoot: tmp.path,
+      storage: _FixedContextStorageService(contextDir),
+    );
+    await pumpEventQueue();
+    cubit.attach(internal.path);
+
+    expect(cubit.state.attachments, isEmpty);
+    expect(cubit.state.lastBlockedReason, contains('Pickforge local context'));
   });
 
   test('stores trimmed custom note for intentional context', () {

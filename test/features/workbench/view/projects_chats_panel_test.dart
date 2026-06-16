@@ -15,6 +15,7 @@ import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/projects/projects_repository.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 import 'package:pickforge/features/workbench/cubit/projects_cubit.dart';
@@ -207,7 +208,8 @@ Future<_SidebarFixture> _sidebarFixture(
   await sidebarCubit.load();
 
   final projectsCubit = ProjectsCubit(pRepo);
-  final chatsCubit = ChatsCubit(cRepo, projectSettings);
+  final chatsCubit =
+      ChatsCubit(cRepo, projectSettings, ContextStorageService.forTesting());
   await projectsCubit.load();
   await chatsCubit.syncProjects(
     projectRoots,
@@ -278,7 +280,8 @@ void main() {
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
 
     final projectsCubit = ProjectsCubit(pRepo);
-    final chatsCubit = ChatsCubit(cRepo, settings);
+    final chatsCubit =
+        ChatsCubit(cRepo, settings, ContextStorageService.forTesting());
     await projectsCubit.load();
 
     await tester.pumpWidget(
@@ -304,7 +307,8 @@ void main() {
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
     final projectsCubit = ProjectsCubit(pRepo);
-    final chatsCubit = ChatsCubit(cRepo, settings);
+    final chatsCubit =
+        ChatsCubit(cRepo, settings, ContextStorageService.forTesting());
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a']);
     chatsCubit.toggleExpanded('/a');
@@ -341,7 +345,8 @@ void main() {
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
     final projectsCubit = ProjectsCubit(pRepo);
-    final chatsCubit = ChatsCubit(cRepo, settings);
+    final chatsCubit =
+        ChatsCubit(cRepo, settings, ContextStorageService.forTesting());
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a']);
     chatsCubit.toggleExpanded('/a');
@@ -374,7 +379,8 @@ void main() {
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
     final projectsCubit = ProjectsCubit(pRepo);
-    final chatsCubit = ChatsCubit(cRepo, settings);
+    final chatsCubit =
+        ChatsCubit(cRepo, settings, ContextStorageService.forTesting());
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a', '/b']);
     chatsCubit.toggleExpanded('/b');
@@ -413,7 +419,8 @@ void main() {
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
 
     final projectsCubit = ProjectsCubit(pRepo);
-    final chatsCubit = ChatsCubit(cRepo, settings);
+    final chatsCubit =
+        ChatsCubit(cRepo, settings, ContextStorageService.forTesting());
     await projectsCubit.load();
     await chatsCubit.syncProjects(['/a', '/b']);
     chatsCubit.toggleExpanded('/b');

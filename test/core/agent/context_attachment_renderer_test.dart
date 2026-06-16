@@ -68,6 +68,22 @@ void main() {
     expect(rendered, isNot(contains('TOKEN=abc')));
   });
 
+  test('skips files under the active context dir', () async {
+    final contextDir = p.join(tmp.path, 'context');
+    final internal = File(p.join(contextDir, 'widget-context.md'));
+    internal.parent.createSync(recursive: true);
+    internal.writeAsStringSync('internal context');
+
+    final rendered = await const ContextAttachmentRenderer().render(
+      projectRoot: tmp.path,
+      paths: [internal.path],
+      contextDir: contextDir,
+    );
+
+    expect(rendered, contains('Skipped: blocked: Pickforge local context.'));
+    expect(rendered, isNot(contains('internal context')));
+  });
+
   test('skips symbolic links to avoid reading outside project files', () async {
     final outside = File(p.join(tmp.parent.path, 'outside_secret.txt'))
       ..writeAsStringSync('OPENAI_API_KEY=outside');

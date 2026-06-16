@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/chats/chats_repository.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/settings/project_settings_repository.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/features/workbench/cubit/chats_cubit.dart';
 import 'package:pickforge/features/workbench/cubit/chats_state.dart';
 
@@ -32,10 +36,12 @@ ChatRow _row(
 void main() {
   late _MockRepo repo;
   late _MockSettings settings;
+  late ContextStorageService storage;
 
   setUp(() {
     repo = _MockRepo();
     settings = _MockSettings();
+    storage = ContextStorageService.forTesting();
     when(() => settings.getLastChatId(any())).thenAnswer((_) async => null);
     when(() => settings.setLastChatId(any(), any())).thenAnswer((_) async {});
   });
@@ -47,7 +53,7 @@ void main() {
           .thenAnswer((_) async => [_row('c1', '/p', 'Chat 1')]);
       when(() => repo.list('/q')).thenAnswer((_) async => <ChatRow>[]);
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) => c.syncProjects(['/p', '/q'], defaultExpand: '/p'),
     expect: () => [
       isA<ChatsLoading>(),
@@ -70,7 +76,7 @@ void main() {
         ),
       ).thenAnswer((_) async => 'c-new');
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) async {
       await c.syncProjects(['/p']);
       when(() => repo.list('/p'))
@@ -96,7 +102,7 @@ void main() {
         (_) async => [_row('c1', '/p', 'Chat 1'), _row('c2', '/p', 'Chat 2')],
       );
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) async {
       await c.syncProjects(['/p']);
       await c.selectChat('c2');
@@ -118,7 +124,7 @@ void main() {
       );
       when(() => settings.getLastChatId('/p')).thenAnswer((_) async => 'c2');
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) => c.syncProjects(['/p'], defaultExpand: '/p'),
     expect: () => [
       isA<ChatsLoading>(),
@@ -138,7 +144,7 @@ void main() {
       when(() => settings.getLastChatId('/b'))
           .thenAnswer((_) async => 'b-chat');
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) async {
       await c.syncProjects(['/a', '/b'], defaultExpand: '/a');
       await c.syncProjects(['/a', '/b'], defaultExpand: '/b');
@@ -160,7 +166,7 @@ void main() {
           .thenAnswer((_) async => 'a-chat');
       when(() => settings.getLastChatId('/b')).thenAnswer((_) async => null);
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) async {
       await c.syncProjects(['/a', '/b']);
       await c.activateProject('/a');
@@ -178,7 +184,7 @@ void main() {
     setUp: () {
       when(() => repo.list('/p')).thenAnswer((_) async => <ChatRow>[]);
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) async {
       await c.syncProjects(['/p']);
       c.toggleExpanded('/p');
@@ -210,7 +216,7 @@ void main() {
         ];
       });
     },
-    build: () => ChatsCubit(repo, settings),
+    build: () => ChatsCubit(repo, settings, storage),
     act: (c) async {
       await c.syncProjects(['/p']);
       await c.setTaskStatus('c1', ChatTaskStatus.done);
@@ -224,4 +230,53 @@ void main() {
       ),
     ],
   );
+
+  test('remove deletes the transcript under the project-local chats dir',
+      () async {
+    final project = await Directory.systemTemp.createTemp('pf-chats-local-');
+    addTearDown(() => project.delete(recursive: true));
+    final marker = Directory(p.join(project.path, '.pickforge'))
+      ..createSync(recursive: true);
+    File(p.join(marker.path, '.gitignore')).writeAsStringSync('*\n');
+    final transcriptDir = Directory(p.join(marker.path, 'chats', 'c1'))
+      ..createSync(recursive: true);
+    File(p.join(transcriptDir.path, 'transcript.log')).writeAsStringSync('hi');
+
+    when(() => repo.list(project.path))
+        .thenAnswer((_) async => [_row('c1', project.path, 'Chat 1')]);
+    when(() => repo.remove('c1')).thenAnswer((_) async {});
+
+    final cubit =
+        ChatsCubit(repo, settings, ContextStorageService.forTesting());
+    await cubit.syncProjects([project.path]);
+    await cubit.remove('c1');
+
+    expect(transcriptDir.existsSync(), isFalse);
+  });
+
+  test('remove deletes the transcript under the home chats dir', () async {
+    final project = await Directory.systemTemp.createTemp('pf-chats-home-');
+    addTearDown(() => project.delete(recursive: true));
+    final home = await Directory.systemTemp.createTemp('pf-home-');
+    addTearDown(() => home.delete(recursive: true));
+
+    final storage = ContextStorageService.forTesting(
+      environment: {'PICKFORGE_HOME': home.path},
+      isWindows: false,
+    );
+    final resolved = await storage.resolve(project.path);
+    final transcriptDir = Directory(p.join(resolved.chatsDir, 'c1'))
+      ..createSync(recursive: true);
+    File(p.join(transcriptDir.path, 'transcript.log')).writeAsStringSync('hi');
+
+    when(() => repo.list(project.path))
+        .thenAnswer((_) async => [_row('c1', project.path, 'Chat 1')]);
+    when(() => repo.remove('c1')).thenAnswer((_) async {});
+
+    final cubit = ChatsCubit(repo, settings, storage);
+    await cubit.syncProjects([project.path]);
+    await cubit.remove('c1');
+
+    expect(transcriptDir.existsSync(), isFalse);
+  });
 }

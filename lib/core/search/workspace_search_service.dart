@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:pickforge/core/chats/chat_metadata.dart';
 import 'package:pickforge/core/drift/pickforge_database.dart';
 import 'package:pickforge/core/search/search_matcher.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/ansi.dart';
 
 enum WorkspaceSearchResultKind { chat, pickHistory, transcript }
@@ -26,12 +27,13 @@ class WorkspaceSearchResult {
 }
 
 class WorkspaceSearchService {
-  WorkspaceSearchService(this._db);
+  WorkspaceSearchService(this._db, this._storage);
 
   static const _maxHistoryRows = 100;
   static const int _maxTranscriptBytes = 256 * 1024;
 
   final PickforgeDatabase _db;
+  final ContextStorageService _storage;
 
   Future<List<WorkspaceSearchResult>> search(
     String query, {
@@ -100,7 +102,7 @@ class WorkspaceSearchService {
     }
 
     for (final chat in chats) {
-      final match = _transcriptMatch(chat, trimmed);
+      final match = await _transcriptMatch(chat, trimmed);
       if (match == null) continue;
       results.add(
         WorkspaceSearchResult(
@@ -116,12 +118,11 @@ class WorkspaceSearchService {
     return results.take(limit).toList(growable: false);
   }
 
-  String? _transcriptMatch(ChatRow chat, String query) {
+  Future<String?> _transcriptMatch(ChatRow chat, String query) async {
+    final resolved = await _storage.resolve(chat.projectRoot);
     final file = File(
       p.join(
-        chat.projectRoot,
-        '.pickforge',
-        'chats',
+        resolved.chatsDir,
         chat.chatId,
         'transcript.log',
       ),

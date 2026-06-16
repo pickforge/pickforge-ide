@@ -11,11 +11,25 @@ IPC proxy contract.
 
 ## Discovery
 
-When a run session is active, Pickforge writes the IPC endpoint to:
+When a run session is active, Pickforge writes the IPC endpoint to the
+resolved context dir's `ipc.sock-path`. In project-local storage mode this is:
 
 ```text
 <projectRoot>/.pickforge/ipc.sock-path
 ```
+
+In home/custom storage modes the context dir lives outside the project, so the
+adapter resolves the endpoint with the following precedence:
+
+1. `PICKFORGE_IPC_ENDPOINT` — when set and non-empty, it is already the live
+   socket path and is used directly.
+2. `PICKFORGE_CONTEXT_DIR` — when set, read `<that>/ipc.sock-path`.
+3. Otherwise, resolve the project's storage layout and read its
+   `ipc.sock-path`.
+
+Pickforge injects `PICKFORGE_CONTEXT_DIR` (and `PICKFORGE_IPC_ENDPOINT` while a
+run session is active) into every embedded terminal, so adapters launched from
+the embedded shell discover the endpoint without re-resolving storage.
 
 On Linux and macOS the endpoint is a Unix socket:
 
@@ -60,12 +74,12 @@ The MCP-facing method names are:
   `SelectedWidget.toJson()`, or `null`.
 - `list_pickforge_history`: returns recent pick-history rows for the active
   project.
-- `capture_screenshot`: captures the active device screen into `.pickforge/`
-  when the current target supports screenshots.
+- `capture_screenshot`: captures the active device screen into the resolved
+  context directory when the current target supports screenshots.
 - `hot_reload`: delegates to the active `flutter run` session.
 - `get_run_logs`: returns the active project in-memory run log entries.
-- `get_project_context`: returns `.pickforge` text context files plus screenshot
-  file metadata.
+- `get_project_context`: returns the resolved context directory's text context
+  files plus screenshot file metadata.
 
 Compatibility aliases are also supported for existing consumers:
 
@@ -76,7 +90,10 @@ Compatibility aliases are also supported for existing consumers:
 
 ## Bundled Stdio Adapter
 
-Run from a Flutter project root that has an active `.pickforge/ipc.sock-path`:
+Run from a Flutter project root while Pickforge has an active run session. The
+adapter discovers the endpoint via the env-based precedence above
+(`PICKFORGE_IPC_ENDPOINT` → `PICKFORGE_CONTEXT_DIR` → resolved storage), so it
+works regardless of whether the context dir is project-local, Home, or custom:
 
 ```bash
 /path/to/pickforge/scripts/pickforge_mcp.sh
@@ -103,7 +120,9 @@ as MCP text content containing pretty-printed JSON.
 Agent profiles should configure an MCP server whose working directory is the
 Flutter project root. The adapter should:
 
-1. Read `.pickforge/ipc.sock-path`.
+1. Resolve the endpoint via `PICKFORGE_IPC_ENDPOINT`, then `PICKFORGE_CONTEXT_DIR`
+   (`<dir>/ipc.sock-path`), then the project's resolved storage layout. Do not
+   assume a `.pickforge/` directory exists in the project root.
 2. Connect using Unix socket or Windows named pipe transport based on the path.
 3. Expose MCP `tools/list` entries matching the six MCP-facing methods above.
 4. On MCP `tools/call`, forward the tool name to Pickforge as the IPC `method`

@@ -12,6 +12,7 @@ import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/inspector/models.dart';
 import 'package:pickforge/core/skills/models/skill_id.dart';
 import 'package:pickforge/core/skills/skill_store.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 
 class _MockAgentProfile extends Mock implements AgentProfile {}
 
@@ -42,6 +43,7 @@ void main() {
   late _MockWidgetContextRenderer mockWidgetRenderer;
   late _MockAgentProfile mockAgent;
   late PickforgeContextWriter writer;
+  late ContextStorageService storage;
   late AgentLauncher launcher;
 
   setUpAll(() {
@@ -54,7 +56,12 @@ void main() {
     mockSkillStore = _MockSkillStore();
     mockWidgetRenderer = _MockWidgetContextRenderer();
     mockAgent = _MockAgentProfile();
-    writer = PickforgeContextWriter();
+    final home = Directory.systemTemp.createTempSync('agent_launcher_home_');
+    addTearDown(() => home.deleteSync(recursive: true));
+    storage = ContextStorageService.forTesting(
+      environment: {'PICKFORGE_HOME': home.path},
+    );
+    writer = PickforgeContextWriter(storage);
 
     when(() => mockAgentRegistry.get(AgentProfileId.opencode))
         .thenReturn(mockAgent);
@@ -79,6 +86,7 @@ void main() {
       contextWriter: writer,
       skillStore: mockSkillStore,
       widgetRenderer: mockWidgetRenderer,
+      storage: storage,
     );
   });
 
@@ -107,11 +115,12 @@ void main() {
       );
 
       final ctx = await launcher.prepareContext(req);
+      final contextDir = (await storage.resolve(tempDir.path)).contextDir;
 
       expect(
         ctx.initialPrompt,
-        '1. Read .pickforge/skill-active.md\n'
-        '2. Read .pickforge/widget-context.md',
+        '1. Read $contextDir/skill-active.md\n'
+        '2. Read $contextDir/widget-context.md',
       );
       expect(ctx.written.skillPath, endsWith('skill-active.md'));
       expect(ctx.written.widgetContextPath, endsWith('widget-context.md'));
@@ -123,8 +132,8 @@ void main() {
       );
       expect(
         File(ctx.written.initialPromptPath).readAsStringSync(),
-        '1. Read .pickforge/skill-active.md\n'
-        '2. Read .pickforge/widget-context.md',
+        '1. Read $contextDir/skill-active.md\n'
+        '2. Read $contextDir/widget-context.md',
       );
     } finally {
       tempDir.deleteSync(recursive: true);
@@ -201,6 +210,7 @@ void main() {
       );
 
       final ctx = await launcher.prepareContext(req);
+      final contextDir = (await storage.resolve(tempDir.path)).contextDir;
 
       verify(
         () => mockSkillStore.loadPromptTemplate(
@@ -209,10 +219,13 @@ void main() {
           projectRoot: tempDir.path,
         ),
       ).called(1);
-      expect(ctx.initialPrompt, contains('3. Read .pickforge/screenshot.png'));
       expect(
         ctx.initialPrompt,
-        contains('4. Read .pickforge/device-screen.png'),
+        contains('3. Read $contextDir/screenshot.png'),
+      );
+      expect(
+        ctx.initialPrompt,
+        contains('4. Read $contextDir/device-screen.png'),
       );
       expect(ctx.initialPrompt, contains('Visual self-check'));
       expect(

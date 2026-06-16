@@ -65,6 +65,8 @@ import 'package:pickforge/core/settings/project_settings_repository.dart'
 import 'package:pickforge/core/settings/workspace_sidebar_settings.dart'
     as _i141;
 import 'package:pickforge/core/skills/skill_store.dart' as _i895;
+import 'package:pickforge/core/storage/context_storage_migrator.dart' as _i542;
+import 'package:pickforge/core/storage/context_storage_service.dart' as _i204;
 import 'package:pickforge/core/terminal/embedded_terminal_settings.dart'
     as _i195;
 import 'package:pickforge/core/terminal/flutter_pty_adapter.dart' as _i93;
@@ -102,11 +104,12 @@ extension GetItInjectableX on _i174.GetIt {
     final terminalRuntimeModule = _$TerminalRuntimeModule();
     final agentProfileModule = _$AgentProfileModule();
     final headlessChatModule = _$HeadlessChatModule();
-    final skillsModule = _$SkillsModule();
     final agentLauncherModule = _$AgentLauncherModule();
     final binaryDetectorModule = _$BinaryDetectorModule();
+    final storageModule = _$StorageModule();
     final driftDaoModule = _$DriftDaoModule();
     final adbScreenshotModule = _$AdbScreenshotModule();
+    final skillsModule = _$SkillsModule();
     await gh.factoryAsync<_i460.SharedPreferences>(
       () => terminalRuntimeModule.prefs,
       preResolve: true,
@@ -124,16 +127,15 @@ extension GetItInjectableX on _i174.GetIt {
         () => headlessChatModule.codexExecJsonAdapter);
     gh.singleton<_i311.OpenCodeRunJsonAdapter>(
         () => headlessChatModule.openCodeRunJsonAdapter);
-    gh.singleton<_i895.SkillStore>(() => skillsModule.skillStore);
     gh.singleton<_i810.WidgetContextRenderer>(
         () => agentLauncherModule.widgetContextRenderer);
     gh.singleton<_i993.BinaryDetector>(
         () => binaryDetectorModule.binaryDetector);
-    gh.lazySingleton<_i342.PickforgeContextWriter>(
-        () => _i342.PickforgeContextWriter());
     gh.lazySingleton<_i536.AppBootstrap>(() => _i536.AppBootstrap());
     gh.lazySingleton<_i597.HeadlessChatFeatureFlags>(
         () => headlessChatModule.headlessChatFeatureFlags);
+    gh.lazySingleton<_i542.ContextStorageMigrator>(
+        () => storageModule.contextStorageMigrator);
     gh.lazySingleton<_i631.PickforgeDatabase>(() => _i631.PickforgeDatabase());
     gh.lazySingleton<_i680.FlutterRunTargetScanner>(
         () => const _i680.FlutterRunTargetScanner());
@@ -170,6 +172,8 @@ extension GetItInjectableX on _i174.GetIt {
     gh.factory<_i638.WorkbenchLayoutCubit>(
         () => _i638.WorkbenchLayoutCubit(gh<_i459.ProjectSettingsDao>()));
     gh.lazySingleton<_i602.PtyProcessFactory>(() => _i93.FlutterPtyAdapter());
+    gh.lazySingleton<_i342.PickforgeContextWriter>(
+        () => _i342.PickforgeContextWriter(gh<_i204.ContextStorageService>()));
     gh.lazySingleton<_i413.AgentModelSettingsRepository>(() =>
         _i413.AgentModelSettingsRepository(gh<_i460.SharedPreferences>()));
     gh.lazySingleton<_i735.LogSettingsRepository>(
@@ -193,7 +197,16 @@ extension GetItInjectableX on _i174.GetIt {
     gh.factory<_i154.ChatsCubit>(() => _i154.ChatsCubit(
           gh<_i779.ChatsRepository>(),
           gh<_i340.ProjectSettingsRepository>(),
+          gh<_i204.ContextStorageService>(),
         ));
+    gh.factory<_i18.SettingsCubit>(() => _i18.SettingsCubit(
+          gh<_i340.ProjectSettingsRepository>(),
+          gh<_i195.EmbeddedTerminalSettingsRepository>(),
+          gh<_i204.ContextStorageService>(),
+          gh<_i542.ContextStorageMigrator>(),
+        ));
+    gh.singleton<_i895.SkillStore>(
+        () => skillsModule.skillStore(gh<_i204.ContextStorageService>()));
     gh.factory<_i132.DevicePickerCubit>(
         () => _i132.DevicePickerCubit(gh<_i577.DeviceDiscoveryService>()));
     gh.factory<_i998.DeviceRunSettingsCubit>(() => _i998.DeviceRunSettingsCubit(
@@ -216,16 +229,6 @@ extension GetItInjectableX on _i174.GetIt {
               gh<_i788.ProcessRunner>(),
               gh<_i519.HeadlessChatAdapterRegistry>(),
             ));
-    gh.factory<_i18.SettingsCubit>(() => _i18.SettingsCubit(
-          gh<_i340.ProjectSettingsRepository>(),
-          gh<_i195.EmbeddedTerminalSettingsRepository>(),
-        ));
-    gh.singleton<_i683.AgentLauncher>(() => agentLauncherModule.agentLauncher(
-          gh<_i360.AgentProfileRegistry>(),
-          gh<_i342.PickforgeContextWriter>(),
-          gh<_i895.SkillStore>(),
-          gh<_i810.WidgetContextRenderer>(),
-        ));
     gh.lazySingleton<_i364.ChatPromptDispatcher>(
         () => headlessChatModule.chatPromptDispatcher(
               gh<_i685.PtySessionPool>(),
@@ -234,10 +237,18 @@ extension GetItInjectableX on _i174.GetIt {
             ));
     gh.factory<_i882.ProjectsCubit>(
         () => _i882.ProjectsCubit(gh<_i613.ProjectsRepository>()));
+    gh.singleton<_i683.AgentLauncher>(() => agentLauncherModule.agentLauncher(
+          gh<_i360.AgentProfileRegistry>(),
+          gh<_i342.PickforgeContextWriter>(),
+          gh<_i895.SkillStore>(),
+          gh<_i810.WidgetContextRenderer>(),
+          gh<_i204.ContextStorageService>(),
+        ));
     gh.factory<_i888.ForgeCubit>(() => _i888.ForgeCubit(
           gh<_i683.AgentLauncher>(),
           gh<_i704.AdbScreenshotCapturer>(),
           gh<_i685.PtySessionPool>(),
+          gh<_i204.ContextStorageService>(),
         ));
     return this;
   }
@@ -249,12 +260,14 @@ class _$AgentProfileModule extends _i74.AgentProfileModule {}
 
 class _$HeadlessChatModule extends _i74.HeadlessChatModule {}
 
-class _$SkillsModule extends _i74.SkillsModule {}
-
 class _$AgentLauncherModule extends _i74.AgentLauncherModule {}
 
 class _$BinaryDetectorModule extends _i74.BinaryDetectorModule {}
 
+class _$StorageModule extends _i74.StorageModule {}
+
 class _$DriftDaoModule extends _i74.DriftDaoModule {}
 
 class _$AdbScreenshotModule extends _i74.AdbScreenshotModule {}
+
+class _$SkillsModule extends _i74.SkillsModule {}

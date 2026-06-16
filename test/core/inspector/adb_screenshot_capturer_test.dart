@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:pickforge/core/emulator/device_models.dart';
 import 'package:pickforge/core/inspector/adb_screenshot_capturer.dart';
 import 'package:pickforge/core/process/binary_detector.dart';
@@ -18,7 +19,10 @@ void main() {
 
       final tempDir = Directory.systemTemp.createTempSync('adb_test_');
       try {
-        final result = await capturer.capture(outputDir: tempDir.path);
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          isProjectLocal: false,
+        );
         expect(result, isNull);
       } finally {
         tempDir.deleteSync(recursive: true);
@@ -47,7 +51,10 @@ void main() {
 
       final tempDir = Directory.systemTemp.createTempSync('adb_test_');
       try {
-        final result = await capturer.capture(outputDir: tempDir.path);
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          isProjectLocal: false,
+        );
         expect(result, isNull);
       } finally {
         tempDir.deleteSync(recursive: true);
@@ -81,7 +88,10 @@ void main() {
 
       final tempDir = Directory.systemTemp.createTempSync('adb_test_');
       try {
-        final result = await capturer.capture(outputDir: tempDir.path);
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          isProjectLocal: false,
+        );
 
         expect(result, isNotNull);
         expect(result, contains('device-screen.png'));
@@ -135,7 +145,10 @@ void main() {
 
       final tempDir = Directory.systemTemp.createTempSync('adb_test_');
       try {
-        final result = await capturer.capture(outputDir: tempDir.path);
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          isProjectLocal: false,
+        );
 
         expect(binaryCalled, isTrue);
         expect(File(result!).readAsBytesSync(), pngHeader);
@@ -172,6 +185,7 @@ void main() {
       try {
         final result = await capturer.capture(
           outputDir: tempDir.path,
+          isProjectLocal: false,
           outputName: AdbScreenshotCapturer.afterHotReloadOutputName,
         );
 
@@ -211,6 +225,7 @@ void main() {
       try {
         final result = await capturer.capture(
           outputDir: tempDir.path,
+          isProjectLocal: false,
           serial: 'R58M1234567',
         );
 
@@ -256,7 +271,10 @@ void main() {
 
       final tempDir = Directory.systemTemp.createTempSync('adb_test_');
       try {
-        final result = await capturer.capture(outputDir: tempDir.path);
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          isProjectLocal: false,
+        );
 
         expect(result, isNotNull);
         expect(
@@ -293,6 +311,7 @@ void main() {
       try {
         final result = await capturer.capture(
           outputDir: tempDir.path,
+          isProjectLocal: false,
           serial: 'A1B2C3D4-0000-1111-2222-333344445555',
           platform: iosSimulatorPlatform,
         );
@@ -336,6 +355,7 @@ void main() {
       try {
         final result = await capturer.capture(
           outputDir: tempDir.path,
+          isProjectLocal: false,
           serial: flutterWebChromeId,
           platform: flutterWebPlatform,
         );
@@ -369,6 +389,7 @@ void main() {
       try {
         final result = await capturer.capture(
           outputDir: tempDir.path,
+          isProjectLocal: false,
           serial: flutterLinuxDeviceId,
           platform: flutterDesktopPlatform,
         );
@@ -424,10 +445,89 @@ void main() {
 
       final tempDir = Directory.systemTemp.createTempSync('adb_test_');
       try {
-        final result = await capturer.capture(outputDir: tempDir.path);
+        final result = await capturer.capture(
+          outputDir: tempDir.path,
+          isProjectLocal: false,
+        );
         expect(result, isNull);
       } finally {
         tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    test(
+        'parity: project-local context dir is guarded by the .pickforge marker',
+        () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        if (args.contains('devices')) {
+          return ProcessResult(
+            0,
+            0,
+            'List of devices attached\nemulator-5554\tdevice\n',
+            '',
+          );
+        }
+        if (args.contains('screencap')) {
+          return ProcessResult(0, 0, pngHeader, '');
+        }
+        return ProcessResult(0, 0, '/usr/bin/adb', '');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(detector, processRunner: runner);
+
+      final project = Directory.systemTemp.createTempSync('adb_pl_');
+      try {
+        final contextDir = p.join(project.path, '.pickforge');
+        final result = await capturer.capture(outputDir: contextDir);
+
+        expect(result, p.join(contextDir, 'device-screen.png'));
+        expect(File(result!).readAsBytesSync(), pngHeader);
+        expect(
+          File(p.join(contextDir, '.gitignore')).readAsStringSync(),
+          '*\n',
+        );
+      } finally {
+        project.deleteSync(recursive: true);
+      }
+    });
+
+    test('home mode: non-project-local context dir writes no marker', () async {
+      final pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+      Future<ProcessResult> runner(String executable, List<String> args) async {
+        if (args.contains('devices')) {
+          return ProcessResult(
+            0,
+            0,
+            'List of devices attached\nemulator-5554\tdevice\n',
+            '',
+          );
+        }
+        if (args.contains('screencap')) {
+          return ProcessResult(0, 0, pngHeader, '');
+        }
+        return ProcessResult(0, 0, '/usr/bin/adb', '');
+      }
+
+      final detector = BinaryDetector(processRunner: runner);
+      final capturer = AdbScreenshotCapturer(detector, processRunner: runner);
+
+      final home = Directory.systemTemp.createTempSync('adb_home_');
+      try {
+        final contextDir = p.join(home.path, 'projects', 'proj', 'context');
+        final result = await capturer.capture(
+          outputDir: contextDir,
+          isProjectLocal: false,
+        );
+
+        expect(result, p.join(contextDir, 'device-screen.png'));
+        expect(File(result!).readAsBytesSync(), pngHeader);
+        expect(File(p.join(contextDir, '.gitignore')).existsSync(), isFalse);
+      } finally {
+        home.deleteSync(recursive: true);
       }
     });
   });

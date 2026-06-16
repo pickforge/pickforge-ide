@@ -2,12 +2,28 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:pickforge/core/storage/context_storage_service.dart';
 import 'package:pickforge/core/terminal/transcript_replayer.dart';
 
 void main() {
   late Directory tmp;
-  setUp(() async => tmp = await Directory.systemTemp.createTemp('pf_replay'));
-  tearDown(() async => tmp.delete(recursive: true));
+  late Directory home;
+  late ContextStorageService storage;
+
+  setUp(() async {
+    tmp = await Directory.systemTemp.createTemp('pf_replay');
+    home = await Directory.systemTemp.createTemp('pf_replay_home');
+    storage = ContextStorageService.forTesting(
+      environment: {'PICKFORGE_HOME': home.path},
+    );
+    Directory(p.join(tmp.path, '.pickforge')).createSync(recursive: true);
+    File(p.join(tmp.path, '.pickforge', '.gitignore')).writeAsStringSync('*\n');
+  });
+
+  tearDown(() async {
+    await tmp.delete(recursive: true);
+    await home.delete(recursive: true);
+  });
 
   test('replay yields chunks of recorded text', () async {
     final dir = Directory(p.join(tmp.path, '.pickforge', 'chats', 'c1'))
@@ -16,6 +32,7 @@ void main() {
     final r = TranscriptReplayer(
       projectRoot: tmp.path,
       chatId: 'c1',
+      storage: storage,
       chunkBytes: 4,
     );
     final chunks = <String>[];
@@ -27,7 +44,11 @@ void main() {
   });
 
   test('replay returns empty stream for missing transcript', () async {
-    final r = TranscriptReplayer(projectRoot: tmp.path, chatId: 'missing');
+    final r = TranscriptReplayer(
+      projectRoot: tmp.path,
+      chatId: 'missing',
+      storage: storage,
+    );
     expect(await r.replay().toList(), isEmpty);
   });
 
@@ -39,7 +60,11 @@ void main() {
       raw,
     );
 
-    final r = TranscriptReplayer(projectRoot: tmp.path, chatId: 'stale');
+    final r = TranscriptReplayer(
+      projectRoot: tmp.path,
+      chatId: 'stale',
+      storage: storage,
+    );
     final chunks = <String>[];
     await for (final ch in r.replay()) {
       chunks.add(String.fromCharCodes(ch));
@@ -59,6 +84,7 @@ void main() {
     final r = TranscriptReplayer(
       projectRoot: tmp.path,
       chatId: 'large',
+      storage: storage,
       chunkBytes: chunkBytes,
     );
     final stopwatch = Stopwatch()..start();
@@ -86,5 +112,28 @@ void main() {
     expect(chunkCount, (size / chunkBytes).ceil());
     expect(checksum, expectedChecksum);
     expect(stopwatch.elapsedMilliseconds, lessThan(2000));
+  });
+
+  test('home mode: clean project replays from <home>/projects/<id>/chats',
+      () async {
+    final clean = await Directory.systemTemp.createTemp('pf_replay_clean');
+    addTearDown(() => clean.delete(recursive: true));
+    final resolved = await storage.resolve(clean.path);
+    final dir = Directory(p.join(resolved.chatsDir, 'c_home'))
+      ..createSync(recursive: true);
+    File(p.join(dir.path, 'transcript.log')).writeAsStringSync('home replay');
+
+    final r = TranscriptReplayer(
+      projectRoot: clean.path,
+      chatId: 'c_home',
+      storage: storage,
+    );
+    final chunks = <String>[];
+    await for (final ch in r.replay()) {
+      chunks.add(String.fromCharCodes(ch));
+    }
+
+    expect(chunks.join(), 'home replay');
+    expect(Directory(p.join(clean.path, '.pickforge')).existsSync(), isFalse);
   });
 }

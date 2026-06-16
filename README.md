@@ -39,9 +39,15 @@ Pick a widget, forge its context to the agent, let it edit, hot-reload, pick the
   <img src="assets/branding/pickforge-workbench-mock.svg" alt="PICKFORGE · WORKBENCH — emulator with picked widget, widget context, agent terminal, and the pick-forge-edit-reload loop" width="900">
 </p>
 
-## What it writes to your project
+## Where it writes your context
 
-Only a single `.pickforge/` folder at your project root:
+By default PickForge keeps each project's chats, runs, screenshots, and context
+files in your **PickForge home** (`~/.pickforge/projects/<projectId>/`), outside
+the repo — so a fresh clone has nothing extra to ignore. Per project you can
+switch to **project-local** storage (a `.pickforge/` folder in the repo) or a
+**custom** folder, under **Settings → Context storage**.
+
+When stored project-local, the layout at your project root is:
 
 ```
 .pickforge/
@@ -54,7 +60,15 @@ Only a single `.pickforge/` folder at your project root:
   run-log.json         # session metadata
 ```
 
-PickForge **never** modifies your `CLAUDE.md`, `AGENTS.md`, or any of your own files. If `.pickforge/` already exists and wasn't created by PickForge, it refuses to proceed.
+In home/custom mode the same files live under
+`~/.pickforge/projects/<projectId>/` (or your chosen folder) instead — so
+transcripts are no longer always under `.pickforge`.
+
+PickForge **never** modifies your `CLAUDE.md`, `AGENTS.md`, or any of your own
+files. The repo-write `.pickforge/` marker rule applies to project-local mode
+only: if a `.pickforge/` already exists there and wasn't created by PickForge,
+it refuses to proceed. Switching storage modes offers to **copy** existing data
+to the new location and always leaves the originals in place.
 
 Detailed storage, retention, and migration-backup policy lives in [`docs/architecture/storage.md`](docs/architecture/storage.md).
 
@@ -64,7 +78,7 @@ Detailed storage, retention, and migration-backup policy lives in [`docs/archite
 | --- | --- |
 | Target platforms (for the app under debug) | Android emulator (MVP). iOS Simulator, Flutter web, and Flutter desktop are planned. |
 | Agents | Claude Code, Codex, OpenCode. More planned. |
-| Terminal | Embedded `xterm` + PTY — no external terminal apps required. Per-chat scrollback persists in `.pickforge/chats/<chatId>/transcript.log`. |
+| Terminal | Embedded `xterm` + PTY — no external terminal apps required. Per-chat scrollback persists under the project's resolved context storage (project-local example: `.pickforge/chats/<chatId>/transcript.log`). |
 
 ## Branding
 

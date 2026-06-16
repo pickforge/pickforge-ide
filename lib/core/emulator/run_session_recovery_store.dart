@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:equatable/equatable.dart';
 import 'package:path/path.dart' as p;
-import 'package:pickforge/core/projects/pickforge_project_directory.dart';
+import 'package:pickforge/core/storage/context_storage_service.dart';
 
 class RunSessionRecoveryMetadata extends Equatable {
   const RunSessionRecoveryMetadata({
@@ -172,8 +172,12 @@ class RunProcessProbe {
 }
 
 class RunSessionRecoveryStore {
-  const RunSessionRecoveryStore({this.probe = const RunProcessProbe()});
+  RunSessionRecoveryStore(
+    this._storage, {
+    this.probe = const RunProcessProbe(),
+  });
 
+  final ContextStorageService _storage;
   final RunProcessProbe probe;
 
   Future<void> persist(RunSessionRecoveryMetadata metadata) async {
@@ -185,7 +189,8 @@ class RunSessionRecoveryStore {
   Future<RunSessionRecoveryMetadata?> findRecoverable(
     String projectRoot,
   ) async {
-    final runs = Directory(p.join(projectRoot, '.pickforge', 'runs'));
+    final resolved = await _storage.resolve(projectRoot);
+    final runs = Directory(resolved.runsDir);
     if (!runs.existsSync()) return null;
     final candidates = <RunSessionRecoveryMetadata>[];
     await for (final entity in runs.list(followLinks: false)) {
@@ -233,8 +238,8 @@ class RunSessionRecoveryStore {
   }
 
   Future<File> _fileFor(String projectRoot, String sessionId) async {
-    final dir = await PickforgeProjectDirectory.ensure(projectRoot);
-    return File(p.join(dir.path, 'runs', sessionId, 'session.json'));
+    final resolved = await _storage.ensure(projectRoot);
+    return File(p.join(resolved.runsDir, sessionId, 'session.json'));
   }
 
   bool _matches(

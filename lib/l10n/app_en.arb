@@ -283,6 +283,71 @@
   "settingsUpdateCheckEnabled": "Check for updates",
   "settingsPrivacy": "Privacy",
   "settingsTelemetryEnabled": "Share anonymous diagnostics",
+  "settingsContextStorage": "Context storage",
+  "settingsContextStorageHelper": "Where this project's chats, runs, and context files are written.",
+  "settingsContextStorageLocation": "Location",
+  "settingsContextStorageHome": "Home",
+  "settingsContextStorageProjectLocal": "Project-local",
+  "settingsContextStorageCustom": "Custom",
+  "settingsContextStorageHomeHint": "Stored under your PickForge home, outside the project. Default.",
+  "settingsContextStorageProjectLocalWarning": "Writes a .pickforge/ folder into the project repository.",
+  "settingsContextStorageCustomInsideRepoWarning": "This folder is inside the project repository. Context data won't be ignored by git unless you add it yourself.",
+  "settingsContextStorageCustomFolder": "Folder",
+  "settingsContextStorageChooseFolder": "Choose folder…",
+  "settingsContextStorageNoCustomFolder": "No folder selected yet.",
+  "settingsContextStorageResolvedDir": "Context directory",
+  "settingsContextStorageCopyTitle": "Copy existing data?",
+  "settingsContextStorageCopyMessage": "{summary} can be copied to the new location. Originals stay where they are.",
+  "@settingsContextStorageCopyMessage": {
+    "placeholders": {
+      "summary": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsContextStorageCopyChats": "{count, plural, one{{count} chat} other{{count} chats}}",
+  "@settingsContextStorageCopyChats": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsContextStorageCopyRuns": "{count, plural, one{{count} run} other{{count} runs}}",
+  "@settingsContextStorageCopyRuns": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsContextStorageCopyPastes": "{count, plural, one{{count} paste} other{{count} pastes}}",
+  "@settingsContextStorageCopyPastes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsContextStorageCopySkills": "{count, plural, one{{count} skill} other{{count} skills}}",
+  "@settingsContextStorageCopySkills": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsContextStorageCopyPromptTemplates": "{count, plural, one{{count} prompt template} other{{count} prompt templates}}",
+  "@settingsContextStorageCopyPromptTemplates": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsContextStorageCopyContextFiles": "context files",
+  "settingsContextStorageCopyConfirm": "Copy",
+  "settingsContextStorageCopySkip": "Don't copy",
   "terminalCopy": "Copy",
   "terminalPaste": "Paste",
   "terminalQuickLaunch": "Quick launch",

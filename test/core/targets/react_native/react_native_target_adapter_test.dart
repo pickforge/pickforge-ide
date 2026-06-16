@@ -127,9 +127,9 @@ void main() {
       // Capabilities grow as each slice lands its backing infrastructure.
       expect(can(TargetCapability.detect), isTrue);
       expect(can(TargetCapability.streamLogs), isTrue); // 4B Metro logs
-      expect(can(TargetCapability.launch), isFalse);
-      expect(can(TargetCapability.stop), isFalse);
-      expect(can(TargetCapability.captureScreenshot), isFalse);
+      expect(can(TargetCapability.launch), isTrue); // 4C ADB launch
+      expect(can(TargetCapability.stop), isTrue); // 4C
+      expect(can(TargetCapability.captureScreenshot), isTrue); // 4C screenshot
       expect(can(TargetCapability.inspectSelection), isFalse);
       // Never declared for the RN MVP (roadmap STOP: no exact source mapping).
       expect(can(TargetCapability.mapSelectionToSource), isFalse);

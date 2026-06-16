@@ -33,6 +33,10 @@ class ReactNativeTargetAdapter implements TargetAdapter {
         TargetCapability.detect,
         // 4B: Metro run + log streaming infrastructure.
         TargetCapability.streamLogs,
+        // 4C: ADB launch / stop / screenshot infrastructure.
+        TargetCapability.launch,
+        TargetCapability.stop,
+        TargetCapability.captureScreenshot,
       });
 
   /// Claims a project only when it is React Native AND has an `android/`

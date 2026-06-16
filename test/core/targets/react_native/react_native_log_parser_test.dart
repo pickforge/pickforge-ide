@@ -45,4 +45,49 @@ void main() {
     expect(parser.metroEvent('   '), isNull);
     expect(parser.metroEvent(''), isNull);
   });
+
+  group('logcat', () {
+    test('classifies threadtime priority letters', () {
+      ({String line, LogLevel level, String source}) parse(String l) =>
+          _log(parser.logcatEvent(l)!);
+
+      expect(
+        parse('06-16 01:23:45.678  1234  5678 E ReactNativeJS: crashed').level,
+        LogLevel.error,
+      );
+      expect(
+        parse('06-16 01:23:45.678  1234  5678 F libc: fatal signal').level,
+        LogLevel.error,
+      );
+      expect(
+        parse('06-16 01:23:45.678  1234  5678 W ActivityManager: slow').level,
+        LogLevel.warning,
+      );
+      expect(
+        parse('06-16 01:23:45.678  1234  5678 I ReactNative: ready').level,
+        LogLevel.info,
+      );
+      final event = parse('06-16 01:23:45.678  1234  5678 I Tag: hi');
+      expect(event.source, 'logcat');
+    });
+
+    test('classifies brief-format priority letters', () {
+      expect(
+        _log(parser.logcatEvent('E/AndroidRuntime( 1234): FATAL')!).level,
+        LogLevel.error,
+      );
+      expect(
+        _log(parser.logcatEvent('W/Choreographer( 1234): skipped')!).level,
+        LogLevel.warning,
+      );
+    });
+
+    test('defaults to info and drops blanks', () {
+      expect(
+        _log(parser.logcatEvent('--------- beginning of main')!).level,
+        LogLevel.info,
+      );
+      expect(parser.logcatEvent('   '), isNull);
+    });
+  });
 }

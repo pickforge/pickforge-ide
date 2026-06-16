@@ -7,6 +7,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:pickforge/core/emulator/process_runner.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 import 'package:pickforge/core/targets/react_native/react_native_command.dart';
+import 'package:pickforge/core/targets/react_native/react_native_metro_cdp_discovery.dart';
 import 'package:pickforge/core/targets/react_native/react_native_metro_session.dart';
 import 'package:pickforge/core/targets/react_native/react_native_project_detector.dart';
 

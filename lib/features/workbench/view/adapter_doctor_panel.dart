@@ -1,5 +1,5 @@
-import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
+import 'package:pickforge/core/targets/adapter_doctor.dart';
 import 'package:pickforge/shared/components/hairline_panel.dart';
 import 'package:pickforge/shared/components/mono_eyebrow.dart';
 import 'package:pickforge/shared/components/status_pill.dart';
@@ -7,8 +7,8 @@ import 'package:pickforge/shared/theme/pickforge_colors.dart';
 import 'package:pickforge/shared/theme/pickforge_spacing.dart';
 import 'package:pickforge/shared/theme/pickforge_typography.dart';
 
-/// The outcome of a tool/runtime availability check.
-enum DoctorStatus { ok, missing, unknown }
+export 'package:pickforge/core/targets/adapter_doctor.dart'
+    show DoctorCheck, DoctorStatus;
 
 extension DoctorStatusVisuals on DoctorStatus {
   StatusIntent get intent => switch (this) {
@@ -22,18 +22,6 @@ extension DoctorStatusVisuals on DoctorStatus {
         DoctorStatus.missing => 'Missing',
         DoctorStatus.unknown => 'Unknown',
       };
-}
-
-/// A single environment check (e.g. "ADB", "Xcode", "Node").
-class DoctorCheck extends Equatable {
-  const DoctorCheck({required this.label, required this.status, this.detail});
-
-  final String label;
-  final DoctorStatus status;
-  final String? detail;
-
-  @override
-  List<Object?> get props => [label, status, detail];
 }
 
 /// Lists the toolchain checks that gate a target's runtime features, so a user

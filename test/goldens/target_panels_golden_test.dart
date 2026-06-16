@@ -19,7 +19,7 @@ void main() {
       await pumpGoldenSurface(
         tester,
         boundaryKey: key,
-        size: const Size(760, 660),
+        size: const Size(760, 820),
         child: const _Panels(),
       );
       await expectGolden(key, 'target_panels');
@@ -44,12 +44,14 @@ class _Panels extends StatelessWidget {
           TargetSummaryPanel(
             displayName: 'Flutter',
             supportLevel: policy.supportLevel(flutter),
+            capabilities: flutter,
             workflows: policy.availableWorkflows(flutter),
           ),
           const SizedBox(height: PickforgeSpacing.lg),
           TargetSummaryPanel(
             displayName: 'React Native (Android)',
             supportLevel: policy.supportLevel(android),
+            capabilities: android,
             workflows: policy.availableWorkflows(android),
           ),
           const SizedBox(height: PickforgeSpacing.lg),

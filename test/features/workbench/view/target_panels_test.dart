@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pickforge/core/targets/target_capability.dart';
 import 'package:pickforge/core/targets/target_workflows.dart';
 import 'package:pickforge/features/workbench/view/adapter_doctor_panel.dart';
 import 'package:pickforge/features/workbench/view/target_summary_panel.dart';
@@ -19,11 +20,18 @@ void main() {
       const TargetSummaryPanel(
         displayName: 'React Native (Android)',
         supportLevel: TargetSupportLevel.useful,
+        capabilities: TargetCapabilities({
+          TargetCapability.launch,
+          TargetCapability.streamLogs,
+        }),
         workflows: {TargetWorkflow.explainUi, TargetWorkflow.runLogsTriage},
       ),
     );
     expect(find.text('React Native (Android)'), findsOneWidget);
     expect(find.byType(TargetSupportBadge), findsOneWidget);
+    // Capability badges render (lit or muted) for every operation.
+    expect(find.text('RUN'), findsOneWidget);
+    expect(find.text('SOURCE MAP'), findsOneWidget);
     expect(find.text('Explain selected UI'), findsOneWidget);
     expect(find.text('Run logs triage'), findsOneWidget);
   });
@@ -35,6 +43,7 @@ void main() {
       const TargetSummaryPanel(
         displayName: 'Generic project',
         supportLevel: TargetSupportLevel.manualOnly,
+        capabilities: TargetCapabilities.none,
         workflows: {},
       ),
     );

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:pickforge/core/targets/target_capability.dart';
 import 'package:pickforge/core/targets/target_workflows.dart';
+import 'package:pickforge/features/workbench/view/target_capability_badges.dart';
 import 'package:pickforge/features/workbench/view/target_support_badge.dart';
 import 'package:pickforge/shared/components/hairline_panel.dart';
 import 'package:pickforge/shared/components/mono_eyebrow.dart';
@@ -13,12 +15,14 @@ class TargetSummaryPanel extends StatelessWidget {
   const TargetSummaryPanel({
     required this.displayName,
     required this.supportLevel,
+    required this.capabilities,
     required this.workflows,
     super.key,
   });
 
   final String displayName;
   final TargetSupportLevel supportLevel;
+  final TargetCapabilities capabilities;
   final Set<TargetWorkflow> workflows;
 
   @override
@@ -38,6 +42,10 @@ class TargetSummaryPanel extends StatelessWidget {
           ),
           const SizedBox(height: PickforgeSpacing.sm),
           Text(displayName, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: PickforgeSpacing.lg),
+          const MonoEyebrow('Capabilities'),
+          const SizedBox(height: PickforgeSpacing.sm),
+          TargetCapabilityBadges(capabilities: capabilities),
           const SizedBox(height: PickforgeSpacing.lg),
           const MonoEyebrow('Workflows'),
           const SizedBox(height: PickforgeSpacing.sm),

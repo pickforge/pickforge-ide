@@ -47,6 +47,7 @@ import 'package:pickforge/core/targets/native_android/native_android_target_adap
 import 'package:pickforge/core/targets/native_ios/ios_target_adapter.dart';
 import 'package:pickforge/core/targets/react_native/react_native_target_adapter.dart';
 import 'package:pickforge/core/targets/target_adapter_registry.dart';
+import 'package:pickforge/core/targets/web/web_target_adapter.dart';
 import 'package:pickforge/core/telemetry/crash_report_service.dart';
 import 'package:pickforge/core/telemetry/telemetry_settings.dart';
 import 'package:pickforge/core/terminal/pty_session_pool.dart';
@@ -306,8 +307,8 @@ abstract class DriftDaoModule {
 @module
 abstract class TargetsModule {
   // Flutter (deep support, 100), React Native Android (80), native Android
-  // (60), native iOS (55), and the generic fallback (0). Order doesn't matter —
-  // the registry sorts by descending priority.
+  // (60), native iOS (55), web (50), and the generic fallback (0). Order
+  // doesn't matter — the registry sorts by descending priority.
   @lazySingleton
   TargetAdapterRegistry targetAdapterRegistry() => TargetAdapterRegistry(
         const [
@@ -315,6 +316,7 @@ abstract class TargetsModule {
           ReactNativeTargetAdapter(),
           NativeAndroidTargetAdapter(),
           IosTargetAdapter(),
+          WebTargetAdapter(),
           GenericProjectAdapter(),
         ],
       );

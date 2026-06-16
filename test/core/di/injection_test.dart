@@ -77,6 +77,7 @@ void main() {
         'react_native_android',
         'native_android',
         'native_ios',
+        'web',
         'generic',
       ],
     );

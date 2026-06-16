@@ -29,8 +29,11 @@ class NativeAndroidTargetAdapter implements TargetAdapter {
   int get priority => 60;
 
   @override
-  TargetCapabilities get capabilities =>
-      const TargetCapabilities({TargetCapability.detect});
+  TargetCapabilities get capabilities => const TargetCapabilities({
+        TargetCapability.detect,
+        // 6-3: Gradle install + best-effort ADB launch.
+        TargetCapability.launch,
+      });
 
   @override
   Future<TargetDetection?> detect(String projectRoot) async {

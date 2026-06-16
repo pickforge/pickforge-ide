@@ -173,11 +173,11 @@ void main() {
   });
 
   group('NativeAndroidTargetAdapter', () {
-    test('identity and detect-only capabilities at 6-1', () {
+    test('identity and honest capabilities', () {
       expect(adapter.id, 'native_android');
       expect(adapter.priority, 60);
       expect(adapter.capabilities.has(TargetCapability.detect), isTrue);
-      expect(adapter.capabilities.has(TargetCapability.launch), isFalse);
+      expect(adapter.capabilities.has(TargetCapability.launch), isTrue); // 6-3
       expect(
         adapter.capabilities.has(TargetCapability.mapSelectionToSource),
         isFalse,

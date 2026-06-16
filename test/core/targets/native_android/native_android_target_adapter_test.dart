@@ -174,14 +174,16 @@ void main() {
 
   group('NativeAndroidTargetAdapter', () {
     test('identity and honest capabilities', () {
+      bool can(TargetCapability c) => adapter.capabilities.has(c);
       expect(adapter.id, 'native_android');
       expect(adapter.priority, 60);
-      expect(adapter.capabilities.has(TargetCapability.detect), isTrue);
-      expect(adapter.capabilities.has(TargetCapability.launch), isTrue); // 6-3
-      expect(
-        adapter.capabilities.has(TargetCapability.mapSelectionToSource),
-        isFalse,
-      );
+      expect(can(TargetCapability.detect), isTrue);
+      expect(can(TargetCapability.launch), isTrue); // 6-3
+      expect(can(TargetCapability.streamLogs), isTrue); // 6-4
+      expect(can(TargetCapability.captureScreenshot), isTrue); // 6-4
+      expect(can(TargetCapability.inspectSelection), isTrue); // 6-4
+      // Best-effort source hints only — never exact mapping.
+      expect(can(TargetCapability.mapSelectionToSource), isFalse);
     });
 
     test('detect surfaces gradle facts in the details', () async {

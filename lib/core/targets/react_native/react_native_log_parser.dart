@@ -1,20 +1,17 @@
 import 'dart:convert';
 
+import 'package:pickforge/core/android/android_logcat_parser.dart';
 import 'package:pickforge/core/emulator/run_session_models.dart';
 
 /// Turns Metro and logcat output lines into PickForge [RunSessionEvent]s so a
 /// React Native run streams through the same run-log model as Flutter.
 ///
-/// The level heuristics are intentionally simple and line-based: the RN CLI
-/// prefixes severity (`info`/`warn`/`error`) and logcat carries a priority
-/// letter (`V`/`D`/`I`/`W`/`E`/`F`).
+/// Metro level heuristics live here (the RN CLI prefixes `info`/`warn`/`error`);
+/// logcat parsing delegates to the shared [AndroidLogcatParser].
 class ReactNativeLogParser {
   const ReactNativeLogParser();
 
-  static final _logcatThreadTime = RegExp(
-    r'^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEF])\s',
-  );
-  static final _logcatBrief = RegExp('^([VDIWEF])/');
+  static const _logcat = AndroidLogcatParser();
 
   /// Parses a whole Metro output chunk into events (blank lines dropped).
   List<RunSessionEvent> parseMetro(String chunk) => const LineSplitter()
@@ -34,14 +31,7 @@ class ReactNativeLogParser {
   }
 
   /// Parses a single `adb logcat` line, or `null` when blank.
-  RunSessionEvent? logcatEvent(String line) {
-    if (line.trim().isEmpty) return null;
-    return RunSessionEvent.log(
-      line: line.trimRight(),
-      level: _logcatLevel(line),
-      source: 'logcat',
-    );
-  }
+  RunSessionEvent? logcatEvent(String line) => _logcat.logcatEvent(line);
 
   LogLevel _metroLevel(String line) {
     final token = line.trimLeft().toLowerCase();
@@ -52,20 +42,5 @@ class ReactNativeLogParser {
     }
     if (token.startsWith('warn')) return LogLevel.warning;
     return LogLevel.info;
-  }
-
-  LogLevel _logcatLevel(String line) {
-    final priority =
-        (_logcatThreadTime.firstMatch(line) ?? _logcatBrief.firstMatch(line))
-            ?.group(1);
-    switch (priority) {
-      case 'E':
-      case 'F':
-        return LogLevel.error;
-      case 'W':
-        return LogLevel.warning;
-      default:
-        return LogLevel.info;
-    }
   }
 }

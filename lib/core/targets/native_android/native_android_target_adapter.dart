@@ -33,6 +33,10 @@ class NativeAndroidTargetAdapter implements TargetAdapter {
         TargetCapability.detect,
         // 6-3: Gradle install + best-effort ADB launch.
         TargetCapability.launch,
+        // 6-4: shared Android ADB layer (screenshot / logcat / UIAutomator).
+        TargetCapability.captureScreenshot,
+        TargetCapability.streamLogs,
+        TargetCapability.inspectSelection,
       });
 
   @override

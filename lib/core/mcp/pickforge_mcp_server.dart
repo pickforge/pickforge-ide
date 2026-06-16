@@ -185,6 +185,13 @@ const List<Map<String, Object?>> _tools = [
     'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
   },
   {
+    'name': 'get_current_selection',
+    'title': 'Get current selection',
+    'description': 'Return the active target selection (generic alias of '
+        'get_selected_widget).',
+    'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
+  },
+  {
     'name': 'list_pickforge_history',
     'title': 'List Pickforge history',
     'description': 'Return recent widget picks for the active project.',
@@ -194,6 +201,13 @@ const List<Map<String, Object?>> _tools = [
     'name': 'capture_screenshot',
     'title': 'Capture screenshot',
     'description': 'Capture the active target screen into the context dir.',
+    'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
+  },
+  {
+    'name': 'capture_target_screenshot',
+    'title': 'Capture target screenshot',
+    'description': 'Capture the active target screen into the context dir '
+        '(generic alias of capture_screenshot).',
     'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
   },
   {

@@ -154,6 +154,83 @@ void main() {
     });
   });
 
+  test('generic selection/screenshot aliases route to the same providers',
+      skip: skipOnWindows, () async {
+    final endpoint = await _createEndpoint();
+    final server = EmulatorIpcServer(socketPath: endpoint.path);
+    await server.start();
+    addTearDown(server.stop);
+    addTearDown(endpoint.dispose);
+
+    server
+      ..bindSelectionProvider(() => {'widgetClass': 'ElevatedButton'})
+      ..bindScreenshotProvider(
+        () => {'ok': true, 'path': '/tmp/.pickforge/device-screen.png'},
+      );
+
+    const client = EmulatorIpcClient();
+    final legacySelection = await client.send(
+      server.socketPath,
+      {'id': 1, 'method': 'get_selected_widget'},
+    );
+    final genericSelection = await client.send(
+      server.socketPath,
+      {'id': 2, 'method': 'get_current_selection'},
+    );
+    final legacyScreenshot = await client.send(
+      server.socketPath,
+      {'id': 3, 'method': 'capture_screenshot'},
+    );
+    final genericScreenshot = await client.send(
+      server.socketPath,
+      {'id': 4, 'method': 'capture_target_screenshot'},
+    );
+
+    expect(genericSelection['result'], legacySelection['result']);
+    expect(genericSelection['result'], {'widgetClass': 'ElevatedButton'});
+    expect(genericScreenshot['result'], legacyScreenshot['result']);
+    expect(genericScreenshot['result'], {
+      'ok': true,
+      'path': '/tmp/.pickforge/device-screen.png',
+    });
+  });
+
+  test('generic aliases match legacy names when no providers are bound',
+      skip: skipOnWindows, () async {
+    final endpoint = await _createEndpoint();
+    final server = EmulatorIpcServer(socketPath: endpoint.path);
+    await server.start();
+    addTearDown(server.stop);
+    addTearDown(endpoint.dispose);
+
+    const client = EmulatorIpcClient();
+    final legacySelection = await client.send(
+      server.socketPath,
+      {'id': 1, 'method': 'get_selected_widget'},
+    );
+    final genericSelection = await client.send(
+      server.socketPath,
+      {'id': 2, 'method': 'get_current_selection'},
+    );
+    final legacyScreenshot = await client.send(
+      server.socketPath,
+      {'id': 3, 'method': 'capture_screenshot'},
+    );
+    final genericScreenshot = await client.send(
+      server.socketPath,
+      {'id': 4, 'method': 'capture_target_screenshot'},
+    );
+
+    expect(genericSelection['result'], legacySelection['result']);
+    expect(genericSelection['result'], isNull);
+    expect(genericScreenshot['result'], legacyScreenshot['result']);
+    expect(genericScreenshot['result'], {
+      'ok': false,
+      'path': null,
+      'reason': 'unavailable',
+    });
+  });
+
   test('returns error when no run session bound', skip: skipOnWindows,
       () async {
     final endpoint = await _createEndpoint();

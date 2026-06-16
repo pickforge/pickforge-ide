@@ -37,12 +37,53 @@ void main() {
       tools.map((tool) => tool['name']),
       containsAll([
         'get_selected_widget',
+        'get_current_selection',
         'list_pickforge_history',
         'capture_screenshot',
+        'capture_target_screenshot',
         'hot_reload',
         'get_run_logs',
         'get_project_context',
       ]),
+    );
+  });
+
+  test('generic alias tools forward their method name verbatim', () async {
+    final project = await Directory.systemTemp.createTemp('pf-mcp-alias-');
+    addTearDown(() => project.delete(recursive: true));
+    final calls = <Map<String, Object?>>[];
+    final server = PickforgeMcpServer(
+      projectRoot: project.path,
+      environment: const {'PICKFORGE_IPC_ENDPOINT': '/run/alias.sock'},
+      ipcSender: (endpoint, request) async {
+        calls.add({'endpoint': endpoint, ...request});
+        return {
+          'id': request['id'],
+          'result': {'widgetClass': 'TextButton'},
+        };
+      },
+    );
+
+    for (final name in ['get_current_selection', 'capture_target_screenshot']) {
+      final response = await server.handleLine(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': 10,
+          'method': 'tools/call',
+          'params': {'name': name, 'arguments': <String, Object?>{}},
+        }),
+      );
+      final result = response!['result']! as Map<String, Object?>;
+      expect(result['isError'], isFalse);
+    }
+
+    expect(calls.map((call) => call['method']), [
+      'get_current_selection',
+      'capture_target_screenshot',
+    ]);
+    expect(
+      calls.every((call) => call['endpoint'] == '/run/alias.sock'),
+      isTrue,
     );
   });
 

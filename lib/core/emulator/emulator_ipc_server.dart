@@ -126,10 +126,12 @@ class EmulatorIpcServer {
           result = _session?.vmServiceUri;
         case 'getCurrentSelection':
         case 'get_selected_widget':
+        case 'get_current_selection':
           result = await _selectionProvider?.call();
         case 'list_pickforge_history':
           result = await _pickHistoryProvider?.call() ?? const [];
         case 'capture_screenshot':
+        case 'capture_target_screenshot':
           result = await _screenshotProvider?.call() ??
               const {
                 'ok': false,

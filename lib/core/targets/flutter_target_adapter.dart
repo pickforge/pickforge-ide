@@ -7,11 +7,12 @@ import 'package:pickforge/core/targets/target_detection.dart';
 
 /// The deep-support reference adapter for Flutter projects.
 ///
-/// 3A is additive: it declares the Flutter target's identity, capability set,
-/// and detection. It does NOT yet move the existing inspector / run /
-/// screenshot code — later M3 slices delegate those operations to the
-/// established `InspectorRepository`, run-session services, and
-/// `AdbScreenshotCapturer`.
+/// Declares the Flutter target's identity, full capability set, and detection.
+/// The live inspector / run / screenshot work stays owned by the established
+/// services (`InspectorRepository`, the run session, `AdbScreenshotCapturer`);
+/// `FlutterSelectionMapper` projects a pick onto the generic `TargetSelection`.
+/// A stateful adapter-owned `TargetSession` is deferred until a second target
+/// (React Native, M4) proves the shared operation surface.
 class FlutterTargetAdapter implements TargetAdapter {
   const FlutterTargetAdapter();
 

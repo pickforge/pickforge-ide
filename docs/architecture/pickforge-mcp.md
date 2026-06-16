@@ -72,14 +72,24 @@ The MCP-facing method names are:
 
 - `get_selected_widget`: returns the active inspector selection as
   `SelectedWidget.toJson()`, or `null`.
+- `get_current_selection`: generic target-selection alias. Currently returns the
+  same `SelectedWidget.toJson()` payload as `get_selected_widget` (Flutter is the
+  only deep-support target so far).
 - `list_pickforge_history`: returns recent pick-history rows for the active
   project.
 - `capture_screenshot`: captures the active device screen into the resolved
   context directory when the current target supports screenshots.
+- `capture_target_screenshot`: generic alias of `capture_screenshot`; same
+  `{ok, path, reason}` result shape.
 - `hot_reload`: delegates to the active `flutter run` session.
 - `get_run_logs`: returns the active project in-memory run log entries.
 - `get_project_context`: returns the resolved context directory's text context
   files plus screenshot file metadata.
+
+`get_current_selection` and `capture_target_screenshot` are the framework-neutral
+names other target adapters (React Native, native Android, web) will eventually
+serve; today they are thin aliases over the Flutter implementations and carry the
+identical payloads, so no consumer has to special-case Flutter.
 
 Compatibility aliases are also supported for existing consumers:
 
@@ -87,6 +97,33 @@ Compatibility aliases are also supported for existing consumers:
 - `hotRestart`
 - `getVmServiceUri`
 - `getCurrentSelection`
+
+## Flutter deep support
+
+Flutter is the reference, deep-support target. The `FlutterTargetAdapter`
+(`lib/core/targets/`) declares the full capability set — launch, stop, hot
+reload/restart, screenshot, log streaming, selection inspection, source mapping,
+and MCP tool exposure — and detects a project by its `sdk: flutter` pubspec
+dependency. The live work behind these IPC methods is owned by the existing
+Flutter services, with the VM Service inspector as the source of truth for widget
+identity:
+
+- VM Service `InspectorExtensions` / `InspectorRepository` / `SelectionStream` —
+  widget identity, ancestor chain, creation location, source snippet, properties.
+- `RunSession` — hot reload/restart over the active `flutter run`.
+- `AdbScreenshotCapturer` — device screenshots into the resolved context dir.
+- `ContextStorageService` — resolves where context, screenshots, and the IPC
+  discovery file live.
+
+`FlutterSelectionMapper` (`lib/core/targets/flutter/`) projects a `SelectedWidget`
+onto the generic `TargetSelection` while retaining the full Flutter pick, so the
+framework-neutral selection contract never loses inspector precision.
+
+Adapter-owned live sessions (a stateful `TargetSession` that takes ownership of
+run/reload/screenshot for the active target) are intentionally **deferred**. The
+generic operation surface is kept thin until a second target — React Native
+Android (Milestone 4) — proves the shared shape, rather than speculating an
+abstraction from a single implementer.
 
 ## Bundled Stdio Adapter
 
@@ -124,7 +161,7 @@ Flutter project root. The adapter should:
    (`<dir>/ipc.sock-path`), then the project's resolved storage layout. Do not
    assume a `.pickforge/` directory exists in the project root.
 2. Connect using Unix socket or Windows named pipe transport based on the path.
-3. Expose MCP `tools/list` entries matching the six MCP-facing methods above.
+3. Expose MCP `tools/list` entries matching the MCP-facing methods above.
 4. On MCP `tools/call`, forward the tool name to Pickforge as the IPC `method`
    and wrap the JSON result into the MCP tool result content.
 

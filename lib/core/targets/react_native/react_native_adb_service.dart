@@ -108,6 +108,22 @@ class ReactNativeAdbService {
     return outputPath;
   }
 
+  /// Dumps the device-side UIAutomator hierarchy XML for [serial], or `null`.
+  ///
+  /// `exec-out uiautomator dump /dev/tty` streams the XML to stdout (with a
+  /// trailing status line the parser tolerates); no file is written to the
+  /// device.
+  Future<String?> dumpUiAutomatorXml({required String serial}) async {
+    if (!await _detector.isBinaryOnPath('adb')) return null;
+    final result = await _runner.run(
+      'adb',
+      ['-s', serial, 'exec-out', 'uiautomator', 'dump', '/dev/tty'],
+    );
+    if (result.exitCode != 0) return null;
+    final output = result.stdout.toString();
+    return output.contains('<') ? output : null;
+  }
+
   /// Spawns `adb logcat` for [serial]. Returns `null` when adb is unavailable.
   ///
   /// The caller OWNS the returned process: pipe its lines through

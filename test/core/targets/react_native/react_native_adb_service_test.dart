@@ -157,6 +157,48 @@ banana                 weirdstate transport_id:9
     });
   });
 
+  group('dumpUiAutomatorXml', () {
+    const dumpArgs = [
+      '-s',
+      'emulator-5554',
+      'exec-out',
+      'uiautomator',
+      'dump',
+      '/dev/tty',
+    ];
+
+    test('returns stdout when it contains XML', () async {
+      when(() => runner.run('adb', dumpArgs)).thenAnswer(
+        (_) async => ProcessResult(0, 0, '<hierarchy></hierarchy>', ''),
+      );
+      final service = ReactNativeAdbService(runner, detector);
+      expect(
+        await service.dumpUiAutomatorXml(serial: 'emulator-5554'),
+        '<hierarchy></hierarchy>',
+      );
+    });
+
+    test('returns null on nonzero exit', () async {
+      when(() => runner.run('adb', dumpArgs))
+          .thenAnswer((_) async => ProcessResult(0, 1, '', 'err'));
+      final service = ReactNativeAdbService(runner, detector);
+      expect(await service.dumpUiAutomatorXml(serial: 'emulator-5554'), isNull);
+    });
+
+    test('returns null when stdout has no XML', () async {
+      when(() => runner.run('adb', dumpArgs))
+          .thenAnswer((_) async => ProcessResult(0, 0, 'ERROR: null root', ''));
+      final service = ReactNativeAdbService(runner, detector);
+      expect(await service.dumpUiAutomatorXml(serial: 'emulator-5554'), isNull);
+    });
+
+    test('returns null when adb is not on PATH', () async {
+      when(() => detector.isBinaryOnPath('adb')).thenAnswer((_) async => false);
+      final service = ReactNativeAdbService(runner, detector);
+      expect(await service.dumpUiAutomatorXml(serial: 's'), isNull);
+    });
+  });
+
   group('streamLogcat', () {
     test('spawns adb logcat for the serial', () async {
       final proc = _FakeProc();

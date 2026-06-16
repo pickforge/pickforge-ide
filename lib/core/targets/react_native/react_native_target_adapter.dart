@@ -37,6 +37,8 @@ class ReactNativeTargetAdapter implements TargetAdapter {
         TargetCapability.launch,
         TargetCapability.stop,
         TargetCapability.captureScreenshot,
+        // 4D: UIAutomator hierarchy inspection.
+        TargetCapability.inspectSelection,
       });
 
   /// Claims a project only when it is React Native AND has an `android/`

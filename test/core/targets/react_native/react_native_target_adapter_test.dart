@@ -130,7 +130,7 @@ void main() {
       expect(can(TargetCapability.launch), isTrue); // 4C ADB launch
       expect(can(TargetCapability.stop), isTrue); // 4C
       expect(can(TargetCapability.captureScreenshot), isTrue); // 4C screenshot
-      expect(can(TargetCapability.inspectSelection), isFalse);
+      expect(can(TargetCapability.inspectSelection), isTrue); // 4D UIAutomator
       // Never declared for the RN MVP (roadmap STOP: no exact source mapping).
       expect(can(TargetCapability.mapSelectionToSource), isFalse);
       expect(can(TargetCapability.hotReload), isFalse);

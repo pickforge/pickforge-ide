@@ -187,3 +187,6 @@ lib/l10n/generated/
 
 # Golden test failure diffs (regenerated on every failing run)
 test/goldens/failures/
+
+# Runtime state store (agentmemory MCP / stream store) written into cwd
+/data/

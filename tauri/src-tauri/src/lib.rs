@@ -1,4 +1,5 @@
 mod db_commands;
+mod device_commands;
 mod fs_commands;
 mod process_commands;
 mod pty_commands;
@@ -29,6 +30,10 @@ pub fn run() {
             fs_commands::list_dir,
             fs_commands::read_text_file,
             fs_commands::path_basename,
+            device_commands::target_detect,
+            device_commands::adb_list_devices,
+            device_commands::adb_screenshot,
+            device_commands::adb_dump_uiautomator,
             db_commands::projects_list,
             db_commands::project_upsert,
             db_commands::project_set_archived,

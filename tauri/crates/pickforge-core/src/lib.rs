@@ -13,7 +13,7 @@ pub mod storage;
 pub mod targets;
 pub mod transcript;
 
-pub use targets::{SourceMap, SourceMapping};
+pub use targets::{detect_target, Capability, Confidence, SourceMap, SourceMapping, TargetDetection};
 
 pub use db::{
     AgentRunLog, Chat, Database, DbError, PickHistory, Project, ProjectSettings, RunSessionLog,

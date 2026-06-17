@@ -69,12 +69,13 @@ export function TerminalPane(props: {
       cwd: props.cwd ?? null,
       rows: term.rows,
       cols: term.cols,
-      onMessage: (message) => {
-        if (message.type === "output") {
-          term.write(toBytes(message.data));
-        } else if (message.type === "exit") {
-          props.onExit?.(message.data);
-        }
+      // Channel callbacks can fire after onCleanup but before the spawn promise
+      // resolves — guard against writing to a disposed terminal.
+      onOutput: (data) => {
+        if (!disposed) term.write(toBytes(data));
+      },
+      onExit: (code) => {
+        if (!disposed) props.onExit?.(code);
       },
     })
       .then((id) => {
@@ -84,7 +85,9 @@ export function TerminalPane(props: {
         }
         sessionId = id;
       })
-      .catch((err) => console.error("[pickforge] pty_spawn failed", err));
+      .catch((err) => {
+        if (!disposed) console.error("[pickforge] pty_spawn failed", err);
+      });
 
     const dataSub = term.onData((data) => {
       if (sessionId !== null) void ptyWrite(sessionId, encoder.encode(data));

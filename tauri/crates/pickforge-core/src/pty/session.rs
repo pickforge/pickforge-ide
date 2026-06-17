@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -71,14 +72,14 @@ struct Session {
 
 /// Owns every live PTY session. Lives behind Tauri's managed `State`.
 pub struct PtyManager {
-    sessions: Mutex<HashMap<u32, Session>>,
+    sessions: Arc<Mutex<HashMap<u32, Session>>>,
     next_id: AtomicU32,
 }
 
 impl Default for PtyManager {
     fn default() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU32::new(1),
         }
     }
@@ -123,11 +124,8 @@ impl PtyManager {
         let writer = pair.master.take_writer()?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
-        let sink = Arc::new(sink);
-        std::thread::Builder::new()
-            .name(format!("pty-reader-{id}"))
-            .spawn(move || read_loop(reader, sink))?;
-
+        // Register before starting the reader so a shell that exits immediately
+        // can't try to remove its session before it has been inserted.
         self.sessions
             .lock()
             .expect("pty registry poisoned")
@@ -139,6 +137,13 @@ impl PtyManager {
                     child,
                 },
             );
+
+        let sink = Arc::new(sink);
+        let sessions = Arc::clone(&self.sessions);
+        std::thread::Builder::new()
+            .name(format!("pty-reader-{id}"))
+            .spawn(move || read_loop(id, reader, sink, sessions))?;
+
         Ok(id)
     }
 
@@ -183,15 +188,36 @@ impl PtyManager {
     }
 }
 
-fn read_loop<S: PtySink>(mut reader: Box<dyn Read + Send>, sink: Arc<S>) {
+fn read_loop<S: PtySink>(
+    id: u32,
+    mut reader: Box<dyn Read + Send>,
+    sink: Arc<S>,
+    sessions: Arc<Mutex<HashMap<u32, Session>>>,
+) {
     let mut buf = [0u8; 8192];
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => sink.emit(PtyEvent::Output(buf[..n].to_vec())),
+            Ok(n) => {
+                let chunk = buf[..n].to_vec();
+                // A panicking sink must not skip the reap below.
+                let delivered =
+                    std::panic::catch_unwind(AssertUnwindSafe(|| sink.emit(PtyEvent::Output(chunk))))
+                        .is_ok();
+                if !delivered {
+                    break;
+                }
+            }
             Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
-    sink.emit(PtyEvent::Exit(None));
+
+    // Drop the session and reap the child so PTY/child handles don't leak after
+    // the shell exits on its own (the common case).
+    let removed = sessions.lock().expect("pty registry poisoned").remove(&id);
+    let code = removed
+        .and_then(|mut session| session.child.wait().ok())
+        .map(|status| status.exit_code() as i32);
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| sink.emit(PtyEvent::Exit(code))));
 }

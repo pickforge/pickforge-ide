@@ -1,27 +1,31 @@
-// Typed client for the Rust PTY commands. Output streams over a Tauri Channel
-// (ordered + fast); input/resize/kill are request/response invokes.
+// Typed client for the Rust PTY commands. stdout streams over a raw-bytes
+// Channel (Response on the Rust side → ArrayBuffer here); exit is a separate
+// small JSON channel. Input/resize/kill are request/response invokes.
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-export type PtyMessage =
-  | { type: "output"; data: number[] | ArrayBuffer | Uint8Array }
-  | { type: "exit"; data: number | null };
+export type PtyBytes = ArrayBuffer | Uint8Array | number[];
 
 export interface SpawnOptions {
   cwd?: string | null;
   rows: number;
   cols: number;
-  onMessage: (message: PtyMessage) => void;
+  onOutput: (data: PtyBytes) => void;
+  onExit: (code: number | null) => void;
 }
 
 /** Spawn `$SHELL` in a fresh pty. Resolves to the session id. */
 export async function ptySpawn(opts: SpawnOptions): Promise<number> {
-  const channel = new Channel<PtyMessage>();
-  channel.onmessage = opts.onMessage;
+  const onOutput = new Channel<PtyBytes>();
+  onOutput.onmessage = opts.onOutput;
+  const onExit = new Channel<number | null>();
+  onExit.onmessage = opts.onExit;
+
   return invoke<number>("pty_spawn", {
     cwd: opts.cwd ?? null,
     rows: opts.rows,
     cols: opts.cols,
-    onMessage: channel,
+    onOutput,
+    onExit,
   });
 }
 
@@ -40,13 +44,8 @@ export function ptyKill(id: number): Promise<void> {
   return invoke("pty_kill", { id });
 }
 
-/**
- * Normalise whatever the channel delivers for an `output` message into a
- * `Uint8Array`. Tauri may hand us an ArrayBuffer (raw IPC body), a number[]
- * (JSON-serialised bytes) or already a Uint8Array — handle all three so the
- * data path is correct regardless of the serializer.
- */
-export function toBytes(data: number[] | ArrayBuffer | Uint8Array): Uint8Array {
+/** Normalise channel output into a Uint8Array regardless of the IPC encoding. */
+export function toBytes(data: PtyBytes): Uint8Array {
   if (data instanceof Uint8Array) return data;
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   return Uint8Array.from(data);

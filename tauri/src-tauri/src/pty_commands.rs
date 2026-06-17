@@ -1,25 +1,13 @@
 //! Tauri command layer adapting `pickforge_core::PtyManager` to IPC.
 //!
-//! Output streams over a per-session [`Channel`] (ordered + fast — the right
-//! primitive for high throughput; events are explicitly *not*). Input, resize
-//! and kill are request/response `invoke` commands.
+//! stdout streams over a per-session [`Channel<Response>`] — `Response` carries
+//! the bytes as a raw IPC body (an ArrayBuffer on the JS side), avoiding the
+//! JSON `number[]` bloat a `Channel<Vec<u8>>` would incur. Exit is a separate
+//! small JSON channel. Input/resize/kill are request/response `invoke`s.
 
 use pickforge_core::{PtyEvent, PtyManager, SpawnOptions};
-use serde::Serialize;
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, Response};
 use tauri::State;
-
-/// One message in a session's output stream. Adjacently tagged so the JS side
-/// switches on `type` and reads `data`.
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase", tag = "type", content = "data")]
-pub enum PtyMessage {
-    /// Raw bytes from the pty master (may split UTF-8 across chunks — the
-    /// frontend's xterm `write(Uint8Array)` reassembles them).
-    Output(Vec<u8>),
-    /// The shell exited.
-    Exit(Option<i32>),
-}
 
 #[tauri::command]
 pub fn pty_spawn(
@@ -27,16 +15,18 @@ pub fn pty_spawn(
     cwd: Option<String>,
     rows: u16,
     cols: u16,
-    on_message: Channel<PtyMessage>,
+    on_output: Channel<Response>,
+    on_exit: Channel<Option<i32>>,
 ) -> Result<u32, String> {
     let opts = SpawnOptions { cwd, rows, cols };
     manager
-        .spawn(opts, move |event: PtyEvent| {
-            let message = match event {
-                PtyEvent::Output(bytes) => PtyMessage::Output(bytes),
-                PtyEvent::Exit(code) => PtyMessage::Exit(code),
-            };
-            let _ = on_message.send(message);
+        .spawn(opts, move |event: PtyEvent| match event {
+            PtyEvent::Output(bytes) => {
+                let _ = on_output.send(Response::new(bytes));
+            }
+            PtyEvent::Exit(code) => {
+                let _ = on_exit.send(code);
+            }
         })
         .map_err(|e| e.to_string())
 }

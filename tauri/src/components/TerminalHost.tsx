@@ -21,7 +21,10 @@ export interface TerminalHostHandle {
   typeToFocused: (text: string) => void;
 }
 
-export function TerminalHost(props: { onReady?: (handle: TerminalHostHandle) => void }) {
+export function TerminalHost(props: {
+  onReady?: (handle: TerminalHostHandle) => void;
+  cwd?: string;
+}) {
   const first = newPane();
   const [panes, setPanes] = createSignal<Pane[]>([first]);
   const [axis, setAxis] = createSignal<"row" | "col">("row");
@@ -92,6 +95,7 @@ export function TerminalHost(props: { onReady?: (handle: TerminalHostHandle) => 
             >
               <div class="pf-term-inner">
                 <TerminalPane
+                  cwd={props.cwd}
                   onReady={(handle) => {
                     handles.set(pane.id, handle);
                     if (focusedId() === pane.id) handle.focus();

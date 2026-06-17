@@ -142,3 +142,137 @@
   box-shadow: none;
   cursor: not-allowed;
 }
+
+/* ---- SelectionBracket: four L-corner marks framing a child ---- */
+.pf-bracket {
+  position: relative;
+  display: inline-block;
+  transition: opacity var(--pf-dur-standard) var(--pf-ease-forge);
+}
+.pf-bracket-corner {
+  position: absolute;
+  pointer-events: none;
+}
+.pf-bracket-corner.tl {
+  border-top: var(--pf-bracket-width) solid var(--pf-bracket-color);
+  border-left: var(--pf-bracket-width) solid var(--pf-bracket-color);
+  border-top-left-radius: var(--pf-bracket-radius);
+}
+.pf-bracket-corner.tr {
+  border-top: var(--pf-bracket-width) solid var(--pf-bracket-corner-color);
+  border-right: var(--pf-bracket-width) solid var(--pf-bracket-corner-color);
+  border-top-right-radius: var(--pf-bracket-radius);
+}
+.pf-bracket-corner.bl {
+  border-bottom: var(--pf-bracket-width) solid var(--pf-bracket-color);
+  border-left: var(--pf-bracket-width) solid var(--pf-bracket-color);
+  border-bottom-left-radius: var(--pf-bracket-radius);
+}
+.pf-bracket-corner.br {
+  border-bottom: var(--pf-bracket-width) solid var(--pf-bracket-color);
+  border-right: var(--pf-bracket-width) solid var(--pf-bracket-color);
+  border-bottom-right-radius: var(--pf-bracket-radius);
+}
+
+/* ---- BlueprintGrid: faint grid backdrop + optional fade + ember halo ---- */
+.pf-blueprint {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.pf-blueprint-bg {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+      var(--pf-blueprint-line) var(--pf-hairline-width),
+      transparent var(--pf-hairline-width)
+    ),
+    linear-gradient(
+      90deg,
+      var(--pf-blueprint-line) var(--pf-hairline-width),
+      transparent var(--pf-hairline-width)
+    );
+  background-size: var(--pf-blueprint-cell) var(--pf-blueprint-cell);
+  pointer-events: none;
+}
+.pf-blueprint-bg.fade {
+  mask-image: radial-gradient(ellipse at center, #000 35%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 35%, transparent 80%);
+}
+.pf-blueprint-halo {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 80% 60% at 50% 37%,
+    var(--pf-ember-glow),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+.pf-blueprint-content {
+  position: relative;
+  height: 100%;
+}
+
+/* ---- EmberSweepBorder: reusable focused-surface frame ---- */
+.pf-sweep-frame {
+  position: relative;
+  border-radius: var(--pf-sweep-radius);
+  padding: var(--pf-sweep-stroke);
+  background: var(--pf-hairline-strong);
+}
+.pf-sweep-frame.active {
+  background: conic-gradient(
+    from var(--pf-sweep-angle),
+    var(--pf-hairline-strong) 0deg,
+    var(--pf-hairline-strong) 295deg,
+    var(--pf-ember-deep) 325deg,
+    var(--pf-ember) 345deg,
+    var(--pf-ember-soft) 352deg,
+    var(--pf-hairline-strong) 360deg
+  );
+  animation: pf-sweep var(--pf-dur-breath) linear infinite;
+}
+.pf-sweep-inner {
+  height: 100%;
+  border-radius: calc(var(--pf-sweep-radius) - var(--pf-sweep-stroke));
+  background: var(--pf-surface);
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-sweep-frame.active {
+    animation: none;
+    background: var(--pf-ember-deep);
+  }
+}
+
+/* ---- ForgeEmptyState: bracket-framed glyph + eyebrow + title + hint ---- */
+.pf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pf-space-md);
+  text-align: center;
+  padding: var(--pf-space-xxl);
+  color: var(--pf-text-low);
+}
+.pf-empty-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: var(--pf-text-med);
+}
+.pf-empty-title {
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-title-md);
+  font-weight: var(--pf-weight-semibold);
+  color: var(--pf-text-hi);
+}
+.pf-empty-hint {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  max-width: 32ch;
+}

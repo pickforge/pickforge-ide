@@ -5,10 +5,15 @@
 //! PTY subsystem; later phases add transcript, process runner, device bridges,
 //! target adapters, VM Service, storage and agent prep.
 
+pub mod db;
 pub mod process;
 pub mod pty;
 pub mod storage;
 pub mod transcript;
+
+pub use db::{
+    AgentRunLog, Chat, Database, DbError, PickHistory, Project, ProjectSettings, RunSessionLog,
+};
 
 pub use process::{
     is_binary_on_path, is_on_user_path, run, user_shell_environment, which_in, CommandOutcome,

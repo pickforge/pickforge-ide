@@ -15,6 +15,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 use super::env::normalize_pty_env;
 use super::shell::{resolve_shell, ShellInvocation};
+use crate::process::user_shell_environment;
 
 /// Events emitted by a running PTY session.
 #[derive(Debug, Clone)]
@@ -46,6 +47,9 @@ pub struct SpawnOptions {
     pub cwd: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    /// Extra environment merged on top of the normalised login-shell env —
+    /// the `PICKFORGE_*` vars (and an IPC endpoint) go here.
+    pub extra_env: HashMap<String, String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -111,9 +115,14 @@ impl PtyManager {
         if let Some(cwd) = opts.cwd.filter(|c| !c.is_empty()) {
             cmd.cwd(cwd);
         }
-        // env_clear so removed keys (NO_COLOR, …) really disappear.
+        // Base the shell's env on the resolved login-shell environment (so PATH
+        // additions from rc files — bun/npm/asdf/mise/cargo — are present), then
+        // normalise colour vars and merge any caller extras (PICKFORGE_*).
+        // env_clear first so removed keys (NO_COLOR, …) really disappear.
         cmd.env_clear();
-        for (key, value) in normalize_pty_env(std::env::vars().collect()) {
+        let mut env = normalize_pty_env(user_shell_environment().clone());
+        env.extend(opts.extra_env);
+        for (key, value) in env {
             cmd.env(key, value);
         }
 

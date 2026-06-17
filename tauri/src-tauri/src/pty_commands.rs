@@ -18,7 +18,7 @@ pub fn pty_spawn(
     on_output: Channel<Response>,
     on_exit: Channel<Option<i32>>,
 ) -> Result<u32, String> {
-    let opts = SpawnOptions { cwd, rows, cols };
+    let opts = SpawnOptions { cwd, rows, cols, ..Default::default() };
     manager
         .spawn(opts, move |event: PtyEvent| match event {
             PtyEvent::Output(bytes) => {

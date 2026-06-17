@@ -19,6 +19,7 @@ fn shell_echo_round_trips_through_the_sink() {
                 cwd: None,
                 rows: 24,
                 cols: 80,
+                ..Default::default()
             },
             move |event| {
                 let _ = tx.send(event);

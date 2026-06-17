@@ -7,10 +7,15 @@
 
 pub mod process;
 pub mod pty;
+pub mod storage;
 pub mod transcript;
 
 pub use process::{
     is_binary_on_path, is_on_user_path, run, user_shell_environment, which_in, CommandOutcome,
+};
+pub use storage::{
+    pickforge_env_vars, pickforge_home, project_id, ContextStorageLocation, ContextStorageMode,
+    ContextStorageService, ResolvedContextDirectory, StorageError,
 };
 pub use pty::{PtyError, PtyEvent, PtyManager, PtySink, SpawnOptions};
 pub use transcript::{

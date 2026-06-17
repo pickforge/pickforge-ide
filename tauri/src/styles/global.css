@@ -1,0 +1,67 @@
+@import "./tokens.css";
+@import "./fonts.css";
+@import "@xterm/xterm/css/xterm.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--pf-surface);
+  color: var(--pf-text-hi);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-md);
+  font-weight: var(--pf-weight-regular);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* desktop chrome: no text selection on shell, no overscroll */
+  overscroll-behavior: none;
+  user-select: none;
+}
+
+/* The machine voice: monospace, tabular, muted by default. */
+.pf-mono {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--pf-text-med);
+}
+
+/* Uppercase, wide-tracked section label (MonoEyebrow). */
+.pf-eyebrow {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  font-weight: var(--pf-weight-medium);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+  margin: 0;
+}
+
+:focus-visible {
+  outline: var(--pf-hairline-width) solid var(--pf-ember-deep);
+  outline-offset: 2px;
+}
+
+/* thin, dark scrollbars that match the chrome */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-pill);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

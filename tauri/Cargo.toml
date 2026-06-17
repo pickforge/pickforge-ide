@@ -1,0 +1,27 @@
+# Cargo workspace for the PickForge Tauri-hybrid app.
+#   crates/pickforge-core  — UI-agnostic Rust core (PTY, process, transcript, …)
+#   src-tauri              — the Tauri v2 binary; adapts the core to IPC
+[workspace]
+resolver = "2"
+members = ["crates/pickforge-core", "src-tauri"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+authors = ["PickForge"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "time", "fs"] }
+portable-pty = "0.9"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"

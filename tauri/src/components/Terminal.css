@@ -1,0 +1,22 @@
+.pf-terminal {
+  height: 100%;
+  width: 100%;
+  padding: var(--pf-space-sm) 0 var(--pf-space-sm) var(--pf-space-md);
+  background: var(--pf-surface);
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+/* xterm paints its own viewport; keep its background transparent so the
+ * panel's surface shows through and selection uses our ember tint. */
+.pf-terminal .xterm,
+.pf-terminal .xterm-viewport {
+  background-color: transparent !important;
+}
+.pf-terminal .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+.pf-terminal .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-pill);
+}

@@ -1,0 +1,114 @@
+.pf-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--pf-surface);
+}
+
+/* ---- Header ---- */
+.pf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 var(--pf-space-lg);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  flex: none;
+}
+.pf-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+}
+/* SelectionBracket DNA: a small frame with one ember corner. */
+.pf-mark {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border: var(--pf-hairline-width) solid var(--pf-text-low);
+  border-radius: 3px;
+}
+.pf-mark::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 7px;
+  height: 7px;
+  border-top: var(--pf-bracket-width) solid var(--pf-ember);
+  border-right: var(--pf-bracket-width) solid var(--pf-ember);
+}
+.pf-wordmark {
+  font-family: var(--pf-font-sans);
+  font-weight: var(--pf-weight-bold);
+  font-size: var(--pf-size-title-lg);
+  letter-spacing: -0.02em;
+  color: var(--pf-text-hi);
+}
+
+/* ---- Quick-launch strip ---- */
+.pf-launch {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-lg);
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  flex: none;
+}
+.pf-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex-wrap: wrap;
+}
+
+/* ---- Main / terminal frame ---- */
+.pf-main {
+  flex: 1;
+  min-height: 0;
+  padding: var(--pf-space-lg);
+}
+
+/* The "live forge" treatment: a slow ember highlight travelling the border. */
+.pf-forge-frame {
+  position: relative;
+  height: 100%;
+  border-radius: var(--pf-radius-md);
+  padding: var(--pf-bracket-width);
+  background: conic-gradient(
+    from var(--pf-sweep-angle),
+    var(--pf-hairline-strong) 0deg,
+    var(--pf-hairline-strong) 295deg,
+    var(--pf-ember-deep) 325deg,
+    var(--pf-ember) 345deg,
+    var(--pf-ember-soft) 352deg,
+    var(--pf-hairline-strong) 360deg
+  );
+  animation: pf-sweep var(--pf-dur-breath) linear infinite;
+}
+.pf-forge-inner {
+  height: 100%;
+  border-radius: calc(var(--pf-radius-md) - var(--pf-bracket-width));
+  background: var(--pf-surface);
+  overflow: hidden;
+}
+
+@property --pf-sweep-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes pf-sweep {
+  to {
+    --pf-sweep-angle: 360deg;
+  }
+}
+
+/* Reduced motion (or browsers without @property): freeze into a quiet ember
+ * border instead of a moving sweep. */
+@media (prefers-reduced-motion: reduce) {
+  .pf-forge-frame {
+    animation: none;
+    background: var(--pf-ember-deep);
+  }
+}

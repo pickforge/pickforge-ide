@@ -8,3 +8,7 @@ src-tauri/gen/
 # Commit Cargo.lock for the app binary (the repo-root *.lock rule would hide it).
 !Cargo.lock
 
+
+# Playwright
+test-results/
+playwright-report/

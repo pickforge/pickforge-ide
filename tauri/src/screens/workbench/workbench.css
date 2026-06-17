@@ -47,7 +47,8 @@
   flex: 1 1 auto;
 }
 .pf-files {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  overflow: hidden;
 }
 .pf-rail-head {
   display: flex;
@@ -136,7 +137,8 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--pf-space-sm) var(--pf-space-md);
-  margin-top: auto;
+  flex: none;
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
 }
 .pf-rail-copy {
   font-family: var(--pf-font-mono);

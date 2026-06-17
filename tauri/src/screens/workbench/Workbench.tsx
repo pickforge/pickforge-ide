@@ -1,5 +1,5 @@
 // The 3-pane workbench: projects/chats/files | terminal | inspector.
-import { createSignal, For, onMount } from "solid-js";
+import { createSignal, For, onMount, Show } from "solid-js";
 import { ProjectsChatsPanel } from "./ProjectsChatsPanel";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
@@ -11,6 +11,7 @@ import { Chip, MonoEyebrow } from "../../components/ui";
 import { detectBinaries } from "../../lib/process";
 import { AGENTS, launchCommand } from "../../lib/agentModels";
 import { workspace } from "../../stores/workspace";
+import { navigate } from "../../router";
 import "./workbench.css";
 
 const AGENT_CHIPS = [
@@ -45,6 +46,16 @@ export function WorkbenchScreen() {
       <aside class="pf-workbench-left">
         <ProjectsChatsPanel />
         <FileExplorer />
+        <div class="pf-rail-footer">
+          <span class="pf-rail-copy">© PICKFORGE · MIT</span>
+          <button
+            class="pf-icon-btn"
+            title="Settings"
+            onClick={() => navigate("settings")}
+          >
+            ⚙
+          </button>
+        </div>
       </aside>
 
       <main class="pf-workbench-center">
@@ -76,7 +87,11 @@ export function WorkbenchScreen() {
           </div>
         </div>
         <div class="pf-workbench-terminal">
-          <TerminalHost onReady={setHost} cwd={workspace.activeRoot ?? undefined} />
+          {/* Mount the terminal only once the workspace has loaded, so the
+              shell spawns in the active project's directory (not the home dir). */}
+          <Show when={workspace.loaded}>
+            <TerminalHost onReady={setHost} cwd={workspace.activeRoot ?? undefined} />
+          </Show>
         </div>
       </main>
 

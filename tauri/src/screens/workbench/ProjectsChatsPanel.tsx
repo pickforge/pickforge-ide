@@ -11,7 +11,6 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
-import { navigate } from "../../router";
 import "./workbench.css";
 
 function basename(path: string): string {
@@ -104,17 +103,6 @@ export function ProjectsChatsPanel() {
           </Show>
         </div>
       </section>
-
-      <div class="pf-rail-footer">
-        <span class="pf-rail-copy">© PICKFORGE · MIT</span>
-        <button
-          class="pf-icon-btn"
-          title="Settings"
-          onClick={() => navigate("settings")}
-        >
-          ⚙
-        </button>
-      </div>
     </div>
   );
 }

@@ -240,3 +240,27 @@
   gap: var(--pf-space-sm);
   padding: var(--pf-space-xs) 0;
 }
+
+.pf-vm-input {
+  width: 100%;
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-md);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  margin-bottom: var(--pf-space-sm);
+}
+.pf-vm-error {
+  color: var(--pf-error);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  margin-top: var(--pf-space-sm);
+  word-break: break-word;
+}
+.pf-inspector-hint {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  margin: var(--pf-space-sm) 0 0;
+}

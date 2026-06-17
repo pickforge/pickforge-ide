@@ -7,11 +7,16 @@
 
 pub mod android;
 pub mod db;
+pub mod inspector;
 pub mod process;
 pub mod pty;
 pub mod storage;
 pub mod targets;
 pub mod transcript;
+pub mod vm_service;
+
+pub use inspector::{decode_widget_tree, CreationLocation, WidgetNode};
+pub use vm_service::{VmError, VmServiceClient};
 
 pub use targets::{detect_target, Capability, Confidence, SourceMap, SourceMapping, TargetDetection};
 

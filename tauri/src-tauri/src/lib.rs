@@ -3,10 +3,11 @@ mod device_commands;
 mod fs_commands;
 mod process_commands;
 mod pty_commands;
+mod vm_commands;
 
 use std::path::PathBuf;
 
-use pickforge_core::{pickforge_home, Database, PtyManager};
+use pickforge_core::{pickforge_home, Database, PtyManager, VmServiceClient};
 
 fn open_database() -> Database {
     let path = pickforge_home(None)
@@ -20,6 +21,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(PtyManager::new())
+        .manage(VmServiceClient::new())
         .manage(open_database())
         .invoke_handler(tauri::generate_handler![
             pty_commands::pty_spawn,
@@ -51,6 +53,11 @@ pub fn run() {
             db_commands::run_finish,
             db_commands::agent_run_insert,
             db_commands::agent_run_finish,
+            vm_commands::vm_connect,
+            vm_commands::vm_disconnect,
+            vm_commands::vm_status,
+            vm_commands::vm_get_vm,
+            vm_commands::vm_widget_tree,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

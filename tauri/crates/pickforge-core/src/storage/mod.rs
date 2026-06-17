@@ -107,11 +107,11 @@ pub fn pickforge_env_vars(
     resolved: &ResolvedContextDirectory,
     active_ipc_endpoint: Option<&str>,
     env: Option<&HashMap<String, String>>,
-) -> HashMap<String, String> {
+) -> Result<HashMap<String, String>, PickforgeHomeError> {
     let mut out = HashMap::new();
-    if let Ok(home) = pickforge_home(env) {
-        out.insert("PICKFORGE_HOME".to_string(), home);
-    }
+    // PICKFORGE_HOME is part of the contract — fail rather than emit a partial
+    // env that a shell/agent would silently mis-resolve against.
+    out.insert("PICKFORGE_HOME".to_string(), pickforge_home(env)?);
     out.insert("PICKFORGE_PROJECT_ROOT".to_string(), resolved.project_root.clone());
     out.insert("PICKFORGE_CONTEXT_DIR".to_string(), resolved.context_dir.clone());
     out.insert(
@@ -121,7 +121,7 @@ pub fn pickforge_env_vars(
     if let Some(endpoint) = active_ipc_endpoint.map(str::trim).filter(|s| !s.is_empty()) {
         out.insert("PICKFORGE_IPC_ENDPOINT".to_string(), endpoint.to_string());
     }
-    out
+    Ok(out)
 }
 
 // ---- shared path helpers ----
@@ -175,7 +175,8 @@ mod tests {
 
     #[test]
     fn env_vars_carry_the_core_keys_and_omit_ipc_when_absent() {
-        let env = pickforge_env_vars(&resolved(ContextStorageMode::PickforgeHome), None, None);
+        let env =
+            pickforge_env_vars(&resolved(ContextStorageMode::PickforgeHome), None, None).unwrap();
         assert_eq!(env.get("PICKFORGE_PROJECT_ROOT").unwrap(), "/abs/proj");
         assert_eq!(env.get("PICKFORGE_CONTEXT_DIR").unwrap(), "/base/context");
         assert_eq!(env.get("PICKFORGE_STORAGE_MODE").unwrap(), "home");
@@ -188,7 +189,8 @@ mod tests {
             &resolved(ContextStorageMode::ProjectLocal),
             Some("  /run/ipc.sock  "),
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(env.get("PICKFORGE_IPC_ENDPOINT").unwrap(), "/run/ipc.sock");
         assert_eq!(env.get("PICKFORGE_STORAGE_MODE").unwrap(), "project-local");
     }

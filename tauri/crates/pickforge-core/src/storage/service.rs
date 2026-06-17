@@ -14,6 +14,8 @@ use super::{
 pub enum StorageError {
     #[error("project folder does not exist: {0}")]
     ProjectMissing(String),
+    #[error("{0} exists but is not a PickForge directory")]
+    Conflict(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -84,10 +86,18 @@ impl ContextStorageService {
         let resolved = self.resolve(project_root, location)?;
         if resolved.is_project_local {
             // The `.pickforge/.gitignore` marker is what auto-detect keys on.
+            // Refuse to adopt a pre-existing `.pickforge/` that isn't ours rather
+            // than silently taking over a user-owned directory.
+            let marker = join(&resolved.context_dir, ".gitignore");
+            let marker_ok = std::fs::read_to_string(&marker)
+                .map(|content| content == "*\n")
+                .unwrap_or(false);
+            if Path::new(&resolved.context_dir).exists() && !marker_ok {
+                return Err(StorageError::Conflict(resolved.context_dir.clone()));
+            }
             std::fs::create_dir_all(&resolved.context_dir)?;
             std::fs::create_dir_all(&resolved.runs_dir)?;
             std::fs::create_dir_all(&resolved.chats_dir)?;
-            let marker = join(&resolved.context_dir, ".gitignore");
             if !Path::new(&marker).exists() {
                 std::fs::write(&marker, "*\n")?;
             }
@@ -158,6 +168,19 @@ mod tests {
 
         std::fs::remove_dir_all(&root).ok();
         std::fs::remove_dir_all(&custom).ok();
+    }
+
+    #[test]
+    fn project_local_ensure_rejects_a_foreign_pickforge_dir() {
+        let root = temp_root("foreign");
+        // A pre-existing .pickforge without the "*\n" marker is user-owned.
+        std::fs::create_dir_all(join(&root, ".pickforge")).unwrap();
+        let svc = ContextStorageService::new();
+        let err = svc
+            .ensure(&root, Some(ContextStorageLocation::project_local()))
+            .unwrap_err();
+        assert!(matches!(err, StorageError::Conflict(_)));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

@@ -43,8 +43,9 @@ pub fn which_in(binary: &str, env: &HashMap<String, String>) -> Option<PathBuf> 
         }
         #[cfg(windows)]
         {
-            for ext in ["exe", "cmd", "bat", "com"] {
-                let with_ext = dir.join(format!("{binary}.{ext}"));
+            for ext in windows_pathext(env) {
+                // `ext` includes the leading dot (e.g. ".EXE").
+                let with_ext = dir.join(format!("{binary}{ext}"));
                 if is_executable(&with_ext) {
                     return Some(with_ext);
                 }
@@ -66,6 +67,25 @@ fn is_executable(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn is_executable(path: &Path) -> bool {
     path.is_file()
+}
+
+#[cfg(windows)]
+fn windows_pathext(env: &HashMap<String, String>) -> Vec<String> {
+    env.get("PATHEXT")
+        .or_else(|| env.get("Pathext"))
+        .map(|value| {
+            value
+                .split(';')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            [".COM", ".EXE", ".BAT", ".CMD"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        })
 }
 
 #[cfg(test)]

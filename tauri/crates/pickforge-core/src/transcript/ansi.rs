@@ -45,13 +45,17 @@ pub fn parse_ansi(input: &str) -> AnsiResult {
     let mut out = String::with_capacity(input.len());
     let mut spans: Vec<AnsiSpan> = Vec::new();
     let mut style = Style::default();
+    // Span offsets are UTF-16 code-unit offsets into the stripped text — the JS
+    // consumer indexes it as a UTF-16 string (and this matches the Dart
+    // recorder, which used String/UTF-16 offsets).
+    let mut units = 0usize;
     let mut span_start = 0usize;
 
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == 0x1B {
             if let Some(end) = match_escape(bytes, i) {
-                flush(&mut spans, out.len(), &mut span_start, &style);
+                flush(&mut spans, units, &mut span_start, &style);
                 let seq = &input[i..end];
                 let sb = seq.as_bytes();
                 if sb.len() > 2 && sb[1] == b'[' && seq.ends_with('m') {
@@ -61,11 +65,12 @@ pub fn parse_ansi(input: &str) -> AnsiResult {
                 continue;
             }
         }
-        let len = utf8_len(bytes[i]);
-        out.push_str(&input[i..i + len]);
-        i += len;
+        let ch = input[i..].chars().next().expect("char boundary");
+        out.push(ch);
+        units += ch.len_utf16();
+        i += ch.len_utf8();
     }
-    flush(&mut spans, out.len(), &mut span_start, &style);
+    flush(&mut spans, units, &mut span_start, &style);
 
     AnsiResult { text: out, spans }
 }
@@ -149,17 +154,18 @@ fn match_escape(b: &[u8], i: usize) -> Option<usize> {
                 None
             }
         }
-        // OSC: ESC ] … (BEL | ESC \)
+        // OSC: ESC ] … terminated by BEL or ST (ESC \). Dart tries the BEL
+        // branch first (it wins if a BEL exists anywhere ahead), then ST.
         b']' => {
-            let mut j = i + 2;
-            while j < n {
-                if b[j] == 0x07 {
-                    return Some(j + 1);
+            let rest = &b[i + 2..];
+            if let Some(pos) = rest.iter().position(|&c| c == 0x07) {
+                return Some(i + 2 + pos + 1);
+            }
+            if let Some(pos) = rest.iter().position(|&c| c == 0x1B) {
+                let esc = i + 2 + pos;
+                if esc + 1 < n && b[esc + 1] == b'\\' {
+                    return Some(esc + 2);
                 }
-                if b[j] == 0x1B && j + 1 < n && b[j + 1] == b'\\' {
-                    return Some(j + 2);
-                }
-                j += 1;
             }
             None
         }
@@ -247,9 +253,9 @@ mod tests {
     fn preserves_multibyte_text() {
         let r = parse_ansi("\x1b[32m✓ café\x1b[0m");
         assert_eq!(r.text, "✓ café");
-        // span covers the whole utf-8 byte range of the run.
+        // span offsets are UTF-16 code units (6 for "✓ café"), not bytes (9).
         assert_eq!(r.spans[0].start, 0);
-        assert_eq!(r.spans[0].end, "✓ café".len());
+        assert_eq!(r.spans[0].end, "✓ café".encode_utf16().count());
         assert_eq!(r.spans[0].fg, Some(2));
     }
 }

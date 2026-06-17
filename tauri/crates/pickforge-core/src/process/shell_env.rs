@@ -13,7 +13,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static CACHE: OnceLock<HashMap<String, String>> = OnceLock::new();
 
@@ -64,21 +64,52 @@ fn run_shell_env(shell: &str, timeout: Duration) -> Option<String> {
         let _ = tx.send(buf);
     });
 
-    let result = match rx.recv_timeout(timeout) {
-        // stdout hit EOF → the shell finished; confirm a clean exit.
-        Ok(buf) => match child.wait() {
-            Ok(status) if status.success() => Some(buf),
-            _ => None,
-        },
-        // A misbehaving rc hung past the budget — kill it and fall back.
-        Err(_) => {
+    // Bound the stdout read by the budget.
+    let output = rx.recv_timeout(timeout).ok();
+
+    // Never block on child exit: if output arrived the shell should exit
+    // promptly (small grace); otherwise kill it now. Either way it ends reaped.
+    let success = match &output {
+        Some(_) => wait_success_within(&mut child, Duration::from_millis(500)),
+        None => {
             let _ = child.kill();
             let _ = child.wait();
-            None
+            false
         }
     };
-    let _ = reader.join();
-    result
+
+    // Join the reader only once it has finished (output present). A reader still
+    // blocked on a descendant holding stdout open is detached, not joined.
+    if output.is_some() {
+        let _ = reader.join();
+    } else {
+        drop(reader);
+    }
+
+    if success {
+        output
+    } else {
+        None
+    }
+}
+
+/// Wait up to `budget` for the child to exit; returns whether it exited cleanly.
+/// Kills + reaps it if it overruns so we never block.
+fn wait_success_within(child: &mut std::process::Child, budget: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if start.elapsed() < budget => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 fn parse_env(raw: &str) -> Vec<(String, String)> {

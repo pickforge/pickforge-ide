@@ -149,9 +149,19 @@ impl PtyManager {
 
         let sink = Arc::new(sink);
         let sessions = Arc::clone(&self.sessions);
-        std::thread::Builder::new()
+        if let Err(err) = std::thread::Builder::new()
             .name(format!("pty-reader-{id}"))
-            .spawn(move || read_loop(id, reader, sink, sessions))?;
+            .spawn(move || read_loop(id, reader, sink, sessions))
+        {
+            // Roll back the just-registered session so a failed reader spawn
+            // can't leak the child + PTY handles.
+            let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+            if let Some(mut session) = removed {
+                let _ = session.child.kill();
+                let _ = session.child.wait();
+            }
+            return Err(PtyError::from(err));
+        }
 
         Ok(id)
     }
@@ -180,9 +190,13 @@ impl PtyManager {
 
     /// Kill a session's shell and drop it from the registry.
     pub fn kill(&self, id: u32) -> Result<(), PtyError> {
-        let mut sessions = self.sessions.lock().expect("pty registry poisoned");
-        if let Some(mut session) = sessions.remove(&id) {
+        // Remove under the lock, then signal + reap outside it so the registry
+        // lock is never held across a blocking wait. Once removed, the reader
+        // thread's own EOF path can't reap the child, so we must wait here.
+        let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+        if let Some(mut session) = removed {
             let _ = session.child.kill();
+            let _ = session.child.wait();
         }
         Ok(())
     }

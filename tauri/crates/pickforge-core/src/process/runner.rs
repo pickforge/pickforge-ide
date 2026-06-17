@@ -37,11 +37,17 @@ pub fn run(
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
     }
-    if let Some(env) = env {
-        cmd.env_clear();
-        for (key, value) in env {
-            cmd.env(key, value);
+    // Base on the enriched login-shell env (like Dart's RealProcessRunner) so
+    // PATH is correct, then overlay caller-provided overrides.
+    cmd.env_clear();
+    let mut merged = super::user_shell_environment().clone();
+    if let Some(extra) = env {
+        for (key, value) in extra {
+            merged.insert(key.clone(), value.clone());
         }
+    }
+    for (key, value) in merged {
+        cmd.env(key, value);
     }
 
     let output = cmd.output()?;

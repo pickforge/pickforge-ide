@@ -1,3 +1,4 @@
+mod process_commands;
 mod pty_commands;
 
 use pickforge_core::PtyManager;
@@ -11,6 +12,7 @@ pub fn run() {
             pty_commands::pty_write,
             pty_commands::pty_resize,
             pty_commands::pty_kill,
+            process_commands::detect_binaries,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

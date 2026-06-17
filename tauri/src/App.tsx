@@ -1,6 +1,7 @@
-import { createSignal } from "solid-js";
+import { createSignal, onMount } from "solid-js";
 import { TerminalPane, type TerminalHandle } from "./components/Terminal";
 import { Chip, MonoEyebrow, StatusPill } from "./components/ui";
+import { detectBinaries } from "./lib/process";
 import "./App.css";
 
 // Phase 0 quick-launch set. Shell-first: each chip just *types* the command
@@ -15,6 +16,19 @@ const QUICK_LAUNCH: { label: string; command: string; ember?: boolean }[] = [
 export function App() {
   const [handle, setHandle] = createSignal<TerminalHandle | null>(null);
   const [exited, setExited] = createSignal(false);
+  // Availability per chip; optimistically true until detection resolves.
+  const [available, setAvailable] = createSignal<boolean[]>(
+    QUICK_LAUNCH.map(() => true),
+  );
+
+  onMount(async () => {
+    try {
+      const binaries = QUICK_LAUNCH.map((i) => i.command.trim().split(/\s+/)[0]);
+      setAvailable(await detectBinaries(binaries));
+    } catch (err) {
+      console.error("[pickforge] detect_binaries failed", err);
+    }
+  });
 
   return (
     <div class="pf-app">
@@ -34,11 +48,11 @@ export function App() {
       <div class="pf-launch">
         <MonoEyebrow text="Quick launch" tick />
         <div class="pf-chips">
-          {QUICK_LAUNCH.map((item) => (
+          {QUICK_LAUNCH.map((item, idx) => (
             <Chip
               label={item.label}
               ember={item.ember}
-              disabled={exited()}
+              disabled={exited() || available()[idx] === false}
               onClick={() => handle()?.typeText(item.command)}
             />
           ))}

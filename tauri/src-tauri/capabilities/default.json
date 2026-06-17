@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Core capability for the main window. App-defined pty_* commands are accessible without ACL entries; this grants the Tauri core defaults.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }

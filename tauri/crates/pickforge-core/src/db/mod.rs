@@ -24,7 +24,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS projects (
-  project_root   TEXT PRIMARY KEY,
+  project_root   TEXT NOT NULL PRIMARY KEY,
   display_name   TEXT NOT NULL,
   created_at     INTEGER NOT NULL,
   last_opened_at INTEGER NOT NULL,
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 
 CREATE TABLE IF NOT EXISTS chats (
-  chat_id          TEXT PRIMARY KEY,
+  chat_id          TEXT NOT NULL PRIMARY KEY,
   project_root     TEXT NOT NULL REFERENCES projects(project_root) ON DELETE CASCADE,
   title            TEXT NOT NULL,
   agent_id         TEXT NOT NULL,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS chats (
 );
 
 CREATE TABLE IF NOT EXISTS project_settings (
-  project_root                TEXT PRIMARY KEY,
+  project_root                TEXT NOT NULL PRIMARY KEY,
   vm_service_url              TEXT,
   default_agent_id            TEXT,
   last_chat_id                TEXT,
@@ -62,8 +62,8 @@ CREATE TABLE IF NOT EXISTS project_settings (
   validator_command           TEXT,
   emulator_launch_options     TEXT,
   emulator_idle_shutdown      TEXT,
-  auto_boot_on_select         INTEGER NOT NULL DEFAULT 1,
-  first_run_celebrated        INTEGER NOT NULL DEFAULT 0,
+  auto_boot_on_select         INTEGER NOT NULL DEFAULT 1 CHECK (auto_boot_on_select IN (0, 1)),
+  first_run_celebrated        INTEGER NOT NULL DEFAULT 0 CHECK (first_run_celebrated IN (0, 1)),
   context_storage_mode        TEXT,
   context_storage_custom_path TEXT
 );
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS pick_history (
 );
 
 CREATE TABLE IF NOT EXISTS run_session_log (
-  session_id        TEXT PRIMARY KEY,
+  session_id        TEXT NOT NULL PRIMARY KEY,
   project_root      TEXT NOT NULL,
   started_at        INTEGER NOT NULL,
   ended_at          INTEGER,
@@ -112,6 +112,11 @@ CREATE TABLE IF NOT EXISTS agent_run_log (
   hot_reload_count    INTEGER NOT NULL DEFAULT 0,
   wrapper_script_path TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_chats_project
+  ON chats(project_root, sort_order ASC, last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pick_history_project
+  ON pick_history(project_root, picked_at DESC);
 "#;
 
 /// The SQLite-backed store. Lives behind Tauri's managed `State`.
@@ -303,7 +308,8 @@ impl Database {
     pub fn list_picks(&self, project_root: &str, limit: i64) -> Result<Vec<PickHistory>, DbError> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT * FROM pick_history WHERE project_root = ?1 ORDER BY picked_at DESC LIMIT ?2",
+            "SELECT * FROM pick_history WHERE project_root = ?1 \
+             ORDER BY picked_at DESC, id DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![project_root, limit], pick_from_row)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -319,7 +325,11 @@ impl Database {
                 hot_reload_count, hot_restart_count, error_count, last_error) \
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16) \
              ON CONFLICT(session_id) DO UPDATE SET \
-               ended_at = excluded.ended_at, exit_reason = excluded.exit_reason, \
+               project_root = excluded.project_root, started_at = excluded.started_at, \
+               ended_at = excluded.ended_at, avd_id = excluded.avd_id, \
+               avd_name = excluded.avd_name, serial = excluded.serial, \
+               vm_service_url = excluded.vm_service_url, target_file = excluded.target_file, \
+               connection_mode = excluded.connection_mode, exit_reason = excluded.exit_reason, \
                exit_code = excluded.exit_code, hot_reload_count = excluded.hot_reload_count, \
                hot_restart_count = excluded.hot_restart_count, error_count = excluded.error_count, \
                last_error = excluded.last_error",

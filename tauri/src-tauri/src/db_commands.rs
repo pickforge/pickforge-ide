@@ -1,7 +1,9 @@
 //! Tauri command layer over `pickforge_core::Database`. Sync commands — SQLite
 //! reads/writes are local and sub-millisecond.
 
-use pickforge_core::{Chat, Database, PickHistory, Project, ProjectSettings, RunSessionLog};
+use pickforge_core::{
+    AgentRunLog, Chat, Database, PickHistory, Project, ProjectSettings, RunSessionLog,
+};
 use tauri::State;
 
 #[tauri::command]
@@ -102,5 +104,22 @@ pub fn run_finish(
     exit_code: Option<i64>,
 ) -> Result<(), String> {
     db.finish_run(&session_id, ended_at, exit_reason.as_deref(), exit_code)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agent_run_insert(db: State<'_, Database>, run: AgentRunLog) -> Result<i64, String> {
+    db.insert_agent_run(&run).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agent_run_finish(
+    db: State<'_, Database>,
+    id: i64,
+    finished_at: i64,
+    exit_code: Option<i64>,
+    hot_reload_count: i64,
+) -> Result<(), String> {
+    db.finish_agent_run(id, finished_at, exit_code, hot_reload_count)
         .map_err(|e| e.to_string())
 }

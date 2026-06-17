@@ -1,4 +1,5 @@
 mod db_commands;
+mod fs_commands;
 mod process_commands;
 mod pty_commands;
 
@@ -16,6 +17,7 @@ fn open_database() -> Database {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(PtyManager::new())
         .manage(open_database())
         .invoke_handler(tauri::generate_handler![
@@ -24,6 +26,9 @@ pub fn run() {
             pty_commands::pty_resize,
             pty_commands::pty_kill,
             process_commands::detect_binaries,
+            fs_commands::list_dir,
+            fs_commands::read_text_file,
+            fs_commands::path_basename,
             db_commands::projects_list,
             db_commands::project_upsert,
             db_commands::project_set_archived,
@@ -39,6 +44,8 @@ pub fn run() {
             db_commands::runs_list,
             db_commands::run_insert,
             db_commands::run_finish,
+            db_commands::agent_run_insert,
+            db_commands::agent_run_finish,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

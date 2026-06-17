@@ -1,10 +1,13 @@
 import { createSignal, onMount } from "solid-js";
-import { TerminalPane, type TerminalHandle } from "./components/Terminal";
+import {
+  TerminalHost,
+  type TerminalHostHandle,
+} from "./components/TerminalHost";
 import { Chip, MonoEyebrow, StatusPill } from "./components/ui";
 import { detectBinaries } from "./lib/process";
 import "./App.css";
 
-// Phase 0 quick-launch set. Shell-first: each chip just *types* the command
+// Phase 0/1 quick-launch set. Shell-first: each chip just *types* the command
 // into the focused shell (no auto-execute), mirroring the Flutter chips.
 const QUICK_LAUNCH: { label: string; command: string; ember?: boolean }[] = [
   { label: "claude", command: "claude ", ember: true },
@@ -14,8 +17,7 @@ const QUICK_LAUNCH: { label: string; command: string; ember?: boolean }[] = [
 ];
 
 export function App() {
-  const [handle, setHandle] = createSignal<TerminalHandle | null>(null);
-  const [exited, setExited] = createSignal(false);
+  const [host, setHost] = createSignal<TerminalHostHandle | null>(null);
   // Availability per chip; optimistically true until detection resolves.
   const [available, setAvailable] = createSignal<boolean[]>(
     QUICK_LAUNCH.map(() => true),
@@ -38,11 +40,7 @@ export function App() {
           <span class="pf-wordmark">PickForge</span>
           <MonoEyebrow text="Tauri" />
         </div>
-        <StatusPill
-          label={exited() ? "shell · exited" : "shell · live"}
-          intent={exited() ? "neutral" : "live"}
-          pulsing={!exited()}
-        />
+        <StatusPill label="shell · live" intent="live" pulsing />
       </header>
 
       <div class="pf-launch">
@@ -52,22 +50,15 @@ export function App() {
             <Chip
               label={item.label}
               ember={item.ember}
-              disabled={exited() || available()[idx] === false}
-              onClick={() => handle()?.typeText(item.command)}
+              disabled={available()[idx] === false}
+              onClick={() => host()?.typeToFocused(item.command)}
             />
           ))}
         </div>
       </div>
 
       <main class="pf-main">
-        <div class="pf-forge-frame">
-          <div class="pf-forge-inner">
-            <TerminalPane
-              onReady={setHandle}
-              onExit={() => setExited(true)}
-            />
-          </div>
-        </div>
+        <TerminalHost onReady={setHost} />
       </main>
     </div>
   );

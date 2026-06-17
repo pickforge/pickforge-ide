@@ -1,7 +1,14 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
 import "./styles/global.css";
+import { installTauriMock } from "./lib/tauriMock";
 import { App } from "./App";
+
+// VRT builds (VITE_PICKFORGE_VRT=1) stub the Tauri runtime so the app renders
+// in a plain browser. No-op (and unused) in the shipped app.
+if (import.meta.env.VITE_PICKFORGE_VRT) {
+  installTauriMock();
+}
 
 const root = document.getElementById("root");
 if (!root) {

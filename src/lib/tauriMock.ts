@@ -34,6 +34,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   ],
   project_touch: () => null,
   vm_status: () => null,
+  "plugin:app|version": () => "0.1.0",
   git_status: () => ({
     isRepo: true,
     branch: "main",

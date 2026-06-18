@@ -12,7 +12,8 @@ export async function loadAppVersion(): Promise<void> {
   loaded = true;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
-    setVersion(await getVersion());
+    const v = await getVersion();
+    if (v) setVersion(v);
   } catch {
     // not in Tauri — keep the default.
   }

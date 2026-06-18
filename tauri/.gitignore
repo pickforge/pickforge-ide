@@ -1,0 +1,14 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/
+*.log
+.DS_Store
+
+# Commit Cargo.lock for the app binary (the repo-root *.lock rule would hide it).
+!Cargo.lock
+
+
+# Playwright
+test-results/
+playwright-report/

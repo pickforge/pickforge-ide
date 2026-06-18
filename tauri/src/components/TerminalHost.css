@@ -1,0 +1,89 @@
+.pf-term-host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pf-term-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  padding-bottom: var(--pf-space-sm);
+  flex: none;
+}
+.pf-term-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-term-tool:hover:not(:disabled) {
+  background: var(--pf-surface-2);
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-term-tool:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pf-term-grid {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  gap: var(--pf-space-sm);
+}
+.pf-term-grid--col {
+  flex-direction: column;
+}
+
+/* Each pane frame. Focused carries the travelling ember sweep (reusing the
+ * global --pf-sweep-angle @property + pf-sweep keyframes from App.css);
+ * unfocused panes get a quiet hairline. */
+.pf-term-cell {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--pf-radius-md);
+  padding: var(--pf-bracket-width);
+  background: var(--pf-hairline-strong);
+}
+.pf-term-cell--focused {
+  background: conic-gradient(
+    from var(--pf-sweep-angle),
+    var(--pf-hairline-strong) 0deg,
+    var(--pf-hairline-strong) 295deg,
+    var(--pf-ember-deep) 325deg,
+    var(--pf-ember) 345deg,
+    var(--pf-ember-soft) 352deg,
+    var(--pf-hairline-strong) 360deg
+  );
+  animation: pf-sweep var(--pf-dur-breath) linear infinite;
+}
+.pf-term-inner {
+  height: 100%;
+  border-radius: calc(var(--pf-radius-md) - var(--pf-bracket-width));
+  background: var(--pf-surface);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-term-cell--focused {
+    animation: none;
+    background: var(--pf-ember-deep);
+  }
+}

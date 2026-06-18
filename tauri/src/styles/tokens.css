@@ -1,0 +1,141 @@
+/*
+ * PickForge design tokens → CSS custom properties.
+ * Rule 1 of the design system: tokens only — components never use raw
+ * hex / sizes / radii / durations. Everything below maps 1:1 from the Flutter
+ * token sources (pickforge_colors / typography / spacing / motion / elevation).
+ */
+
+:root {
+  /* ---- Color: dark palette (the canonical brand) ---- */
+  --pf-surface: #0a0a0b;
+  --pf-surface-1: #0f0f11;
+  --pf-surface-2: #141417;
+  --pf-surface-3: #1b1b1f;
+
+  --pf-text-hi: #f2f2f3;
+  --pf-text-med: #a0a0a6;
+  --pf-text-low: #6e6e75;
+
+  /* The single accent. One ember per composition. */
+  --pf-ember: #ff7a1a;
+  --pf-ember-soft: #ff9a4a;
+  --pf-ember-deep: #cc5e0c;
+
+  --pf-hairline: rgba(255, 255, 255, 0.08);
+  --pf-hairline-strong: rgba(255, 255, 255, 0.14);
+  --pf-item-fill: rgba(255, 255, 255, 0.03);
+
+  --pf-connected: #3dd68c;
+  --pf-warning: #f2b53a;
+  --pf-error: #ff6b5c;
+  --pf-info: #7aa2ff;
+
+  --pf-ember-glow: rgba(255, 122, 26, 0.28);
+
+  /* ---- Elevation / glow (from pickforge_elevation.dart) ---- */
+  --pf-glow-ember-soft: 0 0 30px -8px rgba(255, 122, 26, 0.25);
+  --pf-glow-ember: 0 0 60px -10px rgba(255, 122, 26, 0.45);
+  --pf-glow-ember-strong: 0 0 90px -10px rgba(255, 122, 26, 0.65);
+  --pf-shadow-raised: 0 8px 24px -6px rgba(0, 0, 0, 0.4);
+  --pf-shadow-overlay: 0 16px 48px -10px rgba(0, 0, 0, 0.6);
+
+  /* ---- Typography ---- */
+  --pf-font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --pf-font-mono: "GeistMono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* type scale (size / weight / tracking / line-height) — selected slots */
+  --pf-size-display-lg: 42px;
+  --pf-size-display-md: 34px;
+  --pf-size-display-sm: 28px;
+  --pf-size-headline-lg: 25px;
+  --pf-size-headline-md: 21px;
+  --pf-size-headline-sm: 18px;
+  --pf-size-title-lg: 16px;
+  --pf-size-title-md: 14px;
+  --pf-size-title-sm: 13px;
+  --pf-size-body-lg: 15px;
+  --pf-size-body-md: 13px;
+  --pf-size-body-sm: 12px;
+  --pf-size-label-lg: 13px;
+  --pf-size-label-md: 12px;
+  --pf-size-label-sm: 11px;
+  --pf-size-eyebrow: 10px;
+  --pf-size-mono: 12px;
+
+  --pf-weight-regular: 400;
+  --pf-weight-medium: 500;
+  --pf-weight-semibold: 600;
+  --pf-weight-bold: 700;
+
+  /* eyebrow: 10px mono, weight 500, wide tracking ~0.18em, uppercase */
+  --pf-tracking-eyebrow: 1.8px;
+
+  /* ---- Spacing: 8px grid ---- */
+  --pf-space-xs: 4px;
+  --pf-space-sm: 8px;
+  --pf-space-md: 12px;
+  --pf-space-lg: 16px;
+  --pf-space-xl: 24px;
+  --pf-space-xxl: 32px;
+  --pf-space-xxxl: 48px;
+
+  /* ---- Radii ---- */
+  --pf-radius-sm: 6px;
+  --pf-radius-md: 10px;
+  --pf-radius-lg: 14px;
+  --pf-radius-xl: 16px;
+  --pf-radius-pill: 999px;
+
+  /* ---- Borders ---- */
+  --pf-hairline-width: 1px;
+  --pf-bracket-width: 1.5px;
+
+  /* ---- Motion ---- */
+  --pf-dur-micro: 110ms;
+  --pf-dur-fast: 180ms;
+  --pf-dur-standard: 260ms;
+  --pf-dur-slow: 420ms;
+  --pf-dur-reveal: 640ms;
+  --pf-dur-pulse: 2400ms;
+  --pf-dur-breath: 6000ms;
+
+  /* The one easing. Signature "forge" curve: snappy in, gentle out. */
+  --pf-ease-forge: cubic-bezier(0.16, 1, 0.3, 1);
+  --pf-ease-curve: cubic-bezier(0.65, 0, 0.35, 1); /* easeInOutCubic */
+  --pf-ease-out: cubic-bezier(0.33, 1, 0.68, 1); /* easeOutCubic */
+}
+
+/* ---- Light mode (inversion map from PickforgePalette.light) ---- */
+:root[data-theme="light"] {
+  --pf-surface: #fafaf7;
+  --pf-surface-1: #ffffff;
+  --pf-surface-2: #f2f2ee;
+  --pf-surface-3: #e9e9e4;
+
+  --pf-text-hi: #17171a;
+  --pf-text-med: #55555c;
+  --pf-text-low: #6e6e75;
+
+  --pf-ember: #e5610a;
+  --pf-ember-soft: #f58220;
+  --pf-ember-deep: #b14c00;
+
+  --pf-hairline: rgba(0, 0, 0, 0.1);
+  --pf-hairline-strong: rgba(0, 0, 0, 0.16);
+  --pf-item-fill: rgba(0, 0, 0, 0.03);
+
+  --pf-ember-glow: rgba(229, 97, 10, 0.23);
+}
+
+/* Reduced motion collapses every duration to zero (Rule 5). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pf-dur-micro: 0ms;
+    --pf-dur-fast: 0ms;
+    --pf-dur-standard: 0ms;
+    --pf-dur-slow: 0ms;
+    --pf-dur-reveal: 0ms;
+    --pf-dur-pulse: 0ms;
+    --pf-dur-breath: 0ms;
+  }
+}

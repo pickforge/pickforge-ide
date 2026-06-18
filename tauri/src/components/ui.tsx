@@ -1,0 +1,247 @@
+// Design-system primitives, web port (SolidJS). Phase 0 subset:
+// MonoEyebrow, HairlinePanel, StatusPill, Chip, EmberButton.
+import { type JSX, Show, splitProps } from "solid-js";
+import "./ui.css";
+
+export type StatusIntent =
+  | "neutral"
+  | "live"
+  | "connected"
+  | "warning"
+  | "error"
+  | "info";
+
+const INTENT_VAR: Record<StatusIntent, string> = {
+  neutral: "var(--pf-text-med)",
+  live: "var(--pf-ember)",
+  connected: "var(--pf-connected)",
+  warning: "var(--pf-warning)",
+  error: "var(--pf-error)",
+  info: "var(--pf-info)",
+};
+
+/** Uppercase, wide-tracked monospace section label with optional ember tick. */
+export function MonoEyebrow(props: {
+  text: string;
+  tick?: boolean;
+  class?: string;
+}): JSX.Element {
+  return (
+    <span class={`pf-eyebrow-row ${props.class ?? ""}`}>
+      <Show when={props.tick}>
+        <span class="pf-eyebrow-tick" />
+      </Show>
+      <span class="pf-eyebrow">{props.text}</span>
+    </span>
+  );
+}
+
+/** Base card/panel: hairline border on a surface fill. */
+export function HairlinePanel(
+  props: {
+    children: JSX.Element;
+    strong?: boolean;
+    glass?: boolean;
+  } & JSX.HTMLAttributes<HTMLDivElement>,
+): JSX.Element {
+  const [local, rest] = splitProps(props, ["children", "strong", "glass", "class"]);
+  return (
+    <div
+      {...rest}
+      class={[
+        "pf-panel",
+        local.strong ? "pf-panel--strong" : "",
+        local.glass ? "pf-panel--glass" : "",
+        local.class ?? "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      {local.children}
+    </div>
+  );
+}
+
+/** Small semantic status chip with a leading dot. */
+export function StatusPill(props: {
+  label: string;
+  intent?: StatusIntent;
+  pulsing?: boolean;
+}): JSX.Element {
+  const intent = () => props.intent ?? "neutral";
+  return (
+    <span class="pf-pill">
+      <span
+        class={`pf-dot ${props.pulsing ? "pf-dot--pulsing" : ""}`}
+        style={{ "--pf-intent": INTENT_VAR[intent()] }}
+      />
+      {props.label}
+    </span>
+  );
+}
+
+/** Quick-launch chip — types an agent command into the focused shell. */
+export function Chip(props: {
+  label: string;
+  ember?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      class={`pf-chip ${props.ember ? "pf-chip--ember" : ""}`}
+      disabled={props.disabled}
+      onClick={() => props.onClick?.()}
+    >
+      {props.label}
+    </button>
+  );
+}
+
+/** Primary pill CTA with ember glow. */
+export function EmberButton(props: {
+  label: string;
+  disabled?: boolean;
+  onClick?: () => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      class="pf-ember-btn"
+      disabled={props.disabled}
+      onClick={() => props.onClick?.()}
+    >
+      {props.label}
+    </button>
+  );
+}
+
+/** Four L-corner marks framing a child; top-right corner is ember by default. */
+export function SelectionBracket(props: {
+  children: JSX.Element;
+  active?: boolean;
+  armLength?: number;
+  inset?: number;
+  color?: string;
+  emberCorner?: boolean;
+  radius?: number;
+}): JSX.Element {
+  const arm = () => `${props.armLength ?? 10}px`;
+  const off = () => `${-(props.inset ?? 3)}px`; // negative = outside the box
+  const pos = (corner: string): Record<string, string> => {
+    const base: Record<string, string> = { width: arm(), height: arm() };
+    if (corner === "tl") return { ...base, top: off(), left: off() };
+    if (corner === "tr") return { ...base, top: off(), right: off() };
+    if (corner === "bl") return { ...base, bottom: off(), left: off() };
+    return { ...base, bottom: off(), right: off() };
+  };
+  return (
+    <span
+      class="pf-bracket"
+      style={{
+        opacity: (props.active ?? true) ? 1 : 0,
+        "--pf-bracket-color": props.color ?? "var(--pf-text-hi)",
+        "--pf-bracket-corner-color": (props.emberCorner ?? true)
+          ? "var(--pf-ember)"
+          : (props.color ?? "var(--pf-text-hi)"),
+        "--pf-bracket-radius": `${props.radius ?? 10}px`,
+      }}
+    >
+      {props.children}
+      <span class="pf-bracket-corner tl" style={pos("tl")} />
+      <span class="pf-bracket-corner tr" style={pos("tr")} />
+      <span class="pf-bracket-corner bl" style={pos("bl")} />
+      <span class="pf-bracket-corner br" style={pos("br")} />
+    </span>
+  );
+}
+
+/** Faint blueprint grid backdrop with optional vignette fade + ember halo. */
+export function BlueprintGrid(props: {
+  children?: JSX.Element;
+  cell?: number;
+  lineColor?: string;
+  halo?: boolean;
+  fade?: boolean;
+}): JSX.Element {
+  return (
+    <div
+      class="pf-blueprint"
+      style={{
+        "--pf-blueprint-cell": `${props.cell ?? 32}px`,
+        "--pf-blueprint-line": props.lineColor ?? "var(--pf-hairline)",
+      }}
+    >
+      <div class={`pf-blueprint-bg ${(props.fade ?? true) ? "fade" : ""}`} />
+      <Show when={props.halo}>
+        <div class="pf-blueprint-halo" />
+      </Show>
+      <div class="pf-blueprint-content">{props.children}</div>
+    </div>
+  );
+}
+
+/** Rounded frame with a slow ember sweep when active; quiet hairline otherwise. */
+export function EmberSweepBorder(props: {
+  children: JSX.Element;
+  active?: boolean;
+  borderRadius?: number;
+  strokeWidth?: number;
+}): JSX.Element {
+  return (
+    <div
+      class={`pf-sweep-frame ${(props.active ?? true) ? "active" : ""}`}
+      style={{
+        "--pf-sweep-radius": `${props.borderRadius ?? 10}px`,
+        "--pf-sweep-stroke": `${props.strokeWidth ?? 1.5}px`,
+      }}
+    >
+      <div class="pf-sweep-inner">{props.children}</div>
+    </div>
+  );
+}
+
+/** Small dot with an optional expanding pulse ring. */
+export function EmberDot(props: {
+  color?: string;
+  size?: number;
+  pulsing?: boolean;
+}): JSX.Element {
+  const size = () => `${props.size ?? 8}px`;
+  return (
+    <span
+      class={`pf-dot ${props.pulsing ? "pf-dot--pulsing" : ""}`}
+      style={{
+        "--pf-intent": props.color ?? "var(--pf-ember)",
+        width: size(),
+        height: size(),
+      }}
+    />
+  );
+}
+
+/** Branded empty state — bracket-framed glyph + eyebrow + title + hint. Ember-free. */
+export function ForgeEmptyState(props: {
+  glyph: JSX.Element;
+  title: string;
+  eyebrow?: string;
+  hint?: string;
+  action?: JSX.Element;
+}): JSX.Element {
+  return (
+    <div class="pf-empty">
+      <SelectionBracket active emberCorner={false} inset={6} armLength={9}>
+        <span class="pf-empty-glyph">{props.glyph}</span>
+      </SelectionBracket>
+      <Show when={props.eyebrow}>
+        <MonoEyebrow text={props.eyebrow!} />
+      </Show>
+      <div class="pf-empty-title">{props.title}</div>
+      <Show when={props.hint}>
+        <div class="pf-empty-hint">{props.hint}</div>
+      </Show>
+      <Show when={props.action}>{props.action}</Show>
+    </div>
+  );
+}

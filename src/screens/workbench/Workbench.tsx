@@ -113,10 +113,10 @@ export function WorkbenchScreen() {
   const renderPane = (pane: PaneId) => (
     <Switch>
       <Match when={pane === "projects"}><PaneShell pane="projects"><ProjectsPane /></PaneShell></Match>
-      <Match when={pane === "chats"}><PaneShell pane="chats" grow><ChatsPane /></PaneShell></Match>
-      <Match when={pane === "files"}><PaneShell pane="files" grow><FileExplorer /></PaneShell></Match>
+      <Match when={pane === "chats"}><PaneShell pane="chats"><ChatsPane /></PaneShell></Match>
+      <Match when={pane === "files"}><PaneShell pane="files"><FileExplorer /></PaneShell></Match>
       <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><SourceControl /></PaneShell></Match>
-      <Match when={pane === "inspector"}><PaneShell pane="inspector" grow><InspectorPanel /></PaneShell></Match>
+      <Match when={pane === "inspector"}><PaneShell pane="inspector"><InspectorPanel /></PaneShell></Match>
     </Switch>
   );
 

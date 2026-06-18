@@ -26,10 +26,37 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  flex: none;
+  /* flex is set inline: expanded → `<weight> 1 0`, collapsed → `0 0 auto`. */
 }
-.pf-dock-slot--grow {
-  flex: 1 1 0;
+/* vertical resize handle between two adjacent expanded panes */
+.pf-pane-vresizer {
+  flex: none;
+  height: 6px;
+  margin: -3px 0;
+  z-index: 5;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pf-pane-vresizer-grip {
+  height: 1px;
+  width: 100%;
+  background: transparent;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-pane-vresizer:hover .pf-pane-vresizer-grip,
+body.pf-resizing .pf-pane-vresizer-grip {
+  background: var(--pf-ember);
+}
+/* insertion line shown while dragging a pane to a new slot */
+.pf-drop-placeholder {
+  flex: none;
+  height: 2px;
+  margin: 1px var(--pf-space-sm);
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-ember);
+  box-shadow: 0 0 8px -1px var(--pf-ember);
 }
 .pf-dock-empty {
   margin: var(--pf-space-md);
@@ -85,12 +112,12 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-pane-shell {
   display: flex;
   flex-direction: column;
-  flex: none;
+  flex: 1 1 0;
   min-height: 0;
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
 }
-.pf-pane-shell--grow {
-  flex: 1 1 0;
+.pf-pane-shell--collapsed {
+  flex: 0 0 auto;
 }
 .pf-pane-shell-head {
   display: flex;
@@ -145,13 +172,8 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-pane-shell-body {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-}
-.pf-pane-shell--grow > .pf-pane-shell-body {
   flex: 1 1 0;
-}
-.pf-pane-shell:not(.pf-pane-shell--grow) > .pf-pane-shell-body {
-  max-height: 40vh;
+  min-height: 0;
 }
 
 /* pane body scaffolding */

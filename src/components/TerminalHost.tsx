@@ -188,6 +188,27 @@ export function TerminalHost(props: {
     }
   };
 
+  // Closing panes play an exit animation in place before leaving the split tree
+  // (mirrors the open animation); siblings reflow once they're gone. Reduced
+  // motion removes them immediately.
+  const [closing, setClosing] = createSignal<string[]>([]);
+  const reduceMotion = () =>
+    typeof window !== "undefined" &&
+    !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const CLOSE_MS = 260; // matches the --pf-dur-standard close animation
+  const requestClose = (id: string) => {
+    if (leaves().length <= 1 || closing().includes(id)) return;
+    if (reduceMotion()) {
+      close(id);
+      return;
+    }
+    setClosing((c) => [...c, id]);
+    setTimeout(() => {
+      setClosing((c) => c.filter((x) => x !== id));
+      close(id);
+    }, CLOSE_MS);
+  };
+
   // --- divider drag → live ratio ---
   let drag: { id: string; dir: "row" | "col"; bounds: Rect } | null = null;
   const onDragMove = (e: PointerEvent) => {
@@ -240,6 +261,7 @@ export function TerminalHost(props: {
           return (
             <div
               class="pf-pane"
+              classList={{ "pf-pane--closing": closing().includes(leaf.id) }}
               style={{
                 left: pct(rect().x),
                 top: pct(rect().y),
@@ -280,7 +302,7 @@ export function TerminalHost(props: {
                       disabled={leaves().length <= 1}
                       onClick={(e) => {
                         e.stopPropagation();
-                        close(leaf.id);
+                        requestClose(leaf.id);
                       }}
                     >
                       <IconClose size={14} />
@@ -316,7 +338,7 @@ export function TerminalHost(props: {
                       handles.set(leaf.id, handle);
                       if (focusedId() === leaf.id) handle.focus();
                     }}
-                    onExit={() => close(leaf.id)}
+                    onExit={() => requestClose(leaf.id)}
                   />
                 </div>
               </div>

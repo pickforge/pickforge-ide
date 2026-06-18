@@ -1,13 +1,17 @@
 // Dock primitives: a resizable/hideable dock column of draggable, collapsible
-// PaneShells, plus the edge resizer and the reveal handle shown when a dock is
-// hidden. The center terminal column is never a dock, so terminals never remount.
-import { For, Show, type JSX } from "solid-js";
+// PaneShells. Expanded panes are weighted flex children, so collapsing a pane
+// lets the others fill the freed space and vertical dividers can re-weight a
+// pair. Pane drags show a header drag image and an insertion placeholder. The
+// center terminal column is never a dock, so terminal hosts never remount.
+import { createSignal, For, Show, type JSX } from "solid-js";
 import {
   isCollapsed,
   layout,
   movePane,
   PANE_TITLES,
+  paneWeight,
   setDockWidth,
+  setPaneWeights,
   toggleDock,
   togglePaneCollapsed,
   type DockId,
@@ -16,25 +20,16 @@ import {
 import { IconChevronDown, IconChevronRight, IconMore } from "../../components/icons";
 
 const PANE_MIME = "application/x-pf-pane";
-// Panes whose body fills available height (the rest size to content).
-const GROW_PANES: ReadonlySet<PaneId> = new Set(["chats", "files", "inspector"]);
 
-export function PaneShell(props: {
-  pane: PaneId;
-  grow?: boolean;
-  actions?: JSX.Element;
-  children: JSX.Element;
-}) {
+export function PaneShell(props: { pane: PaneId; actions?: JSX.Element; children: JSX.Element }) {
   const collapsed = () => isCollapsed(props.pane);
+  let headEl!: HTMLElement;
   return (
     <section
       class="pf-pane-shell"
-      classList={{
-        "pf-pane-shell--collapsed": collapsed(),
-        "pf-pane-shell--grow": !!props.grow && !collapsed(),
-      }}
+      classList={{ "pf-pane-shell--collapsed": collapsed() }}
     >
-      <header class="pf-pane-shell-head" onDblClick={() => togglePaneCollapsed(props.pane)}>
+      <header ref={headEl} class="pf-pane-shell-head" onDblClick={() => togglePaneCollapsed(props.pane)}>
         <button
           class="pf-pane-shell-toggle"
           title={collapsed() ? "Expand" : "Collapse"}
@@ -54,7 +49,11 @@ export function PaneShell(props: {
           draggable={true}
           onDragStart={(e) => {
             e.dataTransfer?.setData(PANE_MIME, props.pane);
-            if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+            if (e.dataTransfer) {
+              e.dataTransfer.effectAllowed = "move";
+              // Drag the whole pane header as the preview, not the tiny grip.
+              e.dataTransfer.setDragImage(headEl, 16, 12);
+            }
           }}
         >
           <IconMore size={14} />
@@ -69,40 +68,116 @@ export function PaneShell(props: {
 
 export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.Element }) {
   const panes = () => layout().docks[props.dock];
-  const allow = (e: DragEvent) => {
-    if (e.dataTransfer?.types.includes(PANE_MIME)) {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+  const [dropIndex, setDropIndex] = createSignal<number | null>(null);
+  const slotEls = new Map<PaneId, HTMLElement>();
+  let dockEl!: HTMLDivElement;
+
+  const isPaneDrag = (e: DragEvent) => !!e.dataTransfer?.types.includes(PANE_MIME);
+
+  const computeIndex = (clientY: number): number => {
+    const ps = panes();
+    for (let i = 0; i < ps.length; i++) {
+      const el = slotEls.get(ps[i]);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
     }
+    return ps.length;
   };
-  const dropAt = (index: number, e: DragEvent) => {
-    const pane = e.dataTransfer?.getData(PANE_MIME) as PaneId;
-    if (!pane) return;
+
+  const onDragOver = (e: DragEvent) => {
+    if (!isPaneDrag(e)) return;
     e.preventDefault();
-    e.stopPropagation();
-    movePane(pane, props.dock, index);
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    setDropIndex(computeIndex(e.clientY));
   };
+  const onDragLeave = (e: DragEvent) => {
+    if (!dockEl.contains(e.relatedTarget as Node)) setDropIndex(null);
+  };
+  const onDrop = (e: DragEvent) => {
+    const pane = e.dataTransfer?.getData(PANE_MIME) as PaneId;
+    const idx = dropIndex();
+    setDropIndex(null);
+    if (!pane || idx === null) return;
+    e.preventDefault();
+    movePane(pane, props.dock, idx);
+  };
+
+  // --- vertical resize between two adjacent expanded panes ---
+  const startResize = (e: PointerEvent, aboveId: PaneId, belowId: PaneId) => {
+    e.preventDefault();
+    const aEl = slotEls.get(aboveId);
+    const bEl = slotEls.get(belowId);
+    if (!aEl || !bEl) return;
+    const startY = e.clientY;
+    const aH = aEl.offsetHeight;
+    const sum = aH + bEl.offsetHeight;
+    const sumW = paneWeight(aboveId) + paneWeight(belowId);
+    const MIN = 64;
+    document.body.classList.add("pf-resizing");
+    const onMove = (ev: PointerEvent) => {
+      let na = aH + (ev.clientY - startY);
+      na = Math.max(MIN, Math.min(sum - MIN, na));
+      setPaneWeights({
+        [aboveId]: (na / sum) * sumW,
+        [belowId]: ((sum - na) / sum) * sumW,
+      });
+    };
+    const end = () => {
+      document.body.classList.remove("pf-resizing");
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", end);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", end);
+  };
+
   const width = () => (props.dock === "left" ? layout().leftWidth : layout().rightWidth);
+
   return (
     <div
+      ref={dockEl}
       class="pf-dock"
       classList={{ "pf-dock--left": props.dock === "left", "pf-dock--right": props.dock === "right" }}
       style={{ width: `${width()}px` }}
-      onDragOver={allow}
-      onDrop={(e) => dropAt(panes().length, e)}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <For each={panes()}>
-        {(pane, i) => (
-          <div
-            class="pf-dock-slot"
-            classList={{ "pf-dock-slot--grow": GROW_PANES.has(pane) }}
-            onDragOver={allow}
-            onDrop={(e) => dropAt(i(), e)}
-          >
-            {props.render(pane)}
-          </div>
-        )}
+        {(pane, i) => {
+          const next = () => panes()[i() + 1];
+          const expanded = () => !isCollapsed(pane);
+          const resizable = () => expanded() && next() && !isCollapsed(next());
+          return (
+            <>
+              <Show when={dropIndex() === i()}>
+                <div class="pf-drop-placeholder" />
+              </Show>
+              <div
+                class="pf-dock-slot"
+                classList={{ "pf-dock-slot--expanded": expanded() }}
+                style={expanded() ? { flex: `${paneWeight(pane)} 1 0` } : { flex: "0 0 auto" }}
+                ref={(el) => slotEls.set(pane, el)}
+              >
+                {props.render(pane)}
+              </div>
+              <Show when={resizable()}>
+                <div
+                  class="pf-pane-vresizer"
+                  title="Drag to resize"
+                  onPointerDown={(e) => startResize(e, pane, next()!)}
+                >
+                  <span class="pf-pane-vresizer-grip" />
+                </div>
+              </Show>
+            </>
+          );
+        }}
       </For>
+      <Show when={dropIndex() === panes().length}>
+        <div class="pf-drop-placeholder" />
+      </Show>
       <Show when={panes().length === 0}>
         <div class="pf-dock-empty">Drop a pane here</div>
       </Show>
@@ -149,7 +224,6 @@ export function DockRevealHandle(props: { dock: DockId }) {
       title={`Show ${props.dock} panel`}
       onClick={() => toggleDock(props.dock)}
     >
-      {/* chevron points "into" the screen: ▸ for the left edge, ◂ (flipped) for right */}
       <IconChevronRight size={14} class={props.dock === "right" ? "pf-flip-x" : undefined} />
     </button>
   );

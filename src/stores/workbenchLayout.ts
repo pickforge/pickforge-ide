@@ -32,11 +32,24 @@ export interface LayoutState {
   rightVisible: boolean;
   docks: Record<DockId, PaneId[]>;
   collapsed: Partial<Record<PaneId, boolean>>;
+  /** vertical flex weight of each pane within its dock (resizable). */
+  paneWeights: Partial<Record<PaneId, number>>;
 }
 
 const KEY = "pickforge.workbenchLayout";
 const MIN_W = 180;
 const MAX_W = 600;
+const MIN_WEIGHT = 0.2;
+const MAX_WEIGHT = 10;
+
+// Sensible default heights so the docks don't open as dead-equal thirds.
+const DEFAULT_WEIGHTS: Record<PaneId, number> = {
+  projects: 1,
+  chats: 1.4,
+  files: 1.4,
+  sourceControl: 1,
+  inspector: 1.6,
+};
 
 const DEFAULTS: LayoutState = {
   leftWidth: 260,
@@ -45,9 +58,11 @@ const DEFAULTS: LayoutState = {
   rightVisible: true,
   docks: { left: ["projects", "chats", "files"], right: ["sourceControl", "inspector"] },
   collapsed: {},
+  paneWeights: {},
 };
 
 const clampW = (n: number) => Math.min(MAX_W, Math.max(MIN_W, Math.round(n)));
+const clampWeight = (n: number) => Math.min(MAX_WEIGHT, Math.max(MIN_WEIGHT, n));
 
 function normalize(input: Partial<LayoutState>): LayoutState {
   const left = (input.docks?.left ?? []).filter((p): p is PaneId => ALL_PANES.includes(p));
@@ -59,6 +74,11 @@ function normalize(input: Partial<LayoutState>): LayoutState {
   for (const p of ALL_PANES) {
     if (!seen.has(p)) docks[DEFAULT_DOCK[p]].push(p);
   }
+  const weights: Partial<Record<PaneId, number>> = {};
+  for (const p of ALL_PANES) {
+    const raw = input.paneWeights?.[p];
+    weights[p] = Number.isFinite(raw) ? clampWeight(raw as number) : DEFAULT_WEIGHTS[p];
+  }
   return {
     leftWidth: clampW(input.leftWidth ?? DEFAULTS.leftWidth),
     rightWidth: clampW(input.rightWidth ?? DEFAULTS.rightWidth),
@@ -66,6 +86,7 @@ function normalize(input: Partial<LayoutState>): LayoutState {
     rightVisible: input.rightVisible !== false,
     docks,
     collapsed: input.collapsed ?? {},
+    paneWeights: weights,
   };
 }
 
@@ -101,6 +122,14 @@ export function togglePaneCollapsed(pane: PaneId) {
 }
 export function isCollapsed(pane: PaneId): boolean {
   return !!state().collapsed[pane];
+}
+export function paneWeight(pane: PaneId): number {
+  return state().paneWeights[pane] ?? DEFAULT_WEIGHTS[pane] ?? 1;
+}
+export function setPaneWeights(patch: Partial<Record<PaneId, number>>) {
+  const next: Partial<Record<PaneId, number>> = { ...state().paneWeights };
+  for (const k in patch) next[k as PaneId] = clampWeight(patch[k as PaneId]!);
+  persist({ ...state(), paneWeights: next });
 }
 
 /** Move `pane` into `toDock` at `index` (clamped). Removes it from both docks

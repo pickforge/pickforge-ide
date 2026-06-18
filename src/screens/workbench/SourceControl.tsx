@@ -38,6 +38,7 @@ export function SourceControl() {
     const root = workspace.activeRoot;
     if (!root) {
       setStatus(null);
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -64,6 +65,7 @@ export function SourceControl() {
     if (!root) return;
     try {
       const text = await gitDiff(root, file.path, staged);
+      if (workspace.activeRoot !== root) return; // project switched mid-flight
       setDiffFor({ file, staged, text });
     } catch (err) {
       console.error("[pickforge] git_diff failed", err);

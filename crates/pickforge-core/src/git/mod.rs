@@ -50,14 +50,24 @@ pub fn current_branch(root: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// The repo's working-tree root. Porcelain status paths are repo-root-relative,
+/// so every command must run from here for paths to line up (matters when the
+/// project is a subdirectory of a larger repo).
+fn toplevel(root: &str) -> Option<String> {
+    git_ok(root, &["rev-parse", "--show-toplevel"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub fn status(root: &str) -> GitStatus {
-    if !is_repo(root) {
-        return GitStatus { is_repo: false, branch: None, files: Vec::new() };
-    }
-    let branch = current_branch(root);
+    let top = match toplevel(root) {
+        Some(t) => t,
+        None => return GitStatus { is_repo: false, branch: None, files: Vec::new() },
+    };
+    let branch = current_branch(&top);
     // -z: NUL-delimited, never quotes/escapes paths (handles spaces/unicode);
     // rename/copy entries are followed by their original path as a second token.
-    let raw = git_ok(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+    let raw = git_ok(&top, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         .unwrap_or_default();
 
     let mut files = Vec::new();
@@ -96,15 +106,18 @@ fn is_tracked(root: &str, path: &str) -> bool {
 /// untracked file has no tracked diff, so we diff it against the empty file so
 /// its contents show as additions.
 pub fn diff(root: &str, path: &str, staged: bool) -> String {
+    // Run from the repo root so the repo-root-relative `path` from status() lines
+    // up regardless of where the project sits in the tree.
+    let top = toplevel(root).unwrap_or_else(|| root.to_string());
     let args: Vec<&str> = if staged {
         vec!["diff", "--cached", "--", path]
     } else {
         vec!["diff", "--", path]
     };
-    let d = git_raw(root, &args);
-    if !staged && d.trim().is_empty() && !is_tracked(root, path) {
+    let d = git_raw(&top, &args);
+    if !staged && d.trim().is_empty() && !is_tracked(&top, path) {
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
-        return git_raw(root, &["diff", "--no-index", "--", null, path]);
+        return git_raw(&top, &["diff", "--no-index", "--", null, path]);
     }
     d
 }

@@ -15,6 +15,12 @@ import { IconClose, IconPlus } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
+import {
+  fileOpenSettings,
+  setFileOpenCustom,
+  setFileOpenMode,
+  type FileOpenMode,
+} from "../stores/fileOpenSettings";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
@@ -265,6 +271,35 @@ export function SettingsScreen() {
             <span class="pf-settings-label">Panel layout</span>
             <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
           </div>
+        </Section>
+
+        <Section title="File opening">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Open files with</span>
+            <select
+              class="pf-select"
+              value={fileOpenSettings().mode}
+              onChange={(e) => setFileOpenMode(e.currentTarget.value as FileOpenMode)}
+            >
+              <option value="nvim-pane">Neovim (new pane)</option>
+              <option value="system">System default editor</option>
+              <option value="custom">Custom command…</option>
+            </select>
+          </div>
+          <Show when={fileOpenSettings().mode === "custom"}>
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">Command</span>
+              <input
+                class="pf-input"
+                value={fileOpenSettings().customCommand}
+                placeholder="code -g {path}"
+                onInput={(e) => setFileOpenCustom(e.currentTarget.value)}
+              />
+            </div>
+          </Show>
+          <span class="pf-settings-muted">
+            Editor modes open in a new terminal pane; {"{path}"} is the file path.
+          </span>
         </Section>
 
         <Section title="Updates">

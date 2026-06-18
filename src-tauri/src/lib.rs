@@ -40,6 +40,7 @@ pub fn run() {
             fs_commands::list_dir,
             fs_commands::read_text_file,
             fs_commands::path_basename,
+            fs_commands::open_path,
             device_commands::target_detect,
             device_commands::adb_list_devices,
             device_commands::adb_screenshot,

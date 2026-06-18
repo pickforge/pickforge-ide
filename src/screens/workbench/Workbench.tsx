@@ -19,6 +19,8 @@ import { Chip, ForgeEmptyState, MonoEyebrow } from "../../components/ui";
 import { IconChevronDown, IconClose, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
 import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
+import { editorCommand } from "../../stores/fileOpenSettings";
+import { openPathSystem } from "../../lib/opener";
 import {
   binaryForItem,
   commandForItem,
@@ -42,6 +44,17 @@ export function WorkbenchScreen() {
   const typeToActive = (text: string) => {
     if (!text) return;
     handles.get(workspace.activeChatId ?? "")?.typeToFocused(text);
+  };
+
+  // Open a file per the user's preference: a new editor pane (nvim/custom) or the
+  // OS default editor.
+  const openFileInActive = (path: string) => {
+    const cmd = editorCommand(path);
+    if (cmd === null) {
+      void openPathSystem(path);
+      return;
+    }
+    handles.get(workspace.activeChatId ?? "")?.openInNewPane(cmd);
   };
 
   // Mount a host the first time its chat becomes active; keep it after.
@@ -114,7 +127,7 @@ export function WorkbenchScreen() {
     <Switch>
       <Match when={pane === "projects"}><PaneShell pane="projects"><ProjectsPane /></PaneShell></Match>
       <Match when={pane === "chats"}><PaneShell pane="chats"><ChatsPane /></PaneShell></Match>
-      <Match when={pane === "files"}><PaneShell pane="files"><FileExplorer /></PaneShell></Match>
+      <Match when={pane === "files"}><PaneShell pane="files"><FileExplorer onOpenFile={openFileInActive} /></PaneShell></Match>
       <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><SourceControl /></PaneShell></Match>
       <Match when={pane === "inspector"}><PaneShell pane="inspector"><InspectorPanel /></PaneShell></Match>
     </Switch>

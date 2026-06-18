@@ -142,6 +142,8 @@ const baseName = (p?: string) =>
 export interface TerminalHostHandle {
   /** Type text into the currently focused pane's shell. */
   typeToFocused: (text: string) => void;
+  /** Split the focused pane and run `command` (e.g. an editor) in the new pane. */
+  openInNewPane: (command: string) => void;
 }
 
 export function TerminalHost(props: {
@@ -173,6 +175,16 @@ export function TerminalHost(props: {
     setRoot((r) => splitTree(r, leafId, dir, fresh));
     setMenuFor(null);
     setFocusedId(fresh.id); // its terminal focuses itself once ready
+  };
+
+  // Commands queued to run in a freshly-split pane once its shell is ready
+  // (used by openInNewPane for "open file in editor").
+  const pendingCmd = new Map<string, string>();
+  const openInNewPane = (command: string) => {
+    const fresh = newLeaf();
+    pendingCmd.set(fresh.id, command);
+    setRoot((r) => splitTree(r, focusedId(), "down", fresh));
+    setFocusedId(fresh.id);
   };
 
   const close = (id: string) => {
@@ -250,6 +262,7 @@ export function TerminalHost(props: {
 
   props.onReady?.({
     typeToFocused: (text) => handles.get(focusedId())?.typeText(text),
+    openInNewPane,
   });
 
   return (
@@ -337,6 +350,11 @@ export function TerminalHost(props: {
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
                       if (focusedId() === leaf.id) handle.focus();
+                      const cmd = pendingCmd.get(leaf.id);
+                      if (cmd) {
+                        pendingCmd.delete(leaf.id);
+                        handle.typeText(cmd + "\r");
+                      }
                     }}
                     onExit={() => requestClose(leaf.id)}
                   />

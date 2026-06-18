@@ -1,6 +1,7 @@
-import { createSignal, For, Match, onMount, Switch } from "solid-js";
+import { createSignal, For, Match, onCleanup, onMount, Switch } from "solid-js";
 import { navigate, route, type Route } from "./router";
 import { loadWorkspace, workspace } from "./stores/workspace";
+import { applyPersistedZoom, handleZoomKey } from "./lib/zoom";
 import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
@@ -19,16 +20,31 @@ const NAV: { route: Route; label: string }[] = [
 export function App() {
   const [, setReady] = createSignal(false);
 
-  onMount(async () => {
+  onMount(() => {
     if (localStorage.getItem("pickforge.theme") === "light") {
       document.documentElement.dataset.theme = "light";
     }
-    await loadWorkspace();
-    const dismissed = localStorage.getItem("pickforge.onboardingDismissed") === "true";
-    if (workspace.projects.length === 0 && !dismissed && route() === "workbench") {
-      navigate("onboarding");
-    }
-    setReady(true);
+
+    // Interface zoom (VS Code-style): apply persisted level + global hotkeys.
+    // Registered synchronously so cleanup binds before the async bootstrap.
+    applyPersistedZoom();
+    const onZoom = (e: KeyboardEvent) => {
+      if (handleZoomKey(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", onZoom, true);
+    onCleanup(() => window.removeEventListener("keydown", onZoom, true));
+
+    void (async () => {
+      await loadWorkspace();
+      const dismissed = localStorage.getItem("pickforge.onboardingDismissed") === "true";
+      if (workspace.projects.length === 0 && !dismissed && route() === "workbench") {
+        navigate("onboarding");
+      }
+      setReady(true);
+    })();
   });
 
   return (

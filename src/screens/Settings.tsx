@@ -12,6 +12,7 @@ import {
 } from "../stores/quickLaunch";
 import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { IconClose, IconPlus } from "../components/icons";
+import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -195,6 +196,18 @@ export function SettingsScreen() {
               >
                 Light
               </button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Interface zoom
+              <span class="pf-settings-hint-inline">Ctrl/⌘ + − 0</span>
+            </span>
+            <div class="pf-zoom">
+              <button class="pf-zoom-btn" title="Zoom out" onClick={zoomOut}>−</button>
+              <span class="pf-zoom-val">{Math.round(currentZoom() * 100)}%</span>
+              <button class="pf-zoom-btn" title="Zoom in" onClick={zoomIn}>+</button>
+              <button class="pf-text-btn" onClick={zoomReset}>Reset</button>
             </div>
           </div>
         </Section>

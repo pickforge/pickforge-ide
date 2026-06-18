@@ -19,8 +19,15 @@ fn open_database() -> Database {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init());
+
+    // The updater is desktop-only (no mobile self-update).
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .manage(PtyManager::new())
         .manage(VmServiceClient::new())
         .manage(open_database())

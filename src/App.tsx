@@ -1,8 +1,9 @@
-import { createSignal, For, Match, onCleanup, onMount, Switch } from "solid-js";
+import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { navigate, route, type Route } from "./router";
 import { loadWorkspace, workspace } from "./stores/workspace";
 import { applyPersistedZoom, currentZoom, handleZoomKey, zoomReset } from "./lib/zoom";
 import { appVersion, loadAppVersion } from "./lib/appInfo";
+import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
@@ -39,6 +40,7 @@ export function App() {
     onCleanup(() => window.removeEventListener("keydown", onZoom, true));
 
     void loadAppVersion();
+    void checkForUpdate(true);
 
     void (async () => {
       await loadWorkspace();
@@ -57,6 +59,15 @@ export function App() {
           <span class="pf-mark" />
           <span class="pf-wordmark">PickForge</span>
           <MonoEyebrow text={`v${appVersion()}`} />
+          <Show when={updateAvailable()}>
+            <button
+              class="pf-update-badge"
+              title={`Update available: v${updateAvailable()!.version}`}
+              onClick={() => navigate("settings")}
+            >
+              <span class="pf-update-dot" /> Update
+            </button>
+          </Show>
         </div>
         <nav class="pf-nav">
           <For each={NAV}>

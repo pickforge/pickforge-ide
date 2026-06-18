@@ -28,9 +28,18 @@
       "devCsp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:* http://localhost:*; img-src 'self' data: blob: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/pickforge/pickforge/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFMzBENEUxOUM0N0RDNDUKUldSRjNFZWM0ZFF3am9yaGJOa2lqSWlRQmpNdW5VelZOV0NaOWhUbk5ZWjdPMytwWCtMS0QwYlEK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "Forge UI from your terminal",
     "longDescription": "A shell-first workbench that drives Claude, Codex, and your build tools from an embedded terminal, with a Rust core for PTY, device bridges, and storage.",

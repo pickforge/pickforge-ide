@@ -47,6 +47,31 @@
   letter-spacing: -0.02em;
   color: var(--pf-text-hi);
 }
+.pf-update-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  border: var(--pf-hairline-width) solid var(--pf-ember);
+  border-radius: var(--pf-radius-pill);
+  background: color-mix(in srgb, var(--pf-ember) 12%, transparent);
+  color: var(--pf-ember);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  padding: 2px var(--pf-space-sm);
+  cursor: pointer;
+}
+.pf-update-badge:hover {
+  background: color-mix(in srgb, var(--pf-ember) 20%, transparent);
+}
+.pf-update-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-ember);
+  box-shadow: 0 0 8px -1px var(--pf-ember);
+}
 
 /* ---- Quick-launch strip ---- */
 .pf-launch {

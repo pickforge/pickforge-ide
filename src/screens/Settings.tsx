@@ -14,6 +14,8 @@ import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { IconClose, IconPlus } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, workbenchPrefs } from "../stores/workbenchPrefs";
+import { appVersion } from "../lib/appInfo";
+import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -54,6 +56,18 @@ export function SettingsScreen() {
   const restore = async (root: string) => {
     await db.projectSetArchived(root, null);
     await reloadArchived();
+  };
+
+  const updateLabel = () => {
+    switch (updateStatus()) {
+      case "available": return `Version ${updateAvailable()?.version} available`;
+      case "none": return "You're up to date";
+      case "checking": return "Checking…";
+      case "downloading": return "Downloading…";
+      case "ready": return "Restarting…";
+      case "error": return "Update check failed";
+      default: return "Check for the latest release";
+    }
   };
 
   const conflicts = () => conflictingHotkeys(quickLaunchItems());
@@ -230,6 +244,41 @@ export function SettingsScreen() {
               </button>
             </div>
           </div>
+        </Section>
+
+        <Section title="Updates">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Current version</span>
+            <span class="pf-settings-muted">v{appVersion()}</span>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">{updateLabel()}</span>
+            <Show
+              when={updateAvailable()}
+              fallback={
+                <button
+                  class="pf-ql-add"
+                  disabled={updateStatus() === "checking"}
+                  onClick={() => void checkForUpdate(false)}
+                >
+                  Check for updates
+                </button>
+              }
+            >
+              <button
+                class="pf-text-btn"
+                disabled={updateStatus() === "downloading"}
+                onClick={() => void installUpdate()}
+              >
+                {updateStatus() === "downloading"
+                  ? "Installing…"
+                  : `Install v${updateAvailable()!.version}`}
+              </button>
+            </Show>
+          </div>
+          <Show when={updateError()}>
+            <div class="pf-vm-error">{updateError()}</div>
+          </Show>
         </Section>
 
         <Section title="Archived projects">

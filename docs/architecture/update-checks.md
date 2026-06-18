@@ -1,33 +1,43 @@
 # Update Checks
 
-Pickforge update checks are build-time configured. Release builds can pass:
+PickForge auto-updates via the **Tauri updater plugin** (`tauri-plugin-updater`).
+On launch the app checks a GitHub Releases endpoint, verifies the download's
+signature against an embedded public key, and offers a one-click install +
+relaunch.
 
-```bash
---dart-define=PICKFORGE_UPDATE_METADATA_URL=https://example.test/pickforge/latest.json
-```
+## How it works
 
-The default value is empty, so local and development builds do not contact a
-network endpoint.
+- `src-tauri/tauri.conf.json` → `plugins.updater`:
+  - `endpoints`: `https://github.com/pickforge/pickforge/releases/latest/download/latest.json`
+  - `pubkey`: the base64 minisign public key (safe to commit).
+- `bundle.createUpdaterArtifacts: true` makes the bundler emit the signed
+  updater artifacts (`*.sig`) alongside each installer.
+- Frontend: `src/lib/updater.ts` (`checkForUpdate`, `installUpdate`). The header
+  shows an **Update** badge when one is available; Settings → Updates has the
+  full check / install flow. Checks are silent on failure and never block paint.
 
-## Metadata
+## Signing keys (required for releases)
 
-The endpoint must return a JSON object:
+Updates are signature-verified, so the CI must sign artifacts with the **private
+key** that matches the `pubkey` in `tauri.conf.json`.
 
-```json
-{
-  "version": "0.2.0+1",
-  "downloadUrl": "https://example.test/download",
-  "releaseNotesUrl": "https://example.test/releases/0.2.0"
-}
-```
+1. Generate a keypair (already done once for this repo's pubkey):
+   ```bash
+   bun run tauri signer generate -w pickforge-updater.key
+   ```
+   Keep the private key OUT of git. The matching public key is embedded in
+   `tauri.conf.json`.
+2. Add two GitHub repo secrets (Settings → Secrets → Actions):
+   - `TAURI_SIGNING_PRIVATE_KEY` — the private key file's contents.
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — its password (empty string if none).
+3. Push a `v*` tag. `.github/workflows/release.yml` builds every platform, signs
+   the artifacts, creates a draft GitHub Release, and uploads `latest.json`
+   (`includeUpdaterJson: true`). Publish the release to ship the update.
 
-`version` is required. `downloadUrl` and `releaseNotesUrl` are optional.
+If the secrets are absent the build still succeeds but produces unsigned
+artifacts, and clients will reject the update — so set them before tagging.
 
-## Behavior
+## Privacy
 
-- Users can opt out from Settings.
-- The check starts after `runApp`, so it does not block first paint.
-- The HTTP client uses short connect and receive timeouts.
-- Failures are local and non-fatal.
-- Requests do not include source code, prompts, screenshots, project paths, or
-  user identifiers.
+The check is a single GET to the public releases endpoint. It sends no source,
+prompts, screenshots, project paths, or user identifiers.

@@ -113,6 +113,19 @@ export function selectChat(chatId: string | null) {
   setState("activeChatId", chatId);
 }
 
+/** Move `draggedId` to sit before `beforeId` (or to the end if null), persisting
+ *  the new sort_order. Updates the store in place so the active chat is kept. */
+export async function reorderChat(draggedId: string, beforeId: string | null) {
+  const dragged = state.chats.find((c) => c.chatId === draggedId);
+  if (!dragged || draggedId === beforeId) return;
+  const rest = state.chats.filter((c) => c.chatId !== draggedId);
+  const idx = beforeId ? rest.findIndex((c) => c.chatId === beforeId) : rest.length;
+  rest.splice(idx < 0 ? rest.length : idx, 0, dragged);
+  const next = rest.map((c, i) => ({ ...c, sortOrder: i }));
+  setState("chats", next);
+  for (const c of next) await db.chatUpsert(c);
+}
+
 export async function renameChat(chatId: string, title: string) {
   const t = title.trim();
   const c = state.chats.find((x) => x.chatId === chatId);

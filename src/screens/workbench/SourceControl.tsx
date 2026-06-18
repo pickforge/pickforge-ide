@@ -2,8 +2,7 @@
 // portaled unified-diff viewer. Read-only — stage/commit happen in the terminal.
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
-import { MonoEyebrow } from "../../components/ui";
-import { IconChevronDown, IconChevronRight, IconClose, IconRefresh } from "../../components/icons";
+import { IconClose, IconRefresh } from "../../components/icons";
 import { gitDiff, gitStatus, type GitFileStatus, type GitStatus } from "../../lib/git";
 import { workspace } from "../../stores/workspace";
 
@@ -32,7 +31,6 @@ function dirName(p: string): string {
 
 export function SourceControl() {
   const [status, setStatus] = createSignal<GitStatus | null>(null);
-  const [collapsed, setCollapsed] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [diffFor, setDiffFor] = createSignal<{ file: GitFileStatus; staged: boolean; text: string } | null>(null);
 
@@ -73,54 +71,43 @@ export function SourceControl() {
   const count = createMemo(() => status()?.files.length ?? 0);
 
   return (
-    <section class="pf-rail-section pf-sc">
-      <div class="pf-rail-head">
-        <button class="pf-group-toggle" onClick={() => setCollapsed((c) => !c)}>
-          <Show when={!collapsed()} fallback={<IconChevronRight size={13} />}>
-            <IconChevronDown size={13} />
-          </Show>
-          <MonoEyebrow text="Source control" tick />
-          <Show when={count() > 0}>
-            <span class="pf-group-count">{count()}</span>
-          </Show>
-        </button>
+    <div class="pf-pane-scroll pf-sc">
+      <div class="pf-pane-toolbar pf-pane-toolbar--end">
+        <Show when={status()?.branch}>
+          <span class="pf-sc-branch">{status()!.branch}</span>
+        </Show>
+        <Show when={count() > 0}>
+          <span class="pf-group-count">{count()}</span>
+        </Show>
         <button class="pf-icon-btn" title="Refresh" disabled={!workspace.activeRoot} onClick={() => void refresh()}>
           <IconRefresh size={14} />
         </button>
       </div>
 
-      <Show when={!collapsed()}>
-        <Show
-          when={status()?.isRepo}
-          fallback={
-            <div class="pf-rail-empty">
-              {loading() ? "Checking…" : "Not a git repository"}
-            </div>
-          }
-        >
-          <Show when={status()!.branch}>
-            <div class="pf-sc-branch">{status()!.branch}</div>
-          </Show>
-          <Show
-            when={count() > 0}
-            fallback={<div class="pf-rail-empty">No changes</div>}
-          >
-            <div class="pf-rail-list pf-sc-list">
-              <For each={status()!.files}>
-                {(f) => (
-                  <div
-                    class="pf-sc-row"
-                    title={f.path}
-                    onClick={() => void openDiff(f, f.staged && !f.unstaged)}
-                  >
-                    <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
-                    <span class="pf-sc-name">{baseName(f.path)}</span>
-                    <span class="pf-sc-dir">{dirName(f.path)}</span>
-                  </div>
-                )}
-              </For>
-            </div>
-          </Show>
+      <Show
+        when={status()?.isRepo}
+        fallback={
+          <div class="pf-rail-empty">
+            {loading() ? "Checking…" : "Not a git repository"}
+          </div>
+        }
+      >
+        <Show when={count() > 0} fallback={<div class="pf-rail-empty">No changes</div>}>
+          <div class="pf-rail-list pf-sc-list">
+            <For each={status()!.files}>
+              {(f) => (
+                <div
+                  class="pf-sc-row"
+                  title={f.path}
+                  onClick={() => void openDiff(f, f.staged && !f.unstaged)}
+                >
+                  <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
+                  <span class="pf-sc-name">{baseName(f.path)}</span>
+                  <span class="pf-sc-dir">{dirName(f.path)}</span>
+                </div>
+              )}
+            </For>
+          </div>
         </Show>
       </Show>
 
@@ -161,7 +148,7 @@ export function SourceControl() {
           </Portal>
         )}
       </Show>
-    </section>
+    </div>
   );
 }
 

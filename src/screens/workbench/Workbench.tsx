@@ -2,18 +2,21 @@
 // Each chat owns its own terminal host (its own panes/shells). Visited hosts
 // stay mounted (visibility toggled) so switching chats/projects never kills a
 // running shell; a host is disposed only when its chat is deleted.
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { ProjectsChatsPanel } from "./ProjectsChatsPanel";
+import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import { ProjectsPane } from "./ProjectsPane";
+import { ChatsPane } from "./ChatsPane";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
 import { RunControlBar } from "./RunControlBar";
+import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
+import { layout, type PaneId } from "../../stores/workbenchLayout";
 import {
   TerminalHost,
   type TerminalHostHandle,
 } from "../../components/TerminalHost";
 import { Chip, ForgeEmptyState, MonoEyebrow } from "../../components/ui";
-import { IconChevronDown, IconClose, IconGear, IconTerminal } from "../../components/icons";
+import { IconChevronDown, IconClose, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
 import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
 import {
@@ -23,7 +26,7 @@ import {
   quickLaunchItems,
 } from "../../stores/quickLaunch";
 import { onChatDeleted, workspace } from "../../stores/workspace";
-import { navigate, route } from "../../router";
+import { route } from "../../router";
 import "./workbench.css";
 
 interface MountedHost {
@@ -107,22 +110,22 @@ export function WorkbenchScreen() {
     })();
   });
 
+  const renderPane = (pane: PaneId) => (
+    <Switch>
+      <Match when={pane === "projects"}><PaneShell pane="projects"><ProjectsPane /></PaneShell></Match>
+      <Match when={pane === "chats"}><PaneShell pane="chats" grow><ChatsPane /></PaneShell></Match>
+      <Match when={pane === "files"}><PaneShell pane="files" grow><FileExplorer /></PaneShell></Match>
+      <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><SourceControl /></PaneShell></Match>
+      <Match when={pane === "inspector"}><PaneShell pane="inspector" grow><InspectorPanel /></PaneShell></Match>
+    </Switch>
+  );
+
   return (
     <div class="pf-workbench">
-      <aside class="pf-workbench-left pf-reveal" style={{ "--pf-reveal-delay": "70ms" }}>
-        <ProjectsChatsPanel />
-        <FileExplorer />
-        <div class="pf-rail-footer">
-          <span class="pf-rail-copy">© PICKFORGE · MIT</span>
-          <button
-            class="pf-icon-btn"
-            title="Settings"
-            onClick={() => navigate("settings")}
-          >
-            <IconGear size={15} />
-          </button>
-        </div>
-      </aside>
+      <Show when={layout().leftVisible} fallback={<DockRevealHandle dock="left" />}>
+        <DockColumn dock="left" render={renderPane} />
+        <DockResizer dock="left" />
+      </Show>
 
       <main class="pf-workbench-center pf-reveal">
         <Show
@@ -194,10 +197,10 @@ export function WorkbenchScreen() {
         </div>
       </main>
 
-      <aside class="pf-workbench-right pf-reveal" style={{ "--pf-reveal-delay": "140ms" }}>
-        <SourceControl />
-        <InspectorPanel />
-      </aside>
+      <Show when={layout().rightVisible} fallback={<DockRevealHandle dock="right" />}>
+        <DockResizer dock="right" />
+        <DockColumn dock="right" render={renderPane} />
+      </Show>
     </div>
   );
 }

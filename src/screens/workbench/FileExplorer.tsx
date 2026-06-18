@@ -1,7 +1,6 @@
 // Lazy project file tree backed by the list_dir command.
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import { MonoEyebrow } from "../../components/ui";
 import { IconChevronDown, IconChevronRight, IconDot } from "../../components/icons";
 import { workspace } from "../../stores/workspace";
 
@@ -67,18 +66,13 @@ export function FileExplorer() {
   });
 
   return (
-    <section class="pf-rail-section pf-files">
-      <div class="pf-rail-head">
-        <MonoEyebrow text="Files" tick />
-      </div>
-      <div class="pf-file-tree">
-        <Show
-          when={workspace.activeRoot}
-          fallback={<div class="pf-rail-empty">Open a project</div>}
-        >
-          <For each={entries()}>{(e) => <FileNode entry={e} depth={0} />}</For>
-        </Show>
-      </div>
-    </section>
+    <div class="pf-file-tree">
+      <Show
+        when={workspace.activeRoot}
+        fallback={<div class="pf-rail-empty">Open a project</div>}
+      >
+        <For each={entries()}>{(e) => <FileNode entry={e} depth={0} />}</For>
+      </Show>
+    </div>
   );
 }

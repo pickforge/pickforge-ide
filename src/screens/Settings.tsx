@@ -14,6 +14,7 @@ import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { IconClose, IconPlus } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, workbenchPrefs } from "../stores/workbenchPrefs";
+import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
 import { appVersion } from "../lib/appInfo";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import * as db from "../lib/db";
@@ -243,6 +244,27 @@ export function SettingsScreen() {
                 Hidden
               </button>
             </div>
+          </div>
+        </Section>
+
+        <Section title="Workbench">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Left panel</span>
+            <div class="pf-seg">
+              <button classList={{ active: layout().leftVisible }} onClick={() => setDockVisible("left", true)}>Shown</button>
+              <button classList={{ active: !layout().leftVisible }} onClick={() => setDockVisible("left", false)}>Hidden</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Right panel</span>
+            <div class="pf-seg">
+              <button classList={{ active: layout().rightVisible }} onClick={() => setDockVisible("right", true)}>Shown</button>
+              <button classList={{ active: !layout().rightVisible }} onClick={() => setDockVisible("right", false)}>Hidden</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Panel layout</span>
+            <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
           </div>
         </Section>
 

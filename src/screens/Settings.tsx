@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import { AGENTS, loadAgentModels, setAgentModel } from "../lib/agentModels";
 import {
   addQuickLaunchItem,
@@ -120,52 +120,54 @@ export function SettingsScreen() {
             </span>
           </div>
           <div class="pf-ql-list">
-            <For each={quickLaunchItems()}>
+            {/* Index (not For): rows are keyed by position so editing a field
+                never re-creates its <input> — the text box keeps focus. */}
+            <Index each={quickLaunchItems()}>
               {(item) => (
                 <div
                   class="pf-ql-row"
-                  classList={{ "pf-ql-row--conflict": conflicts().has(item.id) }}
+                  classList={{ "pf-ql-row--conflict": conflicts().has(item().id) }}
                 >
                   <input
                     class="pf-input pf-ql-label"
-                    value={item.label}
+                    value={item().label}
                     onInput={(e) =>
-                      updateQuickLaunchItem(item.id, { label: e.currentTarget.value })
+                      updateQuickLaunchItem(item().id, { label: e.currentTarget.value })
                     }
                   />
                   <Show
-                    when={item.agentId}
+                    when={item().agentId}
                     fallback={
                       <input
                         class="pf-input pf-ql-cmd"
-                        value={item.command ?? ""}
+                        value={item().command ?? ""}
                         placeholder="command to type…"
                         onInput={(e) =>
-                          updateQuickLaunchItem(item.id, { command: e.currentTarget.value })
+                          updateQuickLaunchItem(item().id, { command: e.currentTarget.value })
                         }
                       />
                     }
                   >
-                    <span class="pf-ql-agent">agent · {agentLabel(item.agentId)}</span>
+                    <span class="pf-ql-agent">agent · {agentLabel(item().agentId)}</span>
                   </Show>
                   <button
                     class="pf-ql-hotkey"
-                    classList={{ "pf-ql-hotkey--capturing": capturingId() === item.id }}
+                    classList={{ "pf-ql-hotkey--capturing": capturingId() === item().id }}
                     title="Click, then press a shortcut (Esc cancels, Backspace clears)"
-                    onClick={() => setCapturingId(item.id)}
+                    onClick={() => setCapturingId(item().id)}
                   >
-                    {capturingId() === item.id ? "press shortcut…" : formatHotkey(item.hotkey)}
+                    {capturingId() === item().id ? "press shortcut…" : formatHotkey(item().hotkey)}
                   </button>
                   <button
                     class="pf-icon-btn"
                     title="Remove"
-                    onClick={() => removeQuickLaunchItem(item.id)}
+                    onClick={() => removeQuickLaunchItem(item().id)}
                   >
                     <IconClose size={14} />
                   </button>
                 </div>
               )}
-            </For>
+            </Index>
           </div>
           <Show when={conflicts().size > 0}>
             <div class="pf-ql-warn">Two items share a shortcut — only one will fire.</div>

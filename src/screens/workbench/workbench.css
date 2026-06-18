@@ -63,6 +63,25 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Reserve a thin gutter so the scrollbar lives in its own lane instead of
+   * overlapping the row labels (Firefox/standards + WebKit). */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--pf-hairline-strong) transparent;
+  padding-right: 2px;
+}
+.pf-rail-list::-webkit-scrollbar,
+.pf-file-tree::-webkit-scrollbar {
+  width: 6px;
+}
+.pf-rail-list::-webkit-scrollbar-thumb,
+.pf-file-tree::-webkit-scrollbar-thumb {
+  background: var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-pill);
+}
+.pf-rail-list::-webkit-scrollbar-track,
+.pf-file-tree::-webkit-scrollbar-track {
+  background: transparent;
 }
 .pf-rail-empty {
   font-size: var(--pf-size-body-sm);

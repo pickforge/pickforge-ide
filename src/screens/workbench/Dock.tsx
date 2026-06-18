@@ -3,7 +3,7 @@
 // lets the others fill the freed space and vertical dividers can re-weight a
 // pair. Pane drags show a header drag image and an insertion placeholder. The
 // center terminal column is never a dock, so terminal hosts never remount.
-import { createSignal, For, Show, type JSX } from "solid-js";
+import { createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import {
   isCollapsed,
   layout,
@@ -149,6 +149,7 @@ export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.
           const next = () => panes()[i() + 1];
           const expanded = () => !isCollapsed(pane);
           const resizable = () => expanded() && next() && !isCollapsed(next());
+          onCleanup(() => slotEls.delete(pane)); // drop the ref when this pane leaves the dock
           return (
             <>
               <Show when={dropIndex() === i()}>

@@ -61,6 +61,7 @@ export function TerminalPane(props: {
     });
 
     let sessionId: number | null = null;
+    let pendingInput = ""; // typed before the pty spawn resolves (e.g. open-in-pane)
     let disposed = false;
     let observer: ResizeObserver | undefined;
     const subs: Array<{ dispose: () => void }> = [];
@@ -115,6 +116,11 @@ export function TerminalPane(props: {
             return;
           }
           sessionId = id;
+          // Flush anything typed (via typeText) before the spawn resolved.
+          if (pendingInput) {
+            void ptyWrite(id, encoder.encode(pendingInput));
+            pendingInput = "";
+          }
         })
         .catch((err) => {
           if (!disposed) console.error("[pickforge] pty_spawn failed", err);
@@ -143,6 +149,7 @@ export function TerminalPane(props: {
       props.onReady?.({
         typeText: (text: string) => {
           if (sessionId !== null) void ptyWrite(sessionId, encoder.encode(text));
+          else pendingInput += text; // buffer until the spawn resolves
           term.focus();
         },
         focus: () => term.focus(),

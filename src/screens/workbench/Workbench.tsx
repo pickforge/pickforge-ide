@@ -50,11 +50,16 @@ export function WorkbenchScreen() {
   // OS default editor.
   const openFileInActive = (path: string) => {
     const cmd = editorCommand(path);
-    if (cmd === null) {
-      void openPathSystem(path);
+    const host = handles.get(workspace.activeChatId ?? "");
+    // Editor-pane modes need a live terminal host; with none open, fall back to
+    // the OS opener so the file still opens.
+    if (cmd === null || !host) {
+      void openPathSystem(path).catch((e) =>
+        console.error("[pickforge] open_path failed", e),
+      );
       return;
     }
-    handles.get(workspace.activeChatId ?? "")?.openInNewPane(cmd);
+    host.openInNewPane(cmd);
   };
 
   // Mount a host the first time its chat becomes active; keep it after.

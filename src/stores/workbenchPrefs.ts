@@ -6,15 +6,20 @@ const KEY = "pickforge.workbenchPrefs";
 
 interface Prefs {
   quickLaunchVisible: boolean;
+  /** show text labels next to the Run/Reload/Restart/Stop icons */
+  runButtonLabels: boolean;
 }
-const DEFAULTS: Prefs = { quickLaunchVisible: true };
+const DEFAULTS: Prefs = { quickLaunchVisible: true, runButtonLabels: false };
 
 function load(): Prefs {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return { ...DEFAULTS };
     const p = JSON.parse(raw);
-    return { quickLaunchVisible: p.quickLaunchVisible !== false };
+    return {
+      quickLaunchVisible: p.quickLaunchVisible !== false,
+      runButtonLabels: p.runButtonLabels === true,
+    };
   } catch {
     return { ...DEFAULTS };
   }
@@ -33,4 +38,7 @@ export function setQuickLaunchVisible(visible: boolean) {
 }
 export function toggleQuickLaunch() {
   setQuickLaunchVisible(!prefs().quickLaunchVisible);
+}
+export function setRunButtonLabels(show: boolean) {
+  persist({ ...prefs(), runButtonLabels: show });
 }

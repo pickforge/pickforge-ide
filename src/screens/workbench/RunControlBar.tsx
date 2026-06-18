@@ -4,10 +4,11 @@
 // (Flutter: r / R / q). Reuses the PTY — no separate runner process.
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { MonoEyebrow } from "../../components/ui";
-import { IconRefresh } from "../../components/icons";
+import { IconPlay, IconRefresh, IconRestart, IconStop } from "../../components/icons";
 import { discoverRunTargets, type RunTarget } from "../../lib/runTargets";
 import { adbListDevices, type AdbDevice } from "../../lib/device";
 import { workspace } from "../../stores/workspace";
+import { workbenchPrefs } from "../../stores/workbenchPrefs";
 
 export function RunControlBar(props: { send: (text: string) => void; canSend: boolean }) {
   const [targets, setTargets] = createSignal<RunTarget[]>([]);
@@ -18,6 +19,7 @@ export function RunControlBar(props: { send: (text: string) => void; canSend: bo
 
   const target = createMemo(() => targets().find((t) => t.id === targetId()) ?? targets()[0] ?? null);
   const can = (cap: string) => !!target()?.capabilities.includes(cap);
+  const labels = () => workbenchPrefs().runButtonLabels;
 
   // Reload targets + devices whenever the active project changes.
   createEffect(() => {
@@ -98,25 +100,30 @@ export function RunControlBar(props: { send: (text: string) => void; canSend: bo
         <div class="pf-runbar-btns">
           <button
             class="pf-runbar-btn pf-runbar-btn--run"
+            classList={{ "pf-runbar-btn--icon": !labels() }}
             title={`Run: ${fullCommand()}`}
             disabled={!props.canSend || !fullCommand()}
             onClick={run}
           >
-            ▷ Run
+            <IconPlay size={13} />
+            <Show when={labels()}>Run</Show>
           </button>
           <Show when={can("hotReload")}>
-            <button class="pf-runbar-btn" title="Hot reload (r)" disabled={!props.canSend || !running()} onClick={reload}>
-              <IconRefresh size={13} /> Reload
+            <button class="pf-runbar-btn" classList={{ "pf-runbar-btn--icon": !labels() }} title="Hot reload (r)" disabled={!props.canSend || !running()} onClick={reload}>
+              <IconRefresh size={13} />
+              <Show when={labels()}>Reload</Show>
             </button>
           </Show>
           <Show when={can("hotRestart")}>
-            <button class="pf-runbar-btn" title="Hot restart (R)" disabled={!props.canSend || !running()} onClick={restart}>
-              Restart
+            <button class="pf-runbar-btn" classList={{ "pf-runbar-btn--icon": !labels() }} title="Hot restart (R)" disabled={!props.canSend || !running()} onClick={restart}>
+              <IconRestart size={13} />
+              <Show when={labels()}>Restart</Show>
             </button>
           </Show>
           <Show when={can("stop")}>
-            <button class="pf-runbar-btn pf-runbar-btn--stop" title="Stop" disabled={!props.canSend || !running()} onClick={stop}>
-              ◻ Stop
+            <button class="pf-runbar-btn pf-runbar-btn--stop" classList={{ "pf-runbar-btn--icon": !labels() }} title="Stop" disabled={!props.canSend || !running()} onClick={stop}>
+              <IconStop size={12} />
+              <Show when={labels()}>Stop</Show>
             </button>
           </Show>
         </div>

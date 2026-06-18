@@ -183,3 +183,29 @@ export function IconSplitTrigger(props: IconProps): JSX.Element {
     </Svg>
   );
 }
+
+export function IconPlay(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M5.5 4 L12 8 L5.5 12 Z" fill="currentColor" />
+    </Svg>
+  );
+}
+
+export function IconStop(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="4.5" y="4.5" width="7" height="7" rx="1.4" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// Hot restart — a clockwise full-cycle arrow (distinct from IconRefresh's reload).
+export function IconRestart(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.25" />
+      <path d="M3 3.4v3h3" />
+    </Svg>
+  );
+}

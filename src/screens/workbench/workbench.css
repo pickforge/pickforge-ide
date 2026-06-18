@@ -183,11 +183,35 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-sc {
   flex: 0 0 auto;
 }
+.pf-sc-toolbar {
+  justify-content: space-between;
+  align-items: center;
+}
+.pf-sc-toolbar-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  flex: none;
+}
 .pf-sc-branch {
+  flex: 1;
+  min-width: 0;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-body-sm);
   color: var(--pf-text-med);
-  padding: 0 var(--pf-space-xs) var(--pf-space-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-sc-count {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  color: var(--pf-text-low);
+  background: var(--pf-item-fill);
+  border-radius: var(--pf-radius-pill);
+  padding: 1px var(--pf-space-sm);
 }
 .pf-sc-list {
   max-height: 32vh;
@@ -367,7 +391,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--pf-hairline-strong) transparent;
-  padding-right: 2px;
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
 }
 .pf-rail-list::-webkit-scrollbar,
 .pf-file-tree::-webkit-scrollbar {
@@ -392,7 +416,8 @@ body.pf-resizing .pf-dock-resizer-grip {
   align-items: center;
   justify-content: space-between;
   gap: var(--pf-space-sm);
-  padding: var(--pf-space-sm);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  min-height: 30px;
   border-radius: var(--pf-radius-sm);
   font-size: var(--pf-size-body-md);
   color: var(--pf-text-med);
@@ -838,8 +863,10 @@ body.pf-resizing .pf-dock-resizer-grip {
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
 }
 .pf-runbar-select {
-  padding: 2px var(--pf-space-sm);
+  height: 26px;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
   font-size: var(--pf-size-body-sm);
+  border-radius: var(--pf-radius-sm);
 }
 .pf-runbar-btns {
   display: inline-flex;
@@ -849,17 +876,23 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-runbar-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--pf-space-xs);
+  height: 26px;
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   border-radius: var(--pf-radius-sm);
   background: var(--pf-surface-1);
   color: var(--pf-text-med);
   font-size: var(--pf-size-body-sm);
-  padding: 2px var(--pf-space-sm);
+  padding: 0 var(--pf-space-sm);
   cursor: pointer;
   transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
     color var(--pf-dur-fast) var(--pf-ease-forge),
     background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-runbar-btn--icon {
+  width: 28px;
+  padding: 0;
 }
 .pf-runbar-btn:hover:not(:disabled) {
   border-color: var(--pf-hairline-strong);
@@ -881,7 +914,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: var(--pf-space-lg);
+  padding: var(--pf-space-sm);
   overflow: hidden;
 }
 /* Engineering-paper depth: a faint blueprint grid + a soft ember bloom at the

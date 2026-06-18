@@ -13,9 +13,10 @@ import {
 import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { IconClose, IconPlus } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
-import { setQuickLaunchVisible, workbenchPrefs } from "../stores/workbenchPrefs";
+import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
 import { appVersion } from "../lib/appInfo";
+import { appTheme, applyTheme } from "../stores/theme";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import * as db from "../lib/db";
 import "./screens.css";
@@ -31,9 +32,6 @@ function Section(props: { title: string; children: any }) {
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
-  const [theme, setTheme] = createSignal(
-    localStorage.getItem("pickforge.theme") ?? "dark",
-  );
   const [archived, setArchived] = createSignal<db.Project[]>([]);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
 
@@ -46,12 +44,6 @@ export function SettingsScreen() {
   const changeModel = (agentId: string, model: string) => {
     setAgentModel(agentId, model || null);
     setModels(loadAgentModels());
-  };
-
-  const applyTheme = (t: string) => {
-    setTheme(t);
-    localStorage.setItem("pickforge.theme", t);
-    document.documentElement.dataset.theme = t === "light" ? "light" : "";
   };
 
   const restore = async (root: string) => {
@@ -203,13 +195,13 @@ export function SettingsScreen() {
             <span class="pf-settings-label">Theme</span>
             <div class="pf-seg">
               <button
-                classList={{ active: theme() === "dark" }}
+                classList={{ active: appTheme() === "dark" }}
                 onClick={() => applyTheme("dark")}
               >
                 Dark
               </button>
               <button
-                classList={{ active: theme() === "light" }}
+                classList={{ active: appTheme() === "light" }}
                 onClick={() => applyTheme("light")}
               >
                 Light
@@ -260,6 +252,13 @@ export function SettingsScreen() {
             <div class="pf-seg">
               <button classList={{ active: layout().rightVisible }} onClick={() => setDockVisible("right", true)}>Shown</button>
               <button classList={{ active: !layout().rightVisible }} onClick={() => setDockVisible("right", false)}>Hidden</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Run buttons</span>
+            <div class="pf-seg">
+              <button classList={{ active: !workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(false)}>Icons</button>
+              <button classList={{ active: workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(true)}>Labels</button>
             </div>
           </div>
           <div class="pf-settings-row">

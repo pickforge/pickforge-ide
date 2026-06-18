@@ -76,16 +76,18 @@ export function SourceControl() {
 
   return (
     <div class="pf-pane-scroll pf-sc">
-      <div class="pf-pane-toolbar pf-pane-toolbar--end">
-        <Show when={status()?.branch}>
-          <span class="pf-sc-branch">{status()!.branch}</span>
-        </Show>
-        <Show when={count() > 0}>
-          <span class="pf-group-count">{count()}</span>
-        </Show>
-        <button class="pf-icon-btn" title="Refresh" disabled={!workspace.activeRoot} onClick={() => void refresh()}>
-          <IconRefresh size={14} />
-        </button>
+      <div class="pf-pane-toolbar pf-sc-toolbar">
+        <span class="pf-sc-branch" title={status()?.branch ?? ""}>
+          {status()?.branch ?? "—"}
+        </span>
+        <div class="pf-sc-toolbar-end">
+          <Show when={count() > 0}>
+            <span class="pf-sc-count">{count()}</span>
+          </Show>
+          <button class="pf-icon-btn" title="Refresh" disabled={!workspace.activeRoot} onClick={() => void refresh()}>
+            <IconRefresh size={14} />
+          </button>
+        </div>
       </div>
 
       <Show

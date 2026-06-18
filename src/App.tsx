@@ -3,6 +3,7 @@ import { navigate, route, type Route } from "./router";
 import { loadWorkspace, workspace } from "./stores/workspace";
 import { applyPersistedZoom, currentZoom, handleZoomKey, zoomReset } from "./lib/zoom";
 import { appVersion, loadAppVersion } from "./lib/appInfo";
+import { initTheme } from "./stores/theme";
 import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
@@ -23,9 +24,7 @@ export function App() {
   const [, setReady] = createSignal(false);
 
   onMount(() => {
-    if (localStorage.getItem("pickforge.theme") === "light") {
-      document.documentElement.dataset.theme = "light";
-    }
+    initTheme();
 
     // Interface zoom (VS Code-style): apply persisted level + global hotkeys.
     // Registered synchronously so cleanup binds before the async bootstrap.

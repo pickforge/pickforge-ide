@@ -125,6 +125,9 @@
   justify-content: space-between;
   gap: var(--pf-space-md);
   padding: var(--pf-space-sm) 0;
+  /* Uniform row height so a select-bearing row matches a plain text row and
+   * everything stays vertically centred. */
+  min-height: 40px;
 }
 .pf-settings-label {
   font-size: var(--pf-size-body-md);
@@ -162,9 +165,22 @@
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-body-sm);
   min-width: 0;
+  position: relative;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    box-shadow var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-input::placeholder {
   color: var(--pf-text-low);
+}
+/* Editing emphasis: the focused field lifts with an ember ring so it's clear
+ * which one you're typing into. */
+.pf-input:focus {
+  outline: none;
+  z-index: 1;
+  background: var(--pf-surface-3);
+  border-color: var(--pf-ember);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pf-ember) 24%, transparent);
 }
 .pf-ql-head {
   margin-bottom: var(--pf-space-xs);

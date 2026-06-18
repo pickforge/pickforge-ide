@@ -1,6 +1,6 @@
 // A single live terminal pane: xterm.js (WebGL renderer + fit) bound to a
 // Rust `$SHELL` pty over a Tauri channel. Shell-first — never an agent.
-import { onCleanup, onMount } from "solid-js";
+import { createEffect, onCleanup, onMount } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -18,6 +18,7 @@ import {
   TERMINAL_FONT_SIZE,
   TERMINAL_LINE_HEIGHT,
 } from "../lib/terminal-theme";
+import { appTheme } from "../stores/theme";
 import "./Terminal.css";
 
 /** Imperative handle so the shell can be driven from outside (chips, focus). */
@@ -50,6 +51,14 @@ export function TerminalPane(props: {
 
     const fit = new FitAddon();
     term.loadAddon(fit);
+
+    // Re-theme live when the app switches dark/light (xterm reads CSS tokens in
+    // JS, so it needs an explicit refresh — the attribute flip alone won't reach
+    // the canvas). Tracks appTheme; the initial run is the mount theme.
+    createEffect(() => {
+      appTheme();
+      term.options.theme = buildTerminalTheme();
+    });
 
     let sessionId: number | null = null;
     let disposed = false;

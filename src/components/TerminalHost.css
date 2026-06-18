@@ -37,8 +37,19 @@
 .pf-pane-frame:hover {
   background: var(--pf-hairline-strong);
 }
-.pf-pane-frame--focused {
-  z-index: 3;
+/* The ember sweep is an overlay that lives in the border ring (the inner pane
+ * paints over its centre). Crossfading its opacity makes focusing / blurring a
+ * pane fade the glow in/out smoothly instead of snapping, and a filter shift
+ * gives a soft, warm hover response — both honor reduced motion (the duration
+ * token collapses to 0). The angle is inherited from .pf-term-host. */
+.pf-pane-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0; /* first child → behind .pf-pane-bar (z2) and .pf-pane-inner */
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
   background: conic-gradient(
     from var(--pf-sweep-angle),
     var(--pf-hairline-strong) 0deg,
@@ -48,23 +59,17 @@
     var(--pf-ember-soft) 352deg,
     var(--pf-hairline-strong) 360deg
   );
-  /* The sweep angle is inherited from .pf-term-host (one shared timeline), so
-   * the focused frame only needs its entrance animation. */
-  animation: pf-pane-in var(--pf-dur-standard) var(--pf-ease-forge) both;
+  transition: opacity var(--pf-dur-standard) var(--pf-ease-forge),
+    filter var(--pf-dur-standard) var(--pf-ease-forge);
 }
-/* Hovering the focused pane must KEEP the sweep (a bare .pf-pane-frame:hover
- * would otherwise out-specify it and flatten the glow) — and warm it: a wider,
- * brighter ember arc signals the live pane is hot. */
-.pf-pane-frame--focused:hover {
-  background: conic-gradient(
-    from var(--pf-sweep-angle),
-    var(--pf-hairline-strong) 0deg,
-    var(--pf-hairline-strong) 280deg,
-    var(--pf-ember) 312deg,
-    var(--pf-ember-soft) 338deg,
-    var(--pf-ember-soft) 352deg,
-    var(--pf-hairline-strong) 360deg
-  );
+.pf-pane-frame--focused {
+  z-index: 3;
+}
+.pf-pane-frame--focused::before {
+  opacity: 1;
+}
+.pf-pane-frame--focused:hover::before {
+  filter: brightness(1.3) saturate(1.12);
 }
 .pf-pane-inner {
   position: relative;
@@ -288,14 +293,14 @@ body.pf-resizing .pf-divider-grip {
 @media (prefers-reduced-motion: reduce) {
   .pf-term-host,
   .pf-pane-frame,
-  .pf-pane-frame--focused,
   .pf-pane-menu {
     animation: none;
   }
-  .pf-pane-frame--focused {
+  /* No moving sweep: a flat ember ring (the angle is frozen otherwise). */
+  .pf-pane-frame--focused::before {
     background: var(--pf-ember-deep);
   }
-  .pf-pane-frame--focused:hover {
-    background: var(--pf-ember);
+  .pf-pane-frame--focused:hover::before {
+    filter: brightness(1.25);
   }
 }

@@ -40,8 +40,8 @@
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
 }
 .pf-rail-projects {
-  flex: 0 0 auto;
-  max-height: 30%;
+  flex: 0 1 auto;
+  max-height: 30vh;
 }
 .pf-rail-chats {
   flex: 1 1 auto;
@@ -90,7 +90,7 @@
 .pf-rail-row.active {
   background: var(--pf-surface-2);
   color: var(--pf-text-hi);
-  box-shadow: inset 2px 0 0 var(--pf-ember);
+  box-shadow: inset 3px 0 0 var(--pf-ember), var(--pf-glow-ember-soft);
 }
 .pf-rail-row-label {
   overflow: hidden;
@@ -98,12 +98,17 @@
   white-space: nowrap;
 }
 .pf-rail-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--pf-text-low);
   cursor: pointer;
   opacity: 0;
-  font-size: 12px;
+  flex: none;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    opacity var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-rail-row:hover .pf-rail-row-action {
   opacity: 1;
@@ -164,7 +169,10 @@
   color: var(--pf-text-hi);
 }
 .pf-file-icon {
-  width: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
   color: var(--pf-text-low);
   flex: none;
 }
@@ -185,9 +193,44 @@
   flex-wrap: wrap;
 }
 .pf-workbench-terminal {
+  position: relative;
   flex: 1;
   min-height: 0;
   padding: var(--pf-space-lg);
+  overflow: hidden;
+}
+/* Engineering-paper depth: a faint blueprint grid + a soft ember bloom at the
+ * top of the stage so the terminal panes read as crisp cards floating on a
+ * textured field, not a flat black void. Both are masked to fade at the edges. */
+.pf-workbench-terminal::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: linear-gradient(var(--pf-hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--pf-hairline) 1px, transparent 1px);
+  background-size: 34px 34px;
+  opacity: 0.45;
+  -webkit-mask-image: radial-gradient(ellipse 75% 80% at 50% 32%, #000 8%, transparent 78%);
+  mask-image: radial-gradient(ellipse 75% 80% at 50% 32%, #000 8%, transparent 78%);
+}
+.pf-workbench-terminal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 58% 42% at 50% -4%,
+    var(--pf-ember-glow),
+    transparent 68%
+  );
+  opacity: 0.5;
+}
+.pf-workbench-terminal > * {
+  position: relative;
+  z-index: 1;
 }
 
 /* ---- inspector ---- */

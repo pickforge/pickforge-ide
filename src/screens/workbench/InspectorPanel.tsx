@@ -7,6 +7,7 @@ import {
   StatusPill,
   type StatusIntent,
 } from "../../components/ui";
+import { IconRefresh } from "../../components/icons";
 import { workspace } from "../../stores/workspace";
 import * as device from "../../lib/device";
 import * as vm from "../../lib/vm";
@@ -79,7 +80,7 @@ export function InspectorPanel() {
           <div class="pf-rail-head">
             <MonoEyebrow text="Devices" />
             <button class="pf-icon-btn" title="Refresh" onClick={() => refetch()}>
-              ⟳
+              <IconRefresh size={14} />
             </button>
           </div>
           <Show

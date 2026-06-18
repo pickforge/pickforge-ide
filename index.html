@@ -5,6 +5,14 @@
     <link rel="icon" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PickForge</title>
+    <!-- Preload the workhorse weights so first paint already has the brand voice
+         (Geist for UI, Geist Mono for the terminal/eyebrows) and xterm measures
+         the real mono glyph, not a system fallback. -->
+    <link rel="preload" href="/fonts/geist-v5-latin-regular.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/geist-v5-latin-600.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/geist-v5-latin-700.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/geist-mono-v5-latin-regular.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/geist-mono-v5-latin-500.ttf" as="font" type="font/ttf" crossorigin />
   </head>
   <body>
     <div id="root"></div>

@@ -1,68 +1,37 @@
+/* Multi-pane terminal host: panes are absolutely positioned from a computed
+ * fractional layout; the 6px gutters between frames double as the divider gaps.
+ * The focused pane wears the global travelling ember sweep (App.css). */
 .pf-term-host {
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  width: 100%;
   height: 100%;
   min-height: 0;
 }
 
-.pf-term-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: var(--pf-space-xs);
-  padding-bottom: var(--pf-space-sm);
-  flex: none;
-}
-.pf-term-tool {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 22px;
-  border-radius: var(--pf-radius-sm);
-  border: var(--pf-hairline-width) solid var(--pf-hairline);
-  background: var(--pf-surface-1);
-  color: var(--pf-text-med);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
-    color var(--pf-dur-fast) var(--pf-ease-forge),
-    border-color var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-term-tool:hover:not(:disabled) {
-  background: var(--pf-surface-2);
-  border-color: var(--pf-hairline-strong);
-  color: var(--pf-text-hi);
-}
-.pf-term-tool:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+/* The cell spans its fractional rect; the visible frame is inset so neighbours
+ * show a clean gutter. The cell itself is click-through so the divider that
+ * lives in the gutter stays grabbable. */
+.pf-pane {
+  position: absolute;
+  pointer-events: none;
 }
 
-.pf-term-grid {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-  gap: var(--pf-space-sm);
-}
-.pf-term-grid--col {
-  flex-direction: column;
-}
-
-/* Each pane frame. Focused carries the travelling ember sweep (reusing the
- * global --pf-sweep-angle @property + pf-sweep keyframes from App.css);
- * unfocused panes get a quiet hairline. */
-.pf-term-cell {
-  position: relative;
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
+.pf-pane-frame {
+  position: absolute;
+  inset: 3px;
+  z-index: 1;
+  pointer-events: auto;
   border-radius: var(--pf-radius-md);
   padding: var(--pf-bracket-width);
+  background: var(--pf-hairline);
+  transition: background var(--pf-dur-standard) var(--pf-ease-forge);
+  animation: pf-pane-in var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+.pf-pane-frame:hover {
   background: var(--pf-hairline-strong);
 }
-.pf-term-cell--focused {
+.pf-pane-frame--focused {
+  z-index: 3;
   background: conic-gradient(
     from var(--pf-sweep-angle),
     var(--pf-hairline-strong) 0deg,
@@ -72,18 +41,229 @@
     var(--pf-ember-soft) 352deg,
     var(--pf-hairline-strong) 360deg
   );
-  animation: pf-sweep var(--pf-dur-breath) linear infinite;
+  animation: pf-pane-in var(--pf-dur-standard) var(--pf-ease-forge) both,
+    pf-sweep var(--pf-dur-breath) linear infinite;
 }
-.pf-term-inner {
+.pf-pane-inner {
+  position: relative;
+  z-index: 0; /* xterm sets z-index on its render layers; keep them below chrome */
   height: 100%;
   border-radius: calc(var(--pf-radius-md) - var(--pf-bracket-width));
   background: var(--pf-surface);
   overflow: hidden;
 }
 
+@keyframes pf-pane-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- pane identity (top-left) ---- */
+.pf-pane-tag {
+  position: absolute;
+  z-index: 6;
+  top: 8px;
+  left: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--pf-radius-pill);
+  background: color-mix(in srgb, var(--pf-surface-1) 78%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-med);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-pane-tag--on {
+  opacity: 1;
+}
+.pf-pane-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-text-low);
+}
+.pf-pane-dot--live {
+  background: var(--pf-ember);
+  box-shadow: 0 0 8px -1px var(--pf-ember);
+}
+
+/* ---- per-pane controls (top-right) ---- */
+.pf-pane-ctls {
+  position: absolute;
+  z-index: 7;
+  top: 7px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge),
+    transform var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-pane-ctls--on {
+  opacity: 1;
+  transform: none;
+}
+.pf-pane-ctl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: color-mix(in srgb, var(--pf-surface-1) 80%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-pane-ctl:hover:not(:disabled) {
+  background: var(--pf-surface-2);
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-pane-ctl--active {
+  border-color: var(--pf-ember);
+  color: var(--pf-ember);
+}
+.pf-pane-ctl:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---- directional split menu ---- */
+.pf-pane-menu {
+  position: absolute;
+  top: calc(100% + var(--pf-space-sm));
+  right: 0;
+  z-index: 20;
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-lg);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: color-mix(in srgb, var(--pf-surface-1) 94%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: var(--pf-shadow-overlay);
+  animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+@keyframes pf-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pf-pane-menu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--pf-space-xs);
+}
+.pf-split-tile {
+  --pf-split-fill: var(--pf-text-low);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: 84px;
+  padding: var(--pf-space-md) var(--pf-space-sm) var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    transform var(--pf-dur-micro) var(--pf-ease-forge);
+}
+.pf-split-tile:hover {
+  --pf-split-fill: var(--pf-ember);
+  background: var(--pf-surface-3);
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-split-tile:active {
+  transform: scale(0.96);
+}
+.pf-split-tile .pf-icon {
+  color: var(--pf-text-med);
+}
+.pf-split-tile-label {
+  white-space: nowrap;
+}
+
+/* ---- draggable seams ---- */
+.pf-divider {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pf-divider--row {
+  width: 11px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+}
+.pf-divider--col {
+  height: 11px;
+  transform: translateY(-50%);
+  cursor: row-resize;
+}
+.pf-divider-grip {
+  background: transparent;
+  border-radius: var(--pf-radius-pill);
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    box-shadow var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-divider--row .pf-divider-grip {
+  width: 2px;
+  height: 26px;
+}
+.pf-divider--col .pf-divider-grip {
+  width: 26px;
+  height: 2px;
+}
+.pf-divider:hover .pf-divider-grip,
+body.pf-resizing .pf-divider-grip {
+  background: var(--pf-ember);
+  box-shadow: 0 0 10px -2px var(--pf-ember);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pf-term-cell--focused {
+  .pf-pane-frame,
+  .pf-pane-frame--focused,
+  .pf-pane-menu {
     animation: none;
+  }
+  .pf-pane-frame--focused {
     background: var(--pf-ember-deep);
   }
 }

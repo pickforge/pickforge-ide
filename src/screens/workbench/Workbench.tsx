@@ -8,6 +8,7 @@ import {
   type TerminalHostHandle,
 } from "../../components/TerminalHost";
 import { Chip, MonoEyebrow } from "../../components/ui";
+import { IconGear } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
 import { AGENTS, launchCommand } from "../../lib/agentModels";
 import { workspace } from "../../stores/workspace";
@@ -43,7 +44,7 @@ export function WorkbenchScreen() {
 
   return (
     <div class="pf-workbench">
-      <aside class="pf-workbench-left">
+      <aside class="pf-workbench-left pf-reveal" style={{ "--pf-reveal-delay": "70ms" }}>
         <ProjectsChatsPanel />
         <FileExplorer />
         <div class="pf-rail-footer">
@@ -53,12 +54,12 @@ export function WorkbenchScreen() {
             title="Settings"
             onClick={() => navigate("settings")}
           >
-            ⚙
+            <IconGear size={15} />
           </button>
         </div>
       </aside>
 
-      <main class="pf-workbench-center">
+      <main class="pf-workbench-center pf-reveal">
         <div class="pf-launch">
           <MonoEyebrow text="Quick launch" tick />
           <div class="pf-chips">
@@ -95,7 +96,7 @@ export function WorkbenchScreen() {
         </div>
       </main>
 
-      <aside class="pf-workbench-right">
+      <aside class="pf-workbench-right pf-reveal" style={{ "--pf-reveal-delay": "140ms" }}>
         <InspectorPanel />
       </aside>
     </div>

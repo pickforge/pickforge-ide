@@ -53,6 +53,35 @@ body {
   outline-offset: 2px;
 }
 
+/* Hairline icons render as block so they centre cleanly with no descender gap. */
+.pf-icon {
+  display: block;
+  flex: none;
+}
+
+/* Shared entrance: a quiet rise + fade, gated to the forge easing. Honors
+ * reduced motion (durations collapse to 0 via the token media query, and the
+ * reduce block below removes the transform so nothing slides). */
+@keyframes pf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pf-reveal {
+  animation: pf-rise var(--pf-dur-reveal) var(--pf-ease-forge) both;
+  animation-delay: var(--pf-reveal-delay, 0ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-reveal {
+    animation: none;
+  }
+}
+
 /* thin, dark scrollbars that match the chrome */
 ::-webkit-scrollbar {
   width: 10px;

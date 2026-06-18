@@ -2,6 +2,7 @@
 import { For, Show } from "solid-js";
 import { open } from "@tauri-apps/plugin-dialog";
 import { MonoEyebrow } from "../../components/ui";
+import { IconArchive, IconClose, IconPlus } from "../../components/icons";
 import {
   addChat,
   addProject,
@@ -29,7 +30,7 @@ export function ProjectsChatsPanel() {
         <div class="pf-rail-head">
           <MonoEyebrow text="Projects" tick />
           <button class="pf-icon-btn" title="Add project" onClick={pickProject}>
-            +
+            <IconPlus />
           </button>
         </div>
         <div class="pf-rail-list">
@@ -53,7 +54,7 @@ export function ProjectsChatsPanel() {
                       void archiveProject(project.projectRoot);
                     }}
                   >
-                    ⌫
+                    <IconArchive size={14} />
                   </button>
                 </div>
               )}
@@ -71,7 +72,7 @@ export function ProjectsChatsPanel() {
             disabled={!workspace.activeRoot}
             onClick={() => addChat("New chat", "claudeCode")}
           >
-            +
+            <IconPlus />
           </button>
         </div>
         <div class="pf-rail-list">
@@ -95,7 +96,7 @@ export function ProjectsChatsPanel() {
                       void deleteChat(chat.chatId);
                     }}
                   >
-                    ✕
+                    <IconClose size={14} />
                   </button>
                 </div>
               )}

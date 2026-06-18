@@ -18,14 +18,14 @@ no longer itself written in Flutter — that was migrated away. See
 
 ## Tooling
 
-- Frontend/build is npm + Vite; the native side is a Cargo workspace.
+- Frontend/build is bun + Vite; the native side is a Cargo workspace.
 - Standard checks:
-  - `npm run build` — `tsc --noEmit && vite build`
+  - `bun run build` — `tsc --noEmit && vite build`
   - `cargo check` — whole workspace
   - `cargo test -p pickforge-core` — core unit/integration tests
-  - `npm run vrt` — Playwright visual regression tests
-- Develop: `npm install`, then `npm run tauri dev` (builds the Rust shell + serves
-  the Vite frontend). Requires a Rust toolchain (`rustup`) and Node 20+.
+  - `bun run vrt` — Playwright visual regression tests
+- Develop: `bun install`, then `bun run tauri dev` (builds the Rust shell + serves
+  the Vite frontend). Requires a Rust toolchain (`rustup`) and Bun 1.2+.
 - Don't hand-edit generated output under `src-tauri/gen/`.
 
 ## Architecture
@@ -64,7 +64,7 @@ keep new UI consistent with it.
 - **Embedded terminal:** Claude/Codex must render with correct colors and no stray
   underlines — see [`docs/design-system/terminal.md`](docs/design-system/terminal.md)
   and `src/lib/terminal-theme.ts`.
-- **Verify visuals via VRT.** After UI changes run `npm run vrt` and review the
+- **Verify visuals via VRT.** After UI changes run `bun run vrt` and review the
   Playwright snapshots under `tests/vrt/` before committing.
 
 ## Testing

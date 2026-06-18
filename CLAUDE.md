@@ -5,10 +5,10 @@ everything there applies to you.
 
 ## Quick reference
 
-- **Tooling:** Tauri v2 — npm + Vite frontend over a Cargo workspace. Develop
-  with `npm install` then `npm run tauri dev`. Standard checks: `npm run build`
+- **Tooling:** Tauri v2 — bun + Vite frontend over a Cargo workspace. Develop
+  with `bun install` then `bun run tauri dev`. Standard checks: `bun run build`
   (`tsc --noEmit && vite build`), `cargo check`, `cargo test -p pickforge-core`,
-  `npm run vrt` (Playwright). Don't hand-edit generated output under
+  `bun run vrt` (Playwright). Don't hand-edit generated output under
   `src-tauri/gen/`.
 - **Architecture:** Rust core in `crates/pickforge-core/` (pty, process,
   transcript, storage, targets, inspector, db), Tauri binary in `src-tauri/`

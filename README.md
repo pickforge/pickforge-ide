@@ -19,10 +19,14 @@ Or build from source:
 ```bash
 git clone https://github.com/pickforge/pickforge
 cd pickforge
-fvm flutter pub get
-fvm dart run build_runner build --delete-conflicting-outputs
-fvm flutter run -d linux   # or -d macos, -d windows
+npm install
+npm run tauri dev        # Rust shell + SolidJS UI, hot-reloaded
+# npm run tauri build    # produce a release bundle (.AppImage / .dmg / .msi)
 ```
+
+Requires a [Rust toolchain](https://rustup.rs) and Node 20+. PickForge is built
+on [Tauri v2](https://tauri.app) — a Rust core (`crates/pickforge-core`) behind a
+Tauri shell (`src-tauri/`) with a SolidJS frontend (`src/`).
 
 ## Quickstart
 

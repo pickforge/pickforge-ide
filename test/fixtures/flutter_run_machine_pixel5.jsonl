@@ -1,6 +1,0 @@
-[{"event":"daemon.connected","params":{"version":"0.6.1","pid":111}}]
-[{"event":"app.start","params":{"appId":"abc","deviceId":"emulator-5554","directory":"/p","launchMode":"run","mode":"debug","supportsRestart":true}}]
-Building...
-[{"event":"daemon.logMessage","params":{"level":"info","message":"Performing hot reload..."}}]
-[{"event":"app.started","params":{"appId":"abc","vmServiceUri":"ws://127.0.0.1:51234/UUID=/ws"}}]
-[{"event":"daemon.logMessage","params":{"level":"info","message":"Reloaded 1 of 12 libraries in 124ms."}}]

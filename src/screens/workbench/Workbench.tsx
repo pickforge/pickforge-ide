@@ -7,6 +7,7 @@ import { ProjectsChatsPanel } from "./ProjectsChatsPanel";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
+import { RunControlBar } from "./RunControlBar";
 import {
   TerminalHost,
   type TerminalHostHandle,
@@ -162,6 +163,8 @@ export function WorkbenchScreen() {
             </button>
           </div>
         </Show>
+
+        <RunControlBar send={typeToActive} canSend={!!workspace.activeChatId} />
 
         <div class="pf-workbench-terminal">
           {/* All visited chats stay mounted; only the active one is shown. */}

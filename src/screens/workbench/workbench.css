@@ -679,6 +679,57 @@
   color: var(--pf-text-hi);
   border-color: var(--pf-hairline-strong);
 }
+
+/* ---- run control bar ---- */
+.pf-runbar {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex-wrap: wrap;
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-lg);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-runbar-select {
+  padding: 2px var(--pf-space-sm);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-runbar-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+}
+.pf-runbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-size: var(--pf-size-body-sm);
+  padding: 2px var(--pf-space-sm);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-runbar-btn:hover:not(:disabled) {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-runbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pf-runbar-btn--run {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+.pf-runbar-btn--stop:hover:not(:disabled) {
+  color: var(--pf-error);
+  border-color: var(--pf-error);
+}
 .pf-workbench-terminal {
   position: relative;
   flex: 1;

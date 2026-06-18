@@ -72,6 +72,20 @@ export async function archiveProject(root: string) {
   await loadWorkspace();
 }
 
+export async function renameProject(root: string, displayName: string) {
+  const name = displayName.trim();
+  const p = state.projects.find((x) => x.projectRoot === root);
+  if (!p || !name || name === p.displayName) return;
+  await db.projectUpsert({ ...p, displayName: name });
+  setState("projects", (x) => x.projectRoot === root, "displayName", name);
+}
+
+export async function deleteProject(root: string) {
+  await db.projectDelete(root); // cascades its chats
+  if (state.activeRoot === root) setState("activeRoot", null);
+  await loadWorkspace();
+}
+
 export async function addChat(title: string, agentId: string) {
   const root = state.activeRoot;
   if (!root) return;
@@ -95,8 +109,16 @@ export async function addChat(title: string, agentId: string) {
   setState("activeChatId", chatId);
 }
 
-export function selectChat(chatId: string) {
+export function selectChat(chatId: string | null) {
   setState("activeChatId", chatId);
+}
+
+export async function renameChat(chatId: string, title: string) {
+  const t = title.trim();
+  const c = state.chats.find((x) => x.chatId === chatId);
+  if (!c || !t || t === c.title) return;
+  await db.chatUpsert({ ...c, title: t });
+  setState("chats", (x) => x.chatId === chatId, "title", t);
 }
 
 export async function deleteChat(chatId: string) {

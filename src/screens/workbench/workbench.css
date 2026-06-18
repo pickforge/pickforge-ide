@@ -278,6 +278,63 @@
   background: var(--pf-hairline);
   margin: var(--pf-space-xs) 0;
 }
+.pf-menu-item--danger {
+  color: var(--pf-error);
+}
+.pf-menu-item--danger:hover {
+  background: color-mix(in srgb, var(--pf-error) 14%, transparent);
+  color: var(--pf-error);
+}
+
+/* Portaled menu: fixed to the viewport, above every pane (#14). JS sets
+ * left/top; right:auto cancels the anchored .pf-menu default. */
+.pf-floating-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: auto;
+  z-index: 200;
+  max-width: 260px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+/* inline rename field shared by project rows/cards, groups and chats */
+.pf-rename {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 2px var(--pf-space-sm);
+  font-size: var(--pf-size-body-md);
+}
+
+.pf-rail-row-action--shown {
+  opacity: 1;
+}
+.pf-rail-row--archived {
+  color: var(--pf-text-low);
+}
+.pf-rail-row--archived .pf-rail-row-label {
+  font-style: italic;
+}
+.pf-rail-archived-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  margin-top: var(--pf-space-xs);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+}
+.pf-rail-archived-toggle:hover {
+  color: var(--pf-text-med);
+}
 
 .pf-proj-grid {
   display: grid;

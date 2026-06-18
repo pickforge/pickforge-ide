@@ -127,6 +127,53 @@ export function IconSplit(
   );
 }
 
+export function IconTerminal(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="2" y="3" width="12" height="10" rx="1.6" />
+      <path d="M4.8 6.4l2 1.6-2 1.6M8.4 10h2.8" />
+    </Svg>
+  );
+}
+
+export function IconList(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M5.5 4.5h8M5.5 8h8M5.5 11.5h8M2.6 4.5h.01M2.6 8h.01M2.6 11.5h.01" />
+    </Svg>
+  );
+}
+
+export function IconGrid(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="2.5" y="2.5" width="4.4" height="4.4" rx="1" />
+      <rect x="9.1" y="2.5" width="4.4" height="4.4" rx="1" />
+      <rect x="2.5" y="9.1" width="4.4" height="4.4" rx="1" />
+      <rect x="9.1" y="9.1" width="4.4" height="4.4" rx="1" />
+    </Svg>
+  );
+}
+
+export function IconFolderPlus(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M2.5 4.2a1 1 0 0 1 1-1h2.8l1.2 1.4h5a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
+      <path d="M8 7v3.2M6.4 8.6h3.2" />
+    </Svg>
+  );
+}
+
+export function IconMore(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="8" cy="3.6" r="1.05" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="8" r="1.05" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="12.4" r="1.05" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
 // The split-affordance trigger: two panes with a seam, no direction implied.
 export function IconSplitTrigger(props: IconProps): JSX.Element {
   return (

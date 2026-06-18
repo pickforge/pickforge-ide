@@ -21,6 +21,15 @@ const [state, setState] = createStore<WorkspaceState>({
 
 export const workspace = state;
 
+// Chat-deletion notifier so the workbench can dispose that chat's terminal host
+// (and its shells). Visited chat hosts are kept mounted across project/chat
+// switches, so they can only be torn down on an explicit delete.
+const chatDeletedListeners = new Set<(chatId: string) => void>();
+export function onChatDeleted(fn: (chatId: string) => void): () => void {
+  chatDeletedListeners.add(fn);
+  return () => chatDeletedListeners.delete(fn);
+}
+
 export function activeProject(): db.Project | null {
   return state.projects.find((p) => p.projectRoot === state.activeRoot) ?? null;
 }
@@ -92,5 +101,6 @@ export function selectChat(chatId: string) {
 
 export async function deleteChat(chatId: string) {
   await db.chatDelete(chatId);
+  chatDeletedListeners.forEach((fn) => fn(chatId));
   if (state.activeRoot) await loadChats(state.activeRoot);
 }

@@ -21,6 +21,10 @@
   inset: 3px;
   z-index: 1;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  /* No overflow:hidden here — it would clip the split menu on short panes. The
+   * bar + inner carry matching corner radii, and .pf-pane-inner clips xterm. */
   border-radius: var(--pf-radius-md);
   padding: var(--pf-bracket-width);
   background: var(--pf-hairline);
@@ -47,8 +51,10 @@
 .pf-pane-inner {
   position: relative;
   z-index: 0; /* xterm sets z-index on its render layers; keep them below chrome */
-  height: 100%;
-  border-radius: calc(var(--pf-radius-md) - var(--pf-bracket-width));
+  flex: 1 1 0;
+  min-height: 0;
+  border-radius: 0 0 calc(var(--pf-radius-md) - var(--pf-bracket-width))
+    calc(var(--pf-radius-md) - var(--pf-bracket-width));
   background: var(--pf-surface);
   overflow: hidden;
 }
@@ -64,32 +70,48 @@
   }
 }
 
-/* ---- pane identity (top-left) ---- */
-.pf-pane-tag {
-  position: absolute;
-  z-index: 6;
-  top: 8px;
-  left: 9px;
+/* ---- pane top bar (a real header row, not an overlay) ---- */
+.pf-pane-bar {
+  position: relative;
+  z-index: 2; /* keep the bar + its split menu above the xterm render layers */
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  height: 28px;
+  padding: 0 var(--pf-space-xs) 0 var(--pf-space-md);
+  background: var(--pf-surface-1);
+  border-radius: calc(var(--pf-radius-md) - var(--pf-bracket-width))
+    calc(var(--pf-radius-md) - var(--pf-bracket-width)) 0 0;
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-pane-frame--focused .pf-pane-bar {
+  border-bottom-color: var(--pf-hairline-strong);
+}
+.pf-pane-bar-id {
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-sm);
-  padding: 3px 9px 3px 7px;
-  border-radius: var(--pf-radius-pill);
-  background: color-mix(in srgb, var(--pf-surface-1) 78%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  min-width: 0;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
   letter-spacing: var(--pf-tracking-eyebrow);
   text-transform: uppercase;
-  color: var(--pf-text-med);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-pane-tag--on {
-  opacity: 1;
+.pf-pane-callsign {
+  color: var(--pf-text-med);
+}
+.pf-pane-frame--focused .pf-pane-callsign {
+  color: var(--pf-text-hi);
+}
+.pf-pane-cwd {
+  color: var(--pf-text-low);
+  letter-spacing: 0.04em;
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pf-pane-dot {
   width: 6px;
@@ -102,36 +124,24 @@
   box-shadow: 0 0 8px -1px var(--pf-ember);
 }
 
-/* ---- per-pane controls (top-right) ---- */
+/* ---- per-pane controls (live in the bar) ---- */
 .pf-pane-ctls {
-  position: absolute;
-  z-index: 7;
-  top: 7px;
-  right: 8px;
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--pf-space-xs);
-  opacity: 0;
-  transform: translateY(-2px);
-  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge),
-    transform var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-pane-ctls--on {
-  opacity: 1;
-  transform: none;
+  gap: 2px;
+  flex: none;
 }
 .pf-pane-ctl {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 24px;
+  width: 24px;
+  height: 22px;
   border-radius: var(--pf-radius-sm);
-  border: var(--pf-hairline-width) solid var(--pf-hairline);
-  background: color-mix(in srgb, var(--pf-surface-1) 80%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  color: var(--pf-text-med);
+  border: var(--pf-hairline-width) solid transparent;
+  background: transparent;
+  color: var(--pf-text-low);
   cursor: pointer;
   transition: background var(--pf-dur-fast) var(--pf-ease-forge),
     color var(--pf-dur-fast) var(--pf-ease-forge),

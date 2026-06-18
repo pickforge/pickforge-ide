@@ -1,5 +1,8 @@
 @import "./tokens.css";
-@import "./fonts.css";
+/* Fonts are embedded as base64 (fonts-data.css) so they load in the WebKitGTK
+ * webview, which rejects the plain network @font-face fetch. Regenerate with
+ * `npm run fonts:data`. */
+@import "./fonts-data.css";
 @import "@xterm/xterm/css/xterm.css";
 
 *,
@@ -13,6 +16,15 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+/* Tell the engine our chrome is dark so native controls (select popups,
+ * scrollbars, form widgets) render themed instead of OS-default white. */
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 body {

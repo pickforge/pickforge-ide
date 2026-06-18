@@ -136,6 +136,8 @@ function computeLayout(
 }
 
 const pct = (v: number) => `${v * 100}%`;
+const baseName = (p?: string) =>
+  p ? p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "" : "";
 
 export interface TerminalHostHandle {
   /** Type text into the currently focused pane's shell. */
@@ -149,7 +151,6 @@ export function TerminalHost(props: {
   const first = newLeaf();
   const [root, setRoot] = createSignal<Node>(first);
   const [focusedId, setFocusedId] = createSignal<string>(first.id);
-  const [hoveredId, setHoveredId] = createSignal<string | null>(null);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
   const handles = new Map<string, TerminalHandle>();
   let containerEl!: HTMLDivElement;
@@ -236,7 +237,6 @@ export function TerminalHost(props: {
         {(leaf) => {
           const rect = () => layout().map.get(leaf.id) ?? { x: 0, y: 0, w: 1, h: 1 };
           const focused = () => focusedId() === leaf.id;
-          const showCtl = () => focused() || hoveredId() === leaf.id || menuFor() === leaf.id;
           return (
             <div
               class="pf-pane"
@@ -251,9 +251,64 @@ export function TerminalHost(props: {
                 class="pf-pane-frame"
                 classList={{ "pf-pane-frame--focused": focused() }}
                 onPointerDown={() => focus(leaf.id)}
-                onPointerEnter={() => setHoveredId(leaf.id)}
-                onPointerLeave={() => setHoveredId((h) => (h === leaf.id ? null : h))}
               >
+                {/* A real top bar: its own row above the terminal, never an
+                    overlay — the shell prompt below it is never covered. */}
+                <div class="pf-pane-bar">
+                  <div class="pf-pane-bar-id">
+                    <span class="pf-pane-dot" classList={{ "pf-pane-dot--live": focused() }} />
+                    <span class="pf-pane-callsign">{leaf.callsign}</span>
+                    <Show when={baseName(props.cwd)}>
+                      <span class="pf-pane-cwd">{baseName(props.cwd)}</span>
+                    </Show>
+                  </div>
+                  <div class="pf-pane-ctls">
+                    <button
+                      class="pf-pane-ctl pf-pane-ctl--split"
+                      classList={{ "pf-pane-ctl--active": menuFor() === leaf.id }}
+                      title="Split this pane"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuFor((m) => (m === leaf.id ? null : leaf.id));
+                      }}
+                    >
+                      <IconSplitTrigger size={14} />
+                    </button>
+                    <button
+                      class="pf-pane-ctl pf-pane-ctl--close"
+                      title="Close pane"
+                      disabled={leaves().length <= 1}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        close(leaf.id);
+                      }}
+                    >
+                      <IconClose size={14} />
+                    </button>
+
+                    <Show when={menuFor() === leaf.id}>
+                      <div class="pf-pane-menu" onPointerDown={(e) => e.stopPropagation()}>
+                        <div class="pf-pane-menu-grid">
+                          <For each={SPLITS}>
+                            {(s) => (
+                              <button
+                                class={`pf-split-tile pf-split-tile--${s.dir}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  doSplit(leaf.id, s.dir);
+                                }}
+                              >
+                                <IconSplit dir={s.dir} size={26} />
+                                <span class="pf-split-tile-label">{s.label}</span>
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+
                 <div class="pf-pane-inner">
                   <TerminalPane
                     cwd={props.cwd}
@@ -263,59 +318,6 @@ export function TerminalHost(props: {
                     }}
                     onExit={() => close(leaf.id)}
                   />
-                </div>
-
-                {/* top-left: quiet pane identity */}
-                <div class="pf-pane-tag" classList={{ "pf-pane-tag--on": showCtl() }}>
-                  <span class="pf-pane-dot" classList={{ "pf-pane-dot--live": focused() }} />
-                  {leaf.callsign}
-                </div>
-
-                {/* top-right: this pane's own controls */}
-                <div class="pf-pane-ctls" classList={{ "pf-pane-ctls--on": showCtl() }}>
-                  <button
-                    class="pf-pane-ctl pf-pane-ctl--split"
-                    classList={{ "pf-pane-ctl--active": menuFor() === leaf.id }}
-                    title="Split this pane"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuFor((m) => (m === leaf.id ? null : leaf.id));
-                    }}
-                  >
-                    <IconSplitTrigger size={14} />
-                  </button>
-                  <button
-                    class="pf-pane-ctl pf-pane-ctl--close"
-                    title="Close pane"
-                    disabled={leaves().length <= 1}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      close(leaf.id);
-                    }}
-                  >
-                    <IconClose size={14} />
-                  </button>
-
-                  <Show when={menuFor() === leaf.id}>
-                    <div class="pf-pane-menu" onPointerDown={(e) => e.stopPropagation()}>
-                      <div class="pf-pane-menu-grid">
-                        <For each={SPLITS}>
-                          {(s) => (
-                            <button
-                              class={`pf-split-tile pf-split-tile--${s.dir}`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                doSplit(leaf.id, s.dir);
-                              }}
-                            >
-                              <IconSplit dir={s.dir} size={26} />
-                              <span class="pf-split-tile-label">{s.label}</span>
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </div>
-                  </Show>
                 </div>
               </div>
             </div>

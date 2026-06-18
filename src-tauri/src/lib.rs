@@ -1,6 +1,7 @@
 mod db_commands;
 mod device_commands;
 mod fs_commands;
+mod git_commands;
 mod process_commands;
 mod pty_commands;
 mod vm_commands;
@@ -36,6 +37,8 @@ pub fn run() {
             device_commands::adb_list_devices,
             device_commands::adb_screenshot,
             device_commands::adb_dump_uiautomator,
+            git_commands::git_status,
+            git_commands::git_diff,
             db_commands::projects_list,
             db_commands::project_upsert,
             db_commands::project_set_archived,

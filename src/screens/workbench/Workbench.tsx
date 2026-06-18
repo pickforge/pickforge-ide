@@ -6,6 +6,7 @@ import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid
 import { ProjectsChatsPanel } from "./ProjectsChatsPanel";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
+import { SourceControl } from "./SourceControl";
 import {
   TerminalHost,
   type TerminalHostHandle,
@@ -191,6 +192,7 @@ export function WorkbenchScreen() {
       </main>
 
       <aside class="pf-workbench-right pf-reveal" style={{ "--pf-reveal-delay": "140ms" }}>
+        <SourceControl />
         <InspectorPanel />
       </aside>
     </div>

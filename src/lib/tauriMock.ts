@@ -34,6 +34,17 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   ],
   project_touch: () => null,
   vm_status: () => null,
+  git_status: () => ({
+    isRepo: true,
+    branch: "main",
+    files: [
+      { path: "lib/login.dart", status: " M", staged: false, unstaged: true, untracked: false },
+      { path: "lib/new_widget.dart", status: "??", staged: false, unstaged: true, untracked: true },
+      { path: "README.md", status: "A ", staged: true, unstaged: false, untracked: false },
+    ],
+  }),
+  git_diff: () =>
+    "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",
 };
 
 export function installTauriMock() {

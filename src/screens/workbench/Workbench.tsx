@@ -72,6 +72,9 @@ export function WorkbenchScreen() {
         if (hotkeyMatches(e, item.hotkey)) {
           e.preventDefault();
           e.stopPropagation();
+          // Match the chip's disabled gate: a missing binary shouldn't fire.
+          const bin = binaryForItem(item);
+          if (bin && available()[bin] === false) return;
           typeToActive(commandForItem(item));
           return;
         }

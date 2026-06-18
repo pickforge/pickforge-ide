@@ -42,12 +42,14 @@ export function SourceControl() {
     }
     setLoading(true);
     try {
-      setStatus(await gitStatus(root));
+      const next = await gitStatus(root);
+      if (workspace.activeRoot !== root) return; // project switched mid-flight
+      setStatus(next);
     } catch (err) {
       console.error("[pickforge] git_status failed", err);
-      setStatus({ isRepo: false, branch: null, files: [] });
+      if (workspace.activeRoot === root) setStatus({ isRepo: false, branch: null, files: [] });
     } finally {
-      setLoading(false);
+      if (workspace.activeRoot === root) setLoading(false);
     }
   };
 

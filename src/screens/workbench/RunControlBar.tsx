@@ -29,15 +29,17 @@ export function RunControlBar(props: { send: (text: string) => void; canSend: bo
     }
     void (async () => {
       const found = await discoverRunTargets(root);
+      if (workspace.activeRoot !== root) return; // project switched mid-flight
       setTargets(found);
       setTargetId(found[0]?.id ?? "");
       if (found.some((t) => t.needsDevice)) {
         try {
           const ds = await adbListDevices();
+          if (workspace.activeRoot !== root) return;
           setDevices(ds);
           setDevice((d) => d || ds.find((x) => x.state === "device")?.serial || "");
         } catch {
-          setDevices([]);
+          if (workspace.activeRoot === root) setDevices([]);
         }
       } else {
         setDevices([]);

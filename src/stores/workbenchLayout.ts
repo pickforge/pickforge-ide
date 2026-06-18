@@ -107,12 +107,17 @@ export function isCollapsed(pane: PaneId): boolean {
  *  first, so this also reorders within a dock. */
 export function movePane(pane: PaneId, toDock: DockId, index: number) {
   const s = state();
+  // If the pane already lives before `index` in the target dock, removing it
+  // shifts the target slot down by one — keep the intended drop position.
+  const fromIdx = s.docks[toDock].indexOf(pane);
   const docks: Record<DockId, PaneId[]> = {
     left: s.docks.left.filter((p) => p !== pane),
     right: s.docks.right.filter((p) => p !== pane),
   };
   const target = docks[toDock];
-  const i = Math.max(0, Math.min(index, target.length));
+  let i = index;
+  if (fromIdx !== -1 && fromIdx < index) i -= 1;
+  i = Math.max(0, Math.min(i, target.length));
   target.splice(i, 0, pane);
   // Never let a dock with content stay hidden after a drop.
   const vis =

@@ -81,7 +81,12 @@ export async function renameProject(root: string, displayName: string) {
 }
 
 export async function deleteProject(root: string) {
-  await db.projectDelete(root); // cascades its chats
+  // The DB cascade-deletes this project's chat rows, but the workbench keeps
+  // visited chat terminal hosts mounted until told a chat is gone — so notify
+  // for each before deleting, or their shells leak.
+  const chats = await db.chatsList(root);
+  await db.projectDelete(root);
+  chats.forEach((c) => chatDeletedListeners.forEach((fn) => fn(c.chatId)));
   if (state.activeRoot === root) setState("activeRoot", null);
   await loadWorkspace();
 }

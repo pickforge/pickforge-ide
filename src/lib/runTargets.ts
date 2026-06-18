@@ -17,13 +17,14 @@ export interface RunTarget {
   source: "detected" | "vscode";
 }
 
+// Target ids match crates/pickforge-core/src/targets/adapters.rs.
 function defaultCommand(t: TargetDetection): string | null {
   switch (t.targetId) {
     case "flutter":
       return "flutter run";
-    case "reactNativeAndroid":
+    case "react-native":
       return "npx react-native run-android";
-    case "nativeAndroid":
+    case "native-android":
       return "./gradlew installDebug";
     case "web":
       return "npm run dev";
@@ -31,6 +32,8 @@ function defaultCommand(t: TargetDetection): string | null {
       return null;
   }
 }
+
+const DEVICE_TARGETS = new Set(["flutter", "react-native", "native-android"]);
 
 /** Strip // and /* *​/ comments so JSONC (launch.json) parses as JSON. */
 function stripJsonc(src: string): string {
@@ -103,7 +106,7 @@ export async function discoverRunTargets(root: string): Promise<RunTarget[]> {
         label: detected.displayName,
         command: cmd,
         capabilities: detected.capabilities,
-        needsDevice: detected.targetId === "flutter" || detected.targetId.toLowerCase().includes("android"),
+        needsDevice: DEVICE_TARGETS.has(detected.targetId),
         source: "detected",
       });
     }

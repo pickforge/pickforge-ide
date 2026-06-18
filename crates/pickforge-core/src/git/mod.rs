@@ -55,21 +55,25 @@ pub fn status(root: &str) -> GitStatus {
         return GitStatus { is_repo: false, branch: None, files: Vec::new() };
     }
     let branch = current_branch(root);
-    let raw = git_ok(root, &["status", "--porcelain=v1", "--untracked-files=all"]).unwrap_or_default();
+    // -z: NUL-delimited, never quotes/escapes paths (handles spaces/unicode);
+    // rename/copy entries are followed by their original path as a second token.
+    let raw = git_ok(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        .unwrap_or_default();
 
     let mut files = Vec::new();
-    for line in raw.lines() {
-        if line.len() < 4 {
+    let mut tokens = raw.split('\0');
+    while let Some(entry) = tokens.next() {
+        if entry.len() < 4 {
             continue;
         }
-        let code = &line[..2];
-        let mut path = line[3..].to_string();
-        // "old -> new" for renames/copies — keep the new path.
-        if let Some(idx) = path.find(" -> ") {
-            path = path[idx + 4..].to_string();
-        }
+        let code = &entry[..2]; // ASCII status bytes
+        let path = entry[3..].to_string(); // byte 2 is the separator space
         let x = code.as_bytes()[0] as char;
         let y = code.as_bytes()[1] as char;
+        // Rename/copy: consume the trailing original-path token.
+        if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
+            tokens.next();
+        }
         let untracked = code == "??";
         files.push(GitFileStatus {
             path,
@@ -82,8 +86,15 @@ pub fn status(root: &str) -> GitStatus {
     GitStatus { is_repo: true, branch, files }
 }
 
-/// Unified diff for one file. `staged` reads the index (`--cached`); for a new
-/// untracked file we diff against the empty tree so its contents show as adds.
+fn is_tracked(root: &str, path: &str) -> bool {
+    run("git", &["ls-files", "--error-unmatch", "--", path], Some(root), None)
+        .map(|o| o.success())
+        .unwrap_or(false)
+}
+
+/// Unified diff for one file. `staged` reads the index (`--cached`); a new
+/// untracked file has no tracked diff, so we diff it against the empty file so
+/// its contents show as additions.
 pub fn diff(root: &str, path: &str, staged: bool) -> String {
     let args: Vec<&str> = if staged {
         vec!["diff", "--cached", "--", path]
@@ -91,7 +102,7 @@ pub fn diff(root: &str, path: &str, staged: bool) -> String {
         vec!["diff", "--", path]
     };
     let d = git_raw(root, &args);
-    if !staged && d.trim().is_empty() {
+    if !staged && d.trim().is_empty() && !is_tracked(root, path) {
         let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         return git_raw(root, &["diff", "--no-index", "--", null, path]);
     }
@@ -112,13 +123,15 @@ mod tests {
     }
 
     #[test]
-    fn parses_porcelain_line_shapes() {
-        // Sanity for the slicing logic used in status().
-        let line = " M src/main.rs";
-        assert_eq!(&line[..2], " M");
-        assert_eq!(&line[3..], "src/main.rs");
-        let rename = "R  old.rs -> new.rs";
-        let p = &rename[3..];
-        assert_eq!(&p[p.find(" -> ").unwrap() + 4..], "new.rs");
+    fn parses_porcelain_z_entry_shape() {
+        // -z entry: 2 status bytes, a separator space, then the (new) path.
+        let entry = " M src/main.rs";
+        assert_eq!(&entry[..2], " M");
+        assert_eq!(&entry[3..], "src/main.rs");
+        // A rename's original path is a separate NUL-delimited token.
+        let z = "R  new.rs\u{0}old.rs";
+        let mut toks = z.split('\u{0}');
+        assert_eq!(toks.next().unwrap(), "R  new.rs");
+        assert_eq!(toks.next().unwrap(), "old.rs");
     }
 }

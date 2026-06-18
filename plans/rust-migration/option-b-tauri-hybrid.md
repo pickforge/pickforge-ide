@@ -1,7 +1,9 @@
 # Option B — Tauri hybrid (Rust core + web UI)
 
-Drafted 2026-06-17. Status: **exploratory, not scheduled.** Read
-[`README.md`](README.md) first for the shared core boundary and the A-vs-B fork.
+Drafted 2026-06-17. **Status: IMPLEMENTED.** This spec was built and merged to
+main under [`tauri/`](../../tauri/) (SolidJS + Tauri v2, Rust `pickforge-core`,
+60 core tests, `.deb`/`.rpm` packaging, Playwright VRT). Read
+[`README.md`](README.md) for the shared core boundary and the A-vs-B fork.
 
 ## Verdict
 

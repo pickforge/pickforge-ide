@@ -1,7 +1,10 @@
 # Rust migration — decision framing
 
-Drafted 2026-06-17. Status: **exploratory, not scheduled.** Two specs sit beside
-this README; both are Rust-core architectures. Read this first to pick a lane.
+Drafted 2026-06-17. **Status: Option B (Tauri hybrid) was chosen and built.** The
+Rust core + SolidJS app lives under [`tauri/`](../../tauri/) and is merged to
+main (60 core tests, `.deb`/`.rpm` packaging, Playwright VRT). The decision
+framing below is preserved as the original record — note its recommendation
+favoured Option A; Option B was ultimately taken for the footprint win.
 
 ## Why we're looking
 
@@ -63,6 +66,11 @@ fork is *only* the UI layer, and you can defer it.
 | Risk | Low | High (Linux webview + mobile + rewrite) |
 
 ## Recommendation
+
+> **Outcome (2026-06-17): Option B was chosen and built.** The full Rust core +
+> SolidJS Tauri app is implemented under [`tauri/`](../../tauri/) and merged to
+> main. The original recommendation below (favouring Option A) is kept as the
+> decision record.
 
 **Start with Option A.** It attacks the actual pain (terminal/OS layer) at the
 lowest risk, keeps the design system + tests + mobile capability you already

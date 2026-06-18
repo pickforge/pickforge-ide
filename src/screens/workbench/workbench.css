@@ -485,6 +485,48 @@
   gap: var(--pf-space-sm);
   flex-wrap: wrap;
 }
+.pf-launch-hide {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-launch-hide:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-item-fill);
+}
+.pf-launch-reveal {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  align-self: flex-start;
+  margin: var(--pf-space-xs) var(--pf-space-lg);
+  padding: 2px var(--pf-space-md);
+  flex: none;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-low);
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+}
+.pf-launch-reveal:hover {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
 .pf-workbench-terminal {
   position: relative;
   flex: 1;

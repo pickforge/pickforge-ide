@@ -11,8 +11,9 @@ import {
   type TerminalHostHandle,
 } from "../../components/TerminalHost";
 import { Chip, ForgeEmptyState, MonoEyebrow } from "../../components/ui";
-import { IconGear, IconTerminal } from "../../components/icons";
+import { IconChevronDown, IconClose, IconGear, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
+import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
 import {
   binaryForItem,
   commandForItem,
@@ -122,24 +123,44 @@ export function WorkbenchScreen() {
       </aside>
 
       <main class="pf-workbench-center pf-reveal">
-        <div class="pf-launch">
-          <MonoEyebrow text="Quick launch" tick />
-          <div class="pf-chips">
-            <For each={quickLaunchItems()}>
-              {(item, i) => {
-                const bin = binaryForItem(item);
-                return (
-                  <Chip
-                    label={item.label}
-                    ember={i() === 0}
-                    disabled={bin ? available()[bin] === false : false}
-                    onClick={() => typeToActive(commandForItem(item))}
-                  />
-                );
-              }}
-            </For>
+        <Show
+          when={workbenchPrefs().quickLaunchVisible}
+          fallback={
+            <button
+              class="pf-launch-reveal"
+              title="Show quick launch"
+              onClick={() => setQuickLaunchVisible(true)}
+            >
+              <IconChevronDown size={12} /> Quick launch
+            </button>
+          }
+        >
+          <div class="pf-launch">
+            <MonoEyebrow text="Quick launch" tick />
+            <div class="pf-chips">
+              <For each={quickLaunchItems()}>
+                {(item, i) => {
+                  const bin = binaryForItem(item);
+                  return (
+                    <Chip
+                      label={item.label}
+                      ember={i() === 0}
+                      disabled={bin ? available()[bin] === false : false}
+                      onClick={() => typeToActive(commandForItem(item))}
+                    />
+                  );
+                }}
+              </For>
+            </div>
+            <button
+              class="pf-launch-hide"
+              title="Hide quick launch"
+              onClick={() => setQuickLaunchVisible(false)}
+            >
+              <IconClose size={13} />
+            </button>
           </div>
-        </div>
+        </Show>
 
         <div class="pf-workbench-terminal">
           {/* All visited chats stay mounted; only the active one is shown. */}

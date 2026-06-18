@@ -6,6 +6,9 @@
   width: 100%;
   height: 100%;
   min-height: 0;
+  /* One continuous sweep timeline for the whole host; focused panes inherit
+   * --pf-sweep-angle, so changing which pane is focused never restarts it. */
+  animation: pf-sweep var(--pf-dur-breath) linear infinite;
 }
 
 /* The cell spans its fractional rect; the visible frame is inset so neighbours
@@ -45,8 +48,23 @@
     var(--pf-ember-soft) 352deg,
     var(--pf-hairline-strong) 360deg
   );
-  animation: pf-pane-in var(--pf-dur-standard) var(--pf-ease-forge) both,
-    pf-sweep var(--pf-dur-breath) linear infinite;
+  /* The sweep angle is inherited from .pf-term-host (one shared timeline), so
+   * the focused frame only needs its entrance animation. */
+  animation: pf-pane-in var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+/* Hovering the focused pane must KEEP the sweep (a bare .pf-pane-frame:hover
+ * would otherwise out-specify it and flatten the glow) — and warm it: a wider,
+ * brighter ember arc signals the live pane is hot. */
+.pf-pane-frame--focused:hover {
+  background: conic-gradient(
+    from var(--pf-sweep-angle),
+    var(--pf-hairline-strong) 0deg,
+    var(--pf-hairline-strong) 280deg,
+    var(--pf-ember) 312deg,
+    var(--pf-ember-soft) 338deg,
+    var(--pf-ember-soft) 352deg,
+    var(--pf-hairline-strong) 360deg
+  );
 }
 .pf-pane-inner {
   position: relative;
@@ -268,6 +286,7 @@ body.pf-resizing .pf-divider-grip {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .pf-term-host,
   .pf-pane-frame,
   .pf-pane-frame--focused,
   .pf-pane-menu {
@@ -275,5 +294,8 @@ body.pf-resizing .pf-divider-grip {
   }
   .pf-pane-frame--focused {
     background: var(--pf-ember-deep);
+  }
+  .pf-pane-frame--focused:hover {
+    background: var(--pf-ember);
   }
 }

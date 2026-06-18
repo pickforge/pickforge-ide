@@ -97,7 +97,9 @@
 
 @property --pf-sweep-angle {
   syntax: "<angle>";
-  inherits: false;
+  /* inheritable so a single timeline on an ancestor (e.g. the terminal host)
+   * drives every focused pane's sweep — switching panes never resets it. */
+  inherits: true;
   initial-value: 0deg;
 }
 @keyframes pf-sweep {
@@ -150,4 +152,44 @@
 }
 .pf-body > * {
   height: 100%;
+}
+/* Routed screens animate in on each visit (the workbench already does). */
+.pf-route {
+  height: 100%;
+}
+
+/* ---- bottom status bar ---- */
+.pf-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-md);
+  height: 24px;
+  padding: 0 var(--pf-space-md);
+  flex: none;
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.04em;
+  color: var(--pf-text-low);
+}
+.pf-statusbar-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-statusbar-zoom {
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font: inherit;
+  letter-spacing: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  padding: 0 var(--pf-space-xs);
+  flex: none;
+}
+.pf-statusbar-zoom:hover {
+  color: var(--pf-text-hi);
 }

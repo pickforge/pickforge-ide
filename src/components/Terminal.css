@@ -5,6 +5,9 @@
   background: var(--pf-surface);
   border-radius: inherit;
   overflow: hidden;
+  /* The machine voice: keep the whole terminal subtree on Geist Mono so the DOM
+   * fallback renderer matches the WebGL atlas font. */
+  font-family: var(--pf-font-mono);
 }
 
 /* xterm paints its own viewport; keep its background transparent so the

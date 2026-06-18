@@ -1,5 +1,8 @@
-// The 3-pane workbench: projects/chats/files | terminal | inspector.
-import { createSignal, For, onMount, Show } from "solid-js";
+// The 3-pane workbench: projects/chats/files | terminals | inspector.
+// Each chat owns its own terminal host (its own panes/shells). Visited hosts
+// stay mounted (visibility toggled) so switching chats/projects never kills a
+// running shell; a host is disposed only when its chat is deleted.
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { ProjectsChatsPanel } from "./ProjectsChatsPanel";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
@@ -7,43 +10,103 @@ import {
   TerminalHost,
   type TerminalHostHandle,
 } from "../../components/TerminalHost";
-import { Chip, MonoEyebrow } from "../../components/ui";
+import { Chip, ForgeEmptyState, MonoEyebrow } from "../../components/ui";
+import { IconGear, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
-import { AGENTS, launchCommand } from "../../lib/agentModels";
-import { workspace } from "../../stores/workspace";
-import { navigate } from "../../router";
+import {
+  binaryForItem,
+  commandForItem,
+  hotkeyMatches,
+  quickLaunchItems,
+} from "../../stores/quickLaunch";
+import { onChatDeleted, workspace } from "../../stores/workspace";
+import { navigate, route } from "../../router";
 import "./workbench.css";
 
-const AGENT_CHIPS = [
-  { label: "claude", agentId: "claudeCode", ember: true },
-  { label: "codex", agentId: "codex" },
-];
-const TOOL_CHIPS = [
-  { label: "flutter doctor", command: "flutter doctor ", binary: "flutter" },
-  { label: "adb devices", command: "adb devices ", binary: "adb" },
-];
+interface MountedHost {
+  chatId: string;
+  projectRoot: string;
+}
 
 export function WorkbenchScreen() {
-  const [host, setHost] = createSignal<TerminalHostHandle | null>(null);
+  const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
+  const handles = new Map<string, TerminalHostHandle>();
 
-  onMount(async () => {
-    const bins = [...new Set([...AGENTS.map((a) => a.binary), "flutter", "adb"])];
-    try {
-      const result = await detectBinaries(bins);
-      const map: Record<string, boolean> = {};
-      bins.forEach((b, i) => (map[b] = result[i]));
-      setAvailable(map);
-    } catch (err) {
-      console.error("[pickforge] detect_binaries failed", err);
-    }
+  const typeToActive = (text: string) => {
+    if (!text) return;
+    handles.get(workspace.activeChatId ?? "")?.typeToFocused(text);
+  };
+
+  // Mount a host the first time its chat becomes active; keep it after.
+  createEffect(() => {
+    const id = workspace.activeChatId;
+    if (!id || mounted().some((m) => m.chatId === id)) return;
+    const chat = workspace.chats.find((c) => c.chatId === id);
+    if (chat) setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
   });
 
-  const type = (text: string) => host()?.typeToFocused(text);
+  onMount(() => {
+    // Wire listeners + cleanup synchronously so they bind to this scope even if
+    // the async detection below is still pending when the screen is disposed.
+
+    // Tear down a chat's host (and shells) only when the chat is deleted.
+    const offDelete = onChatDeleted((chatId) => {
+      setMounted((m) => m.filter((h) => h.chatId !== chatId));
+      handles.delete(chatId);
+    });
+
+    // Global quick-launch hotkeys. Capture phase so they win over the shell;
+    // ignored while typing in a real form field (but not in the terminal).
+    const onKey = (e: KeyboardEvent) => {
+      if (route() !== "workbench") return; // hotkeys only act on the workbench
+      const t = e.target as HTMLElement | null;
+      const inXterm = !!t?.closest?.(".xterm");
+      const inField =
+        !inXterm &&
+        !!t?.closest?.(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+        );
+      if (inField) return;
+      for (const item of quickLaunchItems()) {
+        if (hotkeyMatches(e, item.hotkey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          // Match the chip's disabled gate: a missing binary shouldn't fire.
+          const bin = binaryForItem(item);
+          if (bin && available()[bin] === false) return;
+          typeToActive(commandForItem(item));
+          return;
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+
+    onCleanup(() => {
+      offDelete();
+      window.removeEventListener("keydown", onKey, true);
+    });
+
+    // Binary availability for chip gating — async, fire-and-forget.
+    void (async () => {
+      const bins = [
+        ...new Set(quickLaunchItems().map(binaryForItem).filter(Boolean) as string[]),
+      ];
+      if (!bins.length) return;
+      try {
+        const result = await detectBinaries(bins);
+        const map: Record<string, boolean> = {};
+        bins.forEach((b, i) => (map[b] = result[i]));
+        setAvailable(map);
+      } catch (err) {
+        console.error("[pickforge] detect_binaries failed", err);
+      }
+    })();
+  });
 
   return (
     <div class="pf-workbench">
-      <aside class="pf-workbench-left">
+      <aside class="pf-workbench-left pf-reveal" style={{ "--pf-reveal-delay": "70ms" }}>
         <ProjectsChatsPanel />
         <FileExplorer />
         <div class="pf-rail-footer">
@@ -53,49 +116,60 @@ export function WorkbenchScreen() {
             title="Settings"
             onClick={() => navigate("settings")}
           >
-            ⚙
+            <IconGear size={15} />
           </button>
         </div>
       </aside>
 
-      <main class="pf-workbench-center">
+      <main class="pf-workbench-center pf-reveal">
         <div class="pf-launch">
           <MonoEyebrow text="Quick launch" tick />
           <div class="pf-chips">
-            <For each={AGENT_CHIPS}>
-              {(c) => {
-                const agent = AGENTS.find((a) => a.id === c.agentId)!;
+            <For each={quickLaunchItems()}>
+              {(item, i) => {
+                const bin = binaryForItem(item);
                 return (
                   <Chip
-                    label={c.label}
-                    ember={c.ember}
-                    disabled={available()[agent.binary] === false}
-                    onClick={() => type(launchCommand(c.agentId))}
+                    label={item.label}
+                    ember={i() === 0}
+                    disabled={bin ? available()[bin] === false : false}
+                    onClick={() => typeToActive(commandForItem(item))}
                   />
                 );
               }}
             </For>
-            <For each={TOOL_CHIPS}>
-              {(c) => (
-                <Chip
-                  label={c.label}
-                  disabled={available()[c.binary] === false}
-                  onClick={() => type(c.command)}
-                />
-              )}
-            </For>
           </div>
         </div>
+
         <div class="pf-workbench-terminal">
-          {/* Mount the terminal only once the workspace has loaded, so the
-              shell spawns in the active project's directory (not the home dir). */}
-          <Show when={workspace.loaded}>
-            <TerminalHost onReady={setHost} cwd={workspace.activeRoot ?? undefined} />
+          {/* All visited chats stay mounted; only the active one is shown. */}
+          <For each={mounted()}>
+            {(h) => (
+              <div
+                class="pf-term-slot"
+                style={{ display: workspace.activeChatId === h.chatId ? "block" : "none" }}
+              >
+                <TerminalHost
+                  cwd={h.projectRoot}
+                  onReady={(handle) => handles.set(h.chatId, handle)}
+                />
+              </div>
+            )}
+          </For>
+          <Show when={workspace.loaded && !workspace.activeChatId}>
+            <div class="pf-term-empty">
+              <ForgeEmptyState
+                glyph={<IconTerminal size={28} />}
+                eyebrow="Terminal"
+                title="No chat open"
+                hint="Create or select a chat to open a shell in its project."
+              />
+            </div>
           </Show>
         </div>
       </main>
 
-      <aside class="pf-workbench-right">
+      <aside class="pf-workbench-right pf-reveal" style={{ "--pf-reveal-delay": "140ms" }}>
         <InspectorPanel />
       </aside>
     </div>

@@ -133,6 +133,7 @@
   color: var(--pf-text-low);
 }
 .pf-select {
+  color-scheme: dark;
   background: var(--pf-surface-2);
   color: var(--pf-text-hi);
   border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
@@ -140,7 +141,152 @@
   padding: var(--pf-space-sm) var(--pf-space-md);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-body-sm);
+  cursor: pointer;
 }
+:root[data-theme="light"] .pf-select {
+  color-scheme: light;
+}
+.pf-select option {
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+}
+/* ---- quick-launch editor ---- */
+.pf-input {
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  min-width: 0;
+}
+.pf-input::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-ql-head {
+  margin-bottom: var(--pf-space-xs);
+}
+.pf-ql-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+.pf-ql-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.4fr) auto auto;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-ql-row--conflict .pf-ql-hotkey {
+  border-color: var(--pf-warning);
+  color: var(--pf-warning);
+}
+.pf-ql-agent {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-med);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-ql-hotkey {
+  min-width: 92px;
+  text-align: center;
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-ql-hotkey:hover {
+  border-color: var(--pf-ember);
+  color: var(--pf-text-hi);
+}
+.pf-ql-hotkey--capturing {
+  border-color: var(--pf-ember);
+  color: var(--pf-ember);
+}
+.pf-ql-warn {
+  margin-top: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.04em;
+  color: var(--pf-warning);
+}
+.pf-ql-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--pf-space-md);
+}
+.pf-ql-add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-size: var(--pf-size-body-sm);
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-ql-add:hover {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+
+.pf-settings-hint-inline {
+  margin-left: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.06em;
+  color: var(--pf-text-low);
+}
+.pf-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-size: var(--pf-size-title-md);
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-zoom-btn:hover {
+  border-color: var(--pf-ember);
+  color: var(--pf-text-hi);
+}
+.pf-zoom-val {
+  min-width: 44px;
+  text-align: center;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--pf-text-hi);
+}
+
 .pf-seg {
   display: inline-flex;
   border: var(--pf-hairline-width) solid var(--pf-hairline-strong);

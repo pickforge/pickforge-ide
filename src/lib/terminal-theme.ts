@@ -46,7 +46,25 @@ export function buildTerminalTheme(): ITheme {
   };
 }
 
+// GeistMono first (the machine voice), then a Nerd-Font chain for box-drawing /
+// powerline glyphs Geist Mono lacks, then system mono. Size 14 matches the old
+// Flutter `EmbeddedTerminalSettings.defaults`.
 export const TERMINAL_FONT_FAMILY =
-  'GeistMono, ui-monospace, "SF Mono", Menlo, monospace';
-export const TERMINAL_FONT_SIZE = 13;
-export const TERMINAL_LINE_HEIGHT = 1.25;
+  'GeistMono, "JetBrainsMono Nerd Font", "Symbols Nerd Font", ui-monospace, "SF Mono", Menlo, monospace';
+export const TERMINAL_FONT_SIZE = 14;
+export const TERMINAL_LINE_HEIGHT = 1.3;
+
+/** xterm measures glyph width on open(); ensure the web font is parsed first so
+ *  it never falls back to a system mono. Resolves even if the font is missing. */
+export async function ensureTerminalFontLoaded(): Promise<void> {
+  if (typeof document === "undefined" || !document.fonts) return;
+  try {
+    await Promise.all([
+      document.fonts.load(`${TERMINAL_FONT_SIZE}px GeistMono`),
+      document.fonts.load(`500 ${TERMINAL_FONT_SIZE}px GeistMono`),
+      document.fonts.ready,
+    ]);
+  } catch {
+    /* font API hiccup — fall through, xterm still renders with the fallback */
+  }
+}

@@ -1,5 +1,8 @@
 @import "./tokens.css";
-@import "./fonts.css";
+/* Fonts are embedded as base64 (fonts-data.css) so they load in the WebKitGTK
+ * webview, which rejects the plain network @font-face fetch. Regenerate with
+ * `npm run fonts:data`. */
+@import "./fonts-data.css";
 @import "@xterm/xterm/css/xterm.css";
 
 *,
@@ -13,6 +16,15 @@ body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+/* Tell the engine our chrome is dark so native controls (select popups,
+ * scrollbars, form widgets) render themed instead of OS-default white. */
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 body {
@@ -51,6 +63,35 @@ body {
 :focus-visible {
   outline: var(--pf-hairline-width) solid var(--pf-ember-deep);
   outline-offset: 2px;
+}
+
+/* Hairline icons render as block so they centre cleanly with no descender gap. */
+.pf-icon {
+  display: block;
+  flex: none;
+}
+
+/* Shared entrance: a quiet rise + fade, gated to the forge easing. Honors
+ * reduced motion (durations collapse to 0 via the token media query, and the
+ * reduce block below removes the transform so nothing slides). */
+@keyframes pf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pf-reveal {
+  animation: pf-rise var(--pf-dur-reveal) var(--pf-ease-forge) both;
+  animation-delay: var(--pf-reveal-delay, 0ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-reveal {
+    animation: none;
+  }
 }
 
 /* thin, dark scrollbars that match the chrome */

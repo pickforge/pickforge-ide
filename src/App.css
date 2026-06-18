@@ -20,23 +20,25 @@
   align-items: center;
   gap: var(--pf-space-md);
 }
-/* SelectionBracket DNA: a small frame with one ember corner. */
+/* The core brand glyph: a hairline selection frame with its top-right corner
+ * replaced by a glowing ember dot. */
 .pf-mark {
   position: relative;
   width: 18px;
   height: 18px;
-  border: var(--pf-hairline-width) solid var(--pf-text-low);
-  border-radius: 3px;
+  border: var(--pf-bracket-width) solid var(--pf-text-med);
+  border-radius: 4px;
 }
 .pf-mark::after {
   content: "";
   position: absolute;
-  top: -1px;
-  right: -1px;
-  width: 7px;
-  height: 7px;
-  border-top: var(--pf-bracket-width) solid var(--pf-ember);
-  border-right: var(--pf-bracket-width) solid var(--pf-ember);
+  top: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-ember);
+  box-shadow: 0 0 9px 0 var(--pf-ember-glow), 0 0 0 2px var(--pf-surface);
 }
 .pf-wordmark {
   font-family: var(--pf-font-sans);

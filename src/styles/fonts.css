@@ -5,42 +5,42 @@
   font-family: "Geist";
   font-style: normal;
   font-weight: 300;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-v5-latin-300.ttf") format("truetype");
 }
 @font-face {
   font-family: "Geist";
   font-style: normal;
   font-weight: 400;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-v5-latin-regular.ttf") format("truetype");
 }
 @font-face {
   font-family: "Geist";
   font-style: normal;
   font-weight: 500;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-v5-latin-500.ttf") format("truetype");
 }
 @font-face {
   font-family: "Geist";
   font-style: normal;
   font-weight: 600;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-v5-latin-600.ttf") format("truetype");
 }
 @font-face {
   font-family: "Geist";
   font-style: normal;
   font-weight: 700;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-v5-latin-700.ttf") format("truetype");
 }
 @font-face {
   font-family: "Geist";
   font-style: normal;
   font-weight: 800;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-v5-latin-800.ttf") format("truetype");
 }
 
@@ -48,27 +48,27 @@
   font-family: "GeistMono";
   font-style: normal;
   font-weight: 400;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-mono-v5-latin-regular.ttf") format("truetype");
 }
 @font-face {
   font-family: "GeistMono";
   font-style: normal;
   font-weight: 500;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-mono-v5-latin-500.ttf") format("truetype");
 }
 @font-face {
   font-family: "GeistMono";
   font-style: normal;
   font-weight: 600;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-mono-v5-latin-600.ttf") format("truetype");
 }
 @font-face {
   font-family: "GeistMono";
   font-style: normal;
   font-weight: 700;
-  font-display: block;
+  font-display: swap;
   src: url("/fonts/geist-mono-v5-latin-700.ttf") format("truetype");
 }

@@ -2,6 +2,7 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { MonoEyebrow } from "../../components/ui";
+import { IconChevronDown, IconChevronRight, IconDot } from "../../components/icons";
 import { workspace } from "../../stores/workspace";
 
 interface Entry {
@@ -34,7 +35,11 @@ function FileNode(props: { entry: Entry; depth: number }) {
         onClick={toggle}
       >
         <span class="pf-file-icon">
-          {props.entry.isDir ? (open() ? "▾" : "▸") : "·"}
+          {props.entry.isDir ? (
+            open() ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />
+          ) : (
+            <IconDot size={13} />
+          )}
         </span>
         <span class="pf-file-name">{props.entry.name}</span>
       </div>

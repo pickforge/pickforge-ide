@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "vrt": "playwright test"
+    "vrt": "playwright test",
+    "fonts:data": "node scripts/generate-fonts-data.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

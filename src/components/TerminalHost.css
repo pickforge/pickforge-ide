@@ -119,11 +119,36 @@
   justify-content: space-between;
   gap: var(--pf-space-sm);
   height: 28px;
-  padding: 0 var(--pf-space-xs) 0 var(--pf-space-md);
+  padding: 0 var(--pf-space-xs) 0 var(--pf-space-sm);
   background: var(--pf-surface-1);
   border-radius: calc(var(--pf-radius-md) - var(--pf-bracket-width))
     calc(var(--pf-radius-md) - var(--pf-bracket-width)) 0 0;
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  cursor: grab;
+  touch-action: none;
+}
+body.pf-pane-moving .pf-pane-bar {
+  cursor: grabbing;
+}
+/* During a pane drag, stop xterm from swallowing the pointer so the global
+ * move/up handlers and hit-testing stay smooth. */
+body.pf-pane-moving .pf-pane-inner {
+  pointer-events: none;
+}
+.pf-pane-grip {
+  display: inline-flex;
+  align-items: center;
+  color: var(--pf-text-low);
+  opacity: 0.45;
+  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-pane-bar:hover .pf-pane-grip {
+  opacity: 1;
+  color: var(--pf-text-med);
+}
+.pf-pane-frame--dragging {
+  opacity: 0.5;
 }
 .pf-pane-frame--focused .pf-pane-bar {
   border-bottom-color: var(--pf-hairline-strong);
@@ -306,10 +331,62 @@ body.pf-resizing .pf-divider-grip {
   box-shadow: 0 0 10px -2px var(--pf-ember);
 }
 
+/* ---- pane rearrange: drop indicator ---- */
+.pf-drop {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  padding: 3px; /* match the pane frame inset so the zone aligns to the frame */
+}
+.pf-drop-zone {
+  position: absolute;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-bracket-width) solid var(--pf-ember);
+  background: var(--pf-ember-glow);
+  box-shadow: var(--pf-glow-ember-soft);
+  animation: pf-drop-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+@keyframes pf-drop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.pf-drop-zone--center {
+  inset: 3px;
+}
+.pf-drop-zone--left {
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+}
+.pf-drop-zone--right {
+  top: 3px;
+  bottom: 3px;
+  right: 3px;
+  width: calc(50% - 3px);
+}
+.pf-drop-zone--up {
+  left: 3px;
+  right: 3px;
+  top: 3px;
+  height: calc(50% - 3px);
+}
+.pf-drop-zone--down {
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  height: calc(50% - 3px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pf-term-host,
   .pf-pane-frame,
-  .pf-pane-menu {
+  .pf-pane-menu,
+  .pf-drop-zone {
     animation: none;
   }
   /* No moving sweep: a flat ember ring (the angle is frozen otherwise). */

@@ -19,6 +19,8 @@
 
 /* ---- docks (resizable / hideable columns of panes) ---- */
 .pf-dock {
+  /* Height of a pane header — the size a collapsed slot rolls down to. */
+  --pf-pane-head-h: 30px;
   display: flex;
   flex-direction: column;
   flex: none;
@@ -32,7 +34,15 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* flex is set inline: expanded → `<weight> 1 0`, collapsed → `0 0 auto`. */
+  overflow: hidden;
+  /* flex longhands are set inline (grow/basis); easing them animates collapse. */
+  transition: flex-grow var(--pf-dur-standard) var(--pf-ease-forge),
+    flex-basis var(--pf-dur-standard) var(--pf-ease-forge);
+}
+/* While dragging a vertical resizer the weights update every frame — easing
+ * them there would feel rubber-bandy, so snap during an active resize. */
+body.pf-resizing .pf-dock-slot {
+  transition: none;
 }
 /* vertical resize handle between two adjacent expanded panes */
 .pf-pane-vresizer {
@@ -121,21 +131,23 @@ body.pf-resizing .pf-dock-resizer-grip {
   flex: 1 1 0;
   min-height: 0;
   /* Clip to the slot so a pane's body can never bleed onto the next pane's
-     header (e.g. a long source-control list over the inspector). */
+     header (e.g. a long source-control list over the inspector). With the body
+     always mounted, this is also what rolls it up as a collapsing slot shrinks. */
   overflow: hidden;
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
-}
-.pf-pane-shell--collapsed {
-  flex: 0 0 auto;
 }
 .pf-pane-shell-head {
   display: flex;
   align-items: center;
   gap: var(--pf-space-xs);
+  height: var(--pf-pane-head-h);
+  box-sizing: border-box;
   padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-xs) var(--pf-space-xs);
   flex: none;
   user-select: none;
+  cursor: grab;
 }
+.pf-pane-shell-head:active { cursor: grabbing; }
 .pf-pane-shell-toggle {
   display: inline-flex;
   align-items: center;
@@ -148,6 +160,12 @@ body.pf-resizing .pf-dock-resizer-grip {
   cursor: pointer;
 }
 .pf-pane-shell-toggle:hover { color: var(--pf-text-hi); }
+.pf-pane-shell-toggle .pf-icon {
+  transition: transform var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-pane-shell-toggle--collapsed .pf-icon {
+  transform: rotate(-90deg);
+}
 .pf-pane-shell-title {
   flex: 1;
   min-width: 0;
@@ -166,18 +184,20 @@ body.pf-resizing .pf-dock-resizer-grip {
   gap: var(--pf-space-xs);
   flex: none;
 }
+/* The grip is now just a visual affordance — the whole header is the handle. */
 .pf-pane-shell-grip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: var(--pf-text-low);
-  cursor: grab;
   flex: none;
+  color: var(--pf-text-low);
+  opacity: 0.5;
+  pointer-events: none;
+  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-pane-shell-grip:hover { color: var(--pf-text-med); }
-.pf-pane-shell-grip:active { cursor: grabbing; }
+.pf-pane-shell-head:hover .pf-pane-shell-grip { opacity: 1; }
 .pf-pane-shell-body {
   display: flex;
   flex-direction: column;
@@ -493,6 +513,156 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-rail-row-action:hover {
   color: var(--pf-ember);
 }
+
+/* ---- projects tree: project rows with nested chat children ---- */
+.pf-tree-node {
+  display: flex;
+  flex-direction: column;
+}
+.pf-tree-row {
+  gap: var(--pf-space-xs);
+}
+.pf-tree-twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+  transition: transform var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-tree-twisty:hover {
+  color: var(--pf-text-hi);
+}
+.pf-tree-twisty--closed {
+  transform: rotate(-90deg);
+}
+.pf-tree-count {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  font-variant-numeric: tabular-nums;
+  background: var(--pf-item-fill);
+  border-radius: var(--pf-radius-pill);
+  padding: 1px 6px;
+  flex: none;
+}
+.pf-rail-row.active .pf-tree-count {
+  color: var(--pf-ember);
+}
+
+/* chat children: indented under their project, with a guide rail */
+.pf-chat-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 var(--pf-space-xs) 16px;
+  padding-left: var(--pf-space-sm);
+  border-left: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-chat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-row:hover {
+  background: var(--pf-item-fill);
+  color: var(--pf-text-hi);
+}
+.pf-chat-row.active {
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  box-shadow: inset 2px 0 0 var(--pf-ember);
+}
+.pf-chat-row--archived {
+  color: var(--pf-text-low);
+}
+.pf-chat-row--archived .pf-chat-title {
+  font-style: italic;
+}
+.pf-chat-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-text-low);
+  flex: none;
+}
+.pf-chat-row.active .pf-chat-dot {
+  background: var(--pf-ember);
+  box-shadow: 0 0 7px -1px var(--pf-ember);
+}
+.pf-chat-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-chat-row .pf-rail-row-action {
+  opacity: 0;
+}
+.pf-chat-row:hover .pf-rail-row-action,
+.pf-chat-row .pf-rail-row-action--shown {
+  opacity: 1;
+}
+.pf-chat-empty {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+}
+.pf-chat-add {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border: none;
+  background: transparent;
+  border-radius: var(--pf-radius-sm);
+  color: var(--pf-text-low);
+  font-size: var(--pf-size-body-sm);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-add:hover {
+  color: var(--pf-ember);
+  background: var(--pf-item-fill);
+}
+/* grid view: a project's chats break to a full-width row beneath its card */
+.pf-proj-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pf-proj-card-count {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-grid-chats {
+  grid-column: 1 / -1;
+}
+.pf-grid-chats .pf-chat-children {
+  margin-left: var(--pf-space-xs);
+}
+
 /* ---- projects: view toggle, groups, grid, menus ---- */
 .pf-rail-tools {
   display: inline-flex;
@@ -1004,10 +1174,96 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-inspector-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
   padding: var(--pf-space-md);
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-inspector-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+}
+.pf-run-on {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-sm);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-run-on-key {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-run-on-val {
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* selectable run devices */
+.pf-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-run-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  width: 100%;
+  text-align: left;
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-run-row:hover:not(:disabled) {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-run-row--on {
+  border-color: var(--pf-ember);
+  color: var(--pf-text-hi);
+  box-shadow: var(--pf-glow-ember-soft);
+}
+.pf-run-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pf-run-radio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: var(--pf-radius-pill);
+  border: var(--pf-bracket-width) solid var(--pf-hairline-strong);
+  color: var(--pf-surface);
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-run-radio--on {
+  background: var(--pf-ember);
+  border-color: var(--pf-ember);
+}
+.pf-run-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--pf-size-body-sm);
 }
 
 .pf-inspector-body {

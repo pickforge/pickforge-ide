@@ -1,12 +1,14 @@
 // Reactive workspace state (projects + chats + active selection) backed by the
-// SQLite Tauri commands.
+// SQLite Tauri commands. Chats are bucketed per project (chatsByRoot) so the
+// projects tree can show each project's chats as children, loaded lazily the
+// first time a project is selected or its branch is expanded.
 import { createStore } from "solid-js/store";
 import * as db from "../lib/db";
 
 interface WorkspaceState {
   projects: db.Project[];
   activeRoot: string | null;
-  chats: db.Chat[];
+  chatsByRoot: Record<string, db.Chat[]>;
   activeChatId: string | null;
   loaded: boolean;
 }
@@ -14,7 +16,7 @@ interface WorkspaceState {
 const [state, setState] = createStore<WorkspaceState>({
   projects: [],
   activeRoot: null,
-  chats: [],
+  chatsByRoot: {},
   activeChatId: null,
   loaded: false,
 });
@@ -34,22 +36,54 @@ export function activeProject(): db.Project | null {
   return state.projects.find((p) => p.projectRoot === state.activeRoot) ?? null;
 }
 
+/** A project's chats (empty array until its branch has been loaded). */
+export function chatsFor(root: string): db.Chat[] {
+  return state.chatsByRoot[root] ?? [];
+}
+
+/** Find a loaded chat by id across all projects. */
+export function findChat(chatId: string): db.Chat | undefined {
+  for (const root of Object.keys(state.chatsByRoot)) {
+    const hit = state.chatsByRoot[root].find((c) => c.chatId === chatId);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+const loadingRoots = new Set<string>();
+
+async function fetchChats(root: string): Promise<db.Chat[]> {
+  const chats = await db.chatsList(root);
+  setState("chatsByRoot", root, chats);
+  return chats;
+}
+
+/** Load a project's chats once; safe to call on every expand/render. */
+export async function ensureChatsLoaded(root: string) {
+  if (state.chatsByRoot[root] || loadingRoots.has(root)) return;
+  loadingRoots.add(root);
+  try {
+    await fetchChats(root);
+  } finally {
+    loadingRoots.delete(root);
+  }
+}
+
 export async function loadWorkspace() {
   const projects = await db.projectsList(false);
   const active = state.activeRoot ?? projects[0]?.projectRoot ?? null;
   setState({ projects, activeRoot: active, loaded: true });
-  if (active) await loadChats(active);
-}
-
-async function loadChats(root: string) {
-  const chats = await db.chatsList(root);
-  setState({ chats, activeChatId: chats[0]?.chatId ?? null });
+  if (active) {
+    const chats = await fetchChats(active);
+    setState("activeChatId", state.activeChatId ?? chats[0]?.chatId ?? null);
+  }
 }
 
 export async function selectProject(root: string) {
   setState("activeRoot", root);
   await db.projectTouch(root, Date.now());
-  await loadChats(root);
+  const chats = await fetchChats(root);
+  setState("activeChatId", chats[0]?.chatId ?? null);
 }
 
 export async function addProject(root: string, displayName: string) {
@@ -88,12 +122,13 @@ export async function deleteProject(root: string) {
   await db.projectDelete(root);
   chats.forEach((c) => chatDeletedListeners.forEach((fn) => fn(c.chatId)));
   if (state.activeRoot === root) setState("activeRoot", null);
+  setState("chatsByRoot", root, undefined!);
   await loadWorkspace();
 }
 
-export async function addChat(title: string, agentId: string) {
-  const root = state.activeRoot;
+export async function addChat(title: string, agentId: string, root = state.activeRoot) {
   if (!root) return;
+  setState("activeRoot", root);
   const now = Date.now();
   const chatId = `chat-${now}`;
   await db.chatUpsert({
@@ -110,37 +145,50 @@ export async function addChat(title: string, agentId: string) {
     lastActivityAt: now,
     sortOrder: 0,
   });
-  await loadChats(root);
+  await fetchChats(root);
   setState("activeChatId", chatId);
 }
 
 export function selectChat(chatId: string | null) {
+  if (chatId) {
+    const chat = findChat(chatId);
+    if (chat) setState("activeRoot", chat.projectRoot);
+  }
   setState("activeChatId", chatId);
 }
 
-/** Move `draggedId` to sit before `beforeId` (or to the end if null), persisting
- *  the new sort_order. Updates the store in place so the active chat is kept. */
+/** Move `draggedId` to sit before `beforeId` (or to the end if null) within its
+ *  project, persisting the new sort_order. Updates the store in place. */
 export async function reorderChat(draggedId: string, beforeId: string | null) {
-  const dragged = state.chats.find((c) => c.chatId === draggedId);
+  const dragged = findChat(draggedId);
   if (!dragged || draggedId === beforeId) return;
-  const rest = state.chats.filter((c) => c.chatId !== draggedId);
+  const root = dragged.projectRoot;
+  const rest = chatsFor(root).filter((c) => c.chatId !== draggedId);
   const idx = beforeId ? rest.findIndex((c) => c.chatId === beforeId) : rest.length;
   rest.splice(idx < 0 ? rest.length : idx, 0, dragged);
   const next = rest.map((c, i) => ({ ...c, sortOrder: i }));
-  setState("chats", next);
+  setState("chatsByRoot", root, next);
   for (const c of next) await db.chatUpsert(c);
 }
 
 export async function renameChat(chatId: string, title: string) {
   const t = title.trim();
-  const c = state.chats.find((x) => x.chatId === chatId);
+  const c = findChat(chatId);
   if (!c || !t || t === c.title) return;
   await db.chatUpsert({ ...c, title: t });
-  setState("chats", (x) => x.chatId === chatId, "title", t);
+  setState("chatsByRoot", c.projectRoot, (list) =>
+    list.map((x) => (x.chatId === chatId ? { ...x, title: t } : x)),
+  );
 }
 
 export async function deleteChat(chatId: string) {
+  const chat = findChat(chatId);
+  const root = chat?.projectRoot ?? state.activeRoot;
   await db.chatDelete(chatId);
   chatDeletedListeners.forEach((fn) => fn(chatId));
-  if (state.activeRoot) await loadChats(state.activeRoot);
+  let remaining: db.Chat[] = [];
+  if (root) remaining = await fetchChats(root);
+  if (state.activeChatId === chatId) {
+    setState("activeChatId", remaining[0]?.chatId ?? null);
+  }
 }

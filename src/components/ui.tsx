@@ -36,6 +36,18 @@ export function MonoEyebrow(props: {
   );
 }
 
+/** Height-animated wrapper for collapsible content. Uses the grid-rows 0fr↔1fr
+ * trick so unknown-height (auto) content animates open/closed; honors reduced
+ * motion via the duration tokens. For flex-filled pane bodies the dock animates
+ * the slot instead — this is for auto-height content (nested chats, sub-lists). */
+export function Collapse(props: { open: boolean; children: JSX.Element }): JSX.Element {
+  return (
+    <div class="pf-collapse" classList={{ "pf-collapse--closed": !props.open }}>
+      <div class="pf-collapse-body">{props.children}</div>
+    </div>
+  );
+}
+
 /** Base card/panel: hairline border on a surface fill. */
 export function HairlinePanel(
   props: {

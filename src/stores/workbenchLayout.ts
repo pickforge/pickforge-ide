@@ -5,21 +5,19 @@
 // so terminal hosts are never remounted by layout changes.
 import { createSignal } from "solid-js";
 
-export type PaneId = "projects" | "chats" | "files" | "sourceControl" | "inspector";
+export type PaneId = "projects" | "files" | "sourceControl" | "inspector";
 export type DockId = "left" | "right";
 
 export const PANE_TITLES: Record<PaneId, string> = {
   projects: "Projects",
-  chats: "Chats",
   files: "Files",
   sourceControl: "Source control",
   inspector: "Inspector",
 };
 
-const ALL_PANES: PaneId[] = ["projects", "chats", "files", "sourceControl", "inspector"];
+const ALL_PANES: PaneId[] = ["projects", "files", "sourceControl", "inspector"];
 const DEFAULT_DOCK: Record<PaneId, DockId> = {
   projects: "left",
-  chats: "left",
   files: "left",
   sourceControl: "right",
   inspector: "right",
@@ -44,8 +42,7 @@ const MAX_WEIGHT = 10;
 
 // Sensible default heights so the docks don't open as dead-equal thirds.
 const DEFAULT_WEIGHTS: Record<PaneId, number> = {
-  projects: 1,
-  chats: 1.4,
+  projects: 2,
   files: 1.4,
   sourceControl: 1,
   inspector: 1.6,
@@ -56,7 +53,7 @@ const DEFAULTS: LayoutState = {
   rightWidth: 320,
   leftVisible: true,
   rightVisible: true,
-  docks: { left: ["projects", "chats", "files"], right: ["sourceControl", "inspector"] },
+  docks: { left: ["projects", "files"], right: ["sourceControl", "inspector"] },
   collapsed: {},
   paneWeights: {},
 };

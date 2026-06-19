@@ -17,7 +17,7 @@ import {
   type DockId,
   type PaneId,
 } from "../../stores/workbenchLayout";
-import { IconChevronDown, IconChevronRight, IconMore } from "../../components/icons";
+import { IconChevronDown, IconChevronRight, IconGrip } from "../../components/icons";
 
 const PANE_MIME = "application/x-pf-pane";
 
@@ -29,39 +29,45 @@ export function PaneShell(props: { pane: PaneId; actions?: JSX.Element; children
       class="pf-pane-shell"
       classList={{ "pf-pane-shell--collapsed": collapsed() }}
     >
-      <header ref={headEl} class="pf-pane-shell-head" onDblClick={() => togglePaneCollapsed(props.pane)}>
+      {/* The whole header is the drag handle (not just a grip) and double-clicks
+          to collapse; the chevron button toggles too. The body stays mounted so
+          collapse/expand can animate the slot height. */}
+      <header
+        ref={headEl}
+        class="pf-pane-shell-head"
+        title="Drag to move · double-click to collapse"
+        draggable={true}
+        onDragStart={(e) => {
+          e.dataTransfer?.setData(PANE_MIME, props.pane);
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setDragImage(headEl, 16, 12);
+          }
+        }}
+        onDblClick={() => togglePaneCollapsed(props.pane)}
+      >
         <button
           class="pf-pane-shell-toggle"
+          classList={{ "pf-pane-shell-toggle--collapsed": collapsed() }}
           title={collapsed() ? "Expand" : "Collapse"}
           onClick={() => togglePaneCollapsed(props.pane)}
         >
-          <Show when={!collapsed()} fallback={<IconChevronRight size={12} />}>
-            <IconChevronDown size={12} />
-          </Show>
+          <IconChevronDown size={12} />
         </button>
         <span class="pf-pane-shell-title">{PANE_TITLES[props.pane]}</span>
-        <span class="pf-pane-shell-actions" onPointerDown={(e) => e.stopPropagation()}>
+        <span
+          class="pf-pane-shell-actions"
+          draggable={false}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDragStart={(e) => e.preventDefault()}
+        >
           {props.actions}
         </span>
-        <span
-          class="pf-pane-shell-grip"
-          title="Drag to move pane"
-          draggable={true}
-          onDragStart={(e) => {
-            e.dataTransfer?.setData(PANE_MIME, props.pane);
-            if (e.dataTransfer) {
-              e.dataTransfer.effectAllowed = "move";
-              // Drag the whole pane header as the preview, not the tiny grip.
-              e.dataTransfer.setDragImage(headEl, 16, 12);
-            }
-          }}
-        >
-          <IconMore size={14} />
+        <span class="pf-pane-shell-grip" aria-hidden="true">
+          <IconGrip size={13} />
         </span>
       </header>
-      <Show when={!collapsed()}>
-        <div class="pf-pane-shell-body">{props.children}</div>
-      </Show>
+      <div class="pf-pane-shell-body">{props.children}</div>
     </section>
   );
 }
@@ -158,7 +164,14 @@ export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.
               <div
                 class="pf-dock-slot"
                 classList={{ "pf-dock-slot--expanded": expanded() }}
-                style={expanded() ? { flex: `${paneWeight(pane)} 1 0` } : { flex: "0 0 auto" }}
+                // Animatable flex longhands: collapsing eases flex-grow → 0 and
+                // flex-basis → the header height, so the slot rolls up smoothly
+                // while siblings expand to fill the freed space.
+                style={{
+                  "flex-grow": expanded() ? `${paneWeight(pane)}` : "0",
+                  "flex-shrink": "1",
+                  "flex-basis": expanded() ? "0px" : "var(--pf-pane-head-h)",
+                }}
                 ref={(el) => slotEls.set(pane, el)}
               >
                 {props.render(pane)}

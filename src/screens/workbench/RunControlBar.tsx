@@ -9,13 +9,19 @@ import { discoverRunTargets, shquote, type RunTarget } from "../../lib/runTarget
 import { adbListDevices, type AdbDevice } from "../../lib/device";
 import { workspace } from "../../stores/workspace";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
+import { selectedDevice, setRunDevice } from "../../stores/runDevice";
 import { runConsole, startRun } from "../../stores/runConsole";
 
 export function RunControlBar() {
   const [targets, setTargets] = createSignal<RunTarget[]>([]);
   const [targetId, setTargetId] = createSignal<string>("");
   const [devices, setDevices] = createSignal<AdbDevice[]>([]);
-  const [device, setDevice] = createSignal<string>("");
+  // The chosen device is shared with the Inspector via the runDevice store;
+  // with no explicit choice, fall back to the first connected device.
+  const device = () =>
+    selectedDevice(workspace.activeRoot) ||
+    devices().find((d) => d.state === "device")?.serial ||
+    "";
 
   const target = createMemo(() => targets().find((t) => t.id === targetId()) ?? targets()[0] ?? null);
   const labels = () => workbenchPrefs().runButtonLabels;
@@ -37,7 +43,6 @@ export function RunControlBar() {
           const ds = await adbListDevices();
           if (workspace.activeRoot !== root) return;
           setDevices(ds);
-          setDevice((d) => d || ds.find((x) => x.state === "device")?.serial || "");
         } catch {
           if (workspace.activeRoot === root) setDevices([]);
         }
@@ -80,7 +85,7 @@ export function RunControlBar() {
           <select
             class="pf-select pf-runbar-select"
             value={device()}
-            onChange={(e) => setDevice(e.currentTarget.value)}
+            onChange={(e) => workspace.activeRoot && setRunDevice(workspace.activeRoot, e.currentTarget.value)}
           >
             <For each={devices()}>
               {(d) => <option value={d.serial}>{d.model ?? d.serial}</option>}

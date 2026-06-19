@@ -1,13 +1,15 @@
-// Right-rail inspector: detected target + capability badges + ADB devices.
-// Live widget inspection rides on the VM-service bridge (a later slice).
-import { createResource, createSignal, For, Show } from "solid-js";
+// Right-rail inspector: detected target, the device the app will run on
+// (selectable — shared with the Run bar), capability badges, and the Flutter
+// VM-service bridge.
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import {
   EmberButton,
   MonoEyebrow,
   StatusPill,
   type StatusIntent,
 } from "../../components/ui";
-import { IconRefresh } from "../../components/icons";
+import { IconCheck, IconRefresh } from "../../components/icons";
+import { selectedDevice, setRunDevice } from "../../stores/runDevice";
 import { workspace } from "../../stores/workspace";
 import * as device from "../../lib/device";
 import * as vm from "../../lib/vm";
@@ -57,14 +59,36 @@ export function InspectorPanel() {
     return t.confidence === "exact" ? "connected" : "warning";
   };
 
+  // The selected run device (shared with the Run bar): explicit choice, else the
+  // first connected device.
+  const selected = () =>
+    selectedDevice(workspace.activeRoot) ||
+    (devices() ?? []).find((d) => d.state === "device")?.serial ||
+    "";
+  const selectedLabel = createMemo(() => {
+    const d = (devices() ?? []).find((x) => x.serial === selected());
+    return d ? (d.model ?? d.serial) : "—";
+  });
+  const pick = (serial: string) => {
+    if (workspace.activeRoot) setRunDevice(workspace.activeRoot, serial);
+  };
+
   return (
     <div class="pf-inspector">
       <div class="pf-inspector-head">
-        <MonoEyebrow text="Target" tick />
-        <StatusPill
-          label={target()?.displayName ?? "no project"}
-          intent={targetIntent()}
-        />
+        <div class="pf-inspector-head-row">
+          <MonoEyebrow text="Target" tick />
+          <StatusPill
+            label={target()?.displayName ?? "no project"}
+            intent={targetIntent()}
+          />
+        </div>
+        <Show when={workspace.activeRoot && (devices() ?? []).length > 0}>
+          <div class="pf-run-on">
+            <span class="pf-run-on-key">Run on</span>
+            <span class="pf-run-on-val">{selectedLabel()}</span>
+          </div>
+        </Show>
       </div>
 
       <div class="pf-inspector-body">
@@ -78,7 +102,7 @@ export function InspectorPanel() {
 
         <div class="pf-inspector-section">
           <div class="pf-rail-head">
-            <MonoEyebrow text="Devices" />
+            <MonoEyebrow text="Run device" />
             <button class="pf-icon-btn" title="Refresh" onClick={() => refetch()}>
               <IconRefresh size={14} />
             </button>
@@ -87,17 +111,29 @@ export function InspectorPanel() {
             when={(devices() ?? []).length > 0}
             fallback={<div class="pf-rail-empty">No devices (adb)</div>}
           >
-            <For each={devices()}>
-              {(d) => (
-                <div class="pf-device-row">
-                  <span class="pf-mono">{d.model ?? d.serial}</span>
-                  <StatusPill
-                    label={d.state}
-                    intent={d.state === "device" ? "connected" : "warning"}
-                  />
-                </div>
-              )}
-            </For>
+            <div class="pf-run-list">
+              <For each={devices()}>
+                {(d) => (
+                  <button
+                    class="pf-run-row"
+                    classList={{ "pf-run-row--on": selected() === d.serial }}
+                    disabled={!workspace.activeRoot}
+                    onClick={() => pick(d.serial)}
+                  >
+                    <span class="pf-run-radio" classList={{ "pf-run-radio--on": selected() === d.serial }}>
+                      <Show when={selected() === d.serial}>
+                        <IconCheck size={11} />
+                      </Show>
+                    </span>
+                    <span class="pf-run-label">{d.model ?? d.serial}</span>
+                    <StatusPill
+                      label={d.state}
+                      intent={d.state === "device" ? "connected" : "warning"}
+                    />
+                  </button>
+                )}
+              </For>
+            </div>
           </Show>
         </div>
 

@@ -4,7 +4,6 @@
 // running shell; a host is disposed only when its chat is deleted.
 import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { ProjectsPane } from "./ProjectsPane";
-import { ChatsPane } from "./ChatsPane";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
@@ -28,7 +27,7 @@ import {
   hotkeyMatches,
   quickLaunchItems,
 } from "../../stores/quickLaunch";
-import { onChatDeleted, workspace } from "../../stores/workspace";
+import { findChat, onChatDeleted, workspace } from "../../stores/workspace";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -68,7 +67,7 @@ export function WorkbenchScreen() {
   createEffect(() => {
     const id = workspace.activeChatId;
     if (!id || mounted().some((m) => m.chatId === id)) return;
-    const chat = workspace.chats.find((c) => c.chatId === id);
+    const chat = findChat(id);
     if (chat) setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
   });
 
@@ -133,7 +132,6 @@ export function WorkbenchScreen() {
   const renderPane = (pane: PaneId) => (
     <Switch>
       <Match when={pane === "projects"}><PaneShell pane="projects"><ProjectsPane /></PaneShell></Match>
-      <Match when={pane === "chats"}><PaneShell pane="chats"><ChatsPane /></PaneShell></Match>
       <Match when={pane === "files"}><PaneShell pane="files"><FileExplorer onOpenFile={openFileInActive} /></PaneShell></Match>
       <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><SourceControl /></PaneShell></Match>
       <Match when={pane === "inspector"}><PaneShell pane="inspector"><InspectorPanel /></PaneShell></Match>

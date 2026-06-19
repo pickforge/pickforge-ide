@@ -1,0 +1,18 @@
+//! Git status/diff commands. They shell out to `git`, so they run on a blocking
+//! thread off the IPC executor.
+
+use pickforge_core::git::{self, GitStatus};
+
+#[tauri::command]
+pub async fn git_status(project_root: String) -> Result<GitStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || git::status(&project_root))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn git_diff(project_root: String, path: String, staged: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || git::diff(&project_root, &path, staged))
+        .await
+        .map_err(|e| e.to_string())
+}

@@ -15,6 +15,21 @@
   flex: none;
 }
 
+/* ---- Collapse: height-animated disclosure (grid 0fr↔1fr trick) ---- */
+.pf-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+  transition: grid-template-rows var(--pf-dur-standard) var(--pf-ease-forge);
+}
+.pf-collapse--closed {
+  grid-template-rows: 0fr;
+}
+.pf-collapse-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* ---- HairlinePanel ---- */
 .pf-panel {
   background: var(--pf-surface-1);

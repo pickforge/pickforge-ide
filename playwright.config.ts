@@ -9,7 +9,7 @@ export default defineConfig({
   retries: 0,
   reporter: "list",
   webServer: {
-    command: "npm run dev",
+    command: "bun run dev",
     url: "http://localhost:1420",
     reuseExistingServer: !process.env.CI,
     env: { VITE_PICKFORGE_VRT: "1" },

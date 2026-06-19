@@ -6,10 +6,11 @@
 // and its own close button. The focused pane wears the travelling ember sweep.
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { TerminalPane, type TerminalHandle } from "./Terminal";
-import { IconClose, IconSplit, IconSplitTrigger } from "./icons";
+import { IconClose, IconGrip, IconSplit, IconSplitTrigger } from "./icons";
 import "./TerminalHost.css";
 
 type Dir = "left" | "right" | "up" | "down";
+type Region = Dir | "center";
 interface Leaf {
   kind: "leaf";
   id: string;
@@ -102,6 +103,13 @@ function collectLeaves(node: Node, out: Leaf[] = []): Leaf[] {
   return out;
 }
 
+/** Rebuild the tree, swapping in replacement leaves (refs preserved elsewhere).
+ * Used to swap two panes' positions without remounting either terminal. */
+function mapLeaves(node: Node, fn: (l: Leaf) => Leaf): Node {
+  if (node.kind === "leaf") return fn(node);
+  return { ...node, a: mapLeaves(node.a, fn), b: mapLeaves(node.b, fn) };
+}
+
 function computeLayout(
   node: Node,
   rect: Rect,
@@ -142,6 +150,8 @@ const baseName = (p?: string) =>
 export interface TerminalHostHandle {
   /** Type text into the currently focused pane's shell. */
   typeToFocused: (text: string) => void;
+  /** Split the focused pane and run `command` (e.g. an editor) in the new pane. */
+  openInNewPane: (command: string) => void;
 }
 
 export function TerminalHost(props: {
@@ -175,6 +185,16 @@ export function TerminalHost(props: {
     setFocusedId(fresh.id); // its terminal focuses itself once ready
   };
 
+  // Commands queued to run in a freshly-split pane once its shell is ready
+  // (used by openInNewPane for "open file in editor").
+  const pendingCmd = new Map<string, string>();
+  const openInNewPane = (command: string) => {
+    const fresh = newLeaf();
+    pendingCmd.set(fresh.id, command);
+    setRoot((r) => splitTree(r, focusedId(), "down", fresh));
+    setFocusedId(fresh.id);
+  };
+
   const close = (id: string) => {
     if (leaves().length <= 1) return;
     const next = removeLeaf(root(), id);
@@ -186,6 +206,27 @@ export function TerminalHost(props: {
       const remaining = collectLeaves(next);
       if (remaining.length) focus(remaining[remaining.length - 1].id);
     }
+  };
+
+  // Closing panes play an exit animation in place before leaving the split tree
+  // (mirrors the open animation); siblings reflow once they're gone. Reduced
+  // motion removes them immediately.
+  const [closing, setClosing] = createSignal<string[]>([]);
+  const reduceMotion = () =>
+    typeof window !== "undefined" &&
+    !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const CLOSE_MS = 260; // matches the --pf-dur-standard close animation
+  const requestClose = (id: string) => {
+    if (leaves().length <= 1 || closing().includes(id)) return;
+    if (reduceMotion()) {
+      close(id);
+      return;
+    }
+    setClosing((c) => [...c, id]);
+    setTimeout(() => {
+      setClosing((c) => c.filter((x) => x !== id));
+      close(id);
+    }, CLOSE_MS);
   };
 
   // --- divider drag → live ratio ---
@@ -217,6 +258,86 @@ export function TerminalHost(props: {
   };
   onCleanup(endDrag);
 
+  // --- pane rearrange: drag a pane by its top bar onto another pane ---
+  // Drop on the centre swaps the two panes; drop on an edge moves the dragged
+  // pane to that side of the target. Leaf objects are reused throughout, so the
+  // dragged shell is repositioned, never remounted.
+  const [dragId, setDragId] = createSignal<string | null>(null);
+  const [drop, setDrop] = createSignal<{ id: string; region: Region } | null>(null);
+  let paneDrag: { id: string; startX: number; startY: number; active: boolean } | null = null;
+
+  const hitTest = (cx: number, cy: number): { id: string; region: Region } | null => {
+    const box = containerEl.getBoundingClientRect();
+    const fx = (cx - box.left) / box.width;
+    const fy = (cy - box.top) / box.height;
+    for (const [id, r] of layout().map) {
+      if (fx < r.x || fx > r.x + r.w || fy < r.y || fy > r.y + r.h) continue;
+      const lx = (fx - r.x) / r.w;
+      const ly = (fy - r.y) / r.h;
+      const edge = Math.min(lx, 1 - lx, ly, 1 - ly);
+      let region: Region = "center";
+      if (edge < 0.28) {
+        if (edge === lx) region = "left";
+        else if (edge === 1 - lx) region = "right";
+        else if (edge === ly) region = "up";
+        else region = "down";
+      }
+      return { id, region };
+    }
+    return null;
+  };
+
+  const rearrange = (sourceId: string, targetId: string, region: Region) => {
+    if (sourceId === targetId) return;
+    if (region === "center") {
+      const a = leaves().find((l) => l.id === sourceId);
+      const b = leaves().find((l) => l.id === targetId);
+      if (!a || !b) return;
+      setRoot((r) => mapLeaves(r, (l) => (l.id === sourceId ? b : l.id === targetId ? a : l)));
+    } else {
+      const src = leaves().find((l) => l.id === sourceId);
+      const without = removeLeaf(root(), sourceId);
+      if (!src || !without) return;
+      setRoot(splitTree(without, targetId, region, src));
+    }
+    focus(sourceId);
+  };
+
+  const onPaneDragMove = (e: PointerEvent) => {
+    if (!paneDrag) return;
+    if (!paneDrag.active) {
+      if (Math.abs(e.clientX - paneDrag.startX) + Math.abs(e.clientY - paneDrag.startY) < 6) return;
+      paneDrag.active = true;
+      setDragId(paneDrag.id);
+      document.body.classList.add("pf-pane-moving");
+    }
+    e.preventDefault();
+    const hit = hitTest(e.clientX, e.clientY);
+    setDrop(hit && hit.id !== paneDrag.id ? hit : null);
+  };
+  const endPaneDrag = () => {
+    const pd = paneDrag;
+    const target = drop();
+    paneDrag = null;
+    window.removeEventListener("pointermove", onPaneDragMove);
+    window.removeEventListener("pointerup", endPaneDrag);
+    document.body.classList.remove("pf-pane-moving");
+    setDragId(null);
+    setDrop(null);
+    if (pd?.active && target && target.id !== pd.id) rearrange(pd.id, target.id, target.region);
+  };
+  const startPaneDrag = (e: PointerEvent, leafId: string) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest(".pf-pane-ctls")) return; // controls aren't handles
+    if (leaves().length <= 1) return; // nothing to rearrange against
+    paneDrag = { id: leafId, startX: e.clientX, startY: e.clientY, active: false };
+    window.addEventListener("pointermove", onPaneDragMove);
+    window.addEventListener("pointerup", endPaneDrag);
+  };
+  onCleanup(() => {
+    if (paneDrag) endPaneDrag();
+  });
+
   // Close the split menu on any outside pointer-down.
   const onWindowDown = (e: PointerEvent) => {
     const t = e.target as HTMLElement;
@@ -229,6 +350,7 @@ export function TerminalHost(props: {
 
   props.onReady?.({
     typeToFocused: (text) => handles.get(focusedId())?.typeText(text),
+    openInNewPane,
   });
 
   return (
@@ -240,6 +362,7 @@ export function TerminalHost(props: {
           return (
             <div
               class="pf-pane"
+              classList={{ "pf-pane--closing": closing().includes(leaf.id) }}
               style={{
                 left: pct(rect().x),
                 top: pct(rect().y),
@@ -249,13 +372,22 @@ export function TerminalHost(props: {
             >
               <div
                 class="pf-pane-frame"
-                classList={{ "pf-pane-frame--focused": focused() }}
+                classList={{
+                  "pf-pane-frame--focused": focused(),
+                  "pf-pane-frame--dragging": dragId() === leaf.id,
+                }}
                 onPointerDown={() => focus(leaf.id)}
               >
                 {/* A real top bar: its own row above the terminal, never an
-                    overlay — the shell prompt below it is never covered. */}
-                <div class="pf-pane-bar">
+                    overlay — the shell prompt below it is never covered. The
+                    whole bar is the drag handle for rearranging panes. */}
+                <div
+                  class="pf-pane-bar"
+                  title="Drag to move this pane"
+                  onPointerDown={(e) => startPaneDrag(e, leaf.id)}
+                >
                   <div class="pf-pane-bar-id">
+                    <span class="pf-pane-grip"><IconGrip size={13} /></span>
                     <span class="pf-pane-dot" classList={{ "pf-pane-dot--live": focused() }} />
                     <span class="pf-pane-callsign">{leaf.callsign}</span>
                     <Show when={baseName(props.cwd)}>
@@ -280,7 +412,7 @@ export function TerminalHost(props: {
                       disabled={leaves().length <= 1}
                       onClick={(e) => {
                         e.stopPropagation();
-                        close(leaf.id);
+                        requestClose(leaf.id);
                       }}
                     >
                       <IconClose size={14} />
@@ -315,8 +447,13 @@ export function TerminalHost(props: {
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
                       if (focusedId() === leaf.id) handle.focus();
+                      const cmd = pendingCmd.get(leaf.id);
+                      if (cmd) {
+                        pendingCmd.delete(leaf.id);
+                        handle.typeText(cmd + "\r");
+                      }
                     }}
-                    onExit={() => close(leaf.id)}
+                    onExit={() => requestClose(leaf.id)}
                   />
                 </div>
               </div>
@@ -342,6 +479,28 @@ export function TerminalHost(props: {
           </div>
         )}
       </For>
+
+      {/* drop indicator: highlights the side/centre the dragged pane will land */}
+      <Show when={drop()}>
+        {(d) => {
+          const rect = () => layout().map.get(d().id);
+          return (
+            <Show when={rect()}>
+              <div
+                class="pf-drop"
+                style={{
+                  left: pct(rect()!.x),
+                  top: pct(rect()!.y),
+                  width: pct(rect()!.w),
+                  height: pct(rect()!.h),
+                }}
+              >
+                <div class={`pf-drop-zone pf-drop-zone--${d().region}`} />
+              </div>
+            </Show>
+          );
+        }}
+      </Show>
     </div>
   );
 }

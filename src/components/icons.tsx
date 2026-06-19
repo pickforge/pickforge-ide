@@ -57,6 +57,43 @@ export function IconRefresh(props: IconProps): JSX.Element {
   );
 }
 
+export function IconCheck(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 8.5l3 3 6-7" />
+    </Svg>
+  );
+}
+
+// Drag grip: two short columns of dots, the universal "grab to move" affordance.
+export function IconGrip(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="6" cy="5" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="5" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="6" cy="8" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="8" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="6" cy="11" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="11" r="0.9" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// Collapse-all: two chevrons converging on a centre seam (expand = diverging).
+export function IconCollapseAll(
+  props: IconProps & { expand?: boolean },
+): JSX.Element {
+  return (
+    <Svg {...props}>
+      {props.expand ? (
+        <path d="M5 6.4l3-2.4 3 2.4M5 9.6l3 2.4 3-2.4" />
+      ) : (
+        <path d="M5 4l3 2.4L11 4M5 12l3-2.4 3 2.4" />
+      )}
+    </Svg>
+  );
+}
+
 export function IconArchive(props: IconProps): JSX.Element {
   return (
     <Svg {...props}>
@@ -180,6 +217,32 @@ export function IconSplitTrigger(props: IconProps): JSX.Element {
     <Svg {...props}>
       <rect x="2.5" y="2.5" width="11" height="11" rx="1.4" />
       <path d="M8 2.8v10.4" />
+    </Svg>
+  );
+}
+
+export function IconPlay(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M5.5 4 L12 8 L5.5 12 Z" fill="currentColor" />
+    </Svg>
+  );
+}
+
+export function IconStop(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="4.5" y="4.5" width="7" height="7" rx="1.4" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// Hot restart — a clockwise full-cycle arrow (distinct from IconRefresh's reload).
+export function IconRestart(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 8a4.5 4.5 0 1 0 1.4-3.25" />
+      <path d="M3 3.4v3h3" />
     </Svg>
   );
 }

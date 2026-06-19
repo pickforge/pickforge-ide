@@ -1,7 +1,10 @@
-import { createSignal, For, Match, onCleanup, onMount, Switch } from "solid-js";
+import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { navigate, route, type Route } from "./router";
 import { loadWorkspace, workspace } from "./stores/workspace";
-import { applyPersistedZoom, handleZoomKey } from "./lib/zoom";
+import { applyPersistedZoom, currentZoom, handleZoomKey, zoomReset } from "./lib/zoom";
+import { appVersion, loadAppVersion } from "./lib/appInfo";
+import { initTheme } from "./stores/theme";
+import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
@@ -21,9 +24,7 @@ export function App() {
   const [, setReady] = createSignal(false);
 
   onMount(() => {
-    if (localStorage.getItem("pickforge.theme") === "light") {
-      document.documentElement.dataset.theme = "light";
-    }
+    initTheme();
 
     // Interface zoom (VS Code-style): apply persisted level + global hotkeys.
     // Registered synchronously so cleanup binds before the async bootstrap.
@@ -36,6 +37,9 @@ export function App() {
     };
     window.addEventListener("keydown", onZoom, true);
     onCleanup(() => window.removeEventListener("keydown", onZoom, true));
+
+    void loadAppVersion();
+    void checkForUpdate(true);
 
     void (async () => {
       await loadWorkspace();
@@ -53,7 +57,16 @@ export function App() {
         <div class="pf-brand">
           <span class="pf-mark" />
           <span class="pf-wordmark">PickForge</span>
-          <MonoEyebrow text="Tauri" />
+          <MonoEyebrow text={`v${appVersion()}`} />
+          <Show when={updateAvailable()}>
+            <button
+              class="pf-update-badge"
+              title={`Update available: v${updateAvailable()!.version}`}
+              onClick={() => navigate("settings")}
+            >
+              <span class="pf-update-dot" /> Update
+            </button>
+          </Show>
         </div>
         <nav class="pf-nav">
           <For each={NAV}>
@@ -83,19 +96,32 @@ export function App() {
         </div>
         <Switch>
           <Match when={route() === "onboarding"}>
-            <OnboardingScreen />
+            <div class="pf-route pf-reveal"><OnboardingScreen /></div>
           </Match>
           <Match when={route() === "history"}>
-            <HistoryScreen />
+            <div class="pf-route pf-reveal"><HistoryScreen /></div>
           </Match>
           <Match when={route() === "run-history"}>
-            <RunHistoryScreen />
+            <div class="pf-route pf-reveal"><RunHistoryScreen /></div>
           </Match>
           <Match when={route() === "settings"}>
-            <SettingsScreen />
+            <div class="pf-route pf-reveal"><SettingsScreen /></div>
           </Match>
         </Switch>
       </div>
+
+      <footer class="pf-statusbar">
+        <span class="pf-statusbar-item">
+          {workspace.activeRoot ? statusBasename(workspace.activeRoot) : "no project"}
+        </span>
+        <button class="pf-statusbar-zoom" title="Reset interface zoom" onClick={zoomReset}>
+          {Math.round(currentZoom() * 100)}%
+        </button>
+      </footer>
     </div>
   );
+}
+
+function statusBasename(path: string): string {
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }

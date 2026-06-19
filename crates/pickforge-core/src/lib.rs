@@ -7,6 +7,7 @@
 
 pub mod android;
 pub mod db;
+pub mod git;
 pub mod inspector;
 pub mod process;
 pub mod pty;

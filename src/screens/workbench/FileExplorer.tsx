@@ -1,7 +1,6 @@
 // Lazy project file tree backed by the list_dir command.
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import { MonoEyebrow } from "../../components/ui";
 import { IconChevronDown, IconChevronRight, IconDot } from "../../components/icons";
 import { workspace } from "../../stores/workspace";
 
@@ -11,12 +10,19 @@ interface Entry {
   isDir: boolean;
 }
 
-function FileNode(props: { entry: Entry; depth: number }) {
+function FileNode(props: {
+  entry: Entry;
+  depth: number;
+  onOpenFile?: (path: string) => void;
+}) {
   const [open, setOpen] = createSignal(false);
   const [children, setChildren] = createSignal<Entry[] | null>(null);
 
-  const toggle = async () => {
-    if (!props.entry.isDir) return;
+  const activate = async () => {
+    if (!props.entry.isDir) {
+      props.onOpenFile?.(props.entry.path);
+      return;
+    }
     if (!open() && children() === null) {
       try {
         setChildren(await invoke<Entry[]>("list_dir", { path: props.entry.path }));
@@ -32,7 +38,7 @@ function FileNode(props: { entry: Entry; depth: number }) {
       <div
         class="pf-file-row"
         style={{ "padding-left": `${props.depth * 12 + 8}px` }}
-        onClick={toggle}
+        onClick={activate}
       >
         <span class="pf-file-icon">
           {props.entry.isDir ? (
@@ -45,14 +51,14 @@ function FileNode(props: { entry: Entry; depth: number }) {
       </div>
       <Show when={open() && children()}>
         <For each={children()!}>
-          {(c) => <FileNode entry={c} depth={props.depth + 1} />}
+          {(c) => <FileNode entry={c} depth={props.depth + 1} onOpenFile={props.onOpenFile} />}
         </For>
       </Show>
     </div>
   );
 }
 
-export function FileExplorer() {
+export function FileExplorer(props: { onOpenFile?: (path: string) => void }) {
   const [entries, setEntries] = createSignal<Entry[]>([]);
 
   createEffect(() => {
@@ -67,18 +73,13 @@ export function FileExplorer() {
   });
 
   return (
-    <section class="pf-rail-section pf-files">
-      <div class="pf-rail-head">
-        <MonoEyebrow text="Files" tick />
-      </div>
-      <div class="pf-file-tree">
-        <Show
-          when={workspace.activeRoot}
-          fallback={<div class="pf-rail-empty">Open a project</div>}
-        >
-          <For each={entries()}>{(e) => <FileNode entry={e} depth={0} />}</For>
-        </Show>
-      </div>
-    </section>
+    <div class="pf-file-tree">
+      <Show
+        when={workspace.activeRoot}
+        fallback={<div class="pf-rail-empty">Open a project</div>}
+      >
+        <For each={entries()}>{(e) => <FileNode entry={e} depth={0} onOpenFile={props.onOpenFile} />}</For>
+      </Show>
+    </div>
   );
 }

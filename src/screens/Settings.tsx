@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
 import { AGENTS, loadAgentModels, setAgentModel } from "../lib/agentModels";
 import {
   addQuickLaunchItem,
@@ -13,6 +13,17 @@ import {
 import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { IconClose, IconPlus } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
+import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
+import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
+import {
+  fileOpenSettings,
+  setFileOpenCustom,
+  setFileOpenMode,
+  type FileOpenMode,
+} from "../stores/fileOpenSettings";
+import { appVersion } from "../lib/appInfo";
+import { appTheme, applyTheme } from "../stores/theme";
+import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -27,9 +38,6 @@ function Section(props: { title: string; children: any }) {
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
-  const [theme, setTheme] = createSignal(
-    localStorage.getItem("pickforge.theme") ?? "dark",
-  );
   const [archived, setArchived] = createSignal<db.Project[]>([]);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
 
@@ -44,15 +52,21 @@ export function SettingsScreen() {
     setModels(loadAgentModels());
   };
 
-  const applyTheme = (t: string) => {
-    setTheme(t);
-    localStorage.setItem("pickforge.theme", t);
-    document.documentElement.dataset.theme = t === "light" ? "light" : "";
-  };
-
   const restore = async (root: string) => {
     await db.projectSetArchived(root, null);
     await reloadArchived();
+  };
+
+  const updateLabel = () => {
+    switch (updateStatus()) {
+      case "available": return `Version ${updateAvailable()?.version} available`;
+      case "none": return "You're up to date";
+      case "checking": return "Checking…";
+      case "downloading": return "Downloading…";
+      case "ready": return "Restarting…";
+      case "error": return "Update check failed";
+      default: return "Check for the latest release";
+    }
   };
 
   const conflicts = () => conflictingHotkeys(quickLaunchItems());
@@ -120,52 +134,54 @@ export function SettingsScreen() {
             </span>
           </div>
           <div class="pf-ql-list">
-            <For each={quickLaunchItems()}>
+            {/* Index (not For): rows are keyed by position so editing a field
+                never re-creates its <input> — the text box keeps focus. */}
+            <Index each={quickLaunchItems()}>
               {(item) => (
                 <div
                   class="pf-ql-row"
-                  classList={{ "pf-ql-row--conflict": conflicts().has(item.id) }}
+                  classList={{ "pf-ql-row--conflict": conflicts().has(item().id) }}
                 >
                   <input
                     class="pf-input pf-ql-label"
-                    value={item.label}
+                    value={item().label}
                     onInput={(e) =>
-                      updateQuickLaunchItem(item.id, { label: e.currentTarget.value })
+                      updateQuickLaunchItem(item().id, { label: e.currentTarget.value })
                     }
                   />
                   <Show
-                    when={item.agentId}
+                    when={item().agentId}
                     fallback={
                       <input
                         class="pf-input pf-ql-cmd"
-                        value={item.command ?? ""}
+                        value={item().command ?? ""}
                         placeholder="command to type…"
                         onInput={(e) =>
-                          updateQuickLaunchItem(item.id, { command: e.currentTarget.value })
+                          updateQuickLaunchItem(item().id, { command: e.currentTarget.value })
                         }
                       />
                     }
                   >
-                    <span class="pf-ql-agent">agent · {agentLabel(item.agentId)}</span>
+                    <span class="pf-ql-agent">agent · {agentLabel(item().agentId)}</span>
                   </Show>
                   <button
                     class="pf-ql-hotkey"
-                    classList={{ "pf-ql-hotkey--capturing": capturingId() === item.id }}
+                    classList={{ "pf-ql-hotkey--capturing": capturingId() === item().id }}
                     title="Click, then press a shortcut (Esc cancels, Backspace clears)"
-                    onClick={() => setCapturingId(item.id)}
+                    onClick={() => setCapturingId(item().id)}
                   >
-                    {capturingId() === item.id ? "press shortcut…" : formatHotkey(item.hotkey)}
+                    {capturingId() === item().id ? "press shortcut…" : formatHotkey(item().hotkey)}
                   </button>
                   <button
                     class="pf-icon-btn"
                     title="Remove"
-                    onClick={() => removeQuickLaunchItem(item.id)}
+                    onClick={() => removeQuickLaunchItem(item().id)}
                   >
                     <IconClose size={14} />
                   </button>
                 </div>
               )}
-            </For>
+            </Index>
           </div>
           <Show when={conflicts().size > 0}>
             <div class="pf-ql-warn">Two items share a shortcut — only one will fire.</div>
@@ -185,13 +201,13 @@ export function SettingsScreen() {
             <span class="pf-settings-label">Theme</span>
             <div class="pf-seg">
               <button
-                classList={{ active: theme() === "dark" }}
+                classList={{ active: appTheme() === "dark" }}
                 onClick={() => applyTheme("dark")}
               >
                 Dark
               </button>
               <button
-                classList={{ active: theme() === "light" }}
+                classList={{ active: appTheme() === "light" }}
                 onClick={() => applyTheme("light")}
               >
                 Light
@@ -210,6 +226,115 @@ export function SettingsScreen() {
               <button class="pf-text-btn" onClick={zoomReset}>Reset</button>
             </div>
           </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Quick launch bar</span>
+            <div class="pf-seg">
+              <button
+                classList={{ active: workbenchPrefs().quickLaunchVisible }}
+                onClick={() => setQuickLaunchVisible(true)}
+              >
+                Shown
+              </button>
+              <button
+                classList={{ active: !workbenchPrefs().quickLaunchVisible }}
+                onClick={() => setQuickLaunchVisible(false)}
+              >
+                Hidden
+              </button>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Workbench">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Left panel</span>
+            <div class="pf-seg">
+              <button classList={{ active: layout().leftVisible }} onClick={() => setDockVisible("left", true)}>Shown</button>
+              <button classList={{ active: !layout().leftVisible }} onClick={() => setDockVisible("left", false)}>Hidden</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Right panel</span>
+            <div class="pf-seg">
+              <button classList={{ active: layout().rightVisible }} onClick={() => setDockVisible("right", true)}>Shown</button>
+              <button classList={{ active: !layout().rightVisible }} onClick={() => setDockVisible("right", false)}>Hidden</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Run buttons</span>
+            <div class="pf-seg">
+              <button classList={{ active: !workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(false)}>Icons</button>
+              <button classList={{ active: workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(true)}>Labels</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Panel layout</span>
+            <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
+          </div>
+        </Section>
+
+        <Section title="File opening">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Open files with</span>
+            <select
+              class="pf-select"
+              value={fileOpenSettings().mode}
+              onChange={(e) => setFileOpenMode(e.currentTarget.value as FileOpenMode)}
+            >
+              <option value="nvim-pane">Neovim (new pane)</option>
+              <option value="system">System default editor</option>
+              <option value="custom">Custom command…</option>
+            </select>
+          </div>
+          <Show when={fileOpenSettings().mode === "custom"}>
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">Command</span>
+              <input
+                class="pf-input"
+                value={fileOpenSettings().customCommand}
+                placeholder="code -g {path}"
+                onInput={(e) => setFileOpenCustom(e.currentTarget.value)}
+              />
+            </div>
+          </Show>
+          <span class="pf-settings-muted">
+            Editor modes open in a new terminal pane; {"{path}"} is the file path.
+          </span>
+        </Section>
+
+        <Section title="Updates">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Current version</span>
+            <span class="pf-settings-muted">v{appVersion()}</span>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">{updateLabel()}</span>
+            <Show
+              when={updateAvailable()}
+              fallback={
+                <button
+                  class="pf-ql-add"
+                  disabled={updateStatus() === "checking"}
+                  onClick={() => void checkForUpdate(false)}
+                >
+                  Check for updates
+                </button>
+              }
+            >
+              <button
+                class="pf-text-btn"
+                disabled={updateStatus() === "downloading"}
+                onClick={() => void installUpdate()}
+              >
+                {updateStatus() === "downloading"
+                  ? "Installing…"
+                  : `Install v${updateAvailable()!.version}`}
+              </button>
+            </Show>
+          </div>
+          <Show when={updateError()}>
+            <div class="pf-vm-error">{updateError()}</div>
+          </Show>
         </Section>
 
         <Section title="Archived projects">

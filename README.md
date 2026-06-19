@@ -19,12 +19,12 @@ Or build from source:
 ```bash
 git clone https://github.com/pickforge/pickforge
 cd pickforge
-npm install
-npm run tauri dev        # Rust shell + SolidJS UI, hot-reloaded
-# npm run tauri build    # produce a release bundle (.AppImage / .dmg / .msi)
+bun install
+bun run tauri dev        # Rust shell + SolidJS UI, hot-reloaded
+# bun run tauri build    # produce a release bundle (.AppImage / .dmg / .msi)
 ```
 
-Requires a [Rust toolchain](https://rustup.rs) and Node 20+. PickForge is built
+Requires a [Rust toolchain](https://rustup.rs) and [Bun](https://bun.sh) 1.2+. PickForge is built
 on [Tauri v2](https://tauri.app) — a Rust core (`crates/pickforge-core`) behind a
 Tauri shell (`src-tauri/`) with a SolidJS frontend (`src/`).
 

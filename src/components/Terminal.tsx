@@ -1,6 +1,6 @@
 // A single live terminal pane: xterm.js (WebGL renderer + fit) bound to a
 // Rust `$SHELL` pty over a Tauri channel. Shell-first — never an agent.
-import { onCleanup, onMount } from "solid-js";
+import { createEffect, onCleanup, onMount } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -18,6 +18,7 @@ import {
   TERMINAL_FONT_SIZE,
   TERMINAL_LINE_HEIGHT,
 } from "../lib/terminal-theme";
+import { appTheme } from "../stores/theme";
 import "./Terminal.css";
 
 /** Imperative handle so the shell can be driven from outside (chips, focus). */
@@ -51,7 +52,16 @@ export function TerminalPane(props: {
     const fit = new FitAddon();
     term.loadAddon(fit);
 
+    // Re-theme live when the app switches dark/light (xterm reads CSS tokens in
+    // JS, so it needs an explicit refresh — the attribute flip alone won't reach
+    // the canvas). Tracks appTheme; the initial run is the mount theme.
+    createEffect(() => {
+      appTheme();
+      term.options.theme = buildTerminalTheme();
+    });
+
     let sessionId: number | null = null;
+    let pendingInput = ""; // typed before the pty spawn resolves (e.g. open-in-pane)
     let disposed = false;
     let observer: ResizeObserver | undefined;
     const subs: Array<{ dispose: () => void }> = [];
@@ -106,6 +116,11 @@ export function TerminalPane(props: {
             return;
           }
           sessionId = id;
+          // Flush anything typed (via typeText) before the spawn resolved.
+          if (pendingInput) {
+            void ptyWrite(id, encoder.encode(pendingInput));
+            pendingInput = "";
+          }
         })
         .catch((err) => {
           if (!disposed) console.error("[pickforge] pty_spawn failed", err);
@@ -134,6 +149,7 @@ export function TerminalPane(props: {
       props.onReady?.({
         typeText: (text: string) => {
           if (sessionId !== null) void ptyWrite(sessionId, encoder.encode(text));
+          else pendingInput += text; // buffer until the spawn resolves
           term.focus();
         },
         focus: () => term.focus(),

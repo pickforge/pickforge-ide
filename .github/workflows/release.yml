@@ -30,12 +30,28 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
+          bun-version: latest
 
-      - run: npm ci
+      - name: Add macOS Rust targets
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - run: bun install --frozen-lockfile
+
       - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing — set these repo secrets (see docs/architecture/update-checks.md).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
+          tagName: ${{ github.ref_name }}
+          releaseName: "PickForge ${{ github.ref_name }}"
+          releaseBody: "Download the installer for your platform below. PickForge auto-updates from this release."
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
           args: ${{ matrix.args }}

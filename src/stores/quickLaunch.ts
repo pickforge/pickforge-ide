@@ -86,6 +86,18 @@ export function binaryForItem(item: QuickLaunchItem): string | null {
 // ---- hotkeys (modifier-required so they never collide with shell input) ----
 const MODS = ["Control", "Shift", "Alt", "Meta"];
 
+/** The physical key as a stable label, independent of Shift. e.code keeps
+ *  "Ctrl+Shift+2" reading as "2" rather than the shifted glyph "@". */
+function keyToken(e: KeyboardEvent): string {
+  const code = e.code;
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^Numpad[0-9]$/.test(code)) return code.slice(6);
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^F[0-9]{1,2}$/.test(code)) return code;
+  if (e.key.length > 1) return e.key; // Arrow*, Enter, Tab, Home, …
+  return e.key.toUpperCase();
+}
+
 /** Encode a keydown as a canonical hotkey string, or null if it's modifier-only
  *  or has no Mod/Alt (we require a modifier so plain typing never fires). */
 export function eventToHotkey(e: KeyboardEvent): string | null {
@@ -96,7 +108,7 @@ export function eventToHotkey(e: KeyboardEvent): string | null {
   if (e.ctrlKey || e.metaKey) parts.push("Mod");
   if (e.altKey) parts.push("Alt");
   if (e.shiftKey) parts.push("Shift");
-  parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  parts.push(keyToken(e));
   return parts.join("+");
 }
 

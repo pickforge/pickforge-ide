@@ -1,6 +1,7 @@
 mod db_commands;
 mod device_commands;
 mod fs_commands;
+mod git_commands;
 mod process_commands;
 mod pty_commands;
 mod vm_commands;
@@ -18,8 +19,15 @@ fn open_database() -> Database {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init());
+
+    // The updater is desktop-only (no mobile self-update).
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .manage(PtyManager::new())
         .manage(VmServiceClient::new())
         .manage(open_database())
@@ -32,10 +40,13 @@ pub fn run() {
             fs_commands::list_dir,
             fs_commands::read_text_file,
             fs_commands::path_basename,
+            fs_commands::open_path,
             device_commands::target_detect,
             device_commands::adb_list_devices,
             device_commands::adb_screenshot,
             device_commands::adb_dump_uiautomator,
+            git_commands::git_status,
+            git_commands::git_diff,
             db_commands::projects_list,
             db_commands::project_upsert,
             db_commands::project_set_archived,

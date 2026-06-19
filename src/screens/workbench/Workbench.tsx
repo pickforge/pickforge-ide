@@ -2,25 +2,34 @@
 // Each chat owns its own terminal host (its own panes/shells). Visited hosts
 // stay mounted (visibility toggled) so switching chats/projects never kills a
 // running shell; a host is disposed only when its chat is deleted.
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { ProjectsChatsPanel } from "./ProjectsChatsPanel";
+import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import { ProjectsPane } from "./ProjectsPane";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
+import { SourceControl } from "./SourceControl";
+import { RunControlBar } from "./RunControlBar";
+import { DebugConsole } from "./DebugConsole";
+import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
+import { layout, type PaneId } from "../../stores/workbenchLayout";
 import {
   TerminalHost,
   type TerminalHostHandle,
 } from "../../components/TerminalHost";
 import { Chip, ForgeEmptyState, MonoEyebrow } from "../../components/ui";
-import { IconGear, IconTerminal } from "../../components/icons";
+import { IconChevronDown, IconClose, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
+import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
+import { editorCommand } from "../../stores/fileOpenSettings";
+import { openPathSystem } from "../../lib/opener";
 import {
   binaryForItem,
   commandForItem,
   hotkeyMatches,
   quickLaunchItems,
 } from "../../stores/quickLaunch";
-import { onChatDeleted, workspace } from "../../stores/workspace";
-import { navigate, route } from "../../router";
+import { findChat, onChatDeleted, workspace } from "../../stores/workspace";
+import { route } from "../../router";
+import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
 
 interface MountedHost {
@@ -38,11 +47,27 @@ export function WorkbenchScreen() {
     handles.get(workspace.activeChatId ?? "")?.typeToFocused(text);
   };
 
+  // Open a file per the user's preference: a new editor pane (nvim/custom) or the
+  // OS default editor.
+  const openFileInActive = (path: string) => {
+    const cmd = editorCommand(path);
+    const host = handles.get(workspace.activeChatId ?? "");
+    // Editor-pane modes need a live terminal host; with none open, fall back to
+    // the OS opener so the file still opens.
+    if (cmd === null || !host) {
+      void openPathSystem(path).catch((e) =>
+        console.error("[pickforge] open_path failed", e),
+      );
+      return;
+    }
+    host.openInNewPane(cmd);
+  };
+
   // Mount a host the first time its chat becomes active; keep it after.
   createEffect(() => {
     const id = workspace.activeChatId;
     if (!id || mounted().some((m) => m.chatId === id)) return;
-    const chat = workspace.chats.find((c) => c.chatId === id);
+    const chat = findChat(id);
     if (chat) setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
   });
 
@@ -104,42 +129,64 @@ export function WorkbenchScreen() {
     })();
   });
 
+  const renderPane = (pane: PaneId) => (
+    <Switch>
+      <Match when={pane === "projects"}><PaneShell pane="projects"><ProjectsPane /></PaneShell></Match>
+      <Match when={pane === "files"}><PaneShell pane="files"><FileExplorer onOpenFile={openFileInActive} /></PaneShell></Match>
+      <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><SourceControl /></PaneShell></Match>
+      <Match when={pane === "inspector"}><PaneShell pane="inspector"><InspectorPanel /></PaneShell></Match>
+    </Switch>
+  );
+
   return (
-    <div class="pf-workbench">
-      <aside class="pf-workbench-left pf-reveal" style={{ "--pf-reveal-delay": "70ms" }}>
-        <ProjectsChatsPanel />
-        <FileExplorer />
-        <div class="pf-rail-footer">
-          <span class="pf-rail-copy">© PICKFORGE · MIT</span>
-          <button
-            class="pf-icon-btn"
-            title="Settings"
-            onClick={() => navigate("settings")}
-          >
-            <IconGear size={15} />
-          </button>
-        </div>
-      </aside>
+    <div class="pf-workbench-wrap">
+      <div class="pf-workbench">
+      <Show when={layout().leftVisible} fallback={<DockRevealHandle dock="left" />}>
+        <DockColumn dock="left" render={renderPane} />
+        <DockResizer dock="left" />
+      </Show>
 
       <main class="pf-workbench-center pf-reveal">
-        <div class="pf-launch">
-          <MonoEyebrow text="Quick launch" tick />
-          <div class="pf-chips">
-            <For each={quickLaunchItems()}>
-              {(item, i) => {
-                const bin = binaryForItem(item);
-                return (
-                  <Chip
-                    label={item.label}
-                    ember={i() === 0}
-                    disabled={bin ? available()[bin] === false : false}
-                    onClick={() => typeToActive(commandForItem(item))}
-                  />
-                );
-              }}
-            </For>
+        <Show
+          when={workbenchPrefs().quickLaunchVisible}
+          fallback={
+            <button
+              class="pf-launch-reveal"
+              title="Show quick launch"
+              onClick={() => setQuickLaunchVisible(true)}
+            >
+              <IconChevronDown size={12} /> Quick launch
+            </button>
+          }
+        >
+          <div class="pf-launch">
+            <MonoEyebrow text="Quick launch" tick />
+            <div class="pf-chips">
+              <For each={quickLaunchItems()}>
+                {(item, i) => {
+                  const bin = binaryForItem(item);
+                  return (
+                    <Chip
+                      label={item.label}
+                      ember={i() === 0}
+                      disabled={bin ? available()[bin] === false : false}
+                      onClick={() => typeToActive(commandForItem(item))}
+                    />
+                  );
+                }}
+              </For>
+            </div>
+            <button
+              class="pf-launch-hide"
+              title="Hide quick launch"
+              onClick={() => setQuickLaunchVisible(false)}
+            >
+              <IconClose size={13} />
+            </button>
           </div>
-        </div>
+        </Show>
+
+        <RunControlBar />
 
         <div class="pf-workbench-terminal">
           {/* All visited chats stay mounted; only the active one is shown. */}
@@ -169,9 +216,17 @@ export function WorkbenchScreen() {
         </div>
       </main>
 
-      <aside class="pf-workbench-right pf-reveal" style={{ "--pf-reveal-delay": "140ms" }}>
-        <InspectorPanel />
-      </aside>
+      <Show when={layout().rightVisible} fallback={<DockRevealHandle dock="right" />}>
+        <DockResizer dock="right" />
+        <DockColumn dock="right" render={renderPane} />
+      </Show>
+      </div>
+
+      {/* Always mounted so a run survives collapsing the panel / navigation;
+          hidden (not unmounted) when closed. */}
+      <div class="pf-dc-host" classList={{ "pf-dc-host--hidden": !runConsole.open() }}>
+        <DebugConsole />
+      </div>
     </div>
   );
 }

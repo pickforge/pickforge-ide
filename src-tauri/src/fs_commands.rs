@@ -56,3 +56,26 @@ pub fn path_basename(path: String) -> String {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or(path)
 }
+
+/// Open a path with the OS default handler (the user's default editor for files).
+/// Shells out to the platform opener on a blocking thread.
+#[tauri::command]
+pub async fn open_path(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        let (program, args): (&str, Vec<&str>) = ("open", vec![path.as_str()]);
+        #[cfg(target_os = "windows")]
+        let (program, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", path.as_str()]);
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let (program, args): (&str, Vec<&str>) = ("xdg-open", vec![path.as_str()]);
+
+        let out = pickforge_core::run(program, &args, None, None).map_err(|e| e.to_string())?;
+        if out.success() {
+            Ok(())
+        } else {
+            Err(format!("{program} exited with {:?}", out.code))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

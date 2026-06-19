@@ -16,12 +16,16 @@ export function RunControlBar() {
   const [targets, setTargets] = createSignal<RunTarget[]>([]);
   const [targetId, setTargetId] = createSignal<string>("");
   const [devices, setDevices] = createSignal<AdbDevice[]>([]);
-  // The chosen device is shared with the Inspector via the runDevice store;
-  // with no explicit choice, fall back to the first connected device.
-  const device = () =>
-    selectedDevice(workspace.activeRoot) ||
-    devices().find((d) => d.state === "device")?.serial ||
-    "";
+  // The chosen device is shared with the Inspector via the runDevice store. Use
+  // the stored serial only if that device is actually present (a serial from a
+  // previous session can linger in storage); otherwise fall back to the first
+  // connected device.
+  const device = () => {
+    const list = devices();
+    const stored = selectedDevice(workspace.activeRoot);
+    if (stored && list.some((d) => d.serial === stored)) return stored;
+    return list.find((d) => d.state === "device")?.serial ?? "";
+  };
 
   const target = createMemo(() => targets().find((t) => t.id === targetId()) ?? targets()[0] ?? null);
   const labels = () => workbenchPrefs().runButtonLabels;
@@ -56,7 +60,12 @@ export function RunControlBar() {
     const t = target();
     if (!t) return "";
     let cmd = t.command;
-    if (t.needsDevice && device() && !/\s-d\s/.test(cmd)) cmd += ` -d ${shquote(device())}`;
+    // `-d <serial>` is Flutter's device selector; React Native / Gradle use
+    // different syntax, so only append it for Flutter commands.
+    const isFlutter = /\bflutter\s/.test(cmd);
+    if (t.needsDevice && isFlutter && device() && !/\s-d\s/.test(cmd)) {
+      cmd += ` -d ${shquote(device())}`;
+    }
     return cmd;
   };
 

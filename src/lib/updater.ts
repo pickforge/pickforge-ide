@@ -41,6 +41,11 @@ export async function checkForUpdate(silent = false): Promise<void> {
       setAvailable({ version: update.version, notes: update.body });
       setStatus("available");
     } else {
+      // A previously-found update may have been retracted (or we've since
+      // updated): clear the cached update so the badge/install button don't keep
+      // offering something the updater no longer reports.
+      pending = null;
+      setAvailable(null);
       setStatus("none");
     }
   } catch (e) {

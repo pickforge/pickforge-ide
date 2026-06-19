@@ -59,12 +59,14 @@ export function InspectorPanel() {
     return t.confidence === "exact" ? "connected" : "warning";
   };
 
-  // The selected run device (shared with the Run bar): explicit choice, else the
-  // first connected device.
-  const selected = () =>
-    selectedDevice(workspace.activeRoot) ||
-    (devices() ?? []).find((d) => d.state === "device")?.serial ||
-    "";
+  // The selected run device (shared with the Run bar): the stored choice if that
+  // device is still present, else the first connected device.
+  const selected = () => {
+    const list = devices() ?? [];
+    const stored = selectedDevice(workspace.activeRoot);
+    if (stored && list.some((d) => d.serial === stored)) return stored;
+    return list.find((d) => d.state === "device")?.serial ?? "";
+  };
   const selectedLabel = createMemo(() => {
     const d = (devices() ?? []).find((x) => x.serial === selected());
     return d ? (d.model ?? d.serial) : "—";

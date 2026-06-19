@@ -35,11 +35,39 @@ function defaultCommand(t: TargetDetection): string | null {
 
 const DEVICE_TARGETS = new Set(["flutter", "react-native", "native-android"]);
 
-/** Strip // and /* *​/ comments so JSONC (launch.json) parses as JSON. */
+/** Convert JSONC (launch.json) to JSON: strip // and /* *​/ comments and
+ *  trailing commas, which VS Code accepts. String-aware so commas/slashes
+ *  inside quoted values (e.g. URLs, "a,]") are left untouched. */
 function stripJsonc(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const out: string[] = [];
+  let i = 0;
+  const n = src.length;
+  let inStr = false;
+  let pendingComma = -1; // index in `out` of a comma awaiting a closer
+  while (i < n) {
+    const ch = src[i];
+    if (inStr) {
+      out.push(ch);
+      if (ch === "\\") {
+        if (i + 1 < n) out.push(src[i + 1]);
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inStr = false;
+      i++;
+      continue;
+    }
+    if (ch === '"') { inStr = true; pendingComma = -1; out.push(ch); i++; continue; }
+    if (ch === "/" && src[i + 1] === "/") { i += 2; while (i < n && src[i] !== "\n") i++; continue; }
+    if (ch === "/" && src[i + 1] === "*") { i += 2; while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++; i += 2; continue; }
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") { out.push(ch); i++; continue; }
+    if (ch === ",") { out.push(ch); pendingComma = out.length - 1; i++; continue; }
+    if ((ch === "}" || ch === "]") && pendingComma >= 0) { out.splice(pendingComma, 1); }
+    pendingComma = -1;
+    out.push(ch);
+    i++;
+  }
+  return out.join("");
 }
 
 interface LaunchConfig {
@@ -54,12 +82,19 @@ interface LaunchConfig {
 }
 
 /** Resolve a launch config `cwd` to an absolute path, the way VS Code does:
- * relative values are joined onto the workspace folder (the project root). */
+ * expand the workspace-folder variables, then join relative values onto the
+ * workspace folder (the project root). */
 function resolveCwd(cwd: string, root: string): string {
-  const isAbs = /^([a-zA-Z]:[\\/]|[\\/])/.test(cwd);
-  if (isAbs) return cwd;
+  const base = root.replace(/[/\\]+$/, "");
+  const baseName = base.split(/[/\\]/).pop() ?? "";
+  // Expand basename first — it shares the ${workspaceFolder} prefix.
+  const expanded = cwd
+    .replace(/\$\{workspaceFolderBasename\}/g, baseName)
+    .replace(/\$\{workspaceFolder\}/g, base);
+  const isAbs = /^([a-zA-Z]:[\\/]|[\\/])/.test(expanded);
+  if (isAbs) return expanded;
   const sep = root.includes("\\") ? "\\" : "/";
-  return `${root.replace(/[/\\]+$/, "")}${sep}${cwd.replace(/^[/\\]+/, "")}`;
+  return `${base}${sep}${expanded.replace(/^[/\\]+/, "")}`;
 }
 
 /** Single-quote a value so spaces / shell metacharacters in it stay inert when
@@ -83,7 +118,9 @@ function fromLaunchConfig(c: LaunchConfig, i: number, root: string): RunTarget |
   } else {
     return null;
   }
-  if (c.args?.length) parts.push(c.args.join(" "));
+  // Each configured arg is one VS Code argument; quote so spaces / shell
+  // metacharacters in a single arg don't split into multiple shell words.
+  if (c.args?.length) parts.push(c.args.map(shquote).join(" "));
   let command = parts.join(" ");
   // VS Code launches the program from `cwd`; the embedded terminal sits at the
   // project root, so `cd` into the resolved (absolute) dir first — otherwise

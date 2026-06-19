@@ -2,8 +2,15 @@
 // SQLite Tauri commands. Chats are bucketed per project (chatsByRoot) so the
 // projects tree can show each project's chats as children, loaded lazily the
 // first time a project is selected or its branch is expanded.
-import { createStore } from "solid-js/store";
+import { createStore, produce } from "solid-js/store";
 import * as db from "../lib/db";
+import { isChatArchived } from "./chatArchive";
+
+/** First non-archived chat id in a list, or null. The projects tree hides
+ *  archived chats, so the active chat must never be one of them. */
+function firstVisibleChat(chats: db.Chat[]): string | null {
+  return chats.find((c) => !isChatArchived(c.chatId))?.chatId ?? null;
+}
 
 interface WorkspaceState {
   projects: db.Project[];
@@ -75,7 +82,16 @@ export async function loadWorkspace() {
   setState({ projects, activeRoot: active, loaded: true });
   if (active) {
     const chats = await fetchChats(active);
-    setState("activeChatId", state.activeChatId ?? chats[0]?.chatId ?? null);
+    // Keep the current chat only if it still belongs to the active project and
+    // isn't archived — otherwise it dangles (e.g. after archiving/deleting the
+    // project it came from) and the terminal area goes blank.
+    const keep =
+      state.activeChatId != null &&
+      chats.some((c) => c.chatId === state.activeChatId) &&
+      !isChatArchived(state.activeChatId);
+    setState("activeChatId", keep ? state.activeChatId : firstVisibleChat(chats));
+  } else {
+    setState("activeChatId", null);
   }
 }
 
@@ -83,7 +99,7 @@ export async function selectProject(root: string) {
   setState("activeRoot", root);
   await db.projectTouch(root, Date.now());
   const chats = await fetchChats(root);
-  setState("activeChatId", chats[0]?.chatId ?? null);
+  setState("activeChatId", firstVisibleChat(chats));
 }
 
 export async function addProject(root: string, displayName: string) {
@@ -122,7 +138,9 @@ export async function deleteProject(root: string) {
   await db.projectDelete(root);
   chats.forEach((c) => chatDeletedListeners.forEach((fn) => fn(c.chatId)));
   if (state.activeRoot === root) setState("activeRoot", null);
-  setState("chatsByRoot", root, undefined!);
+  // Remove the bucket entirely; leaving an `undefined` value here makes
+  // findChat() call .find on it and throw on the next chat operation.
+  setState("chatsByRoot", produce((m) => { delete m[root]; }));
   await loadWorkspace();
 }
 
@@ -189,6 +207,6 @@ export async function deleteChat(chatId: string) {
   let remaining: db.Chat[] = [];
   if (root) remaining = await fetchChats(root);
   if (state.activeChatId === chatId) {
-    setState("activeChatId", remaining[0]?.chatId ?? null);
+    setState("activeChatId", firstVisibleChat(remaining));
   }
 }

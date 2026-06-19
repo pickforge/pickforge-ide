@@ -58,9 +58,9 @@
 }
 /* The ember sweep is an overlay that lives in the border ring (the inner pane
  * paints over its centre). Crossfading its opacity makes focusing / blurring a
- * pane fade the glow in/out smoothly instead of snapping, and a filter shift
- * gives a soft, warm hover response — both honor reduced motion (the duration
- * token collapses to 0). The angle is inherited from .pf-term-host. */
+ * pane fade the glow in/out smoothly instead of snapping (honors reduced motion
+ * — the duration token collapses to 0). The angle is inherited from
+ * .pf-term-host. */
 .pf-pane-frame::before {
   content: "";
   position: absolute;
@@ -86,9 +86,6 @@
 }
 .pf-pane-frame--focused::before {
   opacity: 1;
-}
-.pf-pane-frame--focused:hover::before {
-  filter: brightness(1.3) saturate(1.12);
 }
 .pf-pane-inner {
   position: relative;
@@ -318,8 +315,5 @@ body.pf-resizing .pf-divider-grip {
   /* No moving sweep: a flat ember ring (the angle is frozen otherwise). */
   .pf-pane-frame--focused::before {
     background: var(--pf-ember-deep);
-  }
-  .pf-pane-frame--focused:hover::before {
-    filter: brightness(1.25);
   }
 }

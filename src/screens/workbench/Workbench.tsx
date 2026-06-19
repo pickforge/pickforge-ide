@@ -9,6 +9,7 @@ import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
 import { RunControlBar } from "./RunControlBar";
+import { DebugConsole } from "./DebugConsole";
 import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
 import { layout, type PaneId } from "../../stores/workbenchLayout";
 import {
@@ -29,6 +30,7 @@ import {
 } from "../../stores/quickLaunch";
 import { onChatDeleted, workspace } from "../../stores/workspace";
 import { route } from "../../router";
+import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
 
 interface MountedHost {
@@ -139,7 +141,8 @@ export function WorkbenchScreen() {
   );
 
   return (
-    <div class="pf-workbench">
+    <div class="pf-workbench-wrap">
+      <div class="pf-workbench">
       <Show when={layout().leftVisible} fallback={<DockRevealHandle dock="left" />}>
         <DockColumn dock="left" render={renderPane} />
         <DockResizer dock="left" />
@@ -185,7 +188,7 @@ export function WorkbenchScreen() {
           </div>
         </Show>
 
-        <RunControlBar send={typeToActive} canSend={!!workspace.activeChatId} />
+        <RunControlBar />
 
         <div class="pf-workbench-terminal">
           {/* All visited chats stay mounted; only the active one is shown. */}
@@ -219,6 +222,13 @@ export function WorkbenchScreen() {
         <DockResizer dock="right" />
         <DockColumn dock="right" render={renderPane} />
       </Show>
+      </div>
+
+      {/* Always mounted so a run survives collapsing the panel / navigation;
+          hidden (not unmounted) when closed. */}
+      <div class="pf-dc-host" classList={{ "pf-dc-host--hidden": !runConsole.open() }}>
+        <DebugConsole />
+      </div>
     </div>
   );
 }

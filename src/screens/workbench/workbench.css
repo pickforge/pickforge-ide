@@ -1,6 +1,12 @@
+.pf-workbench-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 .pf-workbench {
   display: flex;
-  height: 100%;
+  flex: 1 1 0;
   min-height: 0;
 }
 .pf-workbench-center {
@@ -114,6 +120,9 @@ body.pf-resizing .pf-dock-resizer-grip {
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
+  /* Clip to the slot so a pane's body can never bleed onto the next pane's
+     header (e.g. a long source-control list over the inspector). */
+  overflow: hidden;
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
 }
 .pf-pane-shell--collapsed {
@@ -203,7 +212,10 @@ body.pf-resizing .pf-dock-resizer-grip {
 
 /* ---- source control pane ---- */
 .pf-sc {
-  flex: 0 0 auto;
+  /* Fill the slot and let the file list scroll inside it, rather than claiming
+     a fixed natural height that overflows the pane. */
+  flex: 1 1 0;
+  min-height: 0;
 }
 .pf-sc-toolbar {
   justify-content: space-between;
@@ -236,7 +248,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   padding: 1px var(--pf-space-sm);
 }
 .pf-sc-list {
-  max-height: 32vh;
+  flex: 1 1 0;
 }
 .pf-sc-row {
   display: grid;
@@ -886,7 +898,8 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-runbar-select {
   height: 26px;
-  padding: var(--pf-space-xs) var(--pf-space-sm);
+  /* padding (incl. chevron room) comes from .pf-select so the value text fits
+     the fixed height instead of being vertically clipped. */
   font-size: var(--pf-size-body-sm);
   border-radius: var(--pf-radius-sm);
 }
@@ -1058,4 +1071,120 @@ body.pf-resizing .pf-dock-resizer-grip {
   font-size: var(--pf-size-body-sm);
   color: var(--pf-text-low);
   margin: var(--pf-space-sm) 0 0;
+}
+
+/* ---- bottom debug console ---- */
+.pf-dc-host {
+  flex: none;
+}
+.pf-dc-host--hidden {
+  display: none;
+}
+.pf-debug-console {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--pf-surface-1);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+/* top-edge drag handle (mirrors the dock resizer's ember-on-hover seam) */
+.pf-dc-resizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  margin-top: -3px;
+  z-index: 6;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+}
+.pf-dc-resizer-grip {
+  height: 1px;
+  width: 100%;
+  background: transparent;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-dc-resizer:hover .pf-dc-resizer-grip,
+body.pf-resizing .pf-dc-resizer-grip {
+  background: var(--pf-ember);
+}
+.pf-dc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-xs) var(--pf-space-lg);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-dc-target {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-med);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+.pf-dc-spacer {
+  flex: 1;
+}
+.pf-dc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  flex: none;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-dc-btn:hover:not(:disabled) {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-dc-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* VSCode-style semantic colours so the controls are identifiable at a glance
+   (tokens, not raw hex): reload = amber, restart = green, stop = red. */
+.pf-dc-btn--reload {
+  color: var(--pf-warning);
+}
+.pf-dc-btn--restart {
+  color: var(--pf-connected);
+}
+.pf-dc-btn--stop {
+  color: var(--pf-error);
+}
+.pf-dc-btn--reload:hover:not(:disabled) {
+  color: var(--pf-warning);
+  border-color: var(--pf-warning);
+}
+.pf-dc-btn--restart:hover:not(:disabled) {
+  color: var(--pf-connected);
+  border-color: var(--pf-connected);
+}
+.pf-dc-btn--stop:hover:not(:disabled) {
+  color: var(--pf-error);
+  border-color: var(--pf-error);
+}
+.pf-dc-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pf-dc-body > * {
+  flex: 1 1 0;
+  min-height: 0;
 }

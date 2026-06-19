@@ -50,9 +50,25 @@ interface LaunchConfig {
   args?: string[];
   flutterMode?: string;
   deviceId?: string;
+  cwd?: string;
 }
 
-function fromLaunchConfig(c: LaunchConfig, i: number): RunTarget | null {
+/** Resolve a launch config `cwd` to an absolute path, the way VS Code does:
+ * relative values are joined onto the workspace folder (the project root). */
+function resolveCwd(cwd: string, root: string): string {
+  const isAbs = /^([a-zA-Z]:[\\/]|[\\/])/.test(cwd);
+  if (isAbs) return cwd;
+  const sep = root.includes("\\") ? "\\" : "/";
+  return `${root.replace(/[/\\]+$/, "")}${sep}${cwd.replace(/^[/\\]+/, "")}`;
+}
+
+/** Single-quote a value so spaces / shell metacharacters in it stay inert when
+ * interpolated into a command typed at the shell. */
+export function shquote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function fromLaunchConfig(c: LaunchConfig, i: number, root: string): RunTarget | null {
   if (c.request && c.request !== "launch") return null;
   const type = (c.type ?? "").toLowerCase();
   const isFlutter = type === "dart" || type === "flutter";
@@ -60,18 +76,24 @@ function fromLaunchConfig(c: LaunchConfig, i: number): RunTarget | null {
   if (isFlutter) {
     parts.push("flutter run");
     if (c.flutterMode) parts.push(`--${c.flutterMode}`);
-    if (c.program) parts.push(`-t ${c.program}`);
-    if (c.deviceId) parts.push(`-d ${c.deviceId}`);
+    if (c.program) parts.push(`-t ${shquote(c.program)}`);
+    if (c.deviceId) parts.push(`-d ${shquote(c.deviceId)}`);
   } else if (c.program) {
-    parts.push(c.program);
+    parts.push(shquote(c.program));
   } else {
     return null;
   }
   if (c.args?.length) parts.push(c.args.join(" "));
+  let command = parts.join(" ");
+  // VS Code launches the program from `cwd`; the embedded terminal sits at the
+  // project root, so `cd` into the resolved (absolute) dir first — otherwise
+  // `flutter run` runs where there is no pubspec.yaml. Absolute so repeated
+  // runs work no matter where the shell currently is.
+  if (c.cwd) command = `cd ${shquote(resolveCwd(c.cwd, root))} && ${command}`;
   return {
     id: `vscode-${i}`,
     label: c.name ?? `Config ${i + 1}`,
-    command: parts.join(" "),
+    command,
     capabilities: isFlutter
       ? ["launch", "hotReload", "hotRestart", "stop"]
       : ["launch", "stop"],
@@ -89,7 +111,9 @@ async function readLaunchJson(root: string): Promise<RunTarget[]> {
     const configs: LaunchConfig[] = Array.isArray(parsed?.configurations)
       ? parsed.configurations
       : [];
-    return configs.map(fromLaunchConfig).filter((t): t is RunTarget => t !== null);
+    return configs
+      .map((c, i) => fromLaunchConfig(c, i, root))
+      .filter((t): t is RunTarget => t !== null);
   } catch {
     return []; // no .vscode/launch.json (or unreadable) — fine.
   }

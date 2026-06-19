@@ -1,30 +1,28 @@
-// VS Code-style run controls. Discovers run targets (detected + launch.json),
-// lets you pick a device, and drives the FOCUSED terminal: Run types the command
-// + Enter; Hot reload / restart / stop are the keystrokes the running tool reads
-// (Flutter: r / R / q). Reuses the PTY — no separate runner process.
+// VS Code-style run launcher. Discovers run targets (detected + launch.json),
+// lets you pick a device, and launches the selected target into the bottom
+// Debug Console (its own pty) — Run never types into the user's own shell.
+// Hot reload / restart / stop live on the console panel, on the running session.
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { MonoEyebrow } from "../../components/ui";
-import { IconPlay, IconRefresh, IconRestart, IconStop } from "../../components/icons";
-import { discoverRunTargets, type RunTarget } from "../../lib/runTargets";
+import { IconPlay } from "../../components/icons";
+import { discoverRunTargets, shquote, type RunTarget } from "../../lib/runTargets";
 import { adbListDevices, type AdbDevice } from "../../lib/device";
 import { workspace } from "../../stores/workspace";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
+import { runConsole, startRun } from "../../stores/runConsole";
 
-export function RunControlBar(props: { send: (text: string) => void; canSend: boolean }) {
+export function RunControlBar() {
   const [targets, setTargets] = createSignal<RunTarget[]>([]);
   const [targetId, setTargetId] = createSignal<string>("");
   const [devices, setDevices] = createSignal<AdbDevice[]>([]);
   const [device, setDevice] = createSignal<string>("");
-  const [running, setRunning] = createSignal(false);
 
   const target = createMemo(() => targets().find((t) => t.id === targetId()) ?? targets()[0] ?? null);
-  const can = (cap: string) => !!target()?.capabilities.includes(cap);
   const labels = () => workbenchPrefs().runButtonLabels;
 
   // Reload targets + devices whenever the active project changes.
   createEffect(() => {
     const root = workspace.activeRoot;
-    setRunning(false);
     if (!root) {
       setTargets([]);
       return;
@@ -53,22 +51,15 @@ export function RunControlBar(props: { send: (text: string) => void; canSend: bo
     const t = target();
     if (!t) return "";
     let cmd = t.command;
-    if (t.needsDevice && device() && !/\s-d\s/.test(cmd)) cmd += ` -d ${device()}`;
+    if (t.needsDevice && device() && !/\s-d\s/.test(cmd)) cmd += ` -d ${shquote(device())}`;
     return cmd;
   };
 
   const run = () => {
+    const t = target();
     const cmd = fullCommand();
-    if (!cmd) return;
-    props.send(cmd + "\r");
-    setRunning(true);
-  };
-  const reload = () => props.send("r");
-  const restart = () => props.send("R");
-  const stop = () => {
-    // Flutter reads "q" to quit; everything else gets Ctrl-C.
-    props.send(can("hotReload") ? "q" : "\x03");
-    setRunning(false);
+    if (!t || !cmd) return;
+    startRun({ ...t, command: cmd }, workspace.activeRoot);
   };
 
   return (
@@ -97,36 +88,16 @@ export function RunControlBar(props: { send: (text: string) => void; canSend: bo
           </select>
         </Show>
 
-        <div class="pf-runbar-btns">
-          <button
-            class="pf-runbar-btn pf-runbar-btn--run"
-            classList={{ "pf-runbar-btn--icon": !labels() }}
-            title={`Run: ${fullCommand()}`}
-            disabled={!props.canSend || !fullCommand()}
-            onClick={run}
-          >
-            <IconPlay size={13} />
-            <Show when={labels()}>Run</Show>
-          </button>
-          <Show when={can("hotReload")}>
-            <button class="pf-runbar-btn" classList={{ "pf-runbar-btn--icon": !labels() }} title="Hot reload (r)" disabled={!props.canSend || !running()} onClick={reload}>
-              <IconRefresh size={13} />
-              <Show when={labels()}>Reload</Show>
-            </button>
-          </Show>
-          <Show when={can("hotRestart")}>
-            <button class="pf-runbar-btn" classList={{ "pf-runbar-btn--icon": !labels() }} title="Hot restart (R)" disabled={!props.canSend || !running()} onClick={restart}>
-              <IconRestart size={13} />
-              <Show when={labels()}>Restart</Show>
-            </button>
-          </Show>
-          <Show when={can("stop")}>
-            <button class="pf-runbar-btn pf-runbar-btn--stop" classList={{ "pf-runbar-btn--icon": !labels() }} title="Stop" disabled={!props.canSend || !running()} onClick={stop}>
-              <IconStop size={12} />
-              <Show when={labels()}>Stop</Show>
-            </button>
-          </Show>
-        </div>
+        <button
+          class="pf-runbar-btn pf-runbar-btn--run"
+          classList={{ "pf-runbar-btn--icon": !labels() }}
+          title={runConsole.status() === "running" ? "A run is active — stop it in the console first" : `Run: ${fullCommand()}`}
+          disabled={!fullCommand() || runConsole.status() === "running"}
+          onClick={run}
+        >
+          <IconPlay size={13} />
+          <Show when={labels()}>Run</Show>
+        </button>
       </div>
     </Show>
   );

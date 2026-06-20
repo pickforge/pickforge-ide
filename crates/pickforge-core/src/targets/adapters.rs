@@ -2,7 +2,7 @@
 //! Each adapter detects from project files; the highest-priority match wins,
 //! falling back to `generic`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -167,6 +167,20 @@ fn generic() -> TargetDetection {
     }
 }
 
+/// Walk up from `start` to the nearest ancestor directory containing a
+/// `pubspec.yaml` — the way Dart-Code derives a Flutter project's root from a
+/// launch config's `program`. `None` if no ancestor has one.
+pub fn nearest_pubspec_dir(start: &Path) -> Option<PathBuf> {
+    let mut dir = Some(start);
+    while let Some(d) = dir {
+        if d.join("pubspec.yaml").is_file() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +214,21 @@ mod tests {
             .unwrap();
         assert_eq!(detect_target(dir.to_str().unwrap()).target_id, "generic");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn nearest_pubspec_walks_up_to_app_dir() {
+        let dir = temp("pubspec");
+        let app_lib = dir.join("app").join("lib");
+        std::fs::create_dir_all(&app_lib).unwrap();
+        std::fs::write(dir.join("app").join("pubspec.yaml"), "name: x").unwrap();
+        // From app/lib it finds app/ (the monorepo case).
+        assert_eq!(nearest_pubspec_dir(&app_lib), Some(dir.join("app")));
+        // No pubspec anywhere up the tree -> None.
+        let bare = temp("nopubspec");
+        assert_eq!(nearest_pubspec_dir(&bare), None);
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&bare).ok();
     }
 
     #[test]

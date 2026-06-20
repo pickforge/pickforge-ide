@@ -27,6 +27,13 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   detect_binaries: (a) => (a.names as string[]).map(() => true),
   target_detect: () => ({ targetId: "flutter", displayName: "Flutter", confidence: "exact", priority: 100, capabilities: ["detect", "launch", "hotReload", "captureScreenshot", "streamLogs", "inspectSelection"] }),
   adb_list_devices: () => [{ serial: "emulator-5554", state: "device", model: "Pixel_10" }],
+  android_device_list: () => [
+    { serial: "emulator-5554", avdId: "Pixel_10", displayName: "Pixel 10", state: "running", kind: "emulator" },
+    { serial: null, avdId: "Pixel_4a", displayName: "Pixel 4a", state: "stopped", kind: "emulator" },
+  ],
+  android_launch_avd: () => null,
+  android_wait_for_device: () => true,
+  find_nearest_pubspec: () => null,
   picks_list: () => SAMPLE_PICKS,
   runs_list: () => SAMPLE_RUNS,
   list_dir: () => [

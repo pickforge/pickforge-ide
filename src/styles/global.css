@@ -105,6 +105,22 @@ textarea {
   }
 }
 
+/* Pane content (source control, files, inspector) rises + fades when the active
+ * project changes (see PaneReveal), so it doesn't snap the way the chat list and
+ * terminal already animate. Fills the pane body; honors reduced motion. */
+.pf-pane-reveal {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  animation: pf-rise var(--pf-dur-reveal) var(--pf-ease-forge) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-pane-reveal {
+    animation: none;
+  }
+}
+
 /* The one scrollbar style for the whole app — thin, dark, tokenized. Applies to
  * every scroll area (panes, inspector, lists) and the window's own vertical /
  * horizontal overflow, so nothing falls back to the OS-default bar. Don't

@@ -19,7 +19,10 @@ pub mod vm_service;
 pub use inspector::{decode_widget_tree, CreationLocation, WidgetNode};
 pub use vm_service::{VmError, VmServiceClient};
 
-pub use targets::{detect_target, Capability, Confidence, SourceMap, SourceMapping, TargetDetection};
+pub use targets::{
+    detect_target, nearest_pubspec_dir, Capability, Confidence, SourceMap, SourceMapping,
+    TargetDetection,
+};
 
 pub use db::{
     AgentRunLog, Chat, Database, DbError, PickHistory, Project, ProjectSettings, RunSessionLog,

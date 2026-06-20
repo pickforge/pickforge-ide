@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +32,10 @@ struct Conn {
     out: mpsc::UnboundedSender<Message>,
     pending: Pending,
     next_id: AtomicI64,
+    /// Stream events (no-id frames, e.g. Extension / ToolEvent / Isolate) are
+    /// broadcast to any subscribers — the inspector needs these for device
+    /// tap-to-select, navigate, and service-extension discovery.
+    events: broadcast::Sender<Value>,
 }
 
 /// A live VM Service connection (or none). Lives behind Tauri's managed `State`.
@@ -53,6 +57,7 @@ impl VmServiceClient {
         let (mut write, mut read) = ws.split();
         let (out, mut out_rx) = mpsc::unbounded_channel::<Message>();
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let (events, _) = broadcast::channel::<Value>(256);
 
         // Writer task: drain the outbound queue to the socket.
         tokio::spawn(async move {
@@ -63,8 +68,10 @@ impl VmServiceClient {
             }
         });
 
-        // Reader task: route responses to their pending sender by id.
+        // Reader task: route id'd responses to their pending sender; broadcast
+        // no-id stream events to subscribers.
         let pending_read = Arc::clone(&pending);
+        let events_read = events.clone();
         tokio::spawn(async move {
             while let Some(Ok(msg)) = read.next().await {
                 if let Message::Text(txt) = msg {
@@ -73,8 +80,10 @@ impl VmServiceClient {
                             if let Some(tx) = pending_read.lock().unwrap().remove(&id) {
                                 let _ = tx.send(value);
                             }
+                        } else {
+                            // Stream event — ignore send error when no subscribers.
+                            let _ = events_read.send(value);
                         }
-                        // Stream events (no id) are ignored for now.
                     }
                 }
             }
@@ -87,8 +96,21 @@ impl VmServiceClient {
             out,
             pending,
             next_id: AtomicI64::new(1),
+            events,
         });
         Ok(())
+    }
+
+    /// Subscribe to VM service stream events (no-id frames). `None` if not
+    /// connected. Pair with [`stream_listen`] to start receiving a stream.
+    pub async fn events(&self) -> Option<broadcast::Receiver<Value>> {
+        self.conn.lock().await.as_ref().map(|c| c.events.subscribe())
+    }
+
+    /// Ask the VM service to start delivering a named event stream (e.g.
+    /// "Extension", "ToolEvent", "Isolate", "Debug").
+    pub async fn stream_listen(&self, stream_id: &str) -> Result<Value, VmError> {
+        self.call("streamListen", json!({ "streamId": stream_id })).await
     }
 
     /// Issue a JSON-RPC call and await the result.

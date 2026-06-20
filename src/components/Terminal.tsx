@@ -36,9 +36,13 @@ export function TerminalPane(props: {
    *  Reconstructed from real keystrokes only — injected typeText is invisible
    *  here, so it never includes chip-launched command prefixes. */
   onUserSubmit?: (line: string) => void;
+  /** Fires with each decoded chunk of shell OUTPUT (e.g. to scrape a VM service
+   *  URL from `flutter run`). Streaming-decoded, so multi-byte chars are safe. */
+  onOutput?: (chunk: string) => void;
 }) {
   let container!: HTMLDivElement;
   const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
 
   onMount(() => {
     const term = new Terminal({
@@ -147,7 +151,10 @@ export function TerminalPane(props: {
         // Channel callbacks can fire after onCleanup but before the spawn
         // promise resolves — guard against writing to a disposed terminal.
         onOutput: (data) => {
-          if (!disposed) term.write(toBytes(data));
+          if (disposed) return;
+          const bytes = toBytes(data);
+          term.write(bytes);
+          if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
         },
         onExit: (code) => {
           if (!disposed) props.onExit?.(code);

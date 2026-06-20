@@ -20,6 +20,25 @@ const INTENT_VAR: Record<StatusIntent, string> = {
   info: "var(--pf-info)",
 };
 
+/** Fade + rise pane content whenever `on()` changes (e.g. the active project),
+ *  so panes (source control, files, inspector) don't snap between projects the
+ *  way the chat list and terminal already animate. Re-mounts the children on
+ *  change so the entrance replays; honors reduced motion via .pf-pane-reveal.
+ *  Children is a thunk so each change renders fresh content. */
+export function PaneReveal(props: {
+  on: () => string | null | undefined;
+  children: () => JSX.Element;
+}): JSX.Element {
+  // Key on a never-falsy value so the keyed block always renders (no eager
+  // fallback instantiation) and re-creates whenever `on()` changes — including
+  // to/from "no project" — replaying the entrance each time.
+  return (
+    <Show when={props.on() ?? "∅"} keyed>
+      {(_key) => <div class="pf-pane-reveal">{props.children()}</div>}
+    </Show>
+  );
+}
+
 /** Uppercase, wide-tracked monospace section label with optional ember tick. */
 export function MonoEyebrow(props: {
   text: string;

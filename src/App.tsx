@@ -6,6 +6,8 @@ import { appVersion, loadAppVersion } from "./lib/appInfo";
 import { initTheme } from "./stores/theme";
 import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { MonoEyebrow, StatusPill } from "./components/ui";
+import { IconTerminal } from "./components/icons";
+import { runConsole, toggleConsole } from "./stores/runConsole";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
 import { SettingsScreen } from "./screens/Settings";
@@ -136,9 +138,21 @@ export function App() {
         <span class="pf-statusbar-item">
           {workspace.activeRoot ? statusBasename(workspace.activeRoot) : "no project"}
         </span>
-        <button class="pf-statusbar-zoom" title="Reset interface zoom" onClick={zoomReset}>
-          {Math.round(currentZoom() * 100)}%
-        </button>
+        <div class="pf-statusbar-right">
+          <Show when={route() === "workbench"}>
+            <button
+              class="pf-statusbar-console"
+              classList={{ active: runConsole.open() }}
+              title={runConsole.open() ? "Hide debug console" : "Show debug console"}
+              onClick={toggleConsole}
+            >
+              <IconTerminal size={11} /> Console
+            </button>
+          </Show>
+          <button class="pf-statusbar-zoom" title="Reset interface zoom" onClick={zoomReset}>
+            {Math.round(currentZoom() * 100)}%
+          </button>
+        </div>
       </footer>
     </div>
   );

@@ -83,17 +83,19 @@ export function setConsoleHeight(px: number) {
 /** Launch a target: open the console, (lazily) mount its terminal, run there. */
 export function startRun(t: RunTarget, projectRoot: string | null) {
   setTarget(t);
+  // The target carries its own run dir (derived from its program's pubspec, or
+  // an explicit launch.json cwd); fall back to the project root.
+  const base = t.cwd ?? projectRoot;
   if (!hasRun()) {
-    setConsoleCwd(projectRoot); // spawn the console shell at the project root
+    setConsoleCwd(base); // spawn the console shell in the run dir
     setHasRun(true);
   }
   setOpen(true);
   persist();
   setStatus("running");
-  // Prefix an absolute cd so each run starts from the project root regardless of
-  // where a previous run left the console shell (launch.json targets then cd
-  // again into their own cwd — harmless).
-  const cmd = projectRoot ? `cd ${shquote(projectRoot)} && ${t.command}` : t.command;
+  // Prefix one absolute cd so each run starts in the right dir regardless of
+  // where a previous run left the console shell.
+  const cmd = base ? `cd ${shquote(base)} && ${t.command}` : t.command;
   send(cmd + "\r");
 }
 

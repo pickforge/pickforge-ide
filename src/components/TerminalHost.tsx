@@ -151,8 +151,9 @@ export interface TerminalHostHandle {
   /** Type text into the currently focused pane's shell. Returns that pane's id
    *  if a shell accepted the text, or null if no pane was ready yet. */
   typeToFocused: (text: string) => string | null;
-  /** Split the focused pane and run `command` (e.g. an editor) in the new pane. */
-  openInNewPane: (command: string) => void;
+  /** Split the focused pane and run `command` in the new pane; returns the new
+   *  pane's id (e.g. to arm auto-naming on it). */
+  openInNewPane: (command: string) => string;
 }
 
 export function TerminalHost(props: {
@@ -192,11 +193,12 @@ export function TerminalHost(props: {
   // Commands queued to run in a freshly-split pane once its shell is ready
   // (used by openInNewPane for "open file in editor").
   const pendingCmd = new Map<string, string>();
-  const openInNewPane = (command: string) => {
+  const openInNewPane = (command: string): string => {
     const fresh = newLeaf();
     pendingCmd.set(fresh.id, command);
     setRoot((r) => splitTree(r, focusedId(), "down", fresh));
     setFocusedId(fresh.id);
+    return fresh.id;
   };
 
   const close = (id: string) => {

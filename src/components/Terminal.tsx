@@ -32,6 +32,10 @@ export function TerminalPane(props: {
   cwd?: string;
   onReady?: (handle: TerminalHandle) => void;
   onExit?: (code: number | null) => void;
+  /** Fires with each non-empty line the user types and submits (Enter).
+   *  Reconstructed from real keystrokes only — injected typeText is invisible
+   *  here, so it never includes chip-launched command prefixes. */
+  onUserSubmit?: (line: string) => void;
 }) {
   let container!: HTMLDivElement;
   const encoder = new TextEncoder();
@@ -65,6 +69,45 @@ export function TerminalPane(props: {
     let disposed = false;
     let observer: ResizeObserver | undefined;
     const subs: Array<{ dispose: () => void }> = [];
+
+    // A tiny line-editor mirror over real keystrokes, so we can surface each line
+    // the user submits (onUserSubmit) without parsing the agent's TUI. Escape
+    // sequences (arrow keys etc.) are consumed, not appended.
+    let inputLine = "";
+    let inEscape = false;
+    let escCSI = false; // the escape is a CSI/SS3 (\x1b[ or \x1bO) multi-char seq
+    const trackUserInput = (data: string) => {
+      for (const ch of data) {
+        const code = ch.codePointAt(0)!;
+        if (inEscape) {
+          if (escCSI) {
+            if (code >= 0x40 && code <= 0x7e) inEscape = escCSI = false; // final byte
+          } else if (ch === "[" || ch === "O") {
+            escCSI = true;
+          } else {
+            inEscape = false; // single-char escape
+          }
+          continue;
+        }
+        switch (code) {
+          case 0x1b: inEscape = true; escCSI = false; break; // ESC
+          case 0x0d: // CR (Enter)
+          case 0x0a: // LF
+            if (inputLine.trim()) props.onUserSubmit?.(inputLine);
+            inputLine = "";
+            break;
+          case 0x7f: // DEL (backspace)
+          case 0x08: inputLine = inputLine.slice(0, -1); break;
+          case 0x03: // Ctrl-C
+          case 0x15: // Ctrl-U (kill line)
+          case 0x1a: inputLine = ""; break; // Ctrl-Z
+          case 0x17: inputLine = inputLine.replace(/\s*\S+\s*$/, ""); break; // Ctrl-W
+          default:
+            if (code >= 0x20 && inputLine.length < 256) inputLine += ch;
+            break;
+        }
+      }
+    };
 
     // Register cleanup synchronously so it binds to this owner even though the
     // terminal opens after an async font wait.
@@ -129,6 +172,7 @@ export function TerminalPane(props: {
       subs.push(
         term.onData((data) => {
           if (sessionId !== null) void ptyWrite(sessionId, encoder.encode(data));
+          if (props.onUserSubmit) trackUserInput(data);
         }),
         term.onResize(({ rows, cols }) => {
           if (sessionId !== null) void ptyResize(sessionId, rows, cols);

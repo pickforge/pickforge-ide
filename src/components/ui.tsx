@@ -95,6 +95,7 @@ export function StatusPill(props: {
 /** Quick-launch chip — types an agent command into the focused shell. */
 export function Chip(props: {
   label: string;
+  hint?: string;
   ember?: boolean;
   disabled?: boolean;
   onClick?: () => void;
@@ -106,7 +107,10 @@ export function Chip(props: {
       disabled={props.disabled}
       onClick={() => props.onClick?.()}
     >
-      {props.label}
+      <span class="pf-chip-label">{props.label}</span>
+      <Show when={props.hint}>
+        <span class="pf-chip-hint">{props.hint}</span>
+      </Show>
     </button>
   );
 }

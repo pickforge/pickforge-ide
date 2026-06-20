@@ -106,7 +106,9 @@
 .pf-settings {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
-  align-items: start;
+  /* Cards in the same wrap row share the tallest one's height (no ragged
+   * bottoms); content stays top-aligned inside each card. */
+  align-items: stretch;
   gap: var(--pf-space-lg);
   padding: var(--pf-space-lg);
 }
@@ -124,10 +126,10 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--pf-space-md);
-  padding: var(--pf-space-sm) 0;
-  /* Uniform row height so a select-bearing row matches a plain text row and
-   * everything stays vertically centred. */
-  min-height: 40px;
+  /* Fixed row height, no vertical padding: a control-bearing row (select, seg)
+   * and a plain text row resolve to the same height. Inter-row spacing comes
+   * from the body's gap, not per-row padding. */
+  min-height: 44px;
 }
 .pf-settings-label {
   font-size: var(--pf-size-body-md);

@@ -1,7 +1,7 @@
 .pf-terminal {
   height: 100%;
   width: 100%;
-  padding: var(--pf-space-sm) 0 var(--pf-space-sm) var(--pf-space-md);
+  padding: 0;
   background: var(--pf-surface);
   border-radius: inherit;
   overflow: hidden;
@@ -16,10 +16,4 @@
 .pf-terminal .xterm-viewport {
   background-color: transparent !important;
 }
-.pf-terminal .xterm-viewport::-webkit-scrollbar {
-  width: 8px;
-}
-.pf-terminal .xterm-viewport::-webkit-scrollbar-thumb {
-  background: var(--pf-hairline-strong);
-  border-radius: var(--pf-radius-pill);
-}
+/* The viewport scrollbar inherits the global app scrollbar style (global.css). */

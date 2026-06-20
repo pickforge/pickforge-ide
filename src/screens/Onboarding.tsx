@@ -29,7 +29,7 @@ export function OnboardingScreen() {
   return (
     <BlueprintGrid halo>
       <div class="pf-onboarding">
-        <SelectionBracket active inset={12} armLength={16}>
+        <SelectionBracket active emberCorner={false} inset={12} armLength={16}>
           <div class="pf-onboarding-mark">
             <span class="pf-mark" />
           </div>

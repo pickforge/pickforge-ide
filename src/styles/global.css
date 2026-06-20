@@ -36,9 +36,20 @@ body {
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* desktop chrome: no text selection on shell, no overscroll */
+  /* desktop chrome: no text selection on shell, no overscroll. WebKitGTK only
+     honours the -webkit- prefixed property, so both are required or the whole
+     shell stays selectable (and drags grab stray text). */
   overscroll-behavior: none;
   user-select: none;
+  -webkit-user-select: none;
+}
+
+/* …except editable fields, which must stay selectable to edit. (The terminal
+   keeps its own selection — xterm uses a custom model, not browser selection.) */
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* The machine voice: monospace, tabular, muted by default. */
@@ -94,15 +105,26 @@ body {
   }
 }
 
-/* thin, dark scrollbars that match the chrome */
+/* The one scrollbar style for the whole app — thin, dark, tokenized. Applies to
+ * every scroll area (panes, inspector, lists) and the window's own vertical /
+ * horizontal overflow, so nothing falls back to the OS-default bar. Don't
+ * re-style scrollbars per component; change them here. */
+:root {
+  scrollbar-width: thin;
+  scrollbar-color: var(--pf-hairline-strong) transparent;
+}
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--pf-hairline-strong);
   border-radius: var(--pf-radius-pill);
 }
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pf-text-low);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }

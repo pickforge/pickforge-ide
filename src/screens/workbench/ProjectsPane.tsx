@@ -51,6 +51,7 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
+import { chatTitleOverride, DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
 
 const PROJECT_MIME = "application/x-pf-project";
 const CHAT_MIME = "application/x-pf-chat";
@@ -106,7 +107,7 @@ export function ProjectsPane() {
   const newGroupFor = (root: string) => { const id = createGroup(); assignProject(root, id); closeMenu(); setRenaming(id); };
   const newChat = (root: string) => {
     if (!chatsExpanded(root)) toggleChats(root);
-    void addChat("New chat", "claudeCode", root);
+    void addChat(DEFAULT_CHAT_TITLE, "claudeCode", root);
   };
   const toggleArchivedFor = (root: string) =>
     setShowArchived((s) => {
@@ -247,7 +248,17 @@ export function ProjectsPane() {
         onContextMenu={(e) => !p.archived && openFromContext("chat", id, e)}
       >
         <span class="pf-chat-dot" />
-        <Show when={renaming() === id} fallback={<span class="pf-chat-title">{p.chat.title}</span>}>
+        <Show
+          when={renaming() === id}
+          fallback={
+            <span
+              class="pf-chat-title"
+              classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}
+            >
+              {chatTitleOverride(id) ?? p.chat.title}
+            </span>
+          }
+        >
           <RenameField value={p.chat.title} commit={(v) => void renameChat(id, v)} />
         </Show>
         <Show
@@ -283,10 +294,6 @@ export function ProjectsPane() {
           <For each={visible()} fallback={<div class="pf-chat-empty">No chats yet</div>}>
             {(chat) => <ChatRow chat={chat} root={p.root} />}
           </For>
-          <button class="pf-chat-add" onClick={() => newChat(p.root)}>
-            <IconPlus size={12} />
-            <span>New chat</span>
-          </button>
           <Show when={archived().length > 0}>
             <button class="pf-rail-archived-toggle" onClick={() => toggleArchivedFor(p.root)}>
               <Show when={archOpen()} fallback={<IconChevronRight size={12} />}>
@@ -334,12 +341,15 @@ export function ProjectsPane() {
           <Show when={renaming() === root} fallback={<span class="pf-rail-row-label">{p.project.displayName}</span>}>
             <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
           </Show>
-          <Show when={count() > 0}>
-            <span class="pf-tree-count">{count()}</span>
-          </Show>
+          <button class="pf-rail-row-action" title="New chat" onClick={(e) => { e.stopPropagation(); newChat(root); }}>
+            <IconPlus size={14} />
+          </button>
           <button class="pf-rail-row-action" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
             <IconMore size={14} />
           </button>
+          <Show when={count() > 0}>
+            <span class="pf-tree-count">{count()}</span>
+          </Show>
         </div>
         <ChatChildren root={root} />
       </div>
@@ -363,12 +373,14 @@ export function ProjectsPane() {
             <span class="pf-proj-card-mark">{p.project.displayName.charAt(0).toUpperCase()}</span>
             <ProjectTwisty root={root} />
           </div>
-          <Show when={renaming() === root} fallback={<span class="pf-proj-card-name">{p.project.displayName}</span>}>
-            <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
-          </Show>
-          <Show when={count() > 0}>
-            <span class="pf-proj-card-count">{count()} chat{count() === 1 ? "" : "s"}</span>
-          </Show>
+          <div class="pf-proj-card-meta">
+            <Show when={renaming() === root} fallback={<span class="pf-proj-card-name">{p.project.displayName}</span>}>
+              <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
+            </Show>
+            <Show when={count() > 0}>
+              <span class="pf-proj-card-count">{count()} chat{count() === 1 ? "" : "s"}</span>
+            </Show>
+          </div>
           <button class="pf-proj-card-menu" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
             <IconMore size={14} />
           </button>
@@ -429,8 +441,10 @@ export function ProjectsPane() {
           <button classList={{ active: !grid() }} title="List view" onClick={() => setViewMode("list")}><IconList size={13} /></button>
           <button classList={{ active: grid() }} title="Grid view" onClick={() => setViewMode("grid")}><IconGrid size={13} /></button>
         </div>
-        <button class="pf-icon-btn" title="New group" onClick={() => setRenaming(createGroup())}><IconFolderPlus size={14} /></button>
-        <button class="pf-icon-btn" title="Add project" onClick={pickProject}><IconPlus /></button>
+        <div class="pf-pane-toolbar-actions">
+          <button class="pf-icon-btn" title="New group" onClick={() => setRenaming(createGroup())}><IconFolderPlus size={14} /></button>
+          <button class="pf-icon-btn" title="Add project" onClick={pickProject}><IconPlus /></button>
+        </div>
       </div>
 
       <div class="pf-rail-list">

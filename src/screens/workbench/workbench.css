@@ -14,7 +14,11 @@
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
-  min-width: 0;
+  /* Keep the column usable instead of collapsing to nothing when the docks +
+   * zoom outgrow the window — the window scrolls horizontally past this floor.
+   * Clip so a squeezed center can never paint over the right dock. */
+  min-width: 220px;
+  overflow: hidden;
 }
 
 /* ---- docks (resizable / hideable columns of panes) ---- */
@@ -215,9 +219,15 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-pane-toolbar {
   display: flex;
   align-items: center;
-  gap: var(--pf-space-xs);
+  gap: var(--pf-space-sm);
   padding: 0 var(--pf-space-sm) var(--pf-space-xs);
   flex: none;
+}
+.pf-pane-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  margin-left: auto;
 }
 .pf-pane-toolbar--end {
   justify-content: flex-end;
@@ -225,9 +235,9 @@ body.pf-resizing .pf-dock-resizer-grip {
 
 /* drop highlight for pane DnD + project→group DnD */
 .pf-drop-target {
-  outline: 1px dashed var(--pf-ember);
+  outline: 1px dashed var(--pf-hairline-strong);
   outline-offset: -2px;
-  background: color-mix(in srgb, var(--pf-ember) 8%, transparent);
+  background: var(--pf-item-fill);
 }
 
 /* ---- source control pane ---- */
@@ -370,7 +380,7 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-diff-tabs button.active {
   background: var(--pf-surface-3);
-  color: var(--pf-ember);
+  color: var(--pf-text-hi);
 }
 .pf-diff-body {
   overflow: auto;
@@ -441,24 +451,9 @@ body.pf-resizing .pf-dock-resizer-grip {
   flex-direction: column;
   gap: 2px;
   /* Reserve a thin gutter so the scrollbar lives in its own lane instead of
-   * overlapping the row labels (Firefox/standards + WebKit). */
+   * overlapping the row labels. The bar itself is styled globally (global.css). */
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--pf-hairline-strong) transparent;
   padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
-}
-.pf-rail-list::-webkit-scrollbar,
-.pf-file-tree::-webkit-scrollbar {
-  width: 6px;
-}
-.pf-rail-list::-webkit-scrollbar-thumb,
-.pf-file-tree::-webkit-scrollbar-thumb {
-  background: var(--pf-hairline-strong);
-  border-radius: var(--pf-radius-pill);
-}
-.pf-rail-list::-webkit-scrollbar-track,
-.pf-file-tree::-webkit-scrollbar-track {
-  background: transparent;
 }
 .pf-rail-empty {
   font-size: var(--pf-size-body-sm);
@@ -487,9 +482,12 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-rail-row.active {
   background: var(--pf-surface-2);
   color: var(--pf-text-hi);
-  box-shadow: inset 3px 0 0 var(--pf-ember), var(--pf-glow-ember-soft);
+  box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
 }
 .pf-rail-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: var(--pf-weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -511,7 +509,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   opacity: 1;
 }
 .pf-rail-row-action:hover {
-  color: var(--pf-ember);
+  color: var(--pf-text-hi);
 }
 
 /* ---- projects tree: project rows with nested chat children ---- */
@@ -521,6 +519,10 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-tree-row {
   gap: var(--pf-space-xs);
+}
+.pf-tree-row .pf-rail-row-label {
+  flex: 1;
+  min-width: 0;
 }
 .pf-tree-twisty {
   display: inline-flex;
@@ -554,7 +556,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   flex: none;
 }
 .pf-rail-row.active .pf-tree-count {
-  color: var(--pf-ember);
+  color: var(--pf-text-hi);
 }
 
 /* chat children: indented under their project, with a guide rail */
@@ -585,7 +587,7 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-chat-row.active {
   background: var(--pf-surface-2);
   color: var(--pf-text-hi);
-  box-shadow: inset 2px 0 0 var(--pf-ember);
+  box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
 }
 .pf-chat-row--archived {
   color: var(--pf-text-low);
@@ -601,8 +603,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   flex: none;
 }
 .pf-chat-row.active .pf-chat-dot {
-  background: var(--pf-ember);
-  box-shadow: 0 0 7px -1px var(--pf-ember);
+  background: var(--pf-text-hi);
 }
 .pf-chat-title {
   flex: 1;
@@ -610,6 +611,19 @@ body.pf-resizing .pf-dock-resizer-grip {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Typewriter caret while the auto-name types itself in (see chatAutoName). */
+.pf-chat-title--typing::after {
+  content: "▏";
+  margin-left: -1px;
+  color: currentColor;
+  animation: pf-caret-blink 0.9s steps(1, end) infinite;
+}
+@keyframes pf-caret-blink {
+  50% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-title--typing::after { animation: none; }
 }
 .pf-chat-row .pf-rail-row-action {
   opacity: 0;
@@ -623,26 +637,6 @@ body.pf-resizing .pf-dock-resizer-grip {
   color: var(--pf-text-low);
   padding: var(--pf-space-xs) var(--pf-space-sm);
 }
-.pf-chat-add {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pf-space-xs);
-  align-self: flex-start;
-  margin-top: 2px;
-  padding: var(--pf-space-xs) var(--pf-space-sm);
-  border: none;
-  background: transparent;
-  border-radius: var(--pf-radius-sm);
-  color: var(--pf-text-low);
-  font-size: var(--pf-size-body-sm);
-  cursor: pointer;
-  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
-    background var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-chat-add:hover {
-  color: var(--pf-ember);
-  background: var(--pf-item-fill);
-}
 /* grid view: a project's chats break to a full-width row beneath its card */
 .pf-proj-card-top {
   display: flex;
@@ -655,6 +649,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   letter-spacing: var(--pf-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--pf-text-low);
+  flex: none;
 }
 .pf-grid-chats {
   grid-column: 1 / -1;
@@ -693,7 +688,7 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-view-toggle button.active {
   background: var(--pf-surface-3);
-  color: var(--pf-ember);
+  color: var(--pf-text-hi);
 }
 
 .pf-group {
@@ -796,10 +791,10 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-menu-item--on {
   color: var(--pf-text-hi);
-  box-shadow: inset 2px 0 0 var(--pf-ember);
+  box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
 }
 .pf-menu-item--accent {
-  color: var(--pf-ember);
+  color: var(--pf-text-hi);
 }
 .pf-menu-sep {
   height: var(--pf-hairline-width);
@@ -887,8 +882,40 @@ body.pf-resizing .pf-dock-resizer-grip {
   border-color: var(--pf-hairline-strong);
 }
 .pf-proj-card.active {
-  border-color: var(--pf-ember);
-  box-shadow: var(--pf-glow-ember-soft);
+  border-color: var(--pf-hairline-strong);
+  /* The brand's selection glyph: four off-white L-corner brackets inset on
+   * the chosen card. No ember — the focused terminal owns that ember. */
+  --pf-bracket-arm: 7px;
+  --pf-bracket-stroke: var(--pf-bracket-width);
+  --pf-bracket-color: var(--pf-text-hi);
+  background-image:
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color)),
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color)),
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color)),
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color)),
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color)),
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color)),
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color)),
+    linear-gradient(var(--pf-bracket-color), var(--pf-bracket-color));
+  background-repeat: no-repeat;
+  background-size:
+    var(--pf-bracket-arm) var(--pf-bracket-stroke),
+    var(--pf-bracket-stroke) var(--pf-bracket-arm),
+    var(--pf-bracket-arm) var(--pf-bracket-stroke),
+    var(--pf-bracket-stroke) var(--pf-bracket-arm),
+    var(--pf-bracket-arm) var(--pf-bracket-stroke),
+    var(--pf-bracket-stroke) var(--pf-bracket-arm),
+    var(--pf-bracket-arm) var(--pf-bracket-stroke),
+    var(--pf-bracket-stroke) var(--pf-bracket-arm);
+  background-position:
+    top var(--pf-space-xs) left var(--pf-space-xs),
+    top var(--pf-space-xs) left var(--pf-space-xs),
+    top var(--pf-space-xs) right var(--pf-space-xs),
+    top var(--pf-space-xs) right var(--pf-space-xs),
+    bottom var(--pf-space-xs) left var(--pf-space-xs),
+    bottom var(--pf-space-xs) left var(--pf-space-xs),
+    bottom var(--pf-space-xs) right var(--pf-space-xs),
+    bottom var(--pf-space-xs) right var(--pf-space-xs);
 }
 .pf-proj-card-mark {
   display: inline-flex;
@@ -903,15 +930,23 @@ body.pf-resizing .pf-dock-resizer-grip {
   color: var(--pf-text-med);
 }
 .pf-proj-card.active .pf-proj-card-mark {
-  color: var(--pf-ember);
-  border-color: var(--pf-ember);
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+.pf-proj-card-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
 }
 .pf-proj-card-name {
   font-size: var(--pf-size-body-sm);
+  font-weight: var(--pf-weight-semibold);
   color: var(--pf-text-hi);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .pf-proj-card-menu {
   position: absolute;
@@ -1119,7 +1154,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   position: relative;
   flex: 1;
   min-height: 0;
-  padding: var(--pf-space-sm);
+  padding: var(--pf-space-xs);
   overflow: hidden;
 }
 /* Engineering-paper depth: a faint blueprint grid + a soft ember bloom at the
@@ -1149,7 +1184,7 @@ body.pf-resizing .pf-dock-resizer-grip {
     var(--pf-ember-glow),
     transparent 68%
   );
-  opacity: 0.5;
+  opacity: 0.18;
 }
 .pf-workbench-terminal > * {
   position: relative;
@@ -1232,9 +1267,8 @@ body.pf-resizing .pf-dock-resizer-grip {
   color: var(--pf-text-hi);
 }
 .pf-run-row--on {
-  border-color: var(--pf-ember);
+  border-color: var(--pf-hairline-strong);
   color: var(--pf-text-hi);
-  box-shadow: var(--pf-glow-ember-soft);
 }
 .pf-run-row:disabled {
   opacity: 0.5;
@@ -1254,8 +1288,8 @@ body.pf-resizing .pf-dock-resizer-grip {
     border-color var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-run-radio--on {
-  background: var(--pf-ember);
-  border-color: var(--pf-ember);
+  background: var(--pf-text-hi);
+  border-color: var(--pf-text-hi);
 }
 .pf-run-label {
   flex: 1;
@@ -1280,6 +1314,9 @@ body.pf-resizing .pf-dock-resizer-grip {
   gap: var(--pf-space-xs);
 }
 .pf-cap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--pf-font-mono);
   font-size: 9px;
   letter-spacing: 0.06em;
@@ -1287,8 +1324,17 @@ body.pf-resizing .pf-dock-resizer-grip {
   color: var(--pf-text-med);
   background: var(--pf-item-fill);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
-  border-radius: var(--pf-radius-pill);
-  padding: 2px var(--pf-space-sm);
+  border-radius: 3px;
+  padding: 2px var(--pf-space-sm) 2px 4px;
+}
+.pf-cap-badge::before {
+  content: "";
+  width: 3px;
+  height: 8px;
+  border: var(--pf-bracket-width) solid var(--pf-text-low);
+  border-right: none;
+  border-radius: 1px 0 0 1px;
+  flex: none;
 }
 .pf-inspector-section {
   display: flex;

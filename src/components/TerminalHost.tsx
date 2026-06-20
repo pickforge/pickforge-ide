@@ -148,8 +148,9 @@ const baseName = (p?: string) =>
   p ? p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "" : "";
 
 export interface TerminalHostHandle {
-  /** Type text into the currently focused pane's shell. */
-  typeToFocused: (text: string) => void;
+  /** Type text into the currently focused pane's shell. Returns that pane's id
+   *  if a shell accepted the text, or null if no pane was ready yet. */
+  typeToFocused: (text: string) => string | null;
   /** Split the focused pane and run `command` (e.g. an editor) in the new pane. */
   openInNewPane: (command: string) => void;
 }
@@ -157,8 +158,9 @@ export interface TerminalHostHandle {
 export function TerminalHost(props: {
   onReady?: (handle: TerminalHostHandle) => void;
   cwd?: string;
-  /** Forwarded from every pane: a line the user typed and submitted. */
-  onUserSubmit?: (line: string) => void;
+  /** Forwarded from every pane: a line the user typed and submitted, tagged with
+   *  the id of the pane it came from. */
+  onUserSubmit?: (line: string, paneId: string) => void;
 }) {
   const first = newLeaf();
   const [root, setRoot] = createSignal<Node>(first);
@@ -351,7 +353,13 @@ export function TerminalHost(props: {
   onCleanup(() => window.removeEventListener("pointerdown", onWindowDown));
 
   props.onReady?.({
-    typeToFocused: (text) => handles.get(focusedId())?.typeText(text),
+    typeToFocused: (text) => {
+      const id = focusedId();
+      const h = handles.get(id);
+      if (!h) return null;
+      h.typeText(text);
+      return id;
+    },
     openInNewPane,
   });
 
@@ -446,7 +454,7 @@ export function TerminalHost(props: {
                 <div class="pf-pane-inner">
                   <TerminalPane
                     cwd={props.cwd}
-                    onUserSubmit={props.onUserSubmit}
+                    onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
                       if (focusedId() === leaf.id) handle.focus();

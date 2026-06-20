@@ -43,16 +43,18 @@ export function WorkbenchScreen() {
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
   const handles = new Map<string, TerminalHostHandle>();
 
-  const typeToActive = (text: string) => {
-    if (!text) return;
-    handles.get(workspace.activeChatId ?? "")?.typeToFocused(text);
+  const typeToActive = (text: string): string | null => {
+    if (!text) return null;
+    return handles.get(workspace.activeChatId ?? "")?.typeToFocused(text) ?? null;
   };
 
-  // Fire a quick-launch item into the active chat; agent items also arm that
-  // chat so its first message becomes the title (see chatAutoName).
+  // Fire a quick-launch item into the active chat; agent items also arm the pane
+  // that received the launch so its first message becomes the title — but only
+  // if the text actually landed (a pane handle accepted it), so a click before
+  // the terminal is ready can't mis-arm (see chatAutoName).
   const launchItem = (item: { agentId?: string }, text: string) => {
-    typeToActive(text);
-    if (item.agentId) armChatAutoName(workspace.activeChatId);
+    const paneId = typeToActive(text);
+    if (paneId && item.agentId) armChatAutoName(workspace.activeChatId, paneId);
   };
 
   // Open a file per the user's preference: a new editor pane (nvim/custom) or the
@@ -208,7 +210,7 @@ export function WorkbenchScreen() {
                 <TerminalHost
                   cwd={h.projectRoot}
                   onReady={(handle) => handles.set(h.chatId, handle)}
-                  onUserSubmit={(line) => maybeAutoNameChat(h.chatId, line)}
+                  onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                 />
               </div>
             )}

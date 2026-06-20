@@ -31,22 +31,27 @@ const VALUE_FLAGS = /^(-m|--model|--cwd|-C|--profile|--config|-c)$/;
 
 const MAX_TITLE = 48;
 
-// chatIds armed for auto-naming by an agent quick-launch.
-const armed = new Set<string>();
+// chatId -> the pane id armed for auto-naming. Scoped to a pane so that, in a
+// chat with split terminals, only the pane the agent launched in can supply the
+// title — a submit in another split pane can't steal it.
+const armed = new Map<string, string>();
 
-/** Arm a chat so its next submitted line is taken as the title (agent launched
- *  via a quick-launch chip/hotkey — we already know it's an agent). No-op once
- *  the chat has a real title. */
-export function armChatAutoName(chatId: string | null | undefined) {
-  if (!chatId) return;
+/** Arm a chat so its next submitted line in `paneId` is taken as the title
+ *  (agent launched via a quick-launch chip/hotkey — we already know it's an
+ *  agent). No-op once the chat has a real title or without a launched pane. */
+export function armChatAutoName(
+  chatId: string | null | undefined,
+  paneId: string | null | undefined,
+) {
+  if (!chatId || !paneId) return;
   const chat = findChat(chatId);
-  if (chat && isDefaultChatTitle(chat.title)) armed.add(chatId);
+  if (chat && isDefaultChatTitle(chat.title)) armed.set(chatId, paneId);
 }
 
-/** Feed a line the user submitted (pressed Enter on) in a chat's terminal. If
- *  the chat still has the default title and is attributable to an agent, derive
- *  a title from the line and rename — once. */
-export function maybeAutoNameChat(chatId: string, rawLine: string) {
+/** Feed a line the user submitted (pressed Enter on) in a chat's terminal pane.
+ *  If the chat still has the default title and is attributable to an agent,
+ *  derive a title from the line and rename — once. */
+export function maybeAutoNameChat(chatId: string, rawLine: string, paneId: string) {
   const chat = findChat(chatId);
   if (!chat || !isDefaultChatTitle(chat.title)) {
     armed.delete(chatId);
@@ -56,18 +61,22 @@ export function maybeAutoNameChat(chatId: string, rawLine: string) {
   const line = rawLine.trim();
   if (!line) return; // ignore blank submits; stay armed
 
-  if (armed.has(chatId)) {
+  const armedPane = armed.get(chatId);
+  if (armedPane !== undefined) {
+    // Only the pane that received the launch may supply the title; a submit in
+    // any other split pane is ignored and the arming stands.
+    if (armedPane !== paneId) return;
     armed.delete(chatId);
     commit(chatId, line);
     return;
   }
 
-  // Not armed by a chip — is this a hand-typed agent launch?
+  // Not armed by a chip — is this a hand-typed agent launch in this pane?
   const launch = matchAgentLaunch(line);
   if (!launch) return; // agent-only scope: plain shell commands don't rename
 
   if (launch.prompt) commit(chatId, launch.prompt); // `claude fix the bug`
-  else armed.add(chatId); // bare `claude` — wait for the in-TUI prompt
+  else armed.set(chatId, paneId); // bare `claude` — wait for the in-TUI prompt
 }
 
 // Transient display title per chat while the auto-name types itself in. The

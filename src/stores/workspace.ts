@@ -128,7 +128,13 @@ export async function refreshFromDb() {
     if (state.activeRoot != null && !liveRoots.has(state.activeRoot)) {
       const nextRoot = projects[0]?.projectRoot ?? null;
       setState("activeRoot", nextRoot);
-      setState("activeChatId", nextRoot ? firstVisibleChat(chatsFor(nextRoot)) : null);
+      // Load the fallback project's chats before picking one — its bucket may
+      // never have been opened in this window, and reading an empty bucket would
+      // strand the UI on "no chat open".
+      const chats = nextRoot
+        ? state.chatsByRoot[nextRoot] ?? (await fetchChats(nextRoot))
+        : [];
+      setState("activeChatId", nextRoot ? firstVisibleChat(chats) : null);
     } else if (state.activeRoot) {
       const chats = chatsFor(state.activeRoot);
       const keep =

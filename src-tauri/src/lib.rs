@@ -81,6 +81,7 @@ pub fn run() {
             vm_commands::vm_dispose_group,
             vm_commands::vm_screenshot,
             vm_commands::vm_widget_properties,
+            vm_commands::inspect_dir,
             vm_commands::inspect_save,
         ])
         .run(tauri::generate_context!())

@@ -3,7 +3,7 @@
 //! tap-to-select / navigate stream events to the UI.
 
 use base64::Engine;
-use pickforge_core::{decode_widget_tree, VmServiceClient, WidgetNode};
+use pickforge_core::{decode_widget_tree, pickforge_home, VmServiceClient, WidgetNode};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
@@ -272,18 +272,33 @@ pub async fn vm_widget_properties(
     Ok(out)
 }
 
+/// Resolve (and create) the inspector capture dir: PickForge home by default
+/// (`~/.pickforge/inspect`), or the project repo (`<root>/.pickforge/inspect`)
+/// when `repo_local`. Returns the absolute dir so the UI can compose paths.
+#[tauri::command]
+pub fn inspect_dir(repo_local: bool, project_root: String) -> Result<String, String> {
+    let dir = if repo_local {
+        std::path::Path::new(&project_root).join(".pickforge").join("inspect")
+    } else {
+        let home = pickforge_home(None).map_err(|e| e.to_string())?;
+        std::path::Path::new(&home).join("inspect")
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
 /// Write the inspector capture (a context markdown + optional screenshot PNG)
-/// under `<project_root>/.pickforge/inspect/`. Returns the absolute paths so the
-/// launched agent can read them regardless of cwd.
+/// into `dir` (from [`inspect_dir`]). Returns the absolute paths so the launched
+/// agent can read them regardless of cwd.
 #[tauri::command]
 pub fn inspect_save(
-    project_root: String,
+    dir: String,
     base_name: String,
     markdown: String,
     png_base64: Option<String>,
 ) -> Result<InspectPaths, String> {
-    let dir = std::path::Path::new(&project_root).join(".pickforge").join("inspect");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = std::path::Path::new(&dir);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let md_path = dir.join(format!("{base_name}.md"));
     std::fs::write(&md_path, markdown).map_err(|e| e.to_string())?;
     let png_path = match png_base64 {

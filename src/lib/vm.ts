@@ -40,14 +40,19 @@ export interface InspectPaths {
   mdPath: string;
   pngPath: string | null;
 }
-/** Write the inspector capture (context markdown + optional screenshot PNG) under
- *  the project's .pickforge/inspect/. Returns absolute paths. */
+/** Resolve (and create) the capture dir: PickForge home by default, or the
+ *  project repo when repoLocal. Returns the absolute dir. */
+export const inspectDir = (repoLocal: boolean, projectRoot: string) =>
+  invoke<string>("inspect_dir", { repoLocal, projectRoot });
+
+/** Write the inspector capture (context markdown + optional screenshot PNG) into
+ *  `dir` (from inspectDir). Returns absolute paths. */
 export const inspectSave = (
-  projectRoot: string,
+  dir: string,
   baseName: string,
   markdown: string,
   pngBase64: string | null,
-) => invoke<InspectPaths>("inspect_save", { projectRoot, baseName, markdown, pngBase64 });
+) => invoke<InspectPaths>("inspect_save", { dir, baseName, markdown, pngBase64 });
 
 /** A device tap (select mode) surfaces a source location to jump to. */
 export interface VmNavigate {

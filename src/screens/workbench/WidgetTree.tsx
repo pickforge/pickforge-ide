@@ -11,11 +11,13 @@ import { openPathSystem } from "../../lib/opener";
 import { editorCommand } from "../../stores/fileOpenSettings";
 import { workspace } from "../../stores/workspace";
 import { getTerminalHost } from "../../stores/terminalHosts";
+import { captureInRepo, setCaptureInRepo } from "../../stores/inspectStorage";
 import { armChatAutoName } from "../../lib/chatAutoName";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
 import { buildWidgetMarkdown, widgetBaseName } from "../../lib/widgetContext";
 import {
+  inspectDir,
   inspectSave,
   onVmFrame,
   vmFindIsolate,
@@ -174,8 +176,10 @@ export function WidgetTree() {
     try {
       const png = await vmScreenshot(iso, node.id, 1024, 2048).catch(() => null);
       const base = widgetBaseName(node);
-      const sep = root.includes("\\") ? "\\" : "/";
-      const predictedPng = png ? `${root}${sep}.pickforge${sep}inspect${sep}${base}.png` : null;
+      // Default to PickForge home; per-project opt-in to the repo.
+      const dir = await inspectDir(captureInRepo(root), root);
+      const sep = dir.includes("\\") ? "\\" : "/";
+      const predictedPng = png ? `${dir}${sep}${base}.png` : null;
       const t = tree();
       const path = (t ? findPath(t, node.id) : null) ?? [node];
       const ancestors = path.slice(0, -1).map((n) => n.className).slice(-5);
@@ -188,7 +192,7 @@ export function WidgetTree() {
         pngPath: predictedPng,
         instruction: prompt(),
       });
-      const paths = await inspectSave(root, base, md, png);
+      const paths = await inspectSave(dir, base, md, png);
       const ask = `Read ${paths.mdPath} (PickForge widget capture: screenshot path + source file:line + props inside). ${prompt()}`;
       const paneId = host.openInNewPane(`${commandForItem(item)} ${shquote(ask)}`);
       if (paneId) armChatAutoName(workspace.activeChatId, paneId);
@@ -338,6 +342,17 @@ export function WidgetTree() {
                   }}
                 />
                 <div class="pf-wd-composer-actions">
+                  <button
+                    class="pf-wd-loc"
+                    title="Where the capture (md + screenshot) is saved"
+                    onClick={() =>
+                      workspace.activeRoot &&
+                      setCaptureInRepo(workspace.activeRoot, !captureInRepo(workspace.activeRoot))
+                    }
+                  >
+                    {captureInRepo(workspace.activeRoot) ? "saved in repo" : "saved in ~/.pickforge"}
+                  </button>
+                  <span class="pf-wd-composer-spacer" />
                   <button class="pf-text-btn" disabled={busy()} onClick={() => setComposerFor(null)}>
                     Cancel
                   </button>

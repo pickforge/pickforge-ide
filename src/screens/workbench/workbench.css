@@ -1868,3 +1868,20 @@ body.pf-resizing .pf-dc-resizer-grip {
   font-size: var(--pf-size-eyebrow);
   color: var(--pf-error);
 }
+
+/* Capture-location toggle in the Ask-AI composer (per project). */
+.pf-wd-composer-spacer {
+  flex: 1;
+}
+.pf-wd-loc {
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  cursor: pointer;
+  padding: 0;
+}
+.pf-wd-loc:hover {
+  color: var(--pf-text-hi);
+}

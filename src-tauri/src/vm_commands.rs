@@ -287,9 +287,10 @@ pub fn inspect_dir(repo_local: bool, project_root: String) -> Result<String, Str
     Ok(dir.to_string_lossy().into_owned())
 }
 
-/// Write the inspector capture (a context markdown + optional screenshot PNG)
-/// into `dir` (from [`inspect_dir`]). Returns the absolute paths so the launched
-/// agent can read them regardless of cwd.
+/// Write the inspector capture into its own per-capture sub-folder
+/// `<dir>/<base_name>/` (from [`inspect_dir`]) as `context.md` + `screenshot.png`,
+/// so each capture is grouped and removable as a unit. Returns absolute paths so
+/// the launched agent can read them regardless of cwd.
 #[tauri::command]
 pub fn inspect_save(
     dir: String,
@@ -297,16 +298,16 @@ pub fn inspect_save(
     markdown: String,
     png_base64: Option<String>,
 ) -> Result<InspectPaths, String> {
-    let dir = std::path::Path::new(&dir);
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let md_path = dir.join(format!("{base_name}.md"));
+    let dir = std::path::Path::new(&dir).join(&base_name);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let md_path = dir.join("context.md");
     std::fs::write(&md_path, markdown).map_err(|e| e.to_string())?;
     let png_path = match png_base64 {
         Some(b64) if !b64.is_empty() => {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64.as_bytes())
                 .map_err(|e| e.to_string())?;
-            let p = dir.join(format!("{base_name}.png"));
+            let p = dir.join("screenshot.png");
             std::fs::write(&p, bytes).map_err(|e| e.to_string())?;
             Some(p.to_string_lossy().into_owned())
         }

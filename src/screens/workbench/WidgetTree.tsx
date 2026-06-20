@@ -179,7 +179,8 @@ export function WidgetTree() {
       // Default to PickForge home; per-project opt-in to the repo.
       const dir = await inspectDir(captureInRepo(root), root);
       const sep = dir.includes("\\") ? "\\" : "/";
-      const predictedPng = png ? `${dir}${sep}${base}.png` : null;
+      // Each capture gets its own sub-folder: <dir>/<base>/{context.md,screenshot.png}.
+      const predictedPng = png ? `${dir}${sep}${base}${sep}screenshot.png` : null;
       const t = tree();
       const path = (t ? findPath(t, node.id) : null) ?? [node];
       const ancestors = path.slice(0, -1).map((n) => n.className).slice(-5);

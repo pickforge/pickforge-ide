@@ -1587,8 +1587,6 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-wt-tree {
   display: flex;
   flex-direction: column;
-  max-height: 38vh;
-  overflow: auto;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-body-sm);
 }
@@ -1717,10 +1715,24 @@ body.pf-resizing .pf-dc-resizer-grip {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 22vh;
-  overflow: auto;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
+}
+.pf-wd-nulltoggle {
+  align-self: flex-start;
+  margin-top: var(--pf-space-xs);
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 0;
+}
+.pf-wd-nulltoggle:hover {
+  color: var(--pf-text-hi);
 }
 .pf-wd-prop {
   display: flex;
@@ -1744,9 +1756,25 @@ body.pf-resizing .pf-dc-resizer-grip {
   flex-direction: column;
   gap: var(--pf-space-sm);
   padding: var(--pf-space-sm);
-  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border: var(--pf-hairline-width) solid var(--pf-ember-deep);
   border-radius: var(--pf-radius-sm);
   background: var(--pf-surface-2);
+  /* A faint amber breath to draw the eye — subtle, and off for reduced motion. */
+  animation: pf-ai-glow 3.2s var(--pf-ease-forge) infinite;
+}
+@keyframes pf-ai-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: var(--pf-glow-ember-soft);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-wd-ai {
+    animation: none;
+  }
 }
 .pf-wd-ai-chips {
   display: flex;

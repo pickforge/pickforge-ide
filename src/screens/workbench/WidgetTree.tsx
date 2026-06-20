@@ -64,6 +64,9 @@ export function WidgetTree() {
   const [error, setError] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [props, setProps] = createSignal<WidgetProp[]>([]);
+  const [showNull, setShowNull] = createSignal(false);
+  const nullCount = () => props().filter((p) => p.value === "null").length;
+  const visibleProps = () => (showNull() ? props() : props().filter((p) => p.value !== "null"));
   const [thumb, setThumb] = createSignal<string | null>(null);
   const [composerFor, setComposerFor] = createSignal<QuickLaunchItem | null>(null);
   const [prompt, setPrompt] = createSignal("");
@@ -345,7 +348,7 @@ export function WidgetTree() {
 
             <Show when={props().length > 0}>
               <div class="pf-wd-props">
-                <For each={props()}>
+                <For each={visibleProps()}>
                   {(p) => (
                     <div class="pf-wd-prop">
                       <span class="pf-wd-prop-name">{p.name}</span>
@@ -353,6 +356,11 @@ export function WidgetTree() {
                     </div>
                   )}
                 </For>
+                <Show when={nullCount() > 0}>
+                  <button class="pf-wd-nulltoggle" onClick={() => setShowNull((o) => !o)}>
+                    {showNull() ? "hide null" : `show ${nullCount()} null`}
+                  </button>
+                </Show>
               </div>
             </Show>
             <Show when={error()}>

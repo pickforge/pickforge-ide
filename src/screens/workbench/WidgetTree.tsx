@@ -13,7 +13,7 @@ import { workspace } from "../../stores/workspace";
 import { getTerminalHost } from "../../stores/terminalHosts";
 import { armChatAutoName } from "../../lib/chatAutoName";
 import { shquote } from "../../lib/runTargets";
-import { commandForItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
+import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
 import { buildWidgetMarkdown, widgetBaseName } from "../../lib/widgetContext";
 import {
   inspectSave,
@@ -236,7 +236,7 @@ export function WidgetTree() {
     });
   });
 
-  const agentChips = () => quickLaunchItems().filter((i) => i.agentId);
+  const agentChips = () => quickLaunchItems().filter(isAskAiItem);
 
   return (
     <>

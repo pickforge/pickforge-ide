@@ -15,13 +15,16 @@ export interface QuickLaunchItem {
   command?: string;
   /** optional binary whose presence gates the chip (e.g. "flutter", "adb"). */
   binary?: string;
+  /** show in the Inspector's "Ask AI" row (the widget context is appended to
+   *  this item's command). Set per item in Settings; agent items default on. */
+  ai?: boolean;
 }
 
 const STORE_KEY = "pickforge.quickLaunch";
 
 export const DEFAULT_QUICK_LAUNCH: QuickLaunchItem[] = [
-  { id: "agent-claude", label: "claude", agentId: "claudeCode", hotkey: "Mod+1" },
-  { id: "agent-codex", label: "codex", agentId: "codex", hotkey: "Mod+2" },
+  { id: "agent-claude", label: "claude", agentId: "claudeCode", hotkey: "Mod+1", ai: true },
+  { id: "agent-codex", label: "codex", agentId: "codex", hotkey: "Mod+2", ai: true },
   { id: "tool-flutter-doctor", label: "flutter doctor", command: "flutter doctor ", binary: "flutter", hotkey: "Mod+3" },
   { id: "tool-adb-devices", label: "adb devices", command: "adb devices ", binary: "adb", hotkey: "Mod+4" },
 ];
@@ -74,6 +77,12 @@ export function resetQuickLaunchItems() {
 export function commandForItem(item: QuickLaunchItem): string {
   if (item.agentId) return launchCommand(item.agentId);
   return item.command ?? "";
+}
+
+/** Whether this item appears in the Inspector's "Ask AI" row. Explicit `ai`
+ *  flag wins; legacy items with an agentId default on (back-compat). */
+export function isAskAiItem(item: QuickLaunchItem): boolean {
+  return item.ai ?? !!item.agentId;
 }
 
 /** The binary whose availability gates a chip (explicit, or the agent's). */

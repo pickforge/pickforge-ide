@@ -128,6 +128,8 @@ export function DebugConsole() {
             onReady={attachConsole}
             onExit={consoleExited}
             onOutput={ingestRunOutput}
+            readOnly
+            consoleTheme
           />
         </Show>
       </div>

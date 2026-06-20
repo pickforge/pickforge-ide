@@ -215,10 +215,35 @@
   letter-spacing: 0.04em;
   color: var(--pf-text-low);
 }
+.pf-statusbar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  min-width: 0;
+}
 .pf-statusbar-item {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Quick show/hide toggles for the side docks (arrow points the move direction). */
+.pf-statusbar-dock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-statusbar-dock:hover {
+  color: var(--pf-text-hi);
+}
+.pf-statusbar-dock.active {
+  color: var(--pf-text-med);
 }
 .pf-statusbar-right {
   display: inline-flex;

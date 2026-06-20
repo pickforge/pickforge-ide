@@ -1,6 +1,6 @@
 import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { navigate, route, type Route } from "./router";
-import { loadWorkspace, workspace } from "./stores/workspace";
+import { loadWorkspace, refreshFromDb, workspace } from "./stores/workspace";
 import { applyPersistedZoom, currentZoom, handleZoomKey, zoomReset } from "./lib/zoom";
 import { appVersion, loadAppVersion } from "./lib/appInfo";
 import { initTheme } from "./stores/theme";
@@ -41,6 +41,24 @@ export function App() {
     void loadAppVersion();
     void checkForUpdate(true);
 
+    // Dev + release share one DB (~/.pickforge/pickforge.db); re-read it whenever
+    // this window regains focus so the other instance's chat/project edits don't
+    // sit stale here. Falls back to the DOM focus event outside Tauri (VRT).
+    let unlistenFocus: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          if (focused) void refreshFromDb();
+        });
+      } catch {
+        const onFocus = () => void refreshFromDb();
+        window.addEventListener("focus", onFocus);
+        unlistenFocus = () => window.removeEventListener("focus", onFocus);
+      }
+    })();
+    onCleanup(() => unlistenFocus?.());
+
     void (async () => {
       await loadWorkspace();
       const dismissed = localStorage.getItem("pickforge.onboardingDismissed") === "true";
@@ -58,6 +76,11 @@ export function App() {
           <span class="pf-mark" />
           <span class="pf-wordmark">PickForge</span>
           <MonoEyebrow text={`v${appVersion()}`} />
+          <Show when={import.meta.env.DEV}>
+            <span class="pf-dev-badge" title="Development build — running via tauri dev">
+              Dev
+            </span>
+          </Show>
           <Show when={updateAvailable()}>
             <button
               class="pf-update-badge"
@@ -83,8 +106,7 @@ export function App() {
         </nav>
         <StatusPill
           label={workspace.activeRoot ? "shell · live" : "no project"}
-          intent={workspace.activeRoot ? "live" : "neutral"}
-          pulsing={!!workspace.activeRoot}
+          intent={workspace.activeRoot ? "connected" : "neutral"}
         />
       </header>
 

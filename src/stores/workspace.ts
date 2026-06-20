@@ -95,6 +95,53 @@ export async function loadWorkspace() {
   }
 }
 
+let refreshing = false;
+/** Re-read everything that lives in the shared DB (`~/.pickforge/pickforge.db`):
+ *  the project list and every already-loaded project's chats. Lets a second
+ *  running instance's writes (e.g. dev alongside release) surface here instead of
+ *  going stale. Fires the chat-deletion notifiers for chats another instance
+ *  removed so their terminal hosts are torn down, and reconciles the active
+ *  project/chat if they vanished. Idempotent; wired to window focus. */
+export async function refreshFromDb() {
+  if (!state.loaded || refreshing) return;
+  refreshing = true;
+  try {
+    const projects = await db.projectsList(false);
+    setState("projects", projects);
+    const liveRoots = new Set(projects.map((p) => p.projectRoot));
+
+    for (const root of Object.keys(state.chatsByRoot)) {
+      const before = state.chatsByRoot[root] ?? [];
+      if (!liveRoots.has(root)) {
+        before.forEach((c) => chatDeletedListeners.forEach((fn) => fn(c.chatId)));
+        setState("chatsByRoot", produce((m) => { delete m[root]; }));
+        continue;
+      }
+      const after = await db.chatsList(root);
+      setState("chatsByRoot", root, after);
+      const afterIds = new Set(after.map((c) => c.chatId));
+      before.forEach((c) => {
+        if (!afterIds.has(c.chatId)) chatDeletedListeners.forEach((fn) => fn(c.chatId));
+      });
+    }
+
+    if (state.activeRoot != null && !liveRoots.has(state.activeRoot)) {
+      const nextRoot = projects[0]?.projectRoot ?? null;
+      setState("activeRoot", nextRoot);
+      setState("activeChatId", nextRoot ? firstVisibleChat(chatsFor(nextRoot)) : null);
+    } else if (state.activeRoot) {
+      const chats = chatsFor(state.activeRoot);
+      const keep =
+        state.activeChatId != null &&
+        chats.some((c) => c.chatId === state.activeChatId) &&
+        !isChatArchived(state.activeChatId);
+      if (!keep) setState("activeChatId", firstVisibleChat(chats));
+    }
+  } finally {
+    refreshing = false;
+  }
+}
+
 export async function selectProject(root: string) {
   setState("activeRoot", root);
   await db.projectTouch(root, Date.now());

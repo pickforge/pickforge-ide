@@ -72,6 +72,22 @@
   background: var(--pf-ember);
   box-shadow: 0 0 8px -1px var(--pf-ember);
 }
+/* Dev-build flag: shown only under `tauri dev` (import.meta.env.DEV). Warning
+ * amber, not ember, so it never competes with the brand mark's single accent. */
+.pf-dev-badge {
+  display: inline-flex;
+  align-items: center;
+  border: var(--pf-hairline-width) solid var(--pf-warning);
+  border-radius: var(--pf-radius-pill);
+  background: color-mix(in srgb, var(--pf-warning) 12%, transparent);
+  color: var(--pf-warning);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  padding: 2px var(--pf-space-sm);
+  user-select: none;
+}
 
 /* ---- Quick-launch strip ---- */
 .pf-launch {
@@ -168,7 +184,7 @@
 }
 .pf-nav-btn.active {
   color: var(--pf-text-hi);
-  box-shadow: inset 0 -2px 0 var(--pf-ember);
+  box-shadow: inset 0 -1px 0 var(--pf-hairline-strong);
 }
 .pf-body {
   flex: 1;

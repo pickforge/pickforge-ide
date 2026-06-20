@@ -21,7 +21,7 @@
 
 .pf-pane-frame {
   position: absolute;
-  inset: 3px;
+  inset: 2px;
   z-index: 1;
   pointer-events: auto;
   display: flex;
@@ -92,6 +92,11 @@
   z-index: 0; /* xterm sets z-index on its render layers; keep them below chrome */
   flex: 1 1 0;
   min-height: 0;
+  /* Inset the terminal on both sides. This padding lives here (an ancestor of
+   * the .xterm element) rather than on .pf-terminal, because FitAddon measures
+   * .xterm's parent and subtracts only .xterm's own padding — padding on
+   * .pf-terminal itself made xterm over-count columns and clip the right edge. */
+  padding: var(--pf-space-sm) var(--pf-space-md);
   border-radius: 0 0 calc(var(--pf-radius-md) - var(--pf-bracket-width))
     calc(var(--pf-radius-md) - var(--pf-bracket-width));
   background: var(--pf-surface);

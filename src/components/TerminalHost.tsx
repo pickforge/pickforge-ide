@@ -157,6 +157,8 @@ export interface TerminalHostHandle {
 export function TerminalHost(props: {
   onReady?: (handle: TerminalHostHandle) => void;
   cwd?: string;
+  /** Forwarded from every pane: a line the user typed and submitted. */
+  onUserSubmit?: (line: string) => void;
 }) {
   const first = newLeaf();
   const [root, setRoot] = createSignal<Node>(first);
@@ -444,6 +446,7 @@ export function TerminalHost(props: {
                 <div class="pf-pane-inner">
                   <TerminalPane
                     cwd={props.cwd}
+                    onUserSubmit={props.onUserSubmit}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
                       if (focusedId() === leaf.id) handle.focus();

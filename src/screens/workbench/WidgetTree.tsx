@@ -29,7 +29,18 @@ import {
   type WidgetProp,
 } from "../../lib/vm";
 
-const fileFromUri = (uri: string) => uri.replace(/^file:\/\//, "");
+// Flutter creation locations are file:// URIs — decode percent-escapes and the
+// Windows `/C:/…` leading slash so the path is openable.
+function fileFromUri(uri: string): string {
+  if (!uri.startsWith("file:")) return uri;
+  try {
+    let p = decodeURIComponent(new URL(uri).pathname);
+    if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1); // /C:/Users → C:/Users
+    return p;
+  } catch {
+    return decodeURIComponent(uri.replace(/^file:\/\//, ""));
+  }
+}
 
 /** Path of nodes from root to the node with `id` (inclusive), or null. */
 function findPath(root: WidgetNode, id: string, acc: WidgetNode[] = []): WidgetNode[] | null {
@@ -162,7 +173,8 @@ export function WidgetTree() {
       const base = widgetBaseName(node);
       const sep = root.includes("\\") ? "\\" : "/";
       const predictedPng = png ? `${root}${sep}.pickforge${sep}inspect${sep}${base}.png` : null;
-      const path = findPath(tree()!, node.id) ?? [node];
+      const t = tree();
+      const path = (t ? findPath(t, node.id) : null) ?? [node];
       const ancestors = path.slice(0, -1).map((n) => n.className).slice(-5);
       const children = node.children.map((c) => c.className).slice(0, 12);
       const md = buildWidgetMarkdown({
@@ -285,35 +297,24 @@ export function WidgetTree() {
               </div>
             </div>
 
-            <Show when={props().length > 0}>
-              <div class="pf-wd-props">
-                <For each={props()}>
-                  {(p) => (
-                    <div class="pf-wd-prop">
-                      <span class="pf-wd-prop-name">{p.name}</span>
-                      <span class="pf-wd-prop-val">{p.value}</span>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </Show>
-
             <Show
               when={composerFor()}
               fallback={
                 <div class="pf-wd-ai">
-                  <span class="pf-wd-ai-label">Ask AI</span>
-                  <For each={agentChips()}>
-                    {(item) => (
-                      <button
-                        class="pf-wd-chip"
-                        title={`Send this widget to ${item.label}`}
-                        onClick={() => openComposer(item)}
-                      >
-                        {item.label}
-                      </button>
-                    )}
-                  </For>
+                  <MonoEyebrow text="Ask AI" tick />
+                  <div class="pf-wd-ai-chips">
+                    <For each={agentChips()}>
+                      {(item) => (
+                        <button
+                          class="pf-wd-chip"
+                          title={`Send this widget to ${item.label}`}
+                          onClick={() => openComposer(item)}
+                        >
+                          {item.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
                 </div>
               }
             >
@@ -339,6 +340,19 @@ export function WidgetTree() {
                   </button>
                   <EmberButton label={busy() ? "Sending…" : "Send"} disabled={busy()} onClick={() => void send()} />
                 </div>
+              </div>
+            </Show>
+
+            <Show when={props().length > 0}>
+              <div class="pf-wd-props">
+                <For each={props()}>
+                  {(p) => (
+                    <div class="pf-wd-prop">
+                      <span class="pf-wd-prop-name">{p.name}</span>
+                      <span class="pf-wd-prop-val">{p.value}</span>
+                    </div>
+                  )}
+                </For>
               </div>
             </Show>
             <Show when={error()}>

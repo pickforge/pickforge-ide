@@ -90,6 +90,10 @@ pub fn resolve_emulator_binary() -> Option<PathBuf> {
         candidates.push(Path::new(&home).join("Android/Sdk/emulator").join(exe));
         candidates.push(Path::new(&home).join("Library/Android/sdk/emulator").join(exe));
     }
+    // Android Studio's default Windows SDK location.
+    if let Some(local) = env.get("LOCALAPPDATA").filter(|s| !s.is_empty()) {
+        candidates.push(Path::new(local).join("Android/Sdk/emulator").join(exe));
+    }
     candidates.into_iter().find(|p| p.is_file())
 }
 

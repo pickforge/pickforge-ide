@@ -55,6 +55,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   }),
   git_diff: () =>
     "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",
+  git_discover_repos: (a) => [a.projectRoot],
 };
 
 export function installTauriMock() {

@@ -39,6 +39,12 @@ pub fn discover_repos(root: &str) -> Vec<String> {
     }
     let mut out = Vec::new();
     scan_for_repos(root_path, 2, &mut out);
+    // No `.git` at or below root — but the project may sit INSIDE a larger repo
+    // (`.git` in an ancestor). Fall back to root so gitStatus resolves the
+    // work-tree via `rev-parse --show-toplevel` (the prior behavior).
+    if out.is_empty() && is_repo(root) {
+        return vec![root.to_string()];
+    }
     out.sort();
     out
 }

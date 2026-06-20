@@ -245,7 +245,8 @@ pub async fn vm_widget_properties(
     let result = client
         .call(
             "ext.flutter.inspector.getDetailsSubtree",
-            json!({ "isolateId": isolate_id, "arg": value_id, "objectGroup": group_name, "subtreeDepth": 1 }),
+            // Service-extension args arrive as strings — stringify the depth.
+            json!({ "isolateId": isolate_id, "arg": value_id, "objectGroup": group_name, "subtreeDepth": "1" }),
         )
         .await
         .map_err(|e| e.to_string())?;

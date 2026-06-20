@@ -32,7 +32,7 @@ import {
   type RunStatus,
 } from "../../stores/runConsole";
 import { hasRunTargets } from "../../stores/runTargets";
-import { isBooting, launchActiveTarget } from "../../stores/runLaunch";
+import { isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
 import { ingestRunOutput } from "../../stores/vmService";
 
@@ -76,6 +76,9 @@ export function DebugConsole() {
         <RunLauncher />
         <Show when={isBooting()}>
           <span class="pf-run-booting">booting…</span>
+        </Show>
+        <Show when={!isBooting() && launchError()}>
+          <span class="pf-run-error" title={launchError()!}>{launchError()}</span>
         </Show>
         <StatusPill label={meta().label} intent={meta().intent} pulsing={meta().pulse} />
         <span class="pf-dc-spacer" />

@@ -176,8 +176,11 @@ async function fromLaunchConfig(
       parts.push("flutter run");
       if (c.flutterMode) parts.push(`--${c.flutterMode}`);
       if (program && !isDirProgram(program)) {
-        // -t relative to the run dir, matching how VS Code passes it.
-        parts.push(`-t ${shquote(relProgram()!)}`);
+        // -t relative to the run dir, matching how VS Code passes it. Skip when
+        // the program IS the run dir (e.g. program "app" → rel "."): flutter
+        // run rejects a directory target.
+        const t = relProgram();
+        if (t && t !== ".") parts.push(`-t ${shquote(t)}`);
       }
       if (c.deviceId) parts.push(`-d ${shquote(c.deviceId)}`);
     }
@@ -201,8 +204,9 @@ async function fromLaunchConfig(
     command: parts.join(" "),
     cwd,
     capabilities,
-    // A test run executes on the host VM — no device selection needed.
-    needsDevice: isFlutter && !isTest,
+    // A test run executes on the host VM, and a config that already pins a
+    // deviceId (e.g. "chrome") needs no picker/auto-boot.
+    needsDevice: isFlutter && !isTest && !c.deviceId,
     source: "vscode",
   };
 }

@@ -19,10 +19,15 @@ pub enum DbError {
     Other(String),
 }
 
-const SCHEMA: &str = r#"
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
+/// Latest schema version applied by the migration runner. `PRAGMA user_version`
+/// on an opened connection ends here once `migrate` returns.
+const LATEST_VERSION: i64 = 2;
 
+/// Migration 0 → 1: the base schema. Older user databases that predate
+/// `user_version` bookkeeping report version 0 and get the full schema applied;
+/// `IF NOT EXISTS` keeps that idempotent against tables they already hold.
+/// Column-level evolution lives in later migrations, never here.
+const MIGRATION_001_BASE: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
   project_root   TEXT NOT NULL PRIMARY KEY,
   display_name   TEXT NOT NULL,
@@ -63,9 +68,7 @@ CREATE TABLE IF NOT EXISTS project_settings (
   emulator_launch_options     TEXT,
   emulator_idle_shutdown      TEXT,
   auto_boot_on_select         INTEGER NOT NULL DEFAULT 1 CHECK (auto_boot_on_select IN (0, 1)),
-  first_run_celebrated        INTEGER NOT NULL DEFAULT 0 CHECK (first_run_celebrated IN (0, 1)),
-  context_storage_mode        TEXT,
-  context_storage_custom_path TEXT
+  first_run_celebrated        INTEGER NOT NULL DEFAULT 0 CHECK (first_run_celebrated IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS pick_history (
@@ -119,6 +122,58 @@ CREATE INDEX IF NOT EXISTS idx_pick_history_project
   ON pick_history(project_root, picked_at DESC);
 "#;
 
+/// Connection-level pragmas. Applied on every open (they are not persisted with
+/// the schema) and never inside a migration transaction.
+fn apply_pragmas(conn: &Connection) -> Result<(), DbError> {
+    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+    Ok(())
+}
+
+/// True when `table` has a column named `column`.
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, DbError> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Bring the schema from `PRAGMA user_version` up to `LATEST_VERSION`, applying
+/// each step in its own transaction and bumping `user_version` afterward. A
+/// fresh DB reports 0 and migrates straight to the latest.
+fn migrate(conn: &mut Connection) -> Result<(), DbError> {
+    let mut version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    while version < LATEST_VERSION {
+        let next = version + 1;
+        let tx = conn.transaction()?;
+        match next {
+            1 => tx.execute_batch(MIGRATION_001_BASE)?,
+            2 => {
+                if !has_column(&tx, "project_settings", "context_storage_mode")? {
+                    tx.execute_batch(
+                        "ALTER TABLE project_settings ADD COLUMN context_storage_mode TEXT;",
+                    )?;
+                }
+                if !has_column(&tx, "project_settings", "context_storage_custom_path")? {
+                    tx.execute_batch(
+                        "ALTER TABLE project_settings \
+                         ADD COLUMN context_storage_custom_path TEXT;",
+                    )?;
+                }
+            }
+            _ => return Err(DbError::Other(format!("no migration for version {next}"))),
+        }
+        tx.execute_batch(&format!("PRAGMA user_version = {next};"))?;
+        tx.commit()?;
+        version = next;
+    }
+    Ok(())
+}
+
 /// The SQLite-backed store. Lives behind Tauri's managed `State`.
 pub struct Database {
     conn: Mutex<Connection>,
@@ -129,14 +184,16 @@ impl Database {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let conn = Connection::open(path)?;
-        conn.execute_batch(SCHEMA)?;
+        let mut conn = Connection::open(path)?;
+        apply_pragmas(&conn)?;
+        migrate(&mut conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
     pub fn open_in_memory() -> Result<Self, DbError> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch(SCHEMA)?;
+        let mut conn = Connection::open_in_memory()?;
+        apply_pragmas(&conn)?;
+        migrate(&mut conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -593,5 +650,121 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].ended_at, Some(9));
         assert_eq!(runs[0].exit_reason.as_deref(), Some("done"));
+    }
+
+    fn temp_db_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("pf-db-{tag}-{}.sqlite", std::process::id()))
+    }
+
+    fn user_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn fresh_db_lands_at_latest_version_and_daos_work() {
+        let path = temp_db_path("fresh");
+        let _ = std::fs::remove_file(&path);
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+
+            db.upsert_project(&Project {
+                project_root: "/p".into(),
+                display_name: "Proj".into(),
+                created_at: 1,
+                last_opened_at: 2,
+                sort_order: 0,
+                archived_at: None,
+            })
+            .unwrap();
+            assert_eq!(db.list_projects(false).unwrap().len(), 1);
+
+            let mut s = ProjectSettings::defaults("/p");
+            s.context_storage_mode = Some("custom".into());
+            s.context_storage_custom_path = Some("/ctx".into());
+            db.upsert_settings(&s).unwrap();
+            let loaded = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(loaded.context_storage_mode.as_deref(), Some("custom"));
+            assert_eq!(loaded.context_storage_custom_path.as_deref(), Some("/ctx"));
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn migrates_pre_context_columns_database() {
+        let path = temp_db_path("legacy");
+        let _ = std::fs::remove_file(&path);
+
+        // Seed a raw v1 database: base schema without the context_storage columns.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE project_settings (
+                   project_root            TEXT NOT NULL PRIMARY KEY,
+                   vm_service_url          TEXT,
+                   default_agent_id        TEXT,
+                   last_chat_id            TEXT,
+                   pane_sizes              TEXT,
+                   last_used_at            INTEGER,
+                   avd_id                  TEXT,
+                   avd_name                TEXT,
+                   connection_mode         TEXT NOT NULL DEFAULT 'auto',
+                   flutter_run_args        TEXT,
+                   target_file             TEXT,
+                   validator_command       TEXT,
+                   emulator_launch_options TEXT,
+                   emulator_idle_shutdown  TEXT,
+                   auto_boot_on_select     INTEGER NOT NULL DEFAULT 1,
+                   first_run_celebrated    INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO project_settings (project_root, connection_mode)
+                   VALUES ('/p', 'auto');
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+            assert!(!has_column(&conn, "project_settings", "context_storage_mode").unwrap());
+        }
+
+        // Opening via Database::open must add the missing columns and reach LATEST.
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            assert!(has_column(
+                &db.lock(),
+                "project_settings",
+                "context_storage_custom_path"
+            )
+            .unwrap());
+
+            // The pre-existing row reads back with NULL context columns.
+            let loaded = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(loaded.connection_mode, "auto");
+            assert!(loaded.context_storage_mode.is_none());
+
+            // And writes that touch the new columns succeed.
+            let mut s = ProjectSettings::defaults("/p");
+            s.context_storage_mode = Some("workspace".into());
+            db.upsert_settings(&s).unwrap();
+            assert_eq!(
+                db.get_settings("/p")
+                    .unwrap()
+                    .unwrap()
+                    .context_storage_mode
+                    .as_deref(),
+                Some("workspace")
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn migrate_is_idempotent_on_reopen() {
+        let path = temp_db_path("reopen");
+        let _ = std::fs::remove_file(&path);
+        Database::open(&path).unwrap();
+        // Reopening an already-current DB is a no-op (no duplicate-column error).
+        let db = Database::open(&path).unwrap();
+        assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+        let _ = std::fs::remove_file(&path);
     }
 }

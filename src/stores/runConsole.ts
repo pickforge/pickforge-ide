@@ -8,8 +8,19 @@ import { createSignal } from "solid-js";
 import type { TerminalHandle } from "../components/Terminal";
 import { type RunTarget } from "../lib/runTargets";
 import { watchDartChanges, type WatchHandle } from "../lib/fsWatch";
+import { newSessionId, recordRunFinish, recordRunStart } from "../lib/runRecord";
 import { autoReloadEnabled } from "./autoReload";
 import { disarmVmAutoConnect } from "./vmService";
+
+/** Device + connection context the run-history row captures at launch. The
+ *  caller (launchActiveTarget) supplies what it resolved; everything is
+ *  optional so a launch with no device still records a row. */
+export interface RunRecordContext {
+  serial?: string | null;
+  avdId?: string | null;
+  avdName?: string | null;
+  connectionMode?: string;
+}
 
 export type RunStatus = "idle" | "running" | "stopped";
 
@@ -48,6 +59,11 @@ let runKey = 0;
 // A stop requested before the console pane attached its handle, tagged with the
 // run key it targeted so it's delivered to THAT run (not a newer one) on attach.
 let pendingStopKey: number | null = null;
+// The persisted run-history session for the live run, and whether its finish has
+// been recorded yet — so a run logs exactly one insert + one finish even if
+// stopRun and consoleExited both fire (stop, then the process exits).
+let runSessionId: string | null = null;
+let runFinishRecorded = false;
 
 function persist() {
   localStorage.setItem(KEY, JSON.stringify({ open: open(), height: height() }));
@@ -133,9 +149,17 @@ export function clearConsole() {
   handle?.clear();
 }
 
+/** Record the run's end exactly once. `consoleExited` and `stopRun` can both
+ *  fire (a stop, then the process exits); only the first writes a finish. */
+function finishRunRecord(exitReason: string) {
+  if (runFinishRecorded || !runSessionId) return;
+  runFinishRecorded = true;
+  void recordRunFinish(runSessionId, Date.now(), exitReason, null);
+}
+
 /** Launch a target: open the console and mount a fresh pty that runs the
  *  command directly. Guards against stacking a run on top of a live one. */
-export function startRun(t: RunTarget, projectRoot: string | null) {
+export function startRun(t: RunTarget, projectRoot: string | null, ctx: RunRecordContext = {}) {
   if (status() === "running") return;
   setTarget(t);
   // The target carries its own run dir (derived from its program's pubspec, or
@@ -150,6 +174,32 @@ export function startRun(t: RunTarget, projectRoot: string | null) {
   setCurrent({ key: ++runKey, command: t.command, cwd: base });
   runBase = base; // watch THIS run's dir, not just the first console's cwd
   syncAutoReloadWatch();
+  // Persist the launch as a run-history row (best effort — a write failure must
+  // never block the run). A fresh session id per launch, finished on exit/stop.
+  runFinishRecorded = false;
+  runSessionId = projectRoot ? newSessionId() : null;
+  if (runSessionId && projectRoot) {
+    void recordRunStart({
+      sessionId: runSessionId,
+      projectRoot,
+      startedAt: Date.now(),
+      endedAt: null,
+      avdId: ctx.avdId ?? null,
+      avdName: ctx.avdName ?? null,
+      serial: ctx.serial ?? null,
+      vmServiceUrl: null,
+      // The target has no entry-file field; its label ("Flutter", "Config 1") is
+      // the readable identifier RunHistory shows in the target_file slot.
+      targetFile: t.label || null,
+      connectionMode: ctx.connectionMode ?? "auto",
+      exitReason: null,
+      exitCode: null,
+      hotReloadCount: 0,
+      hotRestartCount: 0,
+      errorCount: 0,
+      lastError: null,
+    });
+  }
 }
 
 /** The run process exited (finished, crashed, or stopped): mark stopped and
@@ -157,6 +207,9 @@ export function startRun(t: RunTarget, projectRoot: string | null) {
 export function consoleExited() {
   setStatus("stopped");
   stopWatch();
+  // Process ended on its own (finished or crashed). If a stop already recorded
+  // the finish, the idempotency guard keeps that "stopped" reason.
+  finishRunRecord("exited");
   // A run that ended before its VM URL printed must not let a later/unrelated
   // chunk of output auto-connect the inspector to a dead/wrong VM.
   disarmVmAutoConnect();
@@ -180,5 +233,6 @@ export function stopRun() {
   else pendingStopKey = current()?.key ?? null;
   setStatus("stopped");
   stopWatch();
+  finishRunRecord("stopped"); // user-initiated SIGINT
   disarmVmAutoConnect(); // stop scanning output for a VM URL once the run is done
 }

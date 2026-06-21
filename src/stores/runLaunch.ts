@@ -80,8 +80,10 @@ export async function launchActiveTarget(): Promise<void> {
   setError(null);
 
   let serial: string | null = null;
+  let device: DeviceEntry | null = null;
   if (t.needsDevice) {
     const entry = resolveSelectedDevice();
+    device = entry;
     if (entry?.state === "offline") {
       setError(`${entry.displayName} is offline or unauthorized — reconnect it first`);
       return;
@@ -108,5 +110,10 @@ export async function launchActiveTarget(): Promise<void> {
   // service URL so the Inspector auto-connects.
   void disconnectVm();
   armVmAutoConnect();
-  startRun({ ...t, command: withDevice(t, serial) }, workspace.activeRoot);
+  startRun({ ...t, command: withDevice(t, serial) }, workspace.activeRoot, {
+    serial,
+    avdId: device?.avdId ?? null,
+    avdName: device?.kind === "emulator" ? device.displayName : null,
+    connectionMode: t.inspectorKind === "vmService" ? "vmService" : "auto",
+  });
 }

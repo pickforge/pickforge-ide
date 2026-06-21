@@ -19,6 +19,7 @@ import { captureInRepo, setCaptureInRepo } from "../../stores/inspectStorage";
 import { workspace } from "../../stores/workspace";
 import { getTerminalHost } from "../../stores/terminalHosts";
 import { armChatAutoName } from "../../lib/chatAutoName";
+import { recordForgeDispatch } from "../../lib/runRecord";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
 import { a11yBaseName, buildA11yMarkdown } from "../../lib/widgetContext";
@@ -212,8 +213,30 @@ export function A11yTree(props: {
       });
       const paths = await inspectSave(dir, base, md, png);
       const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by resource-id / text / class). ${instruction}`;
-      const paneId = host.openInNewPane(`${commandForItem(item)} ${shquote(ask)}`);
-      if (paneId) armChatAutoName(chatId, paneId);
+      const command = `${commandForItem(item)} ${shquote(ask)}`;
+      const paneId = host.openInNewPane(command);
+      if (paneId) {
+        armChatAutoName(chatId, paneId);
+        // Persist the dispatch (pick + agent run) for the forge audit. Best
+        // effort — a write failure must not affect the launched agent. A11y
+        // nodes carry no source file:line (search by resource-id / text / class).
+        void recordForgeDispatch(
+          {
+            id: 0,
+            projectRoot: root,
+            widgetClass: node.className,
+            creationFile: null,
+            creationLine: null,
+            skillId: "",
+            agentId: item.agentId ?? item.id,
+            terminalId: paneId,
+            chatId,
+            pickedAt: Date.now(),
+            widgetContextJson: md,
+          },
+          command,
+        );
+      }
       setComposerFor(null);
     } catch (e) {
       setError(String(e));

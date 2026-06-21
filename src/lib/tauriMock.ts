@@ -35,6 +35,11 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   android_wait_for_device: () => true,
   find_nearest_pubspec: () => null,
   picks_list: () => SAMPLE_PICKS,
+  pick_insert: () => 1,
+  run_insert: () => null,
+  run_finish: () => null,
+  agent_run_insert: () => 1,
+  agent_run_finish: () => null,
   runs_list: () => SAMPLE_RUNS,
   list_dir: () => [
     { name: "lib", path: "/home/dev/acme-app/lib", isDir: true },

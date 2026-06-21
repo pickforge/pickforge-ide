@@ -80,6 +80,16 @@ export interface RunSessionLog {
   lastError: string | null;
 }
 
+export interface AgentRunLog {
+  id: number;
+  pickId: number;
+  startedAt: number;
+  finishedAt: number | null;
+  exitCode: number | null;
+  hotReloadCount: number;
+  wrapperScriptPath: string;
+}
+
 // ---- projects ----
 export const projectsList = (includeArchived = false) =>
   invoke<Project[]>("projects_list", { includeArchived });
@@ -120,3 +130,12 @@ export const runFinish = (
   exitReason: string | null,
   exitCode: number | null,
 ) => invoke<void>("run_finish", { sessionId, endedAt, exitReason, exitCode });
+export const agentRunInsert = (run: AgentRunLog) =>
+  invoke<number>("agent_run_insert", { run });
+export const agentRunFinish = (
+  id: number,
+  finishedAt: number,
+  exitCode: number | null,
+  hotReloadCount: number,
+) =>
+  invoke<void>("agent_run_finish", { id, finishedAt, exitCode, hotReloadCount });

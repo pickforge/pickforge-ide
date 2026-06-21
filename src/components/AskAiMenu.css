@@ -1,0 +1,90 @@
+/* "Ask AI" popup for selected terminal text. Lives inside FloatingMenu's
+   .pf-menu chrome (surface + hairline + shadow); this styles the inner layout.
+   One ember per composition: only the active agent chip wears the ember. */
+.pf-askai {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm);
+  min-width: 220px;
+  max-width: 340px;
+}
+.pf-askai-snip {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-med);
+  background: var(--pf-item-fill);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  max-height: 64px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pf-askai-agents,
+.pf-askai-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-xs);
+}
+.pf-askai-agent {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-med);
+  background: transparent;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  cursor: pointer;
+}
+.pf-askai-agent--on {
+  color: var(--pf-ember);
+  border-color: var(--pf-ember);
+}
+.pf-askai-preset,
+.pf-askai-send {
+  font-size: var(--pf-size-label-md);
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-2);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  cursor: pointer;
+}
+.pf-askai-preset:hover,
+.pf-askai-send:not(:disabled):hover {
+  border-color: var(--pf-hairline-strong);
+}
+.pf-askai-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pf-askai-custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-askai-input {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-hi);
+  background: var(--pf-surface);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  resize: vertical;
+  min-height: 40px;
+}
+.pf-askai-input:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+}
+.pf-askai-err {
+  color: var(--pf-error);
+  font-size: var(--pf-size-label-sm);
+}
+.pf-askai-empty {
+  color: var(--pf-text-low);
+  font-size: var(--pf-size-label-sm);
+}

@@ -2,8 +2,9 @@
 // the foot of the workbench. Opens on Run and stays mounted (height-toggled, not
 // unmounted) so a running process survives collapsing the panel or navigating
 // away. The Run controls drive THIS terminal's pty, never the user's shell.
-import { onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 import { TerminalPane } from "../../components/Terminal";
+import { AskAiMenu } from "../../components/AskAiMenu";
 import { RunLauncher } from "./RunLauncher";
 import {
   ForgeEmptyState,
@@ -51,6 +52,7 @@ export function DebugConsole() {
   const meta = () => STATUS[status()];
   const can = (c: string) => !!target()?.capabilities.includes(c);
   const isRunning = () => status() === "running";
+  const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
 
   onCleanup(detachConsole);
 
@@ -157,12 +159,17 @@ export function DebugConsole() {
               onReady={attachConsole}
               onExit={consoleExited}
               onOutput={ingestRunOutput}
+              onSelectionChange={setAskSel}
               readOnly
               consoleTheme
             />
           )}
         </Show>
       </div>
+
+      <Show when={askSel()}>
+        {(s) => <AskAiMenu selection={s()} onClose={() => setAskSel(null)} />}
+      </Show>
     </section>
   );
 }

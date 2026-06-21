@@ -45,6 +45,9 @@ export function TerminalPane(props: {
   /** Fires with each decoded chunk of shell OUTPUT (e.g. to scrape a VM service
    *  URL from `flutter run`). Streaming-decoded, so multi-byte chars are safe. */
   onOutput?: (chunk: string) => void;
+  /** Fires when the user selects text (anchored near the pointer release), or
+   *  null when the selection clears — drives the terminal "Ask AI" popup. */
+  onSelectionChange?: (sel: { text: string; x: number; y: number } | null) => void;
   /** View-only: the user can't type into it (the toolbar still drives it via
    *  typeText). For the Debug Console run output. */
   readOnly?: boolean;
@@ -202,6 +205,28 @@ export function TerminalPane(props: {
           if (sessionId !== null) void ptyResize(sessionId, rows, cols);
         }),
       );
+
+      // Report text selections (anchored near the pointer release) so the host
+      // can offer an "Ask AI" action on the selected text; clear (null) when the
+      // selection drops. Works in read-only consoles too (selection is allowed).
+      if (props.onSelectionChange) {
+        const emit = props.onSelectionChange;
+        const onPointerUp = (e: PointerEvent) => {
+          // Defer so xterm has finalized the selection for this gesture.
+          setTimeout(() => {
+            if (disposed) return;
+            const text = term.getSelection();
+            if (text.trim()) emit({ text, x: e.clientX, y: e.clientY });
+          }, 0);
+        };
+        container.addEventListener("pointerup", onPointerUp);
+        subs.push(
+          { dispose: () => container.removeEventListener("pointerup", onPointerUp) },
+          term.onSelectionChange(() => {
+            if (!term.hasSelection()) emit(null);
+          }),
+        );
+      }
 
       observer = new ResizeObserver(() => {
         try {

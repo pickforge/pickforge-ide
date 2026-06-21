@@ -6,6 +6,7 @@
 // and its own close button. The focused pane wears the travelling ember sweep.
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { TerminalPane, type TerminalHandle } from "./Terminal";
+import { AskAiMenu } from "./AskAiMenu";
 import { IconClose, IconGrip, IconSplit, IconSplitTrigger } from "./icons";
 import "./TerminalHost.css";
 
@@ -365,6 +366,8 @@ export function TerminalHost(props: {
     openInNewPane,
   });
 
+  const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
+
   return (
     <div class="pf-term-host" ref={containerEl}>
       <For each={leaves()}>
@@ -457,6 +460,7 @@ export function TerminalHost(props: {
                   <TerminalPane
                     cwd={props.cwd}
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
+                    onSelectionChange={setAskSel}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
                       if (focusedId() === leaf.id) handle.focus();
@@ -513,6 +517,10 @@ export function TerminalHost(props: {
             </Show>
           );
         }}
+      </Show>
+
+      <Show when={askSel()}>
+        {(s) => <AskAiMenu selection={s()} onClose={() => setAskSel(null)} />}
       </Show>
     </div>
   );

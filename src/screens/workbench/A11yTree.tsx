@@ -54,9 +54,11 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
   const [tree, setTree] = createSignal<A11yNode | null>(null);
   const [selected, setSelected] = createSignal<A11yNode | null>(null);
   const [thumb, setThumb] = createSignal<string | null>(null);
-  // Path of the device screenshot taken with the dump — reused by the forge so we
-  // don't re-shoot the device (and so the agent's capture matches the thumbnail).
-  const [shotPath, setShotPath] = createSignal<string | null>(null);
+  // Base64 PNG (no data-URL prefix) of the screenshot that passed the epoch check
+  // and is shown as the thumbnail. The forge ships THESE bytes so the saved capture
+  // always matches the displayed thumbnail, even if a stale in-flight dump later
+  // overwrites a11y-screenshot.png on disk.
+  const [shotB64, setShotB64] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   // Tracks whether a dump has run, so the pre-dump and empty-after-dump states
@@ -85,7 +87,7 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
         setTree(null);
         setSelected(null);
         setThumb(null);
-        setShotPath(null);
+        setShotB64(null);
         setComposerFor(null);
         setError(null);
         setDumped(false);
@@ -107,7 +109,7 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
       setTree(root);
       setSelected(null);
       setThumb(null);
-      setShotPath(null);
+      setShotB64(null);
       setComposerFor(null);
       setDumped(true);
       void loadThumb(serial, mine);
@@ -132,12 +134,14 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
       const url = path ? await readImageDataUrl(path) : null;
       if (mine === epoch && serial === props.serial) {
         setThumb(url);
-        setShotPath(path);
+        // Keep the accepted bytes so the forge can't re-read a file a stale
+        // in-flight dump may have overwritten. Strip the data-URL prefix once.
+        setShotB64(url ? url.replace(/^data:image\/png;base64,/, "") : null);
       }
     } catch {
       if (mine === epoch && serial === props.serial) {
         setThumb(null);
-        setShotPath(null);
+        setShotB64(null);
       }
     }
   };
@@ -177,10 +181,11 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
     }
     setBusy(true);
     try {
-      // Reuse the screenshot taken with the dump (as base64) so the capture folder
-      // gets its own copy and the agent reads a screenshot matching the thumbnail.
-      const url = shotPath() ? await readImageDataUrl(shotPath()!).catch(() => null) : null;
-      const png = url ? url.replace(/^data:image\/png;base64,/, "") : null;
+      // Ship the ACCEPTED screenshot bytes (the base64 that passed the epoch check
+      // and is shown as the thumbnail) so the capture folder always matches the
+      // displayed thumbnail — never a re-read of a11y-screenshot.png that a stale
+      // in-flight dump may have overwritten.
+      const png = shotB64();
       const base = a11yBaseName(node);
       const dir = await inspectDir(captureInRepo(root), root);
       const sep = dir.includes("\\") ? "\\" : "/";

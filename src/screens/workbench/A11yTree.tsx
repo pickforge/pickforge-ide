@@ -159,11 +159,18 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
   // capture folder, then launch the agent in a new pane with a prompt that points
   // at the markdown. Mirrors WidgetTree.send, minus any source file:line.
   const send = async () => {
+    if (busy()) return;
     const item = composerFor();
     const node = selectedNode();
     const root = workspace.activeRoot;
     if (!item || !node || !root) return;
-    const host = getTerminalHost(workspace.activeChatId);
+    // Snapshot reactive state before any await — a refresh/device switch or an
+    // edit mid-send must not let findPath, the saved markdown, or the armed chat
+    // drift from what the user launched.
+    const t = tree();
+    const instruction = prompt();
+    const chatId = workspace.activeChatId;
+    const host = getTerminalHost(chatId);
     if (!host) {
       setError("Open a chat first so the agent has a terminal.");
       return;
@@ -178,7 +185,6 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
       const dir = await inspectDir(captureInRepo(root), root);
       const sep = dir.includes("\\") ? "\\" : "/";
       const predictedPng = png ? `${dir}${sep}${base}${sep}screenshot.png` : null;
-      const t = tree();
       const path = (t ? findPath(t, node.nodeId) : null) ?? [node];
       const ancestors = path.slice(0, -1).map((n) => nodeName(n)).slice(-5);
       const children = node.children.map((c) => nodeName(c)).slice(0, 12);
@@ -187,12 +193,12 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
         ancestors,
         children,
         pngPath: predictedPng,
-        instruction: prompt(),
+        instruction,
       });
       const paths = await inspectSave(dir, base, md, png);
-      const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by resource-id / text / class). ${prompt()}`;
+      const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by resource-id / text / class). ${instruction}`;
       const paneId = host.openInNewPane(`${commandForItem(item)} ${shquote(ask)}`);
-      if (paneId) armChatAutoName(workspace.activeChatId, paneId);
+      if (paneId) armChatAutoName(chatId, paneId);
       setComposerFor(null);
     } catch (e) {
       setError(String(e));
@@ -295,7 +301,7 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
-                      void send();
+                      if (!busy()) void send();
                     } else if (e.key === "Escape") {
                       setComposerFor(null);
                     }

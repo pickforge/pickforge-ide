@@ -1,0 +1,4 @@
+// Fixture project for the PickForge e2e harness target detection.
+// A settings.gradle + build.gradle pair is what `detect_native_android` keys on.
+rootProject.name = 'pf_e2e_native_android_fixture'
+include ':app'

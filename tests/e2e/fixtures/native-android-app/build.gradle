@@ -1,0 +1,3 @@
+// Fixture root build script — its presence alongside settings.gradle is what
+// `detect_native_android` requires. Not actually built by the smoke (the heavy
+// tier shells out to a project's own `./gradlew`, which this fixture lacks).

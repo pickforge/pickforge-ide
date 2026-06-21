@@ -38,6 +38,10 @@ export function FloatingMenu(props: {
 
   onMount(() => {
     place();
+    // Re-clamp when the menu's own size changes (e.g. revealing a taller form),
+    // so growing content can't push controls below the viewport edge.
+    const ro = new ResizeObserver(() => place());
+    ro.observe(el);
     const onDown = (e: PointerEvent) => {
       if (!el.contains(e.target as Node)) props.onClose();
     };
@@ -55,6 +59,7 @@ export function FloatingMenu(props: {
     window.addEventListener("wheel", onWheel, true);
     window.addEventListener("resize", props.onClose);
     onCleanup(() => {
+      ro.disconnect();
       window.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("wheel", onWheel, true);

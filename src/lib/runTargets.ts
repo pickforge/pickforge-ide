@@ -66,7 +66,7 @@ const TIER_META: Record<SupportTier, { label: string; blurb: string }> = {
 /** Does a target declare a capability? Capability strings are the camelCase
  *  serde names from `Capability` in adapters.rs (e.g. "inspectSelection"). */
 export function hasCapability(t: RunTarget | null | undefined, cap: string): boolean {
-  return !!t && t.capabilities.includes(cap);
+  return (t?.capabilities ?? []).includes(cap);
 }
 
 /** Derive the support tier from a target's declared capabilities — the ONE place
@@ -76,7 +76,8 @@ export function hasCapability(t: RunTarget | null | undefined, cap: string): boo
  *  ⇒ Experimental; detect-only ⇒ Manual. */
 export function supportTier(t: RunTarget | null | undefined): SupportTier {
   if (!t) return "manual";
-  const has = (c: string) => t.capabilities.includes(c);
+  const caps = t.capabilities ?? [];
+  const has = (c: string) => caps.includes(c);
   const inspect = has("inspectSelection");
   const runnable = has("launch");
   const tooling = runnable || has("captureScreenshot") || has("streamLogs");
@@ -307,7 +308,7 @@ export async function fromLaunchConfig(
   const capabilities = isTest
     ? ["test", "stop"]
     : isFlutter
-      ? ["launch", "hotReload", "hotRestart", "stop"]
+      ? ["launch", "hotReload", "hotRestart", "stop", "inspectSelection", "mapSelectionToSource"]
       : ["launch", "stop"];
   const flutterRun = isFlutter && !isTest;
   return {

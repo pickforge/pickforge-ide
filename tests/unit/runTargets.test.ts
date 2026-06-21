@@ -107,6 +107,13 @@ describe("supportTier", () => {
     expect(supportTier(target({ capabilities: generic }))).toBe("manual");
     expect(supportTier(null)).toBe("manual");
   });
+  it("undefined capabilities → manual, no throw", () => {
+    const t = target({ capabilities: undefined as never });
+    expect(() => supportTier(t)).not.toThrow();
+    expect(supportTier(t)).toBe("manual");
+    expect(() => hasCapability(t, "inspectSelection")).not.toThrow();
+    expect(hasCapability(t, "inspectSelection")).toBe(false);
+  });
   it("hasCapability reads the vector", () => {
     expect(hasCapability(target({ capabilities: reactNative }), "inspectSelection")).toBe(true);
     expect(hasCapability(target({ capabilities: reactNative }), "mapSelectionToSource")).toBe(false);
@@ -204,5 +211,17 @@ describe("fromLaunchConfig", () => {
     expect(t?.inspectorKind).toBe("none");
     expect(t?.deviceConvention).toBe("none");
     expect(t?.needsDevice).toBe(false);
+  });
+  it("a Flutter run config is deep-tier with VM-service inspection + source mapping", async () => {
+    const t = await fromLaunchConfig({ type: "dart", program: "lib/main.dart", cwd: "/p" }, 0, "/p");
+    expect(t?.capabilities).toContain("inspectSelection");
+    expect(t?.capabilities).toContain("mapSelectionToSource");
+    expect(supportTier(t)).toBe("deep");
+  });
+  it("a non-Flutter run config keeps its prior (experimental) tier — runnable, no inspect", async () => {
+    const t = await fromLaunchConfig({ type: "node", program: "server.js" }, 0, "/p");
+    expect(t?.capabilities).toEqual(["launch", "stop"]);
+    expect(t?.capabilities).not.toContain("inspectSelection");
+    expect(supportTier(t)).toBe("experimental");
   });
 });

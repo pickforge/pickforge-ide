@@ -11,6 +11,12 @@ export interface WatchHandle {
   stop: () => void;
 }
 
+/** A `.dart` change event from the Rust watcher, tagged with its watch id. */
+interface FsChange {
+  id: number;
+  path: string;
+}
+
 /** Watch `dir` for `.dart` writes; calls `onChange` once per debounced burst. */
 export async function watchDartChanges(
   dir: string,
@@ -18,11 +24,14 @@ export async function watchDartChanges(
   debounceMs = 600,
 ): Promise<WatchHandle> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const unlisten: UnlistenFn = await listen("fs-changed", () => {
+  let watchId: number | null = null;
+  // React only to OUR watcher's events (matched by id) — a second, racing
+  // watcher's writes must not trip this one's reload.
+  const unlisten: UnlistenFn = await listen<FsChange>("fs-changed", (e) => {
+    if (watchId == null || e.payload?.id !== watchId) return;
     clearTimeout(timer);
     timer = setTimeout(onChange, debounceMs);
   });
-  let watchId: number | null = null;
   try {
     watchId = await fsWatchStart(dir);
   } catch (e) {

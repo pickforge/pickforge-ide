@@ -23,14 +23,25 @@ impl WatchManager {
     }
 }
 
-/// Start watching `path` recursively; emits `fs-changed` for each `.dart` write.
-/// Returns a watch id to pass to [`fs_watch_stop`].
+/// One `.dart` change event, tagged with the watch id that produced it so the UI
+/// reacts only to its own watcher (two transient watchers must not cross-fire).
+#[derive(Clone, serde::Serialize)]
+struct FsChange {
+    id: u32,
+    path: String,
+}
+
+/// Start watching `path` recursively; emits `fs-changed` ({ id, path }) for each
+/// `.dart` write. Returns a watch id to pass to [`fs_watch_stop`].
 #[tauri::command]
 pub fn fs_watch_start(
     app: AppHandle,
     manager: State<'_, WatchManager>,
     path: String,
 ) -> Result<u32, String> {
+    // Allocate the id up front so the watcher closure can tag every event with
+    // it — the UI filters on this id so a racing watcher can't cross-fire.
+    let id = manager.next_id.fetch_add(1, Ordering::Relaxed);
     let app = app.clone();
     let root = PathBuf::from(&path);
     let watch_root = root.clone(); // `root` is moved into the closure below
@@ -60,7 +71,10 @@ pub fn fs_watch_start(
             }) {
                 continue;
             }
-            let _ = app.emit("fs-changed", p.to_string_lossy().to_string());
+            let _ = app.emit(
+                "fs-changed",
+                FsChange { id, path: p.to_string_lossy().to_string() },
+            );
         }
     })
     .map_err(|e| e.to_string())?;
@@ -69,7 +83,6 @@ pub fn fs_watch_start(
         .watch(&watch_root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
-    let id = manager.next_id.fetch_add(1, Ordering::Relaxed);
     manager
         .watchers
         .lock()

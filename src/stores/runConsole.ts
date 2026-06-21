@@ -44,12 +44,16 @@ const [current, setCurrent] = createSignal<RunSession | null>(null);
 
 let handle: TerminalHandle | null = null;
 let runKey = 0;
+// A stop requested before the console pane attached its handle, tagged with the
+// run key it targeted so it's delivered to THAT run (not a newer one) on attach.
+let pendingStopKey: number | null = null;
 
 function persist() {
   localStorage.setItem(KEY, JSON.stringify({ open: open(), height: height() }));
 }
 
-/** Write a control byte to the running process's stdin (reload/restart/stop). */
+/** Write a control byte to the running process's stdin (reload/restart). Stop is
+ *  handled separately so it can survive the pre-attach window. */
 function send(text: string) {
   handle?.typeText(text);
 }
@@ -94,6 +98,13 @@ export function syncAutoReloadWatch() {
 /** The DebugConsole's terminal registers its handle here once spawned. */
 export function attachConsole(h: TerminalHandle) {
   handle = h;
+  // A stop clicked before this pane attached (font load / pty spawn still
+  // pending) would otherwise be dropped, leaving the run alive. Deliver it now,
+  // but only for the run it targeted — never a newer run mounted since.
+  if (pendingStopKey !== null && pendingStopKey === current()?.key) {
+    pendingStopKey = null;
+    h.typeText("\x03");
+  }
 }
 export function detachConsole() {
   handle = null;
@@ -132,6 +143,7 @@ export function startRun(t: RunTarget, projectRoot: string | null) {
   setOpen(true);
   persist();
   setStatus("running");
+  pendingStopKey = null; // a fresh run is never pre-stopped
   // A new key remounts the console pane, spawning a fresh pty that runs THIS
   // command in `base` — output never carries over from a previous run.
   setCurrent({ key: ++runKey, command: t.command, cwd: base });
@@ -157,7 +169,11 @@ export function restartRun() {
  *  process. Reliable at any startup stage, unlike sending Flutter's "q" before
  *  it is reading stdin (which used to garble into the shell). */
 export function stopRun() {
-  send("\x03");
+  // Ctrl-C → SIGINT via the pty line discipline. If the pane hasn't attached its
+  // handle yet, remember the request against this run's key so attachConsole can
+  // deliver it the moment the pty exists (otherwise the stop is silently lost).
+  if (handle) handle.typeText("\x03");
+  else pendingStopKey = current()?.key ?? null;
   setStatus("stopped");
   stopWatch();
 }

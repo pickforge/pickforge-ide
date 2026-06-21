@@ -20,6 +20,44 @@ export interface DeviceEntry {
   kind: "emulator" | "physical";
 }
 
+/** Coarse role inferred from the Android class name (mirrors the Rust
+ *  `A11yRole`). camelCase to match `#[serde(rename_all = "camelCase")]`. */
+export type A11yRole =
+  | "button"
+  | "text"
+  | "image"
+  | "input"
+  | "switchControl"
+  | "checkbox"
+  | "list"
+  | "unknown";
+
+/** Device-pixel rectangle `[left,top][right,bottom]`. The Rust `Rect` has no
+ *  rename, so these field names stay snake-free already. */
+export interface A11yRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** A UIAutomator accessibility node — framework-agnostic (native Views, Compose
+ *  and React Native all emit the same XML). Mirrors `A11yNode` in
+ *  `crates/pickforge-core/src/android/uiautomator.rs`. */
+export interface A11yNode {
+  nodeId: string;
+  role: A11yRole;
+  className: string;
+  text: string | null;
+  contentDescription: string | null;
+  resourceId: string | null;
+  bounds: A11yRect;
+  enabled: boolean;
+  clickable: boolean;
+  selected: boolean;
+  children: A11yNode[];
+}
+
 export const targetDetect = (projectRoot: string) =>
   invoke<TargetDetection>("target_detect", { projectRoot });
 
@@ -37,3 +75,19 @@ export const androidWaitForDevice = (serial: string, timeoutMs: number) =>
 /** The nearest enclosing pubspec.yaml dir at/above `program`, or null. */
 export const findNearestPubspec = (program: string, root: string) =>
   invoke<string | null>("find_nearest_pubspec", { program, root });
+
+/** Dump the device's current UIAutomator accessibility tree (RN / native
+ *  Android). Null when nothing could be parsed (no foregrounded app / offline
+ *  device). */
+export const adbDumpUiautomator = (serial: string) =>
+  invoke<A11yNode | null>("adb_dump_uiautomator", { serial });
+
+/** Capture a device screenshot into `outputDir/outputName`. Returns the written
+ *  PNG path, or null on failure. */
+export const adbScreenshot = (serial: string, outputDir: string, outputName: string) =>
+  invoke<string | null>("adb_screenshot", { serial, outputDir, outputName });
+
+/** Read a PNG file as a `data:image/png;base64,…` URL for inline `<img>` display
+ *  (the web view can't load arbitrary file paths). Null if missing/oversized. */
+export const readImageDataUrl = (path: string) =>
+  invoke<string | null>("read_image_data_url", { path });

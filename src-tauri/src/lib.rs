@@ -4,6 +4,7 @@ mod device_commands;
 mod fs_commands;
 mod git_commands;
 mod logcat_commands;
+mod mcp_commands;
 mod mirror_commands;
 mod process_commands;
 mod pty_commands;
@@ -48,6 +49,7 @@ pub fn run() {
         .manage(logcat_commands::LogcatManager::new())
         .manage(approved_roots)
         .manage(database)
+        .manage(mcp_commands::McpState::new())
         .invoke_handler(tauri::generate_handler![
             pty_commands::pty_spawn,
             pty_commands::pty_write,
@@ -117,6 +119,11 @@ pub fn run() {
             mirror_commands::mirror_stop,
             logcat_commands::logcat_start,
             logcat_commands::logcat_stop,
+            mcp_commands::mcp_start,
+            mcp_commands::mcp_stop,
+            mcp_commands::mcp_publish_state,
+            mcp_commands::mcp_push_log,
+            mcp_commands::mcp_run_started,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

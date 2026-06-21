@@ -17,6 +17,7 @@ import { recordForgeDispatch } from "../../lib/runRecord";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
 import { buildWidgetMarkdown, widgetBaseName } from "../../lib/widgetContext";
+import { publishMcpSelection } from "../../stores/mcp";
 import {
   inspectDir,
   inspectSave,
@@ -79,6 +80,12 @@ export function WidgetTree() {
   const groupName = () => `pf-inspect-${group}`;
 
   const selectedNode = () => selected();
+
+  // Publish the live widget selection to the MCP endpoint so an embedded agent's
+  // `get_current_selection` reflects exactly what the inspector shows. Cleared on
+  // unmount so a closed inspector reports "no selection".
+  createEffect(() => publishMcpSelection(selected()));
+  onCleanup(() => publishMcpSelection(null));
 
   // Resolve the Flutter isolate. `force` re-discovers it (the isolate changes on
   // hot restart, so cached ids go stale — re-resolve instead of making the user

@@ -36,6 +36,8 @@ export function TerminalPane(props: {
   /** When set, the pty runs this command once instead of an interactive shell
    *  (the Debug Console's view-only run output). */
   runCommand?: string;
+  /** Extra `PICKFORGE_*` env for the spawned shell (MCP endpoint discovery). */
+  env?: Record<string, string> | null;
   onReady?: (handle: TerminalHandle) => void;
   onExit?: (code: number | null) => void;
   /** Fires with each non-empty line the user types and submits (Enter).
@@ -163,6 +165,7 @@ export function TerminalPane(props: {
       ptySpawn({
         cwd: props.cwd ?? null,
         command: props.runCommand ?? null,
+        env: props.env ?? null,
         rows: term.rows,
         cols: term.cols,
         // Channel callbacks can fire after onCleanup but before the spawn

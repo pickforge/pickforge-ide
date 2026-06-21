@@ -10,6 +10,10 @@ export interface SpawnOptions {
   /** When set, run this command once (`$SHELL -c <command>`) instead of an
    *  interactive shell — the pty exits when the command does. */
   command?: string | null;
+  /** Extra env merged on top of the login-shell env — the `PICKFORGE_*` vars
+   *  (incl. `PICKFORGE_IPC_ENDPOINT`) that let an embedded agent discover the
+   *  local MCP endpoint. */
+  env?: Record<string, string> | null;
   rows: number;
   cols: number;
   onOutput: (data: PtyBytes) => void;
@@ -27,6 +31,7 @@ export async function ptySpawn(opts: SpawnOptions): Promise<number> {
   return invoke<number>("pty_spawn", {
     cwd: opts.cwd ?? null,
     command: opts.command ?? null,
+    env: opts.env ?? null,
     rows: opts.rows,
     cols: opts.cols,
     onOutput,

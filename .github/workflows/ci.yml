@@ -41,6 +41,14 @@ jobs:
       - name: build (tsc --noEmit && vite build)
         run: bun run build
 
+      # Build + stage the `pickforge-mcp` sidecar at the triple-suffixed path
+      # `bundle.externalBin` points at. `tauri-build` resolves that externalBin
+      # at build-script time (not just at bundle time), so a bare `cargo check`
+      # fails with "resource path ... doesn't exist" without it. The script
+      # derives the host triple from `rustc -vV`, so it's correct for this runner.
+      - name: stage MCP sidecar (externalBin)
+        run: bun run sidecar
+
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
 

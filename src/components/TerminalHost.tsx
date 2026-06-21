@@ -160,6 +160,8 @@ export interface TerminalHostHandle {
 export function TerminalHost(props: {
   onReady?: (handle: TerminalHostHandle) => void;
   cwd?: string;
+  /** Extra `PICKFORGE_*` env for every spawned shell — MCP endpoint discovery. */
+  env?: Record<string, string> | null;
   /** Forwarded from every pane: a line the user typed and submitted, tagged with
    *  the id of the pane it came from. */
   onUserSubmit?: (line: string, paneId: string) => void;
@@ -459,6 +461,7 @@ export function TerminalHost(props: {
                 <div class="pf-pane-inner">
                   <TerminalPane
                     cwd={props.cwd}
+                    env={props.env}
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
                     onSelectionChange={setAskSel}
                     onReady={(handle) => {

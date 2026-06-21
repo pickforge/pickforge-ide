@@ -2452,10 +2452,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pickforge-mcp"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "pickforge-tauri"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "libc",
  "notify",
  "pickforge-core",
  "serde",

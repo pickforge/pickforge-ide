@@ -10,6 +10,7 @@ pub mod cdp;
 pub mod db;
 pub mod git;
 pub mod inspector;
+pub mod mcp;
 pub mod process;
 pub mod pty;
 pub mod storage;

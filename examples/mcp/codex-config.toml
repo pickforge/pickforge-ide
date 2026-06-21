@@ -1,0 +1,8 @@
+# Codex MCP config for the local PickForge endpoint. Add this block to
+# ~/.codex/config.toml. Set `command` to the pickforge-mcp binary (it ships in
+# the same Cargo build as the app: target/release/pickforge-mcp). The adapter
+# inherits PICKFORGE_IPC_ENDPOINT from the embedded terminal, so no env is needed.
+
+[mcp_servers.pickforge]
+command = "/absolute/path/to/pickforge/target/release/pickforge-mcp"
+args = []

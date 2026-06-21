@@ -1,9 +1,10 @@
 # Cargo workspace for the PickForge Tauri-hybrid app.
 #   crates/pickforge-core  — UI-agnostic Rust core (PTY, process, transcript, …)
+#   crates/pickforge-mcp   — stdio MCP adapter the embedded agent spawns
 #   src-tauri              — the Tauri v2 binary; adapts the core to IPC
 [workspace]
 resolver = "2"
-members = ["crates/pickforge-core", "src-tauri"]
+members = ["crates/pickforge-core", "crates/pickforge-mcp", "src-tauri"]
 
 [workspace.package]
 edition = "2021"

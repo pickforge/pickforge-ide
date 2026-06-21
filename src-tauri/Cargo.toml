@@ -24,5 +24,8 @@ notify = "6"
 tokio = { workspace = true }
 pickforge-core = { path = "../crates/pickforge-core" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"

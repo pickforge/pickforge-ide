@@ -1,0 +1,18 @@
+[package]
+name = "pickforge-mcp"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+
+# The stdio MCP adapter the embedded agent spawns. It is a thin, dependency-light
+# byte-pump: read a JSON-RPC line on stdin, forward it to the running PickForge
+# app over the local Unix socket (PICKFORGE_IPC_ENDPOINT), stream the reply to
+# stdout. No protocol logic lives here — the app owns the MCP surface.
+[[bin]]
+name = "pickforge-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# `io-std` is needed for the agent's stdin/stdout (not in the workspace default).
+tokio = { version = "1", features = ["rt", "macros", "io-util", "io-std", "net"] }

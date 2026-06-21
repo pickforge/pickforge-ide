@@ -8,6 +8,8 @@ dist/
 # Rust / Tauri
 target/
 src-tauri/gen/
+# Staged Tauri sidecar (built by scripts/build-sidecar.mjs at bundle time)
+src-tauri/binaries/
 
 # Commit lockfiles for reproducible builds
 !Cargo.lock

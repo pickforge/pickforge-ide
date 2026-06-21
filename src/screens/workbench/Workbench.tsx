@@ -26,6 +26,7 @@ import {
 } from "../../stores/quickLaunch";
 import { findChat, onChatDeleted, workspace } from "../../stores/workspace";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
+import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
 import { armChatAutoName, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
@@ -68,12 +69,31 @@ export function WorkbenchScreen() {
     host.openInNewPane(cmd);
   };
 
-  // Mount a host the first time its chat becomes active; keep it after.
+  // Track which chats have a mount in flight so a re-run of this effect (e.g. a
+  // second reactive read) never kicks off two binds / two mounts for one chat.
+  const binding = new Set<string>();
+
+  // Mount a host the first time its chat becomes active; keep it after. AWAIT the
+  // project's MCP endpoint before mounting, so the very first shell carries the
+  // discovery env (PICKFORGE_IPC_ENDPOINT). `TerminalPane` reads `props.env` once
+  // at spawn — and the font wait it spawns behind is often cached/instant — so a
+  // fire-and-forget `mcp_start` could lose the race and spawn an agent shell with
+  // no endpoint, undiscoverable until the user opened a fresh pane. `mcp_start` is
+  // best-effort (it catches its own errors and always resolves), so awaiting it
+  // never blocks the mount indefinitely; on failure we mount with empty env, the
+  // same graceful degradation as before.
   createEffect(() => {
     const id = workspace.activeChatId;
-    if (!id || mounted().some((m) => m.chatId === id)) return;
+    if (!id || binding.has(id) || mounted().some((m) => m.chatId === id)) return;
     const chat = findChat(id);
-    if (chat) setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
+    if (!chat) return;
+    binding.add(id);
+    void ensureMcpRunning(chat.projectRoot).finally(() => {
+      binding.delete(id);
+      // Guard: the chat may have been deleted while the bind was in flight.
+      if (!findChat(id) || mounted().some((m) => m.chatId === id)) return;
+      setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
+    });
   });
 
   onMount(() => {
@@ -203,6 +223,7 @@ export function WorkbenchScreen() {
               >
                 <TerminalHost
                   cwd={h.projectRoot}
+                  env={mcpEnv(h.projectRoot)}
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                 />

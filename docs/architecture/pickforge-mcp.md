@@ -1,170 +1,118 @@
-# Pickforge MCP Integration
+# PickForge MCP endpoint
 
-Pickforge ships the app-local IPC backend for MCP integrations plus a small
-stdio MCP adapter at `tool/pickforge_mcp.dart`. The adapter proxies MCP tool
-calls to Pickforge through this IPC contract.
+PickForge exposes a small, **local-only** MCP server so an agent running in the
+embedded terminal (Claude / Codex) can re-query live context mid-task. It serves
+four capability-gated tools over a Unix socket; the agent reaches it through a
+thin stdio adapter that PickForge ships.
 
-This keeps the desktop app free of agent-host packaging concerns while still
-giving agent profiles one stable project-local discovery mechanism. Packaged
-agent-host integrations can either call this adapter or reimplement the same
-IPC proxy contract.
+## Why this shape (transport decision)
+
+Two parts, splitting protocol from transport:
+
+1. **In-app socket server** (`src-tauri/src/mcp_commands.rs`). The live state the
+   tools need — the active target, the device serial, the current inspector
+   selection, recent run logs — already lives in the running app. Hosting the
+   server *inside* the app means it reads that state directly instead of
+   re-deriving it. It binds a Unix domain socket and speaks newline-delimited MCP
+   JSON-RPC. No network listener is ever opened.
+2. **Stdio adapter** (`crates/pickforge-mcp`). MCP hosts spawn a *stdio* server
+   and talk JSON-RPC over its stdin/stdout. `pickforge-mcp` is a dependency-light
+   byte-pump: it resolves the live socket from the `PICKFORGE_*` env the embedded
+   terminal already carries, connects, and pumps frames in both directions. It
+   contains **no** protocol logic, so it can never drift from the server.
+
+The MCP wire format + tool logic live once, in `crates/pickforge-core/src/mcp/`
+(hand-rolled JSON-RPC — the surface is `initialize`, `tools/list`, `tools/call`,
+too small to justify a framework). The same code backs the in-app server, the
+adapter's expectations, and the unit + socket tests.
+
+```
+agent (Claude/Codex)  ──stdio JSON-RPC──▶  pickforge-mcp  ──unix socket──▶  PickForge app
+                                            (byte pump)                      (core::mcp + live state)
+```
+
+## Tools
+
+All four are gated on the **active target's** capabilities (the camelCase
+`Capability` set from `targets/adapters.rs`). A gated or empty answer is a
+*successful* result with `available: false` and a `reason` — never an error — so
+an agent can always read a clear signal.
+
+| Tool | Input | Returns |
+| --- | --- | --- |
+| `get_current_selection` | — | The live selected UI element for the active target: the Flutter VM-Service widget (`inspectorKind: vmService`) or the UIAutomator `A11yNode` (`uiAutomator`). `{ available, kind, targetId, selection }`, or `{ available:false, reason }`. Gated on `inspectSelection`. |
+| `capture_screenshot` | — | `{ available, path }` — an absolute PNG path written under the context dir (live `adb` capture for Android). Gated on `captureScreenshot`. |
+| `get_run_logs` | `{ limit?: 1..1000 }` | `{ available, lineCount, lines }` — recent run-console / logcat lines, newest last. Gated on `streamLogs`. |
+| `get_project_context` | — | `{ projectRoot, activeTargetId, activeTargetLabel, supportTier, capabilities, storage:{contextDir,runsDir,chatsDir} }`. Always available. |
+
+`get_current_selection` routes to the adapter the active target drives, so the
+caller never special-cases a framework — Flutter returns a `WidgetNode`, Android
+an `A11yNode`, both under the same envelope.
+
+## Live state
+
+The frontend is the source of truth for what is *active*. It publishes a snapshot
+(`mcp_publish_state`) whenever the active target, device, project context, or
+selection changes, and streams run-console lines (`mcp_push_log`) into a bounded
+ring buffer. The socket server reads that snapshot per request and, for Android
+screenshots, resolves a fresh device capture through the core `adb` helper
+(`android::capture_screenshot`). The 11 existing `vm_*` IPC commands are untouched.
 
 ## Discovery
 
-When a run session is active, Pickforge writes the IPC endpoint to the
-resolved context dir's `ipc.sock-path`. In project-local storage mode this is:
+PickForge injects these into every embedded terminal once a project's endpoint is
+up (the server starts when a project becomes active in the workbench):
 
-```text
-<projectRoot>/.pickforge/ipc.sock-path
-```
+- `PICKFORGE_IPC_ENDPOINT` — the live Unix-socket path.
+- `PICKFORGE_PROJECT_ROOT`, `PICKFORGE_CONTEXT_DIR`.
 
-In home/custom storage modes the context dir lives outside the project, so the
-adapter resolves the endpoint with the following precedence:
+On run start the endpoint is also written to `<context_dir>/ipc.sock-path`, so an
+adapter launched outside the embedded shell can still find it. The adapter
+resolves the endpoint with this precedence:
 
-1. `PICKFORGE_IPC_ENDPOINT` — when set and non-empty, it is already the live
-   socket path and is used directly.
-2. `PICKFORGE_CONTEXT_DIR` — when set, read `<that>/ipc.sock-path`.
-3. Otherwise, resolve the project's storage layout and read its
-   `ipc.sock-path`.
+1. `PICKFORGE_IPC_ENDPOINT` (used directly).
+2. `PICKFORGE_CONTEXT_DIR` → read `<dir>/ipc.sock-path`.
+3. legacy `<PICKFORGE_PROJECT_ROOT or cwd>/.pickforge/ipc.sock-path`.
 
-Pickforge injects `PICKFORGE_CONTEXT_DIR` (and `PICKFORGE_IPC_ENDPOINT` while a
-run session is active) into every embedded terminal, so adapters launched from
-the embedded shell discover the endpoint without re-resolving storage.
+The socket lives at `$XDG_RUNTIME_DIR/pickforge-<pid>/agent.sock` (temp-dir
+fallback). Windows named-pipe transport is deferred — desktop targets Linux/macOS
+first.
 
-On Linux and macOS the endpoint is a Unix socket:
+## Wiring an agent (opt-in)
 
-```text
-$XDG_RUNTIME_DIR/pickforge-<pid>/agent.sock
-```
+The endpoint is discoverable but never auto-attached. To let an agent use it,
+point its MCP config at the `pickforge-mcp` adapter — see `examples/mcp/`:
 
-If `XDG_RUNTIME_DIR` is not available, Pickforge falls back to the system temp
-directory. On Windows, the endpoint is a named pipe:
+- **Claude Code**: copy `examples/mcp/.mcp.json` to your project root and set the
+  `command` to the `pickforge-mcp` binary. No `env` block is needed — the embedded
+  terminal already carries `PICKFORGE_*`.
+- **Codex**: add the `examples/mcp/codex-config.toml` `[mcp_servers.pickforge]`
+  block to `~/.codex/config.toml`.
 
-```text
-\\.\pipe\pickforge-<pid>-agent
-```
+Where the binary lives:
 
-The file is removed when the run session unbinds. Agent MCP adapters should read
-the endpoint from the project root they are launched in, connect to the socket
-or named pipe, and send newline-delimited JSON requests.
+- **Installed app**: it ships as a Tauri *sidecar* (`bundle.externalBin`), so it
+  is installed next to the main `PickForge` executable (e.g. `pickforge-mcp`
+  alongside the app binary on Linux/macOS). `scripts/build-sidecar.mjs` builds and
+  stages it for the current target triple, wired into the Tauri
+  `beforeBuildCommand`, so a packaged app actually ships the adapter.
+- **Dev build / source checkout**: `target/<profile>/pickforge-mcp` from the same
+  Cargo workspace.
 
-## IPC Request Shape
+Because the adapter inherits the terminal's env, the *same* config works whether
+storage is project-local, Home, or custom.
 
-```json
-{"id":1,"method":"get_selected_widget"}
-```
+## Local trust boundary & disabling
 
-Successful responses include the same `id` and a JSON-safe `result` value:
+The endpoint shares the rest of PickForge's IPC trust boundary: a Unix socket on
+the same machine, no auth, no network. To disable it, simply don't add the MCP
+config to your agent — nothing connects on its own. The server stops and removes
+its socket on `mcp_stop`.
 
-```json
-{"id":1,"result":{"node":{"className":"ElevatedButton"}}}
-```
+## Deliberately minimal / deferred
 
-Errors include an `error` string:
-
-```json
-{"id":1,"error":"no_active_session"}
-```
-
-## Methods
-
-The MCP-facing method names are:
-
-- `get_selected_widget`: returns the active inspector selection as
-  `SelectedWidget.toJson()`, or `null`.
-- `get_current_selection`: generic target-selection alias. Currently returns the
-  same `SelectedWidget.toJson()` payload as `get_selected_widget` (Flutter is the
-  only deep-support target so far).
-- `list_pickforge_history`: returns recent pick-history rows for the active
-  project.
-- `capture_screenshot`: captures the active device screen into the resolved
-  context directory when the current target supports screenshots.
-- `capture_target_screenshot`: generic alias of `capture_screenshot`; same
-  `{ok, path, reason}` result shape.
-- `hot_reload`: delegates to the active `flutter run` session.
-- `get_run_logs`: returns the active project in-memory run log entries.
-- `get_project_context`: returns the resolved context directory's text context
-  files plus screenshot file metadata.
-
-`get_current_selection` and `capture_target_screenshot` are the framework-neutral
-names other target adapters (React Native, native Android, web) will eventually
-serve; today they are thin aliases over the Flutter implementations and carry the
-identical payloads, so no consumer has to special-case Flutter.
-
-Compatibility aliases are also supported for existing consumers:
-
-- `hotReload`
-- `hotRestart`
-- `getVmServiceUri`
-- `getCurrentSelection`
-
-## Flutter deep support
-
-Flutter is the reference, deep-support target. The `FlutterTargetAdapter`
-(`lib/core/targets/`) declares the full capability set — launch, stop, hot
-reload/restart, screenshot, log streaming, selection inspection, source mapping,
-and MCP tool exposure — and detects a project by its `sdk: flutter` pubspec
-dependency. The live work behind these IPC methods is owned by the existing
-Flutter services, with the VM Service inspector as the source of truth for widget
-identity:
-
-- VM Service `InspectorExtensions` / `InspectorRepository` / `SelectionStream` —
-  widget identity, ancestor chain, creation location, source snippet, properties.
-- `RunSession` — hot reload/restart over the active `flutter run`.
-- `AdbScreenshotCapturer` — device screenshots into the resolved context dir.
-- `ContextStorageService` — resolves where context, screenshots, and the IPC
-  discovery file live.
-
-`FlutterSelectionMapper` (`lib/core/targets/flutter/`) projects a `SelectedWidget`
-onto the generic `TargetSelection` while retaining the full Flutter pick, so the
-framework-neutral selection contract never loses inspector precision.
-
-Adapter-owned live sessions (a stateful `TargetSession` that takes ownership of
-run/reload/screenshot for the active target) are intentionally **deferred**. The
-generic operation surface is kept thin until a second target — React Native
-Android (Milestone 4) — proves the shared shape, rather than speculating an
-abstraction from a single implementer.
-
-## Bundled Stdio Adapter
-
-Run from a Flutter project root while Pickforge has an active run session. The
-adapter discovers the endpoint via the env-based precedence above
-(`PICKFORGE_IPC_ENDPOINT` → `PICKFORGE_CONTEXT_DIR` → resolved storage), so it
-works regardless of whether the context dir is project-local, Home, or custom:
-
-```bash
-/path/to/pickforge/scripts/pickforge_mcp.sh
-```
-
-Use the wrapper script rather than `fvm dart run` in MCP host configuration:
-some Flutter/FVM hooks print build status to stdout, and MCP stdio requires
-stdout to contain only JSON-RPC messages. The wrapper compiles the adapter under
-`build/mcp/` and redirects compiler output to stderr before executing it.
-
-The adapter implements:
-
-- `initialize`
-- `notifications/initialized`
-- `ping`
-- `tools/list`
-- `tools/call`
-
-Tool calls are forwarded to Pickforge as IPC requests. Tool results are returned
-as MCP text content containing pretty-printed JSON.
-
-## MCP Adapter Guidance
-
-Agent profiles should configure an MCP server whose working directory is the
-Flutter project root. The adapter should:
-
-1. Resolve the endpoint via `PICKFORGE_IPC_ENDPOINT`, then `PICKFORGE_CONTEXT_DIR`
-   (`<dir>/ipc.sock-path`), then the project's resolved storage layout. Do not
-   assume a `.pickforge/` directory exists in the project root.
-2. Connect using Unix socket or Windows named pipe transport based on the path.
-3. Expose MCP `tools/list` entries matching the MCP-facing methods above.
-4. On MCP `tools/call`, forward the tool name to Pickforge as the IPC `method`
-   and wrap the JSON result into the MCP tool result content.
-
-Profile-specific configuration should only differ in the host application's MCP
-configuration format. The Pickforge discovery file and tool names stay the same
-for Codex, OpenCode, and other agent hosts.
+- One protocol dialect (MCP JSON-RPC) end-to-end; no separate IPC verb set.
+- Web (`cdp`) selection and an `hot_reload` tool are not implemented — the four
+  tools the issue names are the surface.
+- Windows named pipes, a per-tool auth layer, and any remote transport are out of
+  scope by design.

@@ -1,0 +1,9 @@
+{
+  "//": "Claude Code MCP config for the local PickForge endpoint. Copy to your project root as .mcp.json and set `command` to the pickforge-mcp binary (it ships in the same Cargo build as the app: target/release/pickforge-mcp or target/debug/pickforge-mcp). No env is needed — the embedded terminal already carries PICKFORGE_IPC_ENDPOINT.",
+  "mcpServers": {
+    "pickforge": {
+      "command": "/absolute/path/to/pickforge/target/release/pickforge-mcp",
+      "args": []
+    }
+  }
+}

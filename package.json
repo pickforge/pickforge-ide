@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "sidecar": "node scripts/build-sidecar.mjs",
+    "build:tauri": "node scripts/build-sidecar.mjs && tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "vrt": "playwright test",

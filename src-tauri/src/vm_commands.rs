@@ -287,10 +287,42 @@ pub fn inspect_dir(repo_local: bool, project_root: String) -> Result<String, Str
     Ok(dir.to_string_lossy().into_owned())
 }
 
+const MAX_MARKDOWN: usize = 8 * 1024 * 1024; // 8 MiB of context markdown
+const MAX_PNG_BYTES: usize = 32 * 1024 * 1024; // 32 MiB decoded screenshot
+
+/// A capture folder name must be a SINGLE safe path component — never a
+/// separator, `..`, or a control char — so `<dir>/<base_name>` can't escape the
+/// inspector directory.
+fn safe_base_name(name: &str) -> Result<&str, String> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(['/', '\\', '\0'])
+        || name.chars().any(char::is_control)
+    {
+        return Err("invalid capture name".into());
+    }
+    Ok(name)
+}
+
+/// True only for the inspector's own storage: PickForge home `<home>/inspect`,
+/// or a project's `<root>/.pickforge/inspect`. Stops a renderer from passing an
+/// arbitrary `dir` to write outside the capture area.
+fn is_inspect_root(dir: &std::path::Path) -> bool {
+    if let Ok(home) = pickforge_home(None) {
+        if dir == std::path::Path::new(&home).join("inspect") {
+            return true;
+        }
+    }
+    dir.file_name().and_then(|n| n.to_str()) == Some("inspect")
+        && dir.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()) == Some(".pickforge")
+}
+
 /// Write the inspector capture into its own per-capture sub-folder
 /// `<dir>/<base_name>/` (from [`inspect_dir`]) as `context.md` + `screenshot.png`,
 /// so each capture is grouped and removable as a unit. Returns absolute paths so
-/// the launched agent can read them regardless of cwd.
+/// the launched agent can read them regardless of cwd. The `base_name` is
+/// sanitized and the final path is re-checked to stay under the inspector dir.
 #[tauri::command]
 pub fn inspect_save(
     dir: String,
@@ -298,17 +330,46 @@ pub fn inspect_save(
     markdown: String,
     png_base64: Option<String>,
 ) -> Result<InspectPaths, String> {
-    let dir = std::path::Path::new(&dir).join(&base_name);
+    let base = safe_base_name(&base_name)?;
+    if markdown.len() > MAX_MARKDOWN {
+        return Err("capture markdown too large".into());
+    }
+    let root = std::path::Path::new(&dir);
+    if !is_inspect_root(root) {
+        return Err("capture dir is not an inspector directory".into());
+    }
+    let dir = root.join(base);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // Re-check containment after canonicalization (defends against symlinks).
+    let canon_root = std::fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let canon_dir = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    if !canon_dir.starts_with(&canon_root) {
+        return Err("capture path escaped the inspector directory".into());
+    }
+    // Create files with O_EXCL (create_new) so a pre-existing symlink at a
+    // capture path can't redirect the write outside the inspector directory.
+    let write_new = |path: &std::path::Path, bytes: &[u8]| -> Result<(), String> {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut f| f.write_all(bytes))
+            .map_err(|e| e.to_string())
+    };
     let md_path = dir.join("context.md");
-    std::fs::write(&md_path, markdown).map_err(|e| e.to_string())?;
+    write_new(&md_path, markdown.as_bytes())?;
     let png_path = match png_base64 {
         Some(b64) if !b64.is_empty() => {
+            // Bound the decoded size before allocating (base64 ≈ 4/3 of bytes).
+            if b64.len() / 4 * 3 > MAX_PNG_BYTES {
+                return Err("capture screenshot too large".into());
+            }
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64.as_bytes())
                 .map_err(|e| e.to_string())?;
             let p = dir.join("screenshot.png");
-            std::fs::write(&p, bytes).map_err(|e| e.to_string())?;
+            write_new(&p, &bytes)?;
             Some(p.to_string_lossy().into_owned())
         }
         _ => None,
@@ -317,6 +378,84 @@ pub fn inspect_save(
         md_path: md_path.to_string_lossy().into_owned(),
         png_path,
     })
+}
+
+#[cfg(test)]
+mod inspect_save_tests {
+    use super::*;
+
+    fn temp_inspect_root(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("pf-inspect-{}-{tag}", std::process::id()))
+            .join(".pickforge")
+            .join("inspect");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn rejects_unsafe_base_names() {
+        for bad in ["", ".", "..", "a/b", "a\\b", "../escape"] {
+            assert!(safe_base_name(bad).is_err(), "{bad:?} should be rejected");
+        }
+        assert!(safe_base_name("20260621-AppBar").is_ok());
+    }
+
+    #[test]
+    fn rejects_traversal_in_inspect_save() {
+        let root = temp_inspect_root("traversal");
+        let res = inspect_save(
+            root.to_string_lossy().into_owned(),
+            "../escape".into(),
+            "x".into(),
+            None,
+        );
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn rejects_a_non_inspector_dir() {
+        let dir = std::env::temp_dir().join(format!("pf-not-inspect-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let res = inspect_save(dir.to_string_lossy().into_owned(), "cap".into(), "x".into(), None);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn writes_a_capture_under_the_inspect_root() {
+        let root = temp_inspect_root("write");
+        let res = inspect_save(
+            root.to_string_lossy().into_owned(),
+            "cap-1".into(),
+            "# hello".into(),
+            None,
+        )
+        .expect("write capture");
+        assert!(std::path::Path::new(&res.md_path).exists());
+        assert!(res.md_path.contains("cap-1"));
+    }
+
+    #[test]
+    fn rejects_oversized_markdown() {
+        let root = temp_inspect_root("big");
+        let big = "a".repeat(MAX_MARKDOWN + 1);
+        assert!(inspect_save(root.to_string_lossy().into_owned(), "cap".into(), big, None).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn does_not_follow_a_symlinked_capture_file() {
+        use std::os::unix::fs::symlink;
+        let root = temp_inspect_root("symlink");
+        let cap = root.join("cap-sym");
+        std::fs::create_dir_all(&cap).unwrap();
+        let evil = std::env::temp_dir().join(format!("pf-evil-{}", std::process::id()));
+        let _ = std::fs::remove_file(&evil);
+        symlink(&evil, cap.join("context.md")).unwrap();
+        let res = inspect_save(root.to_string_lossy().into_owned(), "cap-sym".into(), "x".into(), None);
+        assert!(res.is_err(), "writing through a symlinked capture file must fail");
+        assert!(!evil.exists(), "the write must not follow the symlink");
+    }
 }
 
 /// A PNG screenshot of one widget subtree (base64), or null.

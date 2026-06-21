@@ -34,14 +34,18 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: cargo check (workspace)
-        run: cargo check --workspace
-
-      - name: cargo test (core)
-        run: cargo test -p pickforge-core
-
+      # Build the frontend FIRST so `dist/` exists (it is gitignored) before the
+      # cargo steps compile the Tauri crate's generate_context!(), which embeds
+      # `../dist`. --locked keeps Cargo.lock authoritative, mirroring the frozen
+      # bun install.
       - name: build (tsc --noEmit && vite build)
         run: bun run build
+
+      - name: cargo check (workspace)
+        run: cargo check --workspace --locked
+
+      - name: cargo test (core)
+        run: cargo test -p pickforge-core --locked
 
   vrt:
     name: visual regression

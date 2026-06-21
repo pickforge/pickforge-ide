@@ -51,6 +51,51 @@ export function defaultCommand(t: TargetDetection): string | null {
   }
 }
 
+/** Honest per-target support tier (docs/architecture/target-adapters.md):
+ *  Deep = exact selection→source; Useful = run/inspect + best-effort hints;
+ *  Experimental = some tooling, thin runtime; Manual = detect-only fallback. */
+export type SupportTier = "deep" | "useful" | "experimental" | "manual";
+
+const TIER_META: Record<SupportTier, { label: string; blurb: string }> = {
+  deep: { label: "Deep", blurb: "Exact selection→source mapping and full run/inspect." },
+  useful: { label: "Useful", blurb: "Run, logs, screenshot, inspect + best-effort source hints." },
+  experimental: { label: "Experimental", blurb: "Detection + some tooling; thin runtime." },
+  manual: { label: "Manual", blurb: "Terminal, attachments and prompts only — no live inspect." },
+};
+
+/** Does a target declare a capability? Capability strings are the camelCase
+ *  serde names from `Capability` in adapters.rs (e.g. "inspectSelection"). */
+export function hasCapability(t: RunTarget | null | undefined, cap: string): boolean {
+  return !!t && t.capabilities.includes(cap);
+}
+
+/** Derive the support tier from a target's declared capabilities — the ONE place
+ *  the capability vector is mapped to a tier, so the badge and any gating read the
+ *  same honest signal. Mirrors the Deep/Useful/Experimental/Manual ladder in the
+ *  docs: exact source mapping ⇒ Deep; run + inspect ⇒ Useful; any live tooling
+ *  ⇒ Experimental; detect-only ⇒ Manual. */
+export function supportTier(t: RunTarget | null | undefined): SupportTier {
+  if (!t) return "manual";
+  const has = (c: string) => t.capabilities.includes(c);
+  const inspect = has("inspectSelection");
+  const runnable = has("launch");
+  const tooling = runnable || has("captureScreenshot") || has("streamLogs");
+  if (inspect && runnable && has("mapSelectionToSource")) return "deep";
+  if (inspect && runnable) return "useful";
+  if (inspect || tooling) return "experimental";
+  return "manual";
+}
+
+/** The badge label + tooltip blurb for a target's tier. */
+export function supportTierMeta(t: RunTarget | null | undefined): {
+  tier: SupportTier;
+  label: string;
+  blurb: string;
+} {
+  const tier = supportTier(t);
+  return { tier, ...TIER_META[tier] };
+}
+
 /** The per-adapter run profile — device convention + inspector kind — derived in
  *  ONE place from the detected target id, so no downstream call site re-derives
  *  "is this Flutter". `withDevice` and the inspector rail consume it. */

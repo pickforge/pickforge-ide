@@ -8,11 +8,13 @@ import {
   defaultCommand,
   expandVars,
   fromLaunchConfig,
+  hasCapability,
   isDirProgram,
   isTestProgram,
   runProfile,
   shquote,
   stripJsonc,
+  supportTier,
   withDevice,
   type RunTarget,
 } from "../../src/lib/runTargets";
@@ -75,6 +77,40 @@ describe("runProfile", () => {
       deviceConvention: "none",
       inspectorKind: "none",
     });
+  });
+});
+
+describe("supportTier", () => {
+  // The capability vectors are the real ones declared per adapter in
+  // crates/pickforge-core/src/targets/adapters.rs.
+  const flutter = [
+    "detect", "launch", "stop", "hotReload", "hotRestart",
+    "captureScreenshot", "streamLogs", "inspectSelection",
+    "mapSelectionToSource", "exposeMcpTools",
+  ];
+  const reactNative = ["detect", "launch", "stop", "captureScreenshot", "streamLogs", "inspectSelection"];
+  const nativeAndroid = ["detect", "launch", "captureScreenshot", "streamLogs", "inspectSelection"];
+  const web = ["detect", "captureScreenshot", "inspectSelection", "mapSelectionToSource"];
+  const generic = ["detect"];
+
+  it("Flutter (source mapping + run + inspect) → deep", () => {
+    expect(supportTier(target({ capabilities: flutter }))).toBe("deep");
+  });
+  it("React Native / native-Android (run + inspect, no source map) → useful", () => {
+    expect(supportTier(target({ capabilities: reactNative }))).toBe("useful");
+    expect(supportTier(target({ capabilities: nativeAndroid }))).toBe("useful");
+  });
+  it("Web (inspect, no launch) → experimental — thin runtime", () => {
+    expect(supportTier(target({ capabilities: web }))).toBe("experimental");
+  });
+  it("Generic (detect-only) and null → manual", () => {
+    expect(supportTier(target({ capabilities: generic }))).toBe("manual");
+    expect(supportTier(null)).toBe("manual");
+  });
+  it("hasCapability reads the vector", () => {
+    expect(hasCapability(target({ capabilities: reactNative }), "inspectSelection")).toBe(true);
+    expect(hasCapability(target({ capabilities: reactNative }), "mapSelectionToSource")).toBe(false);
+    expect(hasCapability(null, "inspectSelection")).toBe(false);
   });
 });
 

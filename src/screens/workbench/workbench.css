@@ -1144,6 +1144,12 @@ body.pf-resizing .pf-dock-resizer-grip {
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
 }
+/* Quiet, neutral support-tier badge on the active target. Reuses StatusPill;
+   the wrapper just carries the tooltip and keeps the pill from shrinking. */
+.pf-run-tier {
+  display: inline-flex;
+  flex: none;
+}
 .pf-run-empty,
 .pf-run-booting {
   font-family: var(--pf-font-mono);
@@ -1940,6 +1946,14 @@ body.pf-resizing .pf-dc-resizer-grip {
   display: flex;
   flex-wrap: wrap;
   gap: var(--pf-space-xs);
+}
+/* Quiet certainty note for targets without exact source mapping — muted, never
+   the ember; the section's single ember stays on the eyebrow tick. */
+.pf-wd-disclaimer {
+  margin: 0;
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.4;
+  color: var(--pf-text-low);
 }
 .pf-wd-chip {
   border: var(--pf-hairline-width) solid var(--pf-hairline-strong);

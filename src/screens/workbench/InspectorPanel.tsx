@@ -36,6 +36,20 @@ export function InspectorPanel() {
     return running?.inspectorKind ?? activeTarget()?.inspectorKind ?? null;
   };
 
+  // VM-service chrome (the connect box + the "VM connected" chip) is Flutter-only.
+  // The legacy no-target case (null) keeps the VM flow, so it shows there too; every
+  // other kind (uiAutomator · cdp · none) must never see Dart-VM-service language.
+  const showVm = () => {
+    const k = inspectorKind();
+    return k === "vmService" || k === null;
+  };
+
+  // The device-picker empty state, honest per inspection mode: adb-backed targets
+  // (Flutter / RN / native-Android, and the legacy no-target case) say "(adb)";
+  // web (cdp) has no adb devices.
+  const noDevicesLabel = () =>
+    inspectorKind() === "cdp" ? "No devices" : "No devices (adb)";
+
   // VM service connection is shared (the Debug Console auto-connects to a
   // `flutter run`'s VM service; this panel shows/controls the same state).
   const vmUrl = vmService.url;
@@ -71,7 +85,7 @@ export function InspectorPanel() {
             <div class="pf-wt-actions">
               {/* VM-service status folded in: a connected chip whose click
                   disconnects (replaces the standalone VM Service section). */}
-              <Show when={vmConnected()}>
+              <Show when={showVm() && vmConnected()}>
                 <button class="pf-vm-chip" title="VM connected — click to disconnect" onClick={disconnectVm}>
                   <span class="pf-vm-dot" />
                   VM
@@ -84,7 +98,7 @@ export function InspectorPanel() {
           </div>
           <Show
             when={devices().length > 0}
-            fallback={<div class="pf-rail-empty">No devices (adb)</div>}
+            fallback={<div class="pf-rail-empty">{noDevicesLabel()}</div>}
           >
             <Dropdown
               value={selectedKey()}

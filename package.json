@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "vrt": "playwright test",
+    "test:unit": "vitest run",
     "fonts:data": "node scripts/generate-fonts-data.mjs"
   },
   "dependencies": {
@@ -30,6 +31,7 @@
     "@types/node": "^22.19.21",
     "typescript": "^5.6.2",
     "vite": "^6.0.0",
-    "vite-plugin-solid": "^2.11.0"
+    "vite-plugin-solid": "^2.11.0",
+    "vitest": "^4.1.9"
   }
 }

@@ -1,10 +1,10 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   BlueprintGrid,
   EmberButton,
   MonoEyebrow,
   SelectionBracket,
 } from "../components/ui";
+import { pickProjectDir } from "../lib/opener";
 import { addProject } from "../stores/workspace";
 import { navigate } from "../router";
 import "./screens.css";
@@ -15,8 +15,8 @@ function basename(path: string): string {
 
 export function OnboardingScreen() {
   const pick = async () => {
-    const dir = await open({ directory: true, title: "Add a project" });
-    if (typeof dir === "string") {
+    const dir = await pickProjectDir();
+    if (dir) {
       await addProject(dir, basename(dir));
       navigate("workbench");
     }

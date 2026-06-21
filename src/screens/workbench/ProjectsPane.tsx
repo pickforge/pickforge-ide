@@ -4,7 +4,6 @@
 // into a group; chats keep rename / archive / delete / drag-reorder. A toolbar
 // control collapses or expands every project's chats at once.
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
-import { open } from "@tauri-apps/plugin-dialog";
 import { FloatingMenu } from "../../components/FloatingMenu";
 import { Collapse } from "../../components/ui";
 import {
@@ -52,6 +51,7 @@ import {
   workspace,
 } from "../../stores/workspace";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
+import { pickProjectDir } from "../../lib/opener";
 
 const PROJECT_MIME = "application/x-pf-project";
 const CHAT_MIME = "application/x-pf-chat";
@@ -60,8 +60,8 @@ function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
 }
 async function pickProject() {
-  const dir = await open({ directory: true, title: "Add a project" });
-  if (typeof dir === "string") await addProject(dir, basename(dir));
+  const dir = await pickProjectDir();
+  if (dir) await addProject(dir, basename(dir));
 }
 
 type MenuKind = "project" | "group" | "chat";

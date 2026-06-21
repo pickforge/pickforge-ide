@@ -8,25 +8,51 @@ use std::sync::Mutex;
 use base64::Engine;
 use pickforge_core::{pickforge_home, Database};
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 /// Canonicalized directories a renderer is allowed to browse / read / open:
 /// the PickForge home (`~/.pickforge`, holding the shared inspect captures) plus
 /// every known project root. Seeded at startup ([`seed_approved_roots`]) and
-/// extended whenever a project is registered ([`register_project_root`]) so the
-/// file explorer, launch.json discovery, and capture reads all resolve under an
-/// approved root while an arbitrary off-disk path is rejected.
+/// extended only by a user-mediated native pick ([`pick_project_dir`]) or a
+/// re-seed from already-persisted DB roots, so the file explorer, launch.json
+/// discovery, and capture reads resolve under an approved root while an
+/// arbitrary off-disk path — or one a compromised renderer asks for — is
+/// rejected.
 #[derive(Default)]
 pub struct ApprovedRoots(pub Mutex<HashSet<PathBuf>>);
 
 impl ApprovedRoots {
     /// Canonicalize `dir` (resolving symlinks/`..`) and add it to the allowlist.
     /// A path that can't be canonicalized (e.g. a not-yet-created project) is
-    /// skipped — it gets added once it exists and is registered again.
+    /// skipped — it gets added once it exists and is registered again. A
+    /// filesystem root (`/`, a Windows drive root) or the user's home directory
+    /// is rejected outright: those are too broad to be a project root, so even a
+    /// bad caller can't approve the whole disk through this helper.
     pub fn insert(&self, dir: &Path) {
         if let Ok(canon) = std::fs::canonicalize(dir) {
+            if is_too_broad_to_approve(&canon) {
+                return;
+            }
             if let Ok(mut set) = self.0.lock() {
                 set.insert(canon);
+            }
+        }
+    }
+
+    /// Clear the allowlist and rebuild it from authoritative sources: the
+    /// PickForge home plus every **active** project root in `db`. Used after a
+    /// project leaves the active set (deleted or archived) so its root doesn't
+    /// stay approved for the rest of the process lifetime — the registry only
+    /// ever grows otherwise.
+    pub fn reseed(&self, db: &Database) {
+        if let Ok(mut set) = self.0.lock() {
+            set.clear();
+        }
+        seed_home_root(self);
+        if let Ok(projects) = db.list_projects(false) {
+            for p in projects {
+                self.insert(Path::new(&p.project_root));
             }
         }
     }
@@ -41,15 +67,66 @@ impl ApprovedRoots {
     }
 }
 
-/// Seed the registry with the PickForge home and every project root in the DB.
-/// Called once at startup; project roots added later flow through
-/// [`register_project_root`].
-pub fn seed_approved_roots(roots: &ApprovedRoots, db: &Database) {
+/// Reject a path that is too broad to ever be a project root: a filesystem root
+/// (`/`, a Windows drive root like `C:\`) or the user's home directory itself.
+/// `dir` is expected to be canonicalized already.
+fn is_too_broad_to_approve(dir: &Path) -> bool {
+    if dir.parent().is_none() {
+        // A filesystem root has no parent (`/`, `C:\`).
+        return true;
+    }
+    if let Some(home) = user_home_dir() {
+        if let Ok(canon_home) = std::fs::canonicalize(&home) {
+            if dir == canon_home {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The user's OS home directory (`$HOME`, or `%USERPROFILE%`/`%HOMEDRIVE%%HOMEPATH%`
+/// on Windows) — distinct from the PickForge home (`~/.pickforge`), which is an
+/// approved root. Used only to reject approving the home directory itself.
+fn user_home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            if !profile.trim().is_empty() {
+                return Some(PathBuf::from(profile));
+            }
+        }
+        let drive = std::env::var("HOMEDRIVE").unwrap_or_default();
+        let path = std::env::var("HOMEPATH").unwrap_or_default();
+        if !drive.is_empty() && !path.is_empty() {
+            return Some(PathBuf::from(format!("{drive}{path}")));
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("HOME")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+    }
+}
+
+/// Add the PickForge home (`~/.pickforge`) to the registry — it holds the shared
+/// inspect captures the renderer reads. Shared by startup seeding and reseed.
+fn seed_home_root(roots: &ApprovedRoots) {
     if let Ok(home) = pickforge_home(None) {
         // Create home if missing so it canonicalizes — the inspector writes here.
         let _ = std::fs::create_dir_all(&home);
         roots.insert(Path::new(&home));
     }
+}
+
+/// Seed the registry with the PickForge home and every project root in the DB.
+/// Called once at startup.
+pub fn seed_approved_roots(roots: &ApprovedRoots, db: &Database) {
+    seed_home_root(roots);
     if let Ok(projects) = db.list_projects(true) {
         for p in projects {
             roots.insert(Path::new(&p.project_root));
@@ -57,10 +134,31 @@ pub fn seed_approved_roots(roots: &ApprovedRoots, db: &Database) {
     }
 }
 
-/// Add a single project root to the registry (called from `project_upsert` /
-/// `projects_list` so the allowlist tracks the live project set).
+/// Add a single project root to the registry. Only called for roots that are
+/// already persisted/vetted — a startup-seeded DB root re-seeded by
+/// `projects_list`, or the user-picked directory from [`pick_project_dir`].
 pub fn register_project_root(roots: &ApprovedRoots, project_root: &str) {
     roots.insert(Path::new(project_root));
+}
+
+/// Open the **native** directory picker from the Rust side and, on a user pick,
+/// register the chosen directory as an approved root. This is the only path by
+/// which a new root becomes approved: the renderer can no longer hand
+/// `project_upsert` an arbitrary `project_root` and have it allowlisted — the
+/// approval is gated on a user-mediated native pick the renderer can't forge.
+/// Returns the picked path, or `None` if the user cancelled.
+#[tauri::command]
+pub async fn pick_project_dir(app: AppHandle) -> Result<Option<String>, String> {
+    // `blocking_pick_folder` must not run on the main thread; async commands run
+    // on a worker thread, so this is safe.
+    let picked = app.dialog().file().blocking_pick_folder();
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let path = file_path.into_path().map_err(|e| e.to_string())?;
+    let roots = app.state::<ApprovedRoots>();
+    register_project_root(&roots, &path.to_string_lossy());
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 /// Canonicalize `path` and confirm it resolves under an approved root. Returns
@@ -434,5 +532,141 @@ mod approved_root_tests {
         std::fs::write(&f, vec![b'a'; MAX_TEXT_PREVIEW_BYTES + 4096]).unwrap();
         let out = read_text_bounded(&f, usize::MAX.min(MAX_TEXT_PREVIEW_BYTES)).expect("read");
         assert_eq!(out.len(), MAX_TEXT_PREVIEW_BYTES);
+    }
+
+    /// A throwaway project root that exists on disk, returned canonicalized.
+    fn make_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pf-fsreg-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn registering_a_filesystem_root_is_rejected() {
+        // Even a bad caller can't approve `/` (or a drive root): it has no parent,
+        // so `insert` drops it and a read under it stays rejected.
+        let roots = ApprovedRoots::default();
+        let fs_root = if cfg!(windows) { "C:\\" } else { "/" };
+        register_project_root(&roots, fs_root);
+        // The registry is empty, so any concrete path is out of bounds.
+        let probe = make_dir("fsroot-probe").join("anything.txt");
+        std::fs::write(&probe, b"x").unwrap();
+        assert!(
+            approved_canonical(&probe.to_string_lossy(), &roots).is_err(),
+            "approving a filesystem root must not allowlist the whole disk",
+        );
+    }
+
+    #[test]
+    fn registering_the_home_directory_is_rejected() {
+        // The user's home is too broad to be a project root — reject it even if a
+        // caller hands it in. (Uses the real HOME; falls back to USERPROFILE on
+        // Windows via `user_home_dir`.)
+        let Some(home) = user_home_dir() else { return };
+        let Ok(canon_home) = std::fs::canonicalize(&home) else { return };
+        let roots = ApprovedRoots::default();
+        register_project_root(&roots, &canon_home.to_string_lossy());
+        // Home itself must not have been approved.
+        assert!(
+            !roots.contains(&canon_home),
+            "approving the home directory must be rejected",
+        );
+    }
+
+    #[test]
+    fn renderer_supplied_root_is_not_approved_by_registration() {
+        // Mirrors a renderer calling `project_upsert({project_root:"/"})`: the
+        // upsert no longer registers, and even if it did, `/` is rejected — a path
+        // outside any real project root stays out of bounds.
+        let roots = ApprovedRoots::default();
+        let real = make_dir("legit");
+        roots.insert(&real); // a normal project root works
+        register_project_root(&roots, if cfg!(windows) { "C:\\" } else { "/" });
+        let outside = std::env::temp_dir().join(format!("pf-fsx-{}.txt", std::process::id()));
+        std::fs::write(&outside, b"secret").unwrap();
+        assert!(
+            approved_canonical(&outside.to_string_lossy(), &roots).is_err(),
+            "a path under the (wrongly) approved `/` must still be rejected",
+        );
+        // The legitimate root still works.
+        let ok = real.join("pubspec.yaml");
+        std::fs::write(&ok, b"name: app").unwrap();
+        assert!(approved_canonical(&ok.to_string_lossy(), &roots).is_ok());
+        let _ = std::fs::remove_file(&outside);
+    }
+
+    #[test]
+    fn reseed_drops_a_removed_root_but_keeps_a_live_one() {
+        use pickforge_core::{Database, Project};
+
+        let db = Database::open_in_memory().expect("in-memory db");
+        let keep = make_dir("keep");
+        let gone = make_dir("gone");
+        let mk = |root: &std::path::Path, name: &str| Project {
+            project_root: root.to_string_lossy().into_owned(),
+            display_name: name.to_string(),
+            created_at: 0,
+            last_opened_at: 0,
+            sort_order: 0,
+            archived_at: None,
+        };
+        db.upsert_project(&mk(&keep, "keep")).unwrap();
+        db.upsert_project(&mk(&gone, "gone")).unwrap();
+
+        let roots = ApprovedRoots::default();
+        seed_approved_roots(&roots, &db);
+
+        // Both roots are gated-readable while their rows exist.
+        let keep_file = keep.join("a.txt");
+        let gone_file = gone.join("b.txt");
+        std::fs::write(&keep_file, b"x").unwrap();
+        std::fs::write(&gone_file, b"y").unwrap();
+        assert!(approved_canonical(&keep_file.to_string_lossy(), &roots).is_ok());
+        assert!(approved_canonical(&gone_file.to_string_lossy(), &roots).is_ok());
+
+        // Delete one project and reseed — its root must no longer be approved,
+        // while the surviving root still reads.
+        db.delete_project(&gone.to_string_lossy()).unwrap();
+        roots.reseed(&db);
+        assert!(
+            approved_canonical(&gone_file.to_string_lossy(), &roots).is_err(),
+            "a deleted project's root must no longer be approved after reseed",
+        );
+        assert!(
+            approved_canonical(&keep_file.to_string_lossy(), &roots).is_ok(),
+            "a surviving project's root must still be approved after reseed",
+        );
+    }
+
+    #[test]
+    fn reseed_drops_an_archived_root() {
+        use pickforge_core::{Database, Project};
+
+        let db = Database::open_in_memory().expect("in-memory db");
+        let root = make_dir("archive");
+        db.upsert_project(&Project {
+            project_root: root.to_string_lossy().into_owned(),
+            display_name: "archived".to_string(),
+            created_at: 0,
+            last_opened_at: 0,
+            sort_order: 0,
+            archived_at: None,
+        })
+        .unwrap();
+
+        let roots = ApprovedRoots::default();
+        seed_approved_roots(&roots, &db);
+        let file = root.join("c.txt");
+        std::fs::write(&file, b"z").unwrap();
+        assert!(approved_canonical(&file.to_string_lossy(), &roots).is_ok());
+
+        // Archive it (still in the table, but no longer active) and reseed — the
+        // reseed uses the active set, so an archived root drops out of the registry.
+        db.set_project_archived(&root.to_string_lossy(), Some(1)).unwrap();
+        roots.reseed(&db);
+        assert!(
+            approved_canonical(&file.to_string_lossy(), &roots).is_err(),
+            "an archived project's root must no longer be approved after reseed",
+        );
     }
 }

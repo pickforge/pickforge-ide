@@ -46,10 +46,16 @@ export function AskAiMenu(props: {
       setError("Open a chat first so the agent has a terminal.");
       return;
     }
+    // Cap the embedded selection so a huge scrollback grab can't exceed the OS
+    // per-argument limit (Linux MAX_ARG_STRLEN ~128 KB) and fail the launch.
+    const MAX_SEL = 16000;
+    const raw = props.selection.text;
+    const clipped =
+      raw.length > MAX_SEL ? `${raw.slice(0, MAX_SEL)}\n…[selection truncated]` : raw;
     const ask =
       `${instruction.trim()}\n\nSelected from the PickForge run console:\n\n` +
       "```\n" +
-      props.selection.text +
+      clipped +
       "\n```";
     const paneId = host.openInNewPane(`${commandForItem(a)} ${shquote(ask)}`);
     if (paneId) armChatAutoName(workspace.activeChatId, paneId);

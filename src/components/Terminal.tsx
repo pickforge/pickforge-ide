@@ -211,7 +211,16 @@ export function TerminalPane(props: {
       // selection drops. Works in read-only consoles too (selection is allowed).
       if (props.onSelectionChange) {
         const emit = props.onSelectionChange;
+        // Track drags that START in this terminal, and listen for the release on
+        // the WINDOW — a tall selection often releases outside the container, so
+        // a container-only pointerup would miss it and the menu never appears.
+        let dragInside = false;
+        const onPointerDown = () => {
+          dragInside = true;
+        };
         const onPointerUp = (e: PointerEvent) => {
+          if (!dragInside) return;
+          dragInside = false;
           // Defer so xterm has finalized the selection for this gesture.
           setTimeout(() => {
             if (disposed) return;
@@ -219,9 +228,15 @@ export function TerminalPane(props: {
             if (text.trim()) emit({ text, x: e.clientX, y: e.clientY });
           }, 0);
         };
-        container.addEventListener("pointerup", onPointerUp);
+        container.addEventListener("pointerdown", onPointerDown);
+        window.addEventListener("pointerup", onPointerUp);
         subs.push(
-          { dispose: () => container.removeEventListener("pointerup", onPointerUp) },
+          {
+            dispose: () => {
+              container.removeEventListener("pointerdown", onPointerDown);
+              window.removeEventListener("pointerup", onPointerUp);
+            },
+          },
           term.onSelectionChange(() => {
             if (!term.hasSelection()) emit(null);
           }),

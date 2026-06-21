@@ -8,7 +8,22 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::process::{is_on_user_path, run};
+use crate::process::{is_on_user_path, run_timeout, CommandOutcome, RunError};
+
+/// adb one-shots can stall on a wedged daemon or an unresponsive device; bound
+/// them so a stuck adb can't hang the calling Tauri blocking task forever. adb
+/// is occasionally slow to start its daemon, so the default leans generous.
+const ADB_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// `adb -s … exec-out` device captures (screencap/uiautomator) can take longer
+/// than a metadata query on a busy device, so give them more headroom.
+const ADB_CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `adb …` bounded by `timeout`. A missing binary or a timeout both surface as
+/// `Err`, which the callers already treat as "no result".
+fn adb(args: &[&str], timeout: Duration) -> Result<CommandOutcome, RunError> {
+    run_timeout("adb", args, None, None, timeout)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +58,7 @@ pub fn list_devices() -> Vec<AdbDevice> {
     if !is_on_user_path("adb") {
         return Vec::new();
     }
-    match run("adb", &["devices", "-l"], None, None) {
+    match adb(&["devices", "-l"], ADB_TIMEOUT) {
         Ok(out) if out.success() => parse_devices(&out.stdout_utf8()),
         _ => Vec::new(),
     }
@@ -56,7 +71,7 @@ pub fn running_avd_id(serial: &str) -> Option<String> {
     if !is_on_user_path("adb") {
         return None;
     }
-    let out = run("adb", &["-s", serial, "emu", "avd", "name"], None, None).ok()?;
+    let out = adb(&["-s", serial, "emu", "avd", "name"], ADB_TIMEOUT).ok()?;
     if !out.success() {
         return None;
     }
@@ -94,11 +109,9 @@ pub fn capture_screenshot(serial: &str, output_dir: &str, output_name: &str) -> 
     if !is_on_user_path("adb") {
         return None;
     }
-    let out = run(
-        "adb",
+    let out = adb(
         &["-s", serial, "exec-out", "screencap", "-p"],
-        None,
-        None,
+        ADB_CAPTURE_TIMEOUT,
     )
     .ok()?;
     if !out.success() || out.stdout.is_empty() {
@@ -115,11 +128,9 @@ pub fn dump_uiautomator_xml(serial: &str) -> Option<String> {
     if !is_on_user_path("adb") {
         return None;
     }
-    let out = run(
-        "adb",
+    let out = adb(
         &["-s", serial, "exec-out", "uiautomator", "dump", "/dev/tty"],
-        None,
-        None,
+        ADB_CAPTURE_TIMEOUT,
     )
     .ok()?;
     if !out.success() {

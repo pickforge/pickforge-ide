@@ -4,7 +4,7 @@
 //! request/response is correlated by id. One connection at a time.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,8 +26,13 @@ pub enum VmError {
 }
 
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>>;
+type ConnSlot = Arc<AsyncMutex<Option<Conn>>>;
 
 struct Conn {
+    /// Monotonic id of this connection. The reader/writer tasks clear the slot
+    /// on exit only if it still holds *their* generation, so a remote close
+    /// can't tear down a newer reconnect that has since replaced it.
+    generation: u64,
     url: String,
     out: mpsc::UnboundedSender<Message>,
     pending: Pending,
@@ -41,7 +46,21 @@ struct Conn {
 /// A live VM Service connection (or none). Lives behind Tauri's managed `State`.
 #[derive(Default)]
 pub struct VmServiceClient {
-    conn: AsyncMutex<Option<Conn>>,
+    conn: ConnSlot,
+    /// Hands out a fresh generation per `connect()`.
+    generation: AtomicU64,
+}
+
+/// Clear the stored connection if it still belongs to `generation` (a remote
+/// close racing a reconnect must not evict the newer one), and drop pending
+/// senders so in-flight calls fail fast instead of timing out.
+async fn clear_connection(slot: &ConnSlot, generation: u64) {
+    let mut guard = slot.lock().await;
+    if guard.as_ref().map(|c| c.generation) == Some(generation) {
+        if let Some(conn) = guard.take() {
+            conn.pending.lock().unwrap().clear();
+        }
+    }
 }
 
 impl VmServiceClient {
@@ -58,20 +77,26 @@ impl VmServiceClient {
         let (out, mut out_rx) = mpsc::unbounded_channel::<Message>();
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let (events, _) = broadcast::channel::<Value>(256);
+        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
 
-        // Writer task: drain the outbound queue to the socket.
+        // Writer task: drain the outbound queue to the socket. On exit (socket
+        // write error or the connection being replaced) tear the slot down so
+        // status flips to disconnected and future calls fail fast.
+        let slot_write = Arc::clone(&self.conn);
         tokio::spawn(async move {
             while let Some(msg) = out_rx.recv().await {
                 if write.send(msg).await.is_err() {
                     break;
                 }
             }
+            clear_connection(&slot_write, generation).await;
         });
 
         // Reader task: route id'd responses to their pending sender; broadcast
         // no-id stream events to subscribers.
         let pending_read = Arc::clone(&pending);
         let events_read = events.clone();
+        let slot_read = Arc::clone(&self.conn);
         tokio::spawn(async move {
             while let Some(Ok(msg)) = read.next().await {
                 if let Message::Text(txt) = msg {
@@ -87,11 +112,14 @@ impl VmServiceClient {
                     }
                 }
             }
-            // Socket closed: drop pending senders so in-flight calls error out.
-            pending_read.lock().unwrap().clear();
+            // Socket closed: clear the stored connection (so `is_connected`
+            // reports false) and drop pending senders so in-flight calls error
+            // out immediately instead of waiting the full request timeout.
+            clear_connection(&slot_read, generation).await;
         });
 
         *self.conn.lock().await = Some(Conn {
+            generation,
             url: url.to_string(),
             out,
             pending,
@@ -125,8 +153,12 @@ impl VmServiceClient {
         let (tx, rx) = oneshot::channel();
         pending.lock().unwrap().insert(id, tx);
         let req = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        out.send(Message::Text(req.to_string()))
-            .map_err(|_| VmError::NotConnected)?;
+        // Remove the just-inserted pending entry on any send failure so a dropped
+        // outbound channel (writer task gone) can't leak the id forever.
+        if out.send(Message::Text(req.to_string())).is_err() {
+            pending.lock().unwrap().remove(&id);
+            return Err(VmError::NotConnected);
+        }
 
         let resp = match tokio::time::timeout(Duration::from_secs(10), rx).await {
             Ok(Ok(v)) => v,
@@ -153,5 +185,99 @@ impl VmServiceClient {
 
     pub async fn is_connected(&self) -> bool {
         self.conn.lock().await.is_some()
+    }
+
+    #[cfg(test)]
+    async fn pending_len(&self) -> usize {
+        self.conn
+            .lock()
+            .await
+            .as_ref()
+            .map(|c| c.pending.lock().unwrap().len())
+            .unwrap_or(0)
+    }
+
+    /// Test seam: install a connection whose outbound receiver is already
+    /// dropped, so the next `call()` hits the send-error path with the pending
+    /// entry already inserted — exercising the leak fix in isolation.
+    #[cfg(test)]
+    async fn install_dead_writer_conn(&self) {
+        let (out, out_rx) = mpsc::unbounded_channel::<Message>();
+        drop(out_rx);
+        let (events, _) = broadcast::channel::<Value>(8);
+        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
+        *self.conn.lock().await = Some(Conn {
+            generation,
+            url: "ws://dead/ws".to_string(),
+            out,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_id: AtomicI64::new(1),
+            events,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+    use tokio::net::TcpListener;
+
+    /// Accept one WS connection, then immediately close it — simulates the
+    /// remote VM service going away (a `flutter run` exiting).
+    async fn spawn_closing_ws_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                if let Ok(ws) = tokio_tungstenite::accept_async(stream).await {
+                    // Drop the stream right away → the client sees a clean close.
+                    drop(ws);
+                }
+            }
+        });
+        format!("ws://{addr}/ws")
+    }
+
+    #[tokio::test]
+    async fn remote_close_flips_disconnected_and_in_flight_calls_fail_fast() {
+        let url = spawn_closing_ws_server().await;
+        let client = VmServiceClient::new();
+        client.connect(&url).await.expect("connect");
+
+        // Let the reader task observe the close and clear the slot.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while client.is_connected().await && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            !client.is_connected().await,
+            "status should flip to disconnected after a remote close"
+        );
+        assert!(client.current_url().await.is_none());
+
+        // A call now must fail fast (NotConnected), not block the 10s timeout.
+        let started = Instant::now();
+        let result = client.call("getVM", json!({})).await;
+        assert!(matches!(result, Err(VmError::NotConnected)));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "in-flight call should fail fast, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn send_failure_does_not_leak_a_pending_id() {
+        let client = VmServiceClient::new();
+        client.install_dead_writer_conn().await;
+
+        let result = client.call("getVM", json!({})).await;
+        assert!(matches!(result, Err(VmError::NotConnected)));
+        assert_eq!(
+            client.pending_len().await,
+            0,
+            "a send failure must remove the pending entry it inserted"
+        );
     }
 }

@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pickforge_core::android::{logcat_event, LogEvent};
 use pickforge_core::user_shell_environment;
@@ -32,14 +32,23 @@ impl LogcatManager {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Insert `session` for `serial`, returning whatever it displaced — all under
+    /// a single held lock so the epoch bump + insert is atomic with respect to
+    /// concurrent start/stop/reader-cleanup. The caller kills the displaced child
+    /// OUTSIDE the lock (kill is blocking; the lock must never span an `.await`).
+    async fn replace_session(&self, serial: &str, session: LogcatSession) -> Option<LogcatSession> {
+        self.0.lock().await.insert(serial.to_string(), session)
+    }
 }
 
-/// Monotonic-ish token to tell sessions for the same serial apart (clock nanos).
+/// Strictly-monotonic, process-local token to tell sessions for the same serial
+/// apart. A counter (not a wall clock) so two sessions can never collide on the
+/// same epoch — a stale reader must never match a newer session's token and tear
+/// it down.
 fn next_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Start streaming `adb logcat` for `serial`, relaying parsed lines to `on_line`.
@@ -53,10 +62,6 @@ pub async fn logcat_start(
     serial: String,
     on_line: Channel<LogEvent>,
 ) -> Result<(), String> {
-    if let Some(old) = manager.0.lock().await.remove(&serial) {
-        stop_child(old).await;
-    }
-
     let mut cmd = Command::new("adb");
     cmd.args(["-s", &serial, "logcat", "-v", "threadtime", "-T", "1"])
         .stdout(Stdio::piped())
@@ -72,7 +77,19 @@ pub async fn logcat_start(
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let stdout = child.stdout.take().ok_or("no logcat stdout")?;
     let epoch = next_epoch();
-    manager.0.lock().await.insert(serial.clone(), LogcatSession { child, epoch });
+
+    // Replace any existing session atomically under one lock: bump the epoch and
+    // insert the new session, taking the displaced one in the same critical
+    // section. This guarantees (a) exactly one session per serial in the map and
+    // (b) the displaced session's reader (older epoch) can never match the new
+    // session and tear it down. Kill the displaced child OUTSIDE the lock so the
+    // blocking wait never wedges concurrent start/stop/cleanup for any device.
+    if let Some(old) = manager
+        .replace_session(&serial, LogcatSession { child, epoch })
+        .await
+    {
+        stop_child(old).await;
+    }
 
     let registry = manager.0.clone();
     tauri::async_runtime::spawn(relay_lines(serial, epoch, stdout, on_line, app, registry));
@@ -126,4 +143,76 @@ pub async fn logcat_stop(manager: State<'_, LogcatManager>, serial: String) -> R
         stop_child(session).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spawn_sleeper() -> Child {
+        // Stand-in for the `adb logcat` child: a long-lived process we can detect
+        // being killed. `kill_on_drop` mirrors the real spawn so a leaked handle
+        // is reaped if the test panics.
+        Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn sleep")
+    }
+
+    #[test]
+    fn epochs_are_strictly_monotonic_and_unique() {
+        let a = next_epoch();
+        let b = next_epoch();
+        let c = next_epoch();
+        assert!(a < b && b < c, "epochs must strictly increase: {a} {b} {c}");
+    }
+
+    // Start-on-an-already-live-serial: the second start must displace the first,
+    // leave EXACTLY one session for the serial, and the displaced child must be
+    // dead (no leaked `adb logcat`). This exercises the same atomic replace path
+    // the command uses.
+    #[tokio::test]
+    async fn second_start_replaces_and_kills_the_first() {
+        let manager = LogcatManager::new();
+        let serial = "emulator-5554";
+
+        let epoch1 = next_epoch();
+        let first = LogcatSession { child: spawn_sleeper(), epoch: epoch1 };
+        assert!(manager.replace_session(serial, first).await.is_none());
+
+        let epoch2 = next_epoch();
+        let second = LogcatSession { child: spawn_sleeper(), epoch: epoch2 };
+        let displaced = manager
+            .replace_session(serial, second)
+            .await
+            .expect("first session is displaced");
+
+        // Exactly one session remains, and it's the newer one.
+        {
+            let reg = manager.0.lock().await;
+            assert_eq!(reg.len(), 1);
+            assert_eq!(reg.get(serial).map(|s| s.epoch), Some(epoch2));
+        }
+
+        // The displaced child is killed (no leaked logcat). After the kill it has
+        // exited, so try_wait yields a status.
+        let mut old = displaced;
+        stop_child_for_test(&mut old).await;
+        assert!(
+            old.child.try_wait().expect("try_wait").is_some(),
+            "displaced child must be dead",
+        );
+
+        // A stale reader for the OLD epoch must no-op against the current session.
+        let reg = manager.0.lock().await;
+        let stale_matches = reg.get(serial).map(|s| s.epoch == epoch1).unwrap_or(false);
+        assert!(!stale_matches, "stale (older) epoch must not match the live session");
+    }
+
+    async fn stop_child_for_test(session: &mut LogcatSession) {
+        let _ = session.child.kill().await;
+    }
 }

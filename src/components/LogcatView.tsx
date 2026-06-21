@@ -7,6 +7,7 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { MonoEyebrow } from "./ui";
+import { IconClear, IconPlay, IconStop } from "./icons";
 import { startLogcat, stopLogcat, type LogEvent } from "../lib/logcat";
 import { deviceLabel, resolveSelectedDevice } from "../stores/runLaunch";
 
@@ -117,28 +118,32 @@ export function LogcatView() {
           follow
         </button>
         <button
-          class="pf-text-btn"
+          class="pf-dc-btn"
           title="Clear device logs"
           disabled={lines().length === 0}
           onClick={clear}
         >
-          Clear
+          <IconClear size={13} />
         </button>
         <Show
           when={active()}
           fallback={
             <button
-              class="pf-text-btn"
+              class="pf-dc-btn"
               title="Stream device logs"
               disabled={busy() || !serial()}
               onClick={() => void start()}
             >
-              {busy() ? "Starting…" : "Start"}
+              <IconPlay size={12} />
             </button>
           }
         >
-          <button class="pf-text-btn" onClick={() => void stop()}>
-            Stop
+          <button
+            class="pf-dc-btn pf-dc-btn--stop"
+            title="Stop streaming device logs"
+            onClick={() => void stop()}
+          >
+            <IconStop size={12} />
           </button>
         </Show>
       </div>

@@ -9,6 +9,7 @@ import type { TerminalHandle } from "../components/Terminal";
 import { type RunTarget } from "../lib/runTargets";
 import { watchDartChanges, type WatchHandle } from "../lib/fsWatch";
 import { autoReloadEnabled } from "./autoReload";
+import { disarmVmAutoConnect } from "./vmService";
 
 export type RunStatus = "idle" | "running" | "stopped";
 
@@ -156,6 +157,9 @@ export function startRun(t: RunTarget, projectRoot: string | null) {
 export function consoleExited() {
   setStatus("stopped");
   stopWatch();
+  // A run that ended before its VM URL printed must not let a later/unrelated
+  // chunk of output auto-connect the inspector to a dead/wrong VM.
+  disarmVmAutoConnect();
 }
 
 /** Hot reload / restart are keystrokes the running tool reads from stdin. */
@@ -176,4 +180,5 @@ export function stopRun() {
   else pendingStopKey = current()?.key ?? null;
   setStatus("stopped");
   stopWatch();
+  disarmVmAutoConnect(); // stop scanning output for a VM URL once the run is done
 }

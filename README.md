@@ -4,7 +4,9 @@
 
 # PickForge
 
-Widget-level AI context for Flutter. PickForge is a local desktop app that lets you pick a widget in your running Flutter app and dispatch its full context — source, ancestor chain, screenshots — to an AI coding CLI (Claude Code, Codex, OpenCode) in an embedded terminal. The agent makes a surgical edit; you hot-reload; repeat.
+An agent IDE for mobile developers. PickForge is a local desktop app that runs your app, lets you pick the on-screen element you care about, and forges its context — source location (or best-effort hints), ancestor/accessibility chain, screenshots — straight into an AI coding CLI (Claude Code, Codex, OpenCode) in an embedded terminal. The agent makes a surgical edit; you hot-reload or re-run; repeat.
+
+It works across **Flutter, React Native (Android), native Android, and web** — but not all equally. Support is honest and tiered: Flutter is deep (exact element→source mapping), React Native and native Android are useful (run, inspect, logs, best-effort source hints), web is experimental. See [Framework support](#framework-support) for exactly what each tier means.
 
 PickForge builds the app. PickLab lets agents see, run, and test it. PickArena measures the results.
 
@@ -30,14 +32,15 @@ Tauri shell (`src-tauri/`) with a SolidJS frontend (`src/`).
 
 ## Quickstart
 
-1. Launch PickForge. On first run it asks you to **Add your first project** — pick the folder of a Flutter project (one that has a `pubspec.yaml`).
+1. Launch PickForge. On first run it asks you to **Add your first project** — pick the folder of a Flutter, React Native, native-Android, or web project. PickForge detects the framework and shows its [support tier](#framework-support) next to the run button.
 2. Inside the workbench, hit **+ New chat** to spawn a persistent agent CLI session in the embedded terminal pane. Each chat keeps its own scrollback across app restarts.
-3. Run your Flutter app and paste its VM Service URL into the inspector pane to enable widget picking.
-4. Tap a widget in the emulator, then click **Forge it** to dispatch the widget context as a prompt into the active chat.
+3. **Run** the detected target from the workbench (Flutter run, Metro/Gradle, dev server). Pick the device when the target needs one.
+4. Open the inspector and **pick** an element: Flutter attaches the Dart VM-service widget inspector; React Native and native Android use the UIAutomator accessibility inspector; web uses CDP/source-map inspection.
+5. Click **Forge it** to dispatch the element's context as a prompt into the active chat.
 
 ### The loop
 
-Pick a widget, forge its context to the agent, let it edit, hot-reload, pick the next one. The agent never gets a context dump — it gets exactly the widget you pointed at, with its source location, ancestor chain, and screenshots.
+Pick an element, forge its context to the agent, let it edit, hot-reload (Flutter) or re-run, pick the next one. The agent never gets a context dump — it gets exactly the element you pointed at, with its source location (or best-effort source hints), ancestor/accessibility chain, and screenshots.
 
 <p align="center">
   <img src="assets/branding/pickforge-workbench-mock.svg" alt="PICKFORGE · WORKBENCH — emulator with picked widget, widget context, agent terminal, and the pick-forge-edit-reload loop" width="900">
@@ -76,12 +79,45 @@ to the new location and always leaves the originals in place.
 
 Detailed storage, retention, and migration-backup policy lives in [`docs/architecture/storage.md`](docs/architecture/storage.md).
 
-## Supported stack
+## Framework support
+
+PickForge declares only the capabilities each framework adapter can actually back, and maps that capability set to a **support tier** — the same badge you see in the workbench next to the run button. The tiers are honest by design; depth that isn't wired isn't claimed.
+
+| Tier | What it means |
+| --- | --- |
+| **Deep** | Run + exact element→source mapping. The inspector resolves your selection to the precise source location. |
+| **Useful** | Run, logs, screenshot, and element inspection, with **best-effort** source hints (text / resource-id / test-id search) — not exact mapping. |
+| **Experimental** | Detection plus some tooling, on a thin runtime. |
+| **Manual** | Generic fallback: terminal, attachments, and prompts only — no live inspect. |
+
+| Framework | Tier | What works today |
+| --- | --- | --- |
+| **Flutter** | **Deep** | Run, hot reload, hot restart, stop. Dart VM-service widget inspector with exact selection→source mapping, screenshots, and forge-to-agent. |
+| **React Native (Android)** | **Useful** | Metro/Gradle run on a device, UIAutomator accessibility inspector + screenshot, `adb logcat` stream, forge-to-agent with **best-effort** source hints (no exact source mapping). |
+| **Native Android** | **Useful** | Gradle run, UIAutomator accessibility inspector + screenshot, `adb logcat` stream, forge-to-agent with **best-effort** source hints. |
+| **Web** | **Experimental** | Dev-server run; CDP / source-map inspection (partial). |
+| **iOS** | **Deferred** | Detection and command/parse fixtures exist, but iOS needs macOS and a product decision — it is **tracked, not working**. Don't expect a live run or inspector yet. |
+
+Notes:
+
+- Only Flutter declares exact `mapSelectionToSource`. Every other adapter forges a confidence-ranked **source-candidate** hint and says so — it never pretends to know the exact line.
+- Detection, command building, and log/hierarchy parsing are fixture-tested (no device required); the live run/inspect paths above are what's wired end-to-end.
+- Architecture and the full capability/tier vocabulary live in [`docs/architecture/target-adapters.md`](docs/architecture/target-adapters.md).
+
+### Roadmap (not yet built)
+
+These are tracked but **not** shipped — don't rely on them yet:
+
+- A **web CDP inspector** that captures DOM/console/network from a live session.
+- An **MCP endpoint** exposing PickForge's run/inspect/forge tools to agents.
+- **iOS** live run + accessibility inspection (needs macOS).
+
+## Stack
 
 | Category | Supported |
 | --- | --- |
-| Target platforms (for the app under debug) | Android emulator (MVP). iOS Simulator, Flutter web, and Flutter desktop are planned. |
 | Agents | Claude Code, Codex, OpenCode. More planned. |
+| Devices | Android emulator / device via adb. iOS Simulator and desktop targets are not wired yet. |
 | Terminal | Embedded `xterm` + PTY — no external terminal apps required. Per-chat scrollback persists under the project's resolved context storage (project-local example: `.pickforge/chats/<chatId>/transcript.log`). |
 
 ## Branding

@@ -35,10 +35,10 @@ export function OnboardingScreen() {
           </div>
         </SelectionBracket>
         <MonoEyebrow text="Welcome" tick />
-        <h1 class="pf-onboarding-title">Forge UI from your terminal.</h1>
+        <h1 class="pf-onboarding-title">An agent IDE for mobile.</h1>
         <p class="pf-onboarding-sub">
-          Point PickForge at a project and drive Claude, Codex, and your tools
-          from a shell-first workbench.
+          Point PickForge at a Flutter, React Native, Android, or web project,
+          then run, inspect, and forge UI to Claude, Codex, and your tools.
         </p>
         <div class="pf-onboarding-actions">
           <EmberButton label="Add a project" onClick={pick} />

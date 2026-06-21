@@ -3,9 +3,79 @@
 //! the user's mental model exactly. Each call runs `git -C <root> …` through the
 //! login-shell env so PATH resolves like the user's terminal.
 
+use std::path::Path;
+
 use serde::Serialize;
 
 use crate::process::run;
+
+/// Heavy / vendored dirs never worth descending into when hunting for sub-repos.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "build",
+    "target",
+    ".dart_tool",
+    "dist",
+    ".gradle",
+    "Pods",
+    "vendor",
+    ".venv",
+    "venv",
+];
+
+fn has_git(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
+/// Discover git work-trees at or beneath `root`. If `root` itself is a repo,
+/// returns just `[root]`. Otherwise scans up to two levels of subdirectories
+/// (e.g. a monorepo whose `app/` and `api/` are separate repos), skipping
+/// dotfiles and vendored dirs and never descending into a repo it already found.
+/// Returns absolute paths, sorted.
+pub fn discover_repos(root: &str) -> Vec<String> {
+    let root_path = Path::new(root);
+    if has_git(root_path) {
+        return vec![root.to_string()];
+    }
+    let mut out = Vec::new();
+    scan_for_repos(root_path, 2, &mut out);
+    // No `.git` at or below root — but the project may sit INSIDE a larger repo
+    // (`.git` in an ancestor). Fall back to root so gitStatus resolves the
+    // work-tree via `rev-parse --show-toplevel` (the prior behavior).
+    if out.is_empty() && is_repo(root) {
+        return vec![root.to_string()];
+    }
+    out.sort();
+    out
+}
+
+fn scan_for_repos(dir: &Path, depth: u32, out: &mut Vec<String>) {
+    if depth == 0 {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if name.starts_with('.') || SKIP_DIRS.contains(&name) {
+            continue;
+        }
+        if has_git(&path) {
+            out.push(path.to_string_lossy().into_owned());
+        } else {
+            scan_for_repos(&path, depth - 1, out);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

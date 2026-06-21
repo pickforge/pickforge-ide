@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, Index, onCleanup, onMount, Show } from
 import { AGENTS, loadAgentModels, setAgentModel } from "../lib/agentModels";
 import {
   addQuickLaunchItem,
+  isAskAiItem,
   conflictingHotkeys,
   eventToHotkey,
   formatHotkey,
@@ -171,6 +172,14 @@ export function SettingsScreen() {
                     onClick={() => setCapturingId(item().id)}
                   >
                     {capturingId() === item().id ? "press shortcut…" : formatHotkey(item().hotkey)}
+                  </button>
+                  <button
+                    class="pf-ql-ai"
+                    classList={{ "pf-ql-ai--on": isAskAiItem(item()) }}
+                    title="Show in the Inspector's Ask AI — the selected widget's context is appended to this command"
+                    onClick={() => updateQuickLaunchItem(item().id, { ai: !isAskAiItem(item()) })}
+                  >
+                    AI
                   </button>
                   <button
                     class="pf-icon-btn"

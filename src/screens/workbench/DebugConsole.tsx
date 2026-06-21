@@ -4,14 +4,15 @@
 // away. The Run controls drive THIS terminal's pty, never the user's shell.
 import { onCleanup, Show } from "solid-js";
 import { TerminalPane } from "../../components/Terminal";
+import { RunLauncher } from "./RunLauncher";
 import {
   ForgeEmptyState,
-  MonoEyebrow,
   StatusPill,
   type StatusIntent,
 } from "../../components/ui";
 import {
   IconClose,
+  IconPlay,
   IconRefresh,
   IconRestart,
   IconStop,
@@ -30,6 +31,10 @@ import {
   stopRun,
   type RunStatus,
 } from "../../stores/runConsole";
+import { hasRunTargets } from "../../stores/runTargets";
+import { isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
+import { workbenchPrefs } from "../../stores/workbenchPrefs";
+import { ingestRunOutput } from "../../stores/vmService";
 
 const STATUS: Record<RunStatus, { label: string; intent: StatusIntent; pulse?: boolean }> = {
   idle: { label: "idle", intent: "neutral" },
@@ -68,12 +73,26 @@ export function DebugConsole() {
         <span class="pf-dc-resizer-grip" />
       </div>
       <header class="pf-dc-head">
-        <MonoEyebrow text="Debug console" />
-        <Show when={target()}>
-          <span class="pf-dc-target" title={target()!.command}>{target()!.label}</span>
+        <RunLauncher />
+        <Show when={isBooting()}>
+          <span class="pf-run-booting">booting…</span>
+        </Show>
+        <Show when={!isBooting() && launchError()}>
+          <span class="pf-run-error" title={launchError()!}>{launchError()}</span>
         </Show>
         <StatusPill label={meta().label} intent={meta().intent} pulsing={meta().pulse} />
         <span class="pf-dc-spacer" />
+        {/* The actual Run, grouped with the transport controls to its right. */}
+        <button
+          class="pf-dc-btn pf-dc-btn--run"
+          classList={{ "pf-dc-btn--labeled": workbenchPrefs().runButtonLabels }}
+          title={isBooting() ? "Booting emulator…" : isRunning() ? "A run is active — stop it first" : "Run"}
+          disabled={!hasRunTargets() || isRunning() || isBooting()}
+          onClick={() => void launchActiveTarget()}
+        >
+          <IconPlay size={12} />
+          <Show when={workbenchPrefs().runButtonLabels}>Run</Show>
+        </button>
         <Show when={can("hotReload")}>
           <button class="pf-dc-btn pf-dc-btn--reload" title="Hot reload (r)" disabled={!isRunning()} onClick={reloadRun}>
             <IconRefresh size={13} />
@@ -104,7 +123,14 @@ export function DebugConsole() {
             />
           }
         >
-          <TerminalPane cwd={consoleSpawnCwd() ?? undefined} onReady={attachConsole} onExit={consoleExited} />
+          <TerminalPane
+            cwd={consoleSpawnCwd() ?? undefined}
+            onReady={attachConsole}
+            onExit={consoleExited}
+            onOutput={ingestRunOutput}
+            readOnly
+            consoleTheme
+          />
         </Show>
       </div>
     </section>

@@ -4,5 +4,5 @@
 mod adapters;
 mod source_map;
 
-pub use adapters::{detect_target, Capability, Confidence, TargetDetection};
+pub use adapters::{detect_target, nearest_pubspec_dir, Capability, Confidence, TargetDetection};
 pub use source_map::{SourceMap, SourceMapping};

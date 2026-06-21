@@ -12,6 +12,7 @@ import {
   toBytes,
 } from "../lib/pty";
 import {
+  buildConsoleTheme,
   buildTerminalTheme,
   ensureTerminalFontLoaded,
   TERMINAL_FONT_FAMILY,
@@ -36,9 +37,19 @@ export function TerminalPane(props: {
    *  Reconstructed from real keystrokes only — injected typeText is invisible
    *  here, so it never includes chip-launched command prefixes. */
   onUserSubmit?: (line: string) => void;
+  /** Fires with each decoded chunk of shell OUTPUT (e.g. to scrape a VM service
+   *  URL from `flutter run`). Streaming-decoded, so multi-byte chars are safe. */
+  onOutput?: (chunk: string) => void;
+  /** View-only: the user can't type into it (the toolbar still drives it via
+   *  typeText). For the Debug Console run output. */
+  readOnly?: boolean;
+  /** Use the readable Debug Console theme variant instead of the shell theme. */
+  consoleTheme?: boolean;
 }) {
   let container!: HTMLDivElement;
   const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const pickTheme = () => (props.consoleTheme ? buildConsoleTheme() : buildTerminalTheme());
 
   onMount(() => {
     const term = new Terminal({
@@ -46,8 +57,9 @@ export function TerminalPane(props: {
       fontSize: TERMINAL_FONT_SIZE,
       lineHeight: TERMINAL_LINE_HEIGHT,
       letterSpacing: 0,
-      theme: buildTerminalTheme(),
-      cursorBlink: true,
+      theme: pickTheme(),
+      cursorBlink: !props.readOnly,
+      disableStdin: props.readOnly ?? false,
       allowProposedApi: true,
       scrollback: 10_000,
       macOptionIsMeta: true,
@@ -61,7 +73,7 @@ export function TerminalPane(props: {
     // the canvas). Tracks appTheme; the initial run is the mount theme.
     createEffect(() => {
       appTheme();
-      term.options.theme = buildTerminalTheme();
+      term.options.theme = pickTheme();
     });
 
     let sessionId: number | null = null;
@@ -147,7 +159,10 @@ export function TerminalPane(props: {
         // Channel callbacks can fire after onCleanup but before the spawn
         // promise resolves — guard against writing to a disposed terminal.
         onOutput: (data) => {
-          if (!disposed) term.write(toBytes(data));
+          if (disposed) return;
+          const bytes = toBytes(data);
+          term.write(bytes);
+          if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
         },
         onExit: (code) => {
           if (!disposed) props.onExit?.(code);
@@ -171,6 +186,9 @@ export function TerminalPane(props: {
 
       subs.push(
         term.onData((data) => {
+          // View-only consoles never forward keystrokes to the pty (the toolbar
+          // drives it via typeText, which writes directly).
+          if (props.readOnly) return;
           if (sessionId !== null) void ptyWrite(sessionId, encoder.encode(data));
           if (props.onUserSubmit) trackUserInput(data);
         }),

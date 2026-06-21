@@ -3,13 +3,16 @@
 // by typing a command into the focused terminal (PTY); hot reload / restart /
 // stop are keystrokes the running tool reads from stdin — so no new runner.
 import { invoke } from "@tauri-apps/api/core";
-import { targetDetect, type TargetDetection } from "./device";
+import { findNearestPubspec, targetDetect, type TargetDetection } from "./device";
 
 export interface RunTarget {
   id: string;
   label: string;
   /** command typed at the prompt (without a trailing newline) */
   command: string;
+  /** absolute dir to run the command in (a single `cd` is applied at run time);
+   *  undefined means "use the project root". */
+  cwd?: string;
   /** capability strings: "hotReload" | "hotRestart" | "stop" | "launch" … */
   capabilities: string[];
   /** flutter/android targets accept a device serial */
@@ -81,20 +84,54 @@ interface LaunchConfig {
   cwd?: string;
 }
 
-/** Resolve a launch config `cwd` to an absolute path, the way VS Code does:
- * expand the workspace-folder variables, then join relative values onto the
- * workspace folder (the project root). */
-function resolveCwd(cwd: string, root: string): string {
+/** Expand VS Code's workspace-folder variables (basename first — it shares the
+ * ${workspaceFolder} prefix). */
+function expandVars(value: string, root: string): string {
   const base = root.replace(/[/\\]+$/, "");
   const baseName = base.split(/[/\\]/).pop() ?? "";
-  // Expand basename first — it shares the ${workspaceFolder} prefix.
-  const expanded = cwd
+  return value
     .replace(/\$\{workspaceFolderBasename\}/g, baseName)
     .replace(/\$\{workspaceFolder\}/g, base);
-  const isAbs = /^([a-zA-Z]:[\\/]|[\\/])/.test(expanded);
-  if (isAbs) return expanded;
+}
+
+/** Join a (possibly relative) path onto the project root, the way VS Code does;
+ * absolute paths are returned as-is. */
+function toAbsolute(p: string, root: string): string {
+  const isAbs = /^([a-zA-Z]:[\\/]|[\\/])/.test(p);
+  if (isAbs) return p;
+  const base = root.replace(/[/\\]+$/, "");
   const sep = root.includes("\\") ? "\\" : "/";
-  return `${base}${sep}${expanded.replace(/^[/\\]+/, "")}`;
+  return `${base}${sep}${p.replace(/^[/\\]+/, "")}`;
+}
+
+/** Compute `to` relative to `from` (both absolute), separator-agnostic. */
+function relativePath(from: string, to: string): string {
+  const sep = from.includes("\\") ? "\\" : "/";
+  const fromParts = from.replace(/[/\\]+$/, "").split(/[/\\]/);
+  const toParts = to.replace(/[/\\]+$/, "").split(/[/\\]/);
+  let i = 0;
+  while (i < fromParts.length && i < toParts.length && fromParts[i] === toParts[i]) i++;
+  const up = fromParts.slice(i).map(() => "..");
+  const down = toParts.slice(i);
+  return [...up, ...down].join(sep) || ".";
+}
+
+/** Resolve a launch config `cwd` to an absolute path: expand the workspace
+ * variables, then join relative values onto the project root. */
+function resolveCwd(cwd: string, root: string): string {
+  return toAbsolute(expandVars(cwd, root), root);
+}
+
+/** A test program — a `test/` dir or a `*_test.dart` file. Dart-Code maps these
+ * to `flutter test`, not `flutter run`. */
+function isTestProgram(program: string): boolean {
+  return /(?:^|[/\\])test[/\\]?$/.test(program) || /_test\.dart$/.test(program);
+}
+
+/** A plain directory program (e.g. "app/") — run the app from that dir with no
+ * `-t` (flutter run rejects a directory as a target). */
+function isDirProgram(program: string): boolean {
+  return program.endsWith("/") || program.endsWith("\\");
 }
 
 /** Single-quote a value so spaces / shell metacharacters in it stay inert when
@@ -103,38 +140,73 @@ export function shquote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-function fromLaunchConfig(c: LaunchConfig, i: number, root: string): RunTarget | null {
+async function fromLaunchConfig(
+  c: LaunchConfig,
+  i: number,
+  root: string,
+): Promise<RunTarget | null> {
   if (c.request && c.request !== "launch") return null;
   const type = (c.type ?? "").toLowerCase();
   const isFlutter = type === "dart" || type === "flutter";
   const parts: string[] = [];
+  // The dir to run in: explicit `cwd` wins; for Flutter without one, derive it
+  // from the program's nearest pubspec.yaml (Dart-Code's rule) so monorepos
+  // whose app lives in a subdir don't fail with "No pubspec.yaml file found.".
+  let cwd: string | undefined = c.cwd ? resolveCwd(c.cwd, root) : undefined;
+  const program = c.program ? expandVars(c.program, root) : undefined;
+  const isTest = isFlutter && !!program && isTestProgram(program);
+
   if (isFlutter) {
-    parts.push("flutter run");
-    if (c.flutterMode) parts.push(`--${c.flutterMode}`);
-    if (c.program) parts.push(`-t ${shquote(c.program)}`);
-    if (c.deviceId) parts.push(`-d ${shquote(c.deviceId)}`);
-  } else if (c.program) {
-    parts.push(shquote(c.program));
+    // Derive the run dir from the program's nearest pubspec.yaml (Dart-Code's
+    // rule) so monorepos whose app lives in a subdir don't fail with "No
+    // pubspec.yaml file found.".
+    if (!cwd && program) {
+      const dir = await findNearestPubspec(toAbsolute(program, root), root).catch(() => null);
+      if (dir) cwd = dir;
+    }
+    const relProgram = () =>
+      cwd && program ? relativePath(cwd, toAbsolute(program, root)) : program;
+    if (isTest) {
+      // A test config runs `flutter test [<path>]` from the project dir — never
+      // `flutter run`, which would silently launch the whole app instead.
+      parts.push("flutter test");
+      const rel = relProgram();
+      if (rel && rel !== ".") parts.push(shquote(rel));
+    } else {
+      parts.push("flutter run");
+      if (c.flutterMode) parts.push(`--${c.flutterMode}`);
+      if (program && !isDirProgram(program)) {
+        // -t relative to the run dir, matching how VS Code passes it. Skip when
+        // the program IS the run dir (e.g. program "app" → rel "."): flutter
+        // run rejects a directory target.
+        const t = relProgram();
+        if (t && t !== ".") parts.push(`-t ${shquote(t)}`);
+      }
+      if (c.deviceId) parts.push(`-d ${shquote(c.deviceId)}`);
+    }
+  } else if (program) {
+    parts.push(shquote(program));
   } else {
     return null;
   }
   // Each configured arg is one VS Code argument; quote so spaces / shell
   // metacharacters in a single arg don't split into multiple shell words.
-  if (c.args?.length) parts.push(c.args.map(shquote).join(" "));
-  let command = parts.join(" ");
-  // VS Code launches the program from `cwd`; the embedded terminal sits at the
-  // project root, so `cd` into the resolved (absolute) dir first — otherwise
-  // `flutter run` runs where there is no pubspec.yaml. Absolute so repeated
-  // runs work no matter where the shell currently is.
-  if (c.cwd) command = `cd ${shquote(resolveCwd(c.cwd, root))} && ${command}`;
+  // Args (e.g. --dart-define-from-file=.env) resolve against the run dir.
+  if (c.args?.length) parts.push(c.args.map((a) => shquote(expandVars(a, root))).join(" "));
+  const capabilities = isTest
+    ? ["test", "stop"]
+    : isFlutter
+      ? ["launch", "hotReload", "hotRestart", "stop"]
+      : ["launch", "stop"];
   return {
     id: `vscode-${i}`,
     label: c.name ?? `Config ${i + 1}`,
-    command,
-    capabilities: isFlutter
-      ? ["launch", "hotReload", "hotRestart", "stop"]
-      : ["launch", "stop"],
-    needsDevice: isFlutter,
+    command: parts.join(" "),
+    cwd,
+    capabilities,
+    // A test run executes on the host VM, and a config that already pins a
+    // deviceId (e.g. "chrome") needs no picker/auto-boot.
+    needsDevice: isFlutter && !isTest && !c.deviceId,
     source: "vscode",
   };
 }
@@ -148,9 +220,8 @@ async function readLaunchJson(root: string): Promise<RunTarget[]> {
     const configs: LaunchConfig[] = Array.isArray(parsed?.configurations)
       ? parsed.configurations
       : [];
-    return configs
-      .map((c, i) => fromLaunchConfig(c, i, root))
-      .filter((t): t is RunTarget => t !== null);
+    const targets = await Promise.all(configs.map((c, i) => fromLaunchConfig(c, i, root)));
+    return targets.filter((t): t is RunTarget => t !== null);
   } catch {
     return []; // no .vscode/launch.json (or unreadable) — fine.
   }

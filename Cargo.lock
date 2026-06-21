@@ -2373,6 +2373,7 @@ dependencies = [
 name = "pickforge-tauri"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "pickforge-core",
  "serde",
  "serde_json",

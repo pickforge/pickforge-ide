@@ -3,7 +3,7 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { IconClose, IconRefresh } from "../../components/icons";
-import { gitDiff, gitStatus, type GitFileStatus, type GitStatus } from "../../lib/git";
+import { gitDiff, gitDiscoverRepos, gitStatus, type GitFileStatus, type GitStatus } from "../../lib/git";
 import { workspace } from "../../stores/workspace";
 
 function letter(f: GitFileStatus): string {
@@ -29,26 +29,36 @@ function dirName(p: string): string {
   return parts.join("/");
 }
 
+interface RepoStatus {
+  path: string;
+  status: GitStatus;
+}
+
 export function SourceControl() {
-  const [status, setStatus] = createSignal<GitStatus | null>(null);
+  const [repos, setRepos] = createSignal<RepoStatus[]>([]);
   const [loading, setLoading] = createSignal(false);
-  const [diffFor, setDiffFor] = createSignal<{ file: GitFileStatus; staged: boolean; text: string } | null>(null);
+  const [diffFor, setDiffFor] = createSignal<{ repo: string; file: GitFileStatus; staged: boolean; text: string } | null>(null);
 
   const refresh = async () => {
     const root = workspace.activeRoot;
     if (!root) {
-      setStatus(null);
+      setRepos([]);
       setLoading(false);
       return;
     }
     setLoading(true);
     try {
-      const next = await gitStatus(root);
+      // Discover repos at/beneath the root (monorepos keep their git in app/, api/…).
+      const paths = await gitDiscoverRepos(root);
       if (workspace.activeRoot !== root) return; // project switched mid-flight
-      setStatus(next);
+      const loaded = await Promise.all(
+        paths.map(async (p) => ({ path: p, status: await gitStatus(p) })),
+      );
+      if (workspace.activeRoot !== root) return;
+      setRepos(loaded.filter((r) => r.status.isRepo));
     } catch (err) {
-      console.error("[pickforge] git_status failed", err);
-      if (workspace.activeRoot === root) setStatus({ isRepo: false, branch: null, files: [] });
+      console.error("[pickforge] git scan failed", err);
+      if (workspace.activeRoot === root) setRepos([]);
     } finally {
       if (workspace.activeRoot === root) setLoading(false);
     }
@@ -60,29 +70,38 @@ export function SourceControl() {
     void refresh();
   });
 
-  const openDiff = async (file: GitFileStatus, staged: boolean) => {
-    const root = workspace.activeRoot;
-    if (!root) return;
+  const openDiff = async (repo: string, file: GitFileStatus, staged: boolean) => {
     try {
-      const text = await gitDiff(root, file.path, staged);
-      if (workspace.activeRoot !== root) return; // project switched mid-flight
-      setDiffFor({ file, staged, text });
+      const text = await gitDiff(repo, file.path, staged);
+      setDiffFor({ repo, file, staged, text });
     } catch (err) {
       console.error("[pickforge] git_diff failed", err);
     }
   };
 
-  const count = createMemo(() => status()?.files.length ?? 0);
+  const total = createMemo(() => repos().reduce((n, r) => n + r.status.files.length, 0));
+  // A single repo at the project root keeps the original headerless layout.
+  const flat = () => repos().length === 1 && repos()[0].path === (workspace.activeRoot ?? "");
+  const repoName = (path: string) => {
+    const root = workspace.activeRoot ?? "";
+    if (path === root) return baseName(root);
+    const rel = path.startsWith(root) ? path.slice(root.length).replace(/^[/\\]+/, "") : path;
+    return rel || baseName(path);
+  };
 
   return (
     <div class="pf-pane-scroll pf-sc">
       <div class="pf-pane-toolbar pf-sc-toolbar">
-        <span class="pf-sc-branch" title={status()?.branch ?? ""}>
-          {status()?.branch ?? "—"}
+        <span class="pf-sc-branch" title={flat() ? repos()[0].status.branch ?? "" : ""}>
+          {flat()
+            ? repos()[0].status.branch ?? "—"
+            : repos().length > 1
+              ? `${repos().length} repos`
+              : "—"}
         </span>
         <div class="pf-sc-toolbar-end">
-          <Show when={count() > 0}>
-            <span class="pf-sc-count">{count()}</span>
+          <Show when={total() > 0}>
+            <span class="pf-sc-count">{total()}</span>
           </Show>
           <button class="pf-icon-btn" title="Refresh" disabled={!workspace.activeRoot} onClick={() => void refresh()}>
             <IconRefresh size={14} />
@@ -91,26 +110,43 @@ export function SourceControl() {
       </div>
 
       <Show
-        when={status()?.isRepo}
+        when={repos().length > 0}
         fallback={
           <div class="pf-rail-empty">
             {loading() ? "Checking…" : "Not a git repository"}
           </div>
         }
       >
-        <Show when={count() > 0} fallback={<div class="pf-rail-empty">No changes</div>}>
+        <Show when={total() > 0} fallback={<div class="pf-rail-empty">No changes</div>}>
           <div class="pf-rail-list pf-sc-list">
-            <For each={status()!.files}>
-              {(f) => (
-                <div
-                  class="pf-sc-row"
-                  title={f.path}
-                  onClick={() => void openDiff(f, f.staged && !f.unstaged)}
-                >
-                  <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
-                  <span class="pf-sc-name">{baseName(f.path)}</span>
-                  <span class="pf-sc-dir">{dirName(f.path)}</span>
-                </div>
+            <For each={repos()}>
+              {(repo) => (
+                <Show when={repo.status.files.length > 0}>
+                  {/* Per-repo header — only when there are sub-repos, so a single
+                      root repo keeps the original flat list. */}
+                  <Show when={!flat()}>
+                    <div class="pf-sc-section">
+                      <span class="pf-sc-section-name" title={repo.path}>{repoName(repo.path)}</span>
+                      <Show when={repo.status.branch}>
+                        <span class="pf-sc-section-branch">{repo.status.branch}</span>
+                      </Show>
+                      <span class="pf-sc-count">{repo.status.files.length}</span>
+                    </div>
+                  </Show>
+                  <For each={repo.status.files}>
+                    {(f) => (
+                      <div
+                        class="pf-sc-row"
+                        title={f.path}
+                        onClick={() => void openDiff(repo.path, f, f.staged && !f.unstaged)}
+                      >
+                        <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
+                        <span class="pf-sc-name">{baseName(f.path)}</span>
+                        <span class="pf-sc-dir">{dirName(f.path)}</span>
+                      </div>
+                    )}
+                  </For>
+                </Show>
               )}
             </For>
           </div>
@@ -127,13 +163,13 @@ export function SourceControl() {
                   <div class="pf-diff-tabs">
                     <button
                       classList={{ active: !d().staged }}
-                      onClick={() => void openDiff(d().file, false)}
+                      onClick={() => void openDiff(d().repo, d().file, false)}
                     >
                       Working
                     </button>
                     <button
                       classList={{ active: d().staged }}
-                      onClick={() => void openDiff(d().file, true)}
+                      onClick={() => void openDiff(d().repo, d().file, true)}
                     >
                       Staged
                     </button>

@@ -7,15 +7,11 @@ import { ProjectsPane } from "./ProjectsPane";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
-import { RunControlBar } from "./RunControlBar";
 import { DebugConsole } from "./DebugConsole";
 import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
 import { layout, type PaneId } from "../../stores/workbenchLayout";
-import {
-  TerminalHost,
-  type TerminalHostHandle,
-} from "../../components/TerminalHost";
-import { Chip, ForgeEmptyState, MonoEyebrow } from "../../components/ui";
+import { TerminalHost } from "../../components/TerminalHost";
+import { Chip, ForgeEmptyState, MonoEyebrow, PaneReveal } from "../../components/ui";
 import { IconChevronDown, IconClose, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
 import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
@@ -28,6 +24,7 @@ import {
   quickLaunchItems,
 } from "../../stores/quickLaunch";
 import { findChat, onChatDeleted, workspace } from "../../stores/workspace";
+import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { armChatAutoName, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
@@ -41,19 +38,16 @@ interface MountedHost {
 export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
-  const handles = new Map<string, TerminalHostHandle>();
 
-  const typeToActive = (text: string): string | null => {
-    if (!text) return null;
-    return handles.get(workspace.activeChatId ?? "")?.typeToFocused(text) ?? null;
-  };
-
-  // Fire a quick-launch item into the active chat; agent items also arm the pane
-  // that received the launch so its first message becomes the title — but only
-  // if the text actually landed (a pane handle accepted it), so a click before
-  // the terminal is ready can't mis-arm (see chatAutoName).
+  // Fire a quick-launch item into the active chat: open a fresh terminal pane,
+  // type the command, and run it (so a launch never disturbs the pane the user
+  // is working in). Agent items also arm that new pane so its first message
+  // becomes the chat title (see chatAutoName).
   const launchItem = (item: { agentId?: string }, text: string) => {
-    const paneId = typeToActive(text);
+    if (!text) return;
+    const host = getTerminalHost(workspace.activeChatId);
+    if (!host) return;
+    const paneId = host.openInNewPane(text);
     if (paneId && item.agentId) armChatAutoName(workspace.activeChatId, paneId);
   };
 
@@ -61,7 +55,7 @@ export function WorkbenchScreen() {
   // OS default editor.
   const openFileInActive = (path: string) => {
     const cmd = editorCommand(path);
-    const host = handles.get(workspace.activeChatId ?? "");
+    const host = getTerminalHost(workspace.activeChatId);
     // Editor-pane modes need a live terminal host; with none open, fall back to
     // the OS opener so the file still opens.
     if (cmd === null || !host) {
@@ -88,7 +82,7 @@ export function WorkbenchScreen() {
     // Tear down a chat's host (and shells) only when the chat is deleted.
     const offDelete = onChatDeleted((chatId) => {
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
-      handles.delete(chatId);
+      deleteTerminalHost(chatId);
     });
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;
@@ -142,9 +136,9 @@ export function WorkbenchScreen() {
   const renderPane = (pane: PaneId) => (
     <Switch>
       <Match when={pane === "projects"}><PaneShell pane="projects"><ProjectsPane /></PaneShell></Match>
-      <Match when={pane === "files"}><PaneShell pane="files"><FileExplorer onOpenFile={openFileInActive} /></PaneShell></Match>
-      <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><SourceControl /></PaneShell></Match>
-      <Match when={pane === "inspector"}><PaneShell pane="inspector"><InspectorPanel /></PaneShell></Match>
+      <Match when={pane === "files"}><PaneShell pane="files"><PaneReveal on={() => workspace.activeRoot}>{() => <FileExplorer onOpenFile={openFileInActive} />}</PaneReveal></PaneShell></Match>
+      <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><PaneReveal on={() => workspace.activeRoot}>{() => <SourceControl />}</PaneReveal></PaneShell></Match>
+      <Match when={pane === "inspector"}><PaneShell pane="inspector"><PaneReveal on={() => workspace.activeRoot}>{() => <InspectorPanel />}</PaneReveal></PaneShell></Match>
     </Switch>
   );
 
@@ -197,8 +191,6 @@ export function WorkbenchScreen() {
           </div>
         </Show>
 
-        <RunControlBar />
-
         <div class="pf-workbench-terminal">
           {/* All visited chats stay mounted; only the active one is shown. */}
           <For each={mounted()}>
@@ -209,7 +201,7 @@ export function WorkbenchScreen() {
               >
                 <TerminalHost
                   cwd={h.projectRoot}
-                  onReady={(handle) => handles.set(h.chatId, handle)}
+                  onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                 />
               </div>

@@ -46,6 +46,20 @@ export function buildTerminalTheme(): ITheme {
   };
 }
 
+// A readability variant for the (view-only) Debug Console: a subtly lifted
+// background so it reads as "output" vs the pure-black shell, brighter default
+// text, and legible dim text — Flutter's own ANSI (red/yellow/…) is preserved.
+export function buildConsoleTheme(): ITheme {
+  const base = buildTerminalTheme();
+  return {
+    ...base,
+    background: token("--pf-surface-2", "#151517"),
+    foreground: token("--pf-text-hi", "#f2f2f3"),
+    white: token("--pf-text-hi", "#f2f2f3"),
+    brightBlack: token("--pf-text-med", "#a0a0a6"),
+  };
+}
+
 // GeistMono first (the machine voice), then a Nerd-Font chain for box-drawing /
 // powerline glyphs Geist Mono lacks, then system mono. Size 14 matches the old
 // Flutter `EmbeddedTerminalSettings.defaults`.

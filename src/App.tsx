@@ -6,6 +6,9 @@ import { appVersion, loadAppVersion } from "./lib/appInfo";
 import { initTheme } from "./stores/theme";
 import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { MonoEyebrow, StatusPill } from "./components/ui";
+import { IconChevronRight, IconTerminal } from "./components/icons";
+import { layout, toggleDock } from "./stores/workbenchLayout";
+import { runConsole, toggleConsole } from "./stores/runConsole";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
 import { SettingsScreen } from "./screens/Settings";
@@ -133,12 +136,46 @@ export function App() {
       </div>
 
       <footer class="pf-statusbar">
-        <span class="pf-statusbar-item">
-          {workspace.activeRoot ? statusBasename(workspace.activeRoot) : "no project"}
-        </span>
-        <button class="pf-statusbar-zoom" title="Reset interface zoom" onClick={zoomReset}>
-          {Math.round(currentZoom() * 100)}%
-        </button>
+        <div class="pf-statusbar-left">
+          <Show when={route() === "workbench"}>
+            <button
+              class="pf-statusbar-dock"
+              classList={{ active: layout().leftVisible }}
+              title={layout().leftVisible ? "Hide left panel" : "Show left panel"}
+              onClick={() => toggleDock("left")}
+            >
+              <IconChevronRight size={11} class={layout().leftVisible ? "pf-flip-x" : ""} />
+            </button>
+          </Show>
+          <span class="pf-statusbar-item">
+            {workspace.activeRoot ? statusBasename(workspace.activeRoot) : "no project"}
+          </span>
+        </div>
+        <div class="pf-statusbar-right">
+          <Show when={route() === "workbench"}>
+            <button
+              class="pf-statusbar-console"
+              classList={{ active: runConsole.open() }}
+              title={runConsole.open() ? "Hide debug console" : "Show debug console"}
+              onClick={toggleConsole}
+            >
+              <IconTerminal size={11} /> Console
+            </button>
+          </Show>
+          <button class="pf-statusbar-zoom" title="Reset interface zoom" onClick={zoomReset}>
+            {Math.round(currentZoom() * 100)}%
+          </button>
+          <Show when={route() === "workbench"}>
+            <button
+              class="pf-statusbar-dock"
+              classList={{ active: layout().rightVisible }}
+              title={layout().rightVisible ? "Hide right panel" : "Show right panel"}
+              onClick={() => toggleDock("right")}
+            >
+              <IconChevronRight size={11} class={layout().rightVisible ? "" : "pf-flip-x"} />
+            </button>
+          </Show>
+        </div>
       </footer>
     </div>
   );

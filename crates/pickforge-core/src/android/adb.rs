@@ -4,6 +4,7 @@
 //! (Long-lived `adb logcat` streaming lands with the streaming process spawn.)
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -45,6 +46,42 @@ pub fn list_devices() -> Vec<AdbDevice> {
     match run("adb", &["devices", "-l"], None, None) {
         Ok(out) if out.success() => parse_devices(&out.stdout_utf8()),
         _ => Vec::new(),
+    }
+}
+
+/// The AVD id of a running emulator `serial`, via `adb -s <serial> emu avd
+/// name`. `None` for physical/offline devices. The emulator console appends an
+/// `OK` line, so take the first non-empty line that isn't `OK`.
+pub fn running_avd_id(serial: &str) -> Option<String> {
+    if !is_on_user_path("adb") {
+        return None;
+    }
+    let out = run("adb", &["-s", serial, "emu", "avd", "name"], None, None).ok()?;
+    if !out.success() {
+        return None;
+    }
+    out.stdout_utf8()
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && *l != "OK")
+        .map(str::to_string)
+}
+
+/// Poll until `serial` reports an online (`device`) state, or `timeout` elapses.
+/// Returns whether it came online.
+pub fn wait_for_online(serial: &str, timeout: Duration, poll: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if list_devices()
+            .iter()
+            .any(|d| d.serial == serial && d.is_online())
+        {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(poll);
     }
 }
 

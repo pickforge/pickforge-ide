@@ -21,3 +21,8 @@ export const gitStatus = (projectRoot: string) =>
 
 export const gitDiff = (projectRoot: string, path: string, staged: boolean) =>
   invoke<string>("git_diff", { projectRoot, path, staged });
+
+/** Git work-trees at/beneath the project root (monorepo subfolders). Absolute
+ *  paths; `[root]` when the root itself is a repo. */
+export const gitDiscoverRepos = (projectRoot: string) =>
+  invoke<string[]>("git_discover_repos", { projectRoot });

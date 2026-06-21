@@ -215,10 +215,41 @@
   letter-spacing: 0.04em;
   color: var(--pf-text-low);
 }
+.pf-statusbar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  min-width: 0;
+}
 .pf-statusbar-item {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Quick show/hide toggles for the side docks (arrow points the move direction). */
+.pf-statusbar-dock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-statusbar-dock:hover {
+  color: var(--pf-text-hi);
+}
+.pf-statusbar-dock.active {
+  color: var(--pf-text-med);
+}
+.pf-statusbar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex: none;
 }
 .pf-statusbar-zoom {
   border: none;
@@ -232,5 +263,25 @@
   flex: none;
 }
 .pf-statusbar-zoom:hover {
+  color: var(--pf-text-hi);
+}
+/* Status-bar toggle that shows/hides the Debug Console — neutral (no ember). */
+.pf-statusbar-console {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 0 var(--pf-space-xs);
+}
+.pf-statusbar-console:hover {
+  color: var(--pf-text-hi);
+}
+.pf-statusbar-console.active {
   color: var(--pf-text-hi);
 }

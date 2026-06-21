@@ -11,7 +11,7 @@ import { openConsole, runConsole, startRun } from "./runConsole";
 import { armVmAutoConnect, disconnectVm } from "./vmService";
 import { workspace } from "./workspace";
 import { androidLaunchAvd, type DeviceEntry } from "../lib/device";
-import { shquote, type RunTarget } from "../lib/runTargets";
+import { withDevice } from "../lib/runTargets";
 
 const BOOT_TIMEOUT_MS = 120_000;
 const BOOT_POLL_MS = 2000;
@@ -68,16 +68,6 @@ async function waitForBootedSerial(avdId: string): Promise<string | null> {
     await sleep(BOOT_POLL_MS);
   }
   return null;
-}
-
-/** Append `-d <serial>` for Flutter commands that need a device. */
-function withDevice(t: RunTarget, serial: string | null): string {
-  let cmd = t.command;
-  const isFlutter = /\bflutter\s/.test(cmd);
-  if (t.needsDevice && isFlutter && serial && !/\s-d\s/.test(cmd)) {
-    cmd += ` -d ${shquote(serial)}`;
-  }
-  return cmd;
 }
 
 /** Launch the active target. Opens the console immediately (so boot progress is

@@ -5,6 +5,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { findNearestPubspec, targetDetect, type TargetDetection } from "./device";
 
+/** How the chosen device serial is applied to a target's command — decided once
+ *  per adapter instead of re-sniffed from the command string at each call site.
+ *  "arg" → append `-d <serial>` (flutter); "rnDevice" → `ANDROID_SERIAL=` +
+ *  `--deviceId <serial>` (react-native); "env" → prefix `ANDROID_SERIAL=`
+ *  (native-android); "none" → ignore the serial. */
+export type DeviceConvention = "arg" | "rnDevice" | "env" | "none";
+/** Which inspector the right rail should use for a target. */
+export type InspectorKind = "vmService" | "uiAutomator" | "cdp" | "none";
+
 export interface RunTarget {
   id: string;
   label: string;
@@ -17,11 +26,15 @@ export interface RunTarget {
   capabilities: string[];
   /** flutter/android targets accept a device serial */
   needsDevice: boolean;
+  /** how a device serial is applied to `command` (see DeviceConvention). */
+  deviceConvention: DeviceConvention;
+  /** which inspector the right rail should use for this target. */
+  inspectorKind: InspectorKind;
   source: "detected" | "vscode";
 }
 
 // Target ids match crates/pickforge-core/src/targets/adapters.rs.
-function defaultCommand(t: TargetDetection): string | null {
+export function defaultCommand(t: TargetDetection): string | null {
   switch (t.targetId) {
     case "flutter":
       // --color (global flag, before the subcommand) forces ANSI output so the
@@ -38,12 +51,55 @@ function defaultCommand(t: TargetDetection): string | null {
   }
 }
 
-const DEVICE_TARGETS = new Set(["flutter", "react-native", "native-android"]);
+/** The per-adapter run profile — device convention + inspector kind — derived in
+ *  ONE place from the detected target id, so no downstream call site re-derives
+ *  "is this Flutter". `withDevice` and the inspector rail consume it. */
+export interface RunProfile {
+  needsDevice: boolean;
+  deviceConvention: DeviceConvention;
+  inspectorKind: InspectorKind;
+}
+export function runProfile(targetId: string): RunProfile {
+  switch (targetId) {
+    case "flutter":
+      return { needsDevice: true, deviceConvention: "arg", inspectorKind: "vmService" };
+    case "react-native":
+      return { needsDevice: true, deviceConvention: "rnDevice", inspectorKind: "uiAutomator" };
+    case "native-android":
+      return { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator" };
+    case "web":
+      return { needsDevice: false, deviceConvention: "none", inspectorKind: "cdp" };
+    default:
+      return { needsDevice: false, deviceConvention: "none", inspectorKind: "none" };
+  }
+}
+
+/** Apply the chosen device serial to a target's command per its convention.
+ *  Centralised here (not regex-sniffed per call site) so a new adapter is a
+ *  one-line profile change. */
+export function withDevice(t: RunTarget, serial: string | null): string {
+  if (!serial || !t.needsDevice) return t.command;
+  switch (t.deviceConvention) {
+    case "arg":
+      // Flutter: append -d <serial>, unless the command already pins a device.
+      return /\s-d\s/.test(t.command) ? t.command : `${t.command} -d ${shquote(serial)}`;
+    case "rnDevice":
+      // React Native: ANDROID_SERIAL pins adb-level ops, but the RN CLI's launch
+      // loop still iterates all connected devices unless --deviceId is given, so
+      // pass both to truly constrain the run to the chosen device.
+      return `ANDROID_SERIAL=${shquote(serial)} ${t.command} --deviceId ${shquote(serial)}`;
+    case "env":
+      // native-android: prefix ANDROID_SERIAL so gradle / adb target the device.
+      return `ANDROID_SERIAL=${shquote(serial)} ${t.command}`;
+    default:
+      return t.command;
+  }
+}
 
 /** Convert JSONC (launch.json) to JSON: strip // and /* *​/ comments and
  *  trailing commas, which VS Code accepts. String-aware so commas/slashes
  *  inside quoted values (e.g. URLs, "a,]") are left untouched. */
-function stripJsonc(src: string): string {
+export function stripJsonc(src: string): string {
   const out: string[] = [];
   let i = 0;
   const n = src.length;
@@ -88,7 +144,7 @@ interface LaunchConfig {
 
 /** Expand VS Code's workspace-folder variables (basename first — it shares the
  * ${workspaceFolder} prefix). */
-function expandVars(value: string, root: string): string {
+export function expandVars(value: string, root: string): string {
   const base = root.replace(/[/\\]+$/, "");
   const baseName = base.split(/[/\\]/).pop() ?? "";
   return value
@@ -126,13 +182,13 @@ function resolveCwd(cwd: string, root: string): string {
 
 /** A test program — a `test/` dir or a `*_test.dart` file. Dart-Code maps these
  * to `flutter test`, not `flutter run`. */
-function isTestProgram(program: string): boolean {
+export function isTestProgram(program: string): boolean {
   return /(?:^|[/\\])test[/\\]?$/.test(program) || /_test\.dart$/.test(program);
 }
 
 /** A plain directory program (e.g. "app/") — run the app from that dir with no
  * `-t` (flutter run rejects a directory as a target). */
-function isDirProgram(program: string): boolean {
+export function isDirProgram(program: string): boolean {
   return program.endsWith("/") || program.endsWith("\\");
 }
 
@@ -142,7 +198,7 @@ export function shquote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-async function fromLaunchConfig(
+export async function fromLaunchConfig(
   c: LaunchConfig,
   i: number,
   root: string,
@@ -200,6 +256,7 @@ async function fromLaunchConfig(
     : isFlutter
       ? ["launch", "hotReload", "hotRestart", "stop"]
       : ["launch", "stop"];
+  const flutterRun = isFlutter && !isTest;
   return {
     id: `vscode-${i}`,
     label: c.name ?? `Config ${i + 1}`,
@@ -208,7 +265,11 @@ async function fromLaunchConfig(
     capabilities,
     // A test run executes on the host VM, and a config that already pins a
     // deviceId (e.g. "chrome") needs no picker/auto-boot.
-    needsDevice: isFlutter && !isTest && !c.deviceId,
+    needsDevice: flutterRun && !c.deviceId,
+    // Flutter launch configs inspect via the VM service; everything else is a
+    // raw program with no PickForge inspector and no device convention.
+    deviceConvention: flutterRun ? "arg" : "none",
+    inspectorKind: flutterRun ? "vmService" : "none",
     source: "vscode",
   };
 }
@@ -235,12 +296,15 @@ export async function discoverRunTargets(root: string): Promise<RunTarget[]> {
     const detected = await targetDetect(root);
     const cmd = defaultCommand(detected);
     if (cmd) {
+      const profile = runProfile(detected.targetId);
       out.push({
         id: "detected",
         label: detected.displayName,
         command: cmd,
         capabilities: detected.capabilities,
-        needsDevice: DEVICE_TARGETS.has(detected.targetId),
+        needsDevice: profile.needsDevice,
+        deviceConvention: profile.deviceConvention,
+        inspectorKind: profile.inspectorKind,
         source: "detected",
       });
     }

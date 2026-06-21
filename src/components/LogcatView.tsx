@@ -10,6 +10,7 @@ import { MonoEyebrow } from "./ui";
 import { IconClear, IconPlay, IconStop } from "./icons";
 import { startLogcat, stopLogcat, type LogEvent } from "../lib/logcat";
 import { deviceLabel, resolveSelectedDevice } from "../stores/runLaunch";
+import { pushMcpLogs } from "../stores/mcp";
 
 const MAX_LINES = 5000;
 
@@ -54,6 +55,11 @@ export function LogcatView() {
       next.push({ ...event, id: seq++ });
       return next;
     });
+    // Feed the device log into the MCP run-log ring too, so `get_run_logs` is
+    // useful for RN / native-Android runs — whose app logs live here, not in the
+    // run PTY that the Debug Console taps. Best effort (no-op until the endpoint
+    // is up).
+    pushMcpLogs([event.line]);
   };
 
   const stop = async () => {

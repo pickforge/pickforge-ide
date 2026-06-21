@@ -7,6 +7,7 @@ import { createEffect, createSignal } from "solid-js";
 import * as mcp from "../lib/mcp";
 import { activeTarget } from "./runTargets";
 import { selectedDevice } from "./runDevice";
+import { runConsole } from "./runConsole";
 import { supportTier } from "../lib/runTargets";
 
 /** The resolved endpoint + storage dirs for the project the server is bound to. */
@@ -58,11 +59,25 @@ export function pushMcpLogs(lines: string[]): void {
   void mcp.mcpPushLog(lines).catch(() => {});
 }
 
+/** Reset the MCP run-log ring for a new run, so `get_run_logs` never returns a
+ *  previous run's lines (the stop/fix/run-again loop). Best effort. */
+export function mcpRunStarted(): void {
+  if (!binding()) return;
+  void mcp.mcpRunStarted().catch(() => {});
+}
+
+/** The target the MCP tools should report. While a run is live, that is the
+ *  *running* target (what's actually on the device) — not a launcher-dropdown
+ *  change the user made mid-run. Otherwise it's the selected launcher target. */
+function mcpTarget() {
+  return runConsole.status() === "running" ? runConsole.target() : activeTarget();
+}
+
 /** Push the current active-target + context snapshot to the Rust side. */
 export async function publishSnapshot(): Promise<void> {
   const b = binding();
   if (!b) return;
-  const t = activeTarget();
+  const t = mcpTarget();
   await mcp
     .mcpPublishState({
       targetId: t?.id ?? "",
@@ -80,11 +95,15 @@ export async function publishSnapshot(): Promise<void> {
     .catch(() => {});
 }
 
-// Re-publish whenever the active target, selection, or binding changes, so the
-// MCP tools always gate against current state.
+// Re-publish whenever the reported target, run status, selection, or binding
+// changes, so the MCP tools always gate against current state. Tracking the run
+// status + running target keeps the snapshot on the LIVE target for a run's
+// duration, then back to the launcher selection once it stops.
 createEffect(() => {
   // Track the reactive inputs.
   activeTarget();
+  runConsole.status();
+  runConsole.target();
   selection();
   binding();
   void publishSnapshot();

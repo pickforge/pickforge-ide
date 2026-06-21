@@ -84,11 +84,20 @@ The endpoint is discoverable but never auto-attached. To let an agent use it,
 point its MCP config at the `pickforge-mcp` adapter — see `examples/mcp/`:
 
 - **Claude Code**: copy `examples/mcp/.mcp.json` to your project root and set the
-  `command` to the `pickforge-mcp` binary (it ships in the same Cargo build as the
-  app: `target/<profile>/pickforge-mcp`). No `env` block is needed — the embedded
+  `command` to the `pickforge-mcp` binary. No `env` block is needed — the embedded
   terminal already carries `PICKFORGE_*`.
 - **Codex**: add the `examples/mcp/codex-config.toml` `[mcp_servers.pickforge]`
   block to `~/.codex/config.toml`.
+
+Where the binary lives:
+
+- **Installed app**: it ships as a Tauri *sidecar* (`bundle.externalBin`), so it
+  is installed next to the main `PickForge` executable (e.g. `pickforge-mcp`
+  alongside the app binary on Linux/macOS). `scripts/build-sidecar.mjs` builds and
+  stages it for the current target triple, wired into the Tauri
+  `beforeBuildCommand`, so a packaged app actually ships the adapter.
+- **Dev build / source checkout**: `target/<profile>/pickforge-mcp` from the same
+  Cargo workspace.
 
 Because the adapter inherits the terminal's env, the *same* config works whether
 storage is project-local, Home, or custom.

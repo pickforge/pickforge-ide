@@ -123,6 +123,7 @@ pub fn run() {
             mcp_commands::mcp_stop,
             mcp_commands::mcp_publish_state,
             mcp_commands::mcp_push_log,
+            mcp_commands::mcp_run_started,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

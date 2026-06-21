@@ -49,3 +49,9 @@ export function mcpPublishState(snapshot: McpPublishedState): Promise<void> {
 export function mcpPushLog(lines: string[]): Promise<void> {
   return invoke("mcp_push_log", { lines });
 }
+
+/** Reset the run-log ring at the start of a new run so `get_run_logs` never
+ *  mixes a previous run's lines into the fresh one. */
+export function mcpRunStarted(): Promise<void> {
+  return invoke("mcp_run_started");
+}

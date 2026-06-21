@@ -69,18 +69,31 @@ export function WorkbenchScreen() {
     host.openInNewPane(cmd);
   };
 
-  // Mount a host the first time its chat becomes active; keep it after. Kick off
-  // the project's MCP endpoint in parallel so the shell carries the discovery env
-  // (PICKFORGE_IPC_ENDPOINT) — `mcpEnv` is read reactively, and the shell only
-  // spawns after an async font load, so the binding is in place by then. MCP
-  // start is best-effort and never blocks the mount.
+  // Track which chats have a mount in flight so a re-run of this effect (e.g. a
+  // second reactive read) never kicks off two binds / two mounts for one chat.
+  const binding = new Set<string>();
+
+  // Mount a host the first time its chat becomes active; keep it after. AWAIT the
+  // project's MCP endpoint before mounting, so the very first shell carries the
+  // discovery env (PICKFORGE_IPC_ENDPOINT). `TerminalPane` reads `props.env` once
+  // at spawn — and the font wait it spawns behind is often cached/instant — so a
+  // fire-and-forget `mcp_start` could lose the race and spawn an agent shell with
+  // no endpoint, undiscoverable until the user opened a fresh pane. `mcp_start` is
+  // best-effort (it catches its own errors and always resolves), so awaiting it
+  // never blocks the mount indefinitely; on failure we mount with empty env, the
+  // same graceful degradation as before.
   createEffect(() => {
     const id = workspace.activeChatId;
-    if (!id || mounted().some((m) => m.chatId === id)) return;
+    if (!id || binding.has(id) || mounted().some((m) => m.chatId === id)) return;
     const chat = findChat(id);
     if (!chat) return;
-    void ensureMcpRunning(chat.projectRoot);
-    setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
+    binding.add(id);
+    void ensureMcpRunning(chat.projectRoot).finally(() => {
+      binding.delete(id);
+      // Guard: the chat may have been deleted while the bind was in flight.
+      if (!findChat(id) || mounted().some((m) => m.chatId === id)) return;
+      setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
+    });
   });
 
   onMount(() => {

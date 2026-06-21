@@ -8,8 +8,9 @@ Opt-in MCP configs that wire an embedded agent to PickForge's local MCP endpoint
   `pickforge-mcp` binary.
 - `codex-config.toml` — Codex. Add the block to `~/.codex/config.toml`.
 
-The `pickforge-mcp` adapter ships in the same Cargo build as the app
-(`target/release/pickforge-mcp`). It discovers the live endpoint from the
-`PICKFORGE_*` env the embedded terminal already sets, so no `env` block is needed.
-Nothing connects unless you add one of these configs — the endpoint is local-only
-and never auto-attached.
+The `pickforge-mcp` adapter ships with the app as a Tauri sidecar
+(`bundle.externalBin`), installed next to the main `PickForge` executable; in a
+dev/source build it is `target/<profile>/pickforge-mcp` from the same Cargo
+workspace. It discovers the live endpoint from the `PICKFORGE_*` env the embedded
+terminal already sets, so no `env` block is needed. Nothing connects unless you
+add one of these configs — the endpoint is local-only and never auto-attached.

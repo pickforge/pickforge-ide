@@ -9,7 +9,7 @@ import { deviceList, refreshDevices } from "./deviceList";
 import { selectedDevice, setRunDevice } from "./runDevice";
 import { openConsole, runConsole, startRun } from "./runConsole";
 import { armVmAutoConnect, disconnectVm } from "./vmService";
-import { ensureMcpRunning } from "./mcp";
+import { ensureMcpRunning, mcpRunStarted } from "./mcp";
 import { workspace } from "./workspace";
 import { androidLaunchAvd, type DeviceEntry } from "../lib/device";
 import { withDevice } from "../lib/runTargets";
@@ -147,8 +147,10 @@ export async function launchActiveTarget(): Promise<void> {
   if (serial && workspace.activeRoot) setRunDevice(workspace.activeRoot, serial);
   // Bring up the local MCP endpoint for this project so an embedded agent can
   // re-query live context (selection / screenshot / logs) mid-run. Opt-in and
-  // best-effort: it never blocks the run.
-  void ensureMcpRunning(workspace.activeRoot);
+  // best-effort: it never blocks the run. Reset the run-log ring for THIS run so
+  // a previous run's lines never bleed into the new run's `get_run_logs` (clears
+  // once the endpoint is up — a no-op on the very first run, whose ring is empty).
+  void ensureMcpRunning(workspace.activeRoot).then(mcpRunStarted);
   // Drop any stale VM connection and watch this run's output for the new VM
   // service URL so the Inspector auto-connects.
   void disconnectVm();

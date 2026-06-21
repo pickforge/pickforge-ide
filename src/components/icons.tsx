@@ -48,6 +48,16 @@ export function IconClose(props: IconProps): JSX.Element {
   );
 }
 
+// Clear console: a circle struck through — the dev-console "clear output" glyph.
+export function IconClear(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="8" cy="8" r="5" />
+      <path d="M4.5 4.5l7 7" />
+    </Svg>
+  );
+}
+
 export function IconRefresh(props: IconProps): JSX.Element {
   return (
     <Svg {...props}>

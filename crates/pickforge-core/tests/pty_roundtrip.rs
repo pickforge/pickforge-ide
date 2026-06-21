@@ -56,6 +56,47 @@ fn shell_echo_round_trips_through_the_sink() {
 }
 
 #[test]
+fn command_mode_runs_once_and_exits() {
+    let manager = PtyManager::new();
+    let (tx, rx) = mpsc::channel::<PtyEvent>();
+
+    let id = manager
+        .spawn(
+            SpawnOptions {
+                command: Some("echo pf_cmd_marker".to_string()),
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+            move |event| {
+                let _ = tx.send(event);
+            },
+        )
+        .expect("spawn command");
+
+    // The one-shot command must stream its output AND then exit on its own,
+    // without lingering at an interactive shell prompt.
+    let mut seen = String::new();
+    let mut exited = false;
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(PtyEvent::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+            Ok(PtyEvent::Exit(_)) => {
+                exited = true;
+                break;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    manager.kill(id).ok();
+    assert!(seen.contains("pf_cmd_marker"), "expected command output, got: {seen:?}");
+    assert!(exited, "command-mode pty should exit on its own, not idle at a prompt");
+}
+
+#[test]
 fn resize_and_kill_are_idempotent_enough() {
     let manager = PtyManager::new();
     let id = manager

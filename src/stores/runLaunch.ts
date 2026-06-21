@@ -7,7 +7,7 @@ import { createSignal } from "solid-js";
 import { activeTarget } from "./runTargets";
 import { deviceList, refreshDevices } from "./deviceList";
 import { selectedDevice, setRunDevice } from "./runDevice";
-import { openConsole, startRun } from "./runConsole";
+import { openConsole, runConsole, startRun } from "./runConsole";
 import { armVmAutoConnect, disconnectVm } from "./vmService";
 import { workspace } from "./workspace";
 import { androidLaunchAvd, type DeviceEntry } from "../lib/device";
@@ -85,6 +85,7 @@ function withDevice(t: RunTarget, serial: string | null): string {
 export async function launchActiveTarget(): Promise<void> {
   const t = activeTarget();
   if (!t) return;
+  if (booting() || runConsole.status() === "running") return; // never stack runs
   openConsole();
   setError(null);
 

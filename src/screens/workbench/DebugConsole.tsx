@@ -11,6 +11,7 @@ import {
   type StatusIntent,
 } from "../../components/ui";
 import {
+  IconClear,
   IconClose,
   IconPlay,
   IconRefresh,
@@ -20,9 +21,9 @@ import {
 } from "../../components/icons";
 import {
   attachConsole,
+  clearConsole,
   closeConsole,
   consoleExited,
-  consoleSpawnCwd,
   detachConsole,
   reloadRun,
   restartRun,
@@ -123,6 +124,14 @@ export function DebugConsole() {
         <button class="pf-dc-btn pf-dc-btn--stop" title="Stop" disabled={!isRunning()} onClick={stopRun}>
           <IconStop size={12} />
         </button>
+        <button
+          class="pf-dc-btn"
+          title="Clear console"
+          disabled={!runConsole.current()}
+          onClick={clearConsole}
+        >
+          <IconClear size={13} />
+        </button>
         <button class="pf-dc-btn" title="Hide console" onClick={closeConsole}>
           <IconClose size={14} />
         </button>
@@ -130,7 +139,8 @@ export function DebugConsole() {
 
       <div class="pf-dc-body">
         <Show
-          when={runConsole.hasRun()}
+          when={runConsole.current()}
+          keyed
           fallback={
             <ForgeEmptyState
               glyph={<IconTerminal size={26} />}
@@ -140,14 +150,17 @@ export function DebugConsole() {
             />
           }
         >
-          <TerminalPane
-            cwd={consoleSpawnCwd() ?? undefined}
-            onReady={attachConsole}
-            onExit={consoleExited}
-            onOutput={ingestRunOutput}
-            readOnly
-            consoleTheme
-          />
+          {(run) => (
+            <TerminalPane
+              runCommand={run.command}
+              cwd={run.cwd ?? undefined}
+              onReady={attachConsole}
+              onExit={consoleExited}
+              onOutput={ingestRunOutput}
+              readOnly
+              consoleTheme
+            />
+          )}
         </Show>
       </div>
     </section>

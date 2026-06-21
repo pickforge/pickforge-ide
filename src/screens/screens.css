@@ -139,31 +139,11 @@
   font-size: var(--pf-size-body-sm);
   color: var(--pf-text-low);
 }
-.pf-select {
-  color-scheme: dark;
-  /* WebKitGTK paints the native menulist label with the GTK theme colour and
-     ignores `color`, so the selected value reads as dark-on-dark. Drop the
-     native appearance and render the value with our tokens + a chevron. */
-  appearance: none;
-  -webkit-appearance: none;
-  background-color: var(--pf-surface-2);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0a0a6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right var(--pf-space-sm) center;
-  color: var(--pf-text-hi);
-  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
-  border-radius: var(--pf-radius-md);
-  padding: var(--pf-space-xs) calc(var(--pf-space-lg) + var(--pf-space-sm)) var(--pf-space-xs) var(--pf-space-md);
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-body-sm);
-  cursor: pointer;
-}
-:root[data-theme="light"] .pf-select {
-  color-scheme: light;
-}
-.pf-select option {
-  background: var(--pf-surface-2);
-  color: var(--pf-text-hi);
+/* Settings use the shared bracket Dropdown; size it for the (space-between) row. */
+.pf-settings-dropdown {
+  flex: 0 0 auto;
+  min-width: 220px;
+  max-width: 280px;
 }
 /* ---- quick-launch editor ---- */
 .pf-input {

@@ -1,13 +1,14 @@
 // Right-rail inspector: the run device (with VM-service status folded in) and
 // the Flutter widget tree / details / "send to AI".
-import { createSignal, For, onCleanup, Show } from "solid-js";
+import { Show } from "solid-js";
 import {
   EmberButton,
   MonoEyebrow,
   StatusPill,
   type StatusIntent,
 } from "../../components/ui";
-import { IconCheck, IconChevronDown, IconRefresh } from "../../components/icons";
+import { Dropdown } from "../../components/Dropdown";
+import { IconRefresh } from "../../components/icons";
 import type { DeviceEntry } from "../../lib/device";
 import { setRunDevice } from "../../stores/runDevice";
 import { useDeviceList } from "../../stores/deviceList";
@@ -35,24 +36,10 @@ export function InspectorPanel() {
     if (workspace.activeRoot) setRunDevice(workspace.activeRoot, key);
   };
 
-  // Bespoke device dropdown (bracket-tag styled — see workbench.css).
-  const [devOpen, setDevOpen] = createSignal(false);
   const selectedDeviceEntry = () => resolveSelectedDevice();
   const stateIntent = (d: DeviceEntry): StatusIntent =>
     d.state === "running" ? "connected" : d.state === "offline" ? "error" : "warning";
   const stateLabel = (d: DeviceEntry) => (d.state === "running" ? "online" : d.state);
-  const closeDev = (e: PointerEvent) => {
-    if (!(e.target as HTMLElement)?.closest?.(".pf-dev-select")) setDevOpen(false);
-  };
-  const onDevKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") setDevOpen(false);
-  };
-  window.addEventListener("pointerdown", closeDev);
-  window.addEventListener("keydown", onDevKey);
-  onCleanup(() => {
-    window.removeEventListener("pointerdown", closeDev);
-    window.removeEventListener("keydown", onDevKey);
-  });
 
   return (
     <div class="pf-inspector">
@@ -78,49 +65,22 @@ export function InspectorPanel() {
             when={devices().length > 0}
             fallback={<div class="pf-rail-empty">No devices (adb)</div>}
           >
-            <div class="pf-dev-select" classList={{ "pf-dev-select--open": devOpen() }}>
-              <button
-                class="pf-dev-trigger"
-                disabled={!workspace.activeRoot}
-                aria-expanded={devOpen()}
-                onClick={() => setDevOpen((o) => !o)}
-              >
-                <span class="pf-dev-bracket" aria-hidden="true" />
-                <span class="pf-dev-trigger-label">
-                  {selectedDeviceEntry() ? deviceLabel(selectedDeviceEntry()!) : "Select device"}
-                </span>
+            <Dropdown
+              value={selectedKey()}
+              onChange={pick}
+              placeholder="Select device"
+              disabled={!workspace.activeRoot}
+              triggerTrailing={
                 <Show when={selectedDeviceEntry()}>
                   {(d) => <StatusPill label={stateLabel(d())} intent={stateIntent(d())} />}
                 </Show>
-                <IconChevronDown size={12} class="pf-dev-chevron" />
-              </button>
-              <Show when={devOpen()}>
-                <div class="pf-dev-menu" role="listbox">
-                  <For each={devices()}>
-                    {(d) => (
-                      <button
-                        class="pf-dev-option"
-                        classList={{ "pf-dev-option--on": selectedKey() === deviceKey(d) }}
-                        role="option"
-                        aria-selected={selectedKey() === deviceKey(d)}
-                        onClick={() => {
-                          pick(deviceKey(d));
-                          setDevOpen(false);
-                        }}
-                      >
-                        <span class="pf-dev-check" aria-hidden="true">
-                          <Show when={selectedKey() === deviceKey(d)}>
-                            <IconCheck size={11} />
-                          </Show>
-                        </span>
-                        <span class="pf-dev-option-label">{deviceLabel(d)}</span>
-                        <StatusPill label={stateLabel(d)} intent={stateIntent(d)} />
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </Show>
-            </div>
+              }
+              options={devices().map((d) => ({
+                value: deviceKey(d),
+                label: deviceLabel(d),
+                trailing: <StatusPill label={stateLabel(d)} intent={stateIntent(d)} />,
+              }))}
+            />
           </Show>
         </div>
 

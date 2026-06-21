@@ -2075,14 +2075,20 @@ body.pf-resizing .pf-dc-resizer-grip {
 
 .pf-mirror-stats {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: var(--pf-space-sm);
+  /* Reserve one fixed line so the strip never grows/shrinks the stage. */
+  min-height: var(--pf-space-lg);
+  overflow: hidden;
+  white-space: nowrap;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
   color: var(--pf-text-low);
 }
 .pf-mirror-stats-err {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--pf-error);
-  flex-basis: 100%;
-  word-break: break-word;
 }

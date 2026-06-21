@@ -134,23 +134,30 @@ export function DeviceMirror() {
           </Show>
         </div>
       </Show>
-      <Show when={active() && stats()}>
-        {(s) => (
-          <div class="pf-mirror-stats">
-            <span>{s().renderer}</span>
-            <span>avc {s().avc}</span>
-            <span>
-              {s().width}×{s().height}
-            </span>
-            <span>frames {s().rendered}</span>
-            <Show when={s().skipped > 0}>
-              <span>skipped {s().skipped}</span>
-            </Show>
-            <Show when={s().error}>
-              <span class="pf-mirror-stats-err">{s().error}</span>
-            </Show>
-          </div>
-        )}
+      {/* The stats strip is reserved for the whole session (fixed-height, single
+          line) so toggling a stat — e.g. "skipped N" — never reflows and resizes
+          the mirror stage. */}
+      <Show when={active()}>
+        <div class="pf-mirror-stats">
+          <Show when={stats()}>
+            {(s) => (
+              <>
+                <span>{s().renderer}</span>
+                <span>avc {s().avc}</span>
+                <span>
+                  {s().width}×{s().height}
+                </span>
+                <span>frames {s().rendered}</span>
+                <Show when={s().skipped > 0}>
+                  <span>skipped {s().skipped}</span>
+                </Show>
+                <Show when={s().error}>
+                  <span class="pf-mirror-stats-err">{s().error}</span>
+                </Show>
+              </>
+            )}
+          </Show>
+        </div>
       </Show>
       <Show when={error()}>
         <div class="pf-vm-error">{error()}</div>

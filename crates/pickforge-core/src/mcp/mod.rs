@@ -14,7 +14,7 @@
 mod protocol;
 mod tools;
 
-pub use protocol::{error_code, Request, Response, PROTOCOL_VERSION};
+pub use protocol::{error_code, Request, RequestId, Response, PROTOCOL_VERSION};
 pub use tools::{
     tool_descriptors, ActiveTarget, InspectorKind, LiveState, ProjectContext, ToolOutput,
     ALL_TOOL_NAMES, CAPTURE_SCREENSHOT, GET_CURRENT_SELECTION, GET_PROJECT_CONTEXT, GET_RUN_LOGS,
@@ -29,11 +29,12 @@ pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Handle one parsed JSON-RPC [`Request`] against `state`, returning the response
 /// to write back — or `None` for a notification (which gets no reply).
 pub fn handle_request(state: &dyn LiveState, req: &Request) -> Option<Response> {
-    // Notifications (no `id`) are acknowledged by silence per JSON-RPC.
+    // Notifications (absent `id`) are acknowledged by silence per JSON-RPC. An
+    // explicit `"id": null` is a request and is answered with `"id": null`.
     if req.is_notification() {
         return None;
     }
-    let id = req.id.clone().unwrap_or(Value::Null);
+    let id = req.id.to_response_id();
 
     let resp = match req.method.as_str() {
         "initialize" => Response::ok(id, initialize_result()),
@@ -224,6 +225,17 @@ mod tests {
     #[test]
     fn ping_is_answered() {
         let r = req(r#"{"jsonrpc":"2.0","id":9,"method":"ping"}"#).unwrap();
+        assert!(r["result"].is_object());
+    }
+
+    #[test]
+    fn explicit_null_id_request_gets_a_response_keyed_null() {
+        // Regression: a request carrying `"id": null` is NOT a notification —
+        // JSON-RPC 2.0 §5 requires a response, keyed by `null`.
+        let line = handle_line(&TestState, r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#);
+        assert!(line.is_some(), "id:null must receive a response, not silence");
+        let r: Value = serde_json::from_str(&line.unwrap()).unwrap();
+        assert_eq!(r["id"], Value::Null);
         assert!(r["result"].is_object());
     }
 }

@@ -225,13 +225,17 @@ fn capture_screenshot(state: &dyn LiveState) -> ToolOutput {
 }
 
 fn get_run_logs(state: &dyn LiveState, args: &Value) -> ToolOutput {
-    if let Some(target) = state.active_target() {
-        if !target.has(Capability::StreamLogs) {
-            return ToolOutput::unavailable(format!(
-                "target '{}' does not stream logs",
-                target.id
-            ));
-        }
+    // Require an active target that streams logs. With NO active target we must
+    // NOT fall through to the shared ring buffer — that would leak the previous
+    // project's run output across a project switch.
+    let Some(target) = state.active_target() else {
+        return ToolOutput::unavailable("no active target");
+    };
+    if !target.has(Capability::StreamLogs) {
+        return ToolOutput::unavailable(format!(
+            "target '{}' does not stream logs",
+            target.id
+        ));
     }
     let limit = args
         .get("limit")
@@ -478,6 +482,21 @@ mod tests {
         let out = call_tool(&st, GET_RUN_LOGS, &Value::Null).unwrap();
         assert_eq!(out.value["available"], json!(false));
         assert!(out.value["reason"].as_str().unwrap().contains("logs"));
+    }
+
+    #[test]
+    fn run_logs_are_gated_with_no_active_target() {
+        // Regression: with no active target, logs must NOT fall through to the
+        // shared ring buffer (cross-project leak). Even with lines buffered, an
+        // unset target returns unavailable.
+        let mut st = FakeState::new();
+        st.target = None;
+        st.logs = (0..5).map(|i| format!("leaked {i}")).collect();
+        let out = call_tool(&st, GET_RUN_LOGS, &json!({ "limit": 5 })).unwrap();
+        assert!(!out.is_error);
+        assert_eq!(out.value["available"], json!(false));
+        assert_eq!(out.value["reason"], json!("no active target"));
+        assert!(out.value.get("lines").is_none(), "no log lines may leak");
     }
 
     #[test]

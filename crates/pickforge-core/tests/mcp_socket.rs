@@ -146,6 +146,17 @@ async fn agent_handshake_over_the_socket() {
     assert!(text.contains("flutterWidget"), "got: {text}");
     assert!(text.contains("ElevatedButton"), "got: {text}");
 
+    // 4. A request with an explicit `"id": null` is NOT a notification — it must
+    // receive a response over the wire, keyed by `null` (JSON-RPC 2.0 §5).
+    let null_id = round_trip(
+        &mut tx,
+        &mut reader,
+        json!({ "jsonrpc": "2.0", "id": null, "method": "ping" }),
+    )
+    .await;
+    assert_eq!(null_id["id"], Value::Null);
+    assert!(null_id["result"].is_object(), "id:null request must be answered");
+
     drop(tx);
     drop(reader);
     let _ = server.await;

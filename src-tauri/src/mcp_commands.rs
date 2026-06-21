@@ -18,7 +18,8 @@
 //! run bind), and the socket file is removed on `mcp_stop`.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pickforge_core::android;
@@ -70,6 +71,38 @@ pub struct PublishedState {
     pub selection: Option<Value>,
 }
 
+/// One running server instance, owned by exactly one accept task. The
+/// `generation` ties the bound socket to *this* task so a later server's socket
+/// is never deleted by an earlier task's cleanup (the stop/restart race).
+#[derive(Clone)]
+struct RunningServer {
+    generation: u64,
+    socket_path: PathBuf,
+    endpoint: String,
+    /// Per-instance shutdown signal. Notifying it stops only THIS server's task.
+    shutdown: Arc<Notify>,
+}
+
+/// The server lifecycle. Modeled as a state machine so a concurrent `mcp_start`
+/// can never observe "running but no socket": it either reuses a `Running`
+/// instance or waits on the in-flight `Starting` bind.
+enum ServerLifecycle {
+    Idle,
+    /// A bind is in flight; concurrent starters await this `Notify`, then re-read
+    /// the (now `Running` or `Idle`-on-failure) lifecycle.
+    Starting(Arc<Notify>),
+    Running(RunningServer),
+}
+
+impl ServerLifecycle {
+    fn running(&self) -> Option<&RunningServer> {
+        match self {
+            ServerLifecycle::Running(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
 /// Shared, mutable MCP state: the latest published snapshot + a run-log ring.
 #[derive(Clone)]
 pub struct McpState(Arc<McpInner>);
@@ -77,11 +110,10 @@ pub struct McpState(Arc<McpInner>);
 struct McpInner {
     published: Mutex<PublishedState>,
     logs: Mutex<VecDeque<String>>,
-    /// The bound socket path, if a server is running.
-    socket_path: Mutex<Option<PathBuf>>,
-    /// Signals the running server task to stop.
-    shutdown: Notify,
-    running: Mutex<bool>,
+    /// The server lifecycle (Idle / Starting / Running).
+    lifecycle: Mutex<ServerLifecycle>,
+    /// Monotonic generation counter; each successful bind gets a fresh id.
+    next_generation: AtomicU64,
 }
 
 impl McpState {
@@ -89,14 +121,23 @@ impl McpState {
         Self(Arc::new(McpInner {
             published: Mutex::new(PublishedState::default()),
             logs: Mutex::new(VecDeque::with_capacity(256)),
-            socket_path: Mutex::new(None),
-            shutdown: Notify::new(),
-            running: Mutex::new(false),
+            lifecycle: Mutex::new(ServerLifecycle::Idle),
+            next_generation: AtomicU64::new(1),
         }))
     }
 
     fn set_published(&self, state: PublishedState) {
-        *self.0.published.lock().unwrap() = state;
+        // When the active project changes, drop the run-log ring so a new
+        // project's `get_run_logs` can't read the previous project's output.
+        // (The tool layer also refuses logs with no active target; this keys the
+        // buffer to the project so a *switch* between projects can't leak either.)
+        {
+            let mut published = self.0.published.lock().unwrap();
+            if published.project_root != state.project_root {
+                self.0.logs.lock().unwrap().clear();
+            }
+            *published = state;
+        }
     }
 
     fn push_logs(&self, lines: Vec<String>) {
@@ -227,13 +268,93 @@ fn now_millis() -> u128 {
         .unwrap_or(0)
 }
 
-/// Default socket path: `$XDG_RUNTIME_DIR/pickforge-<pid>/agent.sock`, falling
-/// back to the system temp dir when `XDG_RUNTIME_DIR` is unset.
-fn default_socket_path() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
+/// The base runtime directory for the socket: `$XDG_RUNTIME_DIR` (already a
+/// user-private `0700` dir per the spec) or, when it is unset, the system temp
+/// dir — which is world-writable, so the per-app subdir below is created and
+/// verified `0700` regardless.
+fn runtime_base() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join(format!("pickforge-{}", std::process::id())).join("agent.sock")
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// The per-process socket path: `<runtime_base>/pickforge-<pid>/agent.sock`.
+fn default_socket_path() -> PathBuf {
+    runtime_base()
+        .join(format!("pickforge-{}", std::process::id()))
+        .join("agent.sock")
+}
+
+/// Ensure the socket's parent directory exists and is a user-PRIVATE (`0700`),
+/// current-user-owned real directory. Rejects a pre-existing path that is a
+/// symlink, not owned by us, or group/other-accessible — defending against a
+/// hostile dir planted in a shared temp dir.
+#[cfg(unix)]
+fn ensure_private_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) => {
+            // Must be a real directory, not a symlink someone swapped in.
+            if !meta.file_type().is_dir() {
+                return Err(format!(
+                    "MCP runtime path {} exists but is not a directory",
+                    dir.display()
+                ));
+            }
+            if meta.uid() != current_uid() {
+                return Err(format!(
+                    "MCP runtime dir {} is not owned by the current user",
+                    dir.display()
+                ));
+            }
+            // Reject any group/other access bits; force-tighten to 0700.
+            let mode = meta.permissions().mode() & 0o777;
+            if mode & 0o077 != 0 {
+                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                    .map_err(|e| format!("cannot tighten MCP runtime dir perms: {e}"))?;
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::DirBuilder::new()
+            .recursive(false)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|e| format!("cannot create private MCP runtime dir {}: {e}", dir.display())),
+        Err(e) => Err(format!("cannot stat MCP runtime dir {}: {e}", dir.display())),
+    }
+}
+
+#[cfg(not(unix))]
+fn ensure_private_dir(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())
+}
+
+/// Restrict a freshly bound socket to the owner (`0600`) so no other local user
+/// can connect to the agent endpoint.
+#[cfg(unix)]
+fn restrict_socket(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    // The socket we just bound must be the one we own — bail if it was swapped.
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("cannot stat MCP socket: {e}"))?;
+    if meta.uid() != current_uid() {
+        return Err("MCP socket is not owned by the current user".to_string());
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("cannot restrict MCP socket perms: {e}"))
+}
+
+#[cfg(not(unix))]
+fn restrict_socket(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    // Safe: getuid is always successful and has no preconditions.
+    unsafe { libc::getuid() }
 }
 
 // ---- Tauri commands ----
@@ -267,6 +388,10 @@ pub struct McpStartResult {
 /// `<context_dir>/ipc.sock-path` (the documented discovery file), and returns the
 /// endpoint + storage dirs. The caller injects `PICKFORGE_IPC_ENDPOINT` /
 /// `PICKFORGE_CONTEXT_DIR` into embedded terminals. No-op if already running.
+///
+/// Concurrency: the lifecycle is a state machine. A second caller that arrives
+/// while a bind is in flight waits on the `Starting` notifier and then reuses the
+/// `Running` instance — it never sees "running but no socket".
 #[tauri::command]
 pub async fn mcp_start(
     state: State<'_, McpState>,
@@ -278,45 +403,80 @@ pub async fn mcp_start(
         .ensure(&project_root, None)
         .map_err(|e| e.to_string())?;
 
-    let already = {
-        let mut running = state.0.running.lock().unwrap();
-        let was = *running;
-        *running = true;
-        was
-    };
-
-    let path = if already {
-        state
-            .0
-            .socket_path
-            .lock()
-            .unwrap()
-            .clone()
-            .ok_or_else(|| "MCP server flagged running but has no socket".to_string())?
-    } else {
-        let path = default_socket_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    // Claim the right to bind, or learn that another caller is already running /
+    // mid-bind. Loop because a `Starting` we wait on may resolve to `Idle` (the
+    // in-flight bind failed), in which case we retry the claim ourselves.
+    let endpoint = loop {
+        enum Claim {
+            // We own the bind; carry the fresh generation.
+            Bind(u64),
+            // Already running — reuse this endpoint.
+            Reuse(String),
+            // Someone else is binding; wait on this, then re-evaluate.
+            Wait(Arc<Notify>),
         }
-        // A stale socket from a previous (crashed) run blocks bind — clear it.
-        let _ = std::fs::remove_file(&path);
-        let listener = UnixListener::bind(&path).map_err(|e| {
-            *state.0.running.lock().unwrap() = false;
-            format!("cannot bind MCP socket at {}: {e}", path.display())
-        })?;
-        *state.0.socket_path.lock().unwrap() = Some(path.clone());
 
-        let inner = state.0.clone();
-        let server_state = McpState(inner.clone());
-        tauri::async_runtime::spawn(async move {
-            serve(listener, server_state, inner).await;
-        });
-        path
+        let claim = {
+            let mut lc = state.0.lifecycle.lock().unwrap();
+            match &*lc {
+                ServerLifecycle::Running(s) => Claim::Reuse(s.endpoint.clone()),
+                ServerLifecycle::Starting(notify) => Claim::Wait(notify.clone()),
+                ServerLifecycle::Idle => {
+                    let generation = state.0.next_generation.fetch_add(1, Ordering::SeqCst);
+                    *lc = ServerLifecycle::Starting(Arc::new(Notify::new()));
+                    Claim::Bind(generation)
+                }
+            }
+        };
+
+        match claim {
+            Claim::Reuse(endpoint) => break endpoint,
+            Claim::Wait(notify) => {
+                notify.notified().await;
+                continue;
+            }
+            Claim::Bind(generation) => {
+                match bind_server(&state, generation) {
+                    Ok(server) => {
+                        let endpoint = server.endpoint.clone();
+                        let waiters = {
+                            let mut lc = state.0.lifecycle.lock().unwrap();
+                            let prev = std::mem::replace(
+                                &mut *lc,
+                                ServerLifecycle::Running(server),
+                            );
+                            match prev {
+                                ServerLifecycle::Starting(n) => Some(n),
+                                _ => None,
+                            }
+                        };
+                        if let Some(n) = waiters {
+                            n.notify_waiters();
+                        }
+                        break endpoint;
+                    }
+                    Err(e) => {
+                        // Reset to Idle and wake waiters so they retry the claim.
+                        let waiters = {
+                            let mut lc = state.0.lifecycle.lock().unwrap();
+                            let prev = std::mem::replace(&mut *lc, ServerLifecycle::Idle);
+                            match prev {
+                                ServerLifecycle::Starting(n) => Some(n),
+                                _ => None,
+                            }
+                        };
+                        if let Some(n) = waiters {
+                            n.notify_waiters();
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+        }
     };
 
     // Write the discovery file so adapters launched outside the embedded terminal
     // (no `PICKFORGE_IPC_ENDPOINT`) can still find the live socket.
-    let endpoint = path.to_string_lossy().into_owned();
     let _ = std::fs::write(resolved.ipc_sock_path(), &endpoint);
 
     Ok(McpStartResult {
@@ -327,31 +487,82 @@ pub async fn mcp_start(
     })
 }
 
+/// Bind a fresh server instance: prepare a private runtime dir, bind the socket,
+/// restrict it to `0600`, and spawn its accept task. Returns the owned
+/// [`RunningServer`] handle (generation + path + endpoint + shutdown).
+fn bind_server(state: &State<'_, McpState>, generation: u64) -> Result<RunningServer, String> {
+    let socket_path = default_socket_path();
+    if let Some(parent) = socket_path.parent() {
+        ensure_private_dir(parent)?;
+    }
+    // A stale socket from a previous (crashed) run blocks bind — clear it.
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = UnixListener::bind(&socket_path)
+        .map_err(|e| format!("cannot bind MCP socket at {}: {e}", socket_path.display()))?;
+    // Restrict before serving any connection so the window is never open.
+    if let Err(e) = restrict_socket(&socket_path) {
+        let _ = std::fs::remove_file(&socket_path);
+        return Err(e);
+    }
+
+    let shutdown = Arc::new(Notify::new());
+    let server = RunningServer {
+        generation,
+        socket_path: socket_path.clone(),
+        endpoint: socket_path.to_string_lossy().into_owned(),
+        shutdown: shutdown.clone(),
+    };
+
+    let inner = state.0.clone();
+    let server_state = McpState(inner.clone());
+    tauri::async_runtime::spawn(async move {
+        serve(listener, server_state, inner, generation, socket_path, shutdown).await;
+    });
+    Ok(server)
+}
+
 /// Stop the MCP server and remove its socket file. Safe to call when stopped.
 #[tauri::command]
 pub fn mcp_stop(state: State<'_, McpState>) {
-    let was_running = {
-        let mut running = state.0.running.lock().unwrap();
-        std::mem::replace(&mut *running, false)
+    // Take the running instance out of the lifecycle and signal ONLY its task.
+    // Cleanup of the socket file is left to that task, which deletes only the
+    // path it bound (guarded by its generation) — so a concurrent restart that
+    // already rebound the shared path is never clobbered.
+    let server = {
+        let mut lc = state.0.lifecycle.lock().unwrap();
+        match std::mem::replace(&mut *lc, ServerLifecycle::Idle) {
+            ServerLifecycle::Running(s) => Some(s),
+            // A bind in flight: put the Starting back so its owner can finish and
+            // observe Idle itself; nothing to stop yet.
+            other => {
+                *lc = other;
+                None
+            }
+        }
     };
-    if was_running {
-        state.0.shutdown.notify_waiters();
-    }
-    if let Some(path) = state.0.socket_path.lock().unwrap().take() {
-        let _ = std::fs::remove_file(path);
+    if let Some(server) = server {
+        server.shutdown.notify_waiters();
     }
 }
 
-/// Accept loop: each connection is handled concurrently, framing newline-
-/// delimited JSON-RPC and dispatching to the core MCP handler. Ends on shutdown.
+/// Accept loop for one server instance. Each connection is handled concurrently,
+/// framing newline-delimited JSON-RPC and dispatching to the core MCP handler.
+/// Ends on this instance's shutdown signal or a dead listener.
 ///
 /// The shutdown future is created ONCE and pinned before the loop: `notified()`
 /// registers interest immediately, so a `mcp_stop` that fires while this loop is
 /// busy spawning a connection (not currently in the `select!`) is still observed
 /// on the next poll — it is not lost the way a fresh per-iteration `notified()`
 /// would be.
-async fn serve(listener: UnixListener, state: McpState, inner: Arc<McpInner>) {
-    let shutdown = inner.shutdown.notified();
+async fn serve(
+    listener: UnixListener,
+    state: McpState,
+    inner: Arc<McpInner>,
+    generation: u64,
+    socket_path: PathBuf,
+    shutdown: Arc<Notify>,
+) {
+    let shutdown = shutdown.notified();
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
@@ -366,10 +577,23 @@ async fn serve(listener: UnixListener, state: McpState, inner: Arc<McpInner>) {
         }
     }
     // Drop the listener so the bound socket inode is released even if `mcp_stop`
-    // already unlinked the path, then best-effort remove the discovery socket.
+    // already unlinked the path. Then remove the socket file ONLY if a *newer*
+    // running server hasn't rebound the same shared path: a restart with a higher
+    // generation owns that file now, and this older task must not delete it.
     drop(listener);
-    if let Some(path) = inner.socket_path.lock().unwrap().take() {
-        let _ = std::fs::remove_file(path);
+    if !newer_server_owns_path(&inner, &socket_path, generation) {
+        let _ = std::fs::remove_file(&socket_path);
+    }
+}
+
+/// True when a server with a *higher* generation currently owns `socket_path` —
+/// i.e. a restart rebound the same path. In that case the older task whose
+/// generation is `generation` must NOT delete the file (it belongs to the new one).
+fn newer_server_owns_path(inner: &Arc<McpInner>, socket_path: &Path, generation: u64) -> bool {
+    let lc = inner.lifecycle.lock().unwrap();
+    match lc.running() {
+        Some(s) => s.generation > generation && s.socket_path == socket_path,
+        None => false,
     }
 }
 
@@ -461,6 +685,139 @@ mod tests {
         assert_eq!(recent.last().unwrap(), &format!("l{}", MAX_LOG_LINES + 49));
         let all = st.recent_logs(MAX_LOG_LINES * 2);
         assert_eq!(all.len(), MAX_LOG_LINES);
+    }
+
+    #[test]
+    fn switching_project_clears_the_log_ring() {
+        let st = McpState::new();
+        st.set_published(PublishedState {
+            project_root: Some("/proj/a".into()),
+            ..Default::default()
+        });
+        st.push_logs(vec!["a-line-1".into(), "a-line-2".into()]);
+        assert_eq!(st.recent_logs(10).len(), 2);
+
+        // Switching to a different project root must drop project A's logs.
+        st.set_published(PublishedState {
+            project_root: Some("/proj/b".into()),
+            ..Default::default()
+        });
+        assert!(st.recent_logs(10).is_empty(), "logs from /proj/a leaked into /proj/b");
+
+        // Re-publishing the SAME project keeps the buffer intact.
+        st.push_logs(vec!["b-line-1".into()]);
+        st.set_published(PublishedState {
+            project_root: Some("/proj/b".into()),
+            target_label: "changed".into(),
+            ..Default::default()
+        });
+        assert_eq!(st.recent_logs(10), vec!["b-line-1".to_string()]);
+    }
+
+    #[cfg(unix)]
+    fn unique_tmp(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "pf-mcp-test-{}-{}-{}",
+            tag,
+            std::process::id(),
+            now_millis()
+        ))
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_dir_creates_0700() {
+        let dir = unique_tmp("dir0700");
+        let _ = std::fs::remove_dir_all(&dir);
+        ensure_private_dir(&dir).expect("creates private dir");
+        assert_eq!(mode_of(&dir), 0o700, "runtime dir must be 0700");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_dir_tightens_a_loose_existing_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = unique_tmp("dirloose");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // We own it but it is group/other-readable: ensure_private_dir tightens it.
+        ensure_private_dir(&dir).expect("tightens own dir");
+        assert_eq!(mode_of(&dir), 0o700, "loose dir must be tightened to 0700");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_dir_rejects_a_symlink() {
+        let target = unique_tmp("symtgt");
+        let link = unique_tmp("symlink");
+        let _ = std::fs::remove_dir_all(&target);
+        let _ = std::fs::remove_file(&link);
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        // A symlink standing in for the runtime dir must be refused.
+        assert!(ensure_private_dir(&link).is_err(), "symlinked runtime dir must be rejected");
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bound_socket_is_restricted_to_0600() {
+        let dir = unique_tmp("sock0600");
+        let _ = std::fs::remove_dir_all(&dir);
+        ensure_private_dir(&dir).unwrap();
+        let sock = dir.join("agent.sock");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _listener = rt.block_on(async { UnixListener::bind(&sock).unwrap() });
+        restrict_socket(&sock).expect("restrict to 0600");
+        assert_eq!(mode_of(&sock), 0o600, "socket must be owner-only (0600)");
+        drop(_listener);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn newer_generation_owning_the_path_blocks_old_task_cleanup() {
+        let st = McpState::new();
+        let path = PathBuf::from("/run/pickforge-x/agent.sock");
+        // A gen-5 server currently owns the path.
+        *st.0.lifecycle.lock().unwrap() = ServerLifecycle::Running(RunningServer {
+            generation: 5,
+            socket_path: path.clone(),
+            endpoint: path.to_string_lossy().into_owned(),
+            shutdown: Arc::new(Notify::new()),
+        });
+        // An OLDER (gen-3) task finishing must NOT delete the file: gen 5 > 3.
+        assert!(newer_server_owns_path(&st.0, &path, 3), "older task must defer to newer owner");
+        // The current owner (gen 5) is NOT 'newer than itself' → it may clean up.
+        assert!(!newer_server_owns_path(&st.0, &path, 5));
+        // After a stop (lifecycle Idle), the orphaned path is the old task's to remove.
+        *st.0.lifecycle.lock().unwrap() = ServerLifecycle::Idle;
+        assert!(!newer_server_owns_path(&st.0, &path, 3));
+    }
+
+    #[test]
+    fn lifecycle_starts_idle_and_reuse_endpoint_after_running() {
+        let st = McpState::new();
+        assert!(matches!(*st.0.lifecycle.lock().unwrap(), ServerLifecycle::Idle));
+        let server = RunningServer {
+            generation: 1,
+            socket_path: PathBuf::from("/run/x/agent.sock"),
+            endpoint: "/run/x/agent.sock".into(),
+            shutdown: Arc::new(Notify::new()),
+        };
+        *st.0.lifecycle.lock().unwrap() = ServerLifecycle::Running(server);
+        // A concurrent caller observing Running reuses the live endpoint.
+        let endpoint = st.0.lifecycle.lock().unwrap().running().map(|s| s.endpoint.clone());
+        assert_eq!(endpoint.as_deref(), Some("/run/x/agent.sock"));
     }
 
     #[test]

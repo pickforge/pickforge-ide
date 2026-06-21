@@ -1,0 +1,7 @@
+name: pf_e2e_flutter_fixture
+description: Fixture project for the PickForge e2e harness target detection.
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter

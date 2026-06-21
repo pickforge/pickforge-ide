@@ -14,10 +14,11 @@ fn main() {
 ///   - full `tauri build` runs `scripts/build-sidecar.mjs` first (wired into
 ///     `beforeBuildCommand`), which builds + stages the real adapter, so the copy
 ///     below is a no-op refresh;
-///   - a bare `cargo build/check --workspace` builds `pickforge-mcp` as a member,
+///   - a bare `cargo build --workspace` builds `pickforge-mcp` as a member,
 ///     leaving the binary in `target/<profile>/` for this copy.
-/// If neither produced it yet, we fail with a clear instruction rather than ship
-/// a placeholder.
+/// If neither produced it (e.g. `cargo check`, which never links binaries), we
+/// only warn: `tauri-build`'s own externalBin check still needs the staged file,
+/// so CI runs `bun run sidecar` before the cargo steps.
 fn stage_mcp_sidecar() {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let workspace = manifest_dir.parent().unwrap().to_path_buf();
@@ -41,11 +42,15 @@ fn stage_mcp_sidecar() {
             panic!("staging pickforge-mcp sidecar to {}: {e}", dest.display())
         });
     } else if !dest.exists() {
-        panic!(
-            "pickforge-mcp sidecar is not built: {} is missing.\n\
-             Run `bun run sidecar` (or `cargo build -p pickforge-mcp`) first, then \
-             rebuild. A full `tauri build` does this automatically via \
-             `beforeBuildCommand`.",
+        // No staged binary, and Cargo hasn't emitted one (e.g. plain `cargo check`,
+        // which never links binaries). Warn instead of panicking so dev/CI workspace
+        // checks pass. Release builds always stage it first via `beforeBuildCommand`
+        // -> `bun run sidecar`. `tauri-build` still wants the externalBin to exist at
+        // build-script time, so CI runs `bun run sidecar` before the cargo steps.
+        println!(
+            "cargo:warning=pickforge-mcp sidecar not staged ({} missing); run \
+             `bun run sidecar` to wire the externalBin (release builds do this \
+             automatically).",
             built.display()
         );
     }

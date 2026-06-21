@@ -22,6 +22,7 @@ import { activeTarget } from "../../stores/runTargets";
 import { hasCapability, type InspectorKind, type RunTarget } from "../../lib/runTargets";
 import { WidgetTree } from "./WidgetTree";
 import { A11yTree } from "./A11yTree";
+import { CdpTree } from "./CdpTree";
 
 export function InspectorPanel() {
   const { devices, refresh } = useDeviceList();
@@ -171,14 +172,13 @@ export function InspectorPanel() {
               canMapSource={canMapSource()}
             />
           </Match>
-          <Match when={inspectorKind() === "cdp" || inspectorKind() === "none"}>
+          <Match when={inspectorKind() === "cdp"}>
+            <CdpTree canInspect={canInspect()} canMapSource={canMapSource()} />
+          </Match>
+          <Match when={inspectorKind() === "none"}>
             <div class="pf-inspector-section">
               <MonoEyebrow text="Inspector" />
-              <div class="pf-rail-empty">
-                {inspectorKind() === "cdp"
-                  ? "No inspector for web targets yet"
-                  : "No inspector for this target"}
-              </div>
+              <div class="pf-rail-empty">No inspector for this target</div>
             </div>
           </Match>
         </Switch>

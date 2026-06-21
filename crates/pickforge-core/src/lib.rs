@@ -6,6 +6,7 @@
 //! target adapters, VM Service, storage and agent prep.
 
 pub mod android;
+pub mod cdp;
 pub mod db;
 pub mod git;
 pub mod inspector;
@@ -16,6 +17,9 @@ pub mod targets;
 pub mod transcript;
 pub mod vm_service;
 
+pub use cdp::{
+    decode_dom_node, find_node_path, CdpClient, CdpError, CdpTarget, DomNode,
+};
 pub use inspector::{decode_widget_tree, CreationLocation, WidgetNode};
 pub use vm_service::{VmError, VmServiceClient};
 

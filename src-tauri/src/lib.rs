@@ -1,3 +1,4 @@
+mod cdp_commands;
 mod db_commands;
 mod device_commands;
 mod fs_commands;
@@ -11,7 +12,7 @@ mod watch_commands;
 
 use std::path::PathBuf;
 
-use pickforge_core::{pickforge_home, Database, PtyManager, VmServiceClient};
+use pickforge_core::{pickforge_home, CdpClient, Database, PtyManager, VmServiceClient};
 
 fn open_database() -> Database {
     let path = pickforge_home(None)
@@ -41,6 +42,7 @@ pub fn run() {
     builder
         .manage(PtyManager::new())
         .manage(VmServiceClient::new())
+        .manage(CdpClient::new())
         .manage(watch_commands::WatchManager::new())
         .manage(mirror_commands::MirrorManager::new())
         .manage(logcat_commands::LogcatManager::new())
@@ -101,6 +103,13 @@ pub fn run() {
             vm_commands::vm_widget_properties,
             vm_commands::inspect_dir,
             vm_commands::inspect_save,
+            cdp_commands::cdp_discover,
+            cdp_commands::cdp_attach,
+            cdp_commands::cdp_detach,
+            cdp_commands::cdp_status,
+            cdp_commands::cdp_dom_tree,
+            cdp_commands::cdp_map_source,
+            cdp_commands::cdp_fetch_source_map,
             watch_commands::fs_watch_start,
             watch_commands::fs_watch_stop,
             mirror_commands::mirror_start,

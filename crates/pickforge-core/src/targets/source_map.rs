@@ -129,16 +129,36 @@ fn decode_mappings(mappings: &str) -> Vec<Vec<Segment>> {
             }
             let fields = match decode_vlq_segment(raw) {
                 Some(f) if !f.is_empty() => f,
+                // A malformed segment (bad Base64, truncated VLQ, or a delta that
+                // overflows i64) is dropped rather than panicking — the running
+                // source map degrades to "no mapping here", not a crash.
                 _ => continue,
             };
-            generated_column += fields[0];
+            // Every delta is checked: a hostile `.map` can encode arbitrarily
+            // large VLQ values, so an add that would overflow drops the segment.
+            let Some(next_gen) = generated_column.checked_add(fields[0]) else {
+                continue;
+            };
+            generated_column = next_gen;
             if fields.len() >= 4 {
-                source_index += fields[1];
-                original_line += fields[2];
-                original_column += fields[3];
+                let (Some(next_src), Some(next_line), Some(next_col)) = (
+                    source_index.checked_add(fields[1]),
+                    original_line.checked_add(fields[2]),
+                    original_column.checked_add(fields[3]),
+                ) else {
+                    continue;
+                };
+                source_index = next_src;
+                original_line = next_line;
+                original_column = next_col;
                 let segment_name = if fields.len() >= 5 {
-                    name_index += fields[4];
-                    Some(name_index)
+                    match name_index.checked_add(fields[4]) {
+                        Some(ni) => {
+                            name_index = ni;
+                            Some(name_index)
+                        }
+                        None => continue,
+                    }
                 } else {
                     None
                 };
@@ -164,8 +184,10 @@ fn decode_mappings(mappings: &str) -> Vec<Vec<Segment>> {
     lines
 }
 
-/// Decode one comma-segment of VLQ fields; `None` on an invalid Base64 char or
-/// a continuation bit set on the final digit (a truncated VLQ).
+/// Decode one comma-segment of VLQ fields. `None` on an invalid Base64 char, a
+/// continuation bit set on the final digit (a truncated VLQ), or a value that
+/// overflows i64 — all checked so malformed input degrades to a dropped segment
+/// instead of an arithmetic panic.
 fn decode_vlq_segment(segment: &str) -> Option<Vec<i64>> {
     let mut values = Vec::new();
     let mut result: i64 = 0;
@@ -173,9 +195,13 @@ fn decode_vlq_segment(segment: &str) -> Option<Vec<i64>> {
     for byte in segment.bytes() {
         let digit = base64_index(byte)?;
         let continuation = (digit & 32) != 0;
-        result += (digit & 31) << shift;
+        // A well-formed VLQ field is at most 32 bits, so a shift past the i64
+        // width can only come from a malformed/oversized field — reject it
+        // instead of letting the `<<` overflow-panic in debug or wrap silently.
+        let chunk = (digit & 31).checked_shl(shift)?;
+        result = result.checked_add(chunk)?;
         if continuation {
-            shift += 5;
+            shift = shift.checked_add(5)?;
         } else {
             let negative = (result & 1) == 1;
             let magnitude = result >> 1;
@@ -239,5 +265,56 @@ mod tests {
         let map2 =
             SourceMap::parse(r#"{"sources":["a.js"],"names":[],"mappings":""}"#).unwrap();
         assert_eq!(map2.resolve_source("a.js"), "a.js");
+    }
+
+    // A multi-line, 5-field mapping must decode end to end so the hardening
+    // didn't break the happy path: the `name` field (delta-coded) resolves too.
+    #[test]
+    fn decodes_a_multi_segment_named_mapping() {
+        // gen-line0 `AACAA` = [0,0,1,0,0] → foo.ts (1,0) name "x";
+        // gen-line1 `AAEI`  = [0,0,2,4]   → foo.ts (1+2, 4) = (3,4).
+        let json = r#"{"version":3,"sources":["foo.ts"],"names":["x"],"mappings":"AACAA;AAEI"}"#;
+        let map = SourceMap::parse(json).unwrap();
+        let a = map.original_position_for(0, 0).unwrap();
+        assert_eq!((a.source.as_str(), a.line, a.column), ("foo.ts", 1, 0));
+        assert_eq!(a.name.as_deref(), Some("x"));
+        let b = map.original_position_for(1, 0).unwrap();
+        assert_eq!((b.line, b.column), (3, 4));
+    }
+
+    // A `.map` is untrusted input — malformed Base64-VLQ must never panic. Each
+    // case exercises a distinct hardening path; parsing must succeed and the
+    // bad segment simply yields no mapping.
+    #[test]
+    fn malformed_vlq_does_not_panic() {
+        // '$' / '!' / '=' are outside the Base64 alphabet → segment dropped.
+        for bad in ["{\"sources\":[\"a.js\"],\"names\":[],\"mappings\":\"$$$$\"}",
+            "{\"sources\":[\"a.js\"],\"names\":[],\"mappings\":\"A!A\"}",
+            // Continuation bit set on the final digit (truncated VLQ): 'g' = 32.
+            "{\"sources\":[\"a.js\"],\"names\":[],\"mappings\":\"g\"}"]
+        {
+            let map = SourceMap::parse(bad).expect("parse must not fail on a bad segment");
+            assert!(map.original_position_for(0, 0).is_none());
+        }
+    }
+
+    // An adversarial `.map` can encode a VLQ far wider than i64; the checked
+    // shift/add must drop it instead of overflow-panicking. A long run of
+    // continuation digits ('g' = value 0, continuation bit set) pushes `shift`
+    // past 63 and would panic on `<<` without the guard.
+    #[test]
+    fn oversized_vlq_is_rejected_without_panic() {
+        let huge = "g".repeat(64); // 64 continuation digits, no terminator
+        let json = format!(
+            r#"{{"sources":["a.js"],"names":[],"mappings":"{huge}"}}"#
+        );
+        let map = SourceMap::parse(&json).expect("parse must not panic on an oversized VLQ");
+        assert!(map.original_position_for(0, 0).is_none());
+
+        // Direct unit check on the segment decoder: oversized → None, not panic.
+        assert!(super::decode_vlq_segment(&"g".repeat(64)).is_none());
+        // A valid single field ('B' = +0 after zig-zag of value 1 → actually
+        // decodes; assert it returns Some so the guard didn't over-reject).
+        assert!(super::decode_vlq_segment("A").is_some());
     }
 }

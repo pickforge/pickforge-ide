@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use base64::Engine;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -46,6 +47,24 @@ pub fn read_text_file(path: String, max_bytes: usize) -> Result<String, String> 
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let end = bytes.len().min(max_bytes);
     Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
+}
+
+/// Read a PNG file as a `data:image/png;base64,…` URL for inline `<img>` display
+/// (the web view can't load arbitrary file paths, and the asset protocol is off).
+/// Capped at 16 MiB so a stray path can't blow up memory; null if missing/oversized.
+#[tauri::command]
+pub fn read_image_data_url(path: String) -> Result<Option<String>, String> {
+    const MAX_BYTES: u64 = 16 * 1024 * 1024;
+    let meta = match std::fs::metadata(&path) {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
+    if !meta.is_file() || meta.len() > MAX_BYTES {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(Some(format!("data:image/png;base64,{b64}")))
 }
 
 /// Basename of a path (for display).

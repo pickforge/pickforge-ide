@@ -43,6 +43,7 @@ pub fn run() {
             process_commands::detect_binaries,
             fs_commands::list_dir,
             fs_commands::read_text_file,
+            fs_commands::read_image_data_url,
             fs_commands::path_basename,
             fs_commands::open_path,
             device_commands::target_detect,

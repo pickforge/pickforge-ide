@@ -1684,6 +1684,18 @@ body.pf-resizing .pf-dc-resizer-grip {
   color: var(--pf-text-hi);
 }
 
+/* Accessibility-tree role tag (RN / native-Android inspector): a quiet trailing
+   mono label classifying the node (button / text / input …). Neutral chrome —
+   the inspector's single ember stays on the selected-row seam. */
+.pf-a11y-role {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+
 /* ---- widget details + send-to-AI ---- */
 .pf-wd {
   gap: var(--pf-space-sm);

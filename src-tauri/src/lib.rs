@@ -54,6 +54,7 @@ pub fn run() {
             git_commands::git_status,
             git_commands::git_diff,
             git_commands::git_discover_repos,
+            git_commands::git_log_graph,
             db_commands::projects_list,
             db_commands::project_upsert,
             db_commands::project_set_archived,

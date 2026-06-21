@@ -4,6 +4,7 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { IconClose, IconRefresh } from "../../components/icons";
 import { gitDiff, gitDiscoverRepos, gitStatus, type GitFileStatus, type GitStatus } from "../../lib/git";
+import { GitGraph } from "./GitGraph";
 import { workspace } from "../../stores/workspace";
 
 function letter(f: GitFileStatus): string {
@@ -37,7 +38,9 @@ interface RepoStatus {
 export function SourceControl() {
   const [repos, setRepos] = createSignal<RepoStatus[]>([]);
   const [loading, setLoading] = createSignal(false);
+  const [view, setView] = createSignal<"changes" | "graph">("changes");
   const [diffFor, setDiffFor] = createSignal<{ repo: string; file: GitFileStatus; staged: boolean; text: string } | null>(null);
+  const graphRepo = () => repos()[0]?.path ?? workspace.activeRoot ?? "";
 
   const refresh = async () => {
     const root = workspace.activeRoot;
@@ -100,7 +103,23 @@ export function SourceControl() {
               : "—"}
         </span>
         <div class="pf-sc-toolbar-end">
-          <Show when={total() > 0}>
+          <div class="pf-sc-viewtoggle">
+            <button
+              classList={{ "pf-sc-view--on": view() === "changes" }}
+              title="Changes"
+              onClick={() => setView("changes")}
+            >
+              Changes
+            </button>
+            <button
+              classList={{ "pf-sc-view--on": view() === "graph" }}
+              title="Commit graph"
+              onClick={() => setView("graph")}
+            >
+              Graph
+            </button>
+          </div>
+          <Show when={view() === "changes" && total() > 0}>
             <span class="pf-sc-count">{total()}</span>
           </Show>
           <button class="pf-icon-btn" title="Refresh" disabled={!workspace.activeRoot} onClick={() => void refresh()}>
@@ -108,6 +127,17 @@ export function SourceControl() {
           </button>
         </div>
       </div>
+
+      <Show when={view() === "graph"}>
+        <Show
+          when={repos().length > 0}
+          fallback={<div class="pf-rail-empty">{loading() ? "Checking…" : "Not a git repository"}</div>}
+        >
+          <GitGraph repo={graphRepo()} />
+        </Show>
+      </Show>
+
+      <Show when={view() === "changes"}>
 
       <Show
         when={repos().length > 0}
@@ -151,6 +181,7 @@ export function SourceControl() {
             </For>
           </div>
         </Show>
+      </Show>
       </Show>
 
       <Show when={diffFor()}>

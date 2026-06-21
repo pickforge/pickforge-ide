@@ -6,17 +6,32 @@ use pickforge_core::{
 };
 use tauri::State;
 
+use crate::fs_commands::{register_project_root, ApprovedRoots};
+
 #[tauri::command]
 pub fn projects_list(
     db: State<'_, Database>,
+    roots: State<'_, ApprovedRoots>,
     include_archived: bool,
 ) -> Result<Vec<Project>, String> {
-    db.list_projects(include_archived).map_err(|e| e.to_string())
+    let projects = db.list_projects(include_archived).map_err(|e| e.to_string())?;
+    // Keep the filesystem allowlist in sync with the live project set (another
+    // instance may have added a project since startup).
+    for p in &projects {
+        register_project_root(&roots, &p.project_root);
+    }
+    Ok(projects)
 }
 
 #[tauri::command]
-pub fn project_upsert(db: State<'_, Database>, project: Project) -> Result<(), String> {
-    db.upsert_project(&project).map_err(|e| e.to_string())
+pub fn project_upsert(
+    db: State<'_, Database>,
+    roots: State<'_, ApprovedRoots>,
+    project: Project,
+) -> Result<(), String> {
+    db.upsert_project(&project).map_err(|e| e.to_string())?;
+    register_project_root(&roots, &project.project_root);
+    Ok(())
 }
 
 #[tauri::command]

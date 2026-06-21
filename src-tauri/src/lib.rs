@@ -30,13 +30,21 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
+    let database = open_database();
+    // Allowlist of filesystem roots the renderer may browse/read/open: PickForge
+    // home plus every known project root. Seeded from the DB before the app runs;
+    // `project_upsert`/`projects_list` keep it in sync as projects change.
+    let approved_roots = fs_commands::ApprovedRoots::default();
+    fs_commands::seed_approved_roots(&approved_roots, &database);
+
     builder
         .manage(PtyManager::new())
         .manage(VmServiceClient::new())
         .manage(watch_commands::WatchManager::new())
         .manage(mirror_commands::MirrorManager::new())
         .manage(logcat_commands::LogcatManager::new())
-        .manage(open_database())
+        .manage(approved_roots)
+        .manage(database)
         .invoke_handler(tauri::generate_handler![
             pty_commands::pty_spawn,
             pty_commands::pty_write,

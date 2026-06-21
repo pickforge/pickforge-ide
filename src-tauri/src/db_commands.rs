@@ -6,27 +6,46 @@ use pickforge_core::{
 };
 use tauri::State;
 
+use crate::fs_commands::{register_project_root, ApprovedRoots};
+
 #[tauri::command]
 pub fn projects_list(
     db: State<'_, Database>,
+    roots: State<'_, ApprovedRoots>,
     include_archived: bool,
 ) -> Result<Vec<Project>, String> {
-    db.list_projects(include_archived).map_err(|e| e.to_string())
+    let projects = db.list_projects(include_archived).map_err(|e| e.to_string())?;
+    // Keep the filesystem allowlist in sync with the live project set (another
+    // instance may have added a project since startup).
+    for p in &projects {
+        register_project_root(&roots, &p.project_root);
+    }
+    Ok(projects)
 }
 
 #[tauri::command]
 pub fn project_upsert(db: State<'_, Database>, project: Project) -> Result<(), String> {
+    // Persist the row only. A new project's root is approved by the user-mediated
+    // native pick (`pick_project_dir`); this command must NOT allowlist a
+    // renderer-supplied `project_root`, or a compromised renderer could approve
+    // an arbitrary path (e.g. `/`) and defeat the allowlist.
     db.upsert_project(&project).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn project_set_archived(
     db: State<'_, Database>,
+    roots: State<'_, ApprovedRoots>,
     root: String,
     archived_at: Option<i64>,
 ) -> Result<(), String> {
     db.set_project_archived(&root, archived_at)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Archiving drops the project from the active set; reseed so its root is no
+    // longer approved (unarchiving re-adds it). Reseed unconditionally — it's
+    // cheap and keeps the registry exactly in sync with the live set.
+    roots.reseed(&db);
+    Ok(())
 }
 
 #[tauri::command]
@@ -35,8 +54,16 @@ pub fn project_touch(db: State<'_, Database>, root: String, ts: i64) -> Result<(
 }
 
 #[tauri::command]
-pub fn project_delete(db: State<'_, Database>, root: String) -> Result<(), String> {
-    db.delete_project(&root).map_err(|e| e.to_string())
+pub fn project_delete(
+    db: State<'_, Database>,
+    roots: State<'_, ApprovedRoots>,
+    root: String,
+) -> Result<(), String> {
+    db.delete_project(&root).map_err(|e| e.to_string())?;
+    // The registry only grows otherwise; rebuild it from the live project set so
+    // a removed root doesn't stay approved for the rest of the process lifetime.
+    roots.reseed(&db);
+    Ok(())
 }
 
 #[tauri::command]

@@ -30,13 +30,22 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
+    let database = open_database();
+    // Allowlist of filesystem roots the renderer may browse/read/open: PickForge
+    // home plus every known project root. Seeded from the DB before the app runs;
+    // a new root is added only by the user-mediated `pick_project_dir`, and
+    // `project_delete`/`project_set_archived` reseed it as projects leave the set.
+    let approved_roots = fs_commands::ApprovedRoots::default();
+    fs_commands::seed_approved_roots(&approved_roots, &database);
+
     builder
         .manage(PtyManager::new())
         .manage(VmServiceClient::new())
         .manage(watch_commands::WatchManager::new())
         .manage(mirror_commands::MirrorManager::new())
         .manage(logcat_commands::LogcatManager::new())
-        .manage(open_database())
+        .manage(approved_roots)
+        .manage(database)
         .invoke_handler(tauri::generate_handler![
             pty_commands::pty_spawn,
             pty_commands::pty_write,
@@ -48,6 +57,7 @@ pub fn run() {
             fs_commands::read_image_data_url,
             fs_commands::path_basename,
             fs_commands::open_path,
+            fs_commands::pick_project_dir,
             device_commands::target_detect,
             device_commands::find_nearest_pubspec,
             device_commands::adb_list_devices,

@@ -1383,6 +1383,9 @@ body.pf-resizing .pf-dock-resizer-grip {
   padding: var(--pf-space-md);
   overflow-y: auto;
   min-height: 0;
+  /* Fill the slot so a short body doesn't get a scrollbar just because an
+     absolutely-positioned dropdown menu overflows its (short) content height. */
+  flex: 1 1 0;
 }
 .pf-cap-badges {
   display: flex;

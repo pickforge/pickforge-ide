@@ -4,10 +4,22 @@
 //! login-shell env so PATH resolves like the user's terminal.
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::process::run;
+use crate::process::{run_timeout, CommandOutcome};
+
+/// Bound every git one-shot so a hung git (a credential/SSH prompt, a stalled
+/// fetch) can't wedge the calling Tauri blocking task. These are local
+/// status/diff/log queries, so 20s is comfortably generous.
+const GIT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// `git <args>` in `root`, bounded. `None` on any spawn error or timeout, which
+/// every caller already folds into "no result".
+fn git_run(root: &str, args: &[&str]) -> Option<CommandOutcome> {
+    run_timeout("git", args, Some(root), None, GIT_TIMEOUT).ok()
+}
 
 /// Heavy / vendored dirs never worth descending into when hunting for sub-repos.
 const SKIP_DIRS: &[&str] = &[
@@ -154,14 +166,14 @@ pub fn log_graph(root: &str, limit: u32) -> Vec<GraphCommit> {
 
 /// stdout of `git <args>` in `root`, only on success (trimmed by caller).
 fn git_ok(root: &str, args: &[&str]) -> Option<String> {
-    let out = run("git", args, Some(root), None).ok()?;
+    let out = git_run(root, args)?;
     out.success().then(|| out.stdout_utf8().into_owned())
 }
 
 /// stdout of `git <args>` regardless of exit code (diff returns 1 when files
 /// differ — that is success for our purposes).
 fn git_raw(root: &str, args: &[&str]) -> String {
-    run("git", args, Some(root), None)
+    git_run(root, args)
         .map(|o| o.stdout_utf8().into_owned())
         .unwrap_or_default()
 }
@@ -223,7 +235,7 @@ pub fn status(root: &str) -> GitStatus {
 }
 
 fn is_tracked(root: &str, path: &str) -> bool {
-    run("git", &["ls-files", "--error-unmatch", "--", path], Some(root), None)
+    git_run(root, &["ls-files", "--error-unmatch", "--", path])
         .map(|o| o.success())
         .unwrap_or(false)
 }

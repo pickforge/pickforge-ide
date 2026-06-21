@@ -76,6 +76,12 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// The shell's pid. portable-pty puts the slave in its own session
+    /// (`setsid`), so on Unix this is also its process-group id — we signal the
+    /// whole group on teardown so a foreground job (`flutter run`, `gradle`,
+    /// `adb`) and its descendants die with the shell, not just the shell itself.
+    #[cfg(unix)]
+    shell_pid: Option<u32>,
 }
 
 /// Owns every live PTY session. Lives behind Tauri's managed `State`.
@@ -141,6 +147,9 @@ impl PtyManager {
         let child = pair.slave.spawn_command(cmd)?;
         drop(pair.slave); // parent must close its slave handle
 
+        #[cfg(unix)]
+        let shell_pid = child.process_id();
+
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -156,6 +165,8 @@ impl PtyManager {
                     master: pair.master,
                     writer,
                     child,
+                    #[cfg(unix)]
+                    shell_pid,
                 },
             );
 
@@ -207,6 +218,11 @@ impl PtyManager {
         // thread's own EOF path can't reap the child, so we must wait here.
         let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
         if let Some(mut session) = removed {
+            // On Unix, take down the shell's whole process group (and the
+            // current foreground job's group) so a `flutter run`/`gradle`/`adb`
+            // child can't outlive the shell. Then reap the shell itself.
+            #[cfg(unix)]
+            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
             let _ = session.child.kill();
             let _ = session.child.wait();
         }
@@ -255,4 +271,41 @@ fn read_loop<S: PtySink>(
         .and_then(|mut session| session.child.wait().ok())
         .map(|status| status.exit_code() as i32);
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| sink.emit(PtyEvent::Exit(code))));
+}
+
+/// Signal the shell's process group — and the controlling terminal's current
+/// foreground group, in case job control split the active job into its own —
+/// with SIGTERM, a short grace, then SIGKILL, so descendants of a foreground
+/// command die with the shell. The shell pid doubles as a pgid because
+/// portable-pty `setsid`s the slave (session + group leader).
+#[cfg(unix)]
+fn terminate_process_groups(shell_pid: Option<u32>, foreground_leader: Option<libc::pid_t>) {
+    let mut pgids: Vec<libc::pid_t> = Vec::new();
+    if let Some(pid) = shell_pid {
+        pgids.push(pid as libc::pid_t);
+    }
+    if let Some(pgid) = foreground_leader {
+        if pgid > 0 && !pgids.contains(&pgid) {
+            pgids.push(pgid);
+        }
+    }
+    if pgids.is_empty() {
+        return;
+    }
+
+    for pgid in &pgids {
+        // SAFETY: killpg with a valid pgid is well-defined; ESRCH (already gone)
+        // is harmless and ignored.
+        unsafe {
+            libc::killpg(*pgid, libc::SIGTERM);
+        }
+    }
+    // Brief grace for a TERM-aware job to clean up before the unconditional kill.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    for pgid in &pgids {
+        // SAFETY: as above; SIGKILL is unconditionally fatal.
+        unsafe {
+            libc::killpg(*pgid, libc::SIGKILL);
+        }
+    }
 }

@@ -36,9 +36,11 @@ pub async fn cdp_status(client: State<'_, CdpClient>) -> Result<Option<String>, 
     Ok(client.current_url().await)
 }
 
-/// The page's DOM as a compact tree (`DOM.getDocument` at full depth). Enables
-/// the DOM domain first (a fresh target may not have it on). `None` if the
-/// document can't be decoded.
+/// The page's DOM as a compact tree (`DOM.getDocument` at full depth, piercing
+/// shadow roots). Enables the DOM domain first (a fresh target may not have it
+/// on). `None` if the page has no document yet (not loaded / detached) or its
+/// root holds no decodable element — the UI renders that as an honest empty
+/// state, never a panic or a bogus tree.
 #[tauri::command]
 pub async fn cdp_dom_tree(client: State<'_, CdpClient>) -> Result<Option<DomNode>, String> {
     // Best-effort enable; ignore the result (already-enabled is not an error we
@@ -48,7 +50,12 @@ pub async fn cdp_dom_tree(client: State<'_, CdpClient>) -> Result<Option<DomNode
         .call("DOM.getDocument", json!({ "depth": -1, "pierce": true }))
         .await
         .map_err(|e| e.to_string())?;
-    let root = result.get("root").unwrap_or(&result);
+    // A well-formed reply carries the `#document` root under `root`. An absent
+    // root (e.g. the page hasn't committed a document) is an empty state, not a
+    // reason to decode the RPC envelope as if it were a node.
+    let Some(root) = result.get("root") else {
+        return Ok(None);
+    };
     Ok(decode_dom_node(root))
 }
 

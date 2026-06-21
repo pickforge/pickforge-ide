@@ -323,11 +323,37 @@ fn read_attrs(flat: &[Value]) -> (Option<String>, Option<String>, Option<String>
     (id, class, source_attr)
 }
 
+/// The child containers `DOM.getDocument({ pierce: true })` exposes. Besides the
+/// plain `children`, a pierced dump puts shadow trees under `shadowRoots` and an
+/// `<iframe>`/`<object>`'s subtree under `contentDocument`, none of which appear
+/// in `children`. Walk all three so web-component / framed subtrees aren't
+/// dropped. Returns an iterator over the child `Value`s in source order.
+fn child_nodes(node: &Value) -> impl Iterator<Item = &Value> {
+    let plain = node.get("children").and_then(Value::as_array);
+    let shadow = node.get("shadowRoots").and_then(Value::as_array);
+    let content = node.get("contentDocument");
+    plain
+        .into_iter()
+        .flatten()
+        .chain(shadow.into_iter().flatten())
+        .chain(content)
+}
+
 /// Decode a `DOM.getDocument` (or a node within it) into our [`DomNode`]. Pure
 /// + fixture-testable. Element nodes (`nodeType == 1`) become rows; text nodes
 /// fold their content into the parent's `text`; everything else is skipped.
+///
+/// `DOM.getDocument` returns the `#document` node (`nodeType == 9`), not the
+/// `<html>` element, so a document — or a document fragment / shadow root
+/// (`nodeType == 11`), which has no element of its own — is unwrapped to its
+/// first decodable element child. A missing/empty document (page not loaded,
+/// target detached) yields `None`, which the UI renders as an honest empty
+/// state rather than a panic or a bogus tree.
 pub fn decode_dom_node(node: &Value) -> Option<DomNode> {
     let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+    if node_type == 9 || node_type == 11 {
+        return child_nodes(node).find_map(decode_dom_node);
+    }
     if node_type != 1 {
         return None; // not an element — handled as text by the parent
     }
@@ -355,22 +381,20 @@ pub fn decode_dom_node(node: &Value) -> Option<DomNode> {
 
     let mut children = Vec::new();
     let mut text: Option<String> = None;
-    if let Some(kids) = node.get("children").and_then(Value::as_array) {
-        for kid in kids {
-            let kt = kid.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
-            if kt == 3 {
-                // Text node: fold the first non-empty run into this element.
-                if text.is_none() {
-                    if let Some(v) = kid.get("nodeValue").and_then(Value::as_str) {
-                        let t = v.trim();
-                        if !t.is_empty() {
-                            text = Some(t.chars().take(120).collect());
-                        }
+    for kid in child_nodes(node) {
+        let kt = kid.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
+        if kt == 3 {
+            // Text node: fold the first non-empty run into this element.
+            if text.is_none() {
+                if let Some(v) = kid.get("nodeValue").and_then(Value::as_str) {
+                    let t = v.trim();
+                    if !t.is_empty() {
+                        text = Some(t.chars().take(120).collect());
                     }
                 }
-            } else if let Some(child) = decode_dom_node(kid) {
-                children.push(child);
             }
+        } else if let Some(child) = decode_dom_node(kid) {
+            children.push(child);
         }
     }
 
@@ -641,6 +665,71 @@ mod tests {
     fn decode_dom_skips_non_elements_at_root() {
         let text_only = json!({ "nodeType": 3, "nodeValue": "x" });
         assert!(decode_dom_node(&text_only).is_none());
+    }
+
+    #[test]
+    fn decode_dom_unwraps_the_document_root_to_html() {
+        // `DOM.getDocument` returns the `#document` node (nodeType 9), not the
+        // `<html>` element. The decoder must descend to `documentElement`,
+        // otherwise a successful attach renders as an empty DOM.
+        let document = json!({
+            "nodeType": 9, "nodeId": 1, "nodeName": "#document",
+            "children": [{
+                "nodeType": 10, "nodeName": "html" // a DOCTYPE — must be skipped
+            }, {
+                "nodeType": 1, "nodeId": 2, "backendNodeId": 20, "nodeName": "HTML",
+                "children": [{
+                    "nodeType": 1, "nodeId": 3, "backendNodeId": 21, "nodeName": "BODY"
+                }]
+            }]
+        });
+        let root = decode_dom_node(&document).expect("document unwraps to <html>");
+        assert_eq!(root.tag, "html");
+        assert_eq!(root.children[0].tag, "body");
+    }
+
+    #[test]
+    fn decode_dom_empty_document_root_is_none() {
+        // Page not loaded / detached: a document with no element child must
+        // degrade to None (empty state), never panic.
+        let empty_doc = json!({ "nodeType": 9, "nodeId": 1, "nodeName": "#document" });
+        assert!(decode_dom_node(&empty_doc).is_none());
+        let only_doctype = json!({
+            "nodeType": 9, "nodeId": 1, "nodeName": "#document",
+            "children": [{ "nodeType": 10, "nodeName": "html" }]
+        });
+        assert!(decode_dom_node(&only_doctype).is_none());
+    }
+
+    #[test]
+    fn decode_dom_pierces_shadow_roots_and_content_documents() {
+        // With `pierce: true`, CDP hangs shadow trees off `shadowRoots` and an
+        // <iframe>'s subtree off `contentDocument`, not `children`. Both must be
+        // walked so web-component / framed UI isn't dropped.
+        let host = json!({
+            "nodeType": 1, "nodeId": 1, "backendNodeId": 10, "nodeName": "MY-WIDGET",
+            "children": [
+                { "nodeType": 1, "nodeId": 2, "backendNodeId": 11, "nodeName": "SPAN" }
+            ],
+            "shadowRoots": [{
+                "nodeType": 11, "nodeId": 3, "nodeName": "#document-fragment",
+                "children": [
+                    { "nodeType": 1, "nodeId": 4, "backendNodeId": 13, "nodeName": "BUTTON",
+                      "attributes": ["id","shadow-btn"] }
+                ]
+            }],
+            "contentDocument": {
+                "nodeType": 9, "nodeId": 5, "nodeName": "#document",
+                "children": [
+                    { "nodeType": 1, "nodeId": 6, "backendNodeId": 15, "nodeName": "IFRAME-BODY" }
+                ]
+            }
+        });
+        let root = decode_dom_node(&host).expect("element decodes");
+        let tags: Vec<&str> = root.children.iter().map(|c| c.tag.as_str()).collect();
+        // light-DOM span, then the shadow root's button, then the framed body.
+        assert_eq!(tags, vec!["span", "button", "iframe-body"]);
+        assert_eq!(root.children[1].id.as_deref(), Some("shadow-btn"));
     }
 
     #[test]

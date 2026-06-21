@@ -17,6 +17,7 @@ import {
   cdpDetach,
   cdpDiscover,
   cdpDomTree,
+  cdpResolveSource,
   type DomNode,
 } from "../../lib/cdp";
 import { inspectDir, inspectSave } from "../../lib/vm";
@@ -160,6 +161,12 @@ export function CdpTree(props: {
       setDumped(true);
     } catch (e) {
       if (mine !== epoch) return;
+      // A redump failure means the backend dropped the connection (tab/port
+      // closed): the attachment is gone. Fall back to the detached view so the
+      // honest "no dev server reachable" state shows and the user can re-attach,
+      // instead of stranding them on a stale tree behind a dead CDP chip.
+      setAttached(false);
+      reset();
       setError(String(e));
     } finally {
       if (mine === epoch) setLoading(false);
@@ -201,7 +208,15 @@ export function CdpTree(props: {
     }
     setBusy(true);
     try {
-      const source = canMapSource() ? nodeSource(node) : null;
+      // Resolve the framework source attribute (often a *generated* file:line:col)
+      // through the page source map FIRST, so the capture + audit row record the
+      // authored location, not the build artifact. Best-effort: an unmapped /
+      // missing `.map` falls back to the raw attribute.
+      const rawSource = canMapSource() ? nodeSource(node) : null;
+      const ep = parseEndpoint(endpoint());
+      const mapped =
+        rawSource && ep ? await cdpResolveSource(ep.host, ep.port, rawSource) : null;
+      const source = mapped ?? rawSource;
       const base = cdpBaseName(node);
       const dir = await inspectDir(captureInRepo(root), root);
       const path = (t ? findPath(t, node.nodeId) : null) ?? [node];

@@ -53,3 +53,49 @@ export const cdpMapSource = (mapJson: string, line: number, column: number) =>
 /** Fetch a script's `.map` from the dev server (best-effort). */
 export const cdpFetchSourceMap = (host: string, port: number, mapPath: string) =>
   invoke<string>("cdp_fetch_source_map", { host, port, mapPath });
+
+/** Parse a `file:line[:col]` source string into its parts. Lines/cols are
+ *  one-based in the framework attribute; the source-map decoder is zero-based,
+ *  so the caller adjusts. `null` when there is no usable `file:line`. */
+function parseGeneratedPos(raw: string): { file: string; line: number; column: number } | null {
+  const m = /^(.*?):(\d+)(?::(\d+))?$/.exec(raw.trim());
+  if (!m) return null;
+  const line = Number(m[2]);
+  if (!Number.isFinite(line)) return null;
+  return { file: m[1], line, column: m[3] ? Number(m[3]) : 0 };
+}
+
+/** Resolve a framework source attribute (a generated `file:line:col`) to the
+ *  authored position through the page's source map, returning `file:line`.
+ *
+ *  Many bundlers emit a `data-*` source attribute pointing at the *generated*
+ *  (bundled / transpiled) file, with a `<file>.map` sidecar that carries the
+ *  authored location. This fetches that map and maps the position back so the
+ *  forge records the authored `file:line`, not the build artifact. Best-effort:
+ *  any failure (no `.map`, malformed, unmapped) returns `null` and the caller
+ *  keeps the raw attribute. */
+export async function cdpResolveSource(
+  host: string,
+  port: number,
+  sourceAttr: string,
+): Promise<string | null> {
+  const pos = parseGeneratedPos(sourceAttr);
+  if (!pos) return null;
+  // Only attempt when the position points at a generated artifact that plausibly
+  // has a source map (a fetchable path with an extension). Authored TS/JSX paths
+  // a plugin already resolved have no sidecar `.map` and are left untouched.
+  if (!/\.[cm]?[jt]sx?$/i.test(pos.file)) return null;
+  let mapJson: string;
+  try {
+    mapJson = await cdpFetchSourceMap(host, port, `${pos.file}.map`);
+  } catch {
+    return null;
+  }
+  // The decoder is zero-based; the attribute is one-based.
+  const line = Math.max(0, pos.line - 1);
+  const column = Math.max(0, pos.column - (pos.column > 0 ? 1 : 0));
+  const mapped = await cdpMapSource(mapJson, line, column).catch(() => null);
+  if (!mapped) return null;
+  // Re-base to one-based for display / recording parity with the attribute.
+  return `${mapped.source}:${mapped.line + 1}`;
+}

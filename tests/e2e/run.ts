@@ -11,8 +11,10 @@
 // crates/pickforge-core/tests/live_adapters.rs):
 //
 //   1. Web smoke (#37) — DEVICE-FREE, so it ALWAYS runs: assert `npm run dev`
-//      is the web command, then prove the reachability probe by spinning a
-//      throwaway local server and asserting HTTP 200 + that no adb is touched.
+//      is the web command, then prove the reachability probe by launching the
+//      REAL web-app fixture's dev server (`npm run dev` → server.mjs) on a free
+//      port and asserting HTTP 200 + the fixture's body, so a broken fixture
+//      script / server fails the smoke. The server is bounded and torn down.
 //   2. Device-adapter run-command contract (#34/#35/#36) — gated on
 //      PICKFORGE_E2E_SERIAL: assert the built command for Flutter / React Native /
 //      native-Android pins the chosen serial per its device convention.
@@ -29,8 +31,8 @@ import { mock } from "bun:test";
 
 mock.module("@tauri-apps/api/core", () => ({ invoke: () => Promise.resolve(null) }));
 
-import { execFileSync } from "node:child_process";
-import { createServer } from "node:http";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -115,9 +117,11 @@ function assertDetected(dir: string, wantId: string): void {
 }
 
 // ── #37 Web: device-free, so it always runs ────────────────────────────────
-// Assert the dev-server command, then prove the reachability probe against a
-// throwaway local server — the same "wait for the port, expect HTTP 200" logic
-// the web adapter relies on — and assert web needs no device (no adb call).
+// Assert the dev-server command, then prove the reachability probe against the
+// REAL web-app fixture: launch its `npm run dev` (→ server.mjs) on a free port,
+// wait for the port, assert HTTP 200 + the fixture's body. Running the actual
+// fixture command means a broken package.json script or server.mjs fails the
+// smoke instead of passing on a throwaway server. The child is always reaped.
 async function webSmoke(): Promise<void> {
   console.log("web smoke (#37): device-free");
   assertDetected("web-app", "web");
@@ -130,29 +134,85 @@ async function webSmoke(): Promise<void> {
   expect(profile.deviceConvention, "none", "web applies no device convention");
   expect(profile.inspectorKind, "cdp", "web inspects over CDP (inspectorKind=cdp)");
 
-  // Spin a trivial server and probe it the way the run flow would: wait for the
-  // port, then assert HTTP 200 from the served URL. Torn down in `finally`.
-  const server = createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "text/html" });
-    res.end("<h1>pf-e2e</h1>");
+  const fixture = join(FIXTURES, "web-app");
+  const port = await freePort();
+  const url = `http://127.0.0.1:${port}/`;
+
+  // Run the fixture's OWN dev command (the asserted `npm run dev`), pinned to a
+  // free port via PORT (server.mjs honours it). Detached into its own group so
+  // we can kill the whole tree on teardown; output discarded.
+  const child = spawn("npm", ["run", "dev"], {
+    cwd: fixture,
+    env: { ...process.env, PORT: String(port) },
+    stdio: "ignore",
+    detached: true,
   });
+  let spawnError: Error | null = null;
+  child.on("error", (e) => {
+    spawnError = e;
+  });
+
   try {
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const { port } = server.address() as AddressInfo;
-    const url = `http://127.0.0.1:${port}/`;
-    const status = await waitForHttp(url, 5_000);
-    expect(String(status), "200", `served URL ${url} returns HTTP 200`);
+    const status = await waitForHttp(url, 15_000, child, () => spawnError);
+    if (status === -2) {
+      fail(`web fixture \`npm run dev\` exited before serving ${url} (broken fixture script / server.mjs?)`);
+    }
+    expect(String(status), "200", `web fixture dev server at ${url} returns HTTP 200`);
+
+    // Assert it's actually the fixture's HTML (its server.mjs serves index.html),
+    // not some unrelated process that happened to grab the port.
+    const body = await fetch(url).then((r) => r.text());
+    expect(
+      String(body.includes("pf-e2e-web-fixture")),
+      "true",
+      "web fixture serves its index.html body",
+    );
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    killTree(child);
   }
-  console.log("      → dev server torn down");
+  console.log("      → web fixture dev server torn down");
 }
 
-/** Poll `url` until it answers (or `timeoutMs` elapses); returns the status, or
- *  -1 on timeout. The reachability probe the web run flow performs. */
-async function waitForHttp(url: string, timeoutMs: number): Promise<number> {
+/** Reserve and immediately release an ephemeral port, returning its number, so
+ *  the fixture's server can bind it. Tiny TOCTOU window, fine for a local test. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+/** SIGKILL the child's whole process group (npm forks node), then the child. */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    process.kill(-child.pid, "SIGKILL"); // negative pid → the detached group
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** Poll `url` until it answers (returns the status), `timeoutMs` elapses
+ *  (returns -1), or the spawned server dies / fails to spawn first (returns -2 —
+ *  fail fast instead of polling a dead server until timeout). */
+async function waitForHttp(
+  url: string,
+  timeoutMs: number,
+  child: ChildProcess,
+  spawnError: () => Error | null,
+): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
+    if (spawnError() !== null) return -2;
+    if (child.exitCode !== null || child.signalCode !== null) return -2;
     try {
       const res = await fetch(url);
       return res.status;

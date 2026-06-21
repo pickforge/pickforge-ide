@@ -273,6 +273,11 @@ const ADB_CALL_TIMEOUT: Duration = Duration::from_secs(15);
 /// nothing", which is the safe reading for a teardown poll. Bounding this is what
 /// keeps a wedged adb from hanging BEFORE the Drop guards run and leaking the
 /// spawned build group / on-device app.
+///
+/// stdout is drained on a dedicated thread the whole time we wait, so a large
+/// `dumpsys activity activities` dump (which easily exceeds the OS pipe buffer)
+/// can't wedge adb on a blocked write — without that drain, adb would block,
+/// `try_wait` would never observe an exit, and this would falsely time out.
 fn adb_capture(args: &[&str], timeout: Duration) -> Option<String> {
     let mut child = Command::new("adb")
         .args(args)
@@ -282,25 +287,43 @@ fn adb_capture(args: &[&str], timeout: Duration) -> Option<String> {
         .spawn()
         .ok()?;
 
+    // Drain stdout concurrently so adb is never blocked on a full pipe while we
+    // poll for exit (classic pipe-buffer deadlock on big dumps).
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut stdout = stdout;
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let out = child.wait_with_output().ok()?;
+                let buf = reader.join().unwrap_or_default();
                 if !status.success() {
                     return None;
                 }
-                return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
+                return Some(String::from_utf8_lossy(&buf).trim().to_string());
             }
             Ok(None) if Instant::now() >= deadline => {
                 // Wedged: kill the child and reap it so we neither hang here nor
-                // leak the adb process, then report "couldn't determine".
+                // leak the adb process, then report "couldn't determine". Killing
+                // the child closes the pipe, which unblocks the reader thread.
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = reader.join();
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-            Err(_) => return None,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
         }
     }
 }
@@ -349,10 +372,11 @@ impl Drop for OnDeviceApp {
     }
 }
 
-/// A spawned launch process whose whole group is SIGKILLed on `Drop`, so a
-/// wedged `flutter run` / `gradle` never leaks past the test. The child is its
-/// own process-group leader (spawned with `process_group(0)`), so killing the
-/// negative PGID takes down every descendant the build tool forked.
+/// A spawned launch process whose whole process TREE is force-killed on `Drop`,
+/// so a wedged `flutter run` / `gradle` never leaks the Gradle/adb/Dart
+/// descendants it forked. On unix the child is its own process-group leader
+/// (spawned with `process_group(0)`), so killing the negative PGID takes down the
+/// whole group; on Windows `taskkill /T /F` walks and kills the child's tree.
 struct LaunchGuard(Child);
 
 impl Drop for LaunchGuard {
@@ -369,13 +393,39 @@ impl Drop for LaunchGuard {
                 .stderr(Stdio::null())
                 .status();
         }
+        #[cfg(windows)]
+        {
+            // `taskkill /T /F /PID <pid>` terminates the child AND its whole tree
+            // (Gradle/adb/Dart), the Windows equivalent of the unix group-kill.
+            let _ = Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &self.0.id().to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
 
-/// Spawn `program args…` in `cwd` as its own process group (so the guard's
-/// group-kill takes down every descendant the build tool forks), discarding I/O.
+impl LaunchGuard {
+    /// `Some(success)` once the launch child has exited (build failed / toolchain
+    /// misconfigured → it dies almost immediately), else `None` while it's still
+    /// running. Lets the foreground poll fail fast on a dead build instead of
+    /// waiting the full timeout.
+    fn try_exit(&mut self) -> Option<bool> {
+        match self.0.try_wait() {
+            Ok(Some(status)) => Some(status.success()),
+            _ => None,
+        }
+    }
+}
+
+/// Spawn `program args…` in `cwd` so the guard can take down the whole process
+/// tree the build tool forks, discarding I/O. On unix the child leads its own
+/// process group (`process_group(0)`) so a group-kill reaches every descendant;
+/// on Windows the tree is reached via `taskkill /T` in the guard's drop.
 fn spawn_grouped(program: &str, args: &[&str], cwd: &Path) -> std::io::Result<LaunchGuard> {
     let mut cmd = Command::new(program);
     cmd.args(args)
@@ -391,30 +441,82 @@ fn spawn_grouped(program: &str, args: &[&str], cwd: &Path) -> std::io::Result<La
     Ok(LaunchGuard(cmd.spawn()?))
 }
 
-/// Poll until `package` is foreground on `serial`, or `timeout` elapses.
-fn wait_for_foreground(serial: &str, package: &str, timeout: Duration) -> bool {
+/// Outcome of waiting for a freshly-launched package to reach the foreground.
+enum Launch {
+    /// The package owns the resumed activity (the launch landed).
+    Foreground,
+    /// The launch child (`flutter run`) exited before the package foregrounded —
+    /// a build failure / misconfigured toolchain. Fail fast, don't keep polling.
+    Died,
+    /// Neither happened before the deadline.
+    Timeout,
+}
+
+/// Poll until `package` is foreground on `serial`, the launch child exits, or
+/// `timeout` elapses. Checking `guard` each iteration means a `flutter run` that
+/// dies during the build is detected immediately instead of polling `dumpsys`
+/// uselessly until the full timeout.
+fn wait_for_foreground(
+    guard: &mut LaunchGuard,
+    serial: &str,
+    package: &str,
+    timeout: Duration,
+) -> Launch {
     let deadline = Instant::now() + timeout;
     loop {
         if package_foreground(serial, package) {
-            return true;
+            return Launch::Foreground;
+        }
+        if guard.try_exit().is_some() {
+            return Launch::Died;
         }
         if Instant::now() >= deadline {
-            return false;
+            return Launch::Timeout;
         }
         std::thread::sleep(Duration::from_secs(2));
     }
 }
 
-/// `flutter` on PATH? The heavy Flutter tier needs the SDK.
-fn flutter_available() -> bool {
-    Command::new("flutter")
-        .arg("--version")
+/// Spawn `program args…` with discarded I/O and wait up to `timeout` for it to
+/// exit. Returns `Some(success)` if it exited in time, or `None` if it had to be
+/// killed for overrunning the deadline (or failed to spawn). Like `adb_capture`,
+/// this bounds an otherwise-unbounded `.status()` so a hung toolchain probe can't
+/// stall the heavy tier indefinitely. No stdout is piped, so there's no pipe to
+/// drain here.
+fn spawn_bounded_status(program: &str, args: &[&str], timeout: Duration) -> Option<bool> {
+    let mut child = Command::new(program)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .spawn()
+        .ok()?;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status.success()),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+/// `flutter` on PATH and responsive? The heavy Flutter tier needs the SDK. The
+/// `flutter --version` probe is time-bounded (a broken / first-run SDK can hang
+/// on startup); a hung or absent toolchain reads as unavailable so the tier skips
+/// cleanly instead of blocking forever.
+fn flutter_available() -> bool {
+    spawn_bounded_status("flutter", &["--version"], ADB_CALL_TIMEOUT).unwrap_or(false)
 }
 
 #[test]
@@ -456,7 +558,7 @@ fn flutter_heavy_launch_lifecycle() {
     force_stop(&serial, &package);
     let app = OnDeviceApp { serial: serial.clone(), package: package.clone() };
     eprintln!("[flutter-heavy] launching `flutter run -d {serial}` in {}", project.display());
-    let guard = spawn_grouped(
+    let mut guard = spawn_grouped(
         "flutter",
         &["--color", "run", "-d", &serial],
         &project,
@@ -464,13 +566,20 @@ fn flutter_heavy_launch_lifecycle() {
     .expect("spawn flutter run");
 
     // A debug build + first install on a cold emulator is slow; give it headroom.
-    let launched = wait_for_foreground(&serial, &package, Duration::from_secs(300));
+    // But if the run dies early (build failure / bad toolchain) we detect the dead
+    // child and fail immediately instead of polling `dumpsys` for the full 300s.
     // Don't let a flaky/slow build read as a pass — fail loudly (the guards still
     // tear down on unwind).
-    assert!(
-        launched,
-        "[flutter-heavy] {package} never reached the foreground within 300s"
-    );
+    match wait_for_foreground(&mut guard, &serial, &package, Duration::from_secs(300)) {
+        Launch::Foreground => {}
+        Launch::Died => panic!(
+            "[flutter-heavy] `flutter run` exited before {package} launched \
+             (build failure / misconfigured toolchain?) — failing fast"
+        ),
+        Launch::Timeout => panic!(
+            "[flutter-heavy] {package} never reached the foreground within 300s"
+        ),
+    }
     eprintln!("[flutter-heavy] {package} is foreground; capturing the running app");
     assert!(package_running(&serial, &package), "[flutter-heavy] package not running");
 

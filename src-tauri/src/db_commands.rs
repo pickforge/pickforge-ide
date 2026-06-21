@@ -6,7 +6,7 @@ use pickforge_core::{
 };
 use tauri::State;
 
-use crate::fs_commands::{register_project_root, ApprovedRoots};
+use crate::fs_commands::{ensure_root_approved, register_project_root, ApprovedRoots};
 
 #[tauri::command]
 pub fn projects_list(
@@ -24,11 +24,20 @@ pub fn projects_list(
 }
 
 #[tauri::command]
-pub fn project_upsert(db: State<'_, Database>, project: Project) -> Result<(), String> {
-    // Persist the row only. A new project's root is approved by the user-mediated
-    // native pick (`pick_project_dir`); this command must NOT allowlist a
-    // renderer-supplied `project_root`, or a compromised renderer could approve
-    // an arbitrary path (e.g. `/`) and defeat the allowlist.
+pub fn project_upsert(
+    db: State<'_, Database>,
+    roots: State<'_, ApprovedRoots>,
+    project: Project,
+) -> Result<(), String> {
+    // Gate the persist on the root already being approved. A new project's root
+    // is approved by the user-mediated native pick (`pick_project_dir`) before
+    // this runs; updating an existing project's metadata is fine because its root
+    // is already in the registry. Rejecting an unapproved root closes the
+    // "DB-laundering" escalation: a compromised renderer can no longer
+    // `project_upsert({project_root: "<any dir>"})` and have a later
+    // `projects_list`/restart re-seed allowlist that arbitrary path — the row
+    // never lands, so re-seeding stays safe.
+    ensure_root_approved(&roots, &project.project_root)?;
     db.upsert_project(&project).map_err(|e| e.to_string())
 }
 

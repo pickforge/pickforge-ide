@@ -57,6 +57,33 @@ impl ApprovedRoots {
         }
     }
 
+    /// Canonicalize `dir`, reject a too-broad pick (`/`, a drive root, the home
+    /// directory), register the canonical directory, and return it. Used by the
+    /// user-mediated [`pick_project_dir`]: the registered approved root and the
+    /// canonical path returned to the renderer (which becomes the DB
+    /// `project_root`) are the same value, so the later `project_upsert` gate
+    /// matches. A non-canonicalizable or too-broad pick is rejected.
+    fn register_picked(&self, dir: &Path) -> Result<PathBuf, String> {
+        let canon = std::fs::canonicalize(dir).map_err(|e| e.to_string())?;
+        if is_too_broad_to_approve(&canon) {
+            return Err("the picked directory is too broad to be a project root".into());
+        }
+        if let Ok(mut set) = self.0.lock() {
+            set.insert(canon.clone());
+        }
+        Ok(canon)
+    }
+
+    /// True when `canon` (an already-canonicalized path) is itself an approved
+    /// root — i.e. a directory that was registered, not merely a child of one.
+    /// Used by the `project_upsert` gate so only a `pick`-vetted root passes.
+    pub fn is_approved_root(&self, canon: &Path) -> bool {
+        self.0
+            .lock()
+            .map(|set| set.contains(canon))
+            .unwrap_or(false)
+    }
+
     /// True when `canon` (an already-canonicalized path) is one of, or sits
     /// under, an approved root.
     fn contains(&self, canon: &Path) -> bool {
@@ -123,11 +150,14 @@ fn seed_home_root(roots: &ApprovedRoots) {
     }
 }
 
-/// Seed the registry with the PickForge home and every project root in the DB.
-/// Called once at startup.
+/// Seed the registry with the PickForge home and every **active** (non-archived)
+/// project root in the DB. Called once at startup. Archived projects are
+/// excluded so a project the user archived isn't silently re-approved at the
+/// next launch — this matches [`ApprovedRoots::reseed`], so startup and the
+/// later reseeds agree on exactly the active set.
 pub fn seed_approved_roots(roots: &ApprovedRoots, db: &Database) {
     seed_home_root(roots);
-    if let Ok(projects) = db.list_projects(true) {
+    if let Ok(projects) = db.list_projects(false) {
         for p in projects {
             roots.insert(Path::new(&p.project_root));
         }
@@ -141,12 +171,33 @@ pub fn register_project_root(roots: &ApprovedRoots, project_root: &str) {
     roots.insert(Path::new(project_root));
 }
 
+/// Confirm `project_root` is an already-approved root before it is persisted.
+/// `project_upsert` calls this so the DB can never gain a root that wasn't
+/// vetted through the user-mediated [`pick_project_dir`]: a renderer can't
+/// `project_upsert({project_root: "<any dir>"})` and have a later re-seed
+/// allowlist it. The root canonicalizes to the same value `pick_project_dir`
+/// registered, so a legitimate add (whose root was just picked) passes, while an
+/// unvetted root — one not in the registry, or one that doesn't even resolve —
+/// is rejected.
+pub fn ensure_root_approved(roots: &ApprovedRoots, project_root: &str) -> Result<(), String> {
+    let canon = std::fs::canonicalize(project_root)
+        .map_err(|_| "project root is not an approved directory".to_string())?;
+    if !roots.is_approved_root(&canon) {
+        return Err("project root is not an approved directory".into());
+    }
+    Ok(())
+}
+
 /// Open the **native** directory picker from the Rust side and, on a user pick,
-/// register the chosen directory as an approved root. This is the only path by
-/// which a new root becomes approved: the renderer can no longer hand
-/// `project_upsert` an arbitrary `project_root` and have it allowlisted — the
-/// approval is gated on a user-mediated native pick the renderer can't forge.
-/// Returns the picked path, or `None` if the user cancelled.
+/// register the **canonical** chosen directory as an approved root. This is the
+/// only path by which a new root becomes approved: the renderer can no longer
+/// hand `project_upsert` an arbitrary `project_root` and have it allowlisted —
+/// the approval is gated on a user-mediated native pick the renderer can't forge.
+/// A too-broad pick (`/`, a drive root, or the home directory) is rejected
+/// before anything is registered. The returned path is canonical and verbatim-
+/// prefix-stripped, so the value the renderer persists as the DB `project_root`
+/// equals the registered approved root and the later `project_upsert` gate
+/// matches. Returns the path, or `None` if the user cancelled.
 #[tauri::command]
 pub async fn pick_project_dir(app: AppHandle) -> Result<Option<String>, String> {
     // `blocking_pick_folder` must not run on the main thread; async commands run
@@ -157,8 +208,31 @@ pub async fn pick_project_dir(app: AppHandle) -> Result<Option<String>, String> 
     };
     let path = file_path.into_path().map_err(|e| e.to_string())?;
     let roots = app.state::<ApprovedRoots>();
-    register_project_root(&roots, &path.to_string_lossy());
-    Ok(Some(path.to_string_lossy().into_owned()))
+    let canon = roots.register_picked(&path)?;
+    Ok(Some(display_path(&canon)))
+}
+
+/// Strip the Windows verbatim / verbatim-UNC prefix (`\\?\`, `\\?\UNC\`) that
+/// `std::fs::canonicalize` prepends, so a path RETURNED to the renderer is the
+/// normal form its callers expect. On non-Windows this is the identity. The
+/// canonical (prefixed) path is still used for the containment check internally;
+/// only the value handed back to the frontend is normalized.
+fn display_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+        s.into_owned()
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_string_lossy().into_owned()
+    }
 }
 
 /// Canonicalize `path` and confirm it resolves under an approved root. Returns
@@ -199,7 +273,10 @@ pub fn list_dir(roots: State<'_, ApprovedRoots>, path: String) -> Result<Vec<Dir
         let is_dir = p.is_dir();
         entries.push(DirEntry {
             name,
-            path: p.to_string_lossy().into_owned(),
+            // The entry inherits `dir`'s canonical (on Windows, `\\?\`-prefixed)
+            // form; strip the verbatim prefix so the renderer gets a normal path
+            // it can hand back to `list_dir`/`read_text_file`.
+            path: display_path(&p),
             is_dir,
         });
     }
@@ -668,5 +745,157 @@ mod approved_root_tests {
             approved_canonical(&file.to_string_lossy(), &roots).is_err(),
             "an archived project's root must no longer be approved after reseed",
         );
+    }
+
+    // ---- Fix 1: project_upsert can't launder an arbitrary root through the DB ----
+
+    #[test]
+    fn upsert_gate_rejects_an_unvetted_root_and_a_gated_read_stays_rejected() {
+        // Mirrors a compromised renderer calling
+        // `project_upsert({project_root: "<unvetted dir>"})`: the dir was never
+        // run through `pick_project_dir`, so it isn't an approved root and the
+        // gate (`ensure_root_approved`, which `project_upsert` calls) rejects it.
+        let roots = ApprovedRoots::default();
+        let unvetted = make_dir("unvetted");
+        assert!(
+            ensure_root_approved(&roots, &unvetted.to_string_lossy()).is_err(),
+            "an unvetted root must not pass the project_upsert gate",
+        );
+        // And since the gate blocks the persist, the root never enters the
+        // registry — a later gated read under it stays rejected.
+        let file = unvetted.join("secret.txt");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(
+            approved_canonical(&file.to_string_lossy(), &roots).is_err(),
+            "a read under an unvetted (rejected) root must be denied",
+        );
+    }
+
+    #[test]
+    fn upsert_gate_accepts_a_pick_vetted_root() {
+        // The legit flow: `pick_project_dir` registers the user-picked dir
+        // (here via `register_picked`, the same helper) and returns its canonical
+        // path; the renderer persists that path, so `project_upsert`'s gate finds
+        // it already approved and passes.
+        let roots = ApprovedRoots::default();
+        let picked = make_dir("picked");
+        let canon = roots.register_picked(&picked).expect("picked dir registers");
+        assert!(
+            ensure_root_approved(&roots, &canon.to_string_lossy()).is_ok(),
+            "a pick-vetted root must pass the project_upsert gate",
+        );
+    }
+
+    #[test]
+    fn upsert_gate_rejects_a_nonexistent_root() {
+        // A path that doesn't even resolve (can't be canonicalized) is rejected
+        // rather than silently passing — a renderer can't smuggle a made-up path.
+        let roots = ApprovedRoots::default();
+        let missing = std::env::temp_dir()
+            .join(format!("pf-fsmissing-{}-does-not-exist", std::process::id()));
+        assert!(
+            ensure_root_approved(&roots, &missing.to_string_lossy()).is_err(),
+            "a non-resolving root must be rejected by the gate",
+        );
+    }
+
+    // ---- Fix 2: startup seed excludes archived projects ----
+
+    #[test]
+    fn startup_seed_excludes_archived_projects() {
+        use pickforge_core::{Database, Project};
+
+        let db = Database::open_in_memory().expect("in-memory db");
+        let active = make_dir("seed-active");
+        let archived = make_dir("seed-archived");
+        let mk = |root: &std::path::Path, name: &str, arch: Option<i64>| Project {
+            project_root: root.to_string_lossy().into_owned(),
+            display_name: name.to_string(),
+            created_at: 0,
+            last_opened_at: 0,
+            sort_order: 0,
+            archived_at: arch,
+        };
+        db.upsert_project(&mk(&active, "active", None)).unwrap();
+        db.upsert_project(&mk(&archived, "archived", Some(1))).unwrap();
+
+        let roots = ApprovedRoots::default();
+        seed_approved_roots(&roots, &db);
+
+        let active_file = active.join("a.txt");
+        let archived_file = archived.join("b.txt");
+        std::fs::write(&active_file, b"x").unwrap();
+        std::fs::write(&archived_file, b"y").unwrap();
+        assert!(
+            approved_canonical(&active_file.to_string_lossy(), &roots).is_ok(),
+            "an active project's root must be approved at startup",
+        );
+        assert!(
+            approved_canonical(&archived_file.to_string_lossy(), &roots).is_err(),
+            "an archived project's root must NOT be approved at startup",
+        );
+    }
+
+    // ---- Fix 4: pick_project_dir's broad-pick rejection ----
+
+    #[test]
+    fn register_picked_rejects_a_filesystem_root() {
+        let roots = ApprovedRoots::default();
+        let fs_root = if cfg!(windows) { "C:\\" } else { "/" };
+        assert!(
+            roots.register_picked(Path::new(fs_root)).is_err(),
+            "picking a filesystem root must be rejected before registering",
+        );
+        assert!(
+            roots.0.lock().unwrap().is_empty(),
+            "a rejected broad pick must not register anything",
+        );
+    }
+
+    #[test]
+    fn register_picked_rejects_the_home_directory() {
+        let Some(home) = user_home_dir() else { return };
+        if std::fs::canonicalize(&home).is_err() {
+            return;
+        }
+        let roots = ApprovedRoots::default();
+        assert!(
+            roots.register_picked(&home).is_err(),
+            "picking the home directory must be rejected before registering",
+        );
+    }
+
+    #[test]
+    fn register_picked_returns_the_canonical_dir_and_approves_it() {
+        // The returned path is canonical (and verbatim-prefix-stripped) and is
+        // the registered approved root, so the value the renderer persists as the
+        // DB project_root matches what the gate later checks.
+        let roots = ApprovedRoots::default();
+        let dir = make_dir("picked-canon");
+        let returned = roots.register_picked(&dir).expect("registers");
+        assert_eq!(returned, std::fs::canonicalize(&dir).unwrap());
+        assert!(roots.is_approved_root(&returned), "the picked dir is approved");
+    }
+
+    // ---- Fix 3: verbatim/UNC prefix stripped from returned paths ----
+
+    #[test]
+    fn display_path_strips_the_windows_verbatim_prefix() {
+        // On non-Windows this is the identity; on Windows the `\\?\` (and
+        // `\\?\UNC\`) prefix std::fs::canonicalize adds is stripped so the
+        // renderer gets a normal path.
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                display_path(Path::new(r"\\?\C:\Users\me\proj")),
+                r"C:\Users\me\proj",
+            );
+            assert_eq!(
+                display_path(Path::new(r"\\?\UNC\server\share\proj")),
+                r"\\server\share\proj",
+            );
+        }
+        let plain = make_dir("display");
+        assert_eq!(display_path(&plain), plain.to_string_lossy());
     }
 }

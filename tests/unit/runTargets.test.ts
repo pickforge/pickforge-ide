@@ -224,4 +224,53 @@ describe("fromLaunchConfig", () => {
     expect(t?.capabilities).not.toContain("inspectSelection");
     expect(supportTier(t)).toBe("experimental");
   });
+  it("a release Flutter config is bare launch/stop — no VM service to inspect or hot reload", async () => {
+    const t = await fromLaunchConfig(
+      { type: "dart", program: "lib/main.dart", cwd: "/p", flutterMode: "release" },
+      0,
+      "/p",
+    );
+    expect(t?.command).toContain("--release");
+    expect(t?.capabilities).toEqual(["launch", "stop"]);
+    expect(t?.capabilities).not.toContain("inspectSelection");
+    expect(t?.capabilities).not.toContain("mapSelectionToSource");
+    expect(t?.capabilities).not.toContain("hotReload");
+    expect(t?.capabilities).not.toContain("hotRestart");
+    expect(t?.inspectorKind).toBe("none");
+    expect(supportTier(t)).not.toBe("deep");
+  });
+  it("a profile Flutter config keeps hot restart but not hot reload or inspection", async () => {
+    const t = await fromLaunchConfig(
+      { type: "dart", program: "lib/main.dart", cwd: "/p", flutterMode: "profile" },
+      0,
+      "/p",
+    );
+    expect(t?.command).toContain("--profile");
+    expect(t?.capabilities).toEqual(["launch", "hotRestart", "stop"]);
+    expect(t?.capabilities).not.toContain("hotReload");
+    expect(t?.capabilities).not.toContain("inspectSelection");
+    expect(t?.capabilities).not.toContain("mapSelectionToSource");
+    expect(t?.inspectorKind).toBe("none");
+    expect(supportTier(t)).not.toBe("deep");
+  });
+  it("a default (debug) Flutter config stays deep with the full live caps", async () => {
+    const t = await fromLaunchConfig({ type: "dart", program: "lib/main.dart", cwd: "/p" }, 0, "/p");
+    expect(t?.capabilities).toEqual([
+      "launch", "hotReload", "hotRestart", "stop", "inspectSelection", "mapSelectionToSource",
+    ]);
+    expect(t?.inspectorKind).toBe("vmService");
+    expect(supportTier(t)).toBe("deep");
+  });
+  it("an explicit debug Flutter config matches the default (debug) caps", async () => {
+    const t = await fromLaunchConfig(
+      { type: "dart", program: "lib/main.dart", cwd: "/p", flutterMode: "debug" },
+      0,
+      "/p",
+    );
+    expect(t?.command).toContain("--debug");
+    expect(t?.capabilities).toContain("inspectSelection");
+    expect(t?.capabilities).toContain("mapSelectionToSource");
+    expect(t?.inspectorKind).toBe("vmService");
+    expect(supportTier(t)).toBe("deep");
+  });
 });

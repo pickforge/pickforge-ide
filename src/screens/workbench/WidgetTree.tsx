@@ -13,6 +13,7 @@ import { workspace } from "../../stores/workspace";
 import { getTerminalHost } from "../../stores/terminalHosts";
 import { captureInRepo, setCaptureInRepo } from "../../stores/inspectStorage";
 import { armChatAutoName } from "../../lib/chatAutoName";
+import { recordForgeDispatch } from "../../lib/runRecord";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
 import { buildWidgetMarkdown, widgetBaseName } from "../../lib/widgetContext";
@@ -195,8 +196,30 @@ export function WidgetTree() {
       });
       const paths = await inspectSave(dir, base, md, png);
       const ask = `Read ${paths.mdPath} (PickForge widget capture: screenshot path + source file:line + props inside). ${prompt()}`;
-      const paneId = host.openInNewPane(`${commandForItem(item)} ${shquote(ask)}`);
-      if (paneId) armChatAutoName(workspace.activeChatId, paneId);
+      const command = `${commandForItem(item)} ${shquote(ask)}`;
+      const paneId = host.openInNewPane(command);
+      if (paneId) {
+        armChatAutoName(workspace.activeChatId, paneId);
+        // Persist the dispatch (pick + agent run) for the forge audit. Best
+        // effort — a write failure must not affect the launched agent.
+        const loc = node.creationLocation;
+        void recordForgeDispatch(
+          {
+            id: 0,
+            projectRoot: root,
+            widgetClass: node.className,
+            creationFile: loc ? fileFromUri(loc.file) : null,
+            creationLine: loc?.line ?? null,
+            skillId: "",
+            agentId: item.agentId ?? item.id,
+            terminalId: paneId,
+            chatId: workspace.activeChatId,
+            pickedAt: Date.now(),
+            widgetContextJson: md,
+          },
+          command,
+        );
+      }
       setComposerFor(null);
     } catch (e) {
       setError(String(e));

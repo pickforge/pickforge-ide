@@ -12,6 +12,9 @@
         "@xterm/addon-fit": "^0.10.0",
         "@xterm/addon-webgl": "^0.18.0",
         "@xterm/xterm": "^5.5.0",
+        "@yume-chan/scrcpy": "^2.3.0",
+        "@yume-chan/scrcpy-decoder-webcodecs": "^2.5.3",
+        "@yume-chan/stream-extra": "^2.6.1",
         "solid-js": "^1.9.5",
       },
       "devDependencies": {
@@ -225,6 +228,22 @@
 
     "@xterm/xterm": ["@xterm/xterm@5.5.0", "", {}, "sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A=="],
 
+    "@yume-chan/async": ["@yume-chan/async@4.1.3", "", {}, "sha512-0vzhNJMkWUPyjKzUK4rqHEeCU6YQtF78RsB1kFRB6Y2BLupmEQNxcSb0mjKabPL9jZpCCiLa5KL8oTOJClUVaw=="],
+
+    "@yume-chan/event": ["@yume-chan/event@2.0.0", "", { "dependencies": { "@yume-chan/async": "^4.0.2" } }, "sha512-z56MDOcX1QlgLUCuA6th3r10negVb7A3gzY//TwSC9ZOvzuRlrAqXcxZf1T3hHfNMk/NFO9RIgQgegXYSfaqLw=="],
+
+    "@yume-chan/no-data-view": ["@yume-chan/no-data-view@2.0.0", "", {}, "sha512-0GRJrrt6wtZlbiE92jocHOnaAvjQ+Y7xwwhwOPqLkwf90Kj1JIHJ5Zh4wJVQSQIkzfRSOpM+jeEQdC2K15snlA=="],
+
+    "@yume-chan/scrcpy": ["@yume-chan/scrcpy@2.3.0", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/no-data-view": "^2.0.0", "@yume-chan/stream-extra": "^2.1.0", "@yume-chan/struct": "^2.0.1" } }, "sha512-rpsNvy7H8mf6gVsWYRSkIXmk0wVsP3XOdw3kASokwZkSWtygB2Z1wjoPaEAvaayVCjsz+y/YfG35TOcykEihGw=="],
+
+    "@yume-chan/scrcpy-decoder-tinyh264": ["@yume-chan/scrcpy-decoder-tinyh264@2.1.0", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/event": "^2.0.0", "@yume-chan/scrcpy": "^2.1.0", "@yume-chan/stream-extra": "^2.1.0", "tinyh264": "^0.0.7", "yuv-buffer": "^1.0.1", "yuv-canvas": "^1.3.0" } }, "sha512-Ou2ejwUZEUlwyorqzjzN6Y3YqMZvAmUi2jK9QsPBbQIVDYu/kbql5l5aXJzatgURTmxbf5HvGnOuEDFzJMqGsQ=="],
+
+    "@yume-chan/scrcpy-decoder-webcodecs": ["@yume-chan/scrcpy-decoder-webcodecs@2.5.3", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/event": "^2.0.0", "@yume-chan/no-data-view": "^2.0.0", "@yume-chan/scrcpy": "^2.3.0", "@yume-chan/scrcpy-decoder-tinyh264": "^2.1.0", "@yume-chan/stream-extra": "^2.5.3" } }, "sha512-iHKKVrEd0JP1x4+MSkKKD6beiwf9wqViGdAzvXTb3BMTYyvJXoihiESaUDVDkesGp2n+mtEKQ237V02wbzkmcw=="],
+
+    "@yume-chan/stream-extra": ["@yume-chan/stream-extra@2.6.1", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/struct": "^2.3.2" } }, "sha512-GQ+Q0SQf9p6Fl7ZK0UO5vHVGBJgkTJm/WXKurUMpjHQV4VUpjZ2hrQ744aCfT7WwSol7Bz/uEiXWmk240Hr/hg=="],
+
+    "@yume-chan/struct": ["@yume-chan/struct@2.3.2", "", { "dependencies": { "@yume-chan/async": "^4.1.3", "@yume-chan/no-data-view": "^2.0.0" } }, "sha512-afoCnSKV+5HRK7e4innVd9YTYDyNWdjA1CVQa1j8rWYnmr7HGZfdkHMQr+AESLk6GxWFMzOIPQIG6nYOTGMFIw=="],
+
     "babel-plugin-jsx-dom-expressions": ["babel-plugin-jsx-dom-expressions@0.40.7", "", { "dependencies": { "@babel/helper-module-imports": "7.18.6", "@babel/plugin-syntax-jsx": "^7.18.6", "@babel/types": "^7.20.7", "html-entities": "2.3.3", "parse5": "^7.1.2" }, "peerDependencies": { "@babel/core": "^7.20.12" } }, "sha512-/O6JWUmjv03OI9lL2ry9bUjpD5S3PclM55RRJEyCdcFZ5W2SEA/59d+l2hNsk3gI6kiWRdRPdOtqZmsQzFN1pQ=="],
 
     "babel-preset-solid": ["babel-preset-solid@1.9.12", "", { "dependencies": { "babel-plugin-jsx-dom-expressions": "^0.40.6" }, "peerDependencies": { "@babel/core": "^7.0.0", "solid-js": "^1.9.12" } }, "sha512-LLqnuKVDlKpyBlMPcH6qEvs/wmS9a+NczppxJ3ryS/c0O5IiSFOIBQi9GzyiGDSbcJpx4Gr87jyFTos1MyEuWg=="],
@@ -303,6 +322,8 @@
 
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
 
+    "tinyh264": ["tinyh264@0.0.7", "", {}, "sha512-etkBRgYkSFBdAi2Cqk4sZgi+xWs/vhzNgvjO3z2i4WILeEmORiNqxuQ4URJatrWQ9LPNV3WPWAtzsh/LA/XL/g=="],
+
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "undici-types": ["undici-types@6.21.0", "", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
@@ -316,6 +337,10 @@
     "vitefu": ["vitefu@1.1.3", "", { "peerDependencies": { "vite": "^3.0.0 || ^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0" } }, "sha512-ub4okH7Z5KLjb6hDyjqrGXqWtWvoYdU3IGm/NorpgHncKoLTCfRIbvlhBm7r0YstIaQRYlp4yEbFqDcKSzXSSg=="],
 
     "yallist": ["yallist@3.1.1", "", {}, "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="],
+
+    "yuv-buffer": ["yuv-buffer@1.0.1", "", {}, "sha512-1clmBXOyTX2R8OG0vaTFu5yP/C2XG4ULe+2HUu7c/aYE1fWpKvkGEzqMhUjknXp1Ts6Xfrc0YtIBbYxvaau38Q=="],
+
+    "yuv-canvas": ["yuv-canvas@1.3.0", "", {}, "sha512-zwl+lJgy23iTyCCUZbi0IRP+WezeKNeGEFU+a0gmtVRa81zL6mKJVxr+NKzlveJ2okz4aIOUEPrTs6yjuPt+Cg=="],
 
     "babel-plugin-jsx-dom-expressions/@babel/helper-module-imports": ["@babel/helper-module-imports@7.18.6", "", { "dependencies": { "@babel/types": "^7.18.6" } }, "sha512-0NFvs3VkuSYbFi1x2Vd6tKrywq+z/cLeYC/RJNFrIX/30Bf5aiGYbtvGXolEktzJH8o5E5KJ3tT+nkxuuZFVlA=="],
 

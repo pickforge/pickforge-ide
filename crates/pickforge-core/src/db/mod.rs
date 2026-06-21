@@ -154,6 +154,16 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, DbEr
     Ok(false)
 }
 
+/// True when a table named `table` exists.
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, DbError> {
+    let count: i64 = conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        params![table],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    Ok(count == 1)
+}
+
 /// Columns the desired schema carries that an older database (a Drift-era one,
 /// or an early unversioned Rust one) might be missing. Every entry is either
 /// nullable or has a DEFAULT, so `ALTER TABLE … ADD COLUMN` can add it without
@@ -215,19 +225,29 @@ fn reconcile_schema(conn: &mut Connection) -> Result<(), DbError> {
 /// steps, but two Drift steps also moved/backfilled data; reconciling schema
 /// alone would silently drop or mis-set that data for older databases.
 ///
-/// `pre_uv` is the on-disk `PRAGMA user_version` *before* any reconciliation, so
-/// each backfill runs only for databases that predate the Drift version that
-/// originally performed it — a Drift v10 (or already-current) database had these
-/// applied long ago and must not have them re-run destructively. Every statement
-/// is additionally written to be a safe no-op (INSERT OR IGNORE, conditional
-/// UPDATE) so re-running can never duplicate rows or clobber user choices. The
-/// whole pass runs in one transaction.
+/// Each backfill is gated on the *schema state captured before*
+/// `reconcile_schema` ran, not on `user_version`. This distinguishes two
+/// databases that both report `user_version = 0`: a genuinely ancient Drift v1
+/// DB (no `projects` table, no `connection_mode` column — needs the backfills)
+/// from an unversioned-Rust DB (created by an earlier `CREATE TABLE IF NOT
+/// EXISTS SCHEMA` build that never stamped `user_version`, so it already holds
+/// the full current schema — must be a strict no-op). Gating on `user_version`
+/// would wrongly run the `connection_mode` backfill against unversioned-Rust
+/// DBs and clobber a user's deliberate 'auto'-with-URL choice. A Drift v10 (or
+/// already-current) DB likewise has both the table and column, so its backfills
+/// are skipped. Every statement is additionally written to be a safe no-op
+/// (INSERT OR IGNORE, conditional UPDATE) as defense-in-depth. The whole pass
+/// runs in one transaction.
 ///
 /// Drift steps NOT replayed here, by design:
 /// * v1→v2 `ALTER TABLE project_settings DROP COLUMN default_terminal_id` — a
 ///   destructive drop. We never remove columns; the Rust schema simply omits it
 ///   and a leftover column is harmless.
-fn reconcile_data(conn: &mut Connection, pre_uv: u32) -> Result<(), DbError> {
+fn reconcile_data(
+    conn: &mut Connection,
+    had_projects_table: bool,
+    had_connection_mode: bool,
+) -> Result<(), DbError> {
     let tx = conn.transaction()?;
 
     // Drift v1→v2: synthesize `projects` rows from existing `project_settings`
@@ -235,9 +255,11 @@ fn reconcile_data(conn: &mut Connection, pre_uv: u32) -> Result<(), DbError> {
     // `list_projects`. Drift used the root's basename as the display name
     // (falling back to the full root when empty) and `last_used_at` (or "now")
     // for both timestamps; DateTime columns are stored as epoch-millis, matching
-    // our INTEGER timestamps. INSERT OR IGNORE keeps it idempotent and never
-    // overwrites a project the user already has.
-    if pre_uv < 2 {
+    // our INTEGER timestamps. Runs only when the `projects` table was absent
+    // (genuinely pre-v2); an unversioned-Rust or v10 DB already has it.
+    // INSERT OR IGNORE keeps it idempotent and never overwrites a project the
+    // user already has.
+    if !had_projects_table {
         let now_ms = now_millis();
         tx.execute(
             "INSERT OR IGNORE INTO projects \
@@ -257,12 +279,12 @@ fn reconcile_data(conn: &mut Connection, pre_uv: u32) -> Result<(), DbError> {
     }
 
     // Drift v2→v3: projects connected via an explicit VM service URL were marked
-    // 'manual'. Gate on pre_uv < 3 so a *current* database where the user
-    // deliberately left a URL on 'auto' is never clobbered. The connection_mode
-    // column itself is added (defaulted 'auto') by `reconcile_schema`; the
-    // `connection_mode = 'auto'` predicate keeps this a no-op for any row already
-    // set to something else.
-    if pre_uv < 3 {
+    // 'manual'. Runs only when the `connection_mode` column was absent
+    // (genuinely pre-v3); an unversioned-Rust or v10 DB already has the column,
+    // so a deliberate 'auto'-with-URL choice is never clobbered. The column is
+    // added (defaulted 'auto') by `reconcile_schema`; the `connection_mode =
+    // 'auto'` predicate keeps this a no-op for any row already set otherwise.
+    if !had_connection_mode {
         tx.execute_batch(
             "UPDATE project_settings SET connection_mode = 'manual' \
              WHERE vm_service_url IS NOT NULL AND connection_mode = 'auto'",
@@ -346,10 +368,16 @@ fn migrate(conn: &mut Connection) -> Result<(), DbError> {
         )));
     }
     if uv <= DRIFT_FINAL {
+        // Capture the on-disk schema state BEFORE reconciliation adds anything,
+        // so the data backfills can tell a genuinely ancient Drift DB (missing
+        // the table/column) from an unversioned-Rust DB that already holds the
+        // full schema despite reporting user_version = 0.
+        let had_projects_table = table_exists(conn, "projects")?;
+        let had_connection_mode = has_column(conn, "project_settings", "connection_mode")?;
         reconcile_schema(conn)?;
-        // Replay Drift's data migrations, gated on the pre-reconcile version so
+        // Replay Drift's data migrations, gated on the captured schema state so
         // version-specific backfills only run for databases that predate them.
-        reconcile_data(conn, uv)?;
+        reconcile_data(conn, had_projects_table, had_connection_mode)?;
         conn.execute_batch(&format!("PRAGMA user_version = {RUST_BASELINE};"))?;
     } else {
         // A Rust-managed database. Reconcile defensively (cheap + idempotent),
@@ -1268,6 +1296,54 @@ mod tests {
             // The deliberate 'auto'-with-URL choice is preserved.
             let s = db.get_settings("/p").unwrap().unwrap();
             assert_eq!(s.connection_mode, "auto");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An unversioned-Rust DB (`user_version` 0) carrying the FULL current
+    /// schema — the shape every pre-migration Rust user has, because the old
+    /// build ran `CREATE TABLE IF NOT EXISTS SCHEMA` and never stamped
+    /// `user_version`. It has the `projects` table and `connection_mode` column,
+    /// so the Drift data backfills must NOT fire: a deliberate 'auto'-with-URL
+    /// setting must survive, and no projects may be synthesized/duplicated.
+    #[test]
+    fn unversioned_rust_db_preserves_auto_with_url() {
+        let path = temp_db_path("unversioned-rust-auto-url");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            // Seed the full current schema with user_version left at 0.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Hand Named', 100, 200);
+                 INSERT INTO project_settings
+                   (project_root, vm_service_url, connection_mode)
+                   VALUES ('/p', 'http://127.0.0.1:8181/abc', 'auto');",
+            )
+            .unwrap();
+            assert_eq!(user_version(&conn), 0);
+            // Both the table and the column are present — the unversioned-Rust
+            // shape that previously tripped the user_version-based gating.
+            assert!(table_exists(&conn, "projects").unwrap());
+            assert!(has_column(&conn, "project_settings", "connection_mode").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+
+            // The deliberate 'auto'-with-URL choice MUST NOT be flipped.
+            let s = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(s.connection_mode, "auto");
+
+            // No duplicate/synthesized project; the existing row is untouched.
+            let projects = db.list_projects(false).unwrap();
+            assert_eq!(projects.len(), 1);
+            assert_eq!(projects[0].display_name, "Hand Named");
+            assert_eq!(projects[0].created_at, 100);
         }
         let _ = std::fs::remove_file(&path);
     }

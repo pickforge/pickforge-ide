@@ -305,11 +305,22 @@ export async function fromLaunchConfig(
   // metacharacters in a single arg don't split into multiple shell words.
   // Args (e.g. --dart-define-from-file=.env) resolve against the run dir.
   if (c.args?.length) parts.push(c.args.map((a) => shquote(expandVars(a, root))).join(" "));
-  const capabilities = isTest
-    ? ["test", "stop"]
-    : isFlutter
-      ? ["launch", "hotReload", "hotRestart", "stop", "inspectSelection", "mapSelectionToSource"]
-      : ["launch", "stop"];
+  // Flutter mode gates which live affordances exist: only debug builds run the
+  // Dart VM service, so hot reload / inspect / source-map are debug-only.
+  // Profile keeps hot restart (no reload, no VM-service inspect); release is a
+  // bare launch/stop. (Flutter: release & profile disable debugging + service
+  // extensions; release also disables hot reload, profile disables hot reload.)
+  const flutterMode = (c.flutterMode ?? "").toLowerCase();
+  // Only debug builds run the Dart VM service (absent/empty mode defaults to
+  // debug); release and profile disable it.
+  const flutterDebug = flutterMode === "" || flutterMode === "debug";
+  const flutterCaps =
+    flutterMode === "release"
+      ? ["launch", "stop"]
+      : flutterMode === "profile"
+        ? ["launch", "hotRestart", "stop"]
+        : ["launch", "hotReload", "hotRestart", "stop", "inspectSelection", "mapSelectionToSource"];
+  const capabilities = isTest ? ["test", "stop"] : isFlutter ? flutterCaps : ["launch", "stop"];
   const flutterRun = isFlutter && !isTest;
   return {
     id: `vscode-${i}`,
@@ -323,7 +334,9 @@ export async function fromLaunchConfig(
     // Flutter launch configs inspect via the VM service; everything else is a
     // raw program with no PickForge inspector and no device convention.
     deviceConvention: flutterRun ? "arg" : "none",
-    inspectorKind: flutterRun ? "vmService" : "none",
+    // Only a debug Flutter run can attach the VM service; release/profile runs
+    // on a real device but exposes no inspector.
+    inspectorKind: flutterRun && flutterDebug ? "vmService" : "none",
     source: "vscode",
   };
 }

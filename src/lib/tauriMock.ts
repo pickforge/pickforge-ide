@@ -47,6 +47,15 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   ],
   project_touch: () => null,
   vm_status: () => null,
+  mcp_start: (a) => ({
+    endpoint: "/run/pickforge-vrt/agent.sock",
+    contextDir: `${a.projectRoot}/.pickforge`,
+    runsDir: `${a.projectRoot}/.pickforge/runs`,
+    chatsDir: `${a.projectRoot}/.pickforge/chats`,
+  }),
+  mcp_publish_state: () => null,
+  mcp_push_log: () => null,
+  mcp_stop: () => null,
   "plugin:app|version": () => "0.1.0",
   open_path: () => null,
   git_status: () => ({

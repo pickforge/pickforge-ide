@@ -26,6 +26,7 @@ import {
 } from "../../stores/quickLaunch";
 import { findChat, onChatDeleted, workspace } from "../../stores/workspace";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
+import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
 import { armChatAutoName, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
@@ -68,12 +69,18 @@ export function WorkbenchScreen() {
     host.openInNewPane(cmd);
   };
 
-  // Mount a host the first time its chat becomes active; keep it after.
+  // Mount a host the first time its chat becomes active; keep it after. Kick off
+  // the project's MCP endpoint in parallel so the shell carries the discovery env
+  // (PICKFORGE_IPC_ENDPOINT) — `mcpEnv` is read reactively, and the shell only
+  // spawns after an async font load, so the binding is in place by then. MCP
+  // start is best-effort and never blocks the mount.
   createEffect(() => {
     const id = workspace.activeChatId;
     if (!id || mounted().some((m) => m.chatId === id)) return;
     const chat = findChat(id);
-    if (chat) setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
+    if (!chat) return;
+    void ensureMcpRunning(chat.projectRoot);
+    setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
   });
 
   onMount(() => {
@@ -203,6 +210,7 @@ export function WorkbenchScreen() {
               >
                 <TerminalHost
                   cwd={h.projectRoot}
+                  env={mcpEnv(h.projectRoot)}
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                 />

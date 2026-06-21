@@ -15,6 +15,8 @@
 //! If a second, less-trusted window is ever added, swap the counter for an
 //! unguessable id (or scope sessions per-window) — left as-is with this note.
 
+use std::collections::HashMap;
+
 use pickforge_core::{PtyEvent, PtyManager, SpawnOptions};
 use tauri::ipc::{Channel, Response};
 use tauri::State;
@@ -43,11 +45,23 @@ pub fn pty_spawn(
     command: Option<String>,
     rows: u16,
     cols: u16,
+    // Extra env merged on top of the login-shell env — the `PICKFORGE_*` vars
+    // (incl. the MCP `PICKFORGE_IPC_ENDPOINT`) so embedded agents discover the
+    // local MCP endpoint. Optional: an interactive shell with no run context
+    // passes nothing.
+    env: Option<HashMap<String, String>>,
     on_output: Channel<Response>,
     on_exit: Channel<Option<i32>>,
 ) -> Result<u32, String> {
     let cwd = resolve_spawn_cwd(cwd, &roots)?;
-    let opts = SpawnOptions { cwd, command, rows, cols, ..Default::default() };
+    let opts = SpawnOptions {
+        cwd,
+        command,
+        rows,
+        cols,
+        extra_env: env.unwrap_or_default(),
+        ..Default::default()
+    };
     manager
         .spawn(opts, move |event: PtyEvent| match event {
             PtyEvent::Output(bytes) => {

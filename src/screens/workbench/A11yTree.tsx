@@ -5,7 +5,7 @@
 // screenshot is fetched as a thumbnail. Mirrors WidgetTree's layout/idiom but
 // reads from `adb_*` (not the Flutter VM service), and its "Ask AI" forge ships
 // the selected node (screenshot + context markdown) to a new agent terminal pane.
-import { createEffect, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { IconChevronDown, IconRefresh } from "../../components/icons";
 import { EmberButton, MonoEyebrow } from "../../components/ui";
 import {
@@ -23,6 +23,7 @@ import { recordForgeDispatch } from "../../lib/runRecord";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
 import { a11yBaseName, buildA11yMarkdown } from "../../lib/widgetContext";
+import { publishMcpSelection } from "../../stores/mcp";
 
 /** Bounds → "left,top → right,bottom (w×h)" for the details panel. */
 function boundsLabel(b: A11yNode["bounds"]): string {
@@ -81,6 +82,11 @@ export function A11yTree(props: {
 
   /** The currently selected accessibility node (the forge target). */
   const selectedNode = () => selected();
+
+  // Publish the live a11y selection to the MCP endpoint so an embedded agent's
+  // `get_current_selection` reflects what the inspector shows; cleared on unmount.
+  createEffect(() => publishMcpSelection(selected()));
+  onCleanup(() => publishMcpSelection(null));
 
   // Bumped on each dump AND on every serial/online change, so an in-flight dump
   // or screenshot whose serial is no longer current is discarded on resolve and

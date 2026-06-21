@@ -41,6 +41,7 @@ import { autoReloadEnabled, toggleAutoReload } from "../../stores/autoReload";
 import { cancelBoot, isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
 import { ingestRunOutput } from "../../stores/vmService";
+import { pushMcpLogs } from "../../stores/mcp";
 
 const STATUS: Record<RunStatus, { label: string; intent: StatusIntent; pulse?: boolean }> = {
   idle: { label: "idle", intent: "neutral" },
@@ -55,6 +56,22 @@ export function DebugConsole() {
   const can = (c: string) => !!target()?.capabilities.includes(c);
   const isRunning = () => status() === "running";
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
+
+  // Tap the run console output for the MCP `get_run_logs` buffer: feed the VM-URL
+  // scraper as before, and forward completed lines (ANSI stripped) to MCP. A small
+  // carry buffer reassembles lines that straddle two output chunks.
+  let logCarry = "";
+  const onRunOutput = (chunk: string) => {
+    ingestRunOutput(chunk);
+    logCarry += chunk;
+    const parts = logCarry.split(/\r?\n/);
+    logCarry = parts.pop() ?? ""; // keep the trailing partial line
+    const lines = parts
+      // eslint-disable-next-line no-control-regex
+      .map((l) => l.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").trimEnd())
+      .filter((l) => l.length > 0);
+    if (lines.length > 0) pushMcpLogs(lines);
+  };
 
   // Console | Logs switch — Logs only exists for RN / native-Android targets,
   // whose device logs live in `adb logcat`, not the run PTY. The running target
@@ -204,7 +221,7 @@ export function DebugConsole() {
                 cwd={run.cwd ?? undefined}
                 onReady={attachConsole}
                 onExit={consoleExited}
-                onOutput={ingestRunOutput}
+                onOutput={onRunOutput}
                 onSelectionChange={setAskSel}
                 readOnly
                 consoleTheme

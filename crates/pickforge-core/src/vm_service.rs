@@ -79,6 +79,25 @@ impl VmServiceClient {
         let (events, _) = broadcast::channel::<Value>(256);
         let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
 
+        // Install the generation-checked `Conn` into the slot BEFORE spawning the
+        // reader/writer tasks. The tasks tear the slot down via
+        // `clear_connection(slot, generation)` on exit; if they ran first and the
+        // socket was already closed, they'd find the slot empty (generation
+        // mismatch), return, and then we'd store a dead `Conn` after them —
+        // leaving `is_connected()` stuck true until a later send finally failed.
+        // Installing first means any task exit always sees (and clears) its own
+        // conn.
+        let pending_read = Arc::clone(&pending);
+        let events_read = events.clone();
+        *self.conn.lock().await = Some(Conn {
+            generation,
+            url: url.to_string(),
+            out,
+            pending,
+            next_id: AtomicI64::new(1),
+            events,
+        });
+
         // Writer task: drain the outbound queue to the socket. On exit (socket
         // write error or the connection being replaced) tear the slot down so
         // status flips to disconnected and future calls fail fast.
@@ -94,8 +113,6 @@ impl VmServiceClient {
 
         // Reader task: route id'd responses to their pending sender; broadcast
         // no-id stream events to subscribers.
-        let pending_read = Arc::clone(&pending);
-        let events_read = events.clone();
         let slot_read = Arc::clone(&self.conn);
         tokio::spawn(async move {
             while let Some(Ok(msg)) = read.next().await {
@@ -118,14 +135,6 @@ impl VmServiceClient {
             clear_connection(&slot_read, generation).await;
         });
 
-        *self.conn.lock().await = Some(Conn {
-            generation,
-            url: url.to_string(),
-            out,
-            pending,
-            next_id: AtomicI64::new(1),
-            events,
-        });
         Ok(())
     }
 

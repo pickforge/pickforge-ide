@@ -5,7 +5,7 @@
 // screenshot is fetched as a thumbnail. Mirrors WidgetTree's layout/idiom but
 // reads from `adb_*` (not the Flutter VM service). The "send to AI" forge is
 // intentionally left for #18 — node selection is surfaced so it can build on it.
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, on, Show } from "solid-js";
 import { IconChevronDown, IconRefresh } from "../../components/icons";
 import { MonoEyebrow } from "../../components/ui";
 import {
@@ -47,36 +47,66 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
   /** The currently selected accessibility node (consumed by #18's forge). */
   const selectedNode = () => selected();
 
+  // Bumped on each dump AND on every serial/online change, so an in-flight dump
+  // or screenshot whose serial is no longer current is discarded on resolve and
+  // can never paint the previous device's tree over the new view.
+  let epoch = 0;
+
+  // Switching devices must not show the previous device's tree/screenshot, and a
+  // slow in-flight call must not latch on later — clear everything and invalidate
+  // outstanding requests whenever the serial (or online state) changes.
+  createEffect(
+    on(
+      () => [props.serial, props.online] as const,
+      () => {
+        epoch++;
+        setTree(null);
+        setSelected(null);
+        setThumb(null);
+        setError(null);
+        setDumped(false);
+        setLoading(false);
+      },
+      { defer: true },
+    ),
+  );
+
   const refresh = async () => {
     const serial = props.serial;
     if (!serial) return;
+    const mine = ++epoch;
     setError(null);
     setLoading(true);
     try {
       const root = await adbDumpUiautomator(serial);
+      if (mine !== epoch || serial !== props.serial) return; // superseded
       setTree(root);
       setSelected(null);
       setThumb(null);
       setDumped(true);
-      void loadThumb(serial);
+      void loadThumb(serial, mine);
     } catch (e) {
+      if (mine !== epoch || serial !== props.serial) return;
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (mine === epoch) setLoading(false);
     }
   };
 
   // A device-level screenshot (not per-node) — the inspector's visual reference.
   // Captured into the inspect dir, then read back as a data URL for inline <img>.
-  const loadThumb = async (serial: string) => {
+  // Tagged with the dump's epoch so a stale screenshot can't overwrite a newer
+  // view (or the next device's).
+  const loadThumb = async (serial: string, mine: number) => {
     const root = workspace.activeRoot;
     if (!root) return;
     try {
       const dir = await inspectDir(captureInRepo(root), root);
       const path = await adbScreenshot(serial, dir, "a11y-screenshot.png");
-      setThumb(path ? await readImageDataUrl(path) : null);
+      const url = path ? await readImageDataUrl(path) : null;
+      if (mine === epoch && serial === props.serial) setThumb(url);
     } catch {
-      setThumb(null);
+      if (mine === epoch && serial === props.serial) setThumb(null);
     }
   };
 

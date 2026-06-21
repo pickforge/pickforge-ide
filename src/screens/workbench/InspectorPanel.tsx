@@ -27,10 +27,14 @@ export function InspectorPanel() {
   const { devices, refresh } = useDeviceList();
 
   // Which inspector the rail shows, branched on the active target's capability:
-  // the running target wins (it's what's live on the device), else the selected
-  // launcher target. Null when nothing is selected → keep the legacy VM flow.
-  const inspectorKind = (): InspectorKind | null =>
-    runConsole.target()?.inspectorKind ?? activeTarget()?.inspectorKind ?? null;
+  // a LIVE run wins (it's what's on the device), else the selected launcher
+  // target. `runConsole` keeps its target after a run stops, so only honor it
+  // while running — otherwise a finished RN/native/web run would keep hiding the
+  // Flutter VM / no-target inspector. Null when nothing is selected → legacy VM.
+  const inspectorKind = (): InspectorKind | null => {
+    const running = runConsole.status() === "running" ? runConsole.target() : null;
+    return running?.inspectorKind ?? activeTarget()?.inspectorKind ?? null;
+  };
 
   // VM service connection is shared (the Debug Console auto-connects to a
   // `flutter run`'s VM service; this panel shows/controls the same state).

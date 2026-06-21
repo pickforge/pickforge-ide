@@ -346,8 +346,19 @@ pub fn inspect_save(
     if !canon_dir.starts_with(&canon_root) {
         return Err("capture path escaped the inspector directory".into());
     }
+    // Create files with O_EXCL (create_new) so a pre-existing symlink at a
+    // capture path can't redirect the write outside the inspector directory.
+    let write_new = |path: &std::path::Path, bytes: &[u8]| -> Result<(), String> {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut f| f.write_all(bytes))
+            .map_err(|e| e.to_string())
+    };
     let md_path = dir.join("context.md");
-    std::fs::write(&md_path, markdown).map_err(|e| e.to_string())?;
+    write_new(&md_path, markdown.as_bytes())?;
     let png_path = match png_base64 {
         Some(b64) if !b64.is_empty() => {
             // Bound the decoded size before allocating (base64 ≈ 4/3 of bytes).
@@ -358,7 +369,7 @@ pub fn inspect_save(
                 .decode(b64.as_bytes())
                 .map_err(|e| e.to_string())?;
             let p = dir.join("screenshot.png");
-            std::fs::write(&p, bytes).map_err(|e| e.to_string())?;
+            write_new(&p, &bytes)?;
             Some(p.to_string_lossy().into_owned())
         }
         _ => None,
@@ -429,6 +440,21 @@ mod inspect_save_tests {
         let root = temp_inspect_root("big");
         let big = "a".repeat(MAX_MARKDOWN + 1);
         assert!(inspect_save(root.to_string_lossy().into_owned(), "cap".into(), big, None).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn does_not_follow_a_symlinked_capture_file() {
+        use std::os::unix::fs::symlink;
+        let root = temp_inspect_root("symlink");
+        let cap = root.join("cap-sym");
+        std::fs::create_dir_all(&cap).unwrap();
+        let evil = std::env::temp_dir().join(format!("pf-evil-{}", std::process::id()));
+        let _ = std::fs::remove_file(&evil);
+        symlink(&evil, cap.join("context.md")).unwrap();
+        let res = inspect_save(root.to_string_lossy().into_owned(), "cap-sym".into(), "x".into(), None);
+        assert!(res.is_err(), "writing through a symlinked capture file must fail");
+        assert!(!evil.exists(), "the write must not follow the symlink");
     }
 }
 

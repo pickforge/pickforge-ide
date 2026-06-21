@@ -2,6 +2,7 @@ mod db_commands;
 mod device_commands;
 mod fs_commands;
 mod git_commands;
+mod logcat_commands;
 mod mirror_commands;
 mod process_commands;
 mod pty_commands;
@@ -34,6 +35,7 @@ pub fn run() {
         .manage(VmServiceClient::new())
         .manage(watch_commands::WatchManager::new())
         .manage(mirror_commands::MirrorManager::new())
+        .manage(logcat_commands::LogcatManager::new())
         .manage(open_database())
         .invoke_handler(tauri::generate_handler![
             pty_commands::pty_spawn,
@@ -94,6 +96,8 @@ pub fn run() {
             mirror_commands::mirror_start,
             mirror_commands::mirror_send_control,
             mirror_commands::mirror_stop,
+            logcat_commands::logcat_start,
+            logcat_commands::logcat_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

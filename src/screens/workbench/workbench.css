@@ -1591,6 +1591,118 @@ body.pf-resizing .pf-dc-resizer-grip {
   flex: 1 1 0;
   min-height: 0;
 }
+/* Console | Logs view stack: each fills the body; only one is shown at a time. */
+.pf-dc-view {
+  flex-direction: column;
+}
+
+/* Console | Logs tab switch (only shown for RN / native-Android targets). */
+.pf-dc-tabs {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+}
+.pf-dc-tab {
+  height: 20px;
+  padding: 0 var(--pf-space-sm);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-dc-tab:hover {
+  color: var(--pf-text-hi);
+}
+.pf-dc-tab--on {
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-3);
+}
+
+/* ---- device logs (logcat) view — the textual sibling of the console ---- */
+.pf-logcat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--pf-surface-2);
+}
+.pf-logcat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-xs) var(--pf-space-lg);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-logcat-spacer {
+  flex: 1;
+}
+.pf-logcat-toggle {
+  flex: none;
+  height: 22px;
+  padding: 0 var(--pf-space-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-logcat-toggle:hover:not(:disabled) {
+  color: var(--pf-text-hi);
+}
+.pf-logcat-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Neutral "on" — the run console's single ember stays on the Run button (one
+   ember per composition); the follow toggle reads as active without an accent. */
+.pf-logcat-toggle--on {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+.pf-logcat-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  line-height: 1.45;
+}
+.pf-logcat-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--pf-text-med);
+}
+.pf-logcat-line--warning {
+  color: var(--pf-warning);
+}
+.pf-logcat-line--error {
+  color: var(--pf-error);
+}
+.pf-logcat-empty {
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+}
 
 /* ---- widget inspector tree ---- */
 .pf-wt-actions {

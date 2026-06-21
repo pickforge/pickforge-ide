@@ -185,6 +185,8 @@ const RECONCILABLE_COLUMNS: &[(&str, &str, &str)] = &[
     ("projects", "archived_at", "ALTER TABLE projects ADD COLUMN archived_at INTEGER"), // Drift v9
     // run_session_log — target_file added a version after the table itself.
     ("run_session_log", "target_file", "ALTER TABLE run_session_log ADD COLUMN target_file TEXT"), // Drift v4
+    // pick_history — chatId arrived alongside the projects/chats split.
+    ("pick_history", "chat_id", "ALTER TABLE pick_history ADD COLUMN chat_id TEXT"), // Drift v2
 ];
 
 /// Idempotently bring any pre-Rust database (Drift v1..=10, or an unversioned
@@ -205,6 +207,98 @@ fn reconcile_schema(conn: &mut Connection) -> Result<(), DbError> {
         }
     }
     tx.commit()?;
+    Ok(())
+}
+
+/// Replay the *data* migrations Drift's `onUpgrade` performed alongside its
+/// schema changes. `reconcile_schema` reproduces Drift's `addColumn`/`createTable`
+/// steps, but two Drift steps also moved/backfilled data; reconciling schema
+/// alone would silently drop or mis-set that data for older databases.
+///
+/// `pre_uv` is the on-disk `PRAGMA user_version` *before* any reconciliation, so
+/// each backfill runs only for databases that predate the Drift version that
+/// originally performed it — a Drift v10 (or already-current) database had these
+/// applied long ago and must not have them re-run destructively. Every statement
+/// is additionally written to be a safe no-op (INSERT OR IGNORE, conditional
+/// UPDATE) so re-running can never duplicate rows or clobber user choices. The
+/// whole pass runs in one transaction.
+///
+/// Drift steps NOT replayed here, by design:
+/// * v1→v2 `ALTER TABLE project_settings DROP COLUMN default_terminal_id` — a
+///   destructive drop. We never remove columns; the Rust schema simply omits it
+///   and a leftover column is harmless.
+fn reconcile_data(conn: &mut Connection, pre_uv: u32) -> Result<(), DbError> {
+    let tx = conn.transaction()?;
+
+    // Drift v1→v2: synthesize `projects` rows from existing `project_settings`
+    // so projects created under the pre-split schema keep showing up in
+    // `list_projects`. Drift used the root's basename as the display name
+    // (falling back to the full root when empty) and `last_used_at` (or "now")
+    // for both timestamps; DateTime columns are stored as epoch-millis, matching
+    // our INTEGER timestamps. INSERT OR IGNORE keeps it idempotent and never
+    // overwrites a project the user already has.
+    if pre_uv < 2 {
+        let now_ms = now_millis();
+        tx.execute(
+            "INSERT OR IGNORE INTO projects \
+               (project_root, display_name, created_at, last_opened_at, sort_order) \
+             SELECT \
+               ps.project_root, \
+               CASE \
+                 WHEN basename(ps.project_root) = '' THEN ps.project_root \
+                 ELSE basename(ps.project_root) \
+               END, \
+               COALESCE(ps.last_used_at, ?1), \
+               COALESCE(ps.last_used_at, ?1), \
+               0 \
+             FROM project_settings ps",
+            params![now_ms],
+        )?;
+    }
+
+    // Drift v2→v3: projects connected via an explicit VM service URL were marked
+    // 'manual'. Gate on pre_uv < 3 so a *current* database where the user
+    // deliberately left a URL on 'auto' is never clobbered. The connection_mode
+    // column itself is added (defaulted 'auto') by `reconcile_schema`; the
+    // `connection_mode = 'auto'` predicate keeps this a no-op for any row already
+    // set to something else.
+    if pre_uv < 3 {
+        tx.execute_batch(
+            "UPDATE project_settings SET connection_mode = 'manual' \
+             WHERE vm_service_url IS NOT NULL AND connection_mode = 'auto'",
+        )?;
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
+/// Milliseconds since the Unix epoch — the unit Drift used for its `DateTime`
+/// columns, so synthesized timestamps line up with rows the old app wrote.
+fn now_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Register a `basename(path)` SQL function: the final `/`- or `\\`-delimited
+/// segment of `path`, mirroring Drift's `root.split(RegExp(r'[/\\]')).last`. Used
+/// by the v1→v2 projects backfill. Trailing separators yield an empty segment,
+/// exactly as Drift's split did.
+fn register_basename(conn: &Connection) -> Result<(), DbError> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "basename",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let path: String = ctx.get(0)?;
+            let last = path.rsplit(['/', '\\']).next().unwrap_or("");
+            Ok(last.to_string())
+        },
+    )?;
     Ok(())
 }
 
@@ -253,6 +347,9 @@ fn migrate(conn: &mut Connection) -> Result<(), DbError> {
     }
     if uv <= DRIFT_FINAL {
         reconcile_schema(conn)?;
+        // Replay Drift's data migrations, gated on the pre-reconcile version so
+        // version-specific backfills only run for databases that predate them.
+        reconcile_data(conn, uv)?;
         conn.execute_batch(&format!("PRAGMA user_version = {RUST_BASELINE};"))?;
     } else {
         // A Rust-managed database. Reconcile defensively (cheap + idempotent),
@@ -275,6 +372,7 @@ impl Database {
         }
         let mut conn = Connection::open(path)?;
         apply_pragmas(&conn)?;
+        register_basename(&conn)?;
         migrate(&mut conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
@@ -282,6 +380,7 @@ impl Database {
     pub fn open_in_memory() -> Result<Self, DbError> {
         let mut conn = Connection::open_in_memory()?;
         apply_pragmas(&conn)?;
+        register_basename(&conn)?;
         migrate(&mut conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
@@ -990,6 +1089,186 @@ mod tests {
         }
 
         assert!(Database::open(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Drift v1 DB: `project_settings` rows exist but there is no `projects`
+    /// table yet (the v1→v2 split had not run). Reconciliation must synthesize
+    /// the `projects` rows so they keep appearing in `list_projects`, and the
+    /// reconciled `pick_history` must carry `chat_id` so picks insert/list.
+    #[test]
+    fn drift_v1_synthesizes_projects_and_pick_chat_id() {
+        let path = temp_db_path("drift-v1");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            // A v1-era schema: project_settings + a pick_history that predates
+            // the chat_id column, and crucially NO projects table.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE project_settings (
+                   project_root     TEXT NOT NULL PRIMARY KEY,
+                   vm_service_url   TEXT,
+                   default_agent_id TEXT,
+                   last_used_at     INTEGER
+                 );
+                 CREATE TABLE pick_history (
+                   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                   project_root        TEXT NOT NULL,
+                   widget_class        TEXT NOT NULL,
+                   creation_file       TEXT,
+                   creation_line       INTEGER,
+                   skill_id            TEXT NOT NULL,
+                   agent_id            TEXT NOT NULL,
+                   terminal_id         TEXT NOT NULL,
+                   picked_at           INTEGER NOT NULL,
+                   widget_context_json TEXT NOT NULL
+                 );
+                 INSERT INTO project_settings (project_root, last_used_at)
+                   VALUES ('/home/dev/code/my_app', 42);
+                 INSERT INTO project_settings (project_root, last_used_at)
+                   VALUES ('/tmp/widget_lab', NULL);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+            assert!(!has_column(&conn, "pick_history", "chat_id").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+
+            // Projects synthesized from project_settings — not empty.
+            let projects = db.list_projects(false).unwrap();
+            assert_eq!(projects.len(), 2);
+            let named: std::collections::HashMap<_, _> = projects
+                .iter()
+                .map(|p| (p.project_root.clone(), p.clone()))
+                .collect();
+            // Display name is the path basename.
+            assert_eq!(named["/home/dev/code/my_app"].display_name, "my_app");
+            assert_eq!(named["/tmp/widget_lab"].display_name, "widget_lab");
+            // Timestamp comes from last_used_at when present.
+            assert_eq!(named["/home/dev/code/my_app"].created_at, 42);
+            assert_eq!(named["/home/dev/code/my_app"].last_opened_at, 42);
+            // NULL last_used_at falls back to "now" (a positive epoch-millis).
+            assert!(named["/tmp/widget_lab"].created_at > 0);
+
+            // pick_history.chat_id was added, so picks insert/list with it.
+            assert!(has_column(&db.lock(), "pick_history", "chat_id").unwrap());
+            let id = db
+                .insert_pick(&PickHistory {
+                    id: 0,
+                    project_root: "/home/dev/code/my_app".into(),
+                    widget_class: "MyButton".into(),
+                    creation_file: None,
+                    creation_line: None,
+                    skill_id: "s".into(),
+                    agent_id: "claude".into(),
+                    terminal_id: "t".into(),
+                    chat_id: Some("c1".into()),
+                    picked_at: 5,
+                    widget_context_json: "{}".into(),
+                })
+                .unwrap();
+            assert!(id > 0);
+            let picks = db.list_picks("/home/dev/code/my_app", 10).unwrap();
+            assert_eq!(picks.len(), 1);
+            assert_eq!(picks[0].chat_id.as_deref(), Some("c1"));
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Drift v2 DB with a `project_settings` row carrying a `vm_service_url`.
+    /// The v2→v3 catch-up must flip that row's `connection_mode` to 'manual'.
+    #[test]
+    fn drift_v2_backfills_manual_connection_mode() {
+        let path = temp_db_path("drift-v2-manual");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            // v2-era project_settings: has the v2 columns but predates v3's
+            // connection_mode. One row has a URL, one does not.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE project_settings (
+                   project_root   TEXT NOT NULL PRIMARY KEY,
+                   vm_service_url TEXT,
+                   default_agent_id TEXT,
+                   last_chat_id   TEXT,
+                   pane_sizes     TEXT,
+                   last_used_at   INTEGER
+                 );
+                 INSERT INTO project_settings (project_root, vm_service_url)
+                   VALUES ('/with_url', 'http://127.0.0.1:8181/abc');
+                 INSERT INTO project_settings (project_root, vm_service_url)
+                   VALUES ('/no_url', NULL);
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+            assert!(!has_column(&conn, "project_settings", "connection_mode").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+
+            // Row with a URL got flipped to 'manual'…
+            let with_url = db.get_settings("/with_url").unwrap().unwrap();
+            assert_eq!(with_url.connection_mode, "manual");
+            // …the URL-less row keeps the 'auto' default.
+            let no_url = db.get_settings("/no_url").unwrap().unwrap();
+            assert_eq!(no_url.connection_mode, "auto");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A current Drift v10 DB that already has its `projects` rows and a
+    /// legitimately-'auto' connection_mode despite a set `vm_service_url`. The
+    /// data reconcile must be a no-op: no duplicate/extra projects, and the
+    /// user's 'auto' choice is preserved (not clobbered to 'manual').
+    #[test]
+    fn drift_v10_data_reconcile_is_noop() {
+        let path = temp_db_path("drift-v10-noop");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "{DRIFT_PRE_CONTEXT_PROJECT_SETTINGS}
+                 CREATE TABLE projects (
+                   project_root   TEXT NOT NULL PRIMARY KEY,
+                   display_name   TEXT NOT NULL,
+                   created_at     INTEGER NOT NULL,
+                   last_opened_at INTEGER NOT NULL,
+                   sort_order     INTEGER NOT NULL DEFAULT 0,
+                   archived_at    INTEGER
+                 );
+                 INSERT INTO project_settings
+                   (project_root, vm_service_url, connection_mode)
+                   VALUES ('/p', 'http://127.0.0.1:8181/abc', 'auto');
+                 INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Hand Named', 100, 200);
+                 PRAGMA user_version = 10;"
+            ))
+            .unwrap();
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+
+            // No duplicate/synthesized project; the existing row is untouched.
+            let projects = db.list_projects(false).unwrap();
+            assert_eq!(projects.len(), 1);
+            assert_eq!(projects[0].display_name, "Hand Named");
+            assert_eq!(projects[0].created_at, 100);
+
+            // The deliberate 'auto'-with-URL choice is preserved.
+            let s = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(s.connection_mode, "auto");
+        }
         let _ = std::fs::remove_file(&path);
     }
 }

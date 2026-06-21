@@ -128,6 +128,7 @@ async function webSmoke(): Promise<void> {
   const profile = runProfile("web");
   expect(String(profile.needsDevice), "false", "web is not a device target (needsDevice=false)");
   expect(profile.deviceConvention, "none", "web applies no device convention");
+  expect(profile.inspectorKind, "cdp", "web inspects over CDP (inspectorKind=cdp)");
 
   // Spin a trivial server and probe it the way the run flow would: wait for the
   // port, then assert HTTP 200 from the served URL. Torn down in `finally`.
@@ -166,28 +167,47 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<number> {
 function deviceContract(serial: string): void {
   console.log(`device contract: driving against ${serial}`);
 
-  // #34 Flutter → `flutter --color run -d '<serial>'`.
+  // #34 Flutter → `flutter --color run -d '<serial>'`, inspected over the VM
+  // service. Asserting inspectorKind guards the vm-service inspector wiring: a
+  // regression that drops it can't silently false-pass on the run command alone.
   assertDetected("flutter-app", "flutter");
   expect(
     liveCommand("flutter", serial),
     `flutter --color run -d '${serial}'`,
     "flutter run command appends -d <serial>",
   );
+  expect(
+    runProfile("flutter").inspectorKind,
+    "vmService",
+    "flutter inspects over the VM service (inspectorKind=vmService)",
+  );
 
-  // #35 React Native → ANDROID_SERIAL + --deviceId pin the chosen serial.
+  // #35 React Native → ANDROID_SERIAL + --deviceId pin the chosen serial;
+  // inspected via UIAutomator.
   assertDetected("rn-app", "react-native");
   expect(
     liveCommand("react-native", serial),
     `ANDROID_SERIAL='${serial}' npx react-native run-android --deviceId '${serial}'`,
     "react-native run command pins the chosen serial",
   );
+  expect(
+    runProfile("react-native").inspectorKind,
+    "uiAutomator",
+    "react-native inspects over UIAutomator (inspectorKind=uiAutomator)",
+  );
 
-  // #36 native-Android → ANDROID_SERIAL prefixes `./gradlew installDebug`.
+  // #36 native-Android → ANDROID_SERIAL prefixes `./gradlew installDebug`;
+  // inspected via UIAutomator (same lane as RN).
   assertDetected("native-android-app", "native-android");
   expect(
     liveCommand("native-android", serial),
     `ANDROID_SERIAL='${serial}' ./gradlew installDebug`,
     "native-android run command prefixes ANDROID_SERIAL",
+  );
+  expect(
+    runProfile("native-android").inspectorKind,
+    "uiAutomator",
+    "native-android inspects over UIAutomator (inspectorKind=uiAutomator)",
   );
 }
 

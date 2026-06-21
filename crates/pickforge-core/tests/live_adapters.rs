@@ -259,23 +259,60 @@ fn native_android_device_roundtrip() {
 
 // ── Tier 2: heavy real-launch lifecycle (gated on PICKFORGE_E2E_LAUNCH=1) ─────
 
-/// `adb -s <serial> shell <args…>` to completion, returning trimmed stdout. The
-/// serial is pinned so a connected physical device / other emulators are never
-/// touched. `None` on any failure.
-fn adb_shell(serial: &str, args: &[&str]) -> Option<String> {
-    let mut full = vec!["-s", serial, "shell"];
-    full.extend_from_slice(args);
-    let out = Command::new("adb")
-        .args(&full)
+/// Max wall-clock any single `adb` invocation in the heavy launch/stop path may
+/// take before it's treated as wedged and killed. Kept short: `pidof`,
+/// `dumpsys`, and `am force-stop` all return well under a second on a healthy
+/// device, so the only thing this bounds is a hung adb that would otherwise stall
+/// the `LaunchGuard` / `OnDeviceApp` Drop guards.
+const ADB_CALL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Spawn `adb args…`, capture stdout, and wait up to `timeout`. If the child
+/// overruns the deadline it is KILLED and reaped (so it can't linger), and this
+/// returns `None` instead of blocking. `None` is also returned on spawn failure
+/// or a non-zero exit — the callers all treat `None` as "couldn't determine /
+/// nothing", which is the safe reading for a teardown poll. Bounding this is what
+/// keeps a wedged adb from hanging BEFORE the Drop guards run and leaking the
+/// spawned build group / on-device app.
+fn adb_capture(args: &[&str], timeout: Duration) -> Option<String> {
+    let mut child = Command::new("adb")
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
+        .spawn()
         .ok()?;
-    if !out.status.success() {
-        return None;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = child.wait_with_output().ok()?;
+                if !status.success() {
+                    return None;
+                }
+                return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                // Wedged: kill the child and reap it so we neither hang here nor
+                // leak the adb process, then report "couldn't determine".
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(_) => return None,
+        }
     }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// `adb -s <serial> shell <args…>` to completion, returning trimmed stdout. The
+/// serial is pinned so a connected physical device / other emulators are never
+/// touched. Timeout-bounded via `adb_capture`, so a wedged adb can't stall the
+/// teardown/poll loop ahead of the Drop guards. `None` on any failure or timeout.
+fn adb_shell(serial: &str, args: &[&str]) -> Option<String> {
+    let mut full = vec!["-s", serial, "shell"];
+    full.extend_from_slice(args);
+    adb_capture(&full, ADB_CALL_TIMEOUT)
 }
 
 /// Whether `package` has a live process on the device (the issue's `pidof` check).

@@ -190,7 +190,15 @@ export function TerminalPane(props: {
           }
         })
         .catch((err) => {
-          if (!disposed) console.error("[pickforge] pty_spawn failed", err);
+          if (disposed) return;
+          // The spawn was rejected before any pty exists — e.g. the run cwd
+          // resolved outside the approved roots. Surface it honestly in the
+          // pane and drive the SAME exit path a real exit would, so the run
+          // console leaves "running" instead of hanging half-mounted.
+          console.error("[pickforge] pty_spawn failed", err);
+          const msg = typeof err === "string" ? err : (err as Error)?.message ?? String(err);
+          term.write(`\r\n\x1b[31mFailed to start: ${msg}\x1b[0m\r\n`);
+          props.onExit?.(null);
         });
 
       subs.push(

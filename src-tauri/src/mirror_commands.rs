@@ -94,6 +94,38 @@ async fn relay_video(
     }
 }
 
+/// Largest scrcpy control message we'll forward. The biggest legitimate message
+/// (inject-text / set-clipboard) carries a short string; a touch/scroll/key
+/// message is tens of bytes. A few KiB comfortably covers any single real
+/// message while refusing an unbounded write to the device's control socket.
+const MAX_CONTROL_BYTES: usize = 4 * 1024;
+
+/// The highest scrcpy control message type byte the v3.x server speaks. The wire
+/// type is the message's index in the server's control-message table; for the
+/// pinned server (3.3.3 → the JS lib's 3.0 table) that table holds 18 entries,
+/// so valid type bytes are `0..=17` (`InjectKeyCode`=0 … `ResetVideo`=17). The
+/// first byte of a control message is its type; anything past this range isn't a
+/// real message, so we reject it rather than write arbitrary leading bytes to
+/// the socket. A conservative sanity check, not a full protocol parse — bump it
+/// if `SERVER_VERSION` ever grows the table.
+const MAX_CONTROL_TYPE: u8 = 17;
+
+/// Reject a control payload that is empty, oversized, or not a recognised scrcpy
+/// control message before it ever reaches the socket. Pulled out so it can be
+/// unit-tested without a live device/session.
+fn validate_control_payload(bytes: &[u8]) -> Result<(), String> {
+    let Some(&type_byte) = bytes.first() else {
+        return Err("empty control payload".into());
+    };
+    if bytes.len() > MAX_CONTROL_BYTES {
+        return Err("control payload exceeds the maximum size".into());
+    }
+    if type_byte > MAX_CONTROL_TYPE {
+        return Err("unknown control message type".into());
+    }
+    Ok(())
+}
+
 /// Write raw scrcpy control bytes (assembled in the UI) to the control socket.
 #[tauri::command]
 pub async fn mirror_send_control(
@@ -101,6 +133,10 @@ pub async fn mirror_send_control(
     serial: String,
     bytes: Vec<u8>,
 ) -> Result<(), String> {
+    // Bound + sanity-check the payload BEFORE taking the control-socket lock, so
+    // an empty, oversized, or bogus message is rejected without touching the
+    // socket (and can't wedge or flood the device control channel).
+    validate_control_payload(&bytes)?;
     // Clone the per-session control handle and release the registry lock BEFORE
     // the (possibly blocking) socket write, so a stalled write can't wedge
     // mirror_start/mirror_stop/relay cleanup for every device.
@@ -119,4 +155,57 @@ pub async fn mirror_stop(manager: State<'_, MirrorManager>, serial: String) -> R
         stop_session(session).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod control_payload_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_an_empty_payload() {
+        assert!(
+            validate_control_payload(&[]).is_err(),
+            "an empty control payload must be rejected",
+        );
+    }
+
+    #[test]
+    fn rejects_an_oversized_payload() {
+        let big = vec![0u8; MAX_CONTROL_BYTES + 1];
+        assert!(
+            validate_control_payload(&big).is_err(),
+            "a payload past the max size must be rejected",
+        );
+    }
+
+    #[test]
+    fn allows_a_normal_small_payload() {
+        // A typical inject-touch message: type byte 2 (INJECT_TOUCH_EVENT)
+        // followed by its fixed fields. Tens of bytes, well under the cap.
+        let mut msg = vec![2u8];
+        msg.extend_from_slice(&[0u8; 31]);
+        assert!(
+            validate_control_payload(&msg).is_ok(),
+            "a normal small control message must be allowed",
+        );
+    }
+
+    #[test]
+    fn allows_a_payload_exactly_at_the_cap() {
+        let mut msg = vec![0u8; MAX_CONTROL_BYTES];
+        msg[0] = MAX_CONTROL_TYPE; // a recognised type byte
+        assert!(
+            validate_control_payload(&msg).is_ok(),
+            "a payload exactly at the cap must be allowed",
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_message_type() {
+        let msg = vec![MAX_CONTROL_TYPE + 1, 0, 0, 0];
+        assert!(
+            validate_control_payload(&msg).is_err(),
+            "a type byte past the known scrcpy range must be rejected",
+        );
+    }
 }

@@ -16,6 +16,7 @@
 //! "no exact source" result rather than an error path.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -42,6 +43,11 @@ pub enum CdpError {
     WebSocket(String),
     #[error("discovery error: {0}")]
     Discovery(String),
+    /// A target host/URL that isn't loopback, or a request path carrying CR/LF.
+    /// The CDP client only ever talks to a local dev server, so anything else is
+    /// refused before a socket is opened — closing SSRF and header-injection.
+    #[error("forbidden CDP target: {0}")]
+    Forbidden(String),
 }
 
 /// One discovered CDP target (a tab / page) from `/json`.
@@ -120,8 +126,10 @@ impl CdpClient {
     }
 
     /// Attach to a target by its `webSocketDebuggerUrl`, replacing any existing
-    /// attachment.
+    /// attachment. The URL's host must resolve to loopback — a compromised
+    /// renderer must not be able to point the CDP client at an arbitrary host.
     pub async fn attach(&self, ws_url: &str) -> Result<(), CdpError> {
+        guard_ws_url_loopback(ws_url).await?;
         let (ws, _) = tokio_tungstenite::connect_async(ws_url)
             .await
             .map_err(|e| CdpError::WebSocket(e.to_string()))?;
@@ -401,6 +409,69 @@ pub fn find_node_path<'a>(root: &'a DomNode, node_id: &str) -> Option<Vec<&'a Do
     }
 }
 
+// ---- Loopback / injection guards -------------------------------------------
+
+/// Reject a string that carries a CR or LF before it's formatted into an HTTP
+/// request line / header — the standard header-injection vector.
+fn reject_crlf(s: &str, what: &str) -> Result<(), CdpError> {
+    if s.contains('\r') || s.contains('\n') {
+        return Err(CdpError::Forbidden(format!("{what} contains CR/LF")));
+    }
+    Ok(())
+}
+
+/// Accept `host` only if it resolves *exclusively* to loopback addresses. A bare
+/// `127.0.0.1` / `::1` is loopback by inspection; anything else (including the
+/// `localhost` name) is resolved and every resulting address must be loopback —
+/// so a renderer can't smuggle `127.0.0.1.evil.com`, `0.0.0.0`, a link-local
+/// metadata IP (`169.254.169.254`), or a name whose DNS points off-box.
+async fn guard_loopback_host(host: &str) -> Result<(), CdpError> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return if ip.is_loopback() {
+            Ok(())
+        } else {
+            Err(CdpError::Forbidden(format!("non-loopback host: {host}")))
+        };
+    }
+
+    // Hostname: resolve and require ALL addresses to be loopback. Port 0 is fine
+    // here — `lookup_host` just needs a `host:port` to resolve.
+    let mut addrs = tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|_| CdpError::Forbidden(format!("host does not resolve: {host}")))?
+        .peekable();
+    if addrs.peek().is_none() {
+        return Err(CdpError::Forbidden(format!("host does not resolve: {host}")));
+    }
+    for addr in addrs {
+        if !addr.ip().is_loopback() {
+            return Err(CdpError::Forbidden(format!(
+                "host {host} resolves to non-loopback {}",
+                addr.ip()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate a `webSocketDebuggerUrl` before attaching: it must be a `ws`/`wss`
+/// URL whose host resolves to loopback. Closes the SSRF path on attach.
+async fn guard_ws_url_loopback(ws_url: &str) -> Result<(), CdpError> {
+    let url = url::Url::parse(ws_url)
+        .map_err(|e| CdpError::Forbidden(format!("invalid ws url: {e}")))?;
+    match url.scheme() {
+        "ws" | "wss" => {}
+        other => {
+            return Err(CdpError::Forbidden(format!("unsupported ws scheme: {other}")));
+        }
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| CdpError::Forbidden("ws url has no host".into()))?;
+    // `Url::host_str` already strips a `[..]` IPv6 wrapper, so this parses clean.
+    guard_loopback_host(host).await
+}
+
 // ---- HTTP (just enough for /json discovery) --------------------------------
 
 /// A bare HTTP/1.1 GET to `http://host:port/path`, returning the body. The CDP
@@ -409,6 +480,14 @@ pub fn find_node_path<'a>(root: &'a DomNode, node_id: &str) -> Option<Vec<&'a Do
 /// pulls in `tokio::net`. Caps the body so a hostile endpoint can't OOM us.
 async fn http_get_json(host: &str, port: u16, path: &str) -> Result<String, CdpError> {
     const MAX_BODY: usize = 4 * 1024 * 1024;
+    // The renderer supplies host + path; both land in the request before a socket
+    // is opened. CR/LF in either would inject extra HTTP headers, and a non-
+    // loopback host would let a compromised renderer drive arbitrary outbound
+    // connections (SSRF). Refuse both up front.
+    reject_crlf(path, "request path")?;
+    reject_crlf(host, "host")?;
+    guard_loopback_host(host).await?;
+
     let mut stream = tokio::time::timeout(
         Duration::from_secs(5),
         TcpStream::connect((host, port)),
@@ -592,5 +671,92 @@ mod tests {
             client.call("DOM.getDocument", json!({})).await,
             Err(CdpError::NotAttached)
         ));
+    }
+
+    // ---- loopback allowlist + header-injection guards ----
+
+    // The CDP client only ever talks to a local dev server. A compromised
+    // renderer that hands us a non-loopback host must be refused before any
+    // socket is opened — for discovery / source-map fetch AND for ws attach.
+    #[tokio::test]
+    async fn non_loopback_host_is_forbidden_for_discovery() {
+        for host in ["169.254.169.254", "evil.com", "0.0.0.0", "8.8.8.8"] {
+            let err = CdpClient::discover(host, 9222).await.unwrap_err();
+            assert!(
+                matches!(err, CdpError::Forbidden(_)),
+                "discover({host}) should be Forbidden, got {err:?}"
+            );
+            // The source-map fetch shares the same HTTP path — also refused.
+            let err = CdpClient::fetch_text(host, 9222, "/app.js.map").await.unwrap_err();
+            assert!(
+                matches!(err, CdpError::Forbidden(_)),
+                "fetch_text({host}) should be Forbidden, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn loopback_host_passes_the_guard() {
+        // No server is listening, so these fail to connect — but with a
+        // *connect/timeout* error, proving they cleared the loopback guard
+        // (a Forbidden would mean the allowlist wrongly rejected loopback).
+        for host in ["127.0.0.1", "::1", "localhost"] {
+            let err = CdpClient::discover(host, 1).await.unwrap_err();
+            assert!(
+                !matches!(err, CdpError::Forbidden(_)),
+                "loopback host {host} must pass the guard, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_non_loopback_ws_url() {
+        let client = CdpClient::new();
+        for ws in [
+            "ws://evil.com:9222/devtools/page/A",
+            "ws://169.254.169.254:9222/devtools/page/A",
+            "ws://8.8.8.8/devtools/page/A",
+        ] {
+            let err = client.attach(ws).await.unwrap_err();
+            assert!(
+                matches!(err, CdpError::Forbidden(_)),
+                "attach({ws}) should be Forbidden, got {err:?}"
+            );
+        }
+        assert!(!client.is_attached().await);
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_non_ws_scheme() {
+        let client = CdpClient::new();
+        let err = client
+            .attach("http://127.0.0.1:9222/devtools/page/A")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CdpError::Forbidden(_)));
+    }
+
+    // A path / Host carrying CR-LF would inject extra HTTP headers; refuse it
+    // before it reaches the request line.
+    #[tokio::test]
+    async fn crlf_in_path_is_forbidden() {
+        let err = CdpClient::fetch_text("127.0.0.1", 9222, "/a\r\nX-Evil: 1")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CdpError::Forbidden(_)), "got {err:?}");
+
+        // Bare reject helper: CR or LF anywhere is refused, clean paths pass.
+        assert!(reject_crlf("/json", "path").is_ok());
+        assert!(reject_crlf("/a\rb", "path").is_err());
+        assert!(reject_crlf("/a\nb", "path").is_err());
+    }
+
+    #[tokio::test]
+    async fn guard_loopback_host_classifies_addresses() {
+        assert!(guard_loopback_host("127.0.0.1").await.is_ok());
+        assert!(guard_loopback_host("127.0.0.5").await.is_ok());
+        assert!(guard_loopback_host("::1").await.is_ok());
+        assert!(guard_loopback_host("169.254.169.254").await.is_err());
+        assert!(guard_loopback_host("10.0.0.1").await.is_err());
     }
 }

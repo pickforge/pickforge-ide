@@ -134,13 +134,15 @@ fn decode_mappings(mappings: &str) -> Vec<Vec<Segment>> {
                 // source map degrades to "no mapping here", not a crash.
                 _ => continue,
             };
-            // Every delta is checked: a hostile `.map` can encode arbitrarily
-            // large VLQ values, so an add that would overflow drops the segment.
+            // Decode every field into LOCALS first; a hostile `.map` can encode
+            // arbitrarily large VLQ values, so any add that overflows drops the
+            // whole segment. Nothing touches the running deltas until the entire
+            // segment validates — a rejected segment must not shift the positions
+            // of the valid mappings that follow it on this line.
             let Some(next_gen) = generated_column.checked_add(fields[0]) else {
                 continue;
             };
-            generated_column = next_gen;
-            if fields.len() >= 4 {
+            let segment = if fields.len() >= 4 {
                 let (Some(next_src), Some(next_line), Some(next_col)) = (
                     source_index.checked_add(fields[1]),
                     original_line.checked_add(fields[2]),
@@ -148,36 +150,40 @@ fn decode_mappings(mappings: &str) -> Vec<Vec<Segment>> {
                 ) else {
                     continue;
                 };
-                source_index = next_src;
-                original_line = next_line;
-                original_column = next_col;
-                let segment_name = if fields.len() >= 5 {
+                let next_name = if fields.len() >= 5 {
                     match name_index.checked_add(fields[4]) {
-                        Some(ni) => {
-                            name_index = ni;
-                            Some(name_index)
-                        }
+                        Some(ni) => Some(ni),
                         None => continue,
                     }
                 } else {
                     None
                 };
-                segments.push(Segment {
+                // All checked fields succeeded — commit the running state now.
+                generated_column = next_gen;
+                source_index = next_src;
+                original_line = next_line;
+                original_column = next_col;
+                if let Some(ni) = next_name {
+                    name_index = ni;
+                }
+                Segment {
                     generated_column,
                     source_index: Some(source_index),
                     original_line: Some(original_line),
                     original_column: Some(original_column),
-                    name_index: segment_name,
-                });
+                    name_index: next_name,
+                }
             } else {
-                segments.push(Segment {
+                generated_column = next_gen;
+                Segment {
                     generated_column,
                     source_index: None,
                     original_line: None,
                     original_column: None,
                     name_index: None,
-                });
-            }
+                }
+            };
+            segments.push(segment);
         }
         lines.push(segments);
     }
@@ -185,26 +191,40 @@ fn decode_mappings(mappings: &str) -> Vec<Vec<Segment>> {
 }
 
 /// Decode one comma-segment of VLQ fields. `None` on an invalid Base64 char, a
-/// continuation bit set on the final digit (a truncated VLQ), or a value that
-/// overflows i64 — all checked so malformed input degrades to a dropped segment
-/// instead of an arithmetic panic.
+/// continuation bit set on the final digit (a truncated VLQ), or a field whose
+/// magnitude won't fit in `i64` — all checked so malformed input degrades to a
+/// dropped segment instead of an arithmetic panic or a silently-wrong delta.
+///
+/// The accumulator is UNSIGNED and wide (`u128`): shifting a 5-bit chunk into a
+/// signed `i64` can set the sign bit, and `i64::checked_shl` only guards
+/// `shift >= 64`, not overflow into bit 63 — so an oversized field could decode
+/// to a bogus *negative* delta. Accumulating unsigned and bounding the
+/// zig-zagged magnitude to `i64::MAX` before applying the sign rejects that
+/// (and any wider-than-i64 field) instead of wrapping it.
 fn decode_vlq_segment(segment: &str) -> Option<Vec<i64>> {
     let mut values = Vec::new();
-    let mut result: i64 = 0;
+    let mut result: u128 = 0;
     let mut shift: u32 = 0;
     for byte in segment.bytes() {
         let digit = base64_index(byte)?;
         let continuation = (digit & 32) != 0;
-        // A well-formed VLQ field is at most 32 bits, so a shift past the i64
-        // width can only come from a malformed/oversized field — reject it
-        // instead of letting the `<<` overflow-panic in debug or wrap silently.
-        let chunk = (digit & 31).checked_shl(shift)?;
+        // A chunk shifted past the u128 width, or one that overflows the running
+        // accumulator, can only come from a malformed/oversized field — reject
+        // instead of letting it wrap (a wrong delta) or panic.
+        let chunk = ((digit & 31) as u128).checked_shl(shift)?;
         result = result.checked_add(chunk)?;
         if continuation {
             shift = shift.checked_add(5)?;
         } else {
+            // Zig-zag: bit 0 is the sign, the rest the magnitude. The magnitude
+            // must fit in `i64` so the negation can't overflow — a hostile field
+            // wider than i64 is rejected here, not wrapped to a bogus negative.
             let negative = (result & 1) == 1;
             let magnitude = result >> 1;
+            if magnitude > i64::MAX as u128 {
+                return None;
+            }
+            let magnitude = magnitude as i64;
             values.push(if negative { -magnitude } else { magnitude });
             result = 0;
             shift = 0;
@@ -230,6 +250,36 @@ fn base64_index(c: u8) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Base64-VLQ-encode a single signed field (zig-zag, little-endian 5-bit
+    /// groups) — the inverse of `decode_vlq_segment`, for building fixtures that
+    /// need exact (and deliberately oversized) deltas.
+    fn encode_vlq(value: i64) -> String {
+        const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut v: u64 = if value < 0 {
+            ((value.unsigned_abs()) << 1) | 1
+        } else {
+            (value as u64) << 1
+        };
+        let mut out = String::new();
+        loop {
+            let mut digit = (v & 31) as usize;
+            v >>= 5;
+            if v != 0 {
+                digit |= 32; // continuation bit
+            }
+            out.push(B64[digit] as char);
+            if v == 0 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// A comma-joined segment from its raw signed field deltas.
+    fn seg(fields: &[i64]) -> String {
+        fields.iter().map(|&f| encode_vlq(f)).collect::<String>()
+    }
 
     #[test]
     fn parses_and_resolves_positions() {
@@ -316,5 +366,71 @@ mod tests {
         // A valid single field ('B' = +0 after zig-zag of value 1 → actually
         // decodes; assert it returns Some so the guard didn't over-reject).
         assert!(super::decode_vlq_segment("A").is_some());
+    }
+
+    // Regression for the sign-bit overflow: a VLQ field can be ≤ 64 bits wide
+    // (so the old `shift >= 64`-only guard accepted it) yet carry a magnitude
+    // past `i64::MAX`. The old signed accumulator wrapped it into the sign bit
+    // and emitted a bogus *negative* delta; the unsigned-accumulate + magnitude
+    // bound must reject it instead.
+    #[test]
+    fn high_bit_vlq_field_is_rejected_not_negative() {
+        // 12 continuation zeros ('g' = value 0, cont. bit set) push shift to 60,
+        // then a final 'Q' (value 16, no continuation) places a set bit at
+        // position 64 → magnitude = 1<<63 > i64::MAX. Must decode to None.
+        let field = format!("{}Q", "g".repeat(12));
+        assert!(
+            super::decode_vlq_segment(&field).is_none(),
+            "a >i64 VLQ field must be rejected, not wrapped negative"
+        );
+
+        // And through the public API: the bad segment is dropped, never paints a
+        // negative generated column / source delta over the running state.
+        let json = format!(
+            r#"{{"sources":["a.js"],"names":[],"mappings":"{field}"}}"#
+        );
+        let map = SourceMap::parse(&json).expect("parse must not panic");
+        assert!(map.original_position_for(0, 0).is_none());
+
+        // A field that sets exactly bit 63 ('I' = value 8 at shift 60 → 1<<63)
+        // is in range after the zig-zag (magnitude 1<<62) and must decode to a
+        // *positive* delta — the old signed shift produced i64::MIN here.
+        let signbit = format!("{}I", "g".repeat(12));
+        assert_eq!(super::decode_vlq_segment(&signbit), Some(vec![1i64 << 62]));
+    }
+
+    // A segment whose VLQ fields all decode but whose running-delta add overflows
+    // must be rejected ATOMICALLY: the running state (generated_column, source,
+    // line, column, name) may not advance from it, or every later valid mapping
+    // on the line is shifted. Here the middle segment carries a valid generated
+    // delta but an `original_column` delta that overflows i64 — under the old
+    // "commit generated_column first" code it still bumped the column counter and
+    // misplaced the segment that follows.
+    #[test]
+    fn rejected_segment_does_not_shift_following_mappings() {
+        // segA: gen=5, src=0, line=0, col=10 → valid mapping at gen col 5.
+        let a = seg(&[5, 0, 0, 10]);
+        // segBad: gen delta=3 (valid on its own), then col delta = i64::MAX which
+        // overflows the running original_column (already 10). Whole segment must
+        // be dropped without advancing generated_column.
+        let bad = seg(&[3, 0, 0, i64::MAX]);
+        // segC: gen delta=2 → must land at col 5+2 = 7 (NOT 5+3+2 = 10).
+        let c = seg(&[2, 0, 0, 4]);
+        let mappings = format!("{a},{bad},{c}");
+        let json = format!(
+            r#"{{"sources":["a.js","b.js"],"names":[],"mappings":"{mappings}"}}"#
+        );
+        let map = SourceMap::parse(&json).expect("parse must not panic");
+
+        // The first valid mapping is intact.
+        let at5 = map.original_position_for(0, 5).unwrap();
+        assert_eq!((at5.line, at5.column), (0, 10));
+
+        // The mapping after the rejected segment lands at generated col 7 — the
+        // rejected segment did NOT bump the running generated column to 8.
+        let at7 = map.original_position_for(0, 7).unwrap();
+        assert_eq!(at7.column, 14, "col delta from a clean base (10+4), not 10+max");
+        // col 6 still snaps to the col-5 mapping; the bad segment left no row at 8.
+        assert_eq!(map.original_position_for(0, 6).unwrap().column, 10);
     }
 }

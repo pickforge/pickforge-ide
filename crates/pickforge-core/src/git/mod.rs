@@ -96,6 +96,62 @@ pub struct GitStatus {
     pub files: Vec<GitFileStatus>,
 }
 
+/// One commit for the graph view. Lane/topology layout is computed in the UI
+/// from `parents`; here we just hand back the commit metadata + decorations.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphCommit {
+    pub hash: String,
+    pub short: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    /// Relative date (e.g. "2 hours ago").
+    pub date: String,
+    /// Decoration names (e.g. "HEAD -> main", "origin/main", "tag: v1").
+    pub refs: Vec<String>,
+    pub subject: String,
+}
+
+/// Recent commits across all refs (newest first, date-order) for the graph view.
+pub fn log_graph(root: &str, limit: u32) -> Vec<GraphCommit> {
+    let top = match toplevel(root) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    // Unit-separator (\x1f) between fields, record-separator (\x1e) between commits
+    // — neither appears in commit text, so parsing is unambiguous.
+    let pretty = "--pretty=format:%H\x1f%h\x1f%P\x1f%an\x1f%ar\x1f%D\x1f%s\x1e";
+    let n = limit.to_string();
+    let raw = git_ok(&top, &["log", "--all", "--date-order", pretty, "-n", &n]).unwrap_or_default();
+    raw.split('\x1e')
+        .filter_map(|rec| {
+            let rec = rec.trim_start_matches('\n');
+            if rec.trim().is_empty() {
+                return None;
+            }
+            let f: Vec<&str> = rec.split('\x1f').collect();
+            if f.len() < 7 {
+                return None;
+            }
+            let parents = f[2].split_whitespace().map(String::from).collect();
+            let refs = f[5]
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            Some(GraphCommit {
+                hash: f[0].to_string(),
+                short: f[1].to_string(),
+                parents,
+                author: f[3].to_string(),
+                date: f[4].to_string(),
+                refs,
+                subject: f[6].to_string(),
+            })
+        })
+        .collect()
+}
+
 /// stdout of `git <args>` in `root`, only on success (trimmed by caller).
 fn git_ok(root: &str, args: &[&str]) -> Option<String> {
     let out = run("git", args, Some(root), None).ok()?;

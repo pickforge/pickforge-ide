@@ -2,7 +2,8 @@
 // (play) action itself is the transport button in the console toolbar next to
 // reload/restart/stop (see DebugConsole); these are just the pickers. Neutral
 // chrome — the single ember stays on the focused terminal.
-import { createEffect, For, Show } from "solid-js";
+import { createEffect, Show } from "solid-js";
+import { Dropdown } from "../../components/Dropdown";
 import { discoverRunTargets } from "../../lib/runTargets";
 import { workspace } from "../../stores/workspace";
 import { useDeviceList } from "../../stores/deviceList";
@@ -37,6 +38,8 @@ export function RunLauncher() {
     const e = resolveSelectedDevice();
     return e ? deviceKey(e) : "";
   };
+  const deviceSuffix = (state: string) =>
+    state === "stopped" ? " — start" : state === "offline" ? " (offline)" : "";
 
   return (
     <div class="pf-run-launcher">
@@ -44,40 +47,27 @@ export function RunLauncher() {
         when={runTargets().length > 0}
         fallback={<span class="pf-run-empty">No run target</span>}
       >
-        <select
-          class="pf-select pf-run-select"
-          value={activeTargetId()}
-          onChange={(e) => setActiveTargetId(e.currentTarget.value)}
+        <Dropdown
+          class="pf-run-dropdown"
           title="Run target"
-        >
-          <For each={runTargets()}>
-            {(t) => (
-              <option value={t.id}>
-                {t.label}
-                {t.source === "vscode" ? " · launch.json" : ""}
-              </option>
-            )}
-          </For>
-        </select>
-
+          value={activeTargetId()}
+          onChange={setActiveTargetId}
+          options={runTargets().map((t) => ({
+            value: t.id,
+            label: t.label + (t.source === "vscode" ? " · launch.json" : ""),
+          }))}
+        />
         <Show when={showDevices()}>
-          <select
-            class="pf-select pf-run-select"
-            value={selectedKey()}
-            onChange={(e) =>
-              workspace.activeRoot && setRunDevice(workspace.activeRoot, e.currentTarget.value)
-            }
+          <Dropdown
+            class="pf-run-dropdown"
             title="Device"
-          >
-            <For each={devices()}>
-              {(d) => (
-                <option value={deviceKey(d)}>
-                  {deviceLabel(d)}
-                  {d.state === "stopped" ? " — start" : d.state === "offline" ? " (offline)" : ""}
-                </option>
-              )}
-            </For>
-          </select>
+            value={selectedKey()}
+            onChange={(v) => workspace.activeRoot && setRunDevice(workspace.activeRoot, v)}
+            options={devices().map((d) => ({
+              value: deviceKey(d),
+              label: deviceLabel(d) + deviceSuffix(d.state),
+            }))}
+          />
         </Show>
       </Show>
     </div>

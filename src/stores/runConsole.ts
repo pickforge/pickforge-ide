@@ -6,6 +6,8 @@
 import { createSignal } from "solid-js";
 import type { TerminalHandle } from "../components/Terminal";
 import { shquote, type RunTarget } from "../lib/runTargets";
+import { watchDartChanges, type WatchHandle } from "../lib/fsWatch";
+import { autoReloadEnabled } from "./autoReload";
 
 export type RunStatus = "idle" | "running" | "stopped";
 
@@ -50,6 +52,40 @@ function send(text: string) {
 
 /** Read-only signals for views. */
 export const runConsole = { open, height, hasRun, status, target };
+
+// ---- auto hot-reload: watch the run dir for .dart writes → send reload ----
+let watch: WatchHandle | null = null;
+let watchEpoch = 0; // bumped on stop / each start, to discard stale async starts
+let runBase: string | null = null; // the dir of the ACTIVE run (per run, not the first)
+
+function stopWatch() {
+  watch?.stop();
+  watch = null;
+  watchEpoch++; // invalidate any in-flight start so it can't latch on later
+}
+
+/** Re-evaluate the auto-reload watch against current state. Called on run
+ *  start/stop and when the toggle flips, so it's idempotent. */
+export function syncAutoReloadWatch() {
+  const canReload = !!target()?.capabilities.includes("hotReload");
+  const want = status() === "running" && autoReloadEnabled() && canReload && !!runBase;
+  if (!want) {
+    stopWatch();
+    return;
+  }
+  if (watch) return; // already watching the active run
+  const epoch = ++watchEpoch;
+  void watchDartChanges(runBase!, () => {
+    if (status() === "running") reloadRun();
+  })
+    .then((h) => {
+      // Discard if superseded (a newer start/stop bumped the epoch) or no
+      // longer wanted — so two racing starts never leak one OS watcher.
+      if (epoch === watchEpoch && !watch && status() === "running" && autoReloadEnabled()) watch = h;
+      else h.stop();
+    })
+    .catch(() => {});
+}
 
 /** The DebugConsole's terminal registers its handle here once spawned. */
 export function attachConsole(h: TerminalHandle) {
@@ -97,6 +133,8 @@ export function startRun(t: RunTarget, projectRoot: string | null) {
   // where a previous run left the console shell.
   const cmd = base ? `cd ${shquote(base)} && ${t.command}` : t.command;
   send(cmd + "\r");
+  runBase = base; // watch THIS run's dir, not just the first console's cwd
+  syncAutoReloadWatch();
 }
 
 /** The console shell exited (e.g. user typed `exit`): drop the dead handle and
@@ -105,6 +143,7 @@ export function consoleExited() {
   detachConsole();
   setStatus("stopped");
   setHasRun(false);
+  stopWatch();
 }
 
 /** Hot reload / restart are keystrokes the running tool reads from stdin. */
@@ -118,6 +157,7 @@ export function stopRun() {
   // Flutter quits on "q"; everything else gets Ctrl-C.
   send(target()?.capabilities.includes("hotReload") ? "q" : "\x03");
   setStatus("stopped");
+  stopWatch();
 }
 
 /** cwd the console terminal should spawn in (set on first run). */

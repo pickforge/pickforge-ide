@@ -1132,12 +1132,17 @@ body.pf-resizing .pf-dock-resizer-grip {
   min-width: 0;
   flex: 0 1 auto;
 }
-.pf-run-select {
-  height: 22px;
-  max-width: 220px;
+/* Bracket dropdowns sized for the horizontal run header (not full-width). */
+.pf-run-dropdown {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.pf-run-dropdown .pf-dropdown-trigger {
+  min-width: 130px;
+  max-width: 240px;
+  padding: 3px var(--pf-space-sm);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
-  border-radius: var(--pf-radius-sm);
 }
 .pf-run-empty,
 .pf-run-booting {
@@ -1260,10 +1265,10 @@ body.pf-resizing .pf-dock-resizer-grip {
 /* Bespoke RUN DEVICE selector — the Inspector's bracket-tag idiom (a leading
    "[" mark + an inline state pill), not a native <select>. Neutral chrome: the
    section's single ember stays on the VM "Connect" button. */
-.pf-dev-select {
+.pf-dropdown {
   position: relative;
 }
-.pf-dev-trigger {
+.pf-dropdown-trigger {
   display: flex;
   align-items: center;
   gap: var(--pf-space-sm);
@@ -1279,17 +1284,17 @@ body.pf-resizing .pf-dock-resizer-grip {
     background var(--pf-dur-fast) var(--pf-ease-forge),
     color var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-dev-trigger:hover:not(:disabled),
-.pf-dev-select--open .pf-dev-trigger {
+.pf-dropdown-trigger:hover:not(:disabled),
+.pf-dropdown--open .pf-dropdown-trigger {
   border-color: var(--pf-hairline-strong);
   color: var(--pf-text-hi);
 }
-.pf-dev-trigger:disabled {
+.pf-dropdown-trigger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 /* The "[" bracket mark — the inspector tag family's signature glyph. */
-.pf-dev-bracket {
+.pf-dropdown-bracket {
   width: 5px;
   height: 13px;
   flex: none;
@@ -1298,11 +1303,11 @@ body.pf-resizing .pf-dock-resizer-grip {
   border-radius: 2px 0 0 2px;
   transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-dev-trigger:hover:not(:disabled) .pf-dev-bracket,
-.pf-dev-select--open .pf-dev-bracket {
+.pf-dropdown-trigger:hover:not(:disabled) .pf-dropdown-bracket,
+.pf-dropdown--open .pf-dropdown-bracket {
   border-color: var(--pf-text-hi);
 }
-.pf-dev-trigger-label {
+.pf-dropdown-trigger-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1310,16 +1315,16 @@ body.pf-resizing .pf-dock-resizer-grip {
   white-space: nowrap;
   font-size: var(--pf-size-body-sm);
 }
-.pf-dev-chevron {
+.pf-dropdown-chevron {
   flex: none;
   color: var(--pf-text-low);
   transition: transform var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-dev-select--open .pf-dev-chevron {
+.pf-dropdown--open .pf-dropdown-chevron {
   transform: rotate(180deg);
 }
 /* Glassy popover — mirrors the pane split-menu surface. */
-.pf-dev-menu {
+.pf-dropdown-menu {
   position: absolute;
   top: calc(100% + var(--pf-space-xs));
   left: 0;
@@ -1328,6 +1333,8 @@ body.pf-resizing .pf-dock-resizer-grip {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: 60vh;
+  overflow-y: auto;
   padding: var(--pf-space-xs);
   border-radius: var(--pf-radius-md);
   border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
@@ -1337,7 +1344,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   box-shadow: var(--pf-shadow-overlay);
   animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
 }
-.pf-dev-option {
+.pf-dropdown-option {
   display: flex;
   align-items: center;
   gap: var(--pf-space-sm);
@@ -1352,14 +1359,14 @@ body.pf-resizing .pf-dock-resizer-grip {
   transition: background var(--pf-dur-fast) var(--pf-ease-forge),
     color var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-dev-option:hover {
+.pf-dropdown-option:hover {
   background: var(--pf-item-fill);
   color: var(--pf-text-hi);
 }
-.pf-dev-option--on {
+.pf-dropdown-option--on {
   color: var(--pf-text-hi);
 }
-.pf-dev-check {
+.pf-dropdown-check {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1367,7 +1374,7 @@ body.pf-resizing .pf-dock-resizer-grip {
   flex: none;
   color: var(--pf-text-hi);
 }
-.pf-dev-option-label {
+.pf-dropdown-option-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1383,6 +1390,9 @@ body.pf-resizing .pf-dock-resizer-grip {
   padding: var(--pf-space-md);
   overflow-y: auto;
   min-height: 0;
+  /* Fill the slot so a short body doesn't get a scrollbar just because an
+     absolutely-positioned dropdown menu overflows its (short) content height. */
+  flex: 1 1 0;
 }
 .pf-cap-badges {
   display: flex;
@@ -1499,6 +1509,30 @@ body.pf-resizing .pf-dc-resizer-grip {
 }
 .pf-dc-spacer {
   flex: 1;
+}
+/* Auto hot-reload toggle (ember when on — the active run-loop accent). */
+.pf-dc-auto {
+  flex: none;
+  height: 26px;
+  padding: 0 var(--pf-space-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-dc-auto:hover {
+  color: var(--pf-text-hi);
+}
+.pf-dc-auto--on {
+  color: var(--pf-ember);
+  border-color: var(--pf-ember-deep);
 }
 .pf-dc-btn {
   display: inline-flex;
@@ -1884,4 +1918,121 @@ body.pf-resizing .pf-dc-resizer-grip {
 }
 .pf-wd-loc:hover {
   color: var(--pf-text-hi);
+}
+
+/* ---- source control: view toggle + commit graph ---- */
+.pf-sc-viewtoggle {
+  display: inline-flex;
+  gap: 0;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  overflow: hidden;
+}
+.pf-sc-viewtoggle button {
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  padding: 2px var(--pf-space-sm);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-sc-viewtoggle button:hover {
+  color: var(--pf-text-hi);
+}
+.pf-sc-viewtoggle .pf-sc-view--on {
+  background: var(--pf-item-fill);
+  color: var(--pf-text-hi);
+}
+
+.pf-graph {
+  display: flex;
+  flex-direction: column;
+  /* Fill the pane and scroll inside it (like the changes list) so older commits
+     stay reachable instead of being clipped by the dock. */
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--pf-space-md);
+}
+.pf-sc-graphrepo {
+  flex: none;
+  padding: 0 var(--pf-space-sm) var(--pf-space-xs);
+}
+.pf-graph-row {
+  cursor: pointer;
+}
+.pf-graph-row:hover {
+  background: var(--pf-item-fill);
+}
+.pf-graph-row--sel {
+  background: var(--pf-item-fill);
+}
+.pf-graph-track {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-graph-track svg {
+  flex: none;
+}
+.pf-graph-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  min-width: 0;
+  flex: 1;
+  padding-right: var(--pf-space-sm);
+}
+.pf-graph-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-med);
+}
+.pf-graph-row--sel .pf-graph-subject {
+  color: var(--pf-text-hi);
+}
+.pf-graph-ref {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  padding: 0 var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  color: var(--pf-text-med);
+  white-space: nowrap;
+}
+.pf-graph-ref[data-kind="head"] {
+  border-color: var(--pf-ember-deep);
+  color: var(--pf-ember);
+}
+.pf-graph-ref[data-kind="remote"] {
+  color: var(--pf-text-low);
+}
+.pf-graph-ref[data-kind="tag"] {
+  border-color: var(--pf-info);
+  color: var(--pf-info);
+}
+.pf-graph-detail {
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm) calc(var(--pf-space-md) + var(--pf-space-sm));
+}
+.pf-graph-detail-row {
+  display: flex;
+  gap: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-graph-hash {
+  color: var(--pf-text-med);
+}
+.pf-graph-author {
+  color: var(--pf-text-med);
 }

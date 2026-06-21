@@ -24,7 +24,9 @@ export interface RunTarget {
 function defaultCommand(t: TargetDetection): string | null {
   switch (t.targetId) {
     case "flutter":
-      return "flutter run";
+      // --color (global flag, before the subcommand) forces ANSI output so the
+      // view-only Debug Console shows Flutter's colored logs/errors.
+      return "flutter --color run";
     case "react-native":
       return "npx react-native run-android";
     case "native-android":

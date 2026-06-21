@@ -26,3 +26,17 @@ export const gitDiff = (projectRoot: string, path: string, staged: boolean) =>
  *  paths; `[root]` when the root itself is a repo. */
 export const gitDiscoverRepos = (projectRoot: string) =>
   invoke<string[]>("git_discover_repos", { projectRoot });
+
+export interface GraphCommit {
+  hash: string;
+  short: string;
+  parents: string[];
+  author: string;
+  date: string;
+  refs: string[];
+  subject: string;
+}
+
+/** Recent commits across all refs (newest first) for the graph view. */
+export const gitLogGraph = (projectRoot: string, limit = 200) =>
+  invoke<GraphCommit[]>("git_log_graph", { projectRoot, limit });

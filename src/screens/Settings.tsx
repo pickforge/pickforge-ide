@@ -12,6 +12,7 @@ import {
   updateQuickLaunchItem,
 } from "../stores/quickLaunch";
 import { HairlinePanel, MonoEyebrow } from "../components/ui";
+import { Dropdown } from "../components/Dropdown";
 import { IconClose, IconPlus } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
@@ -113,15 +114,12 @@ export function SettingsScreen() {
                   when={agent.models.length > 0}
                   fallback={<span class="pf-settings-muted">CLI default</span>}
                 >
-                  <select
-                    class="pf-select"
+                  <Dropdown
+                    class="pf-settings-dropdown"
                     value={models()[agent.id] ?? ""}
-                    onChange={(e) => changeModel(agent.id, e.currentTarget.value)}
-                  >
-                    <For each={agent.models}>
-                      {(m) => <option value={m.id}>{m.label}</option>}
-                    </For>
-                  </select>
+                    onChange={(v) => changeModel(agent.id, v)}
+                    options={agent.models.map((m) => ({ value: m.id, label: m.label }))}
+                  />
                 </Show>
               </div>
             )}
@@ -285,15 +283,16 @@ export function SettingsScreen() {
         <Section title="File opening">
           <div class="pf-settings-row">
             <span class="pf-settings-label">Open files with</span>
-            <select
-              class="pf-select"
+            <Dropdown
+              class="pf-settings-dropdown"
               value={fileOpenSettings().mode}
-              onChange={(e) => setFileOpenMode(e.currentTarget.value as FileOpenMode)}
-            >
-              <option value="nvim-pane">Neovim (new pane)</option>
-              <option value="system">System default editor</option>
-              <option value="custom">Custom command…</option>
-            </select>
+              onChange={(v) => setFileOpenMode(v as FileOpenMode)}
+              options={[
+                { value: "nvim-pane", label: "Neovim (new pane)" },
+                { value: "system", label: "System default editor" },
+                { value: "custom", label: "Custom command…" },
+              ]}
+            />
           </div>
           <Show when={fileOpenSettings().mode === "custom"}>
             <div class="pf-settings-row">

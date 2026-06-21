@@ -4,6 +4,8 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { IconClose, IconRefresh } from "../../components/icons";
 import { gitDiff, gitDiscoverRepos, gitStatus, type GitFileStatus, type GitStatus } from "../../lib/git";
+import { GitGraph } from "./GitGraph";
+import { Dropdown } from "../../components/Dropdown";
 import { workspace } from "../../stores/workspace";
 
 function letter(f: GitFileStatus): string {
@@ -37,7 +39,16 @@ interface RepoStatus {
 export function SourceControl() {
   const [repos, setRepos] = createSignal<RepoStatus[]>([]);
   const [loading, setLoading] = createSignal(false);
+  const [view, setView] = createSignal<"changes" | "graph">("changes");
+  const [graphVersion, setGraphVersion] = createSignal(0);
+  const [graphSel, setGraphSel] = createSignal("");
   const [diffFor, setDiffFor] = createSignal<{ repo: string; file: GitFileStatus; staged: boolean; text: string } | null>(null);
+  // The repo to graph: the user's pick if still present, else the first repo.
+  const graphRepo = () => {
+    const sel = graphSel();
+    if (sel && repos().some((r) => r.path === sel)) return sel;
+    return repos()[0]?.path ?? workspace.activeRoot ?? "";
+  };
 
   const refresh = async () => {
     const root = workspace.activeRoot;
@@ -56,6 +67,7 @@ export function SourceControl() {
       );
       if (workspace.activeRoot !== root) return;
       setRepos(loaded.filter((r) => r.status.isRepo));
+      setGraphVersion((v) => v + 1); // let the graph view refetch on Refresh too
     } catch (err) {
       console.error("[pickforge] git scan failed", err);
       if (workspace.activeRoot === root) setRepos([]);
@@ -100,7 +112,23 @@ export function SourceControl() {
               : "—"}
         </span>
         <div class="pf-sc-toolbar-end">
-          <Show when={total() > 0}>
+          <div class="pf-sc-viewtoggle">
+            <button
+              classList={{ "pf-sc-view--on": view() === "changes" }}
+              title="Changes"
+              onClick={() => setView("changes")}
+            >
+              Changes
+            </button>
+            <button
+              classList={{ "pf-sc-view--on": view() === "graph" }}
+              title="Commit graph"
+              onClick={() => setView("graph")}
+            >
+              Graph
+            </button>
+          </div>
+          <Show when={view() === "changes" && total() > 0}>
             <span class="pf-sc-count">{total()}</span>
           </Show>
           <button class="pf-icon-btn" title="Refresh" disabled={!workspace.activeRoot} onClick={() => void refresh()}>
@@ -108,6 +136,26 @@ export function SourceControl() {
           </button>
         </div>
       </div>
+
+      <Show when={view() === "graph"}>
+        <Show
+          when={repos().length > 0}
+          fallback={<div class="pf-rail-empty">{loading() ? "Checking…" : "Not a git repository"}</div>}
+        >
+          <Show when={repos().length > 1}>
+            <div class="pf-sc-graphrepo">
+              <Dropdown
+                value={graphRepo()}
+                onChange={setGraphSel}
+                options={repos().map((r) => ({ value: r.path, label: repoName(r.path) }))}
+              />
+            </div>
+          </Show>
+          <GitGraph repo={graphRepo()} version={graphVersion()} />
+        </Show>
+      </Show>
+
+      <Show when={view() === "changes"}>
 
       <Show
         when={repos().length > 0}
@@ -151,6 +199,7 @@ export function SourceControl() {
             </For>
           </div>
         </Show>
+      </Show>
       </Show>
 
       <Show when={diffFor()}>

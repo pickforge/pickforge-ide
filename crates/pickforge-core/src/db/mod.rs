@@ -19,15 +19,25 @@ pub enum DbError {
     Other(String),
 }
 
-/// Latest schema version applied by the migration runner. `PRAGMA user_version`
-/// on an opened connection ends here once `migrate` returns.
-const LATEST_VERSION: i64 = 2;
+/// Drift's final `PRAGMA user_version`. The previous Flutter/Drift app managed
+/// its own schema with `user_version` 1..=10; a real upgrading user's database
+/// sits anywhere in that range.
+const DRIFT_FINAL: u32 = 10;
 
-/// Migration 0 → 1: the base schema. Older user databases that predate
-/// `user_version` bookkeeping report version 0 and get the full schema applied;
-/// `IF NOT EXISTS` keeps that idempotent against tables they already hold.
-/// Column-level evolution lives in later migrations, never here.
-const MIGRATION_001_BASE: &str = r#"
+/// First Rust-managed schema version. Deliberately set above Drift's range so a
+/// Rust-stamped database can never be confused with a Drift-era one.
+const RUST_BASELINE: u32 = 11;
+
+/// Latest schema version this build understands. Bump (and add a numbered Rust
+/// migration in `apply_rust_migrations`) whenever the schema changes from here.
+const LATEST_VERSION: u32 = 11;
+
+/// The full, current desired schema. Every statement is `IF NOT EXISTS`, so
+/// running it against a database that already holds some tables only fills the
+/// gaps. Column-level evolution that `CREATE TABLE IF NOT EXISTS` cannot express
+/// (a table that already exists but lacks a newer column) is handled by the
+/// `ALTER TABLE … ADD COLUMN` pass in `reconcile_schema`.
+const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS projects (
   project_root   TEXT NOT NULL PRIMARY KEY,
   display_name   TEXT NOT NULL,
@@ -68,7 +78,9 @@ CREATE TABLE IF NOT EXISTS project_settings (
   emulator_launch_options     TEXT,
   emulator_idle_shutdown      TEXT,
   auto_boot_on_select         INTEGER NOT NULL DEFAULT 1 CHECK (auto_boot_on_select IN (0, 1)),
-  first_run_celebrated        INTEGER NOT NULL DEFAULT 0 CHECK (first_run_celebrated IN (0, 1))
+  first_run_celebrated        INTEGER NOT NULL DEFAULT 0 CHECK (first_run_celebrated IN (0, 1)),
+  context_storage_mode        TEXT,
+  context_storage_custom_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pick_history (
@@ -142,39 +154,111 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, DbEr
     Ok(false)
 }
 
-/// Bring the schema from `PRAGMA user_version` up to `LATEST_VERSION`, applying
-/// each step in its own transaction and bumping `user_version` afterward. A
-/// fresh DB reports 0 and migrates straight to the latest.
-fn migrate(conn: &mut Connection) -> Result<(), DbError> {
-    let mut version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version > LATEST_VERSION {
-        return Err(DbError::Other(format!(
-            "database schema v{version} is newer than this build supports (v{LATEST_VERSION})"
-        )));
+/// Columns the desired schema carries that an older database (a Drift-era one,
+/// or an early unversioned Rust one) might be missing. Every entry is either
+/// nullable or has a DEFAULT, so `ALTER TABLE … ADD COLUMN` can add it without
+/// rewriting existing rows. The Drift version that introduced each column (per
+/// the old app's `onUpgrade`) is noted so it is clear which legacy databases
+/// could lack it. `reconcile_schema` only runs an ALTER when `has_column` is
+/// false, so re-adding a column a database already holds is a silent no-op.
+const RECONCILABLE_COLUMNS: &[(&str, &str, &str)] = &[
+    // project_settings — the most-evolved table across Drift v2..v10.
+    ("project_settings", "last_chat_id", "ALTER TABLE project_settings ADD COLUMN last_chat_id TEXT"), // Drift v2
+    ("project_settings", "pane_sizes", "ALTER TABLE project_settings ADD COLUMN pane_sizes TEXT"), // Drift v2
+    ("project_settings", "avd_id", "ALTER TABLE project_settings ADD COLUMN avd_id TEXT"), // Drift v3
+    ("project_settings", "avd_name", "ALTER TABLE project_settings ADD COLUMN avd_name TEXT"), // Drift v3
+    ("project_settings", "connection_mode", "ALTER TABLE project_settings ADD COLUMN connection_mode TEXT NOT NULL DEFAULT 'auto'"), // Drift v3
+    ("project_settings", "flutter_run_args", "ALTER TABLE project_settings ADD COLUMN flutter_run_args TEXT"), // Drift v3
+    ("project_settings", "target_file", "ALTER TABLE project_settings ADD COLUMN target_file TEXT"), // Drift v3
+    ("project_settings", "auto_boot_on_select", "ALTER TABLE project_settings ADD COLUMN auto_boot_on_select INTEGER NOT NULL DEFAULT 1"), // Drift v3
+    ("project_settings", "first_run_celebrated", "ALTER TABLE project_settings ADD COLUMN first_run_celebrated INTEGER NOT NULL DEFAULT 0"), // Drift v3
+    ("project_settings", "emulator_launch_options", "ALTER TABLE project_settings ADD COLUMN emulator_launch_options TEXT"), // Drift v5
+    ("project_settings", "emulator_idle_shutdown", "ALTER TABLE project_settings ADD COLUMN emulator_idle_shutdown TEXT"), // Drift v6
+    ("project_settings", "validator_command", "ALTER TABLE project_settings ADD COLUMN validator_command TEXT"), // Drift v8
+    ("project_settings", "context_storage_mode", "ALTER TABLE project_settings ADD COLUMN context_storage_mode TEXT"), // Drift v10
+    ("project_settings", "context_storage_custom_path", "ALTER TABLE project_settings ADD COLUMN context_storage_custom_path TEXT"), // Drift v10
+    // chats — labels/status/brief arrived together.
+    ("chats", "labels_json", "ALTER TABLE chats ADD COLUMN labels_json TEXT"), // Drift v7
+    ("chats", "status", "ALTER TABLE chats ADD COLUMN status TEXT"), // Drift v7
+    ("chats", "task_brief_text", "ALTER TABLE chats ADD COLUMN task_brief_text TEXT"), // Drift v7
+    // projects — archived_at backfilled for databases that came through v2.
+    ("projects", "archived_at", "ALTER TABLE projects ADD COLUMN archived_at INTEGER"), // Drift v9
+    // run_session_log — target_file added a version after the table itself.
+    ("run_session_log", "target_file", "ALTER TABLE run_session_log ADD COLUMN target_file TEXT"), // Drift v4
+];
+
+/// Idempotently bring any pre-Rust database (Drift v1..=10, or an unversioned
+/// Rust database created by an earlier `CREATE TABLE IF NOT EXISTS` build) up to
+/// the full current schema. Adds missing tables/indexes via `SCHEMA`, then adds
+/// any missing columns from `RECONCILABLE_COLUMNS`. Only ever ADDS — never drops
+/// a table, column, index, or row, and never touches `user_version`. Safe to run
+/// repeatedly.
+fn reconcile_schema(conn: &mut Connection) -> Result<(), DbError> {
+    // CREATE TABLE/INDEX IF NOT EXISTS — fills in whatever tables are absent.
+    conn.execute_batch(SCHEMA)?;
+
+    // ALTER in any columns an older table is missing, all in one transaction.
+    let tx = conn.transaction()?;
+    for (table, column, alter_sql) in RECONCILABLE_COLUMNS {
+        if !has_column(&tx, table, column)? {
+            tx.execute_batch(alter_sql)?;
+        }
     }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Apply numbered Rust migrations to step a Rust-managed database
+/// (`RUST_BASELINE..=LATEST_VERSION`) forward. There are none beyond the baseline
+/// yet, so this only has work to do once `LATEST_VERSION` is bumped above
+/// `RUST_BASELINE`. Adding one is a single `match` arm — see the worked example
+/// in the body — each running its DDL and bumping `user_version` in one
+/// transaction.
+fn apply_rust_migrations(conn: &mut Connection, mut version: u32) -> Result<(), DbError> {
     while version < LATEST_VERSION {
         let next = version + 1;
-        let tx = conn.transaction()?;
-        match next {
-            1 => tx.execute_batch(MIGRATION_001_BASE)?,
-            2 => {
-                if !has_column(&tx, "project_settings", "context_storage_mode")? {
-                    tx.execute_batch(
-                        "ALTER TABLE project_settings ADD COLUMN context_storage_mode TEXT;",
-                    )?;
-                }
-                if !has_column(&tx, "project_settings", "context_storage_custom_path")? {
-                    tx.execute_batch(
-                        "ALTER TABLE project_settings \
-                         ADD COLUMN context_storage_custom_path TEXT;",
-                    )?;
-                }
-            }
-            _ => return Err(DbError::Other(format!("no migration for version {next}"))),
-        }
+        let mut tx = conn.transaction()?;
+        run_rust_migration(&mut tx, next)?;
         tx.execute_batch(&format!("PRAGMA user_version = {next};"))?;
         tx.commit()?;
         version = next;
+    }
+    Ok(())
+}
+
+/// The DDL for a single Rust-managed migration step. The fallthrough rejects an
+/// unknown version. To add a step, give it an arm, e.g.:
+/// `12 => tx.execute_batch("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")?,`
+fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Result<(), DbError> {
+    let _ = tx;
+    match version {
+        _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
+    }
+}
+
+/// Reconcile the on-disk schema with the current desired schema, choosing the
+/// path from `PRAGMA user_version`:
+///
+/// * `uv > LATEST_VERSION` → reject (a genuinely newer schema / app downgrade).
+///   A Drift-era database has `uv <= 10 < RUST_BASELINE`, so it never trips this.
+/// * `uv <= DRIFT_FINAL` (Drift v1..=10, or unversioned-Rust `uv == 0`) →
+///   `reconcile_schema`: idempotent bring-up to the full schema, stamp baseline.
+/// * `RUST_BASELINE..=LATEST_VERSION` → run numbered Rust migrations forward.
+fn migrate(conn: &mut Connection) -> Result<(), DbError> {
+    let uv: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if uv > LATEST_VERSION {
+        return Err(DbError::Other(format!(
+            "database schema v{uv} is newer than this build supports (v{LATEST_VERSION})"
+        )));
+    }
+    if uv <= DRIFT_FINAL {
+        reconcile_schema(conn)?;
+        conn.execute_batch(&format!("PRAGMA user_version = {RUST_BASELINE};"))?;
+    } else {
+        // A Rust-managed database. Reconcile defensively (cheap + idempotent),
+        // then apply any numbered migrations above the baseline.
+        reconcile_schema(conn)?;
+        apply_rust_migrations(conn, uv)?;
     }
     Ok(())
 }
@@ -661,17 +745,208 @@ mod tests {
         std::env::temp_dir().join(format!("pf-db-{tag}-{}.sqlite", std::process::id()))
     }
 
-    fn user_version(conn: &Connection) -> i64 {
+    fn user_version(conn: &Connection) -> u32 {
         conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
     }
 
+    // A Drift v10 project_settings table that is MISSING the v10 context columns
+    // — the exact shape that panicked the rejection-guard build.
+    const DRIFT_PRE_CONTEXT_PROJECT_SETTINGS: &str = "CREATE TABLE project_settings (
+           project_root            TEXT NOT NULL PRIMARY KEY,
+           vm_service_url          TEXT,
+           default_agent_id        TEXT,
+           last_chat_id            TEXT,
+           pane_sizes              TEXT,
+           last_used_at            INTEGER,
+           avd_id                  TEXT,
+           avd_name                TEXT,
+           connection_mode         TEXT NOT NULL DEFAULT 'auto',
+           flutter_run_args        TEXT,
+           target_file             TEXT,
+           validator_command       TEXT,
+           emulator_launch_options TEXT,
+           emulator_idle_shutdown  TEXT,
+           auto_boot_on_select     INTEGER NOT NULL DEFAULT 1,
+           first_run_celebrated    INTEGER NOT NULL DEFAULT 0
+         );";
+
+    /// Drift v10 DB whose `project_settings` predates the v10 context columns.
+    /// The old rejection guard panicked on this (user_version=10 > LATEST=2);
+    /// reconciliation must add the columns and stamp the Rust baseline instead.
     #[test]
-    fn fresh_db_lands_at_latest_version_and_daos_work() {
+    fn drift_v10_missing_context_columns_upgrades() {
+        let path = temp_db_path("drift-v10");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "{DRIFT_PRE_CONTEXT_PROJECT_SETTINGS}
+                 INSERT INTO project_settings (project_root, connection_mode)
+                   VALUES ('/p', 'auto');
+                 PRAGMA user_version = 10;"
+            ))
+            .unwrap();
+            assert_eq!(user_version(&conn), 10);
+            assert!(!has_column(&conn, "project_settings", "context_storage_mode").unwrap());
+            assert!(!has_column(&conn, "project_settings", "context_storage_custom_path").unwrap());
+        }
+
+        {
+            // Must SUCCEED, not reject.
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert!(has_column(&db.lock(), "project_settings", "context_storage_mode").unwrap());
+            assert!(
+                has_column(&db.lock(), "project_settings", "context_storage_custom_path").unwrap()
+            );
+
+            // Existing row survives; new columns read back NULL.
+            let loaded = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(loaded.connection_mode, "auto");
+            assert!(loaded.context_storage_mode.is_none());
+            assert!(loaded.context_storage_custom_path.is_none());
+
+            // get/upsert round-trip the freshly added columns.
+            let mut s = ProjectSettings::defaults("/p");
+            s.context_storage_mode = Some("custom".into());
+            s.context_storage_custom_path = Some("/ctx".into());
+            db.upsert_settings(&s).unwrap();
+            let loaded = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(loaded.context_storage_mode.as_deref(), Some("custom"));
+            assert_eq!(loaded.context_storage_custom_path.as_deref(), Some("/ctx"));
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Drift v2 DB with only a subset of tables/columns: `projects` plus a
+    /// `project_settings` missing most of the post-v2 columns. Reconciliation
+    /// must create the missing tables and add the missing columns.
+    #[test]
+    fn drift_v2_partial_schema_reconciles() {
+        let path = temp_db_path("drift-v2");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE projects (
+                   project_root   TEXT NOT NULL PRIMARY KEY,
+                   display_name   TEXT NOT NULL,
+                   created_at     INTEGER NOT NULL,
+                   last_opened_at INTEGER NOT NULL,
+                   sort_order     INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE project_settings (
+                   project_root  TEXT NOT NULL PRIMARY KEY,
+                   vm_service_url TEXT,
+                   default_agent_id TEXT,
+                   last_chat_id  TEXT,
+                   pane_sizes    TEXT,
+                   last_used_at  INTEGER
+                 );
+                 INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Proj', 1, 2);
+                 INSERT INTO project_settings (project_root) VALUES ('/p');
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+            // Pre-state: missing tables and columns.
+            assert!(!has_column(&conn, "projects", "archived_at").unwrap());
+            assert!(!has_column(&conn, "project_settings", "connection_mode").unwrap());
+            assert!(!has_column(&conn, "project_settings", "context_storage_mode").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+
+            // Missing columns added across the reconciled tables.
+            assert!(has_column(&db.lock(), "projects", "archived_at").unwrap());
+            assert!(has_column(&db.lock(), "project_settings", "connection_mode").unwrap());
+            assert!(has_column(&db.lock(), "project_settings", "validator_command").unwrap());
+            assert!(has_column(&db.lock(), "project_settings", "context_storage_mode").unwrap());
+
+            // Existing project + settings rows survive and DAOs work.
+            assert_eq!(db.list_projects(false).unwrap().len(), 1);
+            let loaded = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(loaded.connection_mode, "auto"); // DEFAULT backfilled.
+
+            // Missing tables were created — their DAOs are usable.
+            db.insert_run(&RunSessionLog {
+                session_id: "r1".into(),
+                project_root: "/p".into(),
+                started_at: 1,
+                ended_at: None,
+                avd_id: None,
+                avd_name: None,
+                serial: None,
+                vm_service_url: None,
+                target_file: None,
+                connection_mode: "auto".into(),
+                exit_reason: None,
+                exit_code: None,
+                hot_reload_count: 0,
+                hot_restart_count: 0,
+                error_count: 0,
+                last_error: None,
+            })
+            .unwrap();
+            assert_eq!(db.list_runs("/p", 10).unwrap().len(), 1);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An unversioned Rust DB (`user_version` 0) that already carries every
+    /// column. Reconciliation must NOT fail with a duplicate-column error; it
+    /// stamps the baseline and leaves the data intact.
+    #[test]
+    fn unversioned_rust_db_with_all_columns() {
+        let path = temp_db_path("unversioned-rust");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            // Seed the full current schema with user_version left at 0.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO project_settings (project_root, connection_mode)
+                   VALUES ('/p', 'auto');",
+            )
+            .unwrap();
+            assert_eq!(user_version(&conn), 0);
+            assert!(has_column(&conn, "project_settings", "context_storage_mode").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+
+            let loaded = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(loaded.connection_mode, "auto");
+            assert!(loaded.context_storage_mode.is_none());
+
+            let mut s = ProjectSettings::defaults("/p");
+            s.context_storage_mode = Some("custom".into());
+            db.upsert_settings(&s).unwrap();
+            assert_eq!(
+                db.get_settings("/p").unwrap().unwrap().context_storage_mode.as_deref(),
+                Some("custom")
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An empty file opens into the full schema, stamps the baseline, and the
+    /// DAOs work end to end.
+    #[test]
+    fn fresh_db_creates_full_schema() {
         let path = temp_db_path("fresh");
         let _ = std::fs::remove_file(&path);
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
 
             db.upsert_project(&Project {
                 project_root: "/p".into(),
@@ -691,159 +966,22 @@ mod tests {
             let loaded = db.get_settings("/p").unwrap().unwrap();
             assert_eq!(loaded.context_storage_mode.as_deref(), Some("custom"));
             assert_eq!(loaded.context_storage_custom_path.as_deref(), Some("/ctx"));
-        }
-        let _ = std::fs::remove_file(&path);
-    }
 
-    #[test]
-    fn migrates_pre_context_columns_database() {
-        let path = temp_db_path("legacy");
-        let _ = std::fs::remove_file(&path);
-
-        // Seed a raw v1 database: base schema without the context_storage columns.
-        {
-            let conn = Connection::open(&path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE project_settings (
-                   project_root            TEXT NOT NULL PRIMARY KEY,
-                   vm_service_url          TEXT,
-                   default_agent_id        TEXT,
-                   last_chat_id            TEXT,
-                   pane_sizes              TEXT,
-                   last_used_at            INTEGER,
-                   avd_id                  TEXT,
-                   avd_name                TEXT,
-                   connection_mode         TEXT NOT NULL DEFAULT 'auto',
-                   flutter_run_args        TEXT,
-                   target_file             TEXT,
-                   validator_command       TEXT,
-                   emulator_launch_options TEXT,
-                   emulator_idle_shutdown  TEXT,
-                   auto_boot_on_select     INTEGER NOT NULL DEFAULT 1,
-                   first_run_celebrated    INTEGER NOT NULL DEFAULT 0
-                 );
-                 INSERT INTO project_settings (project_root, connection_mode)
-                   VALUES ('/p', 'auto');
-                 PRAGMA user_version = 1;",
-            )
-            .unwrap();
-            assert!(!has_column(&conn, "project_settings", "context_storage_mode").unwrap());
-        }
-
-        // Opening via Database::open must add the missing columns and reach LATEST.
-        {
+            // Reopen is idempotent (no duplicate-column error).
+            drop(db);
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
-            assert!(has_column(
-                &db.lock(),
-                "project_settings",
-                "context_storage_custom_path"
-            )
-            .unwrap());
-
-            // The pre-existing row reads back with NULL context columns.
-            let loaded = db.get_settings("/p").unwrap().unwrap();
-            assert_eq!(loaded.connection_mode, "auto");
-            assert!(loaded.context_storage_mode.is_none());
-
-            // And writes that touch the new columns succeed.
-            let mut s = ProjectSettings::defaults("/p");
-            s.context_storage_mode = Some("workspace".into());
-            db.upsert_settings(&s).unwrap();
-            assert_eq!(
-                db.get_settings("/p")
-                    .unwrap()
-                    .unwrap()
-                    .context_storage_mode
-                    .as_deref(),
-                Some("workspace")
-            );
+            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
         }
         let _ = std::fs::remove_file(&path);
     }
 
+    /// A DB stamped one past LATEST (a genuine downgrade / newer schema) is
+    /// rejected rather than silently mangled.
     #[test]
-    fn migrate_is_idempotent_on_reopen() {
-        let path = temp_db_path("reopen");
-        let _ = std::fs::remove_file(&path);
-        Database::open(&path).unwrap();
-        // Reopening an already-current DB is a no-op (no duplicate-column error).
-        let db = Database::open(&path).unwrap();
-        assert_eq!(user_version(&db.lock()), LATEST_VERSION);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn unversioned_db_already_holding_context_columns_is_left_intact() {
-        let path = temp_db_path("legacy-current");
+    fn genuinely_newer_schema_is_rejected() {
+        let path = temp_db_path("newer");
         let _ = std::fs::remove_file(&path);
 
-        // Seed a raw legacy database that predates user_version bookkeeping yet
-        // already carries the newest columns. user_version stays 0 (the default),
-        // so the migrator replays every step and the has_column guard must skip
-        // the ALTERs instead of failing with a duplicate-column error.
-        {
-            let conn = Connection::open(&path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE project_settings (
-                   project_root                TEXT NOT NULL PRIMARY KEY,
-                   vm_service_url              TEXT,
-                   default_agent_id            TEXT,
-                   last_chat_id                TEXT,
-                   pane_sizes                  TEXT,
-                   last_used_at                INTEGER,
-                   avd_id                      TEXT,
-                   avd_name                    TEXT,
-                   connection_mode             TEXT NOT NULL DEFAULT 'auto',
-                   flutter_run_args            TEXT,
-                   target_file                 TEXT,
-                   validator_command           TEXT,
-                   emulator_launch_options     TEXT,
-                   emulator_idle_shutdown      TEXT,
-                   auto_boot_on_select         INTEGER NOT NULL DEFAULT 1,
-                   first_run_celebrated        INTEGER NOT NULL DEFAULT 0,
-                   context_storage_mode        TEXT,
-                   context_storage_custom_path TEXT
-                 );
-                 INSERT INTO project_settings (project_root, connection_mode)
-                   VALUES ('/p', 'auto');",
-            )
-            .unwrap();
-            assert_eq!(user_version(&conn), 0);
-            assert!(has_column(&conn, "project_settings", "context_storage_mode").unwrap());
-        }
-
-        // Opening must succeed (no duplicate-column error), reach LATEST, and the
-        // settings DAO must read and write the row.
-        {
-            let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
-
-            let loaded = db.get_settings("/p").unwrap().unwrap();
-            assert_eq!(loaded.connection_mode, "auto");
-            assert!(loaded.context_storage_mode.is_none());
-
-            let mut s = ProjectSettings::defaults("/p");
-            s.context_storage_mode = Some("custom".into());
-            db.upsert_settings(&s).unwrap();
-            assert_eq!(
-                db.get_settings("/p")
-                    .unwrap()
-                    .unwrap()
-                    .context_storage_mode
-                    .as_deref(),
-                Some("custom")
-            );
-        }
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn opening_a_newer_schema_is_rejected() {
-        let path = temp_db_path("downgrade");
-        let _ = std::fs::remove_file(&path);
-
-        // Seed a DB stamped a version ahead of this build (an app downgrade).
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch(&format!("PRAGMA user_version = {};", LATEST_VERSION + 1))

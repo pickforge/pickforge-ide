@@ -2072,3 +2072,17 @@ body.pf-resizing .pf-dc-resizer-grip {
   position: absolute;
   pointer-events: none;
 }
+
+.pf-mirror-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-mirror-stats-err {
+  color: var(--pf-error);
+  flex-basis: 100%;
+  word-break: break-word;
+}

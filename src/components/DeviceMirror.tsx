@@ -4,7 +4,7 @@
 import { createSignal, onCleanup, Show } from "solid-js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { EmberButton, MonoEyebrow } from "./ui";
-import { mirrorSupported, startMirror, type MirrorHandle } from "../lib/scrcpy";
+import { mirrorSupported, startMirror, type MirrorHandle, type MirrorStats } from "../lib/scrcpy";
 import { deviceLabel, resolveSelectedDevice } from "../stores/runLaunch";
 
 export function DeviceMirror() {
@@ -12,8 +12,10 @@ export function DeviceMirror() {
   const [active, setActive] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [stats, setStats] = createSignal<MirrorStats | null>(null);
   let handle: MirrorHandle | null = null;
   let unlisten: UnlistenFn | undefined;
+  let poll: ReturnType<typeof setInterval> | undefined;
   let down = false;
 
   const device = () => resolveSelectedDevice();
@@ -26,6 +28,9 @@ export function DeviceMirror() {
   const stop = async () => {
     unlisten?.();
     unlisten = undefined;
+    clearInterval(poll);
+    poll = undefined;
+    setStats(null);
     const h = handle;
     handle = null;
     setActive(false);
@@ -43,6 +48,7 @@ export function DeviceMirror() {
     try {
       handle = await startMirror(s, canvas);
       setActive(true);
+      poll = setInterval(() => setStats(handle?.stats() ?? null), 700);
       unlisten = await listen<string>("mirror-disconnected", (e) => {
         if (e.payload === s) void stop();
       });
@@ -56,6 +62,7 @@ export function DeviceMirror() {
 
   onCleanup(() => {
     unlisten?.();
+    clearInterval(poll);
     void handle?.stop();
   });
 
@@ -126,6 +133,24 @@ export function DeviceMirror() {
             </div>
           </Show>
         </div>
+      </Show>
+      <Show when={active() && stats()}>
+        {(s) => (
+          <div class="pf-mirror-stats">
+            <span>{s().renderer}</span>
+            <span>avc {s().avc}</span>
+            <span>
+              {s().width}×{s().height}
+            </span>
+            <span>frames {s().rendered}</span>
+            <Show when={s().skipped > 0}>
+              <span>skipped {s().skipped}</span>
+            </Show>
+            <Show when={s().error}>
+              <span class="pf-mirror-stats-err">{s().error}</span>
+            </Show>
+          </div>
+        )}
       </Show>
       <Show when={error()}>
         <div class="pf-vm-error">{error()}</div>

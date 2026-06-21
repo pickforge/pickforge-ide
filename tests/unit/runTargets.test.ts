@@ -48,10 +48,19 @@ describe("runProfile", () => {
       inspectorKind: "vmService",
     });
   });
-  it("react-native / native-android → env + uiAutomator", () => {
-    const expected = { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator" };
-    expect(runProfile("react-native")).toEqual(expected);
-    expect(runProfile("native-android")).toEqual(expected);
+  it("react-native → rnDevice + uiAutomator", () => {
+    expect(runProfile("react-native")).toEqual({
+      needsDevice: true,
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+    });
+  });
+  it("native-android → env + uiAutomator", () => {
+    expect(runProfile("native-android")).toEqual({
+      needsDevice: true,
+      deviceConvention: "env",
+      inspectorKind: "uiAutomator",
+    });
   });
   it("web → none device + cdp", () => {
     expect(runProfile("web")).toEqual({
@@ -80,10 +89,12 @@ describe("withDevice", () => {
       withDevice(target({ deviceConvention: "arg", command: "flutter run -d chrome" }), "emulator-5556"),
     ).toBe("flutter run -d chrome");
   });
-  it("react-native / native-android prefix ANDROID_SERIAL", () => {
+  it("react-native pins ANDROID_SERIAL + --deviceId", () => {
     expect(
-      withDevice(target({ deviceConvention: "env", command: "npx react-native run-android" }), "emulator-5556"),
-    ).toBe("ANDROID_SERIAL='emulator-5556' npx react-native run-android");
+      withDevice(target({ deviceConvention: "rnDevice", command: "npx react-native run-android" }), "emulator-5556"),
+    ).toBe("ANDROID_SERIAL='emulator-5556' npx react-native run-android --deviceId 'emulator-5556'");
+  });
+  it("native-android prefixes ANDROID_SERIAL", () => {
     expect(
       withDevice(target({ deviceConvention: "env", command: "./gradlew installDebug" }), "emulator-5556"),
     ).toBe("ANDROID_SERIAL='emulator-5556' ./gradlew installDebug");

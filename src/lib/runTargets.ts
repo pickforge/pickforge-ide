@@ -7,9 +7,10 @@ import { findNearestPubspec, targetDetect, type TargetDetection } from "./device
 
 /** How the chosen device serial is applied to a target's command — decided once
  *  per adapter instead of re-sniffed from the command string at each call site.
- *  "arg" → append `-d <serial>` (flutter); "env" → prefix `ANDROID_SERIAL=`
- *  (react-native / native-android); "none" → ignore the serial. */
-export type DeviceConvention = "arg" | "env" | "none";
+ *  "arg" → append `-d <serial>` (flutter); "rnDevice" → `ANDROID_SERIAL=` +
+ *  `--deviceId <serial>` (react-native); "env" → prefix `ANDROID_SERIAL=`
+ *  (native-android); "none" → ignore the serial. */
+export type DeviceConvention = "arg" | "rnDevice" | "env" | "none";
 /** Which inspector the right rail should use for a target. */
 export type InspectorKind = "vmService" | "uiAutomator" | "cdp" | "none";
 
@@ -63,6 +64,7 @@ export function runProfile(targetId: string): RunProfile {
     case "flutter":
       return { needsDevice: true, deviceConvention: "arg", inspectorKind: "vmService" };
     case "react-native":
+      return { needsDevice: true, deviceConvention: "rnDevice", inspectorKind: "uiAutomator" };
     case "native-android":
       return { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator" };
     case "web":
@@ -81,9 +83,13 @@ export function withDevice(t: RunTarget, serial: string | null): string {
     case "arg":
       // Flutter: append -d <serial>, unless the command already pins a device.
       return /\s-d\s/.test(t.command) ? t.command : `${t.command} -d ${shquote(serial)}`;
+    case "rnDevice":
+      // React Native: ANDROID_SERIAL pins adb-level ops, but the RN CLI's launch
+      // loop still iterates all connected devices unless --deviceId is given, so
+      // pass both to truly constrain the run to the chosen device.
+      return `ANDROID_SERIAL=${shquote(serial)} ${t.command} --deviceId ${shquote(serial)}`;
     case "env":
-      // react-native / native-android: prefix ANDROID_SERIAL so adb / gradle /
-      // metro all target the chosen device.
+      // native-android: prefix ANDROID_SERIAL so gradle / adb target the device.
       return `ANDROID_SERIAL=${shquote(serial)} ${t.command}`;
     default:
       return t.command;

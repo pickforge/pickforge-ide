@@ -2,8 +2,9 @@
 // the foot of the workbench. Opens on Run and stays mounted (height-toggled, not
 // unmounted) so a running process survives collapsing the panel or navigating
 // away. The Run controls drive THIS terminal's pty, never the user's shell.
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { TerminalPane } from "../../components/Terminal";
+import { LogcatView } from "../../components/LogcatView";
 import { AskAiMenu } from "../../components/AskAiMenu";
 import { RunLauncher } from "./RunLauncher";
 import {
@@ -34,7 +35,8 @@ import {
   stopRun,
   type RunStatus,
 } from "../../stores/runConsole";
-import { hasRunTargets } from "../../stores/runTargets";
+import { activeTarget, hasRunTargets } from "../../stores/runTargets";
+import { isLogcatTarget } from "../../lib/runTargets";
 import { autoReloadEnabled, toggleAutoReload } from "../../stores/autoReload";
 import { isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
@@ -53,6 +55,18 @@ export function DebugConsole() {
   const can = (c: string) => !!target()?.capabilities.includes(c);
   const isRunning = () => status() === "running";
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
+
+  // Console | Logs switch — Logs only exists for RN / native-Android targets,
+  // whose device logs live in `adb logcat`, not the run PTY. The running target
+  // wins (it's what's on the device); else the selected launcher target.
+  const [view, setView] = createSignal<"console" | "logs">("console");
+  const logcatCapable = () =>
+    isLogcatTarget(isRunning() ? target() : activeTarget());
+  // Fall back to the console whenever Logs isn't available (e.g. target switched
+  // to Flutter), so the body never shows a Logs view for an unsupported target.
+  createEffect(() => {
+    if (view() === "logs" && !logcatCapable()) setView("console");
+  });
 
   onCleanup(detachConsole);
 
@@ -79,6 +93,28 @@ export function DebugConsole() {
       </div>
       <header class="pf-dc-head">
         <RunLauncher />
+        <Show when={logcatCapable()}>
+          <div class="pf-dc-tabs" role="tablist">
+            <button
+              class="pf-dc-tab"
+              classList={{ "pf-dc-tab--on": view() === "console" }}
+              role="tab"
+              aria-selected={view() === "console"}
+              onClick={() => setView("console")}
+            >
+              Console
+            </button>
+            <button
+              class="pf-dc-tab"
+              classList={{ "pf-dc-tab--on": view() === "logs" }}
+              role="tab"
+              aria-selected={view() === "logs"}
+              onClick={() => setView("logs")}
+            >
+              Logs
+            </button>
+          </div>
+        </Show>
         <Show when={isBooting()}>
           <span class="pf-run-booting">booting…</span>
         </Show>
@@ -140,30 +176,42 @@ export function DebugConsole() {
       </header>
 
       <div class="pf-dc-body">
-        <Show
-          when={runConsole.current()}
-          keyed
-          fallback={
-            <ForgeEmptyState
-              glyph={<IconTerminal size={26} />}
-              eyebrow="Run"
-              title="Nothing running"
-              hint="Pick a target and hit Run to launch it here."
-            />
-          }
-        >
-          {(run) => (
-            <TerminalPane
-              runCommand={run.command}
-              cwd={run.cwd ?? undefined}
-              onReady={attachConsole}
-              onExit={consoleExited}
-              onOutput={ingestRunOutput}
-              onSelectionChange={setAskSel}
-              readOnly
-              consoleTheme
-            />
-          )}
+        {/* Console + Logs are display-toggled (not unmounted) so switching tabs
+            never kills the run pty or the live logcat stream. */}
+        <div class="pf-dc-view" style={{ display: view() === "console" ? "flex" : "none" }}>
+          <Show
+            when={runConsole.current()}
+            keyed
+            fallback={
+              <ForgeEmptyState
+                glyph={<IconTerminal size={26} />}
+                eyebrow="Run"
+                title="Nothing running"
+                hint="Pick a target and hit Run to launch it here."
+              />
+            }
+          >
+            {(run) => (
+              <TerminalPane
+                runCommand={run.command}
+                cwd={run.cwd ?? undefined}
+                onReady={attachConsole}
+                onExit={consoleExited}
+                onOutput={ingestRunOutput}
+                onSelectionChange={setAskSel}
+                readOnly
+                consoleTheme
+              />
+            )}
+          </Show>
+        </div>
+        {/* Mounted only for logcat-capable targets (RN / native-Android); kept
+            mounted across tab switches so the stream persists, torn down when
+            the target stops being logcat-capable. */}
+        <Show when={logcatCapable()}>
+          <div class="pf-dc-view" style={{ display: view() === "logs" ? "flex" : "none" }}>
+            <LogcatView />
+          </div>
         </Show>
       </div>
 

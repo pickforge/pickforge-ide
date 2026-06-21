@@ -74,6 +74,14 @@ export function runProfile(targetId: string): RunProfile {
   }
 }
 
+/** Whether a target's device logs live in `adb logcat` rather than the run PTY —
+ *  i.e. React Native / native-Android. Flutter streams its logs into the PTY, so
+ *  it (and web / unknown) is excluded. Keyed off the inspector kind so a new
+ *  Android adapter inherits the Logs view from its one-line profile. */
+export function isLogcatTarget(t: RunTarget | null | undefined): boolean {
+  return t?.inspectorKind === "uiAutomator";
+}
+
 /** Apply the chosen device serial to a target's command per its convention.
  *  Centralised here (not regex-sniffed per call site) so a new adapter is a
  *  one-line profile change. */

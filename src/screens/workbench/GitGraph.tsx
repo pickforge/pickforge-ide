@@ -118,10 +118,10 @@ function refLabel(ref: string): { label: string; kind: string } {
   return { label: ref, kind: "branch" };
 }
 
-export function GitGraph(props: { repo: string }) {
+export function GitGraph(props: { repo: string; version?: number }) {
   const [commits] = createResource(
-    () => props.repo,
-    (repo) => gitLogGraph(repo, 200).catch(() => [] as GraphCommit[]),
+    () => ({ repo: props.repo, v: props.version ?? 0 }),
+    (src) => gitLogGraph(src.repo, 200).catch(() => [] as GraphCommit[]),
   );
   const [selected, setSelected] = createSignal<string | null>(null);
   const data = () => layout(commits() ?? []);

@@ -55,32 +55,36 @@ export const runConsole = { open, height, hasRun, status, target };
 
 // ---- auto hot-reload: watch the run dir for .dart writes → send reload ----
 let watch: WatchHandle | null = null;
+let watchEpoch = 0; // bumped on stop / each start, to discard stale async starts
+let runBase: string | null = null; // the dir of the ACTIVE run (per run, not the first)
 
 function stopWatch() {
   watch?.stop();
   watch = null;
+  watchEpoch++; // invalidate any in-flight start so it can't latch on later
 }
 
 /** Re-evaluate the auto-reload watch against current state. Called on run
  *  start/stop and when the toggle flips, so it's idempotent. */
 export function syncAutoReloadWatch() {
-  const base = consoleCwd();
   const canReload = !!target()?.capabilities.includes("hotReload");
-  if (status() === "running" && autoReloadEnabled() && canReload && base) {
-    if (!watch) {
-      void watchDartChanges(base, () => {
-        if (status() === "running") reloadRun();
-      })
-        .then((h) => {
-          // A stop may have raced in while we were starting — honor it.
-          if (status() === "running" && autoReloadEnabled()) watch = h;
-          else h.stop();
-        })
-        .catch(() => {});
-    }
-  } else {
+  const want = status() === "running" && autoReloadEnabled() && canReload && !!runBase;
+  if (!want) {
     stopWatch();
+    return;
   }
+  if (watch) return; // already watching the active run
+  const epoch = ++watchEpoch;
+  void watchDartChanges(runBase!, () => {
+    if (status() === "running") reloadRun();
+  })
+    .then((h) => {
+      // Discard if superseded (a newer start/stop bumped the epoch) or no
+      // longer wanted — so two racing starts never leak one OS watcher.
+      if (epoch === watchEpoch && !watch && status() === "running" && autoReloadEnabled()) watch = h;
+      else h.stop();
+    })
+    .catch(() => {});
 }
 
 /** The DebugConsole's terminal registers its handle here once spawned. */
@@ -129,6 +133,7 @@ export function startRun(t: RunTarget, projectRoot: string | null) {
   // where a previous run left the console shell.
   const cmd = base ? `cd ${shquote(base)} && ${t.command}` : t.command;
   send(cmd + "\r");
+  runBase = base; // watch THIS run's dir, not just the first console's cwd
   syncAutoReloadWatch();
 }
 

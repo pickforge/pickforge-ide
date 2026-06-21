@@ -7,13 +7,15 @@
 
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::process::run;
+use crate::process::{run, user_shell_environment};
 
 /// scrcpy-server version — MUST match the bundled jar and what
 /// `@yume-chan/scrcpy` understands (its `latest` == 3.3.3).
@@ -37,7 +39,8 @@ pub struct MirrorSession {
     pub child: Child,
     /// Taken by the video relay task once (`None` afterwards).
     pub video: Option<TcpStream>,
-    pub control: TcpStream,
+    /// Behind its own lock so a control write never blocks the mirror registry.
+    pub control: Arc<Mutex<TcpStream>>,
 }
 
 fn adb(args: &[&str]) -> Result<(), MirrorError> {
@@ -73,33 +76,39 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
 
     // app_process runs the server jar's main. Reverse tunnel ⇒ no dummy byte.
     let scid_arg = format!("scid={scid}");
-    let mut child = Command::new("adb")
-        .args([
-            "-s",
-            serial,
-            "shell",
-            "CLASSPATH=/data/local/tmp/scrcpy-server.jar",
-            "app_process",
-            "/",
-            "com.genymobile.scrcpy.Server",
-            SERVER_VERSION,
-            &scid_arg,
-            "log_level=info",
-            "audio=false",
-            "video=true",
-            "video_codec=h264",
-            "send_device_meta=false",
-            "send_dummy_byte=false",
-            "send_codec_meta=true",
-            "send_frame_meta=true",
-            "tunnel_forward=false",
-            "control=true",
-            "cleanup=true",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()?;
+    let mut cmd = Command::new("adb");
+    cmd.args([
+        "-s",
+        serial,
+        "shell",
+        "CLASSPATH=/data/local/tmp/scrcpy-server.jar",
+        "app_process",
+        "/",
+        "com.genymobile.scrcpy.Server",
+        SERVER_VERSION,
+        &scid_arg,
+        "log_level=info",
+        "audio=false",
+        "video=true",
+        "video_codec=h264",
+        "send_device_meta=false",
+        "send_dummy_byte=false",
+        "send_codec_meta=true",
+        "send_frame_meta=true",
+        "tunnel_forward=false",
+        "control=true",
+        "cleanup=true",
+    ])
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .kill_on_drop(true);
+    // Spawn with the login-shell env so `adb` resolves like the other Android
+    // commands — GUI-launched apps otherwise have a minimal PATH.
+    cmd.env_clear();
+    for (k, v) in user_shell_environment() {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn()?;
 
     // The server connects video first, then control (audio disabled).
     let accept = async {
@@ -123,7 +132,7 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
         scid,
         child,
         video: Some(video),
-        control,
+        control: Arc::new(Mutex::new(control)),
     })
 }
 

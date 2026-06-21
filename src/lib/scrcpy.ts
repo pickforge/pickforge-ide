@@ -159,7 +159,10 @@ export async function startMirror(
 
   await invoke("mirror_start", { serial, onVideo: channel });
 
-  const { stream, metadata } = await options.parseVideoStreamMetadata(raw);
+  // mirror_start registered a Rust session; if anything below throws, the caller
+  // has no handle to stop it — so tear it down here on failure.
+  try {
+    const { stream, metadata } = await options.parseVideoStreamMetadata(raw);
   let size = { width: metadata.width ?? canvas.width, height: metadata.height ?? canvas.height };
   canvas.width = size.width;
   canvas.height = size.height;
@@ -273,5 +276,9 @@ export async function startMirror(
     error: lastError,
   });
 
-  return { size: () => size, touch, stats, stop };
+    return { size: () => size, touch, stats, stop };
+  } catch (e) {
+    await invoke("mirror_stop", { serial }).catch(() => {});
+    throw e;
+  }
 }

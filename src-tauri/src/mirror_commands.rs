@@ -52,16 +52,18 @@ pub async fn mirror_start(
     let jar = ensure_jar()?;
     let mut session = start_session(&serial, &jar).await.map_err(|e| e.to_string())?;
     let video = session.video.take().ok_or("no video socket")?;
+    let scid = session.scid.clone();
     manager.0.lock().await.insert(serial.clone(), session);
 
     let app = app.clone();
     let registry = manager.0.clone();
-    tauri::async_runtime::spawn(relay_video(serial, video, on_video, app, registry));
+    tauri::async_runtime::spawn(relay_video(serial, scid, video, on_video, app, registry));
     Ok(())
 }
 
 async fn relay_video(
     serial: String,
+    scid: String,
     mut video: tokio::net::TcpStream,
     channel: Channel<Response>,
     app: AppHandle,
@@ -78,10 +80,18 @@ async fn relay_video(
             }
         }
     }
-    if let Some(session) = registry.lock().await.remove(&serial) {
-        stop_session(session).await;
+    // Only tear down + signal if THIS session is still registered — a quick
+    // stop+restart may have replaced it with a new session (different scid),
+    // which this stale task must not kill.
+    let mut reg = registry.lock().await;
+    if reg.get(&serial).map(|s| s.scid == scid).unwrap_or(false) {
+        let session = reg.remove(&serial);
+        drop(reg);
+        if let Some(session) = session {
+            stop_session(session).await;
+        }
+        let _ = app.emit("mirror-disconnected", &serial);
     }
-    let _ = app.emit("mirror-disconnected", &serial);
 }
 
 /// Write raw scrcpy control bytes (assembled in the UI) to the control socket.
@@ -91,9 +101,14 @@ pub async fn mirror_send_control(
     serial: String,
     bytes: Vec<u8>,
 ) -> Result<(), String> {
-    let mut reg = manager.0.lock().await;
-    let session = reg.get_mut(&serial).ok_or("no active mirror for device")?;
-    session.control.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    // Clone the per-session control handle and release the registry lock BEFORE
+    // the (possibly blocking) socket write, so a stalled write can't wedge
+    // mirror_start/mirror_stop/relay cleanup for every device.
+    let control = {
+        let reg = manager.0.lock().await;
+        reg.get(&serial).ok_or("no active mirror for device")?.control.clone()
+    };
+    control.lock().await.write_all(&bytes).await.map_err(|e| e.to_string())?;
     Ok(())
 }
 

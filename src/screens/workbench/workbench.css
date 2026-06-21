@@ -2036,3 +2036,39 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-graph-author {
   color: var(--pf-text-med);
 }
+
+/* ---- device mirror pane ---- */
+.pf-mirror {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  padding: var(--pf-space-md);
+  gap: var(--pf-space-sm);
+}
+.pf-mirror-stage {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pf-surface);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  overflow: hidden;
+}
+.pf-mirror-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  touch-action: none;
+}
+.pf-mirror-canvas--live {
+  cursor: crosshair;
+}
+.pf-mirror-hint {
+  position: absolute;
+  pointer-events: none;
+}

@@ -7,6 +7,7 @@ import { ProjectsPane } from "./ProjectsPane";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
+import { DeviceMirror } from "../../components/DeviceMirror";
 import { DebugConsole } from "./DebugConsole";
 import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
 import { layout, type PaneId } from "../../stores/workbenchLayout";
@@ -139,6 +140,7 @@ export function WorkbenchScreen() {
       <Match when={pane === "files"}><PaneShell pane="files"><PaneReveal on={() => workspace.activeRoot}>{() => <FileExplorer onOpenFile={openFileInActive} />}</PaneReveal></PaneShell></Match>
       <Match when={pane === "sourceControl"}><PaneShell pane="sourceControl"><PaneReveal on={() => workspace.activeRoot}>{() => <SourceControl />}</PaneReveal></PaneShell></Match>
       <Match when={pane === "inspector"}><PaneShell pane="inspector"><PaneReveal on={() => workspace.activeRoot}>{() => <InspectorPanel />}</PaneReveal></PaneShell></Match>
+      <Match when={pane === "mirror"}><PaneShell pane="mirror"><DeviceMirror /></PaneShell></Match>
     </Switch>
   );
 

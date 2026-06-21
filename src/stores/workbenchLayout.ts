@@ -5,7 +5,7 @@
 // so terminal hosts are never remounted by layout changes.
 import { createSignal } from "solid-js";
 
-export type PaneId = "projects" | "files" | "sourceControl" | "inspector";
+export type PaneId = "projects" | "files" | "sourceControl" | "inspector" | "mirror";
 export type DockId = "left" | "right";
 
 export const PANE_TITLES: Record<PaneId, string> = {
@@ -13,14 +13,16 @@ export const PANE_TITLES: Record<PaneId, string> = {
   files: "Files",
   sourceControl: "Source control",
   inspector: "Inspector",
+  mirror: "Device mirror",
 };
 
-const ALL_PANES: PaneId[] = ["projects", "files", "sourceControl", "inspector"];
+const ALL_PANES: PaneId[] = ["projects", "files", "sourceControl", "inspector", "mirror"];
 const DEFAULT_DOCK: Record<PaneId, DockId> = {
   projects: "left",
   files: "left",
   sourceControl: "right",
   inspector: "right",
+  mirror: "right",
 };
 
 export interface LayoutState {
@@ -46,6 +48,7 @@ const DEFAULT_WEIGHTS: Record<PaneId, number> = {
   files: 1.4,
   sourceControl: 1,
   inspector: 1.6,
+  mirror: 1.6,
 };
 
 const DEFAULTS: LayoutState = {

@@ -33,6 +33,7 @@ pub fn fs_watch_start(
 ) -> Result<u32, String> {
     let app = app.clone();
     let root = PathBuf::from(&path);
+    let watch_root = root.clone(); // `root` is moved into the closure below
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
         // Only content/lifecycle changes — ignore pure access/metadata events.
@@ -65,7 +66,7 @@ pub fn fs_watch_start(
     .map_err(|e| e.to_string())?;
 
     watcher
-        .watch(&root, RecursiveMode::Recursive)
+        .watch(&watch_root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
     let id = manager.next_id.fetch_add(1, Ordering::Relaxed);

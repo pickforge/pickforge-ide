@@ -5,6 +5,7 @@ mod git_commands;
 mod process_commands;
 mod pty_commands;
 mod vm_commands;
+mod watch_commands;
 
 use std::path::PathBuf;
 
@@ -30,6 +31,7 @@ pub fn run() {
     builder
         .manage(PtyManager::new())
         .manage(VmServiceClient::new())
+        .manage(watch_commands::WatchManager::new())
         .manage(open_database())
         .invoke_handler(tauri::generate_handler![
             pty_commands::pty_spawn,
@@ -83,6 +85,8 @@ pub fn run() {
             vm_commands::vm_widget_properties,
             vm_commands::inspect_dir,
             vm_commands::inspect_save,
+            watch_commands::fs_watch_start,
+            watch_commands::fs_watch_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

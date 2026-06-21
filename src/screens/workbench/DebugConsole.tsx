@@ -27,11 +27,13 @@ import {
   reloadRun,
   restartRun,
   runConsole,
+  syncAutoReloadWatch,
   setConsoleHeight,
   stopRun,
   type RunStatus,
 } from "../../stores/runConsole";
 import { hasRunTargets } from "../../stores/runTargets";
+import { autoReloadEnabled, toggleAutoReload } from "../../stores/autoReload";
 import { isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
 import { ingestRunOutput } from "../../stores/vmService";
@@ -94,6 +96,21 @@ export function DebugConsole() {
           <Show when={workbenchPrefs().runButtonLabels}>Run</Show>
         </button>
         <Show when={can("hotReload")}>
+          <button
+            class="pf-dc-auto"
+            classList={{ "pf-dc-auto--on": autoReloadEnabled() }}
+            title={
+              autoReloadEnabled()
+                ? "Auto hot-reload on save: ON — click to disable"
+                : "Auto hot-reload on save: OFF — click to enable"
+            }
+            onClick={() => {
+              toggleAutoReload();
+              syncAutoReloadWatch();
+            }}
+          >
+            auto
+          </button>
           <button class="pf-dc-btn pf-dc-btn--reload" title="Hot reload (r)" disabled={!isRunning()} onClick={reloadRun}>
             <IconRefresh size={13} />
           </button>

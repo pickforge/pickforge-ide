@@ -7,13 +7,17 @@ export type PtyBytes = ArrayBuffer | Uint8Array | number[];
 
 export interface SpawnOptions {
   cwd?: string | null;
+  /** When set, run this command once (`$SHELL -c <command>`) instead of an
+   *  interactive shell — the pty exits when the command does. */
+  command?: string | null;
   rows: number;
   cols: number;
   onOutput: (data: PtyBytes) => void;
   onExit: (code: number | null) => void;
 }
 
-/** Spawn `$SHELL` in a fresh pty. Resolves to the session id. */
+/** Spawn a pty — interactive `$SHELL`, or a one-shot `command`. Resolves to the
+ *  session id. */
 export async function ptySpawn(opts: SpawnOptions): Promise<number> {
   const onOutput = new Channel<PtyBytes>();
   onOutput.onmessage = opts.onOutput;
@@ -22,6 +26,7 @@ export async function ptySpawn(opts: SpawnOptions): Promise<number> {
 
   return invoke<number>("pty_spawn", {
     cwd: opts.cwd ?? null,
+    command: opts.command ?? null,
     rows: opts.rows,
     cols: opts.cols,
     onOutput,

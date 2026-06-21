@@ -50,6 +50,10 @@ pub struct SpawnOptions {
     /// Extra environment merged on top of the normalised login-shell env —
     /// the `PICKFORGE_*` vars (and an IPC endpoint) go here.
     pub extra_env: HashMap<String, String>,
+    /// When set, run this command (`$SHELL -c <command>`) once and exit, instead
+    /// of an interactive shell. The Debug Console uses this so a finished run
+    /// leaves its output behind rather than dropping to a live shell prompt.
+    pub command: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -94,7 +98,9 @@ impl PtyManager {
         Self::default()
     }
 
-    /// Spawn `$SHELL` in a fresh pty; stream output to `sink`. Returns the id.
+    /// Spawn a pty and stream its output to `sink`. Without `opts.command` this
+    /// is the user's interactive `$SHELL`; with it, a one-shot `$SHELL -c
+    /// <command>` that exits when the command does. Returns the session id.
     pub fn spawn<S: PtySink>(&self, opts: SpawnOptions, sink: S) -> Result<u32, PtyError> {
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
@@ -107,7 +113,13 @@ impl PtyManager {
             pixel_height: 0,
         })?;
 
-        let ShellInvocation { program, args } = resolve_shell();
+        let ShellInvocation { program, mut args } = resolve_shell();
+        // Command mode: append `-c <command>` so the shell runs it and exits,
+        // keeping any platform login flag (`-l`) ahead of it.
+        if let Some(command) = opts.command.as_ref().filter(|c| !c.trim().is_empty()) {
+            args.push("-c".to_string());
+            args.push(command.clone());
+        }
         let mut cmd = CommandBuilder::new(program);
         for arg in args {
             cmd.arg(arg);

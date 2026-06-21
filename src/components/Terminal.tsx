@@ -26,11 +26,16 @@ import "./Terminal.css";
 export interface TerminalHandle {
   /** Type text into the shell without executing it (no trailing newline). */
   typeText: (text: string) => void;
+  /** Wipe the terminal's scrollback (the view-only console's Clear action). */
+  clear: () => void;
   focus: () => void;
 }
 
 export function TerminalPane(props: {
   cwd?: string;
+  /** When set, the pty runs this command once instead of an interactive shell
+   *  (the Debug Console's view-only run output). */
+  runCommand?: string;
   onReady?: (handle: TerminalHandle) => void;
   onExit?: (code: number | null) => void;
   /** Fires with each non-empty line the user types and submits (Enter).
@@ -154,6 +159,7 @@ export function TerminalPane(props: {
 
       ptySpawn({
         cwd: props.cwd ?? null,
+        command: props.runCommand ?? null,
         rows: term.rows,
         cols: term.cols,
         // Channel callbacks can fire after onCleanup but before the spawn
@@ -214,6 +220,7 @@ export function TerminalPane(props: {
           else pendingInput += text; // buffer until the spawn resolves
           term.focus();
         },
+        clear: () => term.clear(),
         focus: () => term.focus(),
       });
     })();

@@ -4,7 +4,8 @@
 // chrome — the single ember stays on the focused terminal.
 import { createEffect, Show } from "solid-js";
 import { Dropdown } from "../../components/Dropdown";
-import { discoverRunTargets } from "../../lib/runTargets";
+import { StatusPill } from "../../components/ui";
+import { discoverRunTargets, supportTierMeta } from "../../lib/runTargets";
 import { workspace } from "../../stores/workspace";
 import { useDeviceList } from "../../stores/deviceList";
 import { setRunDevice } from "../../stores/runDevice";
@@ -34,6 +35,10 @@ export function RunLauncher() {
   });
 
   const showDevices = () => !!activeTarget()?.needsDevice && devices().length > 0;
+  // Honest support tier for the active target — a quiet, neutral badge so a user
+  // on an RN/Android/web project sees how deep PickForge actually goes, instead of
+  // a bare dropdown that overstates support. Never the ember (Run keeps that).
+  const tier = () => supportTierMeta(activeTarget());
   const selectedKey = () => {
     const e = resolveSelectedDevice();
     return e ? deviceKey(e) : "";
@@ -57,6 +62,11 @@ export function RunLauncher() {
             label: t.label + (t.source === "vscode" ? " · launch.json" : ""),
           }))}
         />
+        <Show when={activeTarget()}>
+          <span class="pf-run-tier" title={`${tier().label} support — ${tier().blurb}`}>
+            <StatusPill label={tier().label} intent="neutral" />
+          </span>
+        </Show>
         <Show when={showDevices()}>
           <Dropdown
             class="pf-run-dropdown"

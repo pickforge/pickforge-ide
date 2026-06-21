@@ -50,7 +50,17 @@ function findPath(root: A11yNode, id: string, acc: A11yNode[] = []): A11yNode[] 
   return null;
 }
 
-export function A11yTree(props: { serial: string | null; online: boolean }) {
+export function A11yTree(props: {
+  serial: string | null;
+  online: boolean;
+  // Capability gates from the active target (adapters.rs). When inspect is
+  // absent the dump/forge is muted (not dead); when source mapping is absent the
+  // forge carries a "no exact source" certainty note (mirrors buildA11yMarkdown).
+  canInspect?: boolean;
+  canMapSource?: boolean;
+}) {
+  const canInspect = () => props.canInspect ?? true;
+  const canMapSource = () => props.canMapSource ?? false;
   const [tree, setTree] = createSignal<A11yNode | null>(null);
   const [selected, setSelected] = createSignal<A11yNode | null>(null);
   const [thumb, setThumb] = createSignal<string | null>(null);
@@ -220,8 +230,12 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
           <div class="pf-wt-actions">
             <button
               class="pf-icon-btn"
-              title="Dump accessibility tree"
-              disabled={!props.serial || loading()}
+              title={
+                canInspect()
+                  ? "Dump accessibility tree"
+                  : "This target can't be inspected (no inspect-selection capability)"
+              }
+              disabled={!props.serial || loading() || !canInspect()}
               onClick={() => void refresh()}
             >
               <IconRefresh size={14} />
@@ -229,6 +243,12 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
           </div>
         </div>
 
+        <Show
+          when={canInspect()}
+          fallback={
+            <div class="pf-rail-empty">This target can't be inspected on the device.</div>
+          }
+        >
         <Show
           when={props.online && props.serial}
           fallback={<div class="pf-rail-empty">Connect or boot a device to inspect</div>}
@@ -257,6 +277,7 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
             </div>
           </Show>
         </Show>
+        </Show>
       </div>
 
       <Show when={selectedNode()}>
@@ -280,6 +301,12 @@ export function A11yTree(props: { serial: string | null; online: boolean }) {
               fallback={
                 <div class="pf-wd-ai">
                   <MonoEyebrow text="Ask AI" tick />
+                  <Show when={!canMapSource()}>
+                    <p class="pf-wd-disclaimer" title="No exact source mapping for this target">
+                      No exact source mapping — the forge ships runtime handles
+                      (resource-id, text, class) for the agent to search by.
+                    </p>
+                  </Show>
                   <div class="pf-wd-ai-chips">
                     <For each={agentChips()}>
                       {(item) => (

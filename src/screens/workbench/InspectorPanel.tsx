@@ -19,7 +19,7 @@ import { workspace } from "../../stores/workspace";
 import { connectVm, disconnectVm, setVmUrl, vmService } from "../../stores/vmService";
 import { runConsole } from "../../stores/runConsole";
 import { activeTarget } from "../../stores/runTargets";
-import type { InspectorKind } from "../../lib/runTargets";
+import { hasCapability, type InspectorKind, type RunTarget } from "../../lib/runTargets";
 import { WidgetTree } from "./WidgetTree";
 import { A11yTree } from "./A11yTree";
 
@@ -31,10 +31,18 @@ export function InspectorPanel() {
   // target. `runConsole` keeps its target after a run stops, so only honor it
   // while running — otherwise a finished RN/native/web run would keep hiding the
   // Flutter VM / no-target inspector. Null when nothing is selected → legacy VM.
-  const inspectorKind = (): InspectorKind | null => {
+  // The target whose capabilities gate the rail: a LIVE run wins, else the
+  // selected launcher target (same precedence as inspectorKind below).
+  const inspectTarget = (): RunTarget | null => {
     const running = runConsole.status() === "running" ? runConsole.target() : null;
-    return running?.inspectorKind ?? activeTarget()?.inspectorKind ?? null;
+    return running ?? activeTarget() ?? null;
   };
+  const inspectorKind = (): InspectorKind | null =>
+    inspectTarget()?.inspectorKind ?? null;
+  // Honest capability gates so an absent capability mutes its action (with a
+  // reason) instead of silently no-opping.
+  const canInspect = () => hasCapability(inspectTarget(), "inspectSelection");
+  const canMapSource = () => hasCapability(inspectTarget(), "mapSelectionToSource");
 
   // VM-service chrome (the connect box + the "VM connected" chip) is Flutter-only.
   // The legacy no-target case (null) keeps the VM flow, so it shows there too; every
@@ -156,7 +164,12 @@ export function InspectorPanel() {
           }
         >
           <Match when={inspectorKind() === "uiAutomator"}>
-            <A11yTree serial={selectedSerial()} online={deviceOnline()} />
+            <A11yTree
+              serial={selectedSerial()}
+              online={deviceOnline()}
+              canInspect={canInspect()}
+              canMapSource={canMapSource()}
+            />
           </Match>
           <Match when={inspectorKind() === "cdp" || inspectorKind() === "none"}>
             <div class="pf-inspector-section">

@@ -147,6 +147,11 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, DbEr
 /// fresh DB reports 0 and migrates straight to the latest.
 fn migrate(conn: &mut Connection) -> Result<(), DbError> {
     let mut version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version > LATEST_VERSION {
+        return Err(DbError::Other(format!(
+            "database schema v{version} is newer than this build supports (v{LATEST_VERSION})"
+        )));
+    }
     while version < LATEST_VERSION {
         let next = version + 1;
         let tx = conn.transaction()?;
@@ -765,6 +770,88 @@ mod tests {
         // Reopening an already-current DB is a no-op (no duplicate-column error).
         let db = Database::open(&path).unwrap();
         assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn unversioned_db_already_holding_context_columns_is_left_intact() {
+        let path = temp_db_path("legacy-current");
+        let _ = std::fs::remove_file(&path);
+
+        // Seed a raw legacy database that predates user_version bookkeeping yet
+        // already carries the newest columns. user_version stays 0 (the default),
+        // so the migrator replays every step and the has_column guard must skip
+        // the ALTERs instead of failing with a duplicate-column error.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE project_settings (
+                   project_root                TEXT NOT NULL PRIMARY KEY,
+                   vm_service_url              TEXT,
+                   default_agent_id            TEXT,
+                   last_chat_id                TEXT,
+                   pane_sizes                  TEXT,
+                   last_used_at                INTEGER,
+                   avd_id                      TEXT,
+                   avd_name                    TEXT,
+                   connection_mode             TEXT NOT NULL DEFAULT 'auto',
+                   flutter_run_args            TEXT,
+                   target_file                 TEXT,
+                   validator_command           TEXT,
+                   emulator_launch_options     TEXT,
+                   emulator_idle_shutdown      TEXT,
+                   auto_boot_on_select         INTEGER NOT NULL DEFAULT 1,
+                   first_run_celebrated        INTEGER NOT NULL DEFAULT 0,
+                   context_storage_mode        TEXT,
+                   context_storage_custom_path TEXT
+                 );
+                 INSERT INTO project_settings (project_root, connection_mode)
+                   VALUES ('/p', 'auto');",
+            )
+            .unwrap();
+            assert_eq!(user_version(&conn), 0);
+            assert!(has_column(&conn, "project_settings", "context_storage_mode").unwrap());
+        }
+
+        // Opening must succeed (no duplicate-column error), reach LATEST, and the
+        // settings DAO must read and write the row.
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+
+            let loaded = db.get_settings("/p").unwrap().unwrap();
+            assert_eq!(loaded.connection_mode, "auto");
+            assert!(loaded.context_storage_mode.is_none());
+
+            let mut s = ProjectSettings::defaults("/p");
+            s.context_storage_mode = Some("custom".into());
+            db.upsert_settings(&s).unwrap();
+            assert_eq!(
+                db.get_settings("/p")
+                    .unwrap()
+                    .unwrap()
+                    .context_storage_mode
+                    .as_deref(),
+                Some("custom")
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn opening_a_newer_schema_is_rejected() {
+        let path = temp_db_path("downgrade");
+        let _ = std::fs::remove_file(&path);
+
+        // Seed a DB stamped a version ahead of this build (an app downgrade).
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!("PRAGMA user_version = {};", LATEST_VERSION + 1))
+                .unwrap();
+            assert_eq!(user_version(&conn), LATEST_VERSION + 1);
+        }
+
+        assert!(Database::open(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }
 }

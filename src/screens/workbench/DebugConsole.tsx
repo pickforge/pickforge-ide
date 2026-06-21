@@ -38,7 +38,7 @@ import {
 import { activeTarget, hasRunTargets } from "../../stores/runTargets";
 import { isLogcatTarget } from "../../lib/runTargets";
 import { autoReloadEnabled, toggleAutoReload } from "../../stores/autoReload";
-import { isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
+import { cancelBoot, isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
 import { ingestRunOutput } from "../../stores/vmService";
 
@@ -117,6 +117,13 @@ export function DebugConsole() {
         </Show>
         <Show when={isBooting()}>
           <span class="pf-run-booting">booting…</span>
+          <button
+            class="pf-dc-btn pf-dc-btn--cancel pf-dc-btn--labeled"
+            title="Cancel emulator boot"
+            onClick={cancelBoot}
+          >
+            Cancel
+          </button>
         </Show>
         <Show when={!isBooting() && launchError()}>
           <span class="pf-run-error" title={launchError()!}>{launchError()}</span>

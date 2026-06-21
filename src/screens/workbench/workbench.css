@@ -1587,6 +1587,15 @@ body.pf-resizing .pf-dc-resizer-grip {
   color: var(--pf-error);
   border-color: var(--pf-error);
 }
+/* Cancel an in-flight emulator boot — a neutral escape hatch (no ember, not the
+   red of Stop): it abandons a boot that hasn't started a run yet. */
+.pf-dc-btn--cancel {
+  color: var(--pf-text-med);
+}
+.pf-dc-btn--cancel:hover:not(:disabled) {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
 .pf-dc-body {
   flex: 1 1 0;
   min-height: 0;

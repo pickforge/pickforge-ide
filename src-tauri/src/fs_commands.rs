@@ -239,7 +239,7 @@ fn display_path(path: &Path) -> String {
 /// the canonical path so callers read the resolved (symlink-free) location.
 /// Canonicalization collapses `..` and follows symlinks, so neither traversal
 /// nor a symlinked escape can leave the approved area.
-fn approved_canonical(path: &str, roots: &ApprovedRoots) -> Result<PathBuf, String> {
+pub(crate) fn approved_canonical(path: &str, roots: &ApprovedRoots) -> Result<PathBuf, String> {
     let canon = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
     if !roots.contains(&canon) {
         return Err("path is outside an approved project root".into());

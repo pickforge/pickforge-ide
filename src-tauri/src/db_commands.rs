@@ -15,12 +15,23 @@ pub fn projects_list(
     include_archived: bool,
 ) -> Result<Vec<Project>, String> {
     let projects = db.list_projects(include_archived).map_err(|e| e.to_string())?;
-    // Keep the filesystem allowlist in sync with the live project set (another
-    // instance may have added a project since startup).
-    for p in &projects {
-        register_project_root(&roots, &p.project_root);
-    }
+    register_active_roots(&roots, &projects);
     Ok(projects)
+}
+
+/// Keep the filesystem allowlist in sync with the live project set (another
+/// instance may have added a project since startup), but register only **active**
+/// rows. `projects_list(include_archived = true)` (Settings renders archived
+/// projects) must not re-approve an archived root — that would let the file
+/// explorer reach a project the user archived until the next reseed. Archived
+/// rows are still RETURNED so Settings can list them; only the registration is
+/// filtered.
+fn register_active_roots(roots: &ApprovedRoots, projects: &[Project]) {
+    for p in projects {
+        if p.archived_at.is_none() {
+            register_project_root(roots, &p.project_root);
+        }
+    }
 }
 
 #[tauri::command]
@@ -158,4 +169,59 @@ pub fn agent_run_finish(
 ) -> Result<(), String> {
     db.finish_agent_run(id, finished_at, exit_code, hot_reload_count)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod projects_list_tests {
+    use super::*;
+    use crate::fs_commands::approved_canonical;
+
+    fn make_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pf-projlist-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    fn project(root: &std::path::Path, name: &str, archived: Option<i64>) -> Project {
+        Project {
+            project_root: root.to_string_lossy().into_owned(),
+            display_name: name.to_string(),
+            created_at: 0,
+            last_opened_at: 0,
+            sort_order: 0,
+            archived_at: archived,
+        }
+    }
+
+    // The `projects_list(include_archived = true)` path (Settings rendering
+    // archived projects) must not re-approve an archived project's root: it
+    // registers only active rows, so a gated read on an archived root stays
+    // rejected while an active root is reachable.
+    #[test]
+    fn listing_with_archived_does_not_reapprove_an_archived_root() {
+        let active = make_dir("active");
+        let archived = make_dir("archived");
+        // `db.list_projects(true)` returns both; only the active one registers.
+        let rows = vec![
+            project(&active, "active", None),
+            project(&archived, "archived", Some(1)),
+        ];
+
+        let roots = ApprovedRoots::default();
+        register_active_roots(&roots, &rows);
+
+        let active_file = active.join("a.txt");
+        let archived_file = archived.join("b.txt");
+        std::fs::write(&active_file, b"x").unwrap();
+        std::fs::write(&archived_file, b"y").unwrap();
+
+        assert!(
+            approved_canonical(&active_file.to_string_lossy(), &roots).is_ok(),
+            "an active project's root must stay approved",
+        );
+        assert!(
+            approved_canonical(&archived_file.to_string_lossy(), &roots).is_err(),
+            "an archived project's root must NOT be approved by projects_list",
+        );
+    }
 }

@@ -1,4 +1,5 @@
 .pf-terminal {
+  position: relative;
   height: 100%;
   width: 100%;
   padding: 0;
@@ -8,6 +9,27 @@
   /* The machine voice: keep the whole terminal subtree on Geist Mono so the DOM
    * fallback renderer matches the WebGL atlas font. */
   font-family: var(--pf-font-mono);
+}
+
+/* OS file-drop affordance: a subtle inset ember ring + glow on the pane being
+ * hovered by an OS drag (driven by .pf-terminal--drop). An overlay, so it never
+ * reflows xterm; pointer-events:none keeps the drop landing on the pane. The
+ * duration token collapses under reduced motion. */
+.pf-terminal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: inset 0 0 0 var(--pf-bracket-width) var(--pf-ember),
+    inset 0 0 24px -8px var(--pf-ember);
+  background: var(--pf-ember-glow);
+  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-terminal--drop::after {
+  opacity: 1;
 }
 
 /* xterm paints its own viewport; keep its background transparent so the

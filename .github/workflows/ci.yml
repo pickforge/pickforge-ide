@@ -58,11 +58,26 @@ jobs:
   vrt:
     name: visual regression
     runs-on: ubuntu-22.04
-    # Non-blocking for now: the committed baselines were rendered locally and CI
-    # chromium differs by ~3% on text-heavy screens (just over the suite's 2%
-    # tolerance) — cosmetic font anti-aliasing, not a regression. The job still
-    # runs on every PR and uploads diff artifacts; flip it to blocking (remove
-    # continue-on-error) once the baselines are regenerated as CI-canonical.
+    # NON-BLOCKING UNTIL BASELINES ARE CI-CANONICAL.
+    #
+    # The committed snapshots under tests/vrt/screens.spec.ts-snapshots/ were
+    # rendered on a developer's machine. CI chromium's font anti-aliasing differs
+    # by a few percent on text-heavy screens (just over the suite's tolerance) —
+    # cosmetic, not a regression — so this job would fail on every PR. While it
+    # would fail, `continue-on-error: true` keeps it from red-gating PRs.
+    #
+    # TO MAKE THIS A REAL (BLOCKING) GATE — do this in two steps:
+    #   1. Run the manual workflow once so the baselines are rendered by THIS
+    #      same runner image and committed back:
+    #         gh workflow run update-vrt-baselines.yml --ref <branch>
+    #      (See .github/workflows/update-vrt-baselines.yml.)
+    #   2. In the follow-up PR (with CI-canonical baselines present), delete the
+    #      `continue-on-error: true` line below. From then on a real visual
+    #      diff fails the job and blocks the merge; the tolerance in
+    #      playwright.config.ts is only a sub-pixel-AA safety margin.
+    #
+    # The job runs on every PR today and uploads diff artifacts so drift is
+    # visible even while non-blocking.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

@@ -240,6 +240,23 @@ body.pf-resizing .pf-dock-resizer-grip {
   background: var(--pf-item-fill);
 }
 
+/* Reorder drop indicator: a thin neutral line on the edge the dragged row will
+ * land against (before = top/left, after = bottom/right). Neutral hairline — the
+ * focused terminal owns the one ember, so DnD stays quiet. The line sits inside
+ * the row via inset box-shadow so it never shifts layout. */
+.pf-drop-before {
+  box-shadow: inset 0 2px 0 -1px var(--pf-hairline-strong);
+}
+.pf-drop-after {
+  box-shadow: inset 0 -2px 0 -1px var(--pf-hairline-strong);
+}
+.pf-drop-before-x {
+  box-shadow: inset 2px 0 0 -1px var(--pf-hairline-strong);
+}
+.pf-drop-after-x {
+  box-shadow: inset -2px 0 0 -1px var(--pf-hairline-strong);
+}
+
 /* ---- source control pane ---- */
 .pf-sc {
   /* Fill the slot and let the file list scroll inside it, rather than claiming

@@ -48,11 +48,13 @@ import {
   renameChat,
   renameProject,
   reorderChat,
+  reorderProject,
   selectChat,
   selectProject,
   workspace,
 } from "../../stores/workspace";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
+import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
 import { pickProjectDir } from "../../lib/opener";
 
 const PROJECT_MIME = "application/x-pf-project";
@@ -73,8 +75,22 @@ export function ProjectsPane() {
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [renaming, setRenaming] = createSignal<string | null>(null);
   const [dropGroup, setDropGroup] = createSignal<string | null>(null); // group id or "__ungrouped"
-  const [dropChat, setDropChat] = createSignal<string | null>(null); // chat id being dragged over
+  // Reorder indicator: the row being hovered + which edge the drop lands on, for
+  // both chat reorder and project reorder. A thin line renders on that edge.
+  const [dropMark, setDropMark] = createSignal<{ kind: "chat" | "project"; id: string; edge: DropEdge } | null>(null);
   const [showArchived, setShowArchived] = createSignal<Set<string>>(new Set()); // roots showing archived
+
+  const markEdge = (kind: "chat" | "project", id: string, axis: "x" | "y" = "y") => (e: DragEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const edge = axis === "x" ? dropEdgeForRectX(e.clientX, rect) : dropEdgeForRect(e.clientY, rect);
+    setDropMark({ kind, id, edge });
+  };
+  const clearMark = (kind: "chat" | "project", id: string) =>
+    setDropMark((m) => (m && m.kind === kind && m.id === id ? null : m));
+  const edgeFor = (kind: "chat" | "project", id: string): DropEdge | null => {
+    const m = dropMark();
+    return m && m.kind === kind && m.id === id ? m.edge : null;
+  };
 
   const closeMenu = () => setMenu(null);
   onCleanup(closeMenu);
@@ -118,10 +134,15 @@ export function ProjectsPane() {
       return next;
     });
 
-  // ---- project → group drag ----
+  // ---- project drag (reorder + assign to group) ----
   const projectDragStart = (root: string, e: DragEvent) => {
     e.dataTransfer?.setData(PROJECT_MIME, root);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    // Ghost only the dragged row header, never the expanded chats subtree below
+    // it — without this the browser can snapshot the whole tree node and produce
+    // a huge, unwieldy drag image.
+    const row = e.currentTarget as HTMLElement;
+    e.dataTransfer?.setDragImage(row, 12, row.offsetHeight / 2);
   };
   const allowProjectDrop = (e: DragEvent) => {
     if (e.dataTransfer?.types.includes(PROJECT_MIME)) {
@@ -138,6 +159,18 @@ export function ProjectsPane() {
     assignProject(root, groupId);
   };
 
+  // ---- project reorder (within the list) ----
+  const dropProjectReorder = (targetRoot: string, e: DragEvent) => {
+    const root = e.dataTransfer?.getData(PROJECT_MIME);
+    const edge = edgeFor("project", targetRoot);
+    setDropMark(null);
+    if (!root || !edge) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const order = workspace.projects.map((p) => p.projectRoot);
+    void reorderProject(root, beforeIdForDrop(order, targetRoot, edge));
+  };
+
   // ---- chat reorder drag (within a project) ----
   const allowChatDrop = (e: DragEvent) => {
     if (e.dataTransfer?.types.includes(CHAT_MIME)) {
@@ -145,15 +178,31 @@ export function ProjectsPane() {
       if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
     }
   };
-  const dropChatBefore = (root: string, beforeId: string | null, e: DragEvent) => {
+  // Drop onto a specific row: insert before or after it by where the pointer sits
+  // relative to the row's midpoint, so reordering works in BOTH directions.
+  const dropOnChat = (root: string, targetId: string, e: DragEvent) => {
     const id = e.dataTransfer?.getData(CHAT_MIME);
-    setDropChat(null);
+    const edge = edgeFor("chat", targetId);
+    setDropMark(null);
     if (!id) return;
     // Only reorder within the same project.
     if (!chatsFor(root).some((c) => c.chatId === id)) return;
     e.preventDefault();
     e.stopPropagation();
-    void reorderChat(id, beforeId);
+    const order = chatsFor(root)
+      .filter((c) => !isChatArchived(c.chatId))
+      .map((c) => c.chatId);
+    void reorderChat(id, edge ? beforeIdForDrop(order, targetId, edge) : null);
+  };
+  // Drop onto the children container's empty space → append to the end.
+  const dropChatAtEnd = (root: string, e: DragEvent) => {
+    const id = e.dataTransfer?.getData(CHAT_MIME);
+    setDropMark(null);
+    if (!id) return;
+    if (!chatsFor(root).some((c) => c.chatId === id)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void reorderChat(id, null);
   };
 
   const RenameField = (props: { value: string; commit: (v: string) => void }) => (
@@ -245,7 +294,8 @@ export function ProjectsPane() {
         classList={{
           active: workspace.activeChatId === id,
           "pf-chat-row--archived": p.archived,
-          "pf-drop-target": dropChat() === id,
+          "pf-drop-before": edgeFor("chat", id) === "before",
+          "pf-drop-after": edgeFor("chat", id) === "after",
         }}
         draggable={!p.archived}
         onDragStart={(e) => {
@@ -253,9 +303,10 @@ export function ProjectsPane() {
           e.dataTransfer?.setData(CHAT_MIME, id);
           if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
         }}
-        onDragOver={p.archived ? undefined : (e) => { allowChatDrop(e); setDropChat(id); }}
-        onDragLeave={() => setDropChat((d) => (d === id ? null : d))}
-        onDrop={p.archived ? undefined : (e) => dropChatBefore(p.root, id, e)}
+        onDragOver={p.archived ? undefined : (e) => { allowChatDrop(e); markEdge("chat", id)(e); }}
+        onDragLeave={() => clearMark("chat", id)}
+        onDrop={p.archived ? undefined : (e) => dropOnChat(p.root, id, e)}
+        onDragEnd={() => setDropMark(null)}
         onClick={() => !p.archived && selectChat(id)}
         onContextMenu={(e) => !p.archived && openFromContext("chat", id, e)}
       >
@@ -307,7 +358,7 @@ export function ProjectsPane() {
         <div
           class="pf-chat-children"
           onDragOver={allowChatDrop}
-          onDrop={(e) => dropChatBefore(p.root, null, e)}
+          onDrop={(e) => dropChatAtEnd(p.root, e)}
         >
           <For each={visible()} fallback={<div class="pf-chat-empty">No chats yet</div>}>
             {(chat) => <ChatRow chat={chat} root={p.root} />}
@@ -349,9 +400,17 @@ export function ProjectsPane() {
       <div class="pf-tree-node">
         <div
           class="pf-rail-row pf-tree-row"
-          classList={{ active: workspace.activeRoot === root }}
+          classList={{
+            active: workspace.activeRoot === root,
+            "pf-drop-before": edgeFor("project", root) === "before",
+            "pf-drop-after": edgeFor("project", root) === "after",
+          }}
           draggable={true}
           onDragStart={(e) => projectDragStart(root, e)}
+          onDragOver={(e) => { allowProjectDrop(e); markEdge("project", root)(e); }}
+          onDragLeave={() => clearMark("project", root)}
+          onDrop={(e) => dropProjectReorder(root, e)}
+          onDragEnd={() => setDropMark(null)}
           onClick={() => selectProject(root)}
           onContextMenu={(e) => openFromContext("project", root, e)}
         >
@@ -381,9 +440,17 @@ export function ProjectsPane() {
       <>
         <div
           class="pf-proj-card"
-          classList={{ active: workspace.activeRoot === root }}
+          classList={{
+            active: workspace.activeRoot === root,
+            "pf-drop-before-x": edgeFor("project", root) === "before",
+            "pf-drop-after-x": edgeFor("project", root) === "after",
+          }}
           draggable={true}
           onDragStart={(e) => projectDragStart(root, e)}
+          onDragOver={(e) => { allowProjectDrop(e); markEdge("project", root, "x")(e); }}
+          onDragLeave={() => clearMark("project", root)}
+          onDrop={(e) => dropProjectReorder(root, e)}
+          onDragEnd={() => setDropMark(null)}
           onClick={() => selectProject(root)}
           onContextMenu={(e) => openFromContext("project", root, e)}
         >

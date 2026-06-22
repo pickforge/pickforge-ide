@@ -5,6 +5,24 @@
   background: var(--pf-surface);
 }
 
+/* Resize affordance for the frameless window (decorations are off, so the
+ * compositor no longer draws resize borders or cursors). Thin transparent zones
+ * pinned to each edge/corner restore the resize cursor and start a native
+ * resize-drag on press. Corners sit above edges so diagonal resize wins where
+ * they overlap. */
+.pf-resize {
+  position: fixed;
+  z-index: 1000;
+}
+.pf-resize--n { top: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.pf-resize--s { bottom: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.pf-resize--w { top: 0; bottom: 0; left: 0; width: 4px; cursor: ew-resize; }
+.pf-resize--e { top: 0; bottom: 0; right: 0; width: 4px; cursor: ew-resize; }
+.pf-resize--nw { top: 0; left: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 1001; }
+.pf-resize--ne { top: 0; right: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 1001; }
+.pf-resize--sw { bottom: 0; left: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 1001; }
+.pf-resize--se { bottom: 0; right: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 1001; }
+
 /* ---- Title bar (custom window chrome) ----
  * One draggable row that replaces the native titlebar AND the old app header:
  * brand (left) · nav (center) · status + window controls (right). The whole bar

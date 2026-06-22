@@ -7,6 +7,7 @@ import { initTheme } from "./stores/theme";
 import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WindowControls } from "./components/WindowControls";
+import { ResizeHandles } from "./components/ResizeHandles";
 import { resolvedControlsSide } from "./stores/windowControls";
 import { IconChevronRight, IconTerminal } from "./components/icons";
 import { layout, toggleDock } from "./stores/workbenchLayout";
@@ -76,6 +77,7 @@ export function App() {
 
   return (
     <div class="pf-app">
+      <ResizeHandles />
       {/* Custom title bar: the whole bar is the drag region (decorations are off);
           interactive children opt out of dragging by simply not carrying the
           attribute. Double-clicking the drag region toggles maximize natively. */}
@@ -84,7 +86,7 @@ export function App() {
         classList={{ "pf-titlebar--controls-left": resolvedControlsSide() === "left" }}
         data-tauri-drag-region
       >
-        <div class="pf-titlebar-left">
+        <div class="pf-titlebar-left" data-tauri-drag-region>
           <Show when={resolvedControlsSide() === "left"}>
             <WindowControls />
           </Show>
@@ -108,7 +110,7 @@ export function App() {
             </Show>
           </div>
         </div>
-        <nav class="pf-nav">
+        <nav class="pf-nav" data-tauri-drag-region>
           <For each={NAV}>
             {(n) => (
               <button
@@ -121,7 +123,7 @@ export function App() {
             )}
           </For>
         </nav>
-        <div class="pf-titlebar-right">
+        <div class="pf-titlebar-right" data-tauri-drag-region>
           <StatusPill
             label={workspace.activeRoot ? "shell · live" : "no project"}
             intent={workspace.activeRoot ? "connected" : "neutral"}

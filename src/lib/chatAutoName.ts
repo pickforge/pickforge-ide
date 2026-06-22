@@ -1,11 +1,23 @@
-// One-time auto-naming of a default-titled chat from the first message the user
-// sends to an agent. Agent-only: a chat is "armed" either by firing an agent
-// quick-launch (chip/hotkey, which knows the agentId) or by typing a recognised
-// agent command (`claude`, `codex`, …). Once armed, the next non-empty line the
-// user submits becomes the title. Plain shell commands never rename the chat.
+// Auto-naming of a default-titled chat. Two sources, in priority order:
+//
+//   1. The agent's OSC 2 terminal title — a short live summary the agent emits
+//      (e.g. Claude/Codex set the window title to what they're working on). The
+//      first chat pane to emit a usable title owns the chat's name; the title is
+//      debounced (commit on quiet) and noise-filtered (a prompt/cwd/`user@host`
+//      banner is never a title). It REPLACES a message-derived auto-name.
+//   2. The first message the user submits to an agent — the fallback when no OSC
+//      title ever arrives. Agent-only: a chat is "armed" either by firing an
+//      agent quick-launch (chip/hotkey, which knows the agentId) or by typing a
+//      recognised agent command (`claude`, `codex`, …). Plain shell commands
+//      never rename the chat.
+//
+// Either source only ever writes while the title is still "auto-owned" (the
+// default, or a title this module set). A manual rename locks the title — see
+// markChatTitleManual, which the rename field calls — so neither source can ever
+// clobber a name the user typed.
 import { createSignal } from "solid-js";
 import { AGENTS } from "./agentModels";
-import { findChat, renameChat } from "../stores/workspace";
+import { findChat, setChatTitle } from "../stores/workspace";
 
 /** Title a freshly-created chat carries until it earns a real name. */
 export const DEFAULT_CHAT_TITLE = "New chat";
@@ -35,6 +47,73 @@ const MAX_TITLE = 48;
 // chat with split terminals, only the pane the agent launched in can supply the
 // title — a submit in another split pane can't steal it.
 const armed = new Map<string, string>();
+
+// ---- title ownership ----
+// A chat the user has manually renamed: locked, so no auto source may overwrite
+// it. Tracked for this session; a non-default title loaded from a previous run
+// is also treated as locked (see canAutoOwn) — we can't tell a prior auto-name
+// from a manual one, so we err toward never clobbering the user.
+const manual = new Set<string>();
+// Chats this module has auto-named in THIS session. Once we own a chat's title
+// (via OSC or the first message) we may keep refining it from the SAME owner,
+// even though it's no longer the default — but only until a manual rename.
+const autoNamed = new Set<string>();
+
+/** Mark a chat's title as user-owned so the OSC/first-message auto-namers leave
+ *  it alone. The rename field calls this on a real manual rename. */
+export function markChatTitleManual(chatId: string) {
+  manual.add(chatId);
+  autoNamed.delete(chatId);
+  oscPaneOwner.delete(chatId);
+}
+
+/** True when an auto source may (re)write this chat's title: never once the user
+ *  has renamed it, and otherwise only while it's the default or a name we set. */
+function canAutoOwn(chatId: string): boolean {
+  if (manual.has(chatId)) return false;
+  const chat = findChat(chatId);
+  if (!chat) return false;
+  return isDefaultChatTitle(chat.title) || autoNamed.has(chatId);
+}
+
+// ---- OSC 2 terminal-title pipeline ----
+// chatId -> the pane id that first emitted a usable OSC title. That pane owns
+// the chat's title for the rest of the session; titles from any other split
+// pane are ignored, so a second shell can't fight it for the name.
+const oscPaneOwner = new Map<string, string>();
+// chatId -> a pending debounce timer + the latest candidate title. The agent
+// rewrites the title rapidly while it works; we commit only after it goes quiet.
+interface OscPending {
+  timer: ReturnType<typeof setTimeout>;
+  title: string;
+}
+const oscPending = new Map<string, OscPending>();
+const OSC_DEBOUNCE_MS = 1200;
+
+/** Feed an OSC 2 title emitted by a chat pane's terminal. Filters noise, lets
+ *  the first usable pane own the title, debounces, and commits on quiet — but
+ *  only while the chat is still auto-owned (never over a manual rename). */
+export function handleOscTitle(chatId: string, paneId: string, rawTitle: string) {
+  if (!canAutoOwn(chatId)) return;
+
+  const title = cleanOscTitle(rawTitle);
+  if (!title) return; // noise — empty, a prompt/cwd banner, the shell name, …
+
+  // First usable pane to speak owns the title; ignore the others.
+  const owner = oscPaneOwner.get(chatId);
+  if (owner === undefined) oscPaneOwner.set(chatId, paneId);
+  else if (owner !== paneId) return;
+
+  const existing = oscPending.get(chatId);
+  if (existing) clearTimeout(existing.timer);
+  const timer = setTimeout(() => {
+    oscPending.delete(chatId);
+    if (!canAutoOwn(chatId)) return; // a manual rename may have landed mid-wait
+    autoNamed.add(chatId);
+    commit(chatId, title);
+  }, OSC_DEBOUNCE_MS);
+  oscPending.set(chatId, { timer, title });
+}
 
 /** Arm a chat so its next submitted line in `paneId` is taken as the title
  *  (agent launched via a quick-launch chip/hotkey — we already know it's an
@@ -130,10 +209,14 @@ function animateRename(chatId: string, from: string, to: string) {
 }
 
 function commit(chatId: string, message: string) {
+  if (!canAutoOwn(chatId)) return; // never write over a manual rename
   const title = toTitle(message);
   if (!title) return;
   const from = findChat(chatId)?.title ?? "";
-  void renameChat(chatId, title); // persist immediately; the override masks it
+  autoNamed.add(chatId); // this module now owns the title (until a manual rename)
+  // Persist via the narrow title update so a live `session_id` write (chat
+  // recovery) the full-row `chat_upsert` would carry can't be clobbered.
+  void setChatTitle(chatId, title);
   if (prefersReducedMotion() || from === title) return;
   setOverride(chatId, from); // mask the instant swap before the first frame
   animateRename(chatId, from, title);
@@ -156,6 +239,48 @@ function matchAgentLaunch(line: string): { prompt: string } | null {
     rest.push(t);
   }
   return { prompt: rest.join(" ") };
+}
+
+// Shell/agent binaries whose bare name a terminal often sets as its title — not
+// a summary worth showing. Folded against the agent binaries we already know.
+const SHELL_BINARIES = new Set<string>([
+  "sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "pwsh", "nu",
+  "xonsh", "elvish",
+]);
+
+/** Validate + tidy an OSC 2 terminal title into a chat title, or "" if the title
+ *  is noise we should ignore. Noise = empty/whitespace, control-only, a
+ *  `user@host`/bare-hostname/FQDN banner, a path or cwd, a prompt-ending line
+ *  (`$`/`%`/`#`/`>`), or the bare name of a shell/agent binary. Exported for
+ *  unit testing — keep it pure. */
+export function cleanOscTitle(raw: string): string {
+  if (typeof raw !== "string") return "";
+  // Strip C0/C1 control chars (some shells wrap the title in them) then trim.
+  // eslint-disable-next-line no-control-regex
+  const s = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
+  if (!s) return ""; // empty / whitespace / control-only
+
+  // A prompt line the shell parks in the title: ends in a shell prompt sigil.
+  if (/[$%#>]\s*$/.test(s)) return "";
+
+  // `user@host` or `user@host:~/path` (the classic xterm default title), and a
+  // bare hostname / FQDN (`devbox`, `devbox.local`, `host.example.com`).
+  if (/^[\w.-]+@[\w.-]+(?::.*)?$/.test(s)) return "";
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(s) && !s.includes(" ")) return "";
+
+  // A path or cwd: absolute (`/x/y`), home-relative (`~/x`), Windows (`C:\…`),
+  // or a single no-space token that's clearly a directory (`~`, contains a
+  // slash). Never a useful summary.
+  if (/^(~|\/|[a-zA-Z]:[\\/]|\.{1,2}\/)/.test(s)) return "";
+  if (!s.includes(" ") && /[\\/]/.test(s)) return "";
+
+  // The bare name of the shell or an agent binary (`zsh`, `claude`, `codex`).
+  const lone = s.toLowerCase();
+  if (!s.includes(" ") && (SHELL_BINARIES.has(lone) || AGENT_BINARIES.has(lone))) {
+    return "";
+  }
+
+  return toTitle(s);
 }
 
 /** Turn a raw message into a tidy chat title: unquoted, single-spaced, capped on

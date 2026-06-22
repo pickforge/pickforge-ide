@@ -53,7 +53,19 @@ pub struct SpawnOptions {
     /// When set, run this command (`$SHELL -c <command>`) once and exit, instead
     /// of an interactive shell. The Debug Console uses this so a finished run
     /// leaves its output behind rather than dropping to a live shell prompt.
+    /// MUTUALLY EXCLUSIVE with `program_override` — the one-shot path is always a
+    /// RAW `$SHELL -c`, never session-backed.
     pub command: Option<String>,
+    /// When set, spawn THIS program instead of the resolved `$SHELL` — the
+    /// dtach/tmux invocation that wraps the chat's shell in a detachable session.
+    /// The env/cwd/sizes are applied to it unchanged. Ignored when `command` is
+    /// set (the one-shot Debug Console path stays a raw shell).
+    pub program_override: Option<(String, Vec<String>)>,
+    /// True when the spawned process is a session CLIENT (dtach/tmux) whose
+    /// teardown must DETACH (reap the client only), not signal the process group
+    /// — the session, and the shell inside it, must outlive the pane. A raw
+    /// interactive shell leaves this false and keeps the process-group teardown.
+    pub detach_on_drop: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -82,6 +94,10 @@ struct Session {
     /// `adb`) and its descendants die with the shell, not just the shell itself.
     #[cfg(unix)]
     shell_pid: Option<u32>,
+    /// True when this session is a dtach/tmux CLIENT: dropping the pane must
+    /// detach (reap the client, leave the process group alone) so the recoverable
+    /// session survives. A raw interactive shell is false → full group teardown.
+    detach_on_drop: bool,
 }
 
 /// Owns every live PTY session. Lives behind Tauri's managed `State`.
@@ -119,13 +135,32 @@ impl PtyManager {
             pixel_height: 0,
         })?;
 
-        let ShellInvocation { program, mut args } = resolve_shell();
-        // Command mode: append `-c <command>` so the shell runs it and exits,
-        // keeping any platform login flag (`-l`) ahead of it.
-        if let Some(command) = opts.command.as_ref().filter(|c| !c.trim().is_empty()) {
-            args.push("-c".to_string());
-            args.push(command.clone());
-        }
+        // One-shot command mode (Debug Console) is ALWAYS a raw `$SHELL -c` and
+        // never session-backed — a `program_override` would be wrong here (it
+        // would reattach to a stale session instead of running the command), so
+        // the one-shot path takes precedence and ignores any override.
+        let one_shot = opts
+            .command
+            .as_ref()
+            .filter(|c| !c.trim().is_empty())
+            .cloned();
+
+        let (program, args) = match (&one_shot, opts.program_override.clone()) {
+            // Session-backed chat shell: spawn the dtach/tmux client verbatim.
+            (None, Some((prog, prog_args))) => (prog, prog_args),
+            // Raw shell (interactive, or one-shot `$SHELL -c <command>`).
+            _ => {
+                let ShellInvocation { program, mut args } = resolve_shell();
+                if let Some(command) = one_shot.as_ref() {
+                    args.push("-c".to_string());
+                    args.push(command.clone());
+                }
+                (program, args)
+            }
+        };
+        // A one-shot command can never run detached — it must reap normally.
+        let detach_on_drop = opts.detach_on_drop && one_shot.is_none();
+
         let mut cmd = CommandBuilder::new(program);
         for arg in args {
             cmd.arg(arg);
@@ -167,6 +202,7 @@ impl PtyManager {
                     child,
                     #[cfg(unix)]
                     shell_pid,
+                    detach_on_drop,
                 },
             );
 
@@ -212,6 +248,12 @@ impl PtyManager {
     }
 
     /// Kill a session's shell and drop it from the registry.
+    ///
+    /// This is the RAW teardown: it signals the shell's whole process group so a
+    /// foreground job (`flutter run`/`gradle`/`adb`) dies with the shell. For a
+    /// session-backed pane (dtach/tmux) use [`detach`](Self::detach) instead —
+    /// killing the client's group here would also take down the recoverable
+    /// session, defeating the whole point.
     pub fn kill(&self, id: u32) -> Result<(), PtyError> {
         // Remove under the lock, then signal + reap outside it so the registry
         // lock is never held across a blocking wait. Once removed, the reader
@@ -226,6 +268,44 @@ impl PtyManager {
             let _ = session.child.kill();
             let _ = session.child.wait();
         }
+        Ok(())
+    }
+
+    /// Detach a session-backed pane WITHOUT killing it: drop the PTY handles so
+    /// the dtach/tmux client sees EOF and detaches, then REAP that client so it
+    /// can't linger as a zombie — but never signal the process group, so the
+    /// session (and the agent shell inside it) keeps running for the next attach.
+    ///
+    /// Falls back to a full [`kill`](Self::kill) for a session that wasn't spawned
+    /// detachable (`detach_on_drop == false`), so calling `detach` on a raw shell
+    /// still tears it down cleanly rather than leaking it.
+    pub fn detach(&self, id: u32) -> Result<(), PtyError> {
+        let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+        let Some(mut session) = removed else {
+            return Ok(()); // already gone (e.g. the reader hit EOF first)
+        };
+        if !session.detach_on_drop {
+            // Not a recoverable session — tear it down like kill() would.
+            #[cfg(unix)]
+            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
+            let _ = session.child.kill();
+            let _ = session.child.wait();
+            return Ok(());
+        }
+        // Drop the writer + master so the slave/client sees EOF and the dtach/
+        // tmux client detaches on its own. Dropping master also stops the reader
+        // thread (its read returns 0). Then reap the now-exiting client so no
+        // zombie is left; the master/session it detached from lives on. Never
+        // signal the process group — that would take the session down with it.
+        let Session {
+            master,
+            writer,
+            mut child,
+            ..
+        } = session;
+        drop(writer);
+        drop(master);
+        let _ = child.wait();
         Ok(())
     }
 

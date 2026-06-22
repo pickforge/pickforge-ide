@@ -23,6 +23,7 @@ import {
 } from "../stores/windowControls";
 import { hostPlatform } from "../lib/platform";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
+import { recoverChatSessions, setRecoverChatSessions } from "../stores/chatSessions";
 import {
   fileOpenSettings,
   setFileOpenCustom,
@@ -299,6 +300,16 @@ export function SettingsScreen() {
             <div class="pf-seg">
               <button classList={{ active: !workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(false)}>Icons</button>
               <button classList={{ active: workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(true)}>Labels</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Recover chat sessions
+              <span class="pf-settings-hint-inline">keep a chat's agent running across restarts (dtach/tmux)</span>
+            </span>
+            <div class="pf-seg">
+              <button classList={{ active: recoverChatSessions() }} onClick={() => setRecoverChatSessions(true)}>On</button>
+              <button classList={{ active: !recoverChatSessions() }} onClick={() => setRecoverChatSessions(false)}>Off</button>
             </div>
           </div>
           <div class="pf-settings-row">

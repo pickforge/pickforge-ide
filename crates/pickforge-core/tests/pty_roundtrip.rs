@@ -137,6 +137,72 @@ fn kill_terminates_a_foreground_jobs_descendants() {
 }
 
 #[test]
+fn one_shot_command_ignores_a_program_override_and_stays_raw() {
+    // The Debug Console one-shot path (`command = Some`) must NEVER be wrapped in
+    // a session, even if a bogus `program_override` is supplied: it has to run
+    // the command and exit, not attach to a dtach/tmux session. Point the
+    // override at a binary that would NOT produce the marker, so the test only
+    // passes if the override was ignored and `$SHELL -c <command>` ran.
+    let manager = PtyManager::new();
+    let (tx, rx) = mpsc::channel::<PtyEvent>();
+
+    let id = manager
+        .spawn(
+            SpawnOptions {
+                command: Some("echo pf_oneshot_wins".to_string()),
+                program_override: Some(("/bin/false".to_string(), vec![])),
+                detach_on_drop: true, // also must be neutralised for one-shot
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+            move |event| {
+                let _ = tx.send(event);
+            },
+        )
+        .expect("spawn one-shot");
+
+    let mut seen = String::new();
+    let mut exited = false;
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(PtyEvent::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+            Ok(PtyEvent::Exit(_)) => {
+                exited = true;
+                break;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    manager.kill(id).ok();
+    assert!(
+        seen.contains("pf_oneshot_wins"),
+        "one-shot command must run despite a program_override; got: {seen:?}"
+    );
+    assert!(exited, "one-shot must still exit on its own");
+}
+
+#[test]
+fn detach_on_a_raw_session_tears_it_down_like_kill() {
+    // `detach` is the pane-close path for SESSION-BACKED panes; called on a RAW
+    // (non-detachable) session it must fall back to a full teardown so a raw
+    // shell is never leaked. A default SpawnOptions has detach_on_drop = false.
+    let manager = PtyManager::new();
+    let id = manager
+        .spawn(SpawnOptions::default(), |_event| {})
+        .expect("spawn shell");
+    assert_eq!(manager.len(), 1);
+
+    manager.detach(id).expect("detach a raw session");
+    assert!(manager.is_empty(), "raw session must be torn down, not leaked");
+    // Idempotent: detaching an already-gone session is a no-op, never a panic.
+    manager.detach(id).expect("second detach is a no-op");
+}
+
+#[test]
 fn resize_and_kill_are_idempotent_enough() {
     let manager = PtyManager::new();
     let id = manager

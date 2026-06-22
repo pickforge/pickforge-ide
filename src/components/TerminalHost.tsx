@@ -160,13 +160,32 @@ export interface TerminalHostHandle {
 export function TerminalHost(props: {
   onReady?: (handle: TerminalHostHandle) => void;
   cwd?: string;
+  /** The chat this host belongs to. When set, panes spawn SESSION-BACKED shells
+   *  (dtach/tmux) keyed off the chat so a running agent survives pane-close and
+   *  app-restart; unset → a plain interactive shell (today's behaviour). */
+  chatId?: string;
   /** Extra `PICKFORGE_*` env for every spawned shell — MCP endpoint discovery. */
   env?: Record<string, string> | null;
   /** Forwarded from every pane: a line the user typed and submitted, tagged with
    *  the id of the pane it came from. */
   onUserSubmit?: (line: string, paneId: string) => void;
+  /** Forwarded from every pane: the shell/agent's OSC 2 terminal title, tagged
+   *  with the pane id — the host maps it to this chat's name. */
+  onTitle?: (title: string, paneId: string) => void;
+  /** Session recovery for this chat's PRIMARY pane (dtach/tmux). Only the first
+   *  pane is session-backed — extra split panes are plain shells, so two panes
+   *  never attach the same session and interleave input. */
+  session?: {
+    projectRoot: string;
+    sessionId?: string | null;
+    backend: "dtach" | "tmux" | "raw";
+    onSession?: (info: { sessionId: string | null; backend: string; degraded: boolean }) => void;
+  };
 }) {
   const first = newLeaf();
+  // The primary pane id — the one (and only one) wired to the chat's recoverable
+  // session. Stays fixed even as the user splits/rearranges around it.
+  const primaryId = first.id;
   const [root, setRoot] = createSignal<Node>(first);
   const [focusedId, setFocusedId] = createSignal<string>(first.id);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
@@ -462,7 +481,19 @@ export function TerminalHost(props: {
                   <TerminalPane
                     cwd={props.cwd}
                     env={props.env}
+                    chat={
+                      props.session && props.chatId && leaf.id === primaryId
+                        ? {
+                            chatId: props.chatId,
+                            projectRoot: props.session.projectRoot,
+                            sessionId: props.session.sessionId,
+                            backend: props.session.backend,
+                            onSession: props.session.onSession,
+                          }
+                        : undefined
+                    }
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
+                    onTitle={(title) => props.onTitle?.(title, leaf.id)}
                     onSelectionChange={setAskSel}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);

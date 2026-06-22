@@ -4,6 +4,7 @@
 // first time a project is selected or its branch is expanded.
 import { createStore, produce } from "solid-js/store";
 import * as db from "../lib/db";
+import { ptyDestroyChatSession } from "../lib/pty";
 import { isChatArchived } from "./chatArchive";
 
 /** First non-archived chat id in a list, or null. The projects tree hides
@@ -252,9 +253,43 @@ export async function renameChat(chatId: string, title: string) {
   );
 }
 
+/** Set a chat's title via the NARROW title write (won't clobber a live
+ *  session_id), updating the store in place. The auto-name flow uses this — it
+ *  can fire while a session_id is being persisted, so the two must not race. */
+export async function setChatTitle(chatId: string, title: string) {
+  const t = title.trim();
+  const c = findChat(chatId);
+  if (!c || !t || t === c.title) return;
+  await db.updateChatTitle(chatId, t);
+  setState("chatsByRoot", c.projectRoot, (list) =>
+    list.map((x) => (x.chatId === chatId ? { ...x, title: t } : x)),
+  );
+}
+
+/** Persist a chat's recovery `session_id` (dtach socket / tmux name, with a
+ *  backend tag), updating the store in place via the narrow write. Null clears
+ *  it (e.g. when the backend degraded to a raw shell we LEAVE it; the caller
+ *  decides). */
+export async function setChatSessionId(chatId: string, sessionId: string | null) {
+  const c = findChat(chatId);
+  if (!c || c.sessionId === sessionId) return;
+  await db.updateChatSessionId(chatId, sessionId);
+  setState("chatsByRoot", c.projectRoot, (list) =>
+    list.map((x) => (x.chatId === chatId ? { ...x, sessionId } : x)),
+  );
+}
+
 export async function deleteChat(chatId: string) {
   const chat = findChat(chatId);
   const root = chat?.projectRoot ?? state.activeRoot;
+  // Tear down the chat's recovery session (kill the tmux session / remove the
+  // dtach socket) before the row goes — otherwise it would linger orphaned.
+  // Best-effort: a failure here must not block deleting the chat.
+  if (chat?.sessionId) {
+    await ptyDestroyChatSession(chat.sessionId).catch((e) =>
+      console.error("[pickforge] pty_destroy_chat_session failed", e),
+    );
+  }
   await db.chatDelete(chatId);
   chatDeletedListeners.forEach((fn) => fn(chatId));
   let remaining: db.Chat[] = [];

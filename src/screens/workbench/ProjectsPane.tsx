@@ -34,6 +34,7 @@ import {
   toggleChats,
 } from "../../stores/chatTree";
 import { archiveChat, isChatArchived, unarchiveChat } from "../../stores/chatArchive";
+import { isChatTmux, recoverChatSessions, setChatTmux } from "../../stores/chatSessions";
 import type { Chat, Project } from "../../lib/db";
 import {
   addChat,
@@ -50,7 +51,7 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
-import { chatTitleOverride, DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
+import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { pickProjectDir } from "../../lib/opener";
 
 const PROJECT_MIME = "application/x-pf-project";
@@ -219,6 +220,16 @@ export function ProjectsPane() {
       <button class="pf-menu-item" onClick={() => { selectChat(p.id); closeMenu(); }}>Open</button>
       <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
       <button class="pf-menu-item" onClick={() => doArchiveChat(p.id)}>Archive</button>
+      <Show when={recoverChatSessions()}>
+        <div class="pf-menu-sep" />
+        <button
+          class="pf-menu-item"
+          title="Back this chat with a named tmux session (a new shell picks it up on next open). Default is dtach."
+          onClick={() => { setChatTmux(p.id, !isChatTmux(p.id)); closeMenu(); }}
+        >
+          {isChatTmux(p.id) ? "Use dtach session" : "Use tmux session"}
+        </button>
+      </Show>
       <div class="pf-menu-sep" />
       <button class="pf-menu-item pf-menu-item--danger" onClick={() => { void deleteChat(p.id); closeMenu(); }}>Delete</button>
     </>
@@ -259,7 +270,7 @@ export function ProjectsPane() {
             </span>
           }
         >
-          <RenameField value={p.chat.title} commit={(v) => void renameChat(id, v)} />
+          <RenameField value={p.chat.title} commit={(v) => { markChatTitleManual(id); void renameChat(id, v); }} />
         </Show>
         <Show
           when={!p.archived}

@@ -24,10 +24,11 @@ import {
   hotkeyMatches,
   quickLaunchItems,
 } from "../../stores/quickLaunch";
-import { findChat, onChatDeleted, workspace } from "../../stores/workspace";
+import { findChat, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
+import { chatBackend } from "../../stores/chatSessions";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import { armChatAutoName, maybeAutoNameChat } from "../../lib/chatAutoName";
+import { armChatAutoName, handleOscTitle, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -224,8 +225,20 @@ export function WorkbenchScreen() {
                 <TerminalHost
                   cwd={h.projectRoot}
                   env={mcpEnv(h.projectRoot)}
+                  chatId={h.chatId}
+                  session={{
+                    projectRoot: h.projectRoot,
+                    sessionId: findChat(h.chatId)?.sessionId ?? null,
+                    backend: chatBackend(h.chatId),
+                    onSession: (info) => {
+                      // Persist the resolved recovery id (narrow write). On a raw
+                      // degrade with no id we leave the stored one alone.
+                      if (info.sessionId) void setChatSessionId(h.chatId, info.sessionId);
+                    },
+                  }}
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
+                  onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
                 />
               </div>
             )}

@@ -39,6 +39,71 @@ export async function ptySpawn(opts: SpawnOptions): Promise<number> {
   });
 }
 
+/** Which recovery backend a chat shell runs under. "dtach" survives pane-close +
+ *  app-restart with the lightest footprint; "tmux" is a named session on
+ *  PickForge's private tmux server (opt-in per chat). */
+export type ChatBackend = "dtach" | "tmux" | "raw";
+
+export interface ChatSpawnOptions {
+  chatId: string;
+  projectRoot: string;
+  cwd?: string | null;
+  env?: Record<string, string> | null;
+  backend: ChatBackend;
+  /** The session id already stored on the chat (preserved on a raw fallback). */
+  sessionId?: string | null;
+  rows: number;
+  cols: number;
+  onOutput: (data: PtyBytes) => void;
+  onExit: (code: number | null) => void;
+}
+
+export interface ChatSpawnResult {
+  ptyId: number;
+  /** The backend actually used — "raw" means the requested one wasn't installed. */
+  backend: ChatBackend;
+  /** "<backend>:<name>" to persist on the chat, or null for a raw open. */
+  sessionId: string | null;
+  status: "created" | "attached";
+  /** True when the requested backend was unavailable and we degraded to raw. */
+  degraded: boolean;
+}
+
+/** Spawn (attach-or-create) a CHAT shell under its recovery backend, so a running
+ *  agent survives the pane closing and the app restarting. Never the one-shot
+ *  Debug-Console path (that stays `ptySpawn` with a command). */
+export async function ptySpawnChat(opts: ChatSpawnOptions): Promise<ChatSpawnResult> {
+  const onOutput = new Channel<PtyBytes>();
+  onOutput.onmessage = opts.onOutput;
+  const onExit = new Channel<number | null>();
+  onExit.onmessage = opts.onExit;
+
+  return invoke<ChatSpawnResult>("pty_spawn_chat", {
+    chatId: opts.chatId,
+    projectRoot: opts.projectRoot,
+    cwd: opts.cwd ?? null,
+    env: opts.env ?? null,
+    backend: opts.backend,
+    sessionId: opts.sessionId ?? null,
+    rows: opts.rows,
+    cols: opts.cols,
+    onOutput,
+    onExit,
+  });
+}
+
+/** Detach (don't kill) a session-backed chat pane on close: the dtach/tmux
+ *  session and the agent shell inside it keep running for the next attach. */
+export function ptyDetach(id: number): Promise<void> {
+  return invoke("pty_detach", { id });
+}
+
+/** Destroy a chat's recovery session on chat delete (kills the tmux session /
+ *  removes the dtach socket). `sessionId` is the stored "<backend>:<name>". */
+export function ptyDestroyChatSession(sessionId: string): Promise<void> {
+  return invoke("pty_destroy_chat_session", { sessionId });
+}
+
 /** Send bytes (keystrokes / pasted text) to the shell. */
 export function ptyWrite(id: number, data: Uint8Array): Promise<void> {
   return invoke("pty_write", { id, data: Array.from(data) });

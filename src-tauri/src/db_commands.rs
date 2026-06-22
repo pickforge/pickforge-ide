@@ -101,6 +101,30 @@ pub fn chat_delete(db: State<'_, Database>, chat_id: String) -> Result<(), Strin
     db.delete_chat(&chat_id).map_err(|e| e.to_string())
 }
 
+/// Narrow title write for the OSC/auto-name flow — touches only `title`, so it
+/// can't race the full-row `chat_upsert` and clobber a live `session_id`.
+#[tauri::command]
+pub fn update_chat_title(
+    db: State<'_, Database>,
+    chat_id: String,
+    title: String,
+) -> Result<(), String> {
+    db.update_chat_title(&chat_id, &title)
+        .map_err(|e| e.to_string())
+}
+
+/// Narrow `session_id` write for chat session recovery — touches only
+/// `session_id`, so it can't race a concurrent title write. `None` clears it.
+#[tauri::command]
+pub fn update_chat_session_id(
+    db: State<'_, Database>,
+    chat_id: String,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    db.update_chat_session_id(&chat_id, session_id.as_deref())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn settings_get(
     db: State<'_, Database>,

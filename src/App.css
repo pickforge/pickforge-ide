@@ -5,20 +5,61 @@
   background: var(--pf-surface);
 }
 
-/* ---- Header ---- */
-.pf-header {
-  display: flex;
+/* Resize affordance for the frameless window (decorations are off, so the
+ * compositor no longer draws resize borders or cursors). Thin transparent zones
+ * pinned to each edge/corner restore the resize cursor and start a native
+ * resize-drag on press. Corners sit above edges so diagonal resize wins where
+ * they overlap. */
+.pf-resize {
+  position: fixed;
+  z-index: 1000;
+}
+.pf-resize--n { top: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.pf-resize--s { bottom: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.pf-resize--w { top: 0; bottom: 0; left: 0; width: 4px; cursor: ew-resize; }
+.pf-resize--e { top: 0; bottom: 0; right: 0; width: 4px; cursor: ew-resize; }
+.pf-resize--nw { top: 0; left: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 1001; }
+.pf-resize--ne { top: 0; right: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 1001; }
+.pf-resize--sw { bottom: 0; left: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 1001; }
+.pf-resize--se { bottom: 0; right: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 1001; }
+
+/* ---- Title bar (custom window chrome) ----
+ * One draggable row that replaces the native titlebar AND the old app header:
+ * brand (left) · nav (center) · status + window controls (right). The whole bar
+ * carries data-tauri-drag-region; interactive children opt out by omitting it.
+ * Three-column grid keeps the nav optically centered regardless of side widths. */
+.pf-titlebar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 var(--pf-space-lg);
+  height: var(--pf-titlebar-h);
+  padding: 0 var(--pf-space-sm) 0 var(--pf-space-lg);
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
   flex: none;
+  user-select: none;
+}
+/* macOS: controls sit on the LEFT; pad the brand so it clears them and tighten
+ * the right padding since nothing lives in the far-right slot there. */
+.pf-titlebar--controls-left {
+  padding: 0 var(--pf-space-lg) 0 var(--pf-space-sm);
+}
+.pf-titlebar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+  justify-self: start;
+  min-width: 0;
 }
 .pf-brand {
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-md);
+}
+.pf-titlebar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+  justify-self: end;
 }
 /* The core brand glyph: a hairline selection frame with its top-right corner
  * replaced by a glowing ember dot. */
@@ -87,6 +128,18 @@
   text-transform: uppercase;
   padding: 2px var(--pf-space-sm);
   user-select: none;
+}
+/* With decorations off, Tauri only starts a drag from the exact element that
+ * carries data-tauri-drag-region — not its descendants. The non-interactive
+ * title-bar labels therefore swallow clicks that should move the window. Let
+ * them fall through to the draggable parent. Real controls (.pf-update-badge,
+ * .pf-nav-btn, the window controls) keep their pointer events. */
+.pf-titlebar .pf-mark,
+.pf-titlebar .pf-wordmark,
+.pf-brand .pf-eyebrow-row,
+.pf-titlebar .pf-dev-badge,
+.pf-titlebar-right .pf-pill {
+  pointer-events: none;
 }
 
 /* ---- Quick-launch strip ---- */
@@ -163,6 +216,7 @@
   display: flex;
   align-items: center;
   gap: var(--pf-space-xs);
+  justify-self: center;
 }
 .pf-nav-btn {
   border: none;

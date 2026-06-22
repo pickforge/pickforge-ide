@@ -32,6 +32,12 @@
 
   --pf-ember-glow: rgba(255, 122, 26, 0.28);
 
+  /* Control-level token (not a composition accent): the close-button hover wash
+   * on the custom title bar. Derived from the danger color so it stays on the
+   * token system; window controls are otherwise strictly neutral so the single
+   * ember (brand mark + active nav) is never challenged. */
+  --pf-winctl-close-hover: color-mix(in srgb, var(--pf-error) 80%, black 12%);
+
   /* ---- Elevation / glow (from pickforge_elevation.dart) ---- */
   --pf-glow-ember-soft: 0 0 30px -8px rgba(255, 122, 26, 0.25);
   --pf-glow-ember: 0 0 60px -10px rgba(255, 122, 26, 0.45);
@@ -69,6 +75,16 @@
 
   /* eyebrow: 10px mono, weight 500, wide tracking ~0.18em, uppercase */
   --pf-tracking-eyebrow: 1.8px;
+
+  /* ---- Chrome ---- */
+  /* Custom (frameless) title-bar height: brand + nav + status + window controls
+   * on one draggable row. */
+  --pf-titlebar-h: 38px;
+  /* Window-control buttons: chrome-only hit targets sized to sit comfortably
+   * within the title-bar row (not on the 8px spacing grid). */
+  --pf-winctl-btn-w: 30px;
+  --pf-winctl-btn-h: 26px;
+  --pf-winctl-gap: 2px;
 
   /* ---- Spacing: 8px grid ---- */
   --pf-space-xs: 4px;

@@ -16,6 +16,12 @@ import { Dropdown } from "../components/Dropdown";
 import { IconClose, IconPlus } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
+import {
+  setWindowControlsSide,
+  windowControlsSide,
+  type ControlsSide,
+} from "../stores/windowControls";
+import { hostPlatform } from "../lib/platform";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
 import {
   fileOpenSettings,
@@ -248,6 +254,27 @@ export function SettingsScreen() {
               >
                 Hidden
               </button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Window controls
+              <Show when={hostPlatform() === "macos"}>
+                <span class="pf-settings-hint-inline">macOS · always left</span>
+              </Show>
+            </span>
+            <div class="pf-seg" classList={{ "pf-seg--disabled": hostPlatform() === "macos" }}>
+              <For each={["auto", "left", "right"] as ControlsSide[]}>
+                {(s) => (
+                  <button
+                    classList={{ active: windowControlsSide() === s }}
+                    disabled={hostPlatform() === "macos"}
+                    onClick={() => setWindowControlsSide(s)}
+                  >
+                    {s === "auto" ? "Auto" : s === "left" ? "Left" : "Right"}
+                  </button>
+                )}
+              </For>
             </div>
           </div>
         </Section>

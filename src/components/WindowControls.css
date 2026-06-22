@@ -1,0 +1,40 @@
+/* Frameless-window controls. NEUTRAL by design — these are chrome, never the
+ * composition's ember. Quiet glyphs (--pf-text-med) that lift to --pf-text-hi
+ * with a faint surface hover fill. The close button is the one exception: on
+ * hover it takes the platform-conventional danger wash, sourced from the single
+ * control-level token --pf-winctl-close-hover (defined in tokens.css). */
+.pf-winctl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-winctl-gap);
+  flex: none;
+  -webkit-app-region: no-drag;
+}
+.pf-winctl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pf-winctl-btn-w);
+  height: var(--pf-winctl-btn-h);
+  border: none;
+  background: transparent;
+  color: var(--pf-text-med);
+  border-radius: var(--pf-radius-sm);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-winctl-btn:hover {
+  background: var(--pf-item-fill);
+  color: var(--pf-text-hi);
+}
+.pf-winctl-btn:active {
+  background: var(--pf-surface-2);
+}
+.pf-winctl-btn--close:hover {
+  background: var(--pf-winctl-close-hover);
+  color: var(--pf-text-hi);
+}
+.pf-winctl-icon {
+  display: block;
+}

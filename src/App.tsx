@@ -6,6 +6,9 @@ import { appVersion, loadAppVersion } from "./lib/appInfo";
 import { initTheme } from "./stores/theme";
 import { checkForUpdate, updateAvailable } from "./lib/updater";
 import { MonoEyebrow, StatusPill } from "./components/ui";
+import { WindowControls } from "./components/WindowControls";
+import { ResizeHandles } from "./components/ResizeHandles";
+import { resolvedControlsSide } from "./stores/windowControls";
 import { IconChevronRight, IconTerminal } from "./components/icons";
 import { layout, toggleDock } from "./stores/workbenchLayout";
 import { runConsole, toggleConsole } from "./stores/runConsole";
@@ -74,27 +77,40 @@ export function App() {
 
   return (
     <div class="pf-app">
-      <header class="pf-header">
-        <div class="pf-brand">
-          <span class="pf-mark" />
-          <span class="pf-wordmark">PickForge</span>
-          <MonoEyebrow text={`v${appVersion()}`} />
-          <Show when={import.meta.env.DEV}>
-            <span class="pf-dev-badge" title="Development build — running via tauri dev">
-              Dev
-            </span>
+      <ResizeHandles />
+      {/* Custom title bar: the whole bar is the drag region (decorations are off);
+          interactive children opt out of dragging by simply not carrying the
+          attribute. Double-clicking the drag region toggles maximize natively. */}
+      <header
+        class="pf-titlebar"
+        classList={{ "pf-titlebar--controls-left": resolvedControlsSide() === "left" }}
+        data-tauri-drag-region
+      >
+        <div class="pf-titlebar-left" data-tauri-drag-region>
+          <Show when={resolvedControlsSide() === "left"}>
+            <WindowControls />
           </Show>
-          <Show when={updateAvailable()}>
-            <button
-              class="pf-update-badge"
-              title={`Update available: v${updateAvailable()!.version}`}
-              onClick={() => navigate("settings")}
-            >
-              <span class="pf-update-dot" /> Update
-            </button>
-          </Show>
+          <div class="pf-brand" data-tauri-drag-region>
+            <span class="pf-mark" />
+            <span class="pf-wordmark">PickForge</span>
+            <MonoEyebrow text={`v${appVersion()}`} />
+            <Show when={import.meta.env.DEV}>
+              <span class="pf-dev-badge" title="Development build — running via tauri dev">
+                Dev
+              </span>
+            </Show>
+            <Show when={updateAvailable()}>
+              <button
+                class="pf-update-badge"
+                title={`Update available: v${updateAvailable()!.version}`}
+                onClick={() => navigate("settings")}
+              >
+                <span class="pf-update-dot" /> Update
+              </button>
+            </Show>
+          </div>
         </div>
-        <nav class="pf-nav">
+        <nav class="pf-nav" data-tauri-drag-region>
           <For each={NAV}>
             {(n) => (
               <button
@@ -107,10 +123,15 @@ export function App() {
             )}
           </For>
         </nav>
-        <StatusPill
-          label={workspace.activeRoot ? "shell · live" : "no project"}
-          intent={workspace.activeRoot ? "connected" : "neutral"}
-        />
+        <div class="pf-titlebar-right" data-tauri-drag-region>
+          <StatusPill
+            label={workspace.activeRoot ? "shell · live" : "no project"}
+            intent={workspace.activeRoot ? "connected" : "neutral"}
+          />
+          <Show when={resolvedControlsSide() === "right"}>
+            <WindowControls />
+          </Show>
+        </div>
       </header>
 
       <div class="pf-body">

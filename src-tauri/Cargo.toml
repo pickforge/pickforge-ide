@@ -27,5 +27,13 @@ pickforge-core = { path = "../crates/pickforge-core" }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Linux/Wayland app_id: GTK derives xdg_toplevel.set_app_id from g_get_prgname(),
+# which defaults to the binary name ("pickforge-tauri"). run() forces it to the
+# bundle identifier early via gtk::glib::set_prgname so the window matches the
+# installed dev.pickforge.app.desktop + icon. gtk 0.18 is already in the build
+# graph (tao -> gtk), so this pins, but doesn't add, a crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-updater = "2"

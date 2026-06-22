@@ -2,13 +2,15 @@
 // Install a CORRECT XDG desktop entry + hicolor icons for the Tauri build so the
 // running window (Wayland/X11) shows the PickForge mark instead of a generic icon.
 //
-// Why this is needed: Tauri sets the GTK/Wayland app_id to the bundle identifier
-// ("dev.pickforge.app") only because tauri.conf.json now has `app.enableGTKAppId:
-// true`. A compositor maps that app_id to an installed `.desktop` whose basename
-// matches, and pulls the icon named by its `Icon=` key from the hicolor theme.
-// The repo previously only had a stale Flutter-era `pickforge.desktop`
-// (Icon=pickforge, StartupWMClass=pickforge, Exec=build/linux/...), which never
-// matches the Tauri app_id — hence the generic icon.
+// Why this is needed: the window's GTK/Wayland app_id is forced to the bundle
+// identifier ("dev.pickforge.app") in src-tauri/src/lib.rs `run()` via
+// gtk::glib::set_prgname(...) at startup. `enableGTKAppId` alone does NOT set the
+// xdg_toplevel app_id under WebKitGTK/Wayland — GTK derives it from g_get_prgname(),
+// which otherwise defaults to the binary name ("pickforge-tauri"). A compositor maps
+// the app_id to an installed `.desktop` whose basename matches, and pulls the icon
+// named by its `Icon=` key from the hicolor theme. The repo previously only had a
+// stale Flutter-era `pickforge.desktop` (Icon=pickforge, StartupWMClass=pickforge,
+// Exec=build/linux/...), which never matches the app_id — hence the generic icon.
 //
 // This installs (user scope, ~/.local/share):
 //   - applications/dev.pickforge.app.desktop  (Icon + StartupWMClass = app_id)

@@ -24,6 +24,18 @@ fn open_database() -> Database {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Linux/Wayland: force the window's app_id to the bundle identifier. GTK derives
+    // xdg_toplevel.set_app_id from g_get_prgname(), which defaults to the binary name
+    // ("pickforge-tauri") — `enableGTKAppId` does NOT override it under WebKitGTK. This
+    // must run before any GTK/display/window init (i.e. before tauri::Builder), so the
+    // installed dev.pickforge.app.desktop + icon match. set_application_name sets the
+    // human-readable name shown by some shells.
+    #[cfg(target_os = "linux")]
+    {
+        gtk::glib::set_prgname(Some("dev.pickforge.app"));
+        gtk::glib::set_application_name("PickForge");
+    }
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init());

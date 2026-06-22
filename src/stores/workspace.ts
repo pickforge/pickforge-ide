@@ -186,12 +186,15 @@ export async function selectProject(root: string) {
 
 export async function addProject(root: string, displayName: string) {
   const now = Date.now();
+  // Land new projects at the end of the current order so they don't jump ahead
+  // of an explicit user reordering (all-zero sort_order falls back to recency).
+  const sortOrder = state.projects.reduce((m, p) => Math.max(m, p.sortOrder + 1), 0);
   await db.projectUpsert({
     projectRoot: root,
     displayName,
     createdAt: now,
     lastOpenedAt: now,
-    sortOrder: 0,
+    sortOrder,
     archivedAt: null,
   });
   await loadWorkspace();
@@ -301,21 +304,54 @@ export function selectChat(chatId: string | null) {
   setState("activeChatId", chatId);
 }
 
+/** Splice `dragged` to sit before `beforeId` (or at the end when null) within
+ *  `list`, returning the reordered array — or null when it's a no-op (the item
+ *  is already in that slot). Shared by chat and project reordering. */
+function spliceBefore<T>(
+  list: T[],
+  dragged: T,
+  beforeId: string | null,
+  idOf: (item: T) => string,
+): T[] | null {
+  const rest = list.filter((item) => idOf(item) !== idOf(dragged));
+  const idx = beforeId ? rest.findIndex((item) => idOf(item) === beforeId) : rest.length;
+  const next = [...rest];
+  next.splice(idx < 0 ? rest.length : idx, 0, dragged);
+  const changed = next.some((item, i) => list[i] === undefined || idOf(item) !== idOf(list[i]));
+  return changed ? next : null;
+}
+
 /** Move `draggedId` to sit before `beforeId` (or to the end if null) within its
  *  project, persisting the new sort_order. Updates the store in place. */
 export async function reorderChat(draggedId: string, beforeId: string | null) {
   const dragged = findChat(draggedId);
   if (!dragged || draggedId === beforeId) return;
   const root = dragged.projectRoot;
-  const rest = chatsFor(root).filter((c) => c.chatId !== draggedId);
-  const idx = beforeId ? rest.findIndex((c) => c.chatId === beforeId) : rest.length;
-  rest.splice(idx < 0 ? rest.length : idx, 0, dragged);
-  const next = rest.map((c, i) => ({ ...c, sortOrder: i }));
+  const reordered = spliceBefore(chatsFor(root), dragged, beforeId, (c) => c.chatId);
+  if (!reordered) return;
+  const next = reordered.map((c, i) => ({ ...c, sortOrder: i }));
   setState("chatsByRoot", root, next);
   // Persist ONLY sort_order (narrow write) — a full-row chat_upsert would carry
   // each chat's in-store sessionId and could clobber a recovery handle that a
   // concurrent narrow session_id write just persisted.
   for (const c of next) await db.updateChatSortOrder(c.chatId, c.sortOrder);
+}
+
+/** Move `draggedRoot` to sit before `beforeRoot` (or to the end if null) within
+ *  the project list, persisting the new sort_order. Updates the store in place.
+ *  Projects share a single global order (groups are a separate, view-only
+ *  concern), so this reorders the whole `workspace.projects` array. */
+export async function reorderProject(draggedRoot: string, beforeRoot: string | null) {
+  if (draggedRoot === beforeRoot) return;
+  const dragged = state.projects.find((p) => p.projectRoot === draggedRoot);
+  if (!dragged) return;
+  const reordered = spliceBefore(state.projects, dragged, beforeRoot, (p) => p.projectRoot);
+  if (!reordered) return;
+  const next = reordered.map((p, i) => ({ ...p, sortOrder: i }));
+  setState("projects", next);
+  // Narrow sort_order write — never a full project_upsert (it would re-stamp
+  // last_opened_at/display_name and could clobber a concurrent rename/touch).
+  for (const p of next) await db.updateProjectSortOrder(p.projectRoot, p.sortOrder);
 }
 
 export async function renameChat(chatId: string, title: string) {

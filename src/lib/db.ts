@@ -101,6 +101,9 @@ export const projectTouch = (root: string, ts: number) =>
   invoke<void>("project_touch", { root, ts });
 export const projectDelete = (root: string) =>
   invoke<void>("project_delete", { root });
+/** Narrow sort_order write (project reorder) — touches only sort_order. */
+export const updateProjectSortOrder = (root: string, sortOrder: number) =>
+  invoke<void>("update_project_sort_order", { root, sortOrder });
 
 // ---- chats ----
 export const chatsList = (projectRoot: string) =>

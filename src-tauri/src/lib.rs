@@ -94,6 +94,7 @@ pub fn run() {
             db_commands::project_set_archived,
             db_commands::project_touch,
             db_commands::project_delete,
+            db_commands::update_project_sort_order,
             db_commands::chats_list,
             db_commands::chat_upsert,
             db_commands::chat_delete,

@@ -86,6 +86,19 @@ pub fn project_delete(
     Ok(())
 }
 
+/// Narrow `sort_order` write for project reordering — touches only `sort_order`,
+/// so dragging projects to re-sort can't re-stamp `last_opened_at`/`display_name`
+/// and race a concurrent rename/touch.
+#[tauri::command]
+pub fn update_project_sort_order(
+    db: State<'_, Database>,
+    root: String,
+    sort_order: i64,
+) -> Result<(), String> {
+    db.update_project_sort_order(&root, sort_order)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn chats_list(db: State<'_, Database>, project_root: String) -> Result<Vec<Chat>, String> {
     db.list_chats(&project_root).map_err(|e| e.to_string())

@@ -476,6 +476,18 @@ impl Database {
         Ok(())
     }
 
+    /// Update only a project's `sort_order`, leaving every other column untouched.
+    /// Reordering uses this (instead of a full-row `upsert_project`) so it can't
+    /// re-stamp `last_opened_at`/`display_name` and race a concurrent
+    /// rename/touch. A no-op for a project_root that doesn't exist.
+    pub fn update_project_sort_order(&self, root: &str, sort_order: i64) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE projects SET sort_order = ?2 WHERE project_root = ?1",
+            params![root, sort_order],
+        )?;
+        Ok(())
+    }
+
     // ---- chats ----
 
     pub fn list_chats(&self, project_root: &str) -> Result<Vec<Chat>, DbError> {
@@ -900,6 +912,53 @@ mod tests {
         db.update_chat_session_id("nope", Some("y")).unwrap();
         db.update_chat_sort_order("nope", 3).unwrap();
         assert_eq!(db.list_chats("/p").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn update_project_sort_order_reorders_and_touches_only_its_column() {
+        let db = Database::open_in_memory().unwrap();
+        let mk = |root: &str, name: &str, sort: i64| Project {
+            project_root: root.into(),
+            display_name: name.into(),
+            created_at: 1,
+            last_opened_at: 2,
+            sort_order: sort,
+            archived_at: None,
+        };
+        db.upsert_project(&mk("/a", "A", 0)).unwrap();
+        db.upsert_project(&mk("/b", "B", 1)).unwrap();
+        db.upsert_project(&mk("/c", "C", 2)).unwrap();
+
+        // Initial order A, B, C (by sort_order ASC).
+        let roots = |db: &Database| {
+            db.list_projects(false)
+                .unwrap()
+                .into_iter()
+                .map(|p| p.project_root)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(roots(&db), ["/a", "/b", "/c"]);
+
+        // Move C to the front by re-stamping sort_order (1-indexed shift below it).
+        db.update_project_sort_order("/c", 0).unwrap();
+        db.update_project_sort_order("/a", 1).unwrap();
+        db.update_project_sort_order("/b", 2).unwrap();
+        assert_eq!(roots(&db), ["/c", "/a", "/b"]);
+
+        // The narrow write leaves display_name / last_opened_at untouched.
+        let c = db
+            .list_projects(false)
+            .unwrap()
+            .into_iter()
+            .find(|p| p.project_root == "/c")
+            .unwrap();
+        assert_eq!(c.display_name, "C");
+        assert_eq!(c.last_opened_at, 2);
+        assert_eq!(c.sort_order, 0);
+
+        // No-op for an unknown root.
+        db.update_project_sort_order("/nope", 9).unwrap();
+        assert_eq!(db.list_projects(false).unwrap().len(), 3);
     }
 
     #[test]

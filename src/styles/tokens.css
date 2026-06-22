@@ -80,6 +80,11 @@
   /* Custom (frameless) title-bar height: brand + nav + status + window controls
    * on one draggable row. */
   --pf-titlebar-h: 38px;
+  /* Window-control buttons: chrome-only hit targets sized to sit comfortably
+   * within the title-bar row (not on the 8px spacing grid). */
+  --pf-winctl-btn-w: 30px;
+  --pf-winctl-btn-h: 26px;
+  --pf-winctl-gap: 2px;
 
   /* ---- Spacing: 8px grid ---- */
   --pf-space-xs: 4px;

@@ -6,7 +6,7 @@
 .pf-winctl {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--pf-winctl-gap);
   flex: none;
   -webkit-app-region: no-drag;
 }
@@ -14,8 +14,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 26px;
+  width: var(--pf-winctl-btn-w);
+  height: var(--pf-winctl-btn-h);
   border: none;
   background: transparent;
   color: var(--pf-text-med);

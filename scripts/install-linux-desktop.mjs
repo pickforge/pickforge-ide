@@ -107,6 +107,15 @@ function installIcons() {
   }
 }
 
+// Quote a program path for an Exec= value per the Desktop Entry spec: wrap in
+// double quotes and backslash-escape the reserved chars (`"` `` ` `` `$` `\`) so
+// a checkout/--exec path containing spaces or reserved characters stays a single
+// argument instead of being split or mis-launched.
+function quoteExec(path) {
+  const escaped = path.replace(/(["`$\\])/g, "\\$1");
+  return `"${escaped}"`;
+}
+
 function installDesktop() {
   mkdirSync(appsDir, { recursive: true });
   const dest = join(appsDir, `${APP_ID}.desktop`);
@@ -116,7 +125,7 @@ function installDesktop() {
 Type=Application
 Name=${APP_NAME}
 Comment=Shell-first workbench that drives Claude, Codex, and your build tools
-Exec=${execPath}
+Exec=${quoteExec(execPath)}
 Icon=${APP_ID}
 Terminal=false
 Categories=Development;IDE;Utility;

@@ -42,35 +42,52 @@ export function WindowControls() {
     void appWindow().then((w) => w.toggleMaximize()).catch(() => {});
   const close = () => void appWindow().then((w) => w.close()).catch(() => {});
 
+  const Minimize = () => (
+    <button
+      type="button"
+      class="pf-winctl-btn"
+      title="Minimize"
+      aria-label="Minimize"
+      onClick={minimize}
+    >
+      <CtlIcon kind="minimize" />
+    </button>
+  );
+  const Maximize = () => (
+    <button
+      type="button"
+      class="pf-winctl-btn"
+      title={maximized() ? "Restore" : "Maximize"}
+      aria-label={maximized() ? "Restore" : "Maximize"}
+      onClick={toggleMax}
+    >
+      <CtlIcon kind={maximized() ? "restore" : "maximize"} />
+    </button>
+  );
+  const Close = () => (
+    <button
+      type="button"
+      class="pf-winctl-btn pf-winctl-btn--close"
+      title="Close"
+      aria-label="Close"
+      onClick={close}
+    >
+      <CtlIcon kind="close" />
+    </button>
+  );
+
+  // macOS renders controls on the LEFT and follows the traffic-light action
+  // order close → minimize → maximize (left→right). Windows/Linux render on the
+  // right with minimize → maximize → close.
+  const isMac = hostPlatform() === "macos";
+
   return (
     <div class="pf-winctl" role="group" aria-label="Window controls">
-      <button
-        type="button"
-        class="pf-winctl-btn"
-        title="Minimize"
-        aria-label="Minimize"
-        onClick={minimize}
-      >
-        <CtlIcon kind="minimize" />
-      </button>
-      <button
-        type="button"
-        class="pf-winctl-btn"
-        title={maximized() ? "Restore" : "Maximize"}
-        aria-label={maximized() ? "Restore" : "Maximize"}
-        onClick={toggleMax}
-      >
-        <CtlIcon kind={maximized() ? "restore" : "maximize"} />
-      </button>
-      <button
-        type="button"
-        class="pf-winctl-btn pf-winctl-btn--close"
-        title="Close"
-        aria-label="Close"
-        onClick={close}
-      >
-        <CtlIcon kind="close" />
-      </button>
+      <Show when={isMac} fallback={<><Minimize /><Maximize /><Close /></>}>
+        <Close />
+        <Minimize />
+        <Maximize />
+      </Show>
     </div>
   );
 }

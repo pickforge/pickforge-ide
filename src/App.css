@@ -129,6 +129,18 @@
   padding: 2px var(--pf-space-sm);
   user-select: none;
 }
+/* With decorations off, Tauri only starts a drag from the exact element that
+ * carries data-tauri-drag-region — not its descendants. The non-interactive
+ * title-bar labels therefore swallow clicks that should move the window. Let
+ * them fall through to the draggable parent. Real controls (.pf-update-badge,
+ * .pf-nav-btn, the window controls) keep their pointer events. */
+.pf-titlebar .pf-mark,
+.pf-titlebar .pf-wordmark,
+.pf-brand .pf-eyebrow-row,
+.pf-titlebar .pf-dev-badge,
+.pf-titlebar-right .pf-pill {
+  pointer-events: none;
+}
 
 /* ---- Quick-launch strip ---- */
 .pf-launch {

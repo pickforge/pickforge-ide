@@ -45,6 +45,19 @@
   --pf-shadow-raised: 0 8px 24px -6px rgba(0, 0, 0, 0.4);
   --pf-shadow-overlay: 0 16px 48px -10px rgba(0, 0, 0, 0.6);
 
+  /* ---- "Live session" ember cue (running / working sidebar glow) ----
+   * The width of the inset ember bar that marks a running chat row, and three
+   * intensities of inset ember wash (calm running / active working low + high)
+   * plus the steady run-dot halo and the grid-card ambient wash. Composed from
+   * --pf-ember / --pf-ember-glow so they follow theme/accent updates. */
+  --pf-runbar-width: 2px;
+  --pf-glow-run-calm: inset 0 0 12px -6px var(--pf-ember-glow);
+  --pf-glow-run-active: inset 0 0 14px -6px var(--pf-ember-glow);
+  --pf-glow-run-breathe: inset 0 0 18px -4px var(--pf-ember-glow);
+  --pf-glow-run-dot: 0 0 6px -1px var(--pf-ember-glow);
+  --pf-glow-run-dot-pulse: 0 0 9px 0 var(--pf-ember-glow);
+  --pf-glow-run-card: 0 0 14px -6px var(--pf-ember-glow);
+
   /* ---- Typography ---- */
   --pf-font-sans: "Geist", system-ui, -apple-system, sans-serif;
   --pf-font-mono: "GeistMono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -105,6 +118,9 @@
   /* ---- Borders ---- */
   --pf-hairline-width: 1px;
   --pf-bracket-width: 1.5px;
+
+  /* Small status dot (rail attention / live-session rollup cues). */
+  --pf-dot-sm: 6px;
 
   /* ---- Motion ---- */
   --pf-dur-micro: 110ms;

@@ -84,6 +84,23 @@ describe("session activity store", () => {
     expect(store.chatRunning("chat-1")).toBe(false);
   });
 
+  it("clear-on-close is idempotent (close + natural exit both fire it)", () => {
+    // Closing an agent pane clears via close(), and a natural PTY exit clears via
+    // onExit — when a close races an exit both can fire clearRunning for the same
+    // chat. The second clear must be a harmless no-op, never a thrown error or a
+    // resurrected level.
+    store.markRunning("chat-1");
+    store.noteOutput("chat-1");
+    expect(store.chatRunning("chat-1")).toBe(true);
+
+    store.clearRunning("chat-1"); // pane closed
+    store.clearRunning("chat-1"); // PTY exit lands after
+    expect(store.chatRunLevel("chat-1")).toBe("idle");
+    // A late relax tick after clearing must not flip it back to running.
+    vi.advanceTimersByTime(store.WORKING_WINDOW_MS);
+    expect(store.chatRunLevel("chat-1")).toBe("idle");
+  });
+
   it("ignores output for a chat that isn't running", () => {
     store.noteOutput("ghost");
     expect(store.chatRunLevel("ghost")).toBe("idle");

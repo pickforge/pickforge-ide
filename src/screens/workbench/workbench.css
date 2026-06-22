@@ -722,13 +722,13 @@ body.pf-resizing .pf-dock-resizer-grip {
    the pulse to a steady glow. */
 .pf-chat-row--running {
   /* A left ember bar + a soft ember wash, layered under any active inset. */
-  box-shadow: inset 2px 0 0 var(--pf-ember),
-    inset 0 0 12px -6px var(--pf-ember-glow);
+  box-shadow: inset var(--pf-runbar-width) 0 0 var(--pf-ember),
+    var(--pf-glow-run-calm);
 }
 .pf-chat-row--running.active {
   /* Keep the active surface's stronger inset, but let the ember own the accent. */
-  box-shadow: inset 2px 0 0 var(--pf-ember),
-    inset 0 0 14px -6px var(--pf-ember-glow);
+  box-shadow: inset var(--pf-runbar-width) 0 0 var(--pf-ember),
+    var(--pf-glow-run-active);
 }
 /* The dot turns ember ONLY when running and NOT also flagged for attention — the
    amber warning dot wins the shared .pf-chat-dot element (it's the more urgent
@@ -736,7 +736,7 @@ body.pf-resizing .pf-dock-resizer-grip {
    glow) above, so both signals stay visible: amber dot + ember ring. */
 .pf-chat-row--running:not(.pf-chat-row--attention) .pf-chat-dot {
   background: var(--pf-ember);
-  box-shadow: 0 0 6px -1px var(--pf-ember-glow);
+  box-shadow: var(--pf-glow-run-dot);
 }
 /* Working: the agent is producing — breathe the ember so it reads as live. */
 .pf-chat-row--working {
@@ -746,24 +746,24 @@ body.pf-resizing .pf-dock-resizer-grip {
   animation: pf-run-dot-pulse var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
 }
 @keyframes pf-run-breathe {
-  0%, 100% { box-shadow: inset 2px 0 0 var(--pf-ember),
-    inset 0 0 12px -6px var(--pf-ember-glow); }
-  50% { box-shadow: inset 2px 0 0 var(--pf-ember),
-    inset 0 0 18px -4px var(--pf-ember-glow); }
+  0%, 100% { box-shadow: inset var(--pf-runbar-width) 0 0 var(--pf-ember),
+    var(--pf-glow-run-calm); }
+  50% { box-shadow: inset var(--pf-runbar-width) 0 0 var(--pf-ember),
+    var(--pf-glow-run-breathe); }
 }
 @keyframes pf-run-dot-pulse {
-  0%, 100% { box-shadow: 0 0 6px -1px var(--pf-ember-glow); }
-  50% { box-shadow: 0 0 9px 0 var(--pf-ember-glow); }
+  0%, 100% { box-shadow: var(--pf-glow-run-dot); }
+  50% { box-shadow: var(--pf-glow-run-dot-pulse); }
 }
 /* Project / group rollup: a quiet ember dot when any chat has a live session
    (mirrors the amber .pf-attn-dot, sits beside it). Steady — the chat rows carry
    the working pulse; the rollup stays calm. */
 .pf-run-dot {
-  width: 6px;
-  height: 6px;
+  width: var(--pf-dot-sm);
+  height: var(--pf-dot-sm);
   border-radius: var(--pf-radius-pill);
   background: var(--pf-ember);
-  box-shadow: 0 0 6px -1px var(--pf-ember-glow);
+  box-shadow: var(--pf-glow-run-dot);
   flex: none;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1088,7 +1088,7 @@ body.pf-resizing .pf-dock-resizer-grip {
    with the active bracket glyph — that uses border-color + background, the ember
    here is a box-shadow, so they don't fight. */
 .pf-proj-card--running {
-  box-shadow: 0 0 14px -6px var(--pf-ember-glow),
+  box-shadow: var(--pf-glow-run-card),
     inset 0 0 0 var(--pf-hairline-width) var(--pf-ember-glow);
 }
 .pf-proj-card-mark {

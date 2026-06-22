@@ -279,19 +279,24 @@ export function WorkbenchScreen() {
                       summary: summary ?? chat?.title,
                     });
                   }}
-                  onOutput={(paneId, isPrimary) => {
-                    // Same gating as attention: only the chat's agent session
-                    // (its session-backed primary, or a chip/hotkey-launched
-                    // agent pane) drives the rail's "live session" ember. A plain
-                    // shell/build in a non-primary split pane is ignored.
-                    if (!isPrimary && !isAgentPane(h.chatId, paneId)) return;
+                  onActivity={(paneId) => {
+                    // The "live session" ember means an AGENT is running — NOT
+                    // just any shell output. So gate strictly on the known-agent
+                    // pane (a chip/hotkey launch arms it; a hand-typed
+                    // `claude`/`codex` marks it — see chatAutoName.isAgentPane).
+                    // A plain interactive shell in the primary pane (a prompt,
+                    // `ls`, a build) is never an agent pane, so it stays dark.
+                    // (Unlike attention, which is rare and meaningful even from a
+                    // recovered primary, output streams constantly — accepting all
+                    // primary output would light every visited chat.)
+                    if (!isAgentPane(h.chatId, paneId)) return;
                     markRunning(h.chatId);
                     noteOutput(h.chatId);
                   }}
-                  onPaneExit={(paneId, isPrimary) => {
-                    // The agent session's PTY exited — drop the ember. Only the
-                    // primary/agent pane owns the chat's running state.
-                    if (!isPrimary && !isAgentPane(h.chatId, paneId)) return;
+                  onPaneExit={(paneId) => {
+                    // The agent pane's PTY exited or the pane was closed — drop the
+                    // ember. Same agent-pane gate as the activity tick.
+                    if (!isAgentPane(h.chatId, paneId)) return;
                     clearRunning(h.chatId);
                   }}
                 />

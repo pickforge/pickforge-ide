@@ -50,8 +50,13 @@ export function TerminalPane(props: {
    *  here, so it never includes chip-launched command prefixes. */
   onUserSubmit?: (line: string) => void;
   /** Fires with each decoded chunk of shell OUTPUT (e.g. to scrape a VM service
-   *  URL from `flutter run`). Streaming-decoded, so multi-byte chars are safe. */
+   *  URL from `flutter run`). Streaming-decoded, so multi-byte chars are safe.
+   *  Only set this when the TEXT is needed — decoding runs per chunk. */
   onOutput?: (chunk: string) => void;
+  /** Fires with the byte length of each shell OUTPUT chunk, BEFORE decoding — a
+   *  cheap "the pty produced bytes" tick for activity glows that don't need the
+   *  text. Lets a noisy split pane drive the cue without paying the decode. */
+  onActivity?: (bytes: number) => void;
   /** Fires when the user selects text (anchored near the pointer release), or
    *  null when the selection clears — drives the terminal "Ask AI" popup. */
   onSelectionChange?: (sel: { text: string; x: number; y: number } | null) => void;
@@ -231,6 +236,9 @@ export function TerminalPane(props: {
         if (disposed) return;
         const bytes = toBytes(data);
         term.write(bytes);
+        // Cheap activity tick first — no decode. The decoded string is only
+        // produced for consumers that actually read the text (props.onOutput).
+        if (props.onActivity) props.onActivity(bytes.length);
         if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
       };
       const onExit = (code: number | null) => {

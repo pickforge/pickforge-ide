@@ -299,10 +299,15 @@ export function ProjectsPane() {
   const ChatRow = (p: { chat: Chat; root: string; archived?: boolean }) => {
     const id = p.chat.chatId;
     // Ember "live session" glow: a calm steady glow while the agent session is
-    // running, a livelier pulse while it's actively producing output. Archived
-    // chats never glow (their host is torn down). This is the row's single ember
-    // accent; the amber needs-attention dot is a separate warning signal.
-    const runLevel = () => (p.archived ? "idle" : chatRunLevel(id));
+    // running, a livelier pulse while it's actively producing output. This is the
+    // row's single ember accent; the amber needs-attention dot is a separate
+    // warning signal. Archiving does NOT tear down a chat's terminal host (it
+    // stays mounted until deletion), so an archived chat CAN still have a live
+    // agent — show its real run level on the (expanded) archived row rather than
+    // hiding a genuine live session. The project/group rollups still exclude
+    // archived chats (consistent with #73's attention rollup), so an archived
+    // live session reads only on its own row, never as a phantom project cue.
+    const runLevel = () => chatRunLevel(id);
     return (
       <div
         class="pf-chat-row"

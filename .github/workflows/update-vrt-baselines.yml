@@ -41,9 +41,18 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
 
-      # `--update-snapshots` (re)writes every baseline PNG from this runner's
-      # chromium. The webServer (vite + VITE_PICKFORGE_VRT) is started by
-      # playwright.config.ts exactly as in the gating job.
+      # Delete the existing baselines first. `--update-snapshots` only rewrites
+      # PNGs that are missing or mismatch beyond tolerance, so snapshots that
+      # drift *within* tolerance would otherwise survive as stale local-rendered
+      # pixels — defeating "make CI canonical". Removing them forces every
+      # baseline to be regenerated fresh on this runner.
+      - name: Clear stale baselines
+        run: rm -rf tests/vrt/screens.spec.ts-snapshots
+
+      # `--update-snapshots` writes a complete set of baseline PNGs from this
+      # runner's chromium (all missing after the clear above). The webServer
+      # (vite + VITE_PICKFORGE_VRT) is started by playwright.config.ts exactly
+      # as in the gating job.
       - name: Regenerate VRT baselines (Playwright --update-snapshots)
         run: bun run vrt -- --update-snapshots
 

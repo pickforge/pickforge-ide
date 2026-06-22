@@ -12,7 +12,6 @@ for (const route of ROUTES) {
     // CI-canonical baselines). Keep the two in sync.
     await expect(page).toHaveScreenshot(`${route}.png`, {
       maxDiffPixelRatio: 0.025,
-      maxDiffPixels: 200,
       animations: "disabled",
     });
   });

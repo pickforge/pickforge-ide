@@ -23,13 +23,11 @@ export default defineConfig({
   // the residual-AA safety margin: it absorbs the handful of sub-pixel font
   // anti-aliasing pixels that still drift between otherwise-identical chromium
   // runs, without masking a real layout/color regression. Bumped from 0.02 →
-  // 0.025; `maxDiffPixels` is a small absolute floor so tiny screens aren't held
-  // to a stricter bar than large ones by the ratio alone. Keep these in sync
-  // with the per-test override in tests/vrt/screens.spec.ts.
+  // 0.025. Keep this in sync with the per-test override in
+  // tests/vrt/screens.spec.ts.
   expect: {
     toHaveScreenshot: {
       maxDiffPixelRatio: 0.025,
-      maxDiffPixels: 200,
     },
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],

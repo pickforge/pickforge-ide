@@ -683,6 +683,35 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-chat-row.active .pf-chat-dot {
   background: var(--pf-text-hi);
 }
+/* Needs-attention cue: a single tokenized attention color (warning amber, NOT
+   the ember — the focused terminal owns the one ember). The chat-row dot lights
+   up; a soft pulse draws the eye, suppressed under reduced motion. */
+.pf-chat-dot--attention {
+  background: var(--pf-warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pf-warning) 22%, transparent);
+  animation: pf-attn-pulse var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
+}
+.pf-chat-row--attention .pf-chat-title {
+  color: var(--pf-text-hi);
+}
+/* Project rollup: a small amber dot when any of a project's chats need
+   attention (so a collapsed project still surfaces the cue). */
+.pf-attn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-warning);
+  flex: none;
+  animation: pf-attn-pulse var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
+}
+@keyframes pf-attn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-dot--attention,
+  .pf-attn-dot { animation: none; }
+}
 .pf-chat-title {
   flex: 1;
   min-width: 0;

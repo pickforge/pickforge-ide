@@ -1,0 +1,60 @@
+# Regenerate the VRT baselines on the CI runner so they're CI-canonical.
+#
+# Why this exists: the committed snapshots under
+# `tests/vrt/screens.spec.ts-snapshots/` are pixel-compared in the `visual
+# regression` job of ci.yml. If they were rendered on a developer's machine,
+# CI chromium's font anti-aliasing differs by a few percent on text-heavy
+# screens and the job fails on every PR. The fix is to make CI the single
+# renderer of record: run this workflow once (and after any intentional UI
+# change) to regenerate the baselines on the SAME runner image the ci.yml vrt
+# job uses, then commit them back. PR runs then diff CI-rendered pixels against
+# CI-rendered pixels and pass.
+#
+# Manual-only (workflow_dispatch). It never runs on push/PR.
+name: update-vrt-baselines
+
+on:
+  workflow_dispatch:
+
+# Needs write access to push the regenerated PNGs back to the branch.
+permissions:
+  contents: write
+
+jobs:
+  update-baselines:
+    name: regenerate VRT baselines (CI-canonical)
+    # MUST match the runner image + Playwright install of the ci.yml `vrt` job
+    # so the rendered pixels are identical to what PR runs compare against.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Check out the dispatched ref so the commit lands on the right branch.
+          ref: ${{ github.ref_name }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # `--update-snapshots` (re)writes every baseline PNG from this runner's
+      # chromium. The webServer (vite + VITE_PICKFORGE_VRT) is started by
+      # playwright.config.ts exactly as in the gating job.
+      - name: Regenerate VRT baselines (Playwright --update-snapshots)
+        run: bun run vrt -- --update-snapshots
+
+      - name: Commit regenerated baselines
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/vrt/screens.spec.ts-snapshots
+          if git diff --cached --quiet; then
+            echo "Baselines already CI-canonical — nothing to commit."
+            exit 0
+          fi
+          git commit -m "test(vrt): regenerate CI-canonical baselines"
+          git push origin HEAD:${{ github.ref_name }}

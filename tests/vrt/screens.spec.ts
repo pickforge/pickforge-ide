@@ -8,8 +8,11 @@ for (const route of ROUTES) {
     await page.goto(`/#/${route}`);
     // Let stores load + the ember sweep animation settle.
     await page.waitForTimeout(900);
+    // Tolerance mirrors playwright.config.ts (residual sub-pixel AA margin on
+    // CI-canonical baselines). Keep the two in sync.
     await expect(page).toHaveScreenshot(`${route}.png`, {
-      maxDiffPixelRatio: 0.02,
+      maxDiffPixelRatio: 0.025,
+      maxDiffPixels: 200,
       animations: "disabled",
     });
   });

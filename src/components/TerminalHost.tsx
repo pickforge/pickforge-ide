@@ -155,18 +155,46 @@ export interface TerminalHostHandle {
   /** Split the focused pane and run `command` in the new pane; returns the new
    *  pane's id (e.g. to arm auto-naming on it). */
   openInNewPane: (command: string) => string;
+  /** Run `command` (with a trailing newline) in this host's PRIMARY,
+   *  session-backed pane — the one wired to the chat's recoverable dtach/tmux
+   *  session — and focus it. Returns the primary pane's id, or null if it isn't
+   *  ready yet. Agent quick-launches use this so the launched agent runs INSIDE
+   *  the recoverable session (surviving close/restart), not a raw split pane. */
+  runInPrimary: (command: string) => string | null;
 }
 
 export function TerminalHost(props: {
   onReady?: (handle: TerminalHostHandle) => void;
   cwd?: string;
+  /** The chat this host belongs to. When set, panes spawn SESSION-BACKED shells
+   *  (dtach/tmux) keyed off the chat so a running agent survives pane-close and
+   *  app-restart; unset → a plain interactive shell (today's behaviour). */
+  chatId?: string;
   /** Extra `PICKFORGE_*` env for every spawned shell — MCP endpoint discovery. */
   env?: Record<string, string> | null;
   /** Forwarded from every pane: a line the user typed and submitted, tagged with
    *  the id of the pane it came from. */
   onUserSubmit?: (line: string, paneId: string) => void;
+  /** Forwarded from every pane: the shell/agent's OSC 2 terminal title, tagged
+   *  with the pane id — the host maps it to this chat's name. */
+  onTitle?: (title: string, paneId: string) => void;
+  /** Session recovery for this chat's PRIMARY pane (dtach/tmux). Only the first
+   *  pane is session-backed — extra split panes are plain shells, so two panes
+   *  never attach the same session and interleave input. */
+  session?: {
+    projectRoot: string;
+    sessionId?: string | null;
+    backend: "dtach" | "tmux" | "raw";
+    onSession?: (info: { sessionId: string | null; backend: string; degraded: boolean }) => void;
+  };
 }) {
   const first = newLeaf();
+  // The primary pane id — the one (and only one) wired to the chat's recoverable
+  // session. It normally stays fixed as the user splits/rearranges around it, but
+  // if the user CLOSES the primary while other panes remain, we PROMOTE a
+  // survivor to be session-backed so the chat's recovery isn't lost (see close()).
+  // Reactive so the session props re-bind to the promoted pane.
+  const [primaryId, setPrimaryId] = createSignal<string>(first.id);
   const [root, setRoot] = createSignal<Node>(first);
   const [focusedId, setFocusedId] = createSignal<string>(first.id);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
@@ -196,6 +224,21 @@ export function TerminalHost(props: {
   // Commands queued to run in a freshly-split pane once its shell is ready
   // (used by openInNewPane for "open file in editor").
   const pendingCmd = new Map<string, string>();
+  // A command queued to run in the PRIMARY (session-backed) pane before its
+  // handle exists — an agent chip/hotkey fired right after the host registered
+  // but before the primary pane's async font-load/spawn called onReady. Flushed
+  // when the primary handle arrives so the launch is never silently dropped.
+  let pendingPrimaryCmd: string | null = null;
+  const flushPrimaryCmd = () => {
+    if (pendingPrimaryCmd === null) return;
+    const id = primaryId();
+    const h = handles.get(id);
+    if (!h) return;
+    const cmd = pendingPrimaryCmd;
+    pendingPrimaryCmd = null;
+    focus(id);
+    h.typeText(cmd + "\r");
+  };
   const openInNewPane = (command: string): string => {
     const fresh = newLeaf();
     pendingCmd.set(fresh.id, command);
@@ -206,8 +249,25 @@ export function TerminalHost(props: {
 
   const close = (id: string) => {
     if (leaves().length <= 1) return;
-    const next = removeLeaf(root(), id);
+    let next = removeLeaf(root(), id);
     if (!next) return;
+    // If the user closed the SESSION-BACKED primary while other panes remain,
+    // promote a survivor so the chat's recovery session stays attached to this
+    // still-mounted host. We swap that survivor's leaf for a fresh id, which
+    // remounts it WITH the chat session props (its old raw shell is replaced by
+    // a pane that re-attaches the live dtach/tmux session); without this the
+    // session would detach with nothing left to reattach it here, and later
+    // agent quick-launches would target a missing primary handle.
+    if (id === primaryId() && props.session && props.chatId) {
+      const survivor = collectLeaves(next)[0];
+      if (survivor) {
+        const promoted = newLeaf();
+        next = mapLeaves(next, (l) => (l.id === survivor.id ? promoted : l));
+        handles.delete(survivor.id);
+        setPrimaryId(promoted.id);
+        if (focusedId() === survivor.id) setFocusedId(promoted.id);
+      }
+    }
     setRoot(next);
     handles.delete(id);
     setMenuFor((m) => (m === id ? null : m));
@@ -366,6 +426,23 @@ export function TerminalHost(props: {
       return id;
     },
     openInNewPane,
+    runInPrimary: (command) => {
+      // The primary pane is the only session-backed one; run the agent there so
+      // it lives inside the recoverable dtach/tmux session. If its handle isn't
+      // ready yet (the pane's font-load/spawn is async and may not have called
+      // onReady), QUEUE the command and flush it when the handle arrives, rather
+      // than dropping the launch. The primary pane id is stable and known up
+      // front, so callers can still arm auto-naming on it immediately.
+      const id = primaryId();
+      const h = handles.get(id);
+      if (!h) {
+        pendingPrimaryCmd = command;
+        return id;
+      }
+      focus(id);
+      h.typeText(command + "\r");
+      return id;
+    },
   });
 
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
@@ -462,7 +539,19 @@ export function TerminalHost(props: {
                   <TerminalPane
                     cwd={props.cwd}
                     env={props.env}
+                    chat={
+                      props.session && props.chatId && leaf.id === primaryId()
+                        ? {
+                            chatId: props.chatId,
+                            projectRoot: props.session.projectRoot,
+                            sessionId: props.session.sessionId,
+                            backend: props.session.backend,
+                            onSession: props.session.onSession,
+                          }
+                        : undefined
+                    }
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
+                    onTitle={(title) => props.onTitle?.(title, leaf.id)}
                     onSelectionChange={setAskSel}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
@@ -472,6 +561,9 @@ export function TerminalHost(props: {
                         pendingCmd.delete(leaf.id);
                         handle.typeText(cmd + "\r");
                       }
+                      // The session-backed (primary) pane just came up — flush any
+                      // agent launch queued before its handle existed.
+                      if (leaf.id === primaryId()) flushPrimaryCmd();
                     }}
                     onExit={() => requestClose(leaf.id)}
                   />

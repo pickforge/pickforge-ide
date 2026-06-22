@@ -108,6 +108,15 @@ export const chatsList = (projectRoot: string) =>
 export const chatUpsert = (chat: Chat) => invoke<void>("chat_upsert", { chat });
 export const chatDelete = (chatId: string) =>
   invoke<void>("chat_delete", { chatId });
+/** Narrow title write (OSC/auto-name) — won't clobber a live session_id. */
+export const updateChatTitle = (chatId: string, title: string) =>
+  invoke<void>("update_chat_title", { chatId, title });
+/** Narrow session_id write (chat recovery) — pass null to clear. */
+export const updateChatSessionId = (chatId: string, sessionId: string | null) =>
+  invoke<void>("update_chat_session_id", { chatId, sessionId });
+/** Narrow sort_order write (reorder) — won't clobber a live session_id. */
+export const updateChatSortOrder = (chatId: string, sortOrder: number) =>
+  invoke<void>("update_chat_sort_order", { chatId, sortOrder });
 
 // ---- settings ----
 export const settingsGet = (root: string) =>

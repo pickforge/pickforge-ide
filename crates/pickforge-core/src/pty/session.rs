@@ -53,7 +53,19 @@ pub struct SpawnOptions {
     /// When set, run this command (`$SHELL -c <command>`) once and exit, instead
     /// of an interactive shell. The Debug Console uses this so a finished run
     /// leaves its output behind rather than dropping to a live shell prompt.
+    /// MUTUALLY EXCLUSIVE with `program_override` — the one-shot path is always a
+    /// RAW `$SHELL -c`, never session-backed.
     pub command: Option<String>,
+    /// When set, spawn THIS program instead of the resolved `$SHELL` — the
+    /// dtach/tmux invocation that wraps the chat's shell in a detachable session.
+    /// The env/cwd/sizes are applied to it unchanged. Ignored when `command` is
+    /// set (the one-shot Debug Console path stays a raw shell).
+    pub program_override: Option<(String, Vec<String>)>,
+    /// True when the spawned process is a session CLIENT (dtach/tmux) whose
+    /// teardown must DETACH (reap the client only), not signal the process group
+    /// — the session, and the shell inside it, must outlive the pane. A raw
+    /// interactive shell leaves this false and keeps the process-group teardown.
+    pub detach_on_drop: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -76,12 +88,22 @@ struct Session {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// The reader thread's join handle. Detach must join it after the client
+    /// exits so we both confirm the cloned-master fd is closed (no leaked thread)
+    /// and don't return while the reader still holds a master fd open.
+    reader_thread: Option<std::thread::JoinHandle<()>>,
     /// The shell's pid. portable-pty puts the slave in its own session
     /// (`setsid`), so on Unix this is also its process-group id — we signal the
     /// whole group on teardown so a foreground job (`flutter run`, `gradle`,
     /// `adb`) and its descendants die with the shell, not just the shell itself.
+    /// For a dtach/tmux CLIENT this is the client pid — detach signals exactly it
+    /// (SIGHUP, not the group) so the client exits while the session survives.
     #[cfg(unix)]
     shell_pid: Option<u32>,
+    /// True when this session is a dtach/tmux CLIENT: dropping the pane must
+    /// detach (reap the client, leave the process group alone) so the recoverable
+    /// session survives. A raw interactive shell is false → full group teardown.
+    detach_on_drop: bool,
 }
 
 /// Owns every live PTY session. Lives behind Tauri's managed `State`.
@@ -119,13 +141,32 @@ impl PtyManager {
             pixel_height: 0,
         })?;
 
-        let ShellInvocation { program, mut args } = resolve_shell();
-        // Command mode: append `-c <command>` so the shell runs it and exits,
-        // keeping any platform login flag (`-l`) ahead of it.
-        if let Some(command) = opts.command.as_ref().filter(|c| !c.trim().is_empty()) {
-            args.push("-c".to_string());
-            args.push(command.clone());
-        }
+        // One-shot command mode (Debug Console) is ALWAYS a raw `$SHELL -c` and
+        // never session-backed — a `program_override` would be wrong here (it
+        // would reattach to a stale session instead of running the command), so
+        // the one-shot path takes precedence and ignores any override.
+        let one_shot = opts
+            .command
+            .as_ref()
+            .filter(|c| !c.trim().is_empty())
+            .cloned();
+
+        let (program, args) = match (&one_shot, opts.program_override.clone()) {
+            // Session-backed chat shell: spawn the dtach/tmux client verbatim.
+            (None, Some((prog, prog_args))) => (prog, prog_args),
+            // Raw shell (interactive, or one-shot `$SHELL -c <command>`).
+            _ => {
+                let ShellInvocation { program, mut args } = resolve_shell();
+                if let Some(command) = one_shot.as_ref() {
+                    args.push("-c".to_string());
+                    args.push(command.clone());
+                }
+                (program, args)
+            }
+        };
+        // A one-shot command can never run detached — it must reap normally.
+        let detach_on_drop = opts.detach_on_drop && one_shot.is_none();
+
         let mut cmd = CommandBuilder::new(program);
         for arg in args {
             cmd.arg(arg);
@@ -155,7 +196,8 @@ impl PtyManager {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         // Register before starting the reader so a shell that exits immediately
-        // can't try to remove its session before it has been inserted.
+        // can't try to remove its session before it has been inserted. The reader
+        // thread handle is attached just below, once the thread is spawned.
         self.sessions
             .lock()
             .expect("pty registry poisoned")
@@ -165,25 +207,43 @@ impl PtyManager {
                     master: pair.master,
                     writer,
                     child,
+                    reader_thread: None,
                     #[cfg(unix)]
                     shell_pid,
+                    detach_on_drop,
                 },
             );
 
         let sink = Arc::new(sink);
         let sessions = Arc::clone(&self.sessions);
-        if let Err(err) = std::thread::Builder::new()
+        match std::thread::Builder::new()
             .name(format!("pty-reader-{id}"))
             .spawn(move || read_loop(id, reader, sink, sessions))
         {
-            // Roll back the just-registered session so a failed reader spawn
-            // can't leak the child + PTY handles.
-            let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
-            if let Some(mut session) = removed {
-                let _ = session.child.kill();
-                let _ = session.child.wait();
+            Ok(handle) => {
+                // Store the join handle so detach can join the reader after the
+                // client exits. The session may already be gone if an instant-exit
+                // shell's reader removed it before we got the lock back — fine, the
+                // thread is then already finishing on its own.
+                if let Some(session) = self
+                    .sessions
+                    .lock()
+                    .expect("pty registry poisoned")
+                    .get_mut(&id)
+                {
+                    session.reader_thread = Some(handle);
+                }
             }
-            return Err(PtyError::from(err));
+            Err(err) => {
+                // Roll back the just-registered session so a failed reader spawn
+                // can't leak the child + PTY handles.
+                let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+                if let Some(mut session) = removed {
+                    let _ = session.child.kill();
+                    let _ = session.child.wait();
+                }
+                return Err(PtyError::from(err));
+            }
         }
 
         Ok(id)
@@ -212,6 +272,12 @@ impl PtyManager {
     }
 
     /// Kill a session's shell and drop it from the registry.
+    ///
+    /// This is the RAW teardown: it signals the shell's whole process group so a
+    /// foreground job (`flutter run`/`gradle`/`adb`) dies with the shell. For a
+    /// session-backed pane (dtach/tmux) use [`detach`](Self::detach) instead —
+    /// killing the client's group here would also take down the recoverable
+    /// session, defeating the whole point.
     pub fn kill(&self, id: u32) -> Result<(), PtyError> {
         // Remove under the lock, then signal + reap outside it so the registry
         // lock is never held across a blocking wait. Once removed, the reader
@@ -225,6 +291,66 @@ impl PtyManager {
             terminate_process_groups(session.shell_pid, session.master.process_group_leader());
             let _ = session.child.kill();
             let _ = session.child.wait();
+        }
+        Ok(())
+    }
+
+    /// Detach a session-backed pane WITHOUT killing it: drop the PTY handles so
+    /// the dtach/tmux client sees EOF and detaches, then REAP that client so it
+    /// can't linger as a zombie — but never signal the process group, so the
+    /// session (and the agent shell inside it) keeps running for the next attach.
+    ///
+    /// Falls back to a full [`kill`](Self::kill) for a session that wasn't spawned
+    /// detachable (`detach_on_drop == false`), so calling `detach` on a raw shell
+    /// still tears it down cleanly rather than leaking it.
+    pub fn detach(&self, id: u32) -> Result<(), PtyError> {
+        let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+        let Some(mut session) = removed else {
+            return Ok(()); // already gone (e.g. the reader hit EOF first)
+        };
+        if !session.detach_on_drop {
+            // Not a recoverable session — tear it down like kill() would.
+            #[cfg(unix)]
+            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
+            let _ = session.child.kill();
+            let _ = session.child.wait();
+            if let Some(t) = session.reader_thread.take() {
+                let _ = t.join();
+            }
+            return Ok(());
+        }
+        // Detach the dtach/tmux CLIENT so the session (and the agent shell inside
+        // it) survives for the next attach.
+        //
+        // Closing all master fds is what makes the client see its controlling
+        // terminal hang up and detach — but the READER THREAD holds a CLONED
+        // master fd (`try_clone_reader`), so dropping only `master` + `writer`
+        // here leaves that clone open, the client may never see the hangup, and
+        // `child.wait()` could block forever (leaking the thread + a stuck
+        // client). So we ALSO SIGHUP the client's own pid (never its process
+        // group — that would take the session down with it): SIGHUP makes a
+        // dtach/tmux client exit (detaching) regardless of the lingering fd, the
+        // master read then returns EOF, and the reader thread finishes. We join
+        // it afterwards to guarantee the clone is closed and nothing leaks.
+        let Session {
+            master,
+            writer,
+            mut child,
+            reader_thread,
+            #[cfg(unix)]
+            shell_pid,
+            ..
+        } = session;
+        drop(writer);
+        drop(master);
+        #[cfg(unix)]
+        signal_client_hangup(shell_pid);
+        let _ = child.wait();
+        if let Some(t) = reader_thread {
+            // The client has exited, so its master read returns EOF and the reader
+            // loop ends; joining confirms the cloned fd is closed (no leaked
+            // thread / fd) before we return.
+            let _ = t.join();
         }
         Ok(())
     }
@@ -271,6 +397,25 @@ fn read_loop<S: PtySink>(
         .and_then(|mut session| session.child.wait().ok())
         .map(|status| status.exit_code() as i32);
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| sink.emit(PtyEvent::Exit(code))));
+}
+
+/// SIGHUP the dtach/tmux CLIENT process — and ONLY it (its own pid, never the
+/// process group) — so the client exits and detaches while the session (the
+/// dtach master / tmux server and the shell inside) keeps running for the next
+/// attach. Used on detach as a belt-and-braces hangup: the master fds are also
+/// dropped, but the reader thread's cloned fd can keep the client from noticing
+/// the hangup on its own, so we make it explicit. ESRCH (already gone) is
+/// harmless and ignored.
+#[cfg(unix)]
+fn signal_client_hangup(client_pid: Option<u32>) {
+    if let Some(pid) = client_pid {
+        // SAFETY: kill() with a valid pid is well-defined; signalling a single
+        // pid (positive arg) never reaches the process group, so the detached
+        // session is untouched.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGHUP);
+        }
+    }
 }
 
 /// Signal the shell's process group — and the controlling terminal's current

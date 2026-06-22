@@ -34,13 +34,19 @@ pub use db::{
 };
 
 pub use process::{
-    is_binary_on_path, is_on_user_path, run, user_shell_environment, which_in, CommandOutcome,
+    is_binary_on_path, is_on_user_path, run, run_timeout, user_shell_environment, which_in,
+    CommandOutcome,
 };
 pub use storage::{
     pickforge_env_vars, pickforge_home, project_id, ContextStorageLocation, ContextStorageMode,
     ContextStorageService, ResolvedContextDirectory, StorageError,
 };
-pub use pty::{PtyError, PtyEvent, PtyManager, PtySink, SpawnOptions};
+pub use pty::{
+    dtach_socket_path, kill_dtach_master, prepare_chat_session, select_backend, session_name,
+    sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
+    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, SessionBackend, SessionStatus,
+    SpawnOptions,
+};
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,
     TERMINAL_MODE_RESETS,

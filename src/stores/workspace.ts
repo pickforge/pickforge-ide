@@ -2,9 +2,12 @@
 // SQLite Tauri commands. Chats are bucketed per project (chatsByRoot) so the
 // projects tree can show each project's chats as children, loaded lazily the
 // first time a project is selected or its branch is expanded.
+import { createSignal } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import * as db from "../lib/db";
+import { clearChatKillMark, markChatForKill, ptyDestroyChatSession } from "../lib/pty";
 import { isChatArchived } from "./chatArchive";
+import { setChatTmux } from "./chatSessions";
 
 /** First non-archived chat id in a list, or null. The projects tree hides
  *  archived chats, so the active chat must never be one of them. */
@@ -37,6 +40,29 @@ const chatDeletedListeners = new Set<(chatId: string) => void>();
 export function onChatDeleted(fn: (chatId: string) => void): () => void {
   chatDeletedListeners.add(fn);
   return () => chatDeletedListeners.delete(fn);
+}
+
+// Chats mid-teardown (delete or backend-migration): the host is removed up front
+// but `activeChatId`/`findChat` still point at the old row until the surrounding
+// awaits finish. The Workbench mount effect must NOT recreate the host in that
+// window — it could resurrect a just-deleted chat or reopen a migrating one with
+// its stale stored session_id. `isChatDestroying` gates that remount. REACTIVE:
+// reading it subscribes the mount effect, so CLEARING the mark (migration done)
+// re-runs the effect and lets the host remount under the new backend.
+const [destroying, setDestroying] = createSignal<Set<string>>(new Set());
+function markDestroying(chatId: string) {
+  setDestroying((s) => (s.has(chatId) ? s : new Set(s).add(chatId)));
+}
+function unmarkDestroying(chatId: string) {
+  setDestroying((s) => {
+    if (!s.has(chatId)) return s;
+    const next = new Set(s);
+    next.delete(chatId);
+    return next;
+  });
+}
+export function isChatDestroying(chatId: string): boolean {
+  return destroying().has(chatId);
 }
 
 export function activeProject(): db.Project | null {
@@ -113,16 +139,19 @@ export async function refreshFromDb() {
     for (const root of Object.keys(state.chatsByRoot)) {
       const before = state.chatsByRoot[root] ?? [];
       if (!liveRoots.has(root)) {
-        before.forEach((c) => chatDeletedListeners.forEach((fn) => fn(c.chatId)));
+        // Project gone in another instance: KILL each chat's pane + destroy its
+        // recovery session (the row is gone, so detaching would strand it).
+        for (const c of before) await destroyExternallyDeletedChat(c.chatId, c.sessionId);
         setState("chatsByRoot", produce((m) => { delete m[root]; }));
         continue;
       }
       const after = await db.chatsList(root);
       setState("chatsByRoot", root, after);
       const afterIds = new Set(after.map((c) => c.chatId));
-      before.forEach((c) => {
-        if (!afterIds.has(c.chatId)) chatDeletedListeners.forEach((fn) => fn(c.chatId));
-      });
+      for (const c of before) {
+        // Chat removed in another instance: same destructive teardown.
+        if (!afterIds.has(c.chatId)) await destroyExternallyDeletedChat(c.chatId, c.sessionId);
+      }
     }
 
     if (state.activeRoot != null && !liveRoots.has(state.activeRoot)) {
@@ -183,18 +212,62 @@ export async function renameProject(root: string, displayName: string) {
   setState("projects", (x) => x.projectRoot === root, "displayName", name);
 }
 
+/** DESTRUCTIVELY tear a chat down (delete, not close): mark it so its mounted
+ *  panes KILL (not detach) on unmount, fire the deletion notifiers (which unmount
+ *  the host — killing the live PTY + its process group), THEN destroy the stored
+ *  dtach/tmux session so nothing lingers. Order matters: killing the mounted pane
+ *  first means we never detach-then-destroy (which would strand a live shell);
+ *  destroying after means the socket/session is gone for good. Best-effort on the
+ *  destroy — a failure there must not block the delete. */
+async function destroyChat(chatId: string, sessionId: string | null) {
+  markChatForKill(chatId);
+  // Block the Workbench from remounting this host while the active chat / store
+  // still point at the old row (cleared by the caller once it has reconciled
+  // state — see deleteChat/migrateChatBackend/deleteProject).
+  markDestroying(chatId);
+  // Unmount the host now (synchronous) so its panes hit the kill teardown while
+  // the mark is set, BEFORE we destroy the session/socket below.
+  chatDeletedListeners.forEach((fn) => fn(chatId));
+  if (sessionId) {
+    await ptyDestroyChatSession(sessionId).catch((e) =>
+      console.error("[pickforge] pty_destroy_chat_session failed", e),
+    );
+  }
+  clearChatKillMark(chatId);
+}
+
+/** Tear down a chat another running instance already removed from the shared DB:
+ *  the row is GONE, so its mounted pane must KILL (not detach) and its recovery
+ *  session must be destroyed — otherwise the session keeps running after its DB
+ *  row disappeared. Same destructive order as destroyChat, but it doesn't gate
+ *  remounting (refreshFromDb removes the chat from the store in the same pass, so
+ *  findChat already returns undefined and the host can't remount). */
+async function destroyExternallyDeletedChat(chatId: string, sessionId: string | null) {
+  markChatForKill(chatId);
+  chatDeletedListeners.forEach((fn) => fn(chatId));
+  if (sessionId) {
+    await ptyDestroyChatSession(sessionId).catch((e) =>
+      console.error("[pickforge] pty_destroy_chat_session failed", e),
+    );
+  }
+  clearChatKillMark(chatId);
+}
+
 export async function deleteProject(root: string) {
   // The DB cascade-deletes this project's chat rows, but the workbench keeps
-  // visited chat terminal hosts mounted until told a chat is gone — so notify
-  // for each before deleting, or their shells leak.
+  // visited chat terminal hosts mounted until told a chat is gone — and each
+  // chat's dtach/tmux session would outlive its project. So for every chat:
+  // kill any mounted pane and destroy its recovery session BEFORE the row goes.
   const chats = await db.chatsList(root);
+  await Promise.all(chats.map((c) => destroyChat(c.chatId, c.sessionId)));
   await db.projectDelete(root);
-  chats.forEach((c) => chatDeletedListeners.forEach((fn) => fn(c.chatId)));
   if (state.activeRoot === root) setState("activeRoot", null);
   // Remove the bucket entirely; leaving an `undefined` value here makes
   // findChat() call .find on it and throw on the next chat operation.
   setState("chatsByRoot", produce((m) => { delete m[root]; }));
   await loadWorkspace();
+  // State reconciled — let the remount gate go (these chats are gone now).
+  chats.forEach((c) => unmarkDestroying(c.chatId));
 }
 
 export async function addChat(title: string, agentId: string, root = state.activeRoot) {
@@ -239,27 +312,84 @@ export async function reorderChat(draggedId: string, beforeId: string | null) {
   rest.splice(idx < 0 ? rest.length : idx, 0, dragged);
   const next = rest.map((c, i) => ({ ...c, sortOrder: i }));
   setState("chatsByRoot", root, next);
-  for (const c of next) await db.chatUpsert(c);
+  // Persist ONLY sort_order (narrow write) — a full-row chat_upsert would carry
+  // each chat's in-store sessionId and could clobber a recovery handle that a
+  // concurrent narrow session_id write just persisted.
+  for (const c of next) await db.updateChatSortOrder(c.chatId, c.sortOrder);
 }
 
 export async function renameChat(chatId: string, title: string) {
   const t = title.trim();
   const c = findChat(chatId);
   if (!c || !t || t === c.title) return;
-  await db.chatUpsert({ ...c, title: t });
+  // Narrow title write — same reason as reorder: never clobber a live session_id.
+  await db.updateChatTitle(chatId, t);
   setState("chatsByRoot", c.projectRoot, (list) =>
     list.map((x) => (x.chatId === chatId ? { ...x, title: t } : x)),
   );
 }
 
+/** Set a chat's title via the NARROW title write (won't clobber a live
+ *  session_id), updating the store in place. The auto-name flow uses this — it
+ *  can fire while a session_id is being persisted, so the two must not race. */
+export async function setChatTitle(chatId: string, title: string) {
+  const t = title.trim();
+  const c = findChat(chatId);
+  if (!c || !t || t === c.title) return;
+  await db.updateChatTitle(chatId, t);
+  setState("chatsByRoot", c.projectRoot, (list) =>
+    list.map((x) => (x.chatId === chatId ? { ...x, title: t } : x)),
+  );
+}
+
+/** Persist a chat's recovery `session_id` (dtach socket / tmux name, with a
+ *  backend tag), updating the store in place via the narrow write. Null clears
+ *  it (e.g. when the backend degraded to a raw shell we LEAVE it; the caller
+ *  decides). */
+export async function setChatSessionId(chatId: string, sessionId: string | null) {
+  const c = findChat(chatId);
+  if (!c || c.sessionId === sessionId) return;
+  await db.updateChatSessionId(chatId, sessionId);
+  setState("chatsByRoot", c.projectRoot, (list) =>
+    list.map((x) => (x.chatId === chatId ? { ...x, sessionId } : x)),
+  );
+}
+
+/** EXPLICIT user migration of a chat to a different recovery backend (the
+ *  dtach⇄tmux menu toggle). Because the chat is otherwise reopened with whatever
+ *  backend its stored handle is tagged with, switching means we must first
+ *  DESTROY the old session and CLEAR the handle — otherwise the toggle would
+ *  never take effect (and the old session would linger). Tears down any mounted
+ *  pane (kill, not detach), destroys the old session/socket, clears the stored
+ *  handle, then flips the per-chat tmux opt-in so the next open spawns a fresh
+ *  session under the new backend. */
+export async function migrateChatBackend(chatId: string, toTmux: boolean) {
+  const chat = findChat(chatId);
+  if (!chat) return;
+  await destroyChat(chatId, chat.sessionId);
+  await setChatSessionId(chatId, null);
+  setChatTmux(chatId, toTmux);
+  // The stored session_id is cleared and the backend opt-in flipped — it's now
+  // safe for the host to remount (it'll spawn a fresh session under the new
+  // backend rather than reopening the destroyed one). Clearing the reactive gate
+  // re-runs the Workbench mount effect, so the host comes back under the new
+  // backend without waiting on another store change.
+  unmarkDestroying(chatId);
+}
+
 export async function deleteChat(chatId: string) {
   const chat = findChat(chatId);
   const root = chat?.projectRoot ?? state.activeRoot;
+  // KILL any mounted pane (so a live agent shell dies with the chat instead of
+  // being detached and stranded), THEN destroy the dtach/tmux session/socket so
+  // nothing lingers orphaned. Never detach on a delete.
+  await destroyChat(chatId, chat?.sessionId ?? null);
   await db.chatDelete(chatId);
-  chatDeletedListeners.forEach((fn) => fn(chatId));
   let remaining: db.Chat[] = [];
   if (root) remaining = await fetchChats(root);
   if (state.activeChatId === chatId) {
     setState("activeChatId", firstVisibleChat(remaining));
   }
+  // Row gone + active chat moved off it — the remount gate can release.
+  unmarkDestroying(chatId);
 }

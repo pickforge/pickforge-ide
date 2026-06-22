@@ -24,10 +24,11 @@ import {
   hotkeyMatches,
   quickLaunchItems,
 } from "../../stores/quickLaunch";
-import { findChat, onChatDeleted, workspace } from "../../stores/workspace";
+import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
+import { chatBackend } from "../../stores/chatSessions";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import { armChatAutoName, maybeAutoNameChat } from "../../lib/chatAutoName";
+import { armChatAutoName, handleOscTitle, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -41,15 +42,17 @@ export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
 
-  // Fire a quick-launch item into the active chat: open a fresh terminal pane,
-  // type the command, and run it (so a launch never disturbs the pane the user
-  // is working in). Agent items also arm that new pane so its first message
-  // becomes the chat title (see chatAutoName).
+  // Fire a quick-launch item into the active chat and run it. An AGENT launch
+  // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
+  // the recoverable dtach/tmux session (surviving pane-close + app-restart) —
+  // not a raw split pane that would kill it on close. We also arm that pane so
+  // the agent's first message becomes the chat title (see chatAutoName). A
+  // non-agent launch opens a fresh split pane so it never disturbs the primary.
   const launchItem = (item: { agentId?: string }, text: string) => {
     if (!text) return;
     const host = getTerminalHost(workspace.activeChatId);
     if (!host) return;
-    const paneId = host.openInNewPane(text);
+    const paneId = item.agentId ? host.runInPrimary(text) : host.openInNewPane(text);
     if (paneId && item.agentId) armChatAutoName(workspace.activeChatId, paneId);
   };
 
@@ -84,14 +87,19 @@ export function WorkbenchScreen() {
   // same graceful degradation as before.
   createEffect(() => {
     const id = workspace.activeChatId;
-    if (!id || binding.has(id) || mounted().some((m) => m.chatId === id)) return;
+    // Never remount a chat that's mid-teardown (delete or backend-migration): its
+    // host was just removed but activeChatId/findChat can still point at the old
+    // row until the store reconciles, and remounting here would resurrect a
+    // just-deleted chat or reopen a migrating one with its stale session_id.
+    if (!id || binding.has(id) || isChatDestroying(id) || mounted().some((m) => m.chatId === id)) return;
     const chat = findChat(id);
     if (!chat) return;
     binding.add(id);
     void ensureMcpRunning(chat.projectRoot).finally(() => {
       binding.delete(id);
-      // Guard: the chat may have been deleted while the bind was in flight.
-      if (!findChat(id) || mounted().some((m) => m.chatId === id)) return;
+      // Guard: the chat may have been deleted (or started teardown) while the
+      // bind was in flight.
+      if (!findChat(id) || isChatDestroying(id) || mounted().some((m) => m.chatId === id)) return;
       setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
     });
   });
@@ -224,8 +232,27 @@ export function WorkbenchScreen() {
                 <TerminalHost
                   cwd={h.projectRoot}
                   env={mcpEnv(h.projectRoot)}
+                  chatId={h.chatId}
+                  session={(() => {
+                    // Honor the chat's PERSISTED backend on reopen: derive the
+                    // backend from the stored session_id tag so a tmux-backed chat
+                    // never silently reopens as dtach (which would abandon the old
+                    // session and overwrite the handle).
+                    const storedSessionId = findChat(h.chatId)?.sessionId ?? null;
+                    return {
+                      projectRoot: h.projectRoot,
+                      sessionId: storedSessionId,
+                      backend: chatBackend(h.chatId, storedSessionId),
+                      onSession: (info) => {
+                        // Persist the resolved recovery id (narrow write). On a raw
+                        // degrade with no id we leave the stored one alone.
+                        if (info.sessionId) void setChatSessionId(h.chatId, info.sessionId);
+                      },
+                    };
+                  })()}
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
+                  onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
                 />
               </div>
             )}

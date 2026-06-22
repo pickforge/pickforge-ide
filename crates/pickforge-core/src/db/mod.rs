@@ -515,6 +515,45 @@ impl Database {
         Ok(())
     }
 
+    /// Update only a chat's `title`, leaving every other column untouched. The
+    /// OSC/auto-name title flow uses this so it can't race the full-row
+    /// `upsert_chat` (which would otherwise clobber a concurrently-written
+    /// `session_id`). A no-op for a chat_id that doesn't exist.
+    pub fn update_chat_title(&self, chat_id: &str, title: &str) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE chats SET title = ?2 WHERE chat_id = ?1",
+            params![chat_id, title],
+        )?;
+        Ok(())
+    }
+
+    /// Update only a chat's `session_id` (the dtach/tmux recovery handle),
+    /// leaving every other column untouched so it can't race a title write. Pass
+    /// `None` to clear it. A no-op for a chat_id that doesn't exist.
+    pub fn update_chat_session_id(
+        &self,
+        chat_id: &str,
+        session_id: Option<&str>,
+    ) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE chats SET session_id = ?2 WHERE chat_id = ?1",
+            params![chat_id, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Update only a chat's `sort_order`, leaving every other column untouched.
+    /// Reordering uses this (instead of a full-row `upsert_chat`) so it can't race
+    /// a concurrent narrow `session_id` write and persist a stale recovery handle.
+    /// A no-op for a chat_id that doesn't exist.
+    pub fn update_chat_sort_order(&self, chat_id: &str, sort_order: i64) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE chats SET sort_order = ?2 WHERE chat_id = ?1",
+            params![chat_id, sort_order],
+        )?;
+        Ok(())
+    }
+
     // ---- project settings ----
 
     pub fn get_settings(&self, root: &str) -> Result<Option<ProjectSettings>, DbError> {
@@ -803,6 +842,64 @@ mod tests {
         // delete cascades to chats.
         db.delete_project("/p").unwrap();
         assert_eq!(db.list_chats("/p").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn narrow_chat_updates_touch_only_their_column() {
+        let db = Database::open_in_memory().unwrap();
+        db.upsert_project(&Project {
+            project_root: "/p".into(),
+            display_name: "Proj".into(),
+            created_at: 1,
+            last_opened_at: 2,
+            sort_order: 0,
+            archived_at: None,
+        })
+        .unwrap();
+        db.upsert_chat(&Chat {
+            chat_id: "c1".into(),
+            project_root: "/p".into(),
+            title: "New chat".into(),
+            agent_id: "claude".into(),
+            skill_id: None,
+            session_id: None,
+            labels_json: None,
+            status: None,
+            task_brief_text: None,
+            created_at: 1,
+            last_activity_at: 3,
+            sort_order: 0,
+        })
+        .unwrap();
+
+        // Title update leaves session_id (and everything else) alone.
+        db.update_chat_session_id("c1", Some("dtach:pf-abc123")).unwrap();
+        db.update_chat_title("c1", "Fix the login bug").unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Fix the login bug");
+        assert_eq!(c.session_id.as_deref(), Some("dtach:pf-abc123"));
+        assert_eq!(c.last_activity_at, 3); // untouched
+
+        // session_id update leaves the title alone; None clears it.
+        db.update_chat_session_id("c1", None).unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Fix the login bug");
+        assert!(c.session_id.is_none());
+
+        // sort_order update leaves a live session_id (and title) alone — the
+        // reorder path relies on this so it can't race a recovery-handle write.
+        db.update_chat_session_id("c1", Some("tmux:pf-keepme")).unwrap();
+        db.update_chat_sort_order("c1", 7).unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.sort_order, 7);
+        assert_eq!(c.session_id.as_deref(), Some("tmux:pf-keepme"));
+        assert_eq!(c.title, "Fix the login bug");
+
+        // All narrow writes are silent no-ops for an unknown chat.
+        db.update_chat_title("nope", "x").unwrap();
+        db.update_chat_session_id("nope", Some("y")).unwrap();
+        db.update_chat_sort_order("nope", 3).unwrap();
+        assert_eq!(db.list_chats("/p").unwrap().len(), 1);
     }
 
     #[test]

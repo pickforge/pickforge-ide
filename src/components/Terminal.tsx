@@ -5,11 +5,15 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import {
+  isChatMarkedForKill,
+  ptyDetach,
   ptyKill,
   ptyResize,
   ptySpawn,
+  ptySpawnChat,
   ptyWrite,
   toBytes,
+  type PtyBytes,
 } from "../lib/pty";
 import {
   buildConsoleTheme,
@@ -50,11 +54,27 @@ export function TerminalPane(props: {
   /** Fires when the user selects text (anchored near the pointer release), or
    *  null when the selection clears — drives the terminal "Ask AI" popup. */
   onSelectionChange?: (sel: { text: string; x: number; y: number } | null) => void;
+  /** Fires with the shell/agent's OSC 2 terminal title (the window-title escape).
+   *  Agents emit a short summary here; the host maps it to the chat name. */
+  onTitle?: (title: string) => void;
   /** View-only: the user can't type into it (the toolbar still drives it via
    *  typeText). For the Debug Console run output. */
   readOnly?: boolean;
   /** Use the readable Debug Console theme variant instead of the shell theme. */
   consoleTheme?: boolean;
+  /** When set, this is a CHAT pane: spawn a SESSION-BACKED shell (dtach/tmux)
+   *  keyed off this chat so a running agent survives pane-close + app-restart.
+   *  On unmount we DETACH (not kill). Unset → today's raw interactive shell. */
+  chat?: {
+    chatId: string;
+    projectRoot: string;
+    /** The session id stored on the chat (preserved on a raw fallback). */
+    sessionId?: string | null;
+    backend: "dtach" | "tmux" | "raw";
+    /** Reports the resolved session id (and whether recovery degraded to raw)
+     *  so the host can persist it. */
+    onSession?: (info: { sessionId: string | null; backend: string; degraded: boolean }) => void;
+  };
 }) {
   let container!: HTMLDivElement;
   const encoder = new TextEncoder();
@@ -131,13 +151,24 @@ export function TerminalPane(props: {
       }
     };
 
+    // Tear down a pty on unmount/dispose. A session-backed chat pane DETACHES so
+    // the dtach/tmux session + agent shell live on for the next attach — UNLESS
+    // its chat is being deleted (marked for kill), where a detach would strand a
+    // live shell (the socket/session is destroyed right after): then we KILL it
+    // (full process-group teardown) so the shell dies with the chat. A raw /
+    // one-shot pane is always killed.
+    const teardownPty = (id: number) => {
+      if (props.chat && !isChatMarkedForKill(props.chat.chatId)) void ptyDetach(id);
+      else void ptyKill(id);
+    };
+
     // Register cleanup synchronously so it binds to this owner even though the
     // terminal opens after an async font wait.
     onCleanup(() => {
       disposed = true;
       observer?.disconnect();
       subs.forEach((s) => s.dispose());
-      if (sessionId !== null) void ptyKill(sessionId);
+      if (sessionId !== null) teardownPty(sessionId);
       term.dispose();
     });
 
@@ -162,27 +193,59 @@ export function TerminalPane(props: {
 
       fit.fit();
 
-      ptySpawn({
-        cwd: props.cwd ?? null,
-        command: props.runCommand ?? null,
-        env: props.env ?? null,
-        rows: term.rows,
-        cols: term.cols,
-        // Channel callbacks can fire after onCleanup but before the spawn
-        // promise resolves — guard against writing to a disposed terminal.
-        onOutput: (data) => {
-          if (disposed) return;
-          const bytes = toBytes(data);
-          term.write(bytes);
-          if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
-        },
-        onExit: (code) => {
-          if (!disposed) props.onExit?.(code);
-        },
-      })
+      // Channel callbacks can fire after onCleanup but before the spawn promise
+      // resolves — guard against writing to a disposed terminal.
+      const onOutput = (data: PtyBytes) => {
+        if (disposed) return;
+        const bytes = toBytes(data);
+        term.write(bytes);
+        if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
+      };
+      const onExit = (code: number | null) => {
+        if (!disposed) props.onExit?.(code);
+      };
+
+      // A chat pane spawns a SESSION-BACKED shell (dtach/tmux, attach-or-create)
+      // so its agent survives; every other pane (interactive or one-shot run
+      // console) spawns the raw shell exactly as before.
+      const spawn = props.chat
+        ? ptySpawnChat({
+            chatId: props.chat.chatId,
+            projectRoot: props.chat.projectRoot,
+            cwd: props.cwd ?? null,
+            env: props.env ?? null,
+            backend: props.chat.backend,
+            sessionId: props.chat.sessionId ?? null,
+            rows: term.rows,
+            cols: term.cols,
+            onOutput,
+            onExit,
+          }).then((res) => {
+            // Report the resolved session so the host can persist it.
+            props.chat?.onSession?.({
+              sessionId: res.sessionId,
+              backend: res.backend,
+              degraded: res.degraded,
+            });
+            return res.ptyId;
+          })
+        : ptySpawn({
+            cwd: props.cwd ?? null,
+            command: props.runCommand ?? null,
+            env: props.env ?? null,
+            rows: term.rows,
+            cols: term.cols,
+            onOutput,
+            onExit,
+          });
+
+      spawn
         .then((id) => {
           if (disposed) {
-            void ptyKill(id);
+            // The pane went away before the spawn resolved: detach a chat session
+            // so it survives for the next attach, kill a raw pty — or, if the
+            // chat is being deleted, kill the session so it doesn't outlive it.
+            teardownPty(id);
             return;
           }
           sessionId = id;
@@ -216,6 +279,14 @@ export function TerminalPane(props: {
           if (sessionId !== null) void ptyResize(sessionId, rows, cols);
         }),
       );
+
+      // The shell/agent's OSC 2 window title — agents emit a short live summary
+      // here. Forward it so the host can adopt it as the chat name (filtered +
+      // debounced downstream). Read-only run consoles never name a chat.
+      if (props.onTitle && !props.readOnly) {
+        const onTitle = props.onTitle;
+        subs.push(term.onTitleChange((title) => onTitle(title)));
+      }
 
       // Report text selections (anchored near the pointer release) so the host
       // can offer an "Ask AI" action on the selected text; clear (null) when the

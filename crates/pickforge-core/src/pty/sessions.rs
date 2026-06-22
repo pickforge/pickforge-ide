@@ -125,6 +125,90 @@ pub fn dtach_socket_path(runtime_base: &Path, name: &str) -> PathBuf {
     sessions_dir(runtime_base).join(format!("{name}.dtach"))
 }
 
+/// Find the pid(s) of the dtach MASTER process bound to `socket` by matching its
+/// argv: a master we spawned is `dtach -A <socket> …`, so the exact socket path
+/// appears as one of its arguments. Matching the FULL socket path (a unique
+/// `pf-<128bit-hex>.dtach` under our private sessions dir) means we never touch
+/// an unrelated dtach the user is running. Linux-only (reads `/proc/<pid>/cmdline`);
+/// returns empty on other platforms, where the socket-unlink fallback stands.
+///
+/// dtach has no kill verb, so destroying a dtach session whose client pane is
+/// already closed means signalling this master — otherwise the shell/agent inside
+/// it keeps running, orphaned, once the socket is removed.
+#[cfg(target_os = "linux")]
+pub fn dtach_master_pids(socket: &Path) -> Vec<i32> {
+    let socket_arg = socket.as_os_str().as_encoded_bytes();
+    let mut pids = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return pids;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|s| s.parse::<i32>().ok()) else {
+            continue; // not a /proc/<pid> dir
+        };
+        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
+            continue; // process exited / not readable
+        };
+        if cmdline_is_dtach_for_socket(&cmdline, socket_arg) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+/// True when a NUL-separated `/proc/<pid>/cmdline` is a `dtach` process (argv[0]
+/// basename == `dtach`) whose argv contains the exact `socket` path. Pure so it
+/// can be unit-tested without spawning a real dtach.
+#[cfg(target_os = "linux")]
+fn cmdline_is_dtach_for_socket(cmdline: &[u8], socket: &[u8]) -> bool {
+    let mut argv = cmdline.split(|&b| b == 0).filter(|a| !a.is_empty());
+    // argv[0] must be the dtach binary (match on basename so an absolute path
+    // like /usr/bin/dtach still counts).
+    let is_dtach = argv
+        .next()
+        .map(|arg0| arg0.rsplit(|&b| b == b'/').next().unwrap_or(arg0) == b"dtach")
+        .unwrap_or(false);
+    // …and one of its args must be exactly our socket path.
+    is_dtach && argv.any(|arg| arg == socket)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn dtach_master_pids(_socket: &Path) -> Vec<i32> {
+    Vec::new()
+}
+
+/// Terminate the dtach master process(es) bound to `socket` (TERM, then KILL).
+/// Only the process group leader is left alone — we signal the single master pid
+/// so we don't reach into anything we didn't match. No-op when no master is found
+/// (the common case: the client pane was open, so the master already exited with
+/// it, or the socket was never a dtach we spawned).
+#[cfg(unix)]
+pub fn kill_dtach_master(socket: &Path) {
+    let pids = dtach_master_pids(socket);
+    if pids.is_empty() {
+        return;
+    }
+    for &pid in &pids {
+        // SAFETY: kill() with a valid pid is well-defined; ESRCH (already gone)
+        // is harmless and ignored.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+    }
+    // Brief grace so the shell + agent can clean up, then force any survivor.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    for &pid in &pids {
+        // SAFETY: as above; SIGKILL is unconditionally fatal.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn kill_dtach_master(_socket: &Path) {}
+
 /// A resolved program + args ready to hand to `portable-pty`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionInvocation {
@@ -560,6 +644,49 @@ mod tests {
             assert_eq!(SessionBackend::from_tag(b.tag()), b);
         }
         assert_eq!(SessionBackend::from_tag("bogus"), SessionBackend::Raw);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dtach_cmdline_matcher_is_exact_and_safe() {
+        // Build a NUL-separated argv blob like /proc/<pid>/cmdline (trailing NUL).
+        fn cmdline(args: &[&str]) -> Vec<u8> {
+            let mut v = Vec::new();
+            for a in args {
+                v.extend_from_slice(a.as_bytes());
+                v.push(0);
+            }
+            v
+        }
+        let sock = b"/run/user/1000/pickforge/sessions/pf-abc.dtach" as &[u8];
+
+        // Our master, with an absolute dtach path → matched.
+        assert!(cmdline_is_dtach_for_socket(
+            &cmdline(&[
+                "/usr/bin/dtach", "-A",
+                "/run/user/1000/pickforge/sessions/pf-abc.dtach",
+                "-E", "-z", "-r", "winch", "/bin/zsh",
+            ]),
+            sock,
+        ));
+        // Bare `dtach` (no path) → matched on basename.
+        assert!(cmdline_is_dtach_for_socket(
+            &cmdline(&["dtach", "-A", "/run/user/1000/pickforge/sessions/pf-abc.dtach", "/bin/zsh"]),
+            sock,
+        ));
+        // A DIFFERENT socket (even a prefix of ours) must NOT match.
+        assert!(!cmdline_is_dtach_for_socket(
+            &cmdline(&["dtach", "-A", "/run/user/1000/pickforge/sessions/pf-abcd.dtach", "/bin/zsh"]),
+            sock,
+        ));
+        // A non-dtach process that merely has the socket path in its args (e.g. an
+        // editor opening the file) must NOT match.
+        assert!(!cmdline_is_dtach_for_socket(
+            &cmdline(&["nvim", "/run/user/1000/pickforge/sessions/pf-abc.dtach"]),
+            sock,
+        ));
+        // Empty / malformed cmdline must not match.
+        assert!(!cmdline_is_dtach_for_socket(&[], sock));
     }
 
     #[test]

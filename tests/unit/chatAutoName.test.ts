@@ -21,6 +21,7 @@ vi.mock("../../src/stores/workspace", () => ({
 }));
 
 import {
+  armChatAutoName,
   cleanOscTitle,
   handleOscTitle,
   markChatTitleManual,
@@ -93,9 +94,13 @@ describe("handleOscTitle — debounce + ownership", () => {
   // The module keeps per-chat ownership state for the session that never clears
   // between tests; give each test a FRESH chat id so its state can't leak.
   let counter = 0;
-  const seed = (title = DEFAULT_CHAT_TITLE): string => {
+  // Seed a chat AND mark pane-0 as its agent-owned pane (an OSC title is only
+  // adopted from the agent pane now), so the title pipeline is exercised. Pass
+  // `agentPane: null` to seed a chat with NO agent pane (for the gating test).
+  const seed = (title = DEFAULT_CHAT_TITLE, agentPane: string | null = "pane-0"): string => {
     const id = `chat-${++counter}`;
     store.chats.set(id, { chatId: id, title });
+    if (agentPane) armChatAutoName(id, agentPane);
     return id;
   };
 
@@ -135,6 +140,25 @@ describe("handleOscTitle — debounce + ownership", () => {
     vi.advanceTimersByTime(1200);
     expect(store.setChatTitle).toHaveBeenCalledTimes(1);
     expect(store.setChatTitle).toHaveBeenCalledWith(id, "Pane zero summary");
+  });
+
+  it("ignores OSC titles from a chat with NO agent pane", () => {
+    const id = seed(DEFAULT_CHAT_TITLE, null); // no agent ever launched
+    handleOscTitle(id, "pane-0", "A build script set this title");
+    vi.advanceTimersByTime(2000);
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+  });
+
+  it("only adopts OSC titles from the agent-owned pane, not other split panes", () => {
+    const id = seed(DEFAULT_CHAT_TITLE, "pane-1"); // agent runs in pane-1
+    // A non-agent split pane (pane-0) sets a window title — must be ignored.
+    handleOscTitle(id, "pane-0", "Editor opened a file");
+    vi.advanceTimersByTime(2000);
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+    // The agent's own pane names the chat.
+    handleOscTitle(id, "pane-1", "Wiring up the agent task");
+    vi.advanceTimersByTime(1200);
+    expect(store.setChatTitle).toHaveBeenCalledWith(id, "Wiring up the agent task");
   });
 
   it("never overwrites a manually renamed chat", () => {

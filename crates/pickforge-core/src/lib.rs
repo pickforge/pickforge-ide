@@ -42,9 +42,10 @@ pub use storage::{
     ContextStorageService, ResolvedContextDirectory, StorageError,
 };
 pub use pty::{
-    dtach_socket_path, prepare_chat_session, select_backend, session_name, sessions_dir,
-    tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args, PreparedSession, PtyError,
-    PtyEvent, PtyManager, PtySink, SessionBackend, SessionStatus, SpawnOptions,
+    dtach_socket_path, kill_dtach_master, prepare_chat_session, select_backend, session_name,
+    sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
+    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, SessionBackend, SessionStatus,
+    SpawnOptions,
 };
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,

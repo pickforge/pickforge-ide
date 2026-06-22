@@ -20,9 +20,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use pickforge_core::{
-    dtach_socket_path, prepare_chat_session, run_timeout, select_backend, session_name, sessions_dir,
-    tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args, PtyEvent, PtyManager,
-    SessionBackend, SpawnOptions,
+    dtach_socket_path, kill_dtach_master, prepare_chat_session, run_timeout, select_backend,
+    session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
+    PtyEvent, PtyManager, SessionBackend, SpawnOptions,
 };
 use serde::Serialize;
 use tauri::ipc::{Channel, Response};
@@ -303,9 +303,11 @@ pub fn pty_spawn_chat(
 
 /// Destroy a chat's recovery session on chat delete, so it doesn't linger after
 /// its chat is gone. tmux is killed declaratively (`kill-session`); dtach has no
-/// kill verb, so we remove its socket (preventing a future attach to a dead
-/// session) — the orphaned dtach master, if the pane wasn't open, is a known
-/// limitation (rare; the shell holds no foreground job once the agent is idle).
+/// kill verb, so we find + terminate the dtach MASTER process bound to this
+/// session's socket (matched by the exact socket path in its argv — so we never
+/// touch an unrelated dtach) and THEN remove the socket. Killing the master is
+/// what stops the shell/agent inside a dtach session whose pane was already
+/// closed (or after an app restart); removing only the socket would orphan it.
 #[tauri::command]
 pub fn pty_destroy_chat_session(session_id: String) -> Result<(), String> {
     let (tag, name) = session_id
@@ -321,6 +323,10 @@ pub fn pty_destroy_chat_session(session_id: String) -> Result<(), String> {
         }
         SessionBackend::Dtach => {
             let sock = dtach_socket_path(&runtime_base(), name);
+            // Terminate the dtach master holding this socket FIRST — otherwise the
+            // shell/agent inside it keeps running after we unlink the socket. Only
+            // matches a dtach whose argv carries this exact (unique) socket path.
+            kill_dtach_master(&sock);
             // Only remove a real socket/file — never follow a symlink someone
             // swapped in for the path.
             if let Ok(meta) = std::fs::symlink_metadata(&sock) {

@@ -48,6 +48,19 @@ const MAX_TITLE = 48;
 // title — a submit in another split pane can't steal it.
 const armed = new Map<string, string>();
 
+// chatId -> the pane an agent is known to run in (the primary/session-backed pane
+// a chip/hotkey launched into, or a pane where a recognised agent command was
+// hand-typed). Unlike `armed`, this is NOT cleared once a title commits — it gates
+// the OSC-title pipeline so only the agent's own pane can claim the chat name. A
+// regular shell/editor/build in another split pane that sets OSC 2 can't rename.
+const agentPane = new Map<string, string>();
+
+/** Record the pane an agent runs in for a chat, so the OSC-title pipeline only
+ *  adopts titles from it (and never from a non-agent split pane). */
+function markAgentPane(chatId: string, paneId: string) {
+  agentPane.set(chatId, paneId);
+}
+
 // ---- title ownership ----
 // A chat the user has manually renamed: locked, so no auto source may overwrite
 // it. Tracked for this session; a non-default title loaded from a previous run
@@ -65,6 +78,7 @@ export function markChatTitleManual(chatId: string) {
   manual.add(chatId);
   autoNamed.delete(chatId);
   oscPaneOwner.delete(chatId);
+  agentPane.delete(chatId);
 }
 
 /** True when an auto source may (re)write this chat's title: never once the user
@@ -96,6 +110,13 @@ const OSC_DEBOUNCE_MS = 1200;
 export function handleOscTitle(chatId: string, paneId: string, rawTitle: string) {
   if (!canAutoOwn(chatId)) return;
 
+  // Only the agent-owned pane may name the chat. A regular shell command,
+  // editor, or build script that sets an OSC 2 window title in another pane must
+  // not claim the chat before any agent prompt exists — consistent with the
+  // armed/first-message pane-ownership model.
+  const agent = agentPane.get(chatId);
+  if (agent === undefined || agent !== paneId) return;
+
   const title = cleanOscTitle(rawTitle);
   if (!title) return; // noise — empty, a prompt/cwd banner, the shell name, …
 
@@ -123,6 +144,10 @@ export function armChatAutoName(
   paneId: string | null | undefined,
 ) {
   if (!chatId || !paneId) return;
+  // The agent runs in this pane — let OSC titles from it (and only it) name the
+  // chat, even if the chat already has a non-default title (the agent pane is the
+  // title authority for this session).
+  markAgentPane(chatId, paneId);
   const chat = findChat(chatId);
   if (chat && isDefaultChatTitle(chat.title)) armed.set(chatId, paneId);
 }
@@ -154,6 +179,8 @@ export function maybeAutoNameChat(chatId: string, rawLine: string, paneId: strin
   const launch = matchAgentLaunch(line);
   if (!launch) return; // agent-only scope: plain shell commands don't rename
 
+  // This pane now runs an agent — let its OSC titles name the chat.
+  markAgentPane(chatId, paneId);
   if (launch.prompt) commit(chatId, launch.prompt); // `claude fix the bug`
   else armed.set(chatId, paneId); // bare `claude` — wait for the in-TUI prompt
 }

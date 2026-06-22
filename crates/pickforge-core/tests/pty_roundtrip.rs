@@ -202,6 +202,48 @@ fn detach_on_a_raw_session_tears_it_down_like_kill() {
     manager.detach(id).expect("second detach is a no-op");
 }
 
+#[cfg(unix)]
+#[test]
+fn detach_of_a_session_backed_pane_completes_without_hanging() {
+    // P1 regression: on detach we drop master + writer, but the READER THREAD
+    // owns a CLONED master fd, so the client could never see the hangup and
+    // `child.wait()` would block forever (leaking the thread + a stuck client).
+    // The fix SIGHUPs the client pid so it exits regardless, then joins the
+    // reader. Here a `detach_on_drop` session runs a plain shell (no dtach needed
+    // in CI); SIGHUP makes the shell exit, the reader hits EOF, and detach must
+    // return PROMPTLY rather than block. We run detach on a worker thread and
+    // fail if it hasn't finished within a generous bound.
+    let manager = std::sync::Arc::new(PtyManager::new());
+    let id = manager
+        .spawn(
+            SpawnOptions {
+                // No real dtach in CI: mark it detachable so we exercise the
+                // detach (SIGHUP-client + join-reader) path, not the kill path.
+                detach_on_drop: true,
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+            |_event| {},
+        )
+        .expect("spawn session-backed shell");
+    assert_eq!(manager.len(), 1);
+    sleep(Duration::from_millis(300)); // let the shell + reader come up
+
+    let (tx, rx) = mpsc::channel::<()>();
+    let m = std::sync::Arc::clone(&manager);
+    let worker = std::thread::spawn(move || {
+        m.detach(id).expect("detach must succeed");
+        let _ = tx.send(());
+    });
+
+    // If the reader-thread fd kept the client alive, this recv would time out.
+    rx.recv_timeout(Duration::from_secs(8))
+        .expect("detach hung — the reader thread fd kept the client from detaching");
+    worker.join().expect("detach worker panicked");
+    assert!(manager.is_empty(), "registry must drain after detach");
+}
+
 #[test]
 fn resize_and_kill_are_idempotent_enough() {
     let manager = PtyManager::new();

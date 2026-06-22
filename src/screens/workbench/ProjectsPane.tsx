@@ -271,7 +271,13 @@ export function ProjectsPane() {
             </span>
           }
         >
-          <RenameField value={p.chat.title} commit={(v) => { markChatTitleManual(id); void renameChat(id, v); }} />
+          <RenameField value={p.chat.title} commit={(v) => {
+            // Only lock the title from OSC/auto-naming when the user actually
+            // changed it — opening the field and blurring it unchanged must not
+            // disable the auto-name flow for a still-default chat.
+            if (v.trim() && v.trim() !== p.chat.title) markChatTitleManual(id);
+            void renameChat(id, v);
+          }} />
         </Show>
         <Show
           when={!p.archived}

@@ -24,7 +24,7 @@ import {
   hotkeyMatches,
   quickLaunchItems,
 } from "../../stores/quickLaunch";
-import { findChat, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
+import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
 import { chatBackend } from "../../stores/chatSessions";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
@@ -87,14 +87,19 @@ export function WorkbenchScreen() {
   // same graceful degradation as before.
   createEffect(() => {
     const id = workspace.activeChatId;
-    if (!id || binding.has(id) || mounted().some((m) => m.chatId === id)) return;
+    // Never remount a chat that's mid-teardown (delete or backend-migration): its
+    // host was just removed but activeChatId/findChat can still point at the old
+    // row until the store reconciles, and remounting here would resurrect a
+    // just-deleted chat or reopen a migrating one with its stale session_id.
+    if (!id || binding.has(id) || isChatDestroying(id) || mounted().some((m) => m.chatId === id)) return;
     const chat = findChat(id);
     if (!chat) return;
     binding.add(id);
     void ensureMcpRunning(chat.projectRoot).finally(() => {
       binding.delete(id);
-      // Guard: the chat may have been deleted while the bind was in flight.
-      if (!findChat(id) || mounted().some((m) => m.chatId === id)) return;
+      // Guard: the chat may have been deleted (or started teardown) while the
+      // bind was in flight.
+      if (!findChat(id) || isChatDestroying(id) || mounted().some((m) => m.chatId === id)) return;
       setMounted([...mounted(), { chatId: id, projectRoot: chat.projectRoot }]);
     });
   });

@@ -167,6 +167,11 @@ export function ProjectsPane() {
     if (!root || !edge) return;
     e.preventDefault();
     e.stopPropagation();
+    // A row-level drop reorders globally; when the target lives in a different
+    // group, also reassign the dragged project so the move sticks (this handler
+    // stops propagation, so the group body's dropIntoGroup never fires).
+    const targetGroup = groupOf(targetRoot);
+    if (groupOf(root) !== targetGroup) assignProject(root, targetGroup);
     const order = workspace.projects.map((p) => p.projectRoot);
     void reorderProject(root, beforeIdForDrop(order, targetRoot, edge));
   };

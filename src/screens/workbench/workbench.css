@@ -242,19 +242,49 @@ body.pf-resizing .pf-dock-resizer-grip {
 
 /* Reorder drop indicator: a thin neutral line on the edge the dragged row will
  * land against (before = top/left, after = bottom/right). Neutral hairline — the
- * focused terminal owns the one ember, so DnD stays quiet. The line sits inside
- * the row via inset box-shadow so it never shifts layout. */
-.pf-drop-before {
-  box-shadow: inset 0 2px 0 -1px var(--pf-hairline-strong);
-}
-.pf-drop-after {
-  box-shadow: inset 0 -2px 0 -1px var(--pf-hairline-strong);
-}
-.pf-drop-before-x {
-  box-shadow: inset 2px 0 0 -1px var(--pf-hairline-strong);
-}
+ * focused terminal owns the one ember, so DnD stays quiet. Rendered as a
+ * pseudo-element so it composes with the active row's own box-shadow (which
+ * would otherwise win on specificity and hide the line), and so it never shifts
+ * layout. */
+.pf-drop-before,
+.pf-drop-after,
+.pf-drop-before-x,
 .pf-drop-after-x {
-  box-shadow: inset -2px 0 0 -1px var(--pf-hairline-strong);
+  position: relative;
+}
+.pf-drop-before::before,
+.pf-drop-after::after,
+.pf-drop-before-x::before,
+.pf-drop-after-x::after {
+  content: "";
+  position: absolute;
+  background: var(--pf-hairline-strong);
+  pointer-events: none;
+  z-index: 1;
+}
+.pf-drop-before::before,
+.pf-drop-after::after {
+  left: 0;
+  right: 0;
+  height: var(--pf-hairline-width);
+}
+.pf-drop-before::before {
+  top: 0;
+}
+.pf-drop-after::after {
+  bottom: 0;
+}
+.pf-drop-before-x::before,
+.pf-drop-after-x::after {
+  top: 0;
+  bottom: 0;
+  width: var(--pf-hairline-width);
+}
+.pf-drop-before-x::before {
+  left: 0;
+}
+.pf-drop-after-x::after {
+  right: 0;
 }
 
 /* ---- source control pane ---- */

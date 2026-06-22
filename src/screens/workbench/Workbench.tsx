@@ -30,6 +30,7 @@ import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stor
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
 import { armChatAutoName, handleOscTitle, isAgentPane, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { signalChatAttention } from "../../stores/notifications";
+import { clearRunning, markRunning, noteOutput } from "../../stores/sessionActivity";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -113,6 +114,8 @@ export function WorkbenchScreen() {
     const offDelete = onChatDeleted((chatId) => {
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
       deleteTerminalHost(chatId);
+      // The host (and its agent PTY) is gone — drop any "live session" ember.
+      clearRunning(chatId);
     });
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;
@@ -275,6 +278,26 @@ export function WorkbenchScreen() {
                       // summary (the chat title), which the host already tracks.
                       summary: summary ?? chat?.title,
                     });
+                  }}
+                  onActivity={(paneId) => {
+                    // The "live session" ember means an AGENT is running — NOT
+                    // just any shell output. So gate strictly on the known-agent
+                    // pane (a chip/hotkey launch arms it; a hand-typed
+                    // `claude`/`codex` marks it — see chatAutoName.isAgentPane).
+                    // A plain interactive shell in the primary pane (a prompt,
+                    // `ls`, a build) is never an agent pane, so it stays dark.
+                    // (Unlike attention, which is rare and meaningful even from a
+                    // recovered primary, output streams constantly — accepting all
+                    // primary output would light every visited chat.)
+                    if (!isAgentPane(h.chatId, paneId)) return;
+                    markRunning(h.chatId);
+                    noteOutput(h.chatId);
+                  }}
+                  onPaneExit={(paneId) => {
+                    // The agent pane's PTY exited or the pane was closed — drop the
+                    // ember. Same agent-pane gate as the activity tick.
+                    if (!isAgentPane(h.chatId, paneId)) return;
+                    clearRunning(h.chatId);
                   }}
                 />
               </div>

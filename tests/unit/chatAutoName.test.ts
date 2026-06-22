@@ -24,7 +24,9 @@ import {
   armChatAutoName,
   cleanOscTitle,
   handleOscTitle,
+  isAgentPane,
   markChatTitleManual,
+  maybeAutoNameChat,
   DEFAULT_CHAT_TITLE,
 } from "../../src/lib/chatAutoName";
 
@@ -190,5 +192,49 @@ describe("handleOscTitle — debounce + ownership", () => {
     handleOscTitle(id, "pane-0", "Refined summary");
     vi.advanceTimersByTime(1200);
     expect(store.setChatTitle).toHaveBeenLastCalledWith(id, "Refined summary");
+  });
+});
+
+// isAgentPane is the gate the rail's "live session" ember glow now relies on:
+// only a pane KNOWN to run an agent drives the running/working cue, so a plain
+// interactive shell (a prompt, `ls`, a build) never glows. These cover the ways
+// a pane becomes agent-owned (chip/hotkey arm, hand-typed launch) and confirm a
+// bare shell pane is not.
+describe("isAgentPane — agent ownership for the live-session glow", () => {
+  let counter = 1000;
+  const mkChat = (title = DEFAULT_CHAT_TITLE): string => {
+    const id = `agent-chat-${++counter}`;
+    store.chats.set(id, { chatId: id, title });
+    return id;
+  };
+
+  it("is false for a chat with no launched/typed agent (plain shell pane)", () => {
+    const id = mkChat();
+    expect(isAgentPane(id, "pane-0")).toBe(false);
+  });
+
+  it("is true for the pane a chip/hotkey armed, false for any other split pane", () => {
+    const id = mkChat();
+    armChatAutoName(id, "pane-0");
+    expect(isAgentPane(id, "pane-0")).toBe(true);
+    expect(isAgentPane(id, "pane-1")).toBe(false);
+  });
+
+  it("marks the pane when a recognised agent command is hand-typed", () => {
+    const id = mkChat();
+    // A plain shell command does NOT mark the pane as an agent.
+    maybeAutoNameChat(id, "ls -la", "pane-0");
+    expect(isAgentPane(id, "pane-0")).toBe(false);
+    // Typing `claude …` does.
+    maybeAutoNameChat(id, "claude fix the bug", "pane-0");
+    expect(isAgentPane(id, "pane-0")).toBe(true);
+  });
+
+  it("stops being an agent pane after a manual rename clears ownership", () => {
+    const id = mkChat();
+    armChatAutoName(id, "pane-0");
+    expect(isAgentPane(id, "pane-0")).toBe(true);
+    markChatTitleManual(id);
+    expect(isAgentPane(id, "pane-0")).toBe(false);
   });
 });

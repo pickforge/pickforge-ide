@@ -712,6 +712,65 @@ body.pf-resizing .pf-dock-resizer-grip {
   .pf-chat-dot--attention,
   .pf-attn-dot { animation: none; }
 }
+
+/* ---- "live session" ember glow (running / working) ----
+   The rail's single EMBER accent: a chat whose agent session is live wears a
+   calm ember ring; while the agent is actively producing output it breathes a
+   livelier pulse. This is the sidebar's one ember — the amber needs-attention
+   dot above is a SEPARATE warning signal, so a row can carry both (ember ring +
+   amber dot) and they read as distinct cues. Tokens only; reduced motion drops
+   the pulse to a steady glow. */
+.pf-chat-row--running {
+  /* A left ember bar + a soft ember wash, layered under any active inset. */
+  box-shadow: inset 2px 0 0 var(--pf-ember),
+    inset 0 0 12px -6px var(--pf-ember-glow);
+}
+.pf-chat-row--running.active {
+  /* Keep the active surface's stronger inset, but let the ember own the accent. */
+  box-shadow: inset 2px 0 0 var(--pf-ember),
+    inset 0 0 14px -6px var(--pf-ember-glow);
+}
+/* The dot turns ember ONLY when running and NOT also flagged for attention — the
+   amber warning dot wins the shared .pf-chat-dot element (it's the more urgent
+   signal). The ember running cue still reads via the row's ring (left bar +
+   glow) above, so both signals stay visible: amber dot + ember ring. */
+.pf-chat-row--running:not(.pf-chat-row--attention) .pf-chat-dot {
+  background: var(--pf-ember);
+  box-shadow: 0 0 6px -1px var(--pf-ember-glow);
+}
+/* Working: the agent is producing — breathe the ember so it reads as live. */
+.pf-chat-row--working {
+  animation: pf-run-breathe var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
+}
+.pf-chat-row--working:not(.pf-chat-row--attention) .pf-chat-dot {
+  animation: pf-run-dot-pulse var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
+}
+@keyframes pf-run-breathe {
+  0%, 100% { box-shadow: inset 2px 0 0 var(--pf-ember),
+    inset 0 0 12px -6px var(--pf-ember-glow); }
+  50% { box-shadow: inset 2px 0 0 var(--pf-ember),
+    inset 0 0 18px -4px var(--pf-ember-glow); }
+}
+@keyframes pf-run-dot-pulse {
+  0%, 100% { box-shadow: 0 0 6px -1px var(--pf-ember-glow); }
+  50% { box-shadow: 0 0 9px 0 var(--pf-ember-glow); }
+}
+/* Project / group rollup: a quiet ember dot when any chat has a live session
+   (mirrors the amber .pf-attn-dot, sits beside it). Steady — the chat rows carry
+   the working pulse; the rollup stays calm. */
+.pf-run-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-ember);
+  box-shadow: 0 0 6px -1px var(--pf-ember-glow);
+  flex: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No breathing — fall back to the steady ember glow. */
+  .pf-chat-row--working,
+  .pf-chat-row--working:not(.pf-chat-row--attention) .pf-chat-dot { animation: none; }
+}
 .pf-chat-title {
   flex: 1;
   min-width: 0;
@@ -1023,6 +1082,14 @@ body.pf-resizing .pf-dock-resizer-grip {
     bottom var(--pf-space-xs) left var(--pf-space-xs),
     bottom var(--pf-space-xs) right var(--pf-space-xs),
     bottom var(--pf-space-xs) right var(--pf-space-xs);
+}
+/* Grid card with a live agent session: a quiet ember border glow (the run-dot in
+   the card top carries the explicit cue; this is the ambient wash). Coexists
+   with the active bracket glyph — that uses border-color + background, the ember
+   here is a box-shadow, so they don't fight. */
+.pf-proj-card--running {
+  box-shadow: 0 0 14px -6px var(--pf-ember-glow),
+    inset 0 0 0 var(--pf-hairline-width) var(--pf-ember-glow);
 }
 .pf-proj-card-mark {
   display: inline-flex;

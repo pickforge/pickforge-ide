@@ -30,6 +30,7 @@ import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stor
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
 import { armChatAutoName, handleOscTitle, isAgentPane, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { signalChatAttention } from "../../stores/notifications";
+import { clearRunning, markRunning, noteOutput } from "../../stores/sessionActivity";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -113,6 +114,8 @@ export function WorkbenchScreen() {
     const offDelete = onChatDeleted((chatId) => {
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
       deleteTerminalHost(chatId);
+      // The host (and its agent PTY) is gone — drop any "live session" ember.
+      clearRunning(chatId);
     });
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;
@@ -275,6 +278,21 @@ export function WorkbenchScreen() {
                       // summary (the chat title), which the host already tracks.
                       summary: summary ?? chat?.title,
                     });
+                  }}
+                  onOutput={(paneId, isPrimary) => {
+                    // Same gating as attention: only the chat's agent session
+                    // (its session-backed primary, or a chip/hotkey-launched
+                    // agent pane) drives the rail's "live session" ember. A plain
+                    // shell/build in a non-primary split pane is ignored.
+                    if (!isPrimary && !isAgentPane(h.chatId, paneId)) return;
+                    markRunning(h.chatId);
+                    noteOutput(h.chatId);
+                  }}
+                  onPaneExit={(paneId, isPrimary) => {
+                    // The agent session's PTY exited — drop the ember. Only the
+                    // primary/agent pane owns the chat's running state.
+                    if (!isPrimary && !isAgentPane(h.chatId, paneId)) return;
+                    clearRunning(h.chatId);
                   }}
                 />
               </div>

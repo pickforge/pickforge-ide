@@ -56,6 +56,7 @@ import {
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
 import { chatNeedsAttention, clearChatAttention, projectAttentionCount } from "../../stores/notifications";
+import { chatRunLevel, projectRunningCount } from "../../stores/sessionActivity";
 import { pickProjectDir } from "../../lib/opener";
 
 const PROJECT_MIME = "application/x-pf-project";
@@ -297,6 +298,11 @@ export function ProjectsPane() {
   // ---- chat rows + a project's chat children ----
   const ChatRow = (p: { chat: Chat; root: string; archived?: boolean }) => {
     const id = p.chat.chatId;
+    // Ember "live session" glow: a calm steady glow while the agent session is
+    // running, a livelier pulse while it's actively producing output. Archived
+    // chats never glow (their host is torn down). This is the row's single ember
+    // accent; the amber needs-attention dot is a separate warning signal.
+    const runLevel = () => (p.archived ? "idle" : chatRunLevel(id));
     return (
       <div
         class="pf-chat-row"
@@ -304,6 +310,8 @@ export function ProjectsPane() {
           active: workspace.activeChatId === id,
           "pf-chat-row--archived": p.archived,
           "pf-chat-row--attention": !p.archived && chatNeedsAttention(id),
+          "pf-chat-row--running": runLevel() !== "idle",
+          "pf-chat-row--working": runLevel() === "working",
           "pf-drop-before": edgeFor("chat", id) === "before",
           "pf-drop-after": edgeFor("chat", id) === "after",
         }}
@@ -414,6 +422,14 @@ export function ProjectsPane() {
       chatsFor(root).filter((c) => !isChatArchived(c.chatId)).map((c) => c.chatId),
     );
 
+  // Chats in a project with a live/running agent session (rolled up to the
+  // project row as a quiet ember cue). Archived chats are excluded — their hosts
+  // are torn down, so they can't be running.
+  const runCount = (root: string) =>
+    projectRunningCount(
+      chatsFor(root).filter((c) => !isChatArchived(c.chatId)).map((c) => c.chatId),
+    );
+
   // Opening a project auto-selects its first visible chat. If that chat is the
   // flagged one, the user is now viewing it, so clear its attention (otherwise
   // the dot lingers and later bells from it coalesce away).
@@ -427,6 +443,7 @@ export function ProjectsPane() {
     const root = p.project.projectRoot;
     const count = () => chatsFor(root).filter((c) => !isChatArchived(c.chatId)).length;
     const attn = () => attnCount(root);
+    const running = () => runCount(root);
     return (
       <div class="pf-tree-node">
         <div
@@ -448,6 +465,9 @@ export function ProjectsPane() {
           <ProjectTwisty root={root} />
           <Show when={renaming() === root} fallback={<span class="pf-rail-row-label">{p.project.displayName}</span>}>
             <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
+          </Show>
+          <Show when={running() > 0}>
+            <span class="pf-run-dot" title={`${running()} chat${running() === 1 ? "" : "s"} with a live session`} />
           </Show>
           <Show when={attn() > 0}>
             <span class="pf-attn-dot" title={`${attn()} chat${attn() === 1 ? "" : "s"} need attention`} />
@@ -471,12 +491,14 @@ export function ProjectsPane() {
     const root = p.project.projectRoot;
     const count = () => chatsFor(root).filter((c) => !isChatArchived(c.chatId)).length;
     const attn = () => attnCount(root);
+    const running = () => runCount(root);
     return (
       <>
         <div
           class="pf-proj-card"
           classList={{
             active: workspace.activeRoot === root,
+            "pf-proj-card--running": running() > 0,
             "pf-drop-before-x": edgeFor("project", root) === "before",
             "pf-drop-after-x": edgeFor("project", root) === "after",
           }}
@@ -491,6 +513,9 @@ export function ProjectsPane() {
         >
           <div class="pf-proj-card-top">
             <span class="pf-proj-card-mark">{p.project.displayName.charAt(0).toUpperCase()}</span>
+            <Show when={running() > 0}>
+              <span class="pf-run-dot" title={`${running()} chat${running() === 1 ? "" : "s"} with a live session`} />
+            </Show>
             <Show when={attn() > 0}>
               <span class="pf-attn-dot" title={`${attn()} chat${attn() === 1 ? "" : "s"} need attention`} />
             </Show>
@@ -529,6 +554,7 @@ export function ProjectsPane() {
     // A flagged chat inside a COLLAPSED group is unmounted, so its dot is hidden.
     // Roll the group's chat attention up to the header so the cue still surfaces.
     const groupAttn = () => p.projects.reduce((n, proj) => n + attnCount(proj.projectRoot), 0);
+    const groupRunning = () => p.projects.reduce((n, proj) => n + runCount(proj.projectRoot), 0);
     return (
     <div
       class="pf-group-head"
@@ -544,6 +570,9 @@ export function ProjectsPane() {
         </span>
         <Show when={renaming() === p.group.id} fallback={<span class="pf-group-name">{p.group.name}</span>}>
           <RenameField value={p.group.name} commit={(v) => renameGroup(p.group.id, v)} />
+        </Show>
+        <Show when={p.group.collapsed && groupRunning() > 0}>
+          <span class="pf-run-dot" title={`${groupRunning()} chat${groupRunning() === 1 ? "" : "s"} with a live session`} />
         </Show>
         <Show when={p.group.collapsed && groupAttn() > 0}>
           <span class="pf-attn-dot" title={`${groupAttn()} chat${groupAttn() === 1 ? "" : "s"} need attention`} />

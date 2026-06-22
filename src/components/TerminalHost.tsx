@@ -184,6 +184,14 @@ export function TerminalHost(props: {
    *  hand-started agent reliably runs even when the transient agent-pane map has
    *  no entry. */
   onAttention?: (summary: string | undefined, paneId: string, isPrimary: boolean) => void;
+  /** Forwarded from every pane: a decoded chunk of shell OUTPUT, tagged with the
+   *  pane id + whether it's the session-backed PRIMARY pane. Drives the rail's
+   *  "live session" ember (running/working). Same `isPrimary` semantics as
+   *  onAttention so the caller can gate to the agent pane. */
+  onOutput?: (paneId: string, isPrimary: boolean) => void;
+  /** Forwarded when a pane's PTY exits, tagged with the pane id + isPrimary —
+   *  clears that chat's "running" ember when the agent session ends. */
+  onPaneExit?: (paneId: string, isPrimary: boolean) => void;
   /** Session recovery for this chat's PRIMARY pane (dtach/tmux). Only the first
    *  pane is session-backed — extra split panes are plain shells, so two panes
    *  never attach the same session and interleave input. */
@@ -559,6 +567,11 @@ export function TerminalHost(props: {
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
                     onTitle={(title) => props.onTitle?.(title, leaf.id)}
                     onAttention={(summary) => props.onAttention?.(summary, leaf.id, leaf.id === primaryId())}
+                    onOutput={
+                      props.onOutput
+                        ? () => props.onOutput!(leaf.id, leaf.id === primaryId())
+                        : undefined
+                    }
                     onSelectionChange={setAskSel}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
@@ -572,7 +585,10 @@ export function TerminalHost(props: {
                       // agent launch queued before its handle existed.
                       if (leaf.id === primaryId()) flushPrimaryCmd();
                     }}
-                    onExit={() => requestClose(leaf.id)}
+                    onExit={() => {
+                      props.onPaneExit?.(leaf.id, leaf.id === primaryId());
+                      requestClose(leaf.id);
+                    }}
                   />
                 </div>
               </div>

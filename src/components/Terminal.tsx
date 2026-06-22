@@ -179,12 +179,18 @@ export function TerminalPane(props: {
     // (no newline) exactly like a paste, so an agent like Claude Code receives
     // it. Read-only consoles don't take typed input, so they don't register.
     // Registered synchronously (binds cleanup to this owner); the `write`
-    // closure reads the live `sessionId`, which is null until the pty spawns.
+    // closure reads the live `sessionId`, which is null until the pty spawns —
+    // a drop during startup buffers into `pendingInput` (the same queue typeText
+    // uses) so the spawn flush sends it instead of dropping it silently.
     if (!props.readOnly) {
       const unregister = registerDropTarget({
         el: container,
         write: (text) => {
-          if (sessionId === null) return false;
+          if (sessionId === null) {
+            pendingInput += text;
+            term.focus();
+            return true;
+          }
           void ptyWrite(sessionId, encoder.encode(text));
           term.focus();
           return true;

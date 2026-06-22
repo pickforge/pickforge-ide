@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 // terminalDrop imports @tauri-apps/api/event for the shared drag-drop
-// subscription; stub it so importing the pure path-quoting helpers never
-// touches the Tauri runtime (the listener only starts on registerDropTarget).
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+// subscription. Capture the registered handlers so a test can fire a synthetic
+// drop and assert dispatch, while pure helper tests stay runtime-free (the
+// listener only starts on registerDropTarget).
+const handlers = vi.hoisted(() => new Map<string, (e: { payload: unknown }) => void>());
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn((name: string, cb: (e: { payload: unknown }) => void) => {
+    handlers.set(name, cb);
+    return Promise.resolve(() => handlers.delete(name));
+  }),
+}));
 
-import { quotePaths, shellQuotePath } from "../../src/lib/terminalDrop";
+import { quotePaths, registerDropTarget, shellQuotePath } from "../../src/lib/terminalDrop";
 
 describe("shellQuotePath", () => {
   it("leaves a plain path unquoted", () => {
@@ -34,5 +41,64 @@ describe("quotePaths", () => {
 
   it("handles a single path", () => {
     expect(quotePaths(["/a/b.png"])).toBe("/a/b.png");
+  });
+});
+
+describe("registerDropTarget — drop dispatch", () => {
+  // A fake pane element at a fixed box; the dispatch hit-tests via
+  // getBoundingClientRect and converts the physical drop point by devicePixelRatio.
+  const fakeEl = (box: { left: number; top: number; right: number; bottom: number }) =>
+    ({
+      getBoundingClientRect: () => ({
+        left: box.left,
+        top: box.top,
+        right: box.right,
+        bottom: box.bottom,
+        width: box.right - box.left,
+        height: box.bottom - box.top,
+      }),
+    }) as unknown as HTMLElement;
+
+  const fireDrop = (paths: string[], position: { x: number; y: number }) => {
+    (globalThis as { window?: { devicePixelRatio: number } }).window = { devicePixelRatio: 1 };
+    handlers.get("tauri://drag-drop")?.({ payload: { paths, position } });
+  };
+
+  it("delivers the dropped paths to the pane under the cursor", () => {
+    const writes: string[] = [];
+    const stop = registerDropTarget({
+      el: fakeEl({ left: 0, top: 0, right: 100, bottom: 100 }),
+      write: (t) => (writes.push(t), true),
+      setHover: () => {},
+    });
+    fireDrop(["/a/b.png"], { x: 50, y: 50 });
+    expect(writes).toEqual(["/a/b.png"]);
+    stop();
+  });
+
+  it("still delivers when the pane buffers an early drop (write returns true)", () => {
+    // A pane whose pty hasn't spawned buffers internally and returns true; the
+    // drop must reach it rather than being discarded.
+    const writes: string[] = [];
+    const stop = registerDropTarget({
+      el: fakeEl({ left: 0, top: 0, right: 100, bottom: 100 }),
+      write: (t) => (writes.push(t), true),
+      setHover: () => {},
+    });
+    fireDrop(["/early.png"], { x: 10, y: 10 });
+    expect(writes).toEqual(["/early.png"]);
+    stop();
+  });
+
+  it("ignores a drop outside every pane", () => {
+    const writes: string[] = [];
+    const stop = registerDropTarget({
+      el: fakeEl({ left: 0, top: 0, right: 100, bottom: 100 }),
+      write: (t) => (writes.push(t), true),
+      setHover: () => {},
+    });
+    fireDrop(["/a/b.png"], { x: 500, y: 500 });
+    expect(writes).toEqual([]);
+    stop();
   });
 });

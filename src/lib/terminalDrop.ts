@@ -12,8 +12,9 @@ import { shquote } from "./runTargets";
 interface DropTarget {
   /** The pane's terminal element — used to hit-test the drop position. */
   el: HTMLElement;
-  /** Write text into this pane's pty (no newline). Returns false if it had no
-   *  live pty yet, so an overlapping target could still take the drop. */
+  /** Write text into this pane's pty (no newline). If the pty hasn't spawned
+   *  yet the pane buffers the text and flushes it on spawn, so an early drop is
+   *  never lost. Returns false only if the pane can't accept the drop at all. */
   write: (text: string) => boolean;
   /** Toggle the subtle drop-highlight while a drag hovers this pane. */
   setHover: (on: boolean) => void;

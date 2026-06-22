@@ -61,6 +61,13 @@ function markAgentPane(chatId: string, paneId: string) {
   agentPane.set(chatId, paneId);
 }
 
+/** Whether `paneId` is the agent-owned pane for a chat — so a bell/notification
+ *  from it counts as agent attention, but one from a plain shell or build in
+ *  another split pane is ignored. Mirrors the OSC-title pane-ownership gate. */
+export function isAgentPane(chatId: string, paneId: string): boolean {
+  return agentPane.get(chatId) === paneId;
+}
+
 // ---- title ownership ----
 // A chat the user has manually renamed: locked, so no auto source may overwrite
 // it. Tracked for this session; a non-default title loaded from a previous run

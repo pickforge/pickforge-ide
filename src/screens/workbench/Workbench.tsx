@@ -28,7 +28,8 @@ import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace 
 import { chatBackend } from "../../stores/chatSessions";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import { armChatAutoName, handleOscTitle, maybeAutoNameChat } from "../../lib/chatAutoName";
+import { armChatAutoName, handleOscTitle, isAgentPane, maybeAutoNameChat } from "../../lib/chatAutoName";
+import { signalChatAttention } from "../../stores/notifications";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -253,6 +254,28 @@ export function WorkbenchScreen() {
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                   onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
+                  onAttention={(summary, paneId, isPrimary) => {
+                    // Attention counts from the agent's own pane. The explicit
+                    // agent-pane map only has an entry when a chip/hotkey launched
+                    // or a recognised agent command was typed — it's empty for a
+                    // recovered dtach/tmux session after restart, or an agent
+                    // hand-started inside the TUI. The session-backed PRIMARY pane
+                    // reliably identifies that agent in those cases, so treat a
+                    // bell from it as attention too. A plain shell/build in a
+                    // NON-primary split pane is still ignored.
+                    if (!isPrimary && !isAgentPane(h.chatId, paneId)) return;
+                    const chat = findChat(h.chatId);
+                    const project = workspace.projects.find(
+                      (p) => p.projectRoot === h.projectRoot,
+                    );
+                    signalChatAttention(h.chatId, {
+                      projectName: project?.displayName,
+                      chatName: chat?.title,
+                      // Prefer an OSC 9/777 message; else the agent's live OSC-2
+                      // summary (the chat title), which the host already tracks.
+                      summary: summary ?? chat?.title,
+                    });
+                  }}
                 />
               </div>
             )}

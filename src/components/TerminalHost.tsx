@@ -178,6 +178,12 @@ export function TerminalHost(props: {
   /** Forwarded from every pane: the shell/agent's OSC 2 terminal title, tagged
    *  with the pane id — the host maps it to this chat's name. */
   onTitle?: (title: string, paneId: string) => void;
+  /** Forwarded from every pane: the agent rang the bell / emitted an OSC 9/777
+   *  notification, tagged with the pane id — the host flags this chat.
+   *  `isPrimary` marks the chat's session-backed pane, where a recovered or
+   *  hand-started agent reliably runs even when the transient agent-pane map has
+   *  no entry. */
+  onAttention?: (summary: string | undefined, paneId: string, isPrimary: boolean) => void;
   /** Session recovery for this chat's PRIMARY pane (dtach/tmux). Only the first
    *  pane is session-backed — extra split panes are plain shells, so two panes
    *  never attach the same session and interleave input. */
@@ -552,6 +558,7 @@ export function TerminalHost(props: {
                     }
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
                     onTitle={(title) => props.onTitle?.(title, leaf.id)}
+                    onAttention={(summary) => props.onAttention?.(summary, leaf.id, leaf.id === primaryId())}
                     onSelectionChange={setAskSel}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);

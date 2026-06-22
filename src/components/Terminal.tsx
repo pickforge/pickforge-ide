@@ -1,9 +1,10 @@
 // A single live terminal pane: xterm.js (WebGL renderer + fit) bound to a
 // Rust `$SHELL` pty over a Tauri channel. Shell-first — never an agent.
-import { createEffect, onCleanup, onMount } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { registerDropTarget } from "../lib/terminalDrop";
 import {
   isChatMarkedForKill,
   ptyDetach,
@@ -80,6 +81,8 @@ export function TerminalPane(props: {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const pickTheme = () => (props.consoleTheme ? buildConsoleTheme() : buildTerminalTheme());
+  // Lit while an OS file drag hovers this pane (the subtle drop highlight).
+  const [dropHover, setDropHover] = createSignal(false);
 
   onMount(() => {
     const term = new Terminal({
@@ -171,6 +174,25 @@ export function TerminalPane(props: {
       if (sessionId !== null) teardownPty(sessionId);
       term.dispose();
     });
+
+    // OS file/image drop INTO this pane: a dropped path is written into the pty
+    // (no newline) exactly like a paste, so an agent like Claude Code receives
+    // it. Read-only consoles don't take typed input, so they don't register.
+    // Registered synchronously (binds cleanup to this owner); the `write`
+    // closure reads the live `sessionId`, which is null until the pty spawns.
+    if (!props.readOnly) {
+      const unregister = registerDropTarget({
+        el: container,
+        write: (text) => {
+          if (sessionId === null) return false;
+          void ptyWrite(sessionId, encoder.encode(text));
+          term.focus();
+          return true;
+        },
+        setHover: setDropHover,
+      });
+      onCleanup(unregister);
+    }
 
     void (async () => {
       // Wait for Geist Mono before xterm measures glyph width — otherwise it
@@ -348,5 +370,11 @@ export function TerminalPane(props: {
     })();
   });
 
-  return <div class="pf-terminal" ref={container} />;
+  return (
+    <div
+      class="pf-terminal"
+      classList={{ "pf-terminal--drop": dropHover() }}
+      ref={container}
+    />
+  );
 }

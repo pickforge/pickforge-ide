@@ -32,7 +32,10 @@ Tauri shell (`src-tauri/`) with a SolidJS frontend (`src/`).
 
 The window uses custom chrome (`decorations: false`) — one draggable title bar
 with the brand, nav, status, and min/maximize/close controls. On Linux/Wayland,
-the GTK app_id is the bundle identifier `dev.pickforge.app` (`enableGTKAppId`).
+the window app_id is forced to the bundle identifier `dev.pickforge.app` at
+startup via `gtk::glib::set_prgname` in `src-tauri/src/lib.rs` (`enableGTKAppId`
+alone doesn't set the xdg_toplevel app_id under WebKitGTK — GTK derives it from
+`g_get_prgname()`, which otherwise defaults to the binary name).
 Release bundles ship their own desktop entry + icon; for a bare dev binary the
 window only shows the PickForge icon once a matching `.desktop` is installed:
 

@@ -336,3 +336,9 @@
   background: var(--pf-ember);
   color: var(--pf-surface);
 }
+.pf-seg--disabled {
+  opacity: 0.5;
+}
+.pf-seg button:disabled {
+  cursor: default;
+}

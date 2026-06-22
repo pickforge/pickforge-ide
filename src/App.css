@@ -5,20 +5,43 @@
   background: var(--pf-surface);
 }
 
-/* ---- Header ---- */
-.pf-header {
-  display: flex;
+/* ---- Title bar (custom window chrome) ----
+ * One draggable row that replaces the native titlebar AND the old app header:
+ * brand (left) · nav (center) · status + window controls (right). The whole bar
+ * carries data-tauri-drag-region; interactive children opt out by omitting it.
+ * Three-column grid keeps the nav optically centered regardless of side widths. */
+.pf-titlebar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 var(--pf-space-lg);
+  height: var(--pf-titlebar-h);
+  padding: 0 var(--pf-space-sm) 0 var(--pf-space-lg);
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
   flex: none;
+  user-select: none;
+}
+/* macOS: controls sit on the LEFT; pad the brand so it clears them and tighten
+ * the right padding since nothing lives in the far-right slot there. */
+.pf-titlebar--controls-left {
+  padding: 0 var(--pf-space-lg) 0 var(--pf-space-sm);
+}
+.pf-titlebar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+  justify-self: start;
+  min-width: 0;
 }
 .pf-brand {
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-md);
+}
+.pf-titlebar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+  justify-self: end;
 }
 /* The core brand glyph: a hairline selection frame with its top-right corner
  * replaced by a glowing ember dot. */
@@ -163,6 +186,7 @@
   display: flex;
   align-items: center;
   gap: var(--pf-space-xs);
+  justify-self: center;
 }
 .pf-nav-btn {
   border: none;

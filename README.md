@@ -30,6 +30,20 @@ Requires a [Rust toolchain](https://rustup.rs) and [Bun](https://bun.sh) 1.2+. P
 on [Tauri v2](https://tauri.app) — a Rust core (`crates/pickforge-core`) behind a
 Tauri shell (`src-tauri/`) with a SolidJS frontend (`src/`).
 
+The window uses custom chrome (`decorations: false`) — one draggable title bar
+with the brand, nav, status, and min/maximize/close controls. On Linux/Wayland,
+the GTK app_id is the bundle identifier `dev.pickforge.app` (`enableGTKAppId`).
+Release bundles ship their own desktop entry + icon; for a bare dev binary the
+window only shows the PickForge icon once a matching `.desktop` is installed:
+
+```bash
+node scripts/install-linux-desktop.mjs            # dev binary (target/debug)
+node scripts/install-linux-desktop.mjs --release  # release binary
+node scripts/install-linux-desktop.mjs --remove-stale   # drop the old pickforge.desktop
+```
+
+Then fully relaunch the window (compositors cache the app_id→icon mapping).
+
 ## Quickstart
 
 1. Launch PickForge. On first run it asks you to **Add your first project** — pick the folder of a Flutter, React Native, native-Android, or web project. PickForge detects the framework and shows its [support tier](#framework-support) next to the run button.

@@ -104,6 +104,30 @@ export function ptyDestroyChatSession(sessionId: string): Promise<void> {
   return invoke("pty_destroy_chat_session", { sessionId });
 }
 
+// Chats whose terminal hosts are being unmounted as part of a DESTRUCTIVE delete
+// (chat delete / project delete), not a routine close. A chat pane normally
+// DETACHES on unmount so its dtach/tmux session survives; when the chat is being
+// deleted that detach would strand a live shell (the socket/session is destroyed
+// right after, leaving an unreachable orphan). Marking the chat here flips its
+// panes to a full KILL on unmount so the shell dies with the chat.
+const chatsMarkedForKill = new Set<string>();
+
+/** Mark a chat so its terminal panes KILL (not detach) on the next unmount —
+ *  call right before firing the delete that unmounts its host. */
+export function markChatForKill(chatId: string) {
+  chatsMarkedForKill.add(chatId);
+}
+
+/** Whether a chat's panes should kill (not detach) on unmount. */
+export function isChatMarkedForKill(chatId: string): boolean {
+  return chatsMarkedForKill.has(chatId);
+}
+
+/** Clear a chat's kill mark once its host has been torn down. */
+export function clearChatKillMark(chatId: string) {
+  chatsMarkedForKill.delete(chatId);
+}
+
 /** Send bytes (keystrokes / pasted text) to the shell. */
 export function ptyWrite(id: number, data: Uint8Array): Promise<void> {
   return invoke("pty_write", { id, data: Array.from(data) });

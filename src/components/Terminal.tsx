@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import {
+  isChatMarkedForKill,
   ptyDetach,
   ptyKill,
   ptyResize,
@@ -150,18 +151,24 @@ export function TerminalPane(props: {
       }
     };
 
+    // Tear down a pty on unmount/dispose. A session-backed chat pane DETACHES so
+    // the dtach/tmux session + agent shell live on for the next attach — UNLESS
+    // its chat is being deleted (marked for kill), where a detach would strand a
+    // live shell (the socket/session is destroyed right after): then we KILL it
+    // (full process-group teardown) so the shell dies with the chat. A raw /
+    // one-shot pane is always killed.
+    const teardownPty = (id: number) => {
+      if (props.chat && !isChatMarkedForKill(props.chat.chatId)) void ptyDetach(id);
+      else void ptyKill(id);
+    };
+
     // Register cleanup synchronously so it binds to this owner even though the
     // terminal opens after an async font wait.
     onCleanup(() => {
       disposed = true;
       observer?.disconnect();
       subs.forEach((s) => s.dispose());
-      if (sessionId !== null) {
-        // A session-backed chat pane DETACHES (the dtach/tmux session + the agent
-        // shell live on for the next attach); a raw / one-shot pane is killed.
-        if (props.chat) void ptyDetach(sessionId);
-        else void ptyKill(sessionId);
-      }
+      if (sessionId !== null) teardownPty(sessionId);
       term.dispose();
     });
 
@@ -235,10 +242,10 @@ export function TerminalPane(props: {
       spawn
         .then((id) => {
           if (disposed) {
-            // Detach a chat session we no longer have a pane for (keep it
-            // alive); kill a raw pty.
-            if (props.chat) void ptyDetach(id);
-            else void ptyKill(id);
+            // The pane went away before the spawn resolved: detach a chat session
+            // so it survives for the next attach, kill a raw pty — or, if the
+            // chat is being deleted, kill the session so it doesn't outlive it.
+            teardownPty(id);
             return;
           }
           sessionId = id;

@@ -542,6 +542,18 @@ impl Database {
         Ok(())
     }
 
+    /// Update only a chat's `sort_order`, leaving every other column untouched.
+    /// Reordering uses this (instead of a full-row `upsert_chat`) so it can't race
+    /// a concurrent narrow `session_id` write and persist a stale recovery handle.
+    /// A no-op for a chat_id that doesn't exist.
+    pub fn update_chat_sort_order(&self, chat_id: &str, sort_order: i64) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE chats SET sort_order = ?2 WHERE chat_id = ?1",
+            params![chat_id, sort_order],
+        )?;
+        Ok(())
+    }
+
     // ---- project settings ----
 
     pub fn get_settings(&self, root: &str) -> Result<Option<ProjectSettings>, DbError> {
@@ -874,9 +886,19 @@ mod tests {
         assert_eq!(c.title, "Fix the login bug");
         assert!(c.session_id.is_none());
 
-        // Both are silent no-ops for an unknown chat.
+        // sort_order update leaves a live session_id (and title) alone — the
+        // reorder path relies on this so it can't race a recovery-handle write.
+        db.update_chat_session_id("c1", Some("tmux:pf-keepme")).unwrap();
+        db.update_chat_sort_order("c1", 7).unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.sort_order, 7);
+        assert_eq!(c.session_id.as_deref(), Some("tmux:pf-keepme"));
+        assert_eq!(c.title, "Fix the login bug");
+
+        // All narrow writes are silent no-ops for an unknown chat.
         db.update_chat_title("nope", "x").unwrap();
         db.update_chat_session_id("nope", Some("y")).unwrap();
+        db.update_chat_sort_order("nope", 3).unwrap();
         assert_eq!(db.list_chats("/p").unwrap().len(), 1);
     }
 

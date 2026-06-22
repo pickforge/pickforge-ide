@@ -52,10 +52,23 @@ export function setChatTmux(chatId: string, on: boolean) {
   persistTmux(on ? [...tmuxIds(), chatId] : tmuxIds().filter((x) => x !== chatId));
 }
 
-/** The recovery backend to REQUEST for a chat: "raw" when recovery is off,
- *  "tmux" when the chat opted into a named tmux session, else "dtach". The Rust
- *  side downgrades to "raw" if the chosen backend isn't installed. */
-export function chatBackend(chatId: string): ChatBackend {
+/** The recovery backend a stored `session_id` is tagged with (`"<backend>:..."`),
+ *  or null if there's no usable handle. A "raw:" handle is preserved on degrade
+ *  but isn't a recoverable backend, so it returns null too. */
+export function backendFromSessionId(sessionId: string | null | undefined): ChatBackend | null {
+  if (!sessionId) return null;
+  const tag = sessionId.split(":", 1)[0];
+  return tag === "dtach" || tag === "tmux" ? tag : null;
+}
+
+/** The recovery backend to REQUEST for a chat. Recovery off → "raw". Otherwise,
+ *  an existing chat is REOPENED with the backend its persisted `session_id` is
+ *  tagged with — so a tmux-backed chat never silently reopens as dtach (which
+ *  would abandon the old session and overwrite the handle). Only a chat with no
+ *  stored handle (brand new, or after an explicit migration cleared it) falls
+ *  back to the per-chat tmux opt-in, else dtach. The Rust side still downgrades to
+ *  "raw" if the chosen backend isn't installed. */
+export function chatBackend(chatId: string, sessionId?: string | null): ChatBackend {
   if (!recover()) return "raw";
-  return isChatTmux(chatId) ? "tmux" : "dtach";
+  return backendFromSessionId(sessionId) ?? (isChatTmux(chatId) ? "tmux" : "dtach");
 }

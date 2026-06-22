@@ -42,15 +42,17 @@ export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
 
-  // Fire a quick-launch item into the active chat: open a fresh terminal pane,
-  // type the command, and run it (so a launch never disturbs the pane the user
-  // is working in). Agent items also arm that new pane so its first message
-  // becomes the chat title (see chatAutoName).
+  // Fire a quick-launch item into the active chat and run it. An AGENT launch
+  // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
+  // the recoverable dtach/tmux session (surviving pane-close + app-restart) —
+  // not a raw split pane that would kill it on close. We also arm that pane so
+  // the agent's first message becomes the chat title (see chatAutoName). A
+  // non-agent launch opens a fresh split pane so it never disturbs the primary.
   const launchItem = (item: { agentId?: string }, text: string) => {
     if (!text) return;
     const host = getTerminalHost(workspace.activeChatId);
     if (!host) return;
-    const paneId = host.openInNewPane(text);
+    const paneId = item.agentId ? host.runInPrimary(text) : host.openInNewPane(text);
     if (paneId && item.agentId) armChatAutoName(workspace.activeChatId, paneId);
   };
 
@@ -226,16 +228,23 @@ export function WorkbenchScreen() {
                   cwd={h.projectRoot}
                   env={mcpEnv(h.projectRoot)}
                   chatId={h.chatId}
-                  session={{
-                    projectRoot: h.projectRoot,
-                    sessionId: findChat(h.chatId)?.sessionId ?? null,
-                    backend: chatBackend(h.chatId),
-                    onSession: (info) => {
-                      // Persist the resolved recovery id (narrow write). On a raw
-                      // degrade with no id we leave the stored one alone.
-                      if (info.sessionId) void setChatSessionId(h.chatId, info.sessionId);
-                    },
-                  }}
+                  session={(() => {
+                    // Honor the chat's PERSISTED backend on reopen: derive the
+                    // backend from the stored session_id tag so a tmux-backed chat
+                    // never silently reopens as dtach (which would abandon the old
+                    // session and overwrite the handle).
+                    const storedSessionId = findChat(h.chatId)?.sessionId ?? null;
+                    return {
+                      projectRoot: h.projectRoot,
+                      sessionId: storedSessionId,
+                      backend: chatBackend(h.chatId, storedSessionId),
+                      onSession: (info) => {
+                        // Persist the resolved recovery id (narrow write). On a raw
+                        // degrade with no id we leave the stored one alone.
+                        if (info.sessionId) void setChatSessionId(h.chatId, info.sessionId);
+                      },
+                    };
+                  })()}
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                   onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}

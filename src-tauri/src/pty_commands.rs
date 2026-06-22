@@ -257,11 +257,6 @@ pub fn pty_spawn_chat(
         },
     );
 
-    // tmux: make sure the private server reports titles (best-effort).
-    if selected == SessionBackend::Tmux {
-        tmux_enable_titles();
-    }
-
     let opts = SpawnOptions {
         cwd,
         rows,
@@ -286,6 +281,16 @@ pub fn pty_spawn_chat(
             let _ = &name;
             e.to_string()
         })?;
+
+    // tmux: enable window-title reporting AFTER the spawn — `new-session -A`
+    // above is what brings the private `-L pickforge` server up, so a set-option
+    // run before it could land on no server (or a half-started one) and the very
+    // first tmux-backed chat would never propagate its OSC title. Running it now,
+    // against the live server, guarantees set-titles applies; `-gq` keeps every
+    // later open an idempotent no-op.
+    if selected == SessionBackend::Tmux {
+        tmux_enable_titles();
+    }
 
     Ok(ChatSpawnResult {
         pty_id,

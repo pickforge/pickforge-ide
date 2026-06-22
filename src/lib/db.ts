@@ -114,6 +114,9 @@ export const updateChatTitle = (chatId: string, title: string) =>
 /** Narrow session_id write (chat recovery) — pass null to clear. */
 export const updateChatSessionId = (chatId: string, sessionId: string | null) =>
   invoke<void>("update_chat_session_id", { chatId, sessionId });
+/** Narrow sort_order write (reorder) — won't clobber a live session_id. */
+export const updateChatSortOrder = (chatId: string, sortOrder: number) =>
+  invoke<void>("update_chat_sort_order", { chatId, sortOrder });
 
 // ---- settings ----
 export const settingsGet = (root: string) =>

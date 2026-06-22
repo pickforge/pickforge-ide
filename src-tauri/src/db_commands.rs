@@ -125,6 +125,19 @@ pub fn update_chat_session_id(
         .map_err(|e| e.to_string())
 }
 
+/// Narrow `sort_order` write for chat reordering — touches only `sort_order`, so
+/// dragging chats to re-sort can't race a concurrent narrow `session_id` write
+/// and persist a stale recovery handle.
+#[tauri::command]
+pub fn update_chat_sort_order(
+    db: State<'_, Database>,
+    chat_id: String,
+    sort_order: i64,
+) -> Result<(), String> {
+    db.update_chat_sort_order(&chat_id, sort_order)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn settings_get(
     db: State<'_, Database>,

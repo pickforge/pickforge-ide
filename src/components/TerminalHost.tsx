@@ -155,6 +155,12 @@ export interface TerminalHostHandle {
   /** Split the focused pane and run `command` in the new pane; returns the new
    *  pane's id (e.g. to arm auto-naming on it). */
   openInNewPane: (command: string) => string;
+  /** Run `command` (with a trailing newline) in this host's PRIMARY,
+   *  session-backed pane — the one wired to the chat's recoverable dtach/tmux
+   *  session — and focus it. Returns the primary pane's id, or null if it isn't
+   *  ready yet. Agent quick-launches use this so the launched agent runs INSIDE
+   *  the recoverable session (surviving close/restart), not a raw split pane. */
+  runInPrimary: (command: string) => string | null;
 }
 
 export function TerminalHost(props: {
@@ -385,6 +391,16 @@ export function TerminalHost(props: {
       return id;
     },
     openInNewPane,
+    runInPrimary: (command) => {
+      // The primary pane is the only session-backed one; run the agent there so
+      // it lives inside the recoverable dtach/tmux session. typeText buffers
+      // until the shell resolves, so this is safe even right after mount.
+      const h = handles.get(primaryId);
+      if (!h) return null;
+      focus(primaryId);
+      h.typeText(command + "\r");
+      return primaryId;
+    },
   });
 
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);

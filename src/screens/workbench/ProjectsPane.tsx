@@ -34,7 +34,7 @@ import {
   toggleChats,
 } from "../../stores/chatTree";
 import { archiveChat, isChatArchived, unarchiveChat } from "../../stores/chatArchive";
-import { isChatTmux, recoverChatSessions, setChatTmux } from "../../stores/chatSessions";
+import { isChatTmux, recoverChatSessions } from "../../stores/chatSessions";
 import type { Chat, Project } from "../../lib/db";
 import {
   addChat,
@@ -44,6 +44,7 @@ import {
   deleteChat,
   deleteProject,
   ensureChatsLoaded,
+  migrateChatBackend,
   renameChat,
   renameProject,
   reorderChat,
@@ -224,8 +225,8 @@ export function ProjectsPane() {
         <div class="pf-menu-sep" />
         <button
           class="pf-menu-item"
-          title="Back this chat with a named tmux session (a new shell picks it up on next open). Default is dtach."
-          onClick={() => { setChatTmux(p.id, !isChatTmux(p.id)); closeMenu(); }}
+          title="Switch this chat's recovery backend. The current session is destroyed and a fresh one is created on next open. Default is dtach."
+          onClick={() => { void migrateChatBackend(p.id, !isChatTmux(p.id)); closeMenu(); }}
         >
           {isChatTmux(p.id) ? "Use dtach session" : "Use tmux session"}
         </button>

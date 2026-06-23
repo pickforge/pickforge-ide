@@ -24,7 +24,6 @@ import {
 import { hostPlatform } from "../lib/platform";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
 import { recoverChatSessions, setRecoverChatSessions } from "../stores/chatSessions";
-import { notificationsEnabled, setNotificationsEnabled } from "../stores/notifications";
 import {
   fileOpenSettings,
   setFileOpenCustom,
@@ -316,19 +315,6 @@ export function SettingsScreen() {
           <div class="pf-settings-row">
             <span class="pf-settings-label">Panel layout</span>
             <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
-          </div>
-        </Section>
-
-        <Section title="Notifications">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">
-              Desktop notifications
-              <span class="pf-settings-hint-inline">when an agent finishes or needs input in a chat you're not viewing</span>
-            </span>
-            <div class="pf-seg">
-              <button classList={{ active: notificationsEnabled() }} onClick={() => setNotificationsEnabled(true)}>On</button>
-              <button classList={{ active: !notificationsEnabled() }} onClick={() => setNotificationsEnabled(false)}>Off</button>
-            </div>
           </div>
         </Section>
 

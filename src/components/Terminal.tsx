@@ -53,20 +53,12 @@ export function TerminalPane(props: {
    *  URL from `flutter run`). Streaming-decoded, so multi-byte chars are safe.
    *  Only set this when the TEXT is needed — decoding runs per chunk. */
   onOutput?: (chunk: string) => void;
-  /** Fires with the byte length of each shell OUTPUT chunk, BEFORE decoding — a
-   *  cheap "the pty produced bytes" tick for activity glows that don't need the
-   *  text. Lets a noisy split pane drive the cue without paying the decode. */
-  onActivity?: (bytes: number) => void;
   /** Fires when the user selects text (anchored near the pointer release), or
    *  null when the selection clears — drives the terminal "Ask AI" popup. */
   onSelectionChange?: (sel: { text: string; x: number; y: number } | null) => void;
   /** Fires with the shell/agent's OSC 2 terminal title (the window-title escape).
    *  Agents emit a short summary here; the host maps it to the chat name. */
   onTitle?: (title: string) => void;
-  /** Fires when the agent rings the terminal BEL (\x07) or emits an OSC 9 / OSC
-   *  777 desktop-notification escape — i.e. it finished a task or needs input.
-   *  `summary` is the message carried by an OSC escape (none for a bare bell). */
-  onAttention?: (summary?: string) => void;
   /** View-only: the user can't type into it (the toolbar still drives it via
    *  typeText). For the Debug Console run output. */
   readOnly?: boolean;
@@ -236,9 +228,6 @@ export function TerminalPane(props: {
         if (disposed) return;
         const bytes = toBytes(data);
         term.write(bytes);
-        // Cheap activity tick first — no decode. The decoded string is only
-        // produced for consumers that actually read the text (props.onOutput).
-        if (props.onActivity) props.onActivity(bytes.length);
         if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
       };
       const onExit = (code: number | null) => {
@@ -326,34 +315,6 @@ export function TerminalPane(props: {
       if (props.onTitle && !props.readOnly) {
         const onTitle = props.onTitle;
         subs.push(term.onTitleChange((title) => onTitle(title)));
-      }
-
-      // Agent attention: the terminal BEL (\x07) an agent rings when it finishes
-      // or needs input, plus the OSC 9 / OSC 777 desktop-notification escapes
-      // some tools emit. The host maps it to the owning chat (rail dot + a
-      // debounced desktop notification). Read-only run consoles never signal.
-      if (props.onAttention && !props.readOnly) {
-        const onAttention = props.onAttention;
-        subs.push(term.onBell(() => onAttention()));
-        // OSC 9 — `\x1b]9;<message>\x07` (iTerm2/Windows Terminal "post
-        // notification"). The handler returns true to mark the sequence handled.
-        subs.push(
-          term.parser.registerOscHandler(9, (data) => {
-            onAttention(data || undefined);
-            return true;
-          }),
-        );
-        // OSC 777 — `\x1b]777;notify;<title>;<body>\x07` (urxvt/notify-send
-        // bridge). Take the body, falling back to the title, as the summary.
-        subs.push(
-          term.parser.registerOscHandler(777, (data) => {
-            const parts = data.split(";");
-            if (parts[0] !== "notify") return false; // not a notification payload
-            const summary = (parts[2] || parts[1] || "").trim();
-            onAttention(summary || undefined);
-            return true;
-          }),
-        );
       }
 
       // Report text selections (anchored near the pointer release) so the host

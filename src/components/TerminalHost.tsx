@@ -178,21 +178,6 @@ export function TerminalHost(props: {
   /** Forwarded from every pane: the shell/agent's OSC 2 terminal title, tagged
    *  with the pane id — the host maps it to this chat's name. */
   onTitle?: (title: string, paneId: string) => void;
-  /** Forwarded from every pane: the agent rang the bell / emitted an OSC 9/777
-   *  notification, tagged with the pane id — the host flags this chat.
-   *  `isPrimary` marks the chat's session-backed pane, where a recovered or
-   *  hand-started agent reliably runs even when the transient agent-pane map has
-   *  no entry. */
-  onAttention?: (summary: string | undefined, paneId: string, isPrimary: boolean) => void;
-  /** Forwarded from every pane: a cheap "this pane produced output bytes" tick
-   *  (no decoded string — see TerminalPane.onActivity), tagged with the pane id +
-   *  whether it's the session-backed PRIMARY pane. Drives the rail's "live
-   *  session" ember (running/working). The caller gates it to the agent pane. */
-  onActivity?: (paneId: string, isPrimary: boolean) => void;
-  /** Forwarded when a pane goes away — its PTY exited naturally OR the user closed
-   *  the pane — tagged with the pane id + isPrimary. Clears that chat's "running"
-   *  ember when the agent session ends or the agent pane is closed. */
-  onPaneExit?: (paneId: string, isPrimary: boolean) => void;
   /** Session recovery for this chat's PRIMARY pane (dtach/tmux). Only the first
    *  pane is session-backed — extra split panes are plain shells, so two panes
    *  never attach the same session and interleave input. */
@@ -266,12 +251,6 @@ export function TerminalHost(props: {
     if (leaves().length <= 1) return;
     let next = removeLeaf(root(), id);
     if (!next) return;
-    // The pane is being removed (close button, or the primary closed). Its
-    // TerminalPane unmount sets `disposed` before killing the pty, so the pane's
-    // own onExit → onPaneExit never fires; clear the chat's "live session" ember
-    // here too so closing an agent pane removes the glow (idempotent with the
-    // natural-exit path, which already cleared it).
-    props.onPaneExit?.(id, id === primaryId());
     // If the user closed the SESSION-BACKED primary while other panes remain,
     // promote a survivor so the chat's recovery session stays attached to this
     // still-mounted host. We swap that survivor's leaf for a fresh id, which
@@ -573,12 +552,6 @@ export function TerminalHost(props: {
                     }
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}
                     onTitle={(title) => props.onTitle?.(title, leaf.id)}
-                    onAttention={(summary) => props.onAttention?.(summary, leaf.id, leaf.id === primaryId())}
-                    onActivity={
-                      props.onActivity
-                        ? () => props.onActivity!(leaf.id, leaf.id === primaryId())
-                        : undefined
-                    }
                     onSelectionChange={setAskSel}
                     onReady={(handle) => {
                       handles.set(leaf.id, handle);
@@ -592,15 +565,7 @@ export function TerminalHost(props: {
                       // agent launch queued before its handle existed.
                       if (leaf.id === primaryId()) flushPrimaryCmd();
                     }}
-                    onExit={() => {
-                      // The PTY exited on its own (the agent quit). Drop the
-                      // ember now — close() only fires onPaneExit for panes the
-                      // USER closes (where the unmount suppresses this callback),
-                      // so a natural exit, especially of the last pane (which
-                      // requestClose leaves mounted), is handled here.
-                      props.onPaneExit?.(leaf.id, leaf.id === primaryId());
-                      requestClose(leaf.id);
-                    }}
+                    onExit={() => requestClose(leaf.id)}
                   />
                 </div>
               </div>

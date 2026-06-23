@@ -1,7 +1,6 @@
 import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { navigate, route, type Route } from "./router";
 import { loadWorkspace, refreshFromDb, workspace } from "./stores/workspace";
-import { clearChatAttention, setWindowFocused } from "./stores/notifications";
 import { applyPersistedZoom, currentZoom, handleZoomKey, zoomReset } from "./lib/zoom";
 import { appVersion, loadAppVersion } from "./lib/appInfo";
 import { initTheme } from "./stores/theme";
@@ -51,36 +50,17 @@ export function App() {
     // Dev + release share one DB (~/.pickforge/pickforge.db); re-read it whenever
     // this window regains focus so the other instance's chat/project edits don't
     // sit stale here. Falls back to the DOM focus event outside Tauri (VRT).
-    // Regaining focus also means the user is now looking at the active chat, so
-    // clear its "needs attention" flag (the desktop-notification gate reads the
-    // same focus state — see stores/notifications).
-    const onWindowFocus = (focused: boolean) => {
-      setWindowFocused(focused);
-      if (focused) {
-        void refreshFromDb();
-        // Only the active chat the user can actually SEE (Workbench route) is
-        // cleared — on Settings/History the chat is hidden, so its dot stays.
-        if (workspace.activeChatId && route() === "workbench") {
-          clearChatAttention(workspace.activeChatId);
-        }
-      }
-    };
     let unlistenFocus: (() => void) | undefined;
     void (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) =>
-          onWindowFocus(focused),
-        );
+        unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          if (focused) void refreshFromDb();
+        });
       } catch {
-        const onFocus = () => onWindowFocus(true);
-        const onBlur = () => onWindowFocus(false);
+        const onFocus = () => void refreshFromDb();
         window.addEventListener("focus", onFocus);
-        window.addEventListener("blur", onBlur);
-        unlistenFocus = () => {
-          window.removeEventListener("focus", onFocus);
-          window.removeEventListener("blur", onBlur);
-        };
+        unlistenFocus = () => window.removeEventListener("focus", onFocus);
       }
     })();
     onCleanup(() => unlistenFocus?.());

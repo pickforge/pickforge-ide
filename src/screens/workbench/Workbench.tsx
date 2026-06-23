@@ -28,9 +28,7 @@ import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace 
 import { chatBackend } from "../../stores/chatSessions";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import { armChatAutoName, handleOscTitle, isAgentPane, maybeAutoNameChat } from "../../lib/chatAutoName";
-import { signalChatAttention } from "../../stores/notifications";
-import { clearRunning, markRunning, noteOutput } from "../../stores/sessionActivity";
+import { armChatAutoName, handleOscTitle, maybeAutoNameChat } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -114,8 +112,6 @@ export function WorkbenchScreen() {
     const offDelete = onChatDeleted((chatId) => {
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
       deleteTerminalHost(chatId);
-      // The host (and its agent PTY) is gone — drop any "live session" ember.
-      clearRunning(chatId);
     });
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;
@@ -257,48 +253,6 @@ export function WorkbenchScreen() {
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                   onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
-                  onAttention={(summary, paneId, isPrimary) => {
-                    // Attention counts from the agent's own pane. The explicit
-                    // agent-pane map only has an entry when a chip/hotkey launched
-                    // or a recognised agent command was typed — it's empty for a
-                    // recovered dtach/tmux session after restart, or an agent
-                    // hand-started inside the TUI. The session-backed PRIMARY pane
-                    // reliably identifies that agent in those cases, so treat a
-                    // bell from it as attention too. A plain shell/build in a
-                    // NON-primary split pane is still ignored.
-                    if (!isPrimary && !isAgentPane(h.chatId, paneId)) return;
-                    const chat = findChat(h.chatId);
-                    const project = workspace.projects.find(
-                      (p) => p.projectRoot === h.projectRoot,
-                    );
-                    signalChatAttention(h.chatId, {
-                      projectName: project?.displayName,
-                      chatName: chat?.title,
-                      // Prefer an OSC 9/777 message; else the agent's live OSC-2
-                      // summary (the chat title), which the host already tracks.
-                      summary: summary ?? chat?.title,
-                    });
-                  }}
-                  onActivity={(paneId) => {
-                    // The "live session" ember means an AGENT is running — NOT
-                    // just any shell output. So gate strictly on the known-agent
-                    // pane (a chip/hotkey launch arms it; a hand-typed
-                    // `claude`/`codex` marks it — see chatAutoName.isAgentPane).
-                    // A plain interactive shell in the primary pane (a prompt,
-                    // `ls`, a build) is never an agent pane, so it stays dark.
-                    // (Unlike attention, which is rare and meaningful even from a
-                    // recovered primary, output streams constantly — accepting all
-                    // primary output would light every visited chat.)
-                    if (!isAgentPane(h.chatId, paneId)) return;
-                    markRunning(h.chatId);
-                    noteOutput(h.chatId);
-                  }}
-                  onPaneExit={(paneId) => {
-                    // The agent pane's PTY exited or the pane was closed — drop the
-                    // ember. Same agent-pane gate as the activity tick.
-                    if (!isAgentPane(h.chatId, paneId)) return;
-                    clearRunning(h.chatId);
-                  }}
                 />
               </div>
             )}

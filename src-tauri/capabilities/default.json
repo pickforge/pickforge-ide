@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Core capability for the main window. App-defined pty_*/mirror_*/fs_* commands are accessible without ACL entries; this grants only the Tauri core defaults plus the plugin permissions the renderer actually invokes (zoom, updater check, relaunch, agent-attention desktop notifications) and the window commands the custom (frameless) title bar drives. The native folder picker runs Rust-side via `pick_project_dir` (app.dialog()), which isn't gated by a webview ACL, so the dialog plugin needs no capability entry here.",
+  "description": "Core capability for the main window. App-defined pty_*/mirror_*/fs_* commands are accessible without ACL entries; this grants only the Tauri core defaults plus the plugin permissions the renderer actually invokes (zoom, updater check, relaunch) and the window commands the custom (frameless) title bar drives. The native folder picker runs Rust-side via `pick_project_dir` (app.dialog()), which isn't gated by a webview ACL, so the dialog plugin needs no capability entry here.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -12,7 +12,6 @@
     "core:window:allow-start-dragging",
     "core:window:allow-start-resize-dragging",
     "updater:default",
-    "process:default",
-    "notification:default"
+    "process:default"
   ]
 }

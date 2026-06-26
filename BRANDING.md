@@ -146,7 +146,7 @@ The icon and wordmark are separate assets. Either can stand alone. Together they
 
 ### Tagline (below or beside the wordmark, not stacked)
 
-- **Copy:** `Widget-level AI context for Flutter.`
+- **Copy:** `Element-level AI context for mobile and web apps.`
 - **Typeface:** Inter Regular.
 - **Size:** ~1/3 of the wordmark.
 - **Color:** `#6E6E75` (muted grey).

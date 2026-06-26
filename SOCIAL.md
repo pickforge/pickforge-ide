@@ -45,8 +45,8 @@ Show up as a human (personal account), not a brand account:
 
 | Channel | How |
 |---|---|
-| r/FlutterDev | Post the demo from your personal account when it's genuinely cool. No corporate tone. |
-| Flutter Discord / Community Slack | Same — personal, helpful, occasional mention. |
+| r/FlutterDev, r/reactnative, r/androiddev | Post the demo from your personal account when it's genuinely cool, matched to each community's framework. No corporate tone. |
+| Flutter / React Native / Android dev Discords + Slacks | Same — personal, helpful, occasional mention. |
 | Hacker News | Launch day submission. Don't astroturf; don't pre-announce repeatedly. |
 
 ### Tier 4 — squat the handle, don't post
@@ -104,10 +104,10 @@ Order of operations from handle registration to launch:
 6. **Pre-launch (weeks):** Go dark on brand accounts until there's a demo GIF that makes people go *"wait, what is that?"*. Don't post filler content.
 7. **Launch day:**
    - Morning: Push to Product Hunt at 00:01 Pacific (PH reset time).
-   - Morning: Submit to HN ("Show HN: PickForge – click a widget in your Flutter app, Claude edits it").
+   - Morning: Submit to HN ("Show HN: PickForge – click an element in your running app, Claude edits it").
    - Morning: Personal LinkedIn post with demo GIF.
    - Morning: X thread from `@pickforge`, founder co-posts from personal account.
-   - Afternoon: Post to r/FlutterDev, Flutter Discord, Flutter Community Slack.
+   - Afternoon: Post to r/FlutterDev (and r/reactnative / r/androiddev), plus the Flutter / React Native / Android community Discords and Slacks.
    - All day: reply to every comment everywhere.
 
 ## Posting cadence (post-launch)

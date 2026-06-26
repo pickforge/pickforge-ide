@@ -10,7 +10,7 @@ It works across **Flutter, React Native (Android), native Android, and web** —
 
 PickForge builds the app. PickLab lets agents see, run, and test it. PickArena measures the results.
 
-Local-first. Open source. Built for people who ship. You bring your own agent credentials — nothing leaves your machine.
+Local-first. Open source. Built for people who ship. You bring your own agent credentials, and your source stays on your machine — the only things that leave are a startup update check against GitHub Releases (version metadata) and the context you explicitly forge into a third-party agent CLI, which then runs under your own credentials.
 
 ## Install
 
@@ -151,6 +151,13 @@ Implementation plan: `docs/superpowers/plans/2026-04-23-pickforge-mvp.md`.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Third-party software
+
+PickForge bundles the [scrcpy](https://github.com/Genymobile/scrcpy) server binary
+(`src-tauri/resources/scrcpy-server-v3.3.3`), © Genymobile / Romain Vimont, licensed
+under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). It is
+redistributed unmodified — see [`NOTICE`](NOTICE) for details.
 
 ---
 

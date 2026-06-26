@@ -14,8 +14,16 @@ issue for security reports.
 
 ## Scope
 
-PickForge runs locally and never sends your code over the network. The main
-threat model we care about:
+PickForge runs locally and keeps your source on your machine — it never uploads
+your code on its own. Two deliberate exceptions are worth naming:
+
+- On startup it checks GitHub Releases for an update (version metadata only — no
+  source leaves your machine).
+- When you explicitly forge context to an agent, it launches a third-party CLI
+  (Claude Code, Codex, OpenCode, …) with the widget context and screenshots you
+  selected; that agent then talks to its own provider under your credentials.
+
+The main threat model we care about:
 
 - Malicious `.pickforge/` content crafted to subvert the user's agent session.
 - Privilege escalation via spawned terminal / wrapper scripts.

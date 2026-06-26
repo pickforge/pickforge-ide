@@ -4,6 +4,7 @@
 //! request/response is correlated by id. One connection at a time.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -23,6 +24,8 @@ pub enum VmError {
     Rpc(String),
     #[error("websocket error: {0}")]
     WebSocket(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
 }
 
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>>;
@@ -63,13 +66,69 @@ async fn clear_connection(slot: &ConnSlot, generation: u64) {
     }
 }
 
+/// Accept `host` only if it resolves *exclusively* to loopback addresses. A bare
+/// `127.0.0.1` / `::1` is loopback by inspection; any name (including the
+/// `localhost` name) is resolved and every resulting address must be loopback —
+/// so a compromised renderer can't smuggle `127.0.0.1.evil.com`, `0.0.0.0`, a
+/// link-local metadata IP (`169.254.169.254`), or a name whose DNS points off-box.
+/// Mirrors the CDP client's `guard_loopback_host` (see `cdp.rs`).
+async fn guard_loopback_host(host: &str) -> Result<(), VmError> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return if ip.is_loopback() {
+            Ok(())
+        } else {
+            Err(VmError::Forbidden(format!("non-loopback host: {host}")))
+        };
+    }
+
+    let mut addrs = tokio::net::lookup_host((host, 0))
+        .await
+        .map_err(|_| VmError::Forbidden(format!("host does not resolve: {host}")))?
+        .peekable();
+    if addrs.peek().is_none() {
+        return Err(VmError::Forbidden(format!("host does not resolve: {host}")));
+    }
+    for addr in addrs {
+        if !addr.ip().is_loopback() {
+            return Err(VmError::Forbidden(format!(
+                "host {host} resolves to non-loopback {}",
+                addr.ip()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate a VM-service WebSocket URL before connecting: it must be a `ws`/`wss`
+/// URL whose host resolves to loopback. Mirrors the CDP client's attach guard
+/// (`guard_ws_url_loopback` in `cdp.rs`) so a renderer-supplied URL can't drive
+/// an arbitrary outbound connection (SSRF).
+async fn guard_ws_url_loopback(ws_url: &str) -> Result<(), VmError> {
+    let url = url::Url::parse(ws_url)
+        .map_err(|e| VmError::Forbidden(format!("invalid ws url: {e}")))?;
+    match url.scheme() {
+        "ws" | "wss" => {}
+        other => {
+            return Err(VmError::Forbidden(format!("unsupported ws scheme: {other}")));
+        }
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| VmError::Forbidden("ws url has no host".into()))?;
+    // `Url::host_str` already strips a `[..]` IPv6 wrapper, so this parses clean.
+    guard_loopback_host(host).await
+}
+
 impl VmServiceClient {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Connect to `ws://…/ws`, replacing any existing connection.
+    /// Connect to `ws://…/ws`, replacing any existing connection. The URL's host
+    /// must resolve to loopback (a renderer must not be able to point the client
+    /// at an arbitrary host).
     pub async fn connect(&self, url: &str) -> Result<(), VmError> {
+        guard_ws_url_loopback(url).await?;
         let (ws, _) = tokio_tungstenite::connect_async(url)
             .await
             .map_err(|e| VmError::WebSocket(e.to_string()))?;
@@ -274,6 +333,34 @@ mod tests {
             "in-flight call should fail fast, took {:?}",
             started.elapsed()
         );
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_non_loopback_ws_url() {
+        let client = VmServiceClient::new();
+        for ws in [
+            "ws://evil.com:8181/ws",
+            "ws://169.254.169.254:8181/ws",
+            "ws://8.8.8.8/ws",
+        ] {
+            let err = client.connect(ws).await.unwrap_err();
+            assert!(
+                matches!(err, VmError::Forbidden(_)),
+                "connect({ws}) should be Forbidden, got {err:?}"
+            );
+        }
+        assert!(!client.is_connected().await);
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_non_ws_scheme() {
+        let client = VmServiceClient::new();
+        let err = client
+            .connect("http://127.0.0.1:8181/ws")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VmError::Forbidden(_)));
+        assert!(!client.is_connected().await);
     }
 
     #[tokio::test]

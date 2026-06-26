@@ -7,6 +7,8 @@ use pickforge_core::{decode_widget_tree, pickforge_home, VmServiceClient, Widget
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
+use crate::fs_commands::{approved_canonical, ApprovedRoots};
+
 /// One widget property (name + display value) for the inspector details panel.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -276,10 +278,20 @@ pub async fn vm_widget_properties(
 /// (`~/.pickforge/inspect`), or the project repo (`<root>/.pickforge/inspect`)
 /// when `repo_local`. Returns the absolute dir so the UI can compose paths.
 #[tauri::command]
-pub fn inspect_dir(repo_local: bool, project_root: String) -> Result<String, String> {
+pub fn inspect_dir(
+    roots: State<'_, ApprovedRoots>,
+    repo_local: bool,
+    project_root: String,
+) -> Result<String, String> {
     let dir = if repo_local {
+        // The renderer supplies `project_root`; require it to resolve under an
+        // approved root before composing the capture dir inside it, so a
+        // compromised renderer can't create/write `.pickforge/inspect` under an
+        // arbitrary directory.
+        approved_canonical(&project_root, &roots)?;
         std::path::Path::new(&project_root).join(".pickforge").join("inspect")
     } else {
+        // PickForge home is a fixed, approved location — no renderer input here.
         let home = pickforge_home(None).map_err(|e| e.to_string())?;
         std::path::Path::new(&home).join("inspect")
     };
@@ -325,6 +337,17 @@ fn is_inspect_root(dir: &std::path::Path) -> bool {
 /// sanitized and the final path is re-checked to stay under the inspector dir.
 #[tauri::command]
 pub fn inspect_save(
+    roots: State<'_, ApprovedRoots>,
+    dir: String,
+    base_name: String,
+    markdown: String,
+    png_base64: Option<String>,
+) -> Result<InspectPaths, String> {
+    inspect_save_inner(&roots, dir, base_name, markdown, png_base64)
+}
+
+fn inspect_save_inner(
+    roots: &ApprovedRoots,
     dir: String,
     base_name: String,
     markdown: String,
@@ -338,6 +361,10 @@ pub fn inspect_save(
     if !is_inspect_root(root) {
         return Err("capture dir is not an inspector directory".into());
     }
+    // Beyond the structural `.pickforge/inspect` shape, the inspector dir must sit
+    // under an approved root (a project root or PickForge home) — so a renderer
+    // can't write a capture into an inspect-shaped dir outside any known project.
+    approved_canonical(&dir, roots)?;
     let dir = root.join(base);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     // Re-check containment after canonicalization (defends against symlinks).
@@ -393,6 +420,18 @@ mod inspect_save_tests {
         dir
     }
 
+    /// An `ApprovedRoots` that approves the project root owning
+    /// `<root>/.pickforge/inspect`, so the new approved-root gate passes.
+    fn approved_for(inspect_dir: &std::path::Path) -> ApprovedRoots {
+        let project_root = inspect_dir
+            .parent() // .pickforge
+            .and_then(std::path::Path::parent) // project root
+            .expect("inspect dir has a project root");
+        let roots = ApprovedRoots::default();
+        roots.insert(project_root);
+        roots
+    }
+
     #[test]
     fn rejects_unsafe_base_names() {
         for bad in ["", ".", "..", "a/b", "a\\b", "../escape"] {
@@ -404,7 +443,9 @@ mod inspect_save_tests {
     #[test]
     fn rejects_traversal_in_inspect_save() {
         let root = temp_inspect_root("traversal");
-        let res = inspect_save(
+        let roots = approved_for(&root);
+        let res = inspect_save_inner(
+            &roots,
             root.to_string_lossy().into_owned(),
             "../escape".into(),
             "x".into(),
@@ -417,14 +458,38 @@ mod inspect_save_tests {
     fn rejects_a_non_inspector_dir() {
         let dir = std::env::temp_dir().join(format!("pf-not-inspect-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let res = inspect_save(dir.to_string_lossy().into_owned(), "cap".into(), "x".into(), None);
+        let res = inspect_save_inner(
+            &ApprovedRoots::default(),
+            dir.to_string_lossy().into_owned(),
+            "cap".into(),
+            "x".into(),
+            None,
+        );
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn rejects_an_inspect_dir_outside_an_approved_root() {
+        // An inspect-shaped dir (`<x>/.pickforge/inspect`) that belongs to no
+        // approved project root must be rejected even though `is_inspect_root`
+        // accepts its shape.
+        let root = temp_inspect_root("unapproved");
+        let res = inspect_save_inner(
+            &ApprovedRoots::default(),
+            root.to_string_lossy().into_owned(),
+            "cap".into(),
+            "x".into(),
+            None,
+        );
+        assert!(res.is_err(), "an unapproved inspect dir must be rejected");
     }
 
     #[test]
     fn writes_a_capture_under_the_inspect_root() {
         let root = temp_inspect_root("write");
-        let res = inspect_save(
+        let roots = approved_for(&root);
+        let res = inspect_save_inner(
+            &roots,
             root.to_string_lossy().into_owned(),
             "cap-1".into(),
             "# hello".into(),
@@ -438,8 +503,16 @@ mod inspect_save_tests {
     #[test]
     fn rejects_oversized_markdown() {
         let root = temp_inspect_root("big");
+        let roots = approved_for(&root);
         let big = "a".repeat(MAX_MARKDOWN + 1);
-        assert!(inspect_save(root.to_string_lossy().into_owned(), "cap".into(), big, None).is_err());
+        assert!(inspect_save_inner(
+            &roots,
+            root.to_string_lossy().into_owned(),
+            "cap".into(),
+            big,
+            None,
+        )
+        .is_err());
     }
 
     #[cfg(unix)]
@@ -447,12 +520,19 @@ mod inspect_save_tests {
     fn does_not_follow_a_symlinked_capture_file() {
         use std::os::unix::fs::symlink;
         let root = temp_inspect_root("symlink");
+        let roots = approved_for(&root);
         let cap = root.join("cap-sym");
         std::fs::create_dir_all(&cap).unwrap();
         let evil = std::env::temp_dir().join(format!("pf-evil-{}", std::process::id()));
         let _ = std::fs::remove_file(&evil);
         symlink(&evil, cap.join("context.md")).unwrap();
-        let res = inspect_save(root.to_string_lossy().into_owned(), "cap-sym".into(), "x".into(), None);
+        let res = inspect_save_inner(
+            &roots,
+            root.to_string_lossy().into_owned(),
+            "cap-sym".into(),
+            "x".into(),
+            None,
+        );
         assert!(res.is_err(), "writing through a symlinked capture file must fail");
         assert!(!evil.exists(), "the write must not follow the symlink");
     }

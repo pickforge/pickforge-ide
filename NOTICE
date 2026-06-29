@@ -1,0 +1,20 @@
+PickForge — third-party notices
+================================
+
+PickForge is licensed under the MIT License (see LICENSE). It bundles software
+from third parties, whose copyright and license terms are referenced below.
+
+scrcpy (server binary)
+----------------------
+Bundled file: src-tauri/resources/scrcpy-server-v3.3.3
+Project:      https://github.com/Genymobile/scrcpy
+Copyright (C) 2018 Genymobile
+Copyright (C) 2018-2024 Romain Vimont
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. A copy of the License is
+available at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+The scrcpy server binary is redistributed unmodified.

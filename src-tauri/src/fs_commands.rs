@@ -344,7 +344,17 @@ fn is_inspect_root(dir: &Path) -> bool {
 /// Capped at 16 MiB during the read (bounded, never a full allocation); null if
 /// missing/oversized/not a PNG.
 #[tauri::command]
-pub fn read_image_data_url(path: String) -> Result<Option<String>, String> {
+pub fn read_image_data_url(
+    roots: State<'_, ApprovedRoots>,
+    path: String,
+) -> Result<Option<String>, String> {
+    read_image_data_url_inner(&roots, path)
+}
+
+fn read_image_data_url_inner(
+    roots: &ApprovedRoots,
+    path: String,
+) -> Result<Option<String>, String> {
     // Canonicalize the file and confirm its parent dir is an inspector capture
     // root. Canonicalization resolves symlinks, so a symlinked file or dir can't
     // escape the approved area (matches `inspect_save`'s containment re-check).
@@ -357,6 +367,12 @@ pub fn read_image_data_url(path: String) -> Result<Option<String>, String> {
         .ok_or_else(|| "image path has no parent directory".to_string())?;
     if !is_inspect_root(parent) {
         return Err("image path is outside the inspector capture directory".into());
+    }
+    // Beyond the structural `.pickforge/inspect` shape, the file must sit under an
+    // approved root (a project root or PickForge home) — so a renderer can't read
+    // a capture it planted in an inspect-shaped dir outside any known project.
+    if !roots.contains(&canon) {
+        return Err("image path is outside an approved project root".into());
     }
     let meta = std::fs::metadata(&canon).map_err(|e| e.to_string())?;
     if !meta.is_file() {
@@ -405,24 +421,48 @@ mod read_image_tests {
         std::fs::canonicalize(&dir).unwrap()
     }
 
+    /// An `ApprovedRoots` that approves the project root owning
+    /// `<root>/.pickforge/inspect`, so the new approved-root gate passes.
+    fn approved_for(inspect_dir: &Path) -> ApprovedRoots {
+        let project_root = inspect_dir
+            .parent() // .pickforge
+            .and_then(Path::parent) // project root
+            .expect("inspect dir has a project root");
+        let roots = ApprovedRoots::default();
+        roots.insert(project_root);
+        roots
+    }
+
     const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 
     #[test]
     fn reads_a_png_under_the_inspect_root() {
         let root = temp_inspect_root("ok");
+        let roots = approved_for(&root);
         let png = root.join("a11y-screenshot.png");
         std::fs::write(&png, PNG_MAGIC).unwrap();
-        let url = read_image_data_url(png.to_string_lossy().into_owned())
+        let url = read_image_data_url_inner(&roots, png.to_string_lossy().into_owned())
             .expect("read")
             .expect("some data url");
         assert!(url.starts_with("data:image/png;base64,"));
     }
 
     #[test]
+    fn rejects_a_png_outside_an_approved_root() {
+        // A capture sitting in an inspect-shaped dir that belongs to no approved
+        // project root must be rejected even though its shape passes.
+        let root = temp_inspect_root("unapproved");
+        let png = root.join("a11y-screenshot.png");
+        std::fs::write(&png, PNG_MAGIC).unwrap();
+        let res = read_image_data_url_inner(&ApprovedRoots::default(), png.to_string_lossy().into_owned());
+        assert!(res.is_err(), "an unapproved inspect-dir capture must be rejected");
+    }
+
+    #[test]
     fn rejects_a_file_outside_the_inspect_root() {
         let outside = std::env::temp_dir().join(format!("pf-secret-{}.png", std::process::id()));
         std::fs::write(&outside, PNG_MAGIC).unwrap();
-        let res = read_image_data_url(outside.to_string_lossy().into_owned());
+        let res = read_image_data_url_inner(&ApprovedRoots::default(), outside.to_string_lossy().into_owned());
         assert!(res.is_err(), "an out-of-root path must be rejected");
         let _ = std::fs::remove_file(&outside);
     }
@@ -441,7 +481,7 @@ mod read_image_tests {
                 .to_string_lossy()
                 .into_owned(),
         );
-        let res = read_image_data_url(sneaky.to_string_lossy().into_owned());
+        let res = read_image_data_url_inner(&ApprovedRoots::default(), sneaky.to_string_lossy().into_owned());
         assert!(res.is_err(), "a traversal path must be rejected");
         let _ = std::fs::remove_file(&secret);
     }
@@ -451,6 +491,7 @@ mod read_image_tests {
     fn rejects_a_symlinked_escape_from_the_inspect_root() {
         use std::os::unix::fs::symlink;
         let root = temp_inspect_root("symlink");
+        let roots = approved_for(&root);
         let secret = std::env::temp_dir().join(format!("pf-symsecret-{}.png", std::process::id()));
         std::fs::write(&secret, PNG_MAGIC).unwrap();
         let link = root.join("link.png");
@@ -458,7 +499,7 @@ mod read_image_tests {
         symlink(&secret, &link).unwrap();
         // The link sits under the inspect root, but canonicalization resolves it
         // to the out-of-root target, whose parent is not an inspect root.
-        let res = read_image_data_url(link.to_string_lossy().into_owned());
+        let res = read_image_data_url_inner(&roots, link.to_string_lossy().into_owned());
         assert!(res.is_err(), "a symlink escaping the inspect root must be rejected");
         let _ = std::fs::remove_file(&secret);
     }
@@ -466,9 +507,10 @@ mod read_image_tests {
     #[test]
     fn returns_none_for_a_non_png_under_the_root() {
         let root = temp_inspect_root("notpng");
+        let roots = approved_for(&root);
         let txt = root.join("a11y-screenshot.png");
         std::fs::write(&txt, b"not a png at all").unwrap();
-        let res = read_image_data_url(txt.to_string_lossy().into_owned()).expect("ok");
+        let res = read_image_data_url_inner(&roots, txt.to_string_lossy().into_owned()).expect("ok");
         assert!(res.is_none(), "a non-PNG must yield None");
     }
 }

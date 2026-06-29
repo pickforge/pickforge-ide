@@ -5,16 +5,17 @@ current codebase and should override personal/global defaults when they conflict
 
 ## Project overview
 
-Pickforge is a local desktop app for selecting widgets in a running Flutter app,
-writing widget context into `.pickforge/`, and pasting that context into an
-embedded terminal. The terminal is shell-first: it runs the user's `$SHELL` in
-the project root, with quick-launch chips that type agent CLI commands
-(claude/codex/…) for the user to run.
+Pickforge is a local desktop app for selecting on-screen elements in a running
+app — Flutter (deep), React Native and native Android (useful), web
+(experimental) — writing the selected element's context into `.pickforge/`, and
+pasting that context into an embedded terminal. The terminal is shell-first: it
+runs the user's `$SHELL` in the project root, with quick-launch chips that type
+agent CLI commands (claude/codex/…) for the user to run.
 
 It is built on **Tauri v2**: a UI-agnostic Rust core, a Tauri shell that adapts
-the core to IPC, and a SolidJS frontend. (The app targets Flutter projects; it is
-no longer itself written in Flutter — that was migrated away. See
-`plans/rust-migration/`.)
+the core to IPC, and a SolidJS frontend. (The app targets mobile and web
+projects, not only Flutter; it is no longer itself written in Flutter — that was
+migrated away. See `plans/rust-migration/`.)
 
 ## Tooling
 

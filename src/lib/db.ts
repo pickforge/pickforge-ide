@@ -15,6 +15,7 @@ export interface Chat {
   chatId: string;
   projectRoot: string;
   title: string;
+  kind: string;
   agentId: string;
   skillId: string | null;
   sessionId: string | null;

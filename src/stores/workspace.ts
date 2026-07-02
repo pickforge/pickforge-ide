@@ -273,7 +273,12 @@ export async function deleteProject(root: string) {
   chats.forEach((c) => unmarkDestroying(c.chatId));
 }
 
-export async function addChat(title: string, agentId: string, root = state.activeRoot) {
+export async function addChat(
+  title: string,
+  agentId: string,
+  root = state.activeRoot,
+  kind = "terminal",
+) {
   if (!root) return;
   setState("activeRoot", root);
   const now = Date.now();
@@ -282,6 +287,7 @@ export async function addChat(title: string, agentId: string, root = state.activ
     chatId,
     projectRoot: root,
     title,
+    kind,
     agentId,
     skillId: null,
     sessionId: null,

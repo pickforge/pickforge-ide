@@ -26,9 +26,21 @@ import {
 } from "../../stores/quickLaunch";
 import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
 import { chatBackend } from "../../stores/chatSessions";
+import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity } from "../../stores/chatActivity";
+import { isChatArchived } from "../../stores/chatArchive";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import { armChatAutoName, handleOscTitle, maybeAutoNameChat } from "../../lib/chatAutoName";
+import {
+  armChatAutoName,
+  chatHadAgentSession,
+  clearChatAgentSession,
+  forgetChatAutoName,
+  handleOscTitle,
+  markChatSessionPane,
+  maybeAutoNameChat,
+  revokeAgentPane,
+  transferAgentPaneOwnership,
+} from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import "./workbench.css";
@@ -76,6 +88,10 @@ export function WorkbenchScreen() {
   // second reactive read) never kicks off two binds / two mounts for one chat.
   const binding = new Set<string>();
 
+  createEffect(() => {
+    setActiveChatForActivity(workspace.activeChatId);
+  });
+
   // Mount a host the first time its chat becomes active; keep it after. AWAIT the
   // project's MCP endpoint before mounting, so the very first shell carries the
   // discovery env (PICKFORGE_IPC_ENDPOINT). `TerminalPane` reads `props.env` once
@@ -111,6 +127,8 @@ export function WorkbenchScreen() {
     // Tear down a chat's host (and shells) only when the chat is deleted.
     const offDelete = onChatDeleted((chatId) => {
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
+      clearChatActivity(chatId);
+      forgetChatAutoName(chatId);
       deleteTerminalHost(chatId);
     });
 
@@ -243,14 +261,43 @@ export function WorkbenchScreen() {
                       projectRoot: h.projectRoot,
                       sessionId: storedSessionId,
                       backend: chatBackend(h.chatId, storedSessionId),
-                      onSession: (info) => {
+                      onSession: (info, paneId) => {
                         // Persist the resolved recovery id (narrow write). On a raw
                         // degrade with no id we leave the stored one alone.
                         if (info.sessionId) void setChatSessionId(h.chatId, info.sessionId);
+                        // Fresh session: whatever agent flag the old one carried
+                        // died with it. Clear BEFORE markChatSessionPane, which
+                        // re-persists when a chip launch beat this spawn report.
+                        if (!info.attached) clearChatAgentSession(h.chatId);
+                        markChatSessionPane(h.chatId, paneId);
+                        if (info.attached && chatHadAgentSession(h.chatId)) {
+                          // The live session survived a restart/pane-close with an
+                          // agent launched into it — re-mark the recovered pane so
+                          // busy/attention still work, but let the re-attach screen
+                          // replay pass without counting as fresh activity.
+                          armChatAutoName(h.chatId, paneId);
+                          graceChatUnseen(h.chatId, REATTACH_REPLAY_GRACE_MS);
+                        }
                       },
                     };
                   })()}
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
+                  onOutput={(chunk, paneId) => {
+                    // An archived chat renders no indicator anywhere — never let
+                    // its still-running shell drive activity or an orphan chime.
+                    if (!isChatArchived(h.chatId)) recordChatOutput(h.chatId, paneId, chunk);
+                  }}
+                  onBell={(paneId) => {
+                    if (!isChatArchived(h.chatId)) recordChatAttention(h.chatId, paneId);
+                  }}
+                  onNotification={(_, paneId) => {
+                    if (!isChatArchived(h.chatId)) recordChatAttention(h.chatId, paneId);
+                  }}
+                  onPrimaryPaneRemount={(fromPaneId, toPaneId) => transferAgentPaneOwnership(h.chatId, fromPaneId, toPaneId)}
+                  onPaneClosed={(paneId) => {
+                    revokeAgentPane(h.chatId, paneId);
+                    handlePaneClosed(h.chatId, paneId);
+                  }}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                   onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
                 />

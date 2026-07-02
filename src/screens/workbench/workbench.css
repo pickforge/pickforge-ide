@@ -667,6 +667,22 @@ body.pf-resizing .pf-dock-resizer-grip {
   color: var(--pf-text-hi);
   box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
 }
+.pf-chat-row--busy:not(.active) {
+  background: color-mix(in srgb, var(--pf-ember) 8%, transparent);
+  box-shadow: inset var(--pf-bracket-width) 0 0 color-mix(in srgb, var(--pf-ember) 58%, transparent);
+}
+.pf-chat-row--busy:not(.active):hover {
+  background: color-mix(in srgb, var(--pf-ember) 12%, var(--pf-item-fill));
+}
+.pf-chat-row--attention {
+  background: color-mix(in srgb, var(--pf-warning) 16%, var(--pf-surface-1));
+  color: var(--pf-text-hi);
+  box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-warning);
+  animation: pf-chat-attention var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
+}
+.pf-chat-row--attention:hover {
+  background: color-mix(in srgb, var(--pf-warning) 22%, var(--pf-surface-2));
+}
 .pf-chat-row--archived {
   color: var(--pf-text-low);
 }
@@ -682,6 +698,22 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-chat-row.active .pf-chat-dot {
   background: var(--pf-text-hi);
+}
+.pf-chat-row--busy .pf-chat-dot {
+  background: var(--pf-ember);
+  box-shadow: var(--pf-glow-ember-soft);
+}
+.pf-chat-row--attention .pf-chat-dot {
+  background: var(--pf-warning);
+  box-shadow: 0 0 var(--pf-space-md) color-mix(in srgb, var(--pf-warning) 70%, transparent);
+}
+@keyframes pf-chat-attention {
+  50% {
+    background: color-mix(in srgb, var(--pf-warning) 24%, var(--pf-surface-2));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-row--attention { animation: none; }
 }
 .pf-chat-title {
   flex: 1;

@@ -54,6 +54,7 @@ import {
   workspace,
 } from "../../stores/workspace";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
+import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
 import { pickProjectDir } from "../../lib/opener";
 
@@ -262,6 +263,9 @@ export function ProjectsPane() {
   const doArchiveChat = (id: string) => {
     const chat = chatsFor(workspace.activeRoot ?? "").find((c) => c.chatId === id);
     archiveChat(id);
+    // An archived row renders no busy/attention state — drop the activity too,
+    // or a pending quiet-timer would chime with no visible source.
+    clearChatActivity(id);
     if (workspace.activeChatId === id) {
       const root = chat?.projectRoot ?? workspace.activeRoot;
       const next = root ? chatsFor(root).find((c) => c.chatId !== id && !isChatArchived(c.chatId)) : undefined;
@@ -299,6 +303,8 @@ export function ProjectsPane() {
         classList={{
           active: workspace.activeChatId === id,
           "pf-chat-row--archived": p.archived,
+          "pf-chat-row--busy": !p.archived && chatBusy(id) && !chatAttention(id),
+          "pf-chat-row--attention": !p.archived && workspace.activeChatId !== id && chatAttention(id),
           "pf-drop-before": edgeFor("chat", id) === "before",
           "pf-drop-after": edgeFor("chat", id) === "after",
         }}

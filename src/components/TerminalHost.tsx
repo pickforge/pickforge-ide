@@ -175,6 +175,18 @@ export function TerminalHost(props: {
   /** Forwarded from every pane: a line the user typed and submitted, tagged with
    *  the id of the pane it came from. */
   onUserSubmit?: (line: string, paneId: string) => void;
+  /** Forwarded from every pane: decoded terminal output, tagged with the pane id. */
+  onOutput?: (chunk: string, paneId: string) => void;
+  /** Forwarded from every pane: terminal bell, tagged with the pane id. */
+  onBell?: (paneId: string) => void;
+  /** Forwarded from every pane: terminal notification OSC, tagged with the pane id. */
+  onNotification?: (message: string, paneId: string) => void;
+  /** Called when the session-backed primary remounts under a fresh pane id. */
+  onPrimaryPaneRemount?: (fromPaneId: string, toPaneId: string) => void;
+  /** Called when a pane leaves the split tree and its shell is killed — the
+   *  user closed it, or it was the survivor swapped out by a primary
+   *  promotion. Lets the host drop per-pane state (agent ownership, activity). */
+  onPaneClosed?: (paneId: string) => void;
   /** Forwarded from every pane: the shell/agent's OSC 2 terminal title, tagged
    *  with the pane id — the host maps it to this chat's name. */
   onTitle?: (title: string, paneId: string) => void;
@@ -185,7 +197,10 @@ export function TerminalHost(props: {
     projectRoot: string;
     sessionId?: string | null;
     backend: "dtach" | "tmux" | "raw";
-    onSession?: (info: { sessionId: string | null; backend: string; degraded: boolean }) => void;
+    onSession?: (
+      info: { sessionId: string | null; backend: string; degraded: boolean; attached: boolean },
+      paneId: string,
+    ) => void;
   };
 }) {
   const first = newLeaf();
@@ -265,11 +280,17 @@ export function TerminalHost(props: {
         next = mapLeaves(next, (l) => (l.id === survivor.id ? promoted : l));
         handles.delete(survivor.id);
         setPrimaryId(promoted.id);
+        props.onPrimaryPaneRemount?.(id, promoted.id);
+        // The survivor's raw shell dies in the swap (the promoted pane
+        // re-attaches the chat session instead) — report it as closed so any
+        // agent ownership it held doesn't outlive the shell.
+        props.onPaneClosed?.(survivor.id);
         if (focusedId() === survivor.id) setFocusedId(promoted.id);
       }
     }
     setRoot(next);
     handles.delete(id);
+    props.onPaneClosed?.(id);
     setMenuFor((m) => (m === id ? null : m));
     if (focusedId() === id) {
       const remaining = collectLeaves(next);
@@ -546,8 +567,17 @@ export function TerminalHost(props: {
                             projectRoot: props.session.projectRoot,
                             sessionId: props.session.sessionId,
                             backend: props.session.backend,
-                            onSession: props.session.onSession,
+                            onSession: (info) => props.session?.onSession?.(info, leaf.id),
                           }
+                        : undefined
+                    }
+                    onOutput={
+                      props.onOutput ? (chunk) => props.onOutput?.(chunk, leaf.id) : undefined
+                    }
+                    onBell={props.onBell ? () => props.onBell?.(leaf.id) : undefined}
+                    onNotification={
+                      props.onNotification
+                        ? (message) => props.onNotification?.(message, leaf.id)
                         : undefined
                     }
                     onUserSubmit={(line) => props.onUserSubmit?.(line, leaf.id)}

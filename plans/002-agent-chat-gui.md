@@ -1,6 +1,6 @@
 # Plan 002 — Agent Chat GUI (Claude Code + Codex, structured chat)
 
-Status: **draft, ready to implement** · Created 2026-07-02 · Depends on: nothing (additive to workbench)
+Status: **v1 implemented (2026-07-02), v2/v3 pending** · Created 2026-07-02 · Depends on: nothing (additive to workbench)
 
 Goal: a chat surface in the workbench for talking to Claude Code and Codex without the terminal — bubbles for text, collapsible thought streams, cards for tool usage / shell commands / file changes, inline approval buttons, resumable sessions. Three phases: v1 proves the pipe on the stable CLI surfaces, v2 goes interactive on the rich protocols, v3 visualizes multi-agent orchestration.
 
@@ -89,17 +89,17 @@ src/components/chat/
 
 ## Phase v1 — prove the pipe (stable surfaces, no mid-run approvals)
 
-- [ ] `event.rs` + `AgentEvent` serde round-trip tests
-- [ ] DB migration: `agent_sessions`, `agent_messages`, `agent_items` (+ index by chat)
-- [ ] `codex_exec.rs`: spawn per turn (`codex exec --json -o <tmp>`, resume via `codex exec resume <thread_id>`), parser + fixture tests. Record real JSONL into `fixtures/agents/codex-exec/*.jsonl`
-- [ ] `claude_stream.rs`: spawn per turn (`claude -p … --resume <session_id>`), parser + fixtures in `fixtures/agents/claude-stream/`
-- [ ] Session-id ledger: persist `provider_session_id` on `SessionStarted` **before** first render (survives crash; recovery documented from `~/.codex/sessions/…-<thread_id>.jsonl` and `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`)
-- [ ] `agent_chat_commands.rs` + `Channel<AgentEvent>` plumbing (copy PTY channel pattern)
-- [ ] Frontend: store, timeline, bubbles, ThinkingBubble, CommandCard, FileChangeCard (no diff in v1 for Codex — exec doesn't carry diffs; show paths/kinds), TokenBadge, Composer
-- [ ] New-chat flow: "Structured chat" option next to terminal chat; provider + model + effort from `agentModels.ts`; cwd = project root
-- [ ] Interrupt = kill child process; render `TurnFailed(interrupted)`
-- [ ] Safety defaults per D7; settings surface for sandbox/permission-mode overrides
-- [ ] Unit: parser fixtures; VRT: timeline with fixture-driven story states
+- [x] `event.rs` + `AgentEvent` serde round-trip tests
+- [x] DB migration: `agent_sessions`, `agent_messages`, `agent_items` (+ index by chat)
+- [x] `codex_exec.rs`: spawn per turn (`codex exec --json -o <tmp>`, resume via `codex exec resume <thread_id>`), parser + fixture tests. Record real JSONL into `fixtures/agents/codex-exec/*.jsonl`
+- [x] `claude_stream.rs`: spawn per turn (`claude -p … --resume <session_id>`), parser + fixtures in `fixtures/agents/claude-stream/`
+- [x] Session-id ledger: persist `provider_session_id` on `SessionStarted` **before** first render (survives crash; recovery documented from `~/.codex/sessions/…-<thread_id>.jsonl` and `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`)
+- [x] `agent_chat_commands.rs` + `Channel<AgentEvent>` plumbing (copy PTY channel pattern)
+- [x] Frontend: store, timeline, bubbles, ThinkingBubble, CommandCard, FileChangeCard (no diff in v1 for Codex — exec doesn't carry diffs; show paths/kinds), TokenBadge, Composer
+- [x] New-chat flow: "Structured chat" option next to terminal chat; provider + model + effort from `agentModels.ts`; cwd = project root
+- [x] Interrupt = kill child process; render `TurnFailed(interrupted)`
+- [x] Safety defaults per D7 (hardcoded in runners); settings surface for overrides DEFERRED to v2 (belongs with the approvals UI)
+- [x] Unit: parser fixtures; VRT: timeline with fixture-driven story states
 
 Acceptance: send a prompt to each provider from the GUI, watch text stream (Claude) / items arrive (Codex), see a shell command card with exit code, close app, reopen, resume both conversations, send follow-up that proves context survived.
 

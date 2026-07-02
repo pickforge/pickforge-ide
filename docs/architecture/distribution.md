@@ -1,8 +1,10 @@
 # Distribution Strategy
 
-Pickforge release automation currently builds raw Flutter desktop artifacts on
-Linux, macOS, and Windows. Public distribution needs packaging, signing, and
-native-host dogfood before release signoff.
+Pickforge v0.1.0 ships through GitHub Releases: Linux `AppImage`/`.deb`/`.rpm`,
+macOS arm64 `.dmg`/`.app`, and Windows `.msi`/NSIS installers. The in-app
+updater is fed by a signed `latest.json`. Shipping unsigned binaries was an
+accepted decision for v0.1.0; OS code signing, notarization, and a macOS x86_64
+build are hardening gates for the next release.
 
 ## Update Channel
 
@@ -11,11 +13,13 @@ native-host dogfood before release signoff.
   `docs/architecture/update-checks.md`.
 - The metadata endpoint should point users to the selected package or release
   page for their platform.
-- Auto-installing updates is platform-specific and gated by signing.
+- The updater reads the signed `latest.json` feed; auto-installing updates
+  stays platform-specific and gated by OS code signing.
 
 ## macOS
 
-- Package as a signed and notarized `.dmg` or `.zip` containing the `.app`.
+- v0.1.0 ships an unsigned arm64 `.dmg`/`.app`. Signing, notarization, and an
+  x86_64 build are next-release hardening gates.
 - Use Sparkle 2 for automatic app updates after signing, notarization, and an
   HTTPS appcast are available.
 - Keep Sparkle disabled until the appcast, EdDSA keys, release notes, and
@@ -29,17 +33,15 @@ native-host dogfood before release signoff.
 
 - Prefer package-manager distribution first: `winget` manifest and optional
   Scoop bucket.
-- Keep in-app self-update out of MVP unless Windows signing and rollback are
-  ready.
-- Public installers must be Authenticode-signed before release.
+- v0.1.0 ships unsigned `.msi`/NSIS installers with the in-app updater feed.
+- Authenticode signing and rollback are next-release hardening gates.
 - Native validation requires a Windows host that can install the release
   artifact, run SmartScreen reputation checks, and verify PATH/tool discovery.
 
 ## Linux
 
-- Ship an AppImage for broad desktop testing with
-  `scripts/package_linux_appimage.sh`, then validate it with
-  `scripts/linux_appimage_smoke.sh --skip-build`.
+- v0.1.0 ships the AppImage built with `scripts/package_linux_appimage.sh` and
+  validated with `scripts/linux_appimage_smoke.sh --skip-build`.
 - Build a `.deb` package for Debian/Ubuntu users with
   `scripts/package_linux_deb.sh`.
 - Build Linux release artifacts on Ubuntu 24.04 so `.deb` binaries do not pick
@@ -58,7 +60,8 @@ native-host dogfood before release signoff.
   only worth adding if users ask for it.
 - Package metadata must include desktop entry, icon, executable name, license,
   and update/check URL behavior.
-- Package signing is still required before public distribution.
+- Package signing is a next-release hardening gate; v0.1.0 shipped unsigned by
+  decision.
 
 ## Signing And Secrets
 
@@ -80,4 +83,5 @@ native-host dogfood before release signoff.
 - Update-check endpoint returns valid metadata for the tagged version.
 - Rollback instructions exist before enabling automatic update installation.
 
-Current public-release blockers are tracked in `docs/release-blockers.md`.
+Remaining next-release hardening blockers are tracked in
+`docs/release-blockers.md`.

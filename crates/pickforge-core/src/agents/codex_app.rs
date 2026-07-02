@@ -790,13 +790,20 @@ fn item_completed_events(params: &Value) -> Vec<RoutedEvent> {
                 text: string_field(item, &["text"]).unwrap_or_default(),
             },
         ),
-        "reasoning" => routed(
-            params,
-            AgentEvent::ThinkingFinal {
-                item_id: string_field(item, &["id"]),
-                text: reasoning_text(item),
-            },
-        ),
+        "reasoning" => {
+            let text = reasoning_text(item);
+            if text.trim().is_empty() {
+                Vec::new()
+            } else {
+                routed(
+                    params,
+                    AgentEvent::ThinkingFinal {
+                        item_id: string_field(item, &["id"]),
+                        text,
+                    },
+                )
+            }
+        }
         "fileChange" | "file_change" => routed(
             params,
             AgentEvent::FileChange {
@@ -1312,6 +1319,16 @@ mod tests {
                     line: "not json".to_string(),
                 },
             }])
+        );
+    }
+
+    #[test]
+    fn skips_empty_reasoning_final() {
+        assert_eq!(
+            parse_incoming_line(
+                r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"reasoning","id":"think-1","text":"   "}}}"#
+            ),
+            IncomingLine::Events(Vec::new())
         );
     }
 

@@ -173,6 +173,7 @@ impl ClaudeStreamParser {
     fn map_assistant_block(&mut self, block: &Value) -> Vec<AgentEvent> {
         match string_at(block, "type") {
             Some("thinking") => string_at(block, "thinking")
+                .filter(|text| !text.trim().is_empty())
                 .map(|text| {
                     vec![AgentEvent::ThinkingFinal {
                         item_id: None,
@@ -898,6 +899,16 @@ mod tests {
             })
         ));
         assert!(!has_noise(&events));
+    }
+
+    #[test]
+    fn skips_empty_assistant_thinking_block() {
+        let mut parser = ClaudeStreamParser::new();
+        let events = parser.push_line(
+            r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"   "}]}}"#,
+        );
+
+        assert!(events.is_empty());
     }
 
     #[test]

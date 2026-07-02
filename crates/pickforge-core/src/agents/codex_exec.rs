@@ -238,10 +238,14 @@ fn parse_item_event(event_type: &str, value: &Value) -> Option<AgentEvent> {
             item_id: item_id(item),
             text: string_field(item, &["text"]).unwrap_or_default(),
         }),
-        "reasoning" => completed.then(|| AgentEvent::ThinkingFinal {
-            item_id: item_id(item),
-            text: reasoning_text(item),
-        }),
+        "reasoning" if completed => {
+            let text = reasoning_text(item);
+            (!text.trim().is_empty()).then(|| AgentEvent::ThinkingFinal {
+                item_id: item_id(item),
+                text,
+            })
+        }
+        "reasoning" => None,
         "command_execution" => match event_type {
             "item.started" => Some(AgentEvent::CommandStarted {
                 item_id: item_id_value,
@@ -881,6 +885,16 @@ mod tests {
             Some(AgentEvent::TurnFailed {
                 error: "boom".to_string(),
             })
+        );
+    }
+
+    #[test]
+    fn skips_empty_reasoning_final() {
+        assert_eq!(
+            parse_codex_exec_line(
+                r#"{"type":"item.completed","item":{"id":"think-1","type":"reasoning","text":"   "}}"#
+            ),
+            None
         );
     }
 

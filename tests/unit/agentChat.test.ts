@@ -155,6 +155,25 @@ describe("agentChat store reducer", () => {
     ]);
   });
 
+  it("ignores blank thinking final events", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "thinkingFinal", itemId: "think-1", text: "   " });
+
+    expect(timeline(chatId)).toEqual([]);
+  });
+
+  it("keeps streamed thinking when a blank final arrives", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "thinkingDelta", text: "reason" });
+    emit({ kind: "thinkingFinal", itemId: "think-1", text: "   " });
+
+    expect(timeline(chatId)).toMatchObject([
+      { type: "thinking", text: "reason", streaming: false },
+    ]);
+  });
+
   it("updates command completion by item id", async () => {
     const { chatId, emit } = await startChat();
 
@@ -244,6 +263,22 @@ describe("agentChat store reducer", () => {
       { type: "assistantText", text: "hello", streaming: false },
       { type: "thinking", text: "checking", streaming: false },
     ]);
+  });
+
+  it("drops blank streamed thinking on terminal turn events", async () => {
+    const doneChat = await startChat();
+
+    doneChat.emit({ kind: "thinkingDelta", text: "   " });
+    doneChat.emit({ kind: "turnDone", status: "completed" });
+
+    expect(timeline(doneChat.chatId)).toEqual([]);
+
+    const failedChat = await startChat();
+
+    failedChat.emit({ kind: "thinkingDelta", text: "" });
+    failedChat.emit({ kind: "turnFailed", error: "boom" });
+
+    expect(timeline(failedChat.chatId)).toEqual([]);
   });
 
   it("stores approval requests and clears them on turn done", async () => {
@@ -457,6 +492,38 @@ describe("agentChat history", () => {
       { type: "userMessage", seq: 1, text: "hello" },
       { type: "assistantText", seq: 2, text: "hi", streaming: false },
       { type: "thinking", seq: 3, text: "checked", streaming: false },
+    ]);
+  });
+
+  it("skips blank persisted thinking items", async () => {
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "item",
+        seq: 1,
+        kind: "thinkingFinal",
+        payload: JSON.stringify({ kind: "thinkingFinal", itemId: "t1", text: "" }),
+        createdAt: 1,
+      },
+      {
+        entryType: "item",
+        seq: 2,
+        kind: "thinkingFinal",
+        payload: JSON.stringify({ kind: "thinkingFinal", itemId: "t2", text: "   " }),
+        createdAt: 2,
+      },
+      {
+        entryType: "message",
+        seq: 3,
+        role: "assistant",
+        content: "still loads",
+        createdAt: 3,
+      },
+    ];
+
+    const { chatId } = await startChat(history);
+
+    expect(timeline(chatId)).toMatchObject([
+      { type: "assistantText", seq: 3, text: "still loads", streaming: false },
     ]);
   });
 

@@ -168,6 +168,10 @@ function withTimeline(chat: AgentChatState, timeline: AgentTimelineItem[]): Agen
   return { ...chat, timeline };
 }
 
+function isBlankText(text: string): boolean {
+  return text.trim().length === 0;
+}
+
 function lastPlanIndex(timeline: AgentTimelineItem[]): number {
   for (let i = timeline.length - 1; i >= 0; i--) {
     if (timeline[i].type === "plan") return i;
@@ -233,13 +237,19 @@ function approvalFromEvent(
 
 function finalizeStreaming(chat: AgentChatState): AgentChatState {
   let changed = false;
-  const timeline = chat.timeline.map((item) => {
+  const timeline: AgentTimelineItem[] = [];
+  for (const item of chat.timeline) {
+    if (item.type === "thinking" && item.streaming && isBlankText(item.text)) {
+      changed = true;
+      continue;
+    }
     if ((item.type === "assistantText" || item.type === "thinking") && item.streaming) {
       changed = true;
-      return { ...item, streaming: false };
+      timeline.push({ ...item, streaming: false });
+      continue;
     }
-    return item;
-  });
+    timeline.push(item);
+  }
   return changed ? withTimeline(chat, timeline) : chat;
 }
 
@@ -299,12 +309,19 @@ function reduceThinkingFinal(
   text: string,
   nextSeq: () => number,
 ): AgentChatState {
+  const blank = isBlankText(text);
   const last = chat.timeline[chat.timeline.length - 1];
   if (last?.type === "thinking" && last.streaming) {
     const timeline = chat.timeline.slice();
-    timeline[timeline.length - 1] = { ...last, text, streaming: false };
+    if (blank) {
+      if (isBlankText(last.text)) timeline.pop();
+      else timeline[timeline.length - 1] = { ...last, streaming: false };
+    } else {
+      timeline[timeline.length - 1] = { ...last, text, streaming: false };
+    }
     return withTimeline(chat, timeline);
   }
+  if (blank) return chat;
   return withTimeline(chat, [
     ...chat.timeline,
     { type: "thinking", seq: nextSeq(), text, streaming: false },
@@ -542,7 +559,9 @@ function stateFromHistory(
       continue;
     }
     const event = parseAgentEvent(entry.payload);
-    if (event) chat = reduceAgentEvent(chat, event, () => entry.seq);
+    if (!event) continue;
+    if (event.kind === "thinkingFinal" && isBlankText(event.text)) continue;
+    chat = reduceAgentEvent(chat, event, () => entry.seq);
   }
   nextSeqByChat.set(chatId, maxSeq + 1);
   return chat;

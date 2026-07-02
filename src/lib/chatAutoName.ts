@@ -42,6 +42,21 @@ const AGENT_BINARIES = new Set<string>([
 const VALUE_FLAGS = /^(-m|--model|--cwd|-C|--profile|--config|-c)$/;
 
 const MAX_TITLE = 48;
+const AGENT_CHAT_MAX_TITLE = 42;
+const GENERIC_AGENT_CHAT_TEXT = new Set([
+  "hi",
+  "hello",
+  "hey",
+  "yo",
+  "ok",
+  "okay",
+  "thanks",
+  "thank you",
+  "help",
+  "please help",
+  "can you help",
+  "can you help me",
+]);
 
 // chatId -> the pane id armed for auto-naming. Scoped to a pane so that, in a
 // chat with split terminals, only the pane the agent launched in can supply the
@@ -415,6 +430,56 @@ function toTitle(raw: string): string {
   if (s.length > MAX_TITLE) {
     const cut = s.slice(0, MAX_TITLE);
     const onWord = cut.replace(/\s+\S*$/, "");
+    s = `${(onWord.length >= 12 ? onWord : cut).trim()}…`;
+  }
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+export function deriveAgentChatTitle(firstUserText: string, firstAssistantText?: string): string {
+  const userTitle = cleanAgentChatTitleSource(firstUserText);
+  const assistantTitle = cleanAgentChatTitleSource(firstAssistantText ?? "");
+  const source = isTrivialAgentChatTitle(userTitle) && assistantTitle ? assistantTitle : userTitle;
+  return formatAgentChatTitle(source);
+}
+
+function cleanAgentChatTitleSource(raw: string): string {
+  return raw
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/https?:\/\/\S+|www\.\S+/gi, " ")
+    .split(/\n+/)
+    .map((line) =>
+      line
+        .replace(/^\s{0,3}>\s?/, "")
+        .replace(/^\s{0,3}#{1,6}\s+/, "")
+        .replace(/^\s*[-*+]\s+/, "")
+        .replace(/^\s*\d+[.)]\s+/, "")
+        .replace(/^\s*\[[ xX]\]\s+/, ""),
+    )
+    .join(" ")
+    .replace(/[*_~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^["'`“”‘’]+/, "")
+    .replace(/["'`“”‘’]+$/, "")
+    .trim();
+}
+
+function isTrivialAgentChatTitle(title: string): boolean {
+  const normalized = title.toLowerCase().replace(/[.!?]+$/g, "").trim();
+  return normalized.length <= 2 || GENERIC_AGENT_CHAT_TEXT.has(normalized);
+}
+
+function formatAgentChatTitle(raw: string): string {
+  let s = raw.trim();
+  if (!s) return "";
+  if (s.length > AGENT_CHAT_MAX_TITLE) {
+    const cut = s.slice(0, AGENT_CHAT_MAX_TITLE);
+    const onWord = /\S/.test(s.charAt(AGENT_CHAT_MAX_TITLE))
+      ? cut.replace(/\s+\S*$/, "").trim()
+      : cut.trim();
     s = `${(onWord.length >= 12 ? onWord : cut).trim()}…`;
   }
   return s.charAt(0).toUpperCase() + s.slice(1);

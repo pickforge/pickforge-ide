@@ -384,6 +384,16 @@ export async function setChatTitle(chatId: string, title: string) {
   );
 }
 
+export async function setChatAgent(chatId: string, agentId: string, kind = "agent") {
+  const c = findChat(chatId);
+  if (!c || (c.agentId === agentId && c.kind === kind)) return;
+  const next = { ...c, agentId, kind };
+  await db.chatUpsert(next);
+  setState("chatsByRoot", c.projectRoot, (list) =>
+    list.map((x) => (x.chatId === chatId ? next : x)),
+  );
+}
+
 /** Persist a chat's recovery `session_id` (dtach socket / tmux name, with a
  *  backend tag), updating the store in place via the narrow write. Null clears
  *  it (e.g. when the backend degraded to a raw shell we LEAVE it; the caller

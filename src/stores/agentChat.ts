@@ -12,14 +12,15 @@ import {
   type AgentProvider,
   type AgentTimelineEntry,
 } from "../lib/agentChat";
+import { deriveAgentChatTitle, isDefaultChatTitle } from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
-import { findChat } from "./workspace";
+import { findChat, setChatAgent, setChatTitle } from "./workspace";
 
 export type AgentTimelineItem =
-  | { type: "userMessage"; seq: number; text: string }
+  | { type: "userMessage"; seq: number; text: string; images?: string[] }
   | { type: "assistantText"; seq: number; text: string; streaming: boolean }
   | { type: "thinking"; seq: number; text: string; streaming: boolean }
   | {
@@ -87,6 +88,8 @@ export interface AgentChatState {
   projectRoot: string | null;
   provider: AgentProvider;
   model: string | null;
+  effort: string | null;
+  providerSwitched: boolean;
   turnActive: boolean;
   error: string | null;
   timeline: AgentTimelineItem[];
@@ -102,6 +105,7 @@ export interface AgentChatState {
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
 const nextSeqByChat = new Map<string, number>();
 const ensurePromises = new Map<string, Promise<void>>();
+const autoRenameChecked = new Set<string>();
 
 // Chats whose active turn the user just interrupted: the backend still emits
 // the terminal turnDone/turnFailed, which must clear the busy glow WITHOUT
@@ -134,6 +138,8 @@ function emptyState(provider: AgentProvider, model: string | null): AgentChatSta
     projectRoot: null,
     provider,
     model,
+    effort: null,
+    providerSwitched: false,
     turnActive: false,
     error: null,
     timeline: [],
@@ -161,13 +167,22 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function appendOptimisticUserMessage(chatId: string, seq: number, text: string) {
+function appendOptimisticUserMessage(
+  chatId: string,
+  seq: number,
+  text: string,
+  images: string[] = [],
+) {
   const chat = chats[chatId];
   if (!chat) return;
+  const message: AgentTimelineItem =
+    images.length > 0
+      ? { type: "userMessage", seq, text, images: [...images] }
+      : { type: "userMessage", seq, text };
   setChats(chatId, {
     turnActive: true,
     error: null,
-    timeline: [...chat.timeline, { type: "userMessage", seq, text }],
+    timeline: [...chat.timeline, message],
   });
 }
 
@@ -428,7 +443,7 @@ function reduceAgentEvent(
     case "sessionStarted":
       return chat;
     case "turnStarted":
-      return { ...chat, turnActive: true, error: null };
+      return { ...chat, turnActive: true, error: null, providerSwitched: false };
     case "textDelta":
       return reduceTextDelta(chat, event.text, nextSeq);
     case "textFinal":
@@ -554,11 +569,29 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     interruptedByUser.delete(chatId);
     if (activityEligible(chatId)) agentTurnStarted(chatId);
   } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
+    if (event.kind === "turnDone") maybeAutoRenameAfterFirstTurn(chatId);
     const wasInterrupted = interruptedByUser.delete(chatId);
     if (!activityEligible(chatId)) return;
     if (wasInterrupted) agentTurnCleared(chatId);
     else agentTurnDone(chatId);
   }
+}
+
+function maybeAutoRenameAfterFirstTurn(chatId: string) {
+  if (autoRenameChecked.has(chatId)) return;
+  autoRenameChecked.add(chatId);
+
+  const row = findChat(chatId);
+  if (!row || typeof row.title !== "string" || !isDefaultChatTitle(row.title)) return;
+
+  const chat = chats[chatId];
+  if (!chat) return;
+  const userMessages = chat.timeline.filter((item) => item.type === "userMessage");
+  if (userMessages.length !== 1) return;
+  const firstAssistant = chat.timeline.find((item) => item.type === "assistantText");
+  const title = deriveAgentChatTitle(userMessages[0].text, firstAssistant?.text);
+  if (!title || isDefaultChatTitle(title)) return;
+  void setChatTitle(chatId, title).catch(() => undefined);
 }
 
 function parseAgentEvent(payload: string): AgentEvent | null {
@@ -618,9 +651,15 @@ export async function ensureAgentChat(
   const promise = (async () => {
     try {
       if (!chats[chatId].historyLoaded) {
+        const previous = chats[chatId];
         const history = await agentChatHistory(chatId);
         const loaded = stateFromHistory(chatId, provider, model, history);
-        setChats(chatId, { ...loaded, projectRoot });
+        setChats(chatId, {
+          ...loaded,
+          projectRoot,
+          effort: previous?.effort ?? loaded.effort,
+          providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
+        });
       }
       if (chats[chatId].sessionId) return;
       const sessionId = await agentChatStart({
@@ -644,14 +683,70 @@ export async function ensureAgentChat(
   return promise;
 }
 
-export async function sendAgentMessage(chatId: string, text: string): Promise<void> {
+export function setAgentChatModel(chatId: string, model: string | null) {
+  if (!chats[chatId]) return;
+  setChats(chatId, { model });
+}
+
+export function clearProviderSwitched(chatId: string) {
+  if (!chats[chatId]) return;
+  setChats(chatId, { providerSwitched: false });
+}
+
+export function setAgentChatEffort(chatId: string, effort: string | null) {
+  if (!chats[chatId]) return;
+  const value = effort?.trim() || null;
+  setChats(chatId, { effort: value });
+}
+
+function sendOptions(chat: AgentChatState, images: string[]) {
+  return {
+    ...(chat.provider === "codex" ? { effort: chat.effort, model: chat.model } : {}),
+    images: [...images],
+  };
+}
+
+export async function switchAgentChatProvider(
+  chatId: string,
+  provider: AgentProvider,
+  model: string | null,
+): Promise<boolean> {
+  const current = chats[chatId];
+  if (current?.turnActive) throw new Error("Cannot switch provider while a turn is active");
+
+  const row = findChat(chatId);
+  const projectRoot = current?.projectRoot ?? row?.projectRoot ?? null;
+  if (!projectRoot) throw new Error("Agent chat is not started");
+
+  disposeAgentChat(chatId);
+  await setChatAgent(chatId, provider, "agent");
+  await ensureAgentChat(chatId, projectRoot, provider, model, { engine: loadAgentEngine() });
+  if (chats[chatId]) {
+    setChats(chatId, {
+      providerSwitched: true,
+      contextUsed: null,
+      contextWindow: null,
+      cumulativeUsage: null,
+      rateLimits: null,
+      approvals: [],
+    });
+  }
+  return true;
+}
+
+export async function sendAgentMessage(
+  chatId: string,
+  text: string,
+  images: string[] = [],
+): Promise<void> {
   const chat = chats[chatId];
   if (!chat) throw new Error("Agent chat is not started");
   let sessionId = chat.sessionId;
   const projectRoot = chat.projectRoot;
   if (!sessionId && !projectRoot) throw new Error("Agent chat is not started");
   let optimisticSeq = takeSeq(chatId);
-  appendOptimisticUserMessage(chatId, optimisticSeq, text);
+  const imageList = [...images];
+  appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList);
   if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
     if (!sessionId) {
@@ -666,12 +761,12 @@ export async function sendAgentMessage(chatId: string, text: string): Promise<vo
       );
       if (!hasOptimisticMessage) {
         optimisticSeq = takeSeq(chatId);
-        appendOptimisticUserMessage(chatId, optimisticSeq, text);
+        appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList);
       } else {
         setChats(chatId, { error: null });
       }
     }
-    await agentChatSend(sessionId, text);
+    await agentChatSend(sessionId, text, sendOptions(chats[chatId] ?? chat, imageList));
   } catch (error) {
     if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
       nextSeqByChat.set(chatId, optimisticSeq);

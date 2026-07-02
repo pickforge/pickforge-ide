@@ -4,6 +4,12 @@ export type AgentProvider = "claudeCode" | "codex";
 export type AgentEngine = "v1" | "v2";
 export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
+export interface AgentSkill {
+  trigger: "/" | "$";
+  name: string;
+  description: string;
+}
+
 export type AgentEvent =
   | { kind: "sessionStarted"; providerSessionId: string }
   | { kind: "turnStarted" }
@@ -99,6 +105,12 @@ export interface AgentChatStartOptions {
   onEvent: (event: AgentEvent) => void;
 }
 
+export interface AgentChatSendOptions {
+  effort?: string | null;
+  model?: string | null;
+  images?: string[];
+}
+
 export async function agentChatStart(opts: AgentChatStartOptions): Promise<string> {
   const onEvent = new Channel<AgentEvent>();
   onEvent.onmessage = opts.onEvent;
@@ -117,8 +129,22 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
   });
 }
 
-export function agentChatSend(sessionId: string, text: string): Promise<void> {
-  return invoke("agent_chat_send", { sessionId, text });
+export function agentChatSend(
+  sessionId: string,
+  text: string,
+  opts: AgentChatSendOptions = {},
+): Promise<void> {
+  return invoke("agent_chat_send", {
+    sessionId,
+    text,
+    effort: opts.effort ?? null,
+    model: opts.model ?? null,
+    images: opts.images ?? [],
+  });
+}
+
+export function agentStashImage(dataBase64: string, ext: string): Promise<string> {
+  return invoke<string>("agent_stash_image", { dataBase64, ext });
 }
 
 export function agentChatInterrupt(sessionId: string): Promise<void> {
@@ -139,4 +165,8 @@ export function agentChatSteer(sessionId: string, text: string): Promise<void> {
 
 export function agentChatHistory(chatId: string): Promise<AgentTimelineEntry[]> {
   return invoke("agent_chat_history", { chatId });
+}
+
+export function agentSkillsList(provider: AgentProvider): Promise<AgentSkill[]> {
+  return invoke("agent_skills_list", { provider });
 }

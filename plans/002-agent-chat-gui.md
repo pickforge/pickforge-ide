@@ -1,6 +1,6 @@
 # Plan 002 — Agent Chat GUI (Claude Code + Codex, structured chat)
 
-Status: **v1 implemented (2026-07-02), v2/v3 pending** · Created 2026-07-02 · Depends on: nothing (additive to workbench)
+Status: **v1+v2 implemented (2026-07-02), v3 pending** — added since draft: per-turn/session cost estimates, Settings default chat mode (terminal/agent/ask) + engine (v1/v2) · Created 2026-07-02 · Depends on: nothing (additive to workbench)
 
 Goal: a chat surface in the workbench for talking to Claude Code and Codex without the terminal — bubbles for text, collapsible thought streams, cards for tool usage / shell commands / file changes, inline approval buttons, resumable sessions. Three phases: v1 proves the pipe on the stable CLI surfaces, v2 goes interactive on the rich protocols, v3 visualizes multi-agent orchestration.
 
@@ -105,16 +105,16 @@ Acceptance: send a prompt to each provider from the GUI, watch text stream (Clau
 
 ## Phase v2 — interactive (rich protocols, approvals, diffs)
 
-- [ ] `codex_app.rs`: long-lived `codex app-server` per project; `initialize` handshake (`clientInfo`, opt-out of unrendered notification classes); `thread/start|resume`; `turn/start` with per-turn `effort`/`sandboxPolicy`; delta events → `TextDelta`/`ThinkingDelta`/`CommandOutput` live streaming
-- [ ] Approvals: `item/commandExecution/requestApproval` + `item/fileChange/requestApproval` → `ApprovalPrompt` buttons → respond `accept | acceptForSession | decline | cancel`. Switch Codex default to `approval_policy=on-request`
-- [ ] `turn/interrupt` + `turn/steer` (steer = "add message while running" in the composer)
-- [ ] `thread/list` + `thread/read includeTurns` → import/browse existing terminal-era Codex sessions in history view
-- [ ] `thread/tokenUsage/updated` → live context-window meter; `account/rateLimits/read|updated` → plan-usage indicator
-- [ ] `scripts/claude-bridge.ts` (Bun + `@anthropic-ai/claude-agent-sdk`): `query()` with `includePartialMessages`, thinking enabled; `canUseTool` → approval round-trip over stdio; `resume`/`forkSession`; `listSessions`/`getSessionMessages` for history import
-- [ ] `claude_bridge.rs` + protocol tests (fixture transcripts)
-- [ ] FileChangeCard: real diff rendering (app-server `fileChange.diff`; Claude Edit old/new)
-- [ ] CI drift check (D6): pinned codex version, `generate-json-schema` diff job; SDK version pinned in package.json, changelog review on bump
-- [ ] Codex login UX: if `account/read` says logged out → `account/login/start {type:"chatgpt"}` → open `authUrl`, listen `account/login/completed`
+- [x] `codex_app.rs`: long-lived `codex app-server` per project; `initialize` handshake (`clientInfo`, opt-out of unrendered notification classes); `thread/start|resume`; `turn/start` with per-turn `effort`/`sandboxPolicy`; delta events → `TextDelta`/`ThinkingDelta`/`CommandOutput` live streaming
+- [x] Approvals: `item/commandExecution/requestApproval` + `item/fileChange/requestApproval` → `ApprovalPrompt` buttons → respond `accept | acceptForSession | decline | cancel`. Switch Codex default to `approval_policy=on-request`
+- [x] `turn/interrupt` + `turn/steer` (steer = "add message while running" in the composer)
+- [~] `thread/list` + `thread/read includeTurns` (client APIs done; import/browse history UI deferred to v3 ledger) → import/browse existing terminal-era Codex sessions in history view
+- [~] `thread/tokenUsage/updated` → context meter DONE; rate-limits indicator deferred (payload stored, no UI) → live context-window meter; `account/rateLimits/read|updated` → plan-usage indicator
+- [x] `scripts/claude-bridge.ts` (Bun + `@anthropic-ai/claude-agent-sdk`): `query()` with `includePartialMessages`, thinking enabled; `canUseTool` → approval round-trip over stdio; `resume`/`forkSession`; `listSessions`/`getSessionMessages` for history import
+- [x] `claude_bridge.rs` + protocol tests (fixture transcripts)
+- [x] FileChangeCard: real diff rendering (app-server `fileChange.diff`; Claude Edit old/new)
+- [x] CI drift check (D6): pinned codex version, `generate-json-schema` diff job; SDK version pinned in package.json, changelog review on bump
+- [~] Codex login UX (client API exists; UI flow deferred): if `account/read` says logged out → `account/login/start {type:"chatgpt"}` → open `authUrl`, listen `account/login/completed`
 
 Acceptance: mid-turn approval prompt answered from the GUI changes agent behavior; streamed deltas render token-by-token for both providers; diff cards show real patches; kill the app mid-turn and resume the thread; usage meters live-update.
 

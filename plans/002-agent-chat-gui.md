@@ -1,6 +1,6 @@
 # Plan 002 — Agent Chat GUI (Claude Code + Codex, structured chat)
 
-Status: **v1+v2 implemented (2026-07-02), v3 pending** — added since draft: per-turn/session cost estimates, Settings default chat mode (terminal/agent/ask) + engine (v1/v2) · Created 2026-07-02 · Depends on: nothing (additive to workbench)
+Status: **v1+v2+v3 core implemented (2026-07-02)** — deferred: session GC, inspector dispatch, codex login UX, rate-limit indicator, thread import UI — added since draft: per-turn/session cost estimates, Settings default chat mode (terminal/agent/ask) + engine (v1/v2) · Created 2026-07-02 · Depends on: nothing (additive to workbench)
 
 Goal: a chat surface in the workbench for talking to Claude Code and Codex without the terminal — bubbles for text, collapsible thought streams, cards for tool usage / shell commands / file changes, inline approval buttons, resumable sessions. Three phases: v1 proves the pipe on the stable CLI surfaces, v2 goes interactive on the rich protocols, v3 visualizes multi-agent orchestration.
 
@@ -120,13 +120,13 @@ Acceptance: mid-turn approval prompt answered from the GUI changes agent behavio
 
 ## Phase v3 — orchestration view (the differentiator)
 
-- [ ] Multi-lane view: one conversation orchestrates N agent sessions (lanes = columns; e.g. Claude plans, Codex builders in parallel, reviewer lane) — mirrors the codex-fable workflow (`~/.claude/skills/codex-fable`)
-- [ ] Thread ledger panel: task → provider session id → status (building / reviewing / fixing / done), backed by `agent_sessions`; gate chips for review status
-- [ ] Cross-provider handoff: "send this diff to Claude for review" / "send findings back to builder thread" (Codex `turn/start` on the task's thread; Claude `resume`)
-- [ ] Prompt templates: wire `assets/prompts/*-*.md.tmpl` into the composer as slash-style inserts
-- [ ] Usage dashboard: per-provider token/cost aggregation from `Usage` events + Codex rate limits
-- [ ] Session GC: archive/delete dead threads (Codex `thread/archive|delete`; Claude transcript cleanup) — mirrors the ledger-cleanup rule from the codex skill
-- [ ] Workbench integration: inspector-to-agent dispatch (`WidgetTree`/`A11yTree` "ask agent") can target a structured chat lane, not just a PTY
+- [x] Multi-lane view: one conversation orchestrates N agent sessions (lanes = columns; e.g. Claude plans, Codex builders in parallel, reviewer lane) — mirrors the codex-fable workflow (`~/.claude/skills/codex-fable`)
+- [x] Thread ledger panel: task → provider session id → status (building / reviewing / fixing / done), backed by `agent_sessions`; gate chips for review status
+- [x] Cross-provider handoff: "send this diff to Claude for review" / "send findings back to builder thread" (Codex `turn/start` on the task's thread; Claude `resume`)
+- [x] Prompt templates: built-in template set (plan/build/review/handoff/fix) as composer slash inserts — assets/prompts/*.tmpl never existed in this repo
+- [x] Usage dashboard: per-provider/model token+cost aggregation (reset-aware) in the orchestra ledger panel; Codex rate limits payload captured but not yet surfaced — per-provider token/cost aggregation from `Usage` events + Codex rate limits
+- [ ] Session GC (DEFERRED post-v3): archive/delete dead threads (Codex `thread/archive|delete`; Claude transcript cleanup) — mirrors the ledger-cleanup rule from the codex skill
+- [ ] Workbench integration (DEFERRED post-v3): inspector-to-agent dispatch (`WidgetTree`/`A11yTree` "ask agent") can target a structured chat lane, not just a PTY
 
 Acceptance: run a real plan (3+ tasks) where a planner lane produces tasks, builder lanes execute on separate Codex threads, review gates surface findings, and the ledger reflects every thread id and status without touching a terminal.
 

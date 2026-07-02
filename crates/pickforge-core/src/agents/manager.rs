@@ -345,6 +345,7 @@ fn handle_runner_event(
             }
         }
         AgentEvent::ThinkingFinal { .. }
+        | AgentEvent::CommandStarted { .. }
         | AgentEvent::CommandDone { .. }
         | AgentEvent::FileChange { .. }
         | AgentEvent::McpToolCall { .. }
@@ -373,7 +374,6 @@ fn handle_runner_event(
         }
         AgentEvent::TextDelta { .. }
         | AgentEvent::ThinkingDelta { .. }
-        | AgentEvent::CommandStarted { .. }
         | AgentEvent::CommandOutput { .. }
         | AgentEvent::TurnStarted
         | AgentEvent::Noise { .. }
@@ -592,6 +592,7 @@ printf '%s\n' \
 '{"type":"thread.started","thread_id":"thread-1"}' \
 '{"type":"turn.started"}' \
 '{"type":"item.completed","item":{"id":"think-1","type":"reasoning","text":"thought"}}' \
+'{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"echo hi"}}' \
 '{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","command":"echo hi","exit_code":0,"status":"completed","aggregated_output":"ok"}}' \
 '{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"assistant hi"}}' \
 '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":2}}'
@@ -632,6 +633,10 @@ printf '%s\n' \
         assert!(timeline.iter().any(|entry| {
             matches!(entry, AgentTimelineEntry::Item { kind, payload, .. }
                 if kind == "thinkingFinal" && payload.contains("thought"))
+        }));
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Item { kind, payload, .. }
+                if kind == "commandStarted" && payload.contains("echo hi"))
         }));
         assert!(timeline.iter().any(|entry| {
             matches!(entry, AgentTimelineEntry::Item { kind, .. } if kind == "commandDone")

@@ -4,8 +4,12 @@
 
 mod models;
 
-pub use models::{AgentRunLog, AgentSessionRow, AgentTimelineEntry, Chat, PickHistory, Project, ProjectSettings, RunSessionLog};
+pub use models::{
+    AgentRunLog, AgentSessionRow, AgentTimelineEntry, AgentUsageSummary, Chat, OrchestraTask,
+    PickHistory, Project, ProjectSettings, RunSessionLog,
+};
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -30,7 +34,7 @@ const RUST_BASELINE: u32 = 11;
 
 /// Latest schema version this build understands. Bump (and add a numbered Rust
 /// migration in `apply_rust_migrations`) whenever the schema changes from here.
-const LATEST_VERSION: u32 = 12;
+const LATEST_VERSION: u32 = 13;
 
 /// The full, current desired schema. Every statement is `IF NOT EXISTS`, so
 /// running it against a database that already holds some tables only fills the
@@ -98,6 +102,21 @@ CREATE TABLE IF NOT EXISTS agent_items (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_items_chat
   ON agent_items(chat_id, seq);
+
+CREATE TABLE IF NOT EXISTS orchestra_tasks (
+  id               TEXT PRIMARY KEY,
+  project_root     TEXT NOT NULL,
+  title            TEXT NOT NULL,
+  status           TEXT NOT NULL,
+  builder_chat_id  TEXT,
+  reviewer_chat_id TEXT,
+  note             TEXT,
+  sort_order       INTEGER NOT NULL DEFAULT 0,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orchestra_tasks_project
+  ON orchestra_tasks(project_root, sort_order);
 
 CREATE TABLE IF NOT EXISTS project_settings (
   project_root                TEXT NOT NULL PRIMARY KEY,
@@ -421,6 +440,25 @@ fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Resul
             )?;
             Ok(())
         }
+        13 => {
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS orchestra_tasks (
+                   id               TEXT PRIMARY KEY,
+                   project_root     TEXT NOT NULL,
+                   title            TEXT NOT NULL,
+                   status           TEXT NOT NULL,
+                   builder_chat_id  TEXT,
+                   reviewer_chat_id TEXT,
+                   note             TEXT,
+                   sort_order       INTEGER NOT NULL DEFAULT 0,
+                   created_at       INTEGER NOT NULL,
+                   updated_at       INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_orchestra_tasks_project
+                   ON orchestra_tasks(project_root, sort_order);",
+            )?;
+            Ok(())
+        }
         _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
     }
 }
@@ -638,6 +676,54 @@ impl Database {
             params![chat_id, sort_order],
         )?;
         Ok(())
+    }
+
+    // ---- orchestra tasks ----
+
+    pub fn orchestra_task_upsert(&self, task: &OrchestraTask) -> Result<(), DbError> {
+        self.lock().execute(
+            "INSERT INTO orchestra_tasks \
+               (id, project_root, title, status, builder_chat_id, reviewer_chat_id, note, \
+                sort_order, created_at, updated_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
+             ON CONFLICT(id) DO UPDATE SET \
+               project_root = excluded.project_root, title = excluded.title, \
+               status = excluded.status, builder_chat_id = excluded.builder_chat_id, \
+               reviewer_chat_id = excluded.reviewer_chat_id, note = excluded.note, \
+               sort_order = excluded.sort_order, updated_at = excluded.updated_at",
+            params![
+                task.id,
+                task.project_root,
+                task.title,
+                task.status,
+                task.builder_chat_id,
+                task.reviewer_chat_id,
+                task.note,
+                task.sort_order,
+                task.created_at,
+                task.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn orchestra_task_delete(&self, id: &str) -> Result<(), DbError> {
+        self.lock()
+            .execute("DELETE FROM orchestra_tasks WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn orchestra_tasks_for_project(
+        &self,
+        project_root: &str,
+    ) -> Result<Vec<OrchestraTask>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM orchestra_tasks WHERE project_root = ?1 \
+             ORDER BY sort_order ASC, created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![project_root], orchestra_task_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     // ---- project settings ----
@@ -884,6 +970,97 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    pub fn agent_usage_summary(
+        &self,
+        project_root: Option<&str>,
+    ) -> Result<Vec<AgentUsageSummary>, DbError> {
+        let sql = if project_root.is_some() {
+            "SELECT s.provider AS provider,
+                    s.model AS model,
+                    s.chat_id AS chat_id,
+                    ai.session_id AS session_id,
+                    json_extract(ai.payload, '$.contextUsed') AS context_used,
+                    json_extract(ai.payload, '$.inputTokens') AS input_tokens,
+                    json_extract(ai.payload, '$.cachedInputTokens') AS cached_input_tokens,
+                    json_extract(ai.payload, '$.outputTokens') AS output_tokens,
+                    json_extract(ai.payload, '$.costUsd') AS cost_usd
+               FROM agent_items ai
+               JOIN agent_sessions s ON s.id = ai.session_id
+               JOIN chats c ON c.chat_id = s.chat_id
+              WHERE ai.kind = 'usage'
+                AND c.project_root = ?1
+              ORDER BY ai.session_id ASC, ai.seq ASC, ai.id ASC"
+                .to_string()
+        } else {
+            "SELECT s.provider AS provider,
+                    s.model AS model,
+                    s.chat_id AS chat_id,
+                    ai.session_id AS session_id,
+                    json_extract(ai.payload, '$.contextUsed') AS context_used,
+                    json_extract(ai.payload, '$.inputTokens') AS input_tokens,
+                    json_extract(ai.payload, '$.cachedInputTokens') AS cached_input_tokens,
+                    json_extract(ai.payload, '$.outputTokens') AS output_tokens,
+                    json_extract(ai.payload, '$.costUsd') AS cost_usd
+               FROM agent_items ai
+               JOIN agent_sessions s ON s.id = ai.session_id
+              WHERE ai.kind = 'usage'
+              ORDER BY ai.session_id ASC, ai.seq ASC, ai.id ASC"
+                .to_string()
+        };
+
+        let conn = self.lock();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = match project_root {
+            Some(project_root) => {
+                stmt.query_map(params![project_root], agent_usage_row_from_row)?
+            }
+            None => stmt.query_map([], agent_usage_row_from_row)?,
+        };
+
+        let mut summaries = BTreeMap::<(String, Option<String>), UsageSummaryAccumulator>::new();
+        let mut cumulative = BTreeMap::<String, CumulativeUsageAccumulator>::new();
+
+        for row in rows {
+            let row = row?;
+            if row.context_used.is_some() {
+                cumulative
+                    .entry(row.session_id.clone())
+                    .or_insert_with(|| CumulativeUsageAccumulator::new(&row))
+                    .add(&row);
+            } else {
+                summaries
+                    .entry((row.provider.clone(), row.model.clone()))
+                    .or_default()
+                    .add_additive(&row);
+            }
+        }
+
+        for session in cumulative.into_values() {
+            summaries
+                .entry((session.provider.clone(), session.model.clone()))
+                .or_default()
+                .add_cumulative(session);
+        }
+
+        Ok(summaries
+            .into_iter()
+            .map(|((provider, model), summary)| AgentUsageSummary {
+                provider,
+                model,
+                chats: summary.chats.len() as i64,
+                turns: if summary.has_cumulative {
+                    None
+                } else {
+                    Some(summary.additive_turns)
+                },
+                input_tokens: summary.input_tokens,
+                cached_input_tokens: summary.cached_input_tokens,
+                output_tokens: summary.output_tokens,
+                cost_usd: summary.cost_usd,
+            })
+            .collect())
+    }
+
     // ---- agent run log ----
 
     pub fn insert_agent_run(&self, a: &AgentRunLog) -> Result<i64, DbError> {
@@ -942,6 +1119,21 @@ fn chat_from_row(row: &Row) -> rusqlite::Result<Chat> {
         created_at: row.get("created_at")?,
         last_activity_at: row.get("last_activity_at")?,
         sort_order: row.get("sort_order")?,
+    })
+}
+
+fn orchestra_task_from_row(row: &Row) -> rusqlite::Result<OrchestraTask> {
+    Ok(OrchestraTask {
+        id: row.get("id")?,
+        project_root: row.get("project_root")?,
+        title: row.get("title")?,
+        status: row.get("status")?,
+        builder_chat_id: row.get("builder_chat_id")?,
+        reviewer_chat_id: row.get("reviewer_chat_id")?,
+        note: row.get("note")?,
+        sort_order: row.get("sort_order")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
     })
 }
 
@@ -1027,6 +1219,130 @@ fn agent_session_from_row(row: &Row) -> rusqlite::Result<AgentSessionRow> {
         status: row.get("status")?,
         created_at: row.get("created_at")?,
     })
+}
+
+struct AgentUsageRow {
+    provider: String,
+    model: Option<String>,
+    chat_id: String,
+    session_id: String,
+    context_used: Option<i64>,
+    input_tokens: Option<i64>,
+    cached_input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    cost_usd: Option<f64>,
+}
+
+fn agent_usage_row_from_row(row: &Row) -> rusqlite::Result<AgentUsageRow> {
+    Ok(AgentUsageRow {
+        provider: row.get("provider")?,
+        model: row.get("model")?,
+        chat_id: row.get("chat_id")?,
+        session_id: row.get("session_id")?,
+        context_used: row.get("context_used")?,
+        input_tokens: row.get("input_tokens")?,
+        cached_input_tokens: row.get("cached_input_tokens")?,
+        output_tokens: row.get("output_tokens")?,
+        cost_usd: row.get("cost_usd")?,
+    })
+}
+
+#[derive(Default)]
+struct UsageSummaryAccumulator {
+    chats: BTreeSet<String>,
+    additive_turns: i64,
+    has_cumulative: bool,
+    input_tokens: i64,
+    cached_input_tokens: i64,
+    output_tokens: i64,
+    cost_usd: f64,
+}
+
+impl UsageSummaryAccumulator {
+    fn add_additive(&mut self, row: &AgentUsageRow) {
+        self.chats.insert(row.chat_id.clone());
+        self.additive_turns += 1;
+        self.input_tokens += row.input_tokens.unwrap_or(0);
+        self.cached_input_tokens += row.cached_input_tokens.unwrap_or(0);
+        self.output_tokens += row.output_tokens.unwrap_or(0);
+        self.cost_usd += row.cost_usd.unwrap_or(0.0);
+    }
+
+    fn add_cumulative(&mut self, session: CumulativeUsageAccumulator) {
+        self.chats.insert(session.chat_id);
+        self.has_cumulative = true;
+        self.input_tokens += session.input_tokens.total;
+        self.cached_input_tokens += session.cached_input_tokens.total;
+        self.output_tokens += session.output_tokens.total;
+        self.cost_usd += session.cost_usd.total;
+    }
+}
+
+struct CumulativeUsageAccumulator {
+    provider: String,
+    model: Option<String>,
+    chat_id: String,
+    input_tokens: CumulativeI64,
+    cached_input_tokens: CumulativeI64,
+    output_tokens: CumulativeI64,
+    cost_usd: CumulativeF64,
+}
+
+impl CumulativeUsageAccumulator {
+    fn new(row: &AgentUsageRow) -> Self {
+        Self {
+            provider: row.provider.clone(),
+            model: row.model.clone(),
+            chat_id: row.chat_id.clone(),
+            input_tokens: CumulativeI64::default(),
+            cached_input_tokens: CumulativeI64::default(),
+            output_tokens: CumulativeI64::default(),
+            cost_usd: CumulativeF64::default(),
+        }
+    }
+
+    fn add(&mut self, row: &AgentUsageRow) {
+        self.input_tokens.add(row.input_tokens);
+        self.cached_input_tokens.add(row.cached_input_tokens);
+        self.output_tokens.add(row.output_tokens);
+        self.cost_usd.add(row.cost_usd);
+    }
+}
+
+#[derive(Default)]
+struct CumulativeI64 {
+    previous: Option<i64>,
+    total: i64,
+}
+
+impl CumulativeI64 {
+    fn add(&mut self, value: Option<i64>) {
+        if let Some(value) = value {
+            self.total += match self.previous {
+                Some(previous) if value >= previous => value - previous,
+                _ => value,
+            };
+            self.previous = Some(value);
+        }
+    }
+}
+
+#[derive(Default)]
+struct CumulativeF64 {
+    previous: Option<f64>,
+    total: f64,
+}
+
+impl CumulativeF64 {
+    fn add(&mut self, value: Option<f64>) {
+        if let Some(value) = value {
+            self.total += match self.previous {
+                Some(previous) if value >= previous => value - previous,
+                _ => value,
+            };
+            self.previous = Some(value);
+        }
+    }
 }
 
 fn agent_timeline_entry_from_row(row: &Row) -> rusqlite::Result<AgentTimelineEntry> {
@@ -1207,6 +1523,73 @@ mod tests {
     }
 
     #[test]
+    fn orchestra_tasks_crud_and_ordering() {
+        let db = Database::open_in_memory().unwrap();
+        let task = |id: &str, project_root: &str, sort_order: i64, created_at: i64| OrchestraTask {
+            id: id.into(),
+            project_root: project_root.into(),
+            title: id.into(),
+            status: "pending".into(),
+            builder_chat_id: None,
+            reviewer_chat_id: None,
+            note: None,
+            sort_order,
+            created_at,
+            updated_at: created_at,
+        };
+
+        db.orchestra_task_upsert(&task("t1", "/p", 1, 20)).unwrap();
+        db.orchestra_task_upsert(&task("t2", "/p", 0, 30)).unwrap();
+        db.orchestra_task_upsert(&task("t3", "/p", 0, 10)).unwrap();
+        db.orchestra_task_upsert(&task("other", "/other", 0, 1))
+            .unwrap();
+
+        let ids = |db: &Database| {
+            db.orchestra_tasks_for_project("/p")
+                .unwrap()
+                .into_iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&db), ["t3", "t2", "t1"]);
+
+        db.orchestra_task_upsert(&OrchestraTask {
+            id: "t2".into(),
+            project_root: "/p".into(),
+            title: "Review persistence".into(),
+            status: "done".into(),
+            builder_chat_id: Some("builder-chat".into()),
+            reviewer_chat_id: Some("reviewer-chat".into()),
+            note: Some("merged".into()),
+            sort_order: 5,
+            created_at: 999,
+            updated_at: 1000,
+        })
+        .unwrap();
+
+        let tasks = db.orchestra_tasks_for_project("/p").unwrap();
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            ["t3", "t1", "t2"]
+        );
+        let updated = tasks.iter().find(|task| task.id == "t2").unwrap();
+        assert_eq!(updated.title, "Review persistence");
+        assert_eq!(updated.status, "done");
+        assert_eq!(updated.builder_chat_id.as_deref(), Some("builder-chat"));
+        assert_eq!(updated.reviewer_chat_id.as_deref(), Some("reviewer-chat"));
+        assert_eq!(updated.note.as_deref(), Some("merged"));
+        assert_eq!(updated.created_at, 30);
+        assert_eq!(updated.updated_at, 1000);
+
+        db.orchestra_task_delete("t1").unwrap();
+        assert_eq!(ids(&db), ["t3", "t2"]);
+        assert_eq!(db.orchestra_tasks_for_project("/other").unwrap().len(), 1);
+    }
+
+    #[test]
     fn settings_default_and_upsert() {
         let db = Database::open_in_memory().unwrap();
         assert!(db.get_settings("/p").unwrap().is_none());
@@ -1275,6 +1658,17 @@ mod tests {
 
     fn user_version(conn: &Connection) -> u32 {
         conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    fn index_exists(conn: &Connection, index: &str) -> bool {
+        let found: i64 = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                params![index],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0);
+        found == 1
     }
 
     // A Drift v10 project_settings table that is MISSING the v10 context columns
@@ -1541,6 +1935,34 @@ mod tests {
     }
 
     #[test]
+    fn fresh_db_exposes_orchestra_tasks_schema() {
+        let path = temp_db_path("fresh-orchestra-tasks");
+        let _ = std::fs::remove_file(&path);
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            assert!(table_exists(&db.lock(), "orchestra_tasks").unwrap());
+            assert!(index_exists(&db.lock(), "idx_orchestra_tasks_project"));
+
+            db.orchestra_task_upsert(&OrchestraTask {
+                id: "task-1".into(),
+                project_root: "/p".into(),
+                title: "Task".into(),
+                status: "pending".into(),
+                builder_chat_id: None,
+                reviewer_chat_id: None,
+                note: None,
+                sort_order: 0,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+            assert_eq!(db.orchestra_tasks_for_project("/p").unwrap().len(), 1);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn rust_v11_old_chats_schema_migrates_to_agent_chat_schema() {
         let path = temp_db_path("rust-v11-agent-chat");
         let _ = std::fs::remove_file(&path);
@@ -1597,6 +2019,336 @@ mod tests {
             assert_eq!(chats[0].kind, "terminal");
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rust_v12_schema_migrates_to_orchestra_tasks_schema() {
+        let path = temp_db_path("rust-v12-orchestra-tasks");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE projects (
+                   project_root   TEXT NOT NULL PRIMARY KEY,
+                   display_name   TEXT NOT NULL,
+                   created_at     INTEGER NOT NULL,
+                   last_opened_at INTEGER NOT NULL,
+                   sort_order     INTEGER NOT NULL DEFAULT 0,
+                   archived_at    INTEGER
+                 );
+                 CREATE TABLE chats (
+                   chat_id          TEXT NOT NULL PRIMARY KEY,
+                   project_root     TEXT NOT NULL REFERENCES projects(project_root) ON DELETE CASCADE,
+                   title            TEXT NOT NULL,
+                   agent_id         TEXT NOT NULL,
+                   kind             TEXT NOT NULL DEFAULT 'terminal',
+                   skill_id         TEXT,
+                   session_id       TEXT,
+                   labels_json      TEXT,
+                   status           TEXT,
+                   task_brief_text  TEXT,
+                   created_at       INTEGER NOT NULL,
+                   last_activity_at INTEGER NOT NULL,
+                   sort_order       INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE TABLE agent_sessions (
+                   id                  TEXT NOT NULL PRIMARY KEY,
+                   chat_id             TEXT NOT NULL,
+                   provider            TEXT NOT NULL,
+                   provider_session_id TEXT,
+                   model               TEXT,
+                   status              TEXT NOT NULL,
+                   created_at          INTEGER NOT NULL
+                 );
+                 CREATE TABLE agent_messages (
+                   id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                   session_id TEXT NOT NULL,
+                   chat_id    TEXT NOT NULL,
+                   seq        INTEGER NOT NULL,
+                   role       TEXT NOT NULL,
+                   content    TEXT NOT NULL,
+                   created_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE agent_items (
+                   id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                   session_id TEXT NOT NULL,
+                   chat_id    TEXT NOT NULL,
+                   seq        INTEGER NOT NULL,
+                   kind       TEXT NOT NULL,
+                   payload    TEXT NOT NULL,
+                   created_at INTEGER NOT NULL
+                 );
+                 INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Proj', 1, 2);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, created_at, last_activity_at)
+                   VALUES ('c1', '/p', 'Chat', 'codex', 1, 3);
+                 PRAGMA user_version = 12;",
+            )
+            .unwrap();
+            assert_eq!(user_version(&conn), 12);
+            assert!(!table_exists(&conn, "orchestra_tasks").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            assert!(table_exists(&db.lock(), "orchestra_tasks").unwrap());
+            assert!(index_exists(&db.lock(), "idx_orchestra_tasks_project"));
+            assert_eq!(db.list_chats("/p").unwrap().len(), 1);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn seed_agent_chat(db: &Database, project_root: &str, chat_id: &str) {
+        db.upsert_project(&Project {
+            project_root: project_root.into(),
+            display_name: project_root.into(),
+            created_at: 1,
+            last_opened_at: 1,
+            sort_order: 0,
+            archived_at: None,
+        })
+        .unwrap();
+        db.upsert_chat(&Chat {
+            chat_id: chat_id.into(),
+            project_root: project_root.into(),
+            title: chat_id.into(),
+            agent_id: "agent".into(),
+            kind: "agent".into(),
+            skill_id: None,
+            session_id: None,
+            labels_json: None,
+            status: None,
+            task_brief_text: None,
+            created_at: 1,
+            last_activity_at: 1,
+            sort_order: 0,
+        })
+        .unwrap();
+    }
+
+    fn seed_agent_session_with_model(
+        db: &Database,
+        id: &str,
+        chat_id: &str,
+        provider: &str,
+        model: Option<&str>,
+    ) {
+        db.agent_session_create(&AgentSessionRow {
+            id: id.into(),
+            chat_id: chat_id.into(),
+            provider: provider.into(),
+            provider_session_id: None,
+            model: model.map(str::to_string),
+            status: "idle".into(),
+            created_at: 1,
+        })
+        .unwrap();
+    }
+
+    fn usage_payload(
+        input_tokens: i64,
+        cached_input_tokens: i64,
+        output_tokens: i64,
+        cost_usd: Option<f64>,
+        context_used: Option<i64>,
+    ) -> String {
+        serde_json::json!({
+            "kind": "usage",
+            "inputTokens": input_tokens,
+            "cachedInputTokens": cached_input_tokens,
+            "outputTokens": output_tokens,
+            "costUsd": cost_usd,
+            "contextUsed": context_used,
+            "contextWindow": null
+        })
+        .to_string()
+    }
+
+    fn append_usage(
+        db: &Database,
+        session_id: &str,
+        chat_id: &str,
+        input_tokens: i64,
+        cached_input_tokens: i64,
+        output_tokens: i64,
+        cost_usd: Option<f64>,
+        context_used: Option<i64>,
+    ) {
+        db.agent_item_append(
+            session_id,
+            chat_id,
+            "usage",
+            &usage_payload(
+                input_tokens,
+                cached_input_tokens,
+                output_tokens,
+                cost_usd,
+                context_used,
+            ),
+        )
+        .unwrap();
+    }
+
+    fn summary_for<'a>(
+        summaries: &'a [AgentUsageSummary],
+        provider: &str,
+        model: Option<&str>,
+    ) -> &'a AgentUsageSummary {
+        summaries
+            .iter()
+            .find(|summary| summary.provider == provider && summary.model.as_deref() == model)
+            .unwrap()
+    }
+
+    #[test]
+    fn agent_usage_summary_folds_cumulative_resets_by_session() {
+        let db = Database::open_in_memory().unwrap();
+        seed_agent_chat(&db, "/p1", "c-codex-reset");
+        seed_agent_session_with_model(
+            &db,
+            "s-codex-reset",
+            "c-codex-reset",
+            "codex",
+            Some("gpt-5.1-codex"),
+        );
+
+        append_usage(
+            &db,
+            "s-codex-reset",
+            "c-codex-reset",
+            36_811,
+            100,
+            500,
+            Some(1.00),
+            Some(36_811),
+        );
+        append_usage(
+            &db,
+            "s-codex-reset",
+            "c-codex-reset",
+            50_115,
+            150,
+            800,
+            Some(1.50),
+            Some(50_115),
+        );
+        append_usage(
+            &db,
+            "s-codex-reset",
+            "c-codex-reset",
+            64_068,
+            180,
+            1_000,
+            Some(2.00),
+            Some(64_068),
+        );
+        append_usage(
+            &db,
+            "s-codex-reset",
+            "c-codex-reset",
+            13_000,
+            20,
+            200,
+            Some(0.40),
+            Some(13_000),
+        );
+
+        let summaries = db.agent_usage_summary(Some("/p1")).unwrap();
+        let codex = summary_for(&summaries, "codex", Some("gpt-5.1-codex"));
+        assert_eq!(codex.chats, 1);
+        assert_eq!(codex.turns, None);
+        assert_eq!(codex.input_tokens, 36_811 + 13_304 + 13_953 + 13_000);
+        assert_eq!(codex.input_tokens, 77_068);
+        assert_eq!(codex.cached_input_tokens, 200);
+        assert_eq!(codex.output_tokens, 1_200);
+        assert!((codex.cost_usd - 2.40).abs() < 1e-9);
+    }
+
+    #[test]
+    fn agent_usage_summary_sums_mixed_additive_and_cumulative_session() {
+        let db = Database::open_in_memory().unwrap();
+        seed_agent_chat(&db, "/p1", "c-mixed");
+        seed_agent_session_with_model(&db, "s-mixed", "c-mixed", "codex", Some("gpt-5"));
+
+        append_usage(&db, "s-mixed", "c-mixed", 5, 1, 2, Some(0.05), None);
+        append_usage(&db, "s-mixed", "c-mixed", 10, 2, 4, Some(0.10), Some(10));
+        append_usage(&db, "s-mixed", "c-mixed", 18, 3, 5, Some(0.18), Some(18));
+
+        let summaries = db.agent_usage_summary(Some("/p1")).unwrap();
+        let codex = summary_for(&summaries, "codex", Some("gpt-5"));
+        assert_eq!(codex.chats, 1);
+        assert_eq!(codex.turns, None);
+        assert_eq!(codex.input_tokens, 23);
+        assert_eq!(codex.cached_input_tokens, 4);
+        assert_eq!(codex.output_tokens, 7);
+        assert!((codex.cost_usd - 0.23).abs() < 1e-9);
+    }
+
+    #[test]
+    fn agent_usage_summary_groups_by_provider_and_model() {
+        let db = Database::open_in_memory().unwrap();
+        seed_agent_chat(&db, "/p1", "c-gpt5-a");
+        seed_agent_chat(&db, "/p1", "c-gpt5-b");
+        seed_agent_chat(&db, "/p1", "c-mini");
+        seed_agent_chat(&db, "/p2", "c-other-project");
+
+        seed_agent_session_with_model(&db, "s-gpt5-a", "c-gpt5-a", "codex", Some("gpt-5"));
+        seed_agent_session_with_model(&db, "s-gpt5-b", "c-gpt5-b", "codex", Some("gpt-5"));
+        seed_agent_session_with_model(&db, "s-mini", "c-mini", "codex", Some("gpt-5-mini"));
+        seed_agent_session_with_model(
+            &db,
+            "s-other-project",
+            "c-other-project",
+            "codex",
+            Some("gpt-5"),
+        );
+
+        append_usage(&db, "s-gpt5-a", "c-gpt5-a", 10, 1, 2, Some(0.10), None);
+        append_usage(&db, "s-gpt5-b", "c-gpt5-b", 5, 0, 1, Some(0.05), None);
+        append_usage(&db, "s-mini", "c-mini", 7, 0, 3, Some(0.07), None);
+        append_usage(
+            &db,
+            "s-other-project",
+            "c-other-project",
+            100,
+            10,
+            20,
+            Some(1.0),
+            None,
+        );
+
+        let project = db.agent_usage_summary(Some("/p1")).unwrap();
+        assert_eq!(project.len(), 2);
+        let codex = summary_for(&project, "codex", Some("gpt-5"));
+        assert_eq!(codex.chats, 2);
+        assert_eq!(codex.turns, Some(2));
+        assert_eq!(codex.input_tokens, 15);
+        assert_eq!(codex.cached_input_tokens, 1);
+        assert_eq!(codex.output_tokens, 3);
+        assert!((codex.cost_usd - 0.15).abs() < 1e-9);
+
+        let mini = summary_for(&project, "codex", Some("gpt-5-mini"));
+        assert_eq!(mini.chats, 1);
+        assert_eq!(mini.turns, Some(1));
+        assert_eq!(mini.input_tokens, 7);
+        assert_eq!(mini.cached_input_tokens, 0);
+        assert_eq!(mini.output_tokens, 3);
+        assert!((mini.cost_usd - 0.07).abs() < 1e-9);
+
+        let global = db.agent_usage_summary(None).unwrap();
+        let codex = summary_for(&global, "codex", Some("gpt-5"));
+        assert_eq!(codex.chats, 3);
+        assert_eq!(codex.turns, Some(3));
+        assert_eq!(codex.input_tokens, 115);
+        assert_eq!(codex.cached_input_tokens, 11);
+        assert_eq!(codex.output_tokens, 23);
+        assert!((codex.cost_usd - 1.15).abs() < 1e-9);
+
+        assert!(db.agent_usage_summary(Some("/missing")).unwrap().is_empty());
     }
 
     #[test]

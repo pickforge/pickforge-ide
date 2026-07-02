@@ -2,7 +2,8 @@
 //! reads/writes are local and sub-millisecond.
 
 use pickforge_core::{
-    AgentRunLog, Chat, Database, PickHistory, Project, ProjectSettings, RunSessionLog,
+    AgentRunLog, AgentUsageSummary, Chat, Database, OrchestraTask, PickHistory, Project,
+    ProjectSettings, RunSessionLog,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -151,6 +152,37 @@ pub fn update_chat_sort_order(
     sort_order: i64,
 ) -> Result<(), String> {
     db.update_chat_sort_order(&chat_id, sort_order)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn orchestra_task_upsert(
+    db: State<'_, Arc<Database>>,
+    task: OrchestraTask,
+) -> Result<(), String> {
+    db.orchestra_task_upsert(&task).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn orchestra_task_delete(db: State<'_, Arc<Database>>, id: String) -> Result<(), String> {
+    db.orchestra_task_delete(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn orchestra_tasks_list(
+    db: State<'_, Arc<Database>>,
+    project_root: String,
+) -> Result<Vec<OrchestraTask>, String> {
+    db.orchestra_tasks_for_project(&project_root)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agent_usage_summary(
+    db: State<'_, Arc<Database>>,
+    project_root: Option<String>,
+) -> Result<Vec<AgentUsageSummary>, String> {
+    db.agent_usage_summary(project_root.as_deref())
         .map_err(|e| e.to_string())
 }
 

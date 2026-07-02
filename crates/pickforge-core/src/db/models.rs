@@ -157,6 +157,34 @@ pub struct AgentSessionRow {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraTask {
+    pub id: String,
+    pub project_root: String,
+    pub title: String,
+    pub status: String,
+    pub builder_chat_id: Option<String>,
+    pub reviewer_chat_id: Option<String>,
+    pub note: Option<String>,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUsageSummary {
+    pub provider: String,
+    pub model: Option<String>,
+    pub chats: i64,
+    pub turns: Option<i64>,
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub cost_usd: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "entryType", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum AgentTimelineEntry {
     #[serde(rename = "message")]

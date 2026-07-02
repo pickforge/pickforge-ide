@@ -18,22 +18,30 @@
 //! run bind), and the socket file is removed on `mcp_stop`.
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pickforge_core::android;
 use pickforge_core::mcp::{self, ActiveTarget, InspectorKind, LiveState, ProjectContext};
 use pickforge_core::targets::Capability;
+#[cfg(unix)]
 use pickforge_core::ContextStorageService;
 use serde::Deserialize;
 use serde_json::Value;
 use tauri::State;
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio::sync::{watch, Notify};
 
 const MAX_LOG_LINES: usize = 2000;
+#[cfg(not(unix))]
+const MCP_SOCKET_UNSUPPORTED: &str = "MCP socket server is only supported on unix platforms";
 
 /// The published, app-side view of the active target + context. Serialized from
 /// the frontend stores; mirrors `runTargets.ts` / `runConsole` shapes.
@@ -128,6 +136,7 @@ struct McpInner {
     /// The server lifecycle (Idle / Starting / Running).
     lifecycle: Mutex<ServerLifecycle>,
     /// Monotonic generation counter; each successful bind gets a fresh id.
+    #[cfg(unix)]
     next_generation: AtomicU64,
 }
 
@@ -137,6 +146,7 @@ impl McpState {
             published: Mutex::new(PublishedState::default()),
             logs: Mutex::new(VecDeque::with_capacity(256)),
             lifecycle: Mutex::new(ServerLifecycle::Idle),
+            #[cfg(unix)]
             next_generation: AtomicU64::new(1),
         }))
     }
@@ -331,6 +341,7 @@ fn now_millis() -> u128 {
 /// user-private `0700` dir per the spec) or, when it is unset, the system temp
 /// dir — which is world-writable, so the per-app subdir below is created and
 /// verified `0700` regardless.
+#[cfg(unix)]
 fn runtime_base() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -338,6 +349,7 @@ fn runtime_base() -> PathBuf {
 }
 
 /// The per-process socket path: `<runtime_base>/pickforge-<pid>/agent.sock`.
+#[cfg(unix)]
 fn default_socket_path() -> PathBuf {
     runtime_base()
         .join(format!("pickforge-{}", std::process::id()))
@@ -384,11 +396,6 @@ fn ensure_private_dir(dir: &Path) -> Result<(), String> {
     }
 }
 
-#[cfg(not(unix))]
-fn ensure_private_dir(dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())
-}
-
 /// Restrict a freshly bound socket to the owner (`0600`) so no other local user
 /// can connect to the agent endpoint.
 #[cfg(unix)]
@@ -403,11 +410,6 @@ fn restrict_socket(path: &Path) -> Result<(), String> {
     }
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| format!("cannot restrict MCP socket perms: {e}"))
-}
-
-#[cfg(not(unix))]
-fn restrict_socket(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -459,6 +461,7 @@ pub struct McpStartResult {
 /// Concurrency: the lifecycle is a state machine. A second caller that arrives
 /// while a bind is in flight waits on the `Starting` notifier and then reuses the
 /// `Running` instance — it never sees "running but no socket".
+#[cfg(unix)]
 #[tauri::command]
 pub async fn mcp_start(
     state: State<'_, McpState>,
@@ -554,9 +557,19 @@ pub async fn mcp_start(
     })
 }
 
+#[cfg(not(unix))]
+#[tauri::command]
+pub async fn mcp_start(
+    _state: State<'_, McpState>,
+    _project_root: String,
+) -> Result<McpStartResult, String> {
+    Err(MCP_SOCKET_UNSUPPORTED.to_string())
+}
+
 /// Bind a fresh server instance: prepare a private runtime dir, bind the socket,
 /// restrict it to `0600`, and spawn its accept task. Returns the owned
 /// [`RunningServer`] handle (generation + path + endpoint + shutdown).
+#[cfg(unix)]
 fn bind_server(state: &State<'_, McpState>, generation: u64) -> Result<RunningServer, String> {
     let socket_path = default_socket_path();
     if let Some(parent) = socket_path.parent() {
@@ -589,6 +602,7 @@ fn bind_server(state: &State<'_, McpState>, generation: u64) -> Result<RunningSe
 }
 
 /// Stop the MCP server and remove its socket file. Safe to call when stopped.
+#[cfg(unix)]
 #[tauri::command]
 pub fn mcp_stop(state: State<'_, McpState>) {
     // Take the running instance out of the lifecycle and signal ONLY its task.
@@ -612,6 +626,12 @@ pub fn mcp_stop(state: State<'_, McpState>) {
     }
 }
 
+#[cfg(not(unix))]
+#[tauri::command]
+pub fn mcp_stop(_state: State<'_, McpState>) -> Result<(), String> {
+    Err(MCP_SOCKET_UNSUPPORTED.to_string())
+}
+
 /// Accept loop for one server instance. Each connection is handled concurrently,
 /// framing newline-delimited JSON-RPC and dispatching to the core MCP handler.
 /// Ends on this instance's shutdown signal or a dead listener.
@@ -621,6 +641,7 @@ pub fn mcp_stop(state: State<'_, McpState>) {
 /// busy spawning a connection (not currently in the `select!`) is still observed
 /// on the next poll — it is not lost the way a fresh per-iteration `notified()`
 /// would be.
+#[cfg(unix)]
 async fn serve(
     listener: UnixListener,
     state: McpState,
@@ -656,6 +677,7 @@ async fn serve(
 /// True when a server with a *higher* generation currently owns `socket_path` —
 /// i.e. a restart rebound the same path. In that case the older task whose
 /// generation is `generation` must NOT delete the file (it belongs to the new one).
+#[cfg(unix)]
 fn newer_server_owns_path(inner: &Arc<McpInner>, socket_path: &Path, generation: u64) -> bool {
     let lc = inner.lifecycle.lock().unwrap();
     match lc.running() {
@@ -664,6 +686,7 @@ fn newer_server_owns_path(inner: &Arc<McpInner>, socket_path: &Path, generation:
     }
 }
 
+#[cfg(unix)]
 async fn handle_conn(stream: tokio::net::UnixStream, state: McpState) {
     // Pin this connection to the project that is active when it is accepted. The
     // socket is shared per-process, but the published snapshot follows the

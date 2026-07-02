@@ -17,9 +17,25 @@ vi.mock("@tauri-apps/api/core", () => ({
   Channel: tauri.Channel,
 }));
 
+const activity = vi.hoisted(() => ({
+  agentTurnStarted: vi.fn(),
+  agentTurnDone: vi.fn(),
+  agentTurnCleared: vi.fn(),
+}));
+const workspace = vi.hoisted(() => ({
+  findChat: vi.fn(),
+  isChatArchived: vi.fn(),
+}));
+
+vi.mock("../../src/stores/chatActivity", () => activity);
+vi.mock("../../src/stores/workspace", () => ({ findChat: workspace.findChat }));
+vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isChatArchived }));
+
 import {
   agentChat,
+  disposeAgentChat,
   ensureAgentChat,
+  interruptAgentChat,
   sendAgentMessage,
   type AgentTimelineItem,
 } from "../../src/stores/agentChat";
@@ -70,6 +86,11 @@ function deferred<T>() {
 beforeEach(() => {
   tauri.invoke.mockReset();
   tauri.channels.splice(0);
+  activity.agentTurnStarted.mockClear();
+  activity.agentTurnDone.mockClear();
+  activity.agentTurnCleared.mockClear();
+  workspace.findChat.mockReset().mockImplementation((id: string) => ({ chatId: id }));
+  workspace.isChatArchived.mockReset().mockReturnValue(false);
 });
 
 describe("agentChat store reducer", () => {
@@ -325,5 +346,103 @@ describe("sendAgentMessage", () => {
     expect(timeline(chatId)).toEqual([]);
     expect(agentChat(chatId)?.turnActive).toBe(false);
     expect(agentChat(chatId)?.error).toBe("send failed");
+  });
+});
+
+describe("agentChat → chatActivity wiring", () => {
+  it("marks the chat busy on send and on a turnStarted event", async () => {
+    const { chatId, emit } = await startChat();
+
+    await sendAgentMessage(chatId, "hello");
+    expect(activity.agentTurnStarted).toHaveBeenCalledTimes(1);
+    expect(activity.agentTurnStarted).toHaveBeenCalledWith(chatId);
+
+    emit({ kind: "turnStarted" });
+    expect(activity.agentTurnStarted).toHaveBeenCalledTimes(2);
+    expect(activity.agentTurnDone).not.toHaveBeenCalled();
+  });
+
+  it("clears busy without a chime when send fails", async () => {
+    const { chatId } = await startChat();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_send") return Promise.reject(new Error("send failed"));
+      return Promise.resolve(null);
+    });
+
+    await expect(sendAgentMessage(chatId, "hello")).rejects.toThrow("send failed");
+
+    expect(activity.agentTurnCleared).toHaveBeenCalledWith(chatId);
+    expect(activity.agentTurnDone).not.toHaveBeenCalled();
+  });
+
+  it("routes turnDone and turnFailed events to agentTurnDone", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "turnStarted" });
+    emit({ kind: "turnDone", status: "completed" });
+    expect(activity.agentTurnDone).toHaveBeenCalledTimes(1);
+    expect(activity.agentTurnDone).toHaveBeenCalledWith(chatId);
+
+    emit({ kind: "turnStarted" });
+    emit({ kind: "turnFailed", error: "boom" });
+    expect(activity.agentTurnDone).toHaveBeenCalledTimes(2);
+    expect(activity.agentTurnCleared).not.toHaveBeenCalled();
+  });
+
+  it("makes no activity calls for an archived chat", async () => {
+    const { chatId, emit } = await startChat();
+    workspace.isChatArchived.mockReturnValue(true);
+
+    await sendAgentMessage(chatId, "hello");
+    emit({ kind: "turnStarted" });
+    emit({ kind: "turnDone", status: "completed" });
+
+    expect(activity.agentTurnStarted).not.toHaveBeenCalled();
+    expect(activity.agentTurnDone).not.toHaveBeenCalled();
+    expect(activity.agentTurnCleared).not.toHaveBeenCalled();
+  });
+
+  it("makes no activity calls when the chat row no longer exists", async () => {
+    const { chatId, emit } = await startChat();
+    workspace.findChat.mockReturnValue(undefined);
+
+    emit({ kind: "turnStarted" });
+    emit({ kind: "turnDone", status: "completed" });
+
+    expect(activity.agentTurnStarted).not.toHaveBeenCalled();
+    expect(activity.agentTurnDone).not.toHaveBeenCalled();
+    expect(agentChat(chatId)?.turnActive).toBe(false);
+  });
+
+  it("suppresses the chime for the terminal event of a user interrupt", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "turnStarted" });
+    await interruptAgentChat(chatId);
+    expect(activity.agentTurnCleared).toHaveBeenCalledTimes(1);
+
+    emit({ kind: "turnFailed", error: "interrupted" });
+    expect(activity.agentTurnDone).not.toHaveBeenCalled();
+    expect(activity.agentTurnCleared).toHaveBeenCalledTimes(2);
+
+    emit({ kind: "turnStarted" });
+    emit({ kind: "turnDone", status: "completed" });
+    expect(activity.agentTurnDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose drops the store entry and ignores late events", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "turnStarted" });
+    activity.agentTurnStarted.mockClear();
+    disposeAgentChat(chatId);
+
+    expect(agentChat(chatId)).toBeUndefined();
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_interrupt")).toBe(true);
+
+    emit({ kind: "turnDone", status: "completed" });
+    expect(agentChat(chatId)).toBeUndefined();
+    expect(activity.agentTurnDone).not.toHaveBeenCalled();
+    expect(activity.agentTurnStarted).not.toHaveBeenCalled();
   });
 });

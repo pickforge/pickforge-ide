@@ -44,6 +44,7 @@ import {
   deleteChat,
   deleteProject,
   ensureChatsLoaded,
+  findChat,
   migrateChatBackend,
   renameChat,
   renameProject,
@@ -53,6 +54,7 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
+import { AGENTS } from "../../lib/agentModels";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
@@ -60,6 +62,12 @@ import { pickProjectDir } from "../../lib/opener";
 
 const PROJECT_MIME = "application/x-pf-project";
 const CHAT_MIME = "application/x-pf-chat";
+
+// Providers a structured agent chat can drive (AgentChatView backends). Reuses
+// the AGENTS profile labels so the picker stays in sync with the model settings.
+const AGENT_CHAT_PROVIDERS = AGENTS.filter((a) => a.id === "claudeCode" || a.id === "codex");
+const AGENT_CHAT_MARKS: Record<string, string> = { claudeCode: "CC", codex: "CX" };
+const agentChatMark = (agentId: string): string => AGENT_CHAT_MARKS[agentId] ?? "AI";
 
 function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
@@ -69,7 +77,7 @@ async function pickProject() {
   if (dir) await addProject(dir, basename(dir));
 }
 
-type MenuKind = "project" | "group" | "chat";
+type MenuKind = "project" | "group" | "chat" | "newchat";
 interface MenuState { kind: MenuKind; id: string; x: number; y: number; align: "start" | "end" }
 
 export function ProjectsPane() {
@@ -124,9 +132,13 @@ export function ProjectsPane() {
 
   const moveTo = (root: string, groupId: string | null) => { assignProject(root, groupId); closeMenu(); };
   const newGroupFor = (root: string) => { const id = createGroup(); assignProject(root, id); closeMenu(); setRenaming(id); };
-  const newChat = (root: string) => {
+  const newTerminalChat = (root: string) => {
     if (!chatsExpanded(root)) toggleChats(root);
-    void addChat(DEFAULT_CHAT_TITLE, "claudeCode", root);
+    void addChat(DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
+  };
+  const newAgentChat = (root: string, provider: string) => {
+    if (!chatsExpanded(root)) toggleChats(root);
+    void addChat(DEFAULT_CHAT_TITLE, provider, root, "agent");
   };
   const toggleArchivedFor = (root: string) =>
     setShowArchived((s) => {
@@ -233,7 +245,7 @@ export function ProjectsPane() {
       <>
         <div class="pf-menu-label">{name()}</div>
         <button class="pf-menu-item" onClick={() => { selectProject(p.root); closeMenu(); }}>Open</button>
-        <button class="pf-menu-item pf-menu-item--accent" onClick={() => { newChat(p.root); closeMenu(); }}>New chat</button>
+        <button class="pf-menu-item pf-menu-item--accent" onClick={() => setMenu((m) => (m ? { ...m, kind: "newchat" } : m))}>New chat…</button>
         <button class="pf-menu-item" onClick={() => { setRenaming(p.root); closeMenu(); }}>Rename</button>
         <div class="pf-menu-sep" />
         <div class="pf-menu-label">Move to</div>
@@ -260,6 +272,20 @@ export function ProjectsPane() {
     </>
   );
 
+  const NewChatMenu = (p: { root: string }) => (
+    <>
+      <div class="pf-menu-label">New chat</div>
+      <button class="pf-menu-item pf-menu-item--accent" onClick={() => { newTerminalChat(p.root); closeMenu(); }}>Terminal</button>
+      <div class="pf-menu-sep" />
+      <div class="pf-menu-label">Agent</div>
+      <For each={AGENT_CHAT_PROVIDERS}>
+        {(a) => (
+          <button class="pf-menu-item" onClick={() => { newAgentChat(p.root, a.id); closeMenu(); }}>{a.label}</button>
+        )}
+      </For>
+    </>
+  );
+
   const doArchiveChat = (id: string) => {
     const chat = chatsFor(workspace.activeRoot ?? "").find((c) => c.chatId === id);
     archiveChat(id);
@@ -279,7 +305,7 @@ export function ProjectsPane() {
       <button class="pf-menu-item" onClick={() => { selectChat(p.id); closeMenu(); }}>Open</button>
       <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
       <button class="pf-menu-item" onClick={() => doArchiveChat(p.id)}>Archive</button>
-      <Show when={recoverChatSessions()}>
+      <Show when={recoverChatSessions() && findChat(p.id)?.kind !== "agent"}>
         <div class="pf-menu-sep" />
         <button
           class="pf-menu-item"
@@ -340,6 +366,9 @@ export function ProjectsPane() {
             if (v.trim() && v.trim() !== p.chat.title) markChatTitleManual(id);
             void renameChat(id, v);
           }} />
+        </Show>
+        <Show when={p.chat.kind === "agent"}>
+          <span class="pf-chat-agent-mark" title="Agent chat">{agentChatMark(p.chat.agentId)}</span>
         </Show>
         <Show
           when={!p.archived}
@@ -433,7 +462,7 @@ export function ProjectsPane() {
           <Show when={renaming() === root} fallback={<span class="pf-rail-row-label">{p.project.displayName}</span>}>
             <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
           </Show>
-          <button class="pf-rail-row-action" title="New chat" onClick={(e) => { e.stopPropagation(); newChat(root); }}>
+          <button class="pf-rail-row-action" title="New chat" onClick={(e) => openFromButton("newchat", root, e)}>
             <IconPlus size={14} />
           </button>
           <button class="pf-rail-row-action" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
@@ -594,6 +623,7 @@ export function ProjectsPane() {
               <Match when={m().kind === "project"}><ProjectMenu root={m().id} /></Match>
               <Match when={m().kind === "group"}><GroupMenu id={m().id} /></Match>
               <Match when={m().kind === "chat"}><ChatMenu id={m().id} /></Match>
+              <Match when={m().kind === "newchat"}><NewChatMenu root={m().id} /></Match>
             </Switch>
           </FloatingMenu>
         )}

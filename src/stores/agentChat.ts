@@ -1,4 +1,4 @@
-import { createStore } from "solid-js/store";
+import { createStore, produce } from "solid-js/store";
 import {
   agentChatHistory,
   agentChatInterrupt,
@@ -8,6 +8,9 @@ import {
   type AgentProvider,
   type AgentTimelineEntry,
 } from "../lib/agentChat";
+import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
+import { isChatArchived } from "./chatArchive";
+import { findChat } from "./workspace";
 
 export type AgentTimelineItem =
   | { type: "userMessage"; seq: number; text: string }
@@ -54,6 +57,19 @@ export interface AgentChatState {
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
 const nextSeqByChat = new Map<string, number>();
 const ensurePromises = new Map<string, Promise<void>>();
+
+// Chats whose active turn the user just interrupted: the backend still emits
+// the terminal turnDone/turnFailed, which must clear the busy glow WITHOUT
+// chiming — the user was right here when they stopped it. Consumed by the next
+// terminal event; a fresh turnStarted drops a stale flag.
+const interruptedByUser = new Set<string>();
+
+// Mirror of the pty invariant: an archived chat renders no busy/attention
+// state anywhere, and a deleted chat must never have activity resurrected by a
+// late event.
+function activityEligible(chatId: string): boolean {
+  return findChat(chatId) !== undefined && !isChatArchived(chatId);
+}
 
 export function agentChat(chatId: string): AgentChatState | undefined {
   return chats[chatId];
@@ -320,6 +336,15 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   const chat = chats[chatId];
   if (!chat) return;
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
+  if (event.kind === "turnStarted") {
+    interruptedByUser.delete(chatId);
+    if (activityEligible(chatId)) agentTurnStarted(chatId);
+  } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
+    const wasInterrupted = interruptedByUser.delete(chatId);
+    if (!activityEligible(chatId)) return;
+    if (wasInterrupted) agentTurnCleared(chatId);
+    else agentTurnDone(chatId);
+  }
 }
 
 function parseAgentEvent(payload: string): AgentEvent | null {
@@ -412,6 +437,7 @@ export async function sendAgentMessage(chatId: string, text: string): Promise<vo
       { type: "userMessage", seq: optimisticSeq, text },
     ],
   });
+  if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
     await agentChatSend(sessionId, text);
   } catch (error) {
@@ -425,6 +451,7 @@ export async function sendAgentMessage(chatId: string, text: string): Promise<vo
         (item) => item.type !== "userMessage" || item.seq !== optimisticSeq,
       ),
     });
+    if (activityEligible(chatId)) agentTurnCleared(chatId);
     throw error;
   }
 }
@@ -432,6 +459,25 @@ export async function sendAgentMessage(chatId: string, text: string): Promise<vo
 export async function interruptAgentChat(chatId: string): Promise<void> {
   const sessionId = chats[chatId]?.sessionId;
   if (!sessionId) return;
-  await agentChatInterrupt(sessionId);
+  if (chats[chatId]?.turnActive) interruptedByUser.add(chatId);
+  try {
+    await agentChatInterrupt(sessionId);
+  } catch (error) {
+    interruptedByUser.delete(chatId);
+    throw error;
+  }
   if (chats[chatId]) setChats(chatId, { turnActive: false });
+  if (activityEligible(chatId)) agentTurnCleared(chatId);
+}
+
+/** The chat was deleted: best-effort stop the backend turn (there is no stop
+ *  command — interrupt is the closest), then drop the store entry so any late
+ *  events for this chat are ignored instead of resurrecting activity state. */
+export function disposeAgentChat(chatId: string) {
+  const sessionId = chats[chatId]?.sessionId;
+  if (sessionId) void agentChatInterrupt(sessionId).catch(() => undefined);
+  interruptedByUser.delete(chatId);
+  nextSeqByChat.delete(chatId);
+  ensurePromises.delete(chatId);
+  if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
 }

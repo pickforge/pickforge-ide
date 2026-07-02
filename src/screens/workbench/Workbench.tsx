@@ -12,6 +12,9 @@ import { DebugConsole } from "./DebugConsole";
 import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
 import { layout, type PaneId } from "../../stores/workbenchLayout";
 import { TerminalHost } from "../../components/TerminalHost";
+import { AgentChatView } from "../../components/chat/AgentChatView";
+import { disposeAgentChat } from "../../stores/agentChat";
+import { loadAgentModels } from "../../lib/agentModels";
 import { Chip, ForgeEmptyState, MonoEyebrow, PaneReveal } from "../../components/ui";
 import { IconChevronDown, IconClose, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
@@ -130,6 +133,7 @@ export function WorkbenchScreen() {
       clearChatActivity(chatId);
       forgetChatAutoName(chatId);
       deleteTerminalHost(chatId);
+      disposeAgentChat(chatId);
     });
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;
@@ -242,11 +246,17 @@ export function WorkbenchScreen() {
         <div class="pf-workbench-terminal">
           {/* All visited chats stay mounted; only the active one is shown. */}
           <For each={mounted()}>
-            {(h) => (
+            {(h) => {
+              const chat = findChat(h.chatId);
+              const provider = (chat?.agentId ?? "claudeCode") as "claudeCode" | "codex";
+              return (
               <div
                 class="pf-term-slot"
                 style={{ display: workspace.activeChatId === h.chatId ? "block" : "none" }}
               >
+                <Show
+                  when={chat?.kind === "agent"}
+                  fallback={
                 <TerminalHost
                   cwd={h.projectRoot}
                   env={mcpEnv(h.projectRoot)}
@@ -301,8 +311,18 @@ export function WorkbenchScreen() {
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                   onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
                 />
+                  }
+                >
+                  <AgentChatView
+                    chatId={h.chatId}
+                    projectRoot={h.projectRoot}
+                    provider={provider}
+                    model={loadAgentModels()[provider] ?? null}
+                  />
+                </Show>
               </div>
-            )}
+              );
+            }}
           </For>
           <Show when={workspace.loaded && !workspace.activeChatId}>
             <div class="pf-term-empty">

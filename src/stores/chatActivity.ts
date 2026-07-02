@@ -214,6 +214,26 @@ export function recordChatAttention(chatId: string, paneId: string) {
   setAttention(chatId);
 }
 
+// ---- structured agent chats (turn-based, no pty panes) ----
+// An agent chat has no shells to scan, so its busy/attention run off the turn
+// lifecycle instead of the char-counting cycle: a turn glows the row busy, and
+// a turn finishing raises attention (chime + marker) only when the user did not
+// watch it happen. Same UI treatment as the pty path, reusing write/setAttention.
+export function agentTurnStarted(chatId: string) {
+  write(chatId, { busy: true });
+}
+
+export function agentTurnDone(chatId: string) {
+  write(chatId, { busy: false });
+  setAttention(chatId);
+}
+
+/** A turn ended because the user interrupted it (or a send failed): drop the
+ *  busy glow but never chime — they were right here when it stopped. */
+export function agentTurnCleared(chatId: string) {
+  write(chatId, { busy: false });
+}
+
 /** A pane was closed (its shell killed). Drop its scanner state; if the chat
  *  has no agent panes left, cancel the pending busy cycle so a dead pane can't
  *  chime later. Call AFTER revoking the pane's agent ownership. */

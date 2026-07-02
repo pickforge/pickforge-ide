@@ -735,6 +735,16 @@ body.pf-resizing .pf-dock-resizer-grip {
 @media (prefers-reduced-motion: reduce) {
   .pf-chat-title--typing::after { animation: none; }
 }
+.pf-chat-agent-mark {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-chat-row.active .pf-chat-agent-mark {
+  color: var(--pf-text-med);
+}
 .pf-chat-row .pf-rail-row-action {
   opacity: 0;
 }

@@ -32,6 +32,9 @@ import {
   transferAgentPaneOwnership,
 } from "../../src/lib/chatAutoName";
 import {
+  agentTurnCleared,
+  agentTurnDone,
+  agentTurnStarted,
   CHAT_BUSY_QUIET_MS,
   chatAttention,
   chatBusy,
@@ -355,6 +358,72 @@ describe("chatActivity — escape-sequence scanning across chunks", () => {
 
     vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
     expect(chatAttention(id)).toBe(true);
+  });
+});
+
+describe("chatActivity — structured agent chat turns", () => {
+  it("sets busy on turn start and clears it on turn done", () => {
+    const id = seed(null);
+    expect(chatBusy(id)).toBe(false);
+
+    agentTurnStarted(id);
+    expect(chatBusy(id)).toBe(true);
+
+    setActiveChatForActivity(id); // the user is watching this chat
+    agentTurnDone(id);
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("raises attention with one chime when a turn finishes unseen", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    expect(chatBusy(id)).toBe(true);
+    expect(chatAttention(id)).toBe(false);
+
+    agentTurnDone(id);
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not alert when a turn finishes on the active, focused chat", () => {
+    const id = seed(null);
+    setActiveChatForActivity(id);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("clears attention when the agent chat becomes active", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+    expect(chatAttention(id)).toBe(true);
+
+    setActiveChatForActivity(id);
+    expect(chatAttention(id)).toBe(false);
+  });
+
+  it("clears busy without alerting when a turn is interrupted", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    expect(chatBusy(id)).toBe(true);
+
+    agentTurnCleared(id);
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
   });
 });
 

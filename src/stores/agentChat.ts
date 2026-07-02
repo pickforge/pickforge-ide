@@ -71,6 +71,17 @@ export type AgentChatTotals = {
   estimated: boolean;
 };
 
+// Last cumulative usage snapshot (providers that report contextUsed send
+// running totals, not per-turn deltas). Kept on the chat so totals accumulate
+// positive deltas across provider-side thread restarts, which RESET the running
+// counters — assign-semantics would silently drop everything before the reset.
+type CumulativeUsageSnapshot = {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+};
+
 export interface AgentChatState {
   sessionId: string | null;
   projectRoot: string | null;
@@ -84,6 +95,7 @@ export interface AgentChatState {
   contextWindow: number | null;
   rateLimits: string | null;
   totals: AgentChatTotals;
+  cumulativeUsage: CumulativeUsageSnapshot | null;
   historyLoaded: boolean;
 }
 
@@ -130,6 +142,7 @@ function emptyState(provider: AgentProvider, model: string | null): AgentChatSta
     contextWindow: null,
     rateLimits: null,
     totals: emptyTotals(),
+    cumulativeUsage: null,
     historyLoaded: false,
   };
 }
@@ -346,21 +359,42 @@ function reduceUsageEvent(
   const contextWindow =
     event.contextWindow === undefined ? chat.contextWindow : event.contextWindow;
   const cumulative = event.contextUsed != null;
-  const totals = cumulative
-    ? {
-        inputTokens: event.inputTokens,
-        cachedInputTokens: event.cachedInputTokens,
-        outputTokens: event.outputTokens,
-        costUsd,
-        estimated: event.costUsd == null,
-      }
-    : {
-        inputTokens: chat.totals.inputTokens + event.inputTokens,
-        cachedInputTokens: chat.totals.cachedInputTokens + event.cachedInputTokens,
-        outputTokens: chat.totals.outputTokens + event.outputTokens,
-        costUsd: chat.totals.costUsd + costUsd,
-        estimated: chat.totals.estimated || estimatedCostUsd !== null,
-      };
+  let totals: AgentChatTotals;
+  let cumulativeUsage = chat.cumulativeUsage;
+  if (cumulative) {
+    // Positive-delta semantics: each field grows by what the running counter
+    // gained since the last snapshot. A counter that DECREASED means the
+    // provider thread restarted — count the new value as a fresh run's start.
+    const snapshot: CumulativeUsageSnapshot = {
+      inputTokens: event.inputTokens,
+      cachedInputTokens: event.cachedInputTokens,
+      outputTokens: event.outputTokens,
+      costUsd,
+    };
+    const previous = chat.cumulativeUsage;
+    const gained = (current: number, before: number) =>
+      current >= before ? current - before : current;
+    totals = {
+      inputTokens:
+        chat.totals.inputTokens + gained(snapshot.inputTokens, previous?.inputTokens ?? 0),
+      cachedInputTokens:
+        chat.totals.cachedInputTokens +
+        gained(snapshot.cachedInputTokens, previous?.cachedInputTokens ?? 0),
+      outputTokens:
+        chat.totals.outputTokens + gained(snapshot.outputTokens, previous?.outputTokens ?? 0),
+      costUsd: chat.totals.costUsd + gained(snapshot.costUsd, previous?.costUsd ?? 0),
+      estimated: chat.totals.estimated || event.costUsd == null,
+    };
+    cumulativeUsage = snapshot;
+  } else {
+    totals = {
+      inputTokens: chat.totals.inputTokens + event.inputTokens,
+      cachedInputTokens: chat.totals.cachedInputTokens + event.cachedInputTokens,
+      outputTokens: chat.totals.outputTokens + event.outputTokens,
+      costUsd: chat.totals.costUsd + costUsd,
+      estimated: chat.totals.estimated || estimatedCostUsd !== null,
+    };
+  }
 
   return withTimeline(
     {
@@ -368,6 +402,7 @@ function reduceUsageEvent(
       contextUsed,
       contextWindow,
       totals,
+      cumulativeUsage,
     },
     [
       ...chat.timeline,

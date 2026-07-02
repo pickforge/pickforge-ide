@@ -1,0 +1,447 @@
+/* Orchestration surface. Tokens only (Rule 1). The ledger, lane headers and the
+ * usage dashboard carry NO ember — each embedded lane is its own composition and
+ * keeps its own composer ember. Structure is hairline + semantic status color. */
+
+.pf-orch {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  background: var(--pf-surface);
+}
+
+/* ---- Ledger panel ---- */
+.pf-orch-ledger {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 288px;
+  min-height: 0;
+  border-right: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  transition: width var(--pf-dur-standard) var(--pf-ease-forge);
+}
+.pf-orch-ledger--closed {
+  width: 40px;
+}
+.pf-orch-ledger-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: var(--pf-space-sm) var(--pf-space-sm) var(--pf-space-xs);
+}
+.pf-orch-ledger-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  padding: var(--pf-space-xs);
+}
+.pf-orch-ledger-toggle:hover {
+  color: var(--pf-text-hi);
+}
+.pf-orch-ledger--closed .pf-orch-ledger-toggle {
+  flex-direction: column;
+}
+.pf-orch-ledger-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
+  gap: var(--pf-space-sm);
+}
+
+/* ---- Tasks ---- */
+.pf-orch-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+.pf-orch-tasks-empty {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  padding: var(--pf-space-sm) var(--pf-space-xs);
+}
+.pf-orch-task {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+}
+.pf-orch-task-top {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-orch-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  flex: none;
+  padding: 2px var(--pf-space-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: var(--pf-status, var(--pf-text-med));
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-status:hover {
+  border-color: var(--pf-hairline-strong);
+}
+.pf-orch-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-status, var(--pf-text-med));
+}
+.pf-orch-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-orch-task-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  opacity: 0;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    opacity var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-task:hover .pf-orch-task-del {
+  opacity: 1;
+}
+.pf-orch-task-del:hover {
+  color: var(--pf-error);
+}
+.pf-orch-task-assign {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  flex-wrap: wrap;
+}
+.pf-orch-task-key {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-orch-select {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 2px var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-select:hover {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-orch-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-orch-note::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-orch-note:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+
+/* ---- Add task ---- */
+.pf-orch-add {
+  display: flex;
+  gap: var(--pf-space-xs);
+}
+.pf-orch-add-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-orch-add-input::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-orch-add-input:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+}
+.pf-orch-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-add-btn:hover {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+
+/* ---- Usage dashboard ---- */
+.pf-orch-usage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  margin-top: auto;
+  padding-top: var(--pf-space-sm);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-orch-usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pf-orch-usage-empty {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+}
+.pf-orch-usage-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pf-orch-usage-row {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(6, 1fr);
+  gap: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-med);
+  font-variant-numeric: tabular-nums;
+}
+.pf-orch-usage-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.pf-orch-usage-row > span:first-child {
+  text-align: left;
+}
+.pf-orch-usage-row--head {
+  color: var(--pf-text-low);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  font-size: var(--pf-size-eyebrow);
+}
+.pf-orch-usage-prov {
+  display: flex;
+  flex-direction: column;
+}
+.pf-orch-usage-model {
+  display: block;
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Lane grid ---- */
+.pf-orch-grid-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pf-orch-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-xs);
+}
+.pf-orch-lane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  overflow: hidden;
+}
+.pf-orch-lane-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+}
+.pf-orch-lane-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-text-low);
+}
+.pf-orch-lane-dot--busy {
+  background: var(--pf-info);
+}
+.pf-orch-lane-dot--attention {
+  background: var(--pf-warning);
+}
+.pf-orch-lane-title {
+  min-width: 0;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-orch-lane-mark {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-orch-lane-model {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-orch-lane-spacer {
+  flex: 1 1 auto;
+}
+/* Quiet inline handoff notice under the lane header: info uses low text,
+ * failures the semantic error token. Never ember. */
+.pf-orch-lane-notice {
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  overflow-wrap: anywhere;
+}
+.pf-orch-lane-notice--error {
+  color: var(--pf-error);
+}
+.pf-orch-lane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.pf-orch-lane-body > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pf-orch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-icon:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-item-fill);
+}
+
+/* ---- Add lane affordance ---- */
+.pf-orch-add-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-add-lane:hover {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+.pf-orch-add-lane--corner {
+  position: absolute;
+  top: var(--pf-space-sm);
+  right: var(--pf-space-sm);
+  z-index: 2;
+  background: var(--pf-surface-2);
+}
+
+/* ---- Empty state ---- */
+.pf-orch-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

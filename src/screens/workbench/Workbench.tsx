@@ -13,10 +13,11 @@ import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
 import { layout, type PaneId } from "../../stores/workbenchLayout";
 import { TerminalHost } from "../../components/TerminalHost";
 import { AgentChatView } from "../../components/chat/AgentChatView";
+import { OrchestraView } from "../../components/orchestra/OrchestraView";
 import { disposeAgentChat } from "../../stores/agentChat";
 import { loadAgentModels } from "../../lib/agentModels";
 import { Chip, ForgeEmptyState, MonoEyebrow, PaneReveal } from "../../components/ui";
-import { IconChevronDown, IconClose, IconTerminal } from "../../components/icons";
+import { IconChevronDown, IconClose, IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
 import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
 import { editorCommand } from "../../stores/fileOpenSettings";
@@ -56,6 +57,7 @@ interface MountedHost {
 export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
+  const [orchestraOpen, setOrchestraOpen] = createSignal(false);
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
   // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
@@ -234,6 +236,15 @@ export function WorkbenchScreen() {
               </For>
             </div>
             <button
+              class="pf-orch-tab"
+              classList={{ "pf-orch-tab--on": orchestraOpen() }}
+              title="Toggle orchestration view"
+              disabled={!workspace.activeRoot}
+              onClick={() => setOrchestraOpen((v) => !v)}
+            >
+              <IconGrid size={13} /> Orchestra
+            </button>
+            <button
               class="pf-launch-hide"
               title="Hide quick launch"
               onClick={() => setQuickLaunchVisible(false)}
@@ -245,6 +256,7 @@ export function WorkbenchScreen() {
 
         <div class="pf-workbench-terminal">
           {/* All visited chats stay mounted; only the active one is shown. */}
+          <div class="pf-term-mounts" classList={{ "pf-term-mounts--hidden": orchestraOpen() }}>
           <For each={mounted()}>
             {(h) => {
               const chat = findChat(h.chatId);
@@ -332,6 +344,12 @@ export function WorkbenchScreen() {
                 title="No chat open"
                 hint="Create or select a chat to open a shell in its project."
               />
+            </div>
+          </Show>
+          </div>
+          <Show when={orchestraOpen() && workspace.activeRoot}>
+            <div class="pf-term-slot pf-orch-slot">
+              <OrchestraView projectRoot={workspace.activeRoot!} />
             </div>
           </Show>
         </div>

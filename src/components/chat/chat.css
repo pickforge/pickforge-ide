@@ -591,9 +591,59 @@
   cursor: not-allowed;
 }
 .pf-chat-composer-input {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: var(--pf-space-sm);
+}
+
+/* Slash-template popover: a quiet list above the input. No ember (Rule 2 — the
+ * send affordance keeps the composition's single ember). */
+.pf-composer-templates {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  z-index: 20;
+  margin-bottom: var(--pf-space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--pf-space-xs);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-1);
+  box-shadow: var(--pf-shadow-overlay);
+  animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+.pf-composer-template {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.pf-composer-template--on {
+  background: var(--pf-surface-2);
+}
+.pf-composer-template-label {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+}
+.pf-composer-template-hint {
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pf-chat-textarea {
   flex: 1 1 auto;

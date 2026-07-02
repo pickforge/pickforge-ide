@@ -112,7 +112,29 @@ const AGENT_CHAT_HISTORY: AgentTimelineEntry[] = [
   item(11, { kind: "turnDone", status: "completed" }),
 ];
 
+const MOCK_ORCHESTRA_TASKS: { id: string; projectRoot: string }[] = [];
+
+const MOCK_USAGE_SUMMARY = [
+  { provider: "claudeCode", model: "claude-haiku-4-5", chats: 2, turns: 14, inputTokens: 48210, cachedInputTokens: 21050, outputTokens: 9640, costUsd: 0.31 },
+  { provider: "codex", model: "gpt-5.3-codex-spark", chats: 1, turns: null, inputTokens: 22400, cachedInputTokens: 8000, outputTokens: 4120, costUsd: 0 },
+];
+
 const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
+  orchestra_task_upsert: (a) => {
+    const task = a.task as { id: string; projectRoot: string };
+    const index = MOCK_ORCHESTRA_TASKS.findIndex((t) => t.id === task.id);
+    if (index >= 0) MOCK_ORCHESTRA_TASKS[index] = task;
+    else MOCK_ORCHESTRA_TASKS.push(task);
+    return null;
+  },
+  orchestra_task_delete: (a) => {
+    const index = MOCK_ORCHESTRA_TASKS.findIndex((t) => t.id === a.id);
+    if (index >= 0) MOCK_ORCHESTRA_TASKS.splice(index, 1);
+    return null;
+  },
+  orchestra_tasks_list: (a) =>
+    MOCK_ORCHESTRA_TASKS.filter((t) => t.projectRoot === a.projectRoot),
+  agent_usage_summary: () => MOCK_USAGE_SUMMARY,
   projects_list: () => SAMPLE_PROJECTS,
   chats_list: (a) => chatsForProject(a.projectRoot),
   settings_get: () => null,

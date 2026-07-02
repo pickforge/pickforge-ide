@@ -115,6 +115,17 @@ function cumulativeUsageEvents(): AgentEvent[] {
       contextUsed: 6_000,
       contextWindow: 100_000,
     },
+    // Provider thread restart: the running counters RESET below the previous
+    // snapshot — totals must keep the pre-reset history and add the new run.
+    {
+      kind: "usage",
+      inputTokens: 100,
+      cachedInputTokens: 10,
+      outputTokens: 20,
+      costUsd: 0.01,
+      contextUsed: 1_000,
+      contextWindow: 100_000,
+    },
   ];
 }
 
@@ -389,21 +400,21 @@ describe("agentChat store reducer", () => {
     ]);
   });
 
-  it("assigns cumulative usage snapshots instead of adding them", async () => {
+  it("accumulates cumulative usage by positive deltas and survives resets", async () => {
     const { chatId, emit } = await startChat();
 
     for (const event of cumulativeUsageEvents()) emit(event);
 
     expect(agentChat(chatId)?.totals).toEqual({
-      inputTokens: 600,
-      cachedInputTokens: 60,
-      outputTokens: 120,
-      costUsd: 0.06,
+      inputTokens: 700,
+      cachedInputTokens: 70,
+      outputTokens: 140,
+      costUsd: expect.closeTo(0.07, 8),
       estimated: false,
     });
-    expect(agentChat(chatId)?.contextUsed).toBe(6_000);
+    expect(agentChat(chatId)?.contextUsed).toBe(1_000);
     expect(agentChat(chatId)?.contextWindow).toBe(100_000);
-    expect(timeline(chatId).filter((item) => item.type === "usage")).toHaveLength(3);
+    expect(timeline(chatId).filter((item) => item.type === "usage")).toHaveLength(4);
   });
 
   it("estimates usage totals for known models when reported cost is missing", async () => {
@@ -606,17 +617,17 @@ describe("agentChat history", () => {
     expect(agentChat(chatId)?.contextWindow).toBe(100_000);
   });
 
-  it("assigns cumulative usage snapshots from history to the latest totals", async () => {
+  it("replays cumulative usage from history with the same delta semantics", async () => {
     const { chatId } = await startChat(historyFromEvents(cumulativeUsageEvents()));
 
     expect(agentChat(chatId)?.totals).toEqual({
-      inputTokens: 600,
-      cachedInputTokens: 60,
-      outputTokens: 120,
-      costUsd: 0.06,
+      inputTokens: 700,
+      cachedInputTokens: 70,
+      outputTokens: 140,
+      costUsd: expect.closeTo(0.07, 8),
       estimated: false,
     });
-    expect(agentChat(chatId)?.contextUsed).toBe(6_000);
+    expect(agentChat(chatId)?.contextUsed).toBe(1_000);
     expect(agentChat(chatId)?.contextWindow).toBe(100_000);
   });
 });

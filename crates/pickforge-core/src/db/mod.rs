@@ -4,7 +4,7 @@
 
 mod models;
 
-pub use models::{AgentRunLog, Chat, PickHistory, Project, ProjectSettings, RunSessionLog};
+pub use models::{AgentRunLog, AgentSessionRow, AgentTimelineEntry, Chat, PickHistory, Project, ProjectSettings, RunSessionLog};
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -30,7 +30,7 @@ const RUST_BASELINE: u32 = 11;
 
 /// Latest schema version this build understands. Bump (and add a numbered Rust
 /// migration in `apply_rust_migrations`) whenever the schema changes from here.
-const LATEST_VERSION: u32 = 11;
+const LATEST_VERSION: u32 = 12;
 
 /// The full, current desired schema. Every statement is `IF NOT EXISTS`, so
 /// running it against a database that already holds some tables only fills the
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS chats (
   project_root     TEXT NOT NULL REFERENCES projects(project_root) ON DELETE CASCADE,
   title            TEXT NOT NULL,
   agent_id         TEXT NOT NULL,
+  kind             TEXT NOT NULL DEFAULT 'terminal',
   skill_id         TEXT,
   session_id       TEXT,
   labels_json      TEXT,
@@ -61,6 +62,42 @@ CREATE TABLE IF NOT EXISTS chats (
   last_activity_at INTEGER NOT NULL,
   sort_order       INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id                  TEXT NOT NULL PRIMARY KEY,
+  chat_id             TEXT NOT NULL,
+  provider            TEXT NOT NULL,
+  provider_session_id TEXT,
+  model               TEXT,
+  status              TEXT NOT NULL,
+  created_at          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_chat
+  ON agent_sessions(chat_id);
+
+CREATE TABLE IF NOT EXISTS agent_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  chat_id    TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  role       TEXT NOT NULL,
+  content    TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_chat
+  ON agent_messages(chat_id, seq);
+
+CREATE TABLE IF NOT EXISTS agent_items (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  chat_id    TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  kind       TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_items_chat
+  ON agent_items(chat_id, seq);
 
 CREATE TABLE IF NOT EXISTS project_settings (
   project_root                TEXT NOT NULL PRIMARY KEY,
@@ -191,6 +228,7 @@ const RECONCILABLE_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "labels_json", "ALTER TABLE chats ADD COLUMN labels_json TEXT"), // Drift v7
     ("chats", "status", "ALTER TABLE chats ADD COLUMN status TEXT"), // Drift v7
     ("chats", "task_brief_text", "ALTER TABLE chats ADD COLUMN task_brief_text TEXT"), // Drift v7
+    ("chats", "kind", "ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'terminal'"),
     // projects — archived_at backfilled for databases that came through v2.
     ("projects", "archived_at", "ALTER TABLE projects ADD COLUMN archived_at INTEGER"), // Drift v9
     // run_session_log — target_file added a version after the table itself.
@@ -325,11 +363,7 @@ fn register_basename(conn: &Connection) -> Result<(), DbError> {
 }
 
 /// Apply numbered Rust migrations to step a Rust-managed database
-/// (`RUST_BASELINE..=LATEST_VERSION`) forward. There are none beyond the baseline
-/// yet, so this only has work to do once `LATEST_VERSION` is bumped above
-/// `RUST_BASELINE`. Adding one is a single `match` arm — see the worked example
-/// in the body — each running its DDL and bumping `user_version` in one
-/// transaction.
+/// (`RUST_BASELINE..=LATEST_VERSION`) forward.
 fn apply_rust_migrations(conn: &mut Connection, mut version: u32) -> Result<(), DbError> {
     while version < LATEST_VERSION {
         let next = version + 1;
@@ -342,12 +376,51 @@ fn apply_rust_migrations(conn: &mut Connection, mut version: u32) -> Result<(), 
     Ok(())
 }
 
-/// The DDL for a single Rust-managed migration step. The fallthrough rejects an
-/// unknown version. To add a step, give it an arm, e.g.:
-/// `12 => tx.execute_batch("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")?,`
 fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Result<(), DbError> {
-    let _ = tx;
     match version {
+        12 => {
+            if !has_column(tx, "chats", "kind")? {
+                tx.execute_batch(
+                    "ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'terminal';",
+                )?;
+            }
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS agent_sessions (
+                   id                  TEXT NOT NULL PRIMARY KEY,
+                   chat_id             TEXT NOT NULL,
+                   provider            TEXT NOT NULL,
+                   provider_session_id TEXT,
+                   model               TEXT,
+                   status              TEXT NOT NULL,
+                   created_at          INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_agent_sessions_chat
+                   ON agent_sessions(chat_id);
+                 CREATE TABLE IF NOT EXISTS agent_messages (
+                   id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                   session_id TEXT NOT NULL,
+                   chat_id    TEXT NOT NULL,
+                   seq        INTEGER NOT NULL,
+                   role       TEXT NOT NULL,
+                   content    TEXT NOT NULL,
+                   created_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_agent_messages_chat
+                   ON agent_messages(chat_id, seq);
+                 CREATE TABLE IF NOT EXISTS agent_items (
+                   id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                   session_id TEXT NOT NULL,
+                   chat_id    TEXT NOT NULL,
+                   seq        INTEGER NOT NULL,
+                   kind       TEXT NOT NULL,
+                   payload    TEXT NOT NULL,
+                   created_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_agent_items_chat
+                   ON agent_items(chat_id, seq);",
+            )?;
+            Ok(())
+        }
         _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
     }
 }
@@ -358,9 +431,10 @@ fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Resul
 /// * `uv > LATEST_VERSION` → reject (a genuinely newer schema / app downgrade).
 ///   A Drift-era database has `uv <= 10 < RUST_BASELINE`, so it never trips this.
 /// * `uv <= DRIFT_FINAL` (Drift v1..=10, or unversioned-Rust `uv == 0`) →
-///   `reconcile_schema`: idempotent bring-up to the full schema, stamp baseline.
+///   `reconcile_schema`: idempotent bring-up to the full schema, stamp latest.
 /// * `RUST_BASELINE..=LATEST_VERSION` → run numbered Rust migrations forward.
 fn migrate(conn: &mut Connection) -> Result<(), DbError> {
+    debug_assert_eq!(RUST_BASELINE, DRIFT_FINAL + 1);
     let uv: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if uv > LATEST_VERSION {
         return Err(DbError::Other(format!(
@@ -378,7 +452,7 @@ fn migrate(conn: &mut Connection) -> Result<(), DbError> {
         // Replay Drift's data migrations, gated on the captured schema state so
         // version-specific backfills only run for databases that predate them.
         reconcile_data(conn, had_projects_table, had_connection_mode)?;
-        conn.execute_batch(&format!("PRAGMA user_version = {RUST_BASELINE};"))?;
+        conn.execute_batch(&format!("PRAGMA user_version = {LATEST_VERSION};"))?;
     } else {
         // A Rust-managed database. Reconcile defensively (cheap + idempotent),
         // then apply any numbered migrations above the baseline.
@@ -503,17 +577,17 @@ impl Database {
     pub fn upsert_chat(&self, c: &Chat) -> Result<(), DbError> {
         self.lock().execute(
             "INSERT INTO chats \
-               (chat_id, project_root, title, agent_id, skill_id, session_id, labels_json, \
+               (chat_id, project_root, title, agent_id, kind, skill_id, session_id, labels_json, \
                 status, task_brief_text, created_at, last_activity_at, sort_order) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) \
              ON CONFLICT(chat_id) DO UPDATE SET \
-               title = excluded.title, agent_id = excluded.agent_id, \
+               title = excluded.title, agent_id = excluded.agent_id, kind = excluded.kind, \
                skill_id = excluded.skill_id, session_id = excluded.session_id, \
                labels_json = excluded.labels_json, status = excluded.status, \
                task_brief_text = excluded.task_brief_text, \
                last_activity_at = excluded.last_activity_at, sort_order = excluded.sort_order",
             params![
-                c.chat_id, c.project_root, c.title, c.agent_id, c.skill_id, c.session_id,
+                c.chat_id, c.project_root, c.title, c.agent_id, c.kind, c.skill_id, c.session_id,
                 c.labels_json, c.status, c.task_brief_text, c.created_at, c.last_activity_at,
                 c.sort_order
             ],
@@ -691,6 +765,117 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    // ---- agent sessions ----
+
+    pub fn agent_session_create(&self, row: &AgentSessionRow) -> Result<(), DbError> {
+        self.lock().execute(
+            "INSERT INTO agent_sessions \
+               (id, chat_id, provider, provider_session_id, model, status, created_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                row.id,
+                row.chat_id,
+                row.provider,
+                row.provider_session_id,
+                row.model,
+                row.status,
+                row.created_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn agent_session_set_provider_session_id(
+        &self,
+        id: &str,
+        provider_session_id: &str,
+    ) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE agent_sessions SET provider_session_id = ?2 WHERE id = ?1",
+            params![id, provider_session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn agent_session_set_status(&self, id: &str, status: &str) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE agent_sessions SET status = ?2 WHERE id = ?1",
+            params![id, status],
+        )?;
+        Ok(())
+    }
+
+    pub fn latest_agent_session_for_chat(
+        &self,
+        chat_id: &str,
+    ) -> Result<Option<AgentSessionRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM agent_sessions WHERE chat_id = ?1 \
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![chat_id], agent_session_from_row)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn agent_message_append(
+        &self,
+        session_id: &str,
+        chat_id: &str,
+        role: &str,
+        content: &str,
+    ) -> Result<i64, DbError> {
+        let conn = self.lock();
+        let seq = agent_next_seq(&conn, chat_id)?;
+        conn.execute(
+            "INSERT INTO agent_messages (session_id, chat_id, seq, role, content, created_at) \
+             VALUES (?1,?2,?3,?4,?5,?6)",
+            params![session_id, chat_id, seq, role, content, now_millis()],
+        )?;
+        Ok(seq)
+    }
+
+    pub fn agent_item_append(
+        &self,
+        session_id: &str,
+        chat_id: &str,
+        kind: &str,
+        payload_json: &str,
+    ) -> Result<i64, DbError> {
+        let conn = self.lock();
+        let seq = agent_next_seq(&conn, chat_id)?;
+        conn.execute(
+            "INSERT INTO agent_items (session_id, chat_id, seq, kind, payload, created_at) \
+             VALUES (?1,?2,?3,?4,?5,?6)",
+            params![session_id, chat_id, seq, kind, payload_json, now_millis()],
+        )?;
+        Ok(seq)
+    }
+
+    pub fn agent_timeline_for_chat(
+        &self,
+        chat_id: &str,
+    ) -> Result<Vec<AgentTimelineEntry>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM (
+               SELECT 'message' AS entry_type, seq, role, content, NULL AS kind, NULL AS payload,
+                      created_at, id AS row_id
+                 FROM agent_messages WHERE chat_id = ?1
+               UNION ALL
+               SELECT 'item' AS entry_type, seq, NULL AS role, NULL AS content, kind, payload,
+                      created_at, id AS row_id
+                 FROM agent_items WHERE chat_id = ?1
+             )
+             ORDER BY seq ASC, created_at ASC, entry_type ASC, row_id ASC",
+        )?;
+        let rows = stmt.query_map(params![chat_id], agent_timeline_entry_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     // ---- agent run log ----
 
     pub fn insert_agent_run(&self, a: &AgentRunLog) -> Result<i64, DbError> {
@@ -740,6 +925,7 @@ fn chat_from_row(row: &Row) -> rusqlite::Result<Chat> {
         project_root: row.get("project_root")?,
         title: row.get("title")?,
         agent_id: row.get("agent_id")?,
+        kind: row.get("kind")?,
         skill_id: row.get("skill_id")?,
         session_id: row.get("session_id")?,
         labels_json: row.get("labels_json")?,
@@ -811,6 +997,53 @@ fn run_from_row(row: &Row) -> rusqlite::Result<RunSessionLog> {
     })
 }
 
+fn agent_next_seq(conn: &Connection, chat_id: &str) -> Result<i64, DbError> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM (
+           SELECT seq FROM agent_messages WHERE chat_id = ?1
+           UNION ALL
+           SELECT seq FROM agent_items WHERE chat_id = ?1
+         )",
+        params![chat_id],
+        |r| r.get(0),
+    )?)
+}
+
+fn agent_session_from_row(row: &Row) -> rusqlite::Result<AgentSessionRow> {
+    Ok(AgentSessionRow {
+        id: row.get("id")?,
+        chat_id: row.get("chat_id")?,
+        provider: row.get("provider")?,
+        provider_session_id: row.get("provider_session_id")?,
+        model: row.get("model")?,
+        status: row.get("status")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
+fn agent_timeline_entry_from_row(row: &Row) -> rusqlite::Result<AgentTimelineEntry> {
+    let entry_type: String = row.get("entry_type")?;
+    match entry_type.as_str() {
+        "message" => Ok(AgentTimelineEntry::Message {
+            seq: row.get("seq")?,
+            role: row.get("role")?,
+            content: row.get("content")?,
+            created_at: row.get("created_at")?,
+        }),
+        "item" => Ok(AgentTimelineEntry::Item {
+            seq: row.get("seq")?,
+            kind: row.get("kind")?,
+            payload: row.get("payload")?,
+            created_at: row.get("created_at")?,
+        }),
+        _ => Err(rusqlite::Error::InvalidColumnType(
+            0,
+            "entry_type".to_string(),
+            rusqlite::types::Type::Text,
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -832,6 +1065,7 @@ mod tests {
             project_root: "/p".into(),
             title: "Chat".into(),
             agent_id: "claude".into(),
+            kind: "agent".into(),
             skill_id: None,
             session_id: None,
             labels_json: None,
@@ -844,7 +1078,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(db.list_projects(false).unwrap().len(), 1);
-        assert_eq!(db.list_chats("/p").unwrap().len(), 1);
+        let chats = db.list_chats("/p").unwrap();
+        assert_eq!(chats.len(), 1);
+        assert_eq!(chats[0].kind, "agent");
 
         // archive hides from the default list but keeps the row.
         db.set_project_archived("/p", Some(99)).unwrap();
@@ -873,6 +1109,7 @@ mod tests {
             project_root: "/p".into(),
             title: "New chat".into(),
             agent_id: "claude".into(),
+            kind: "terminal".into(),
             skill_id: None,
             session_id: None,
             labels_json: None,
@@ -1055,7 +1292,7 @@ mod tests {
 
     /// Drift v10 DB whose `project_settings` predates the v10 context columns.
     /// The old rejection guard panicked on this (user_version=10 > LATEST=2);
-    /// reconciliation must add the columns and stamp the Rust baseline instead.
+    /// reconciliation must add the columns and stamp the latest version instead.
     #[test]
     fn drift_v10_missing_context_columns_upgrades() {
         let path = temp_db_path("drift-v10");
@@ -1078,7 +1315,7 @@ mod tests {
         {
             // Must SUCCEED, not reject.
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
             assert!(has_column(&db.lock(), "project_settings", "context_storage_mode").unwrap());
             assert!(
                 has_column(&db.lock(), "project_settings", "context_storage_custom_path").unwrap()
@@ -1143,7 +1380,7 @@ mod tests {
 
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
 
             // Missing columns added across the reconciled tables.
             assert!(has_column(&db.lock(), "projects", "archived_at").unwrap());
@@ -1183,7 +1420,7 @@ mod tests {
 
     /// An unversioned Rust DB (`user_version` 0) that already carries every
     /// column. Reconciliation must NOT fail with a duplicate-column error; it
-    /// stamps the baseline and leaves the data intact.
+    /// stamps the latest version and leaves the data intact.
     #[test]
     fn unversioned_rust_db_with_all_columns() {
         let path = temp_db_path("unversioned-rust");
@@ -1204,7 +1441,7 @@ mod tests {
 
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
 
             let loaded = db.get_settings("/p").unwrap().unwrap();
             assert_eq!(loaded.connection_mode, "auto");
@@ -1221,7 +1458,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// An empty file opens into the full schema, stamps the baseline, and the
+    /// An empty file opens into the full schema, stamps the latest version, and the
     /// DAOs work end to end.
     #[test]
     fn fresh_db_creates_full_schema() {
@@ -1229,7 +1466,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
 
             db.upsert_project(&Project {
                 project_root: "/p".into(),
@@ -1253,9 +1490,265 @@ mod tests {
             // Reopen is idempotent (no duplicate-column error).
             drop(db);
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
         }
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn fresh_db_exposes_agent_chat_schema() {
+        let path = temp_db_path("fresh-agent-chat");
+        let _ = std::fs::remove_file(&path);
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            assert!(has_column(&db.lock(), "chats", "kind").unwrap());
+            assert!(table_exists(&db.lock(), "agent_sessions").unwrap());
+            assert!(table_exists(&db.lock(), "agent_messages").unwrap());
+            assert!(table_exists(&db.lock(), "agent_items").unwrap());
+
+            {
+                let conn = db.lock();
+                conn.execute(
+                    "INSERT INTO projects
+                       (project_root, display_name, created_at, last_opened_at)
+                     VALUES (?1,?2,?3,?4)",
+                    params!["/p", "Proj", 1, 2],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO chats
+                       (chat_id, project_root, title, agent_id, created_at, last_activity_at)
+                     VALUES (?1,?2,?3,?4,?5,?6)",
+                    params!["c1", "/p", "Chat", "claude", 1, 3],
+                )
+                .unwrap();
+            }
+
+            let chats = db.list_chats("/p").unwrap();
+            assert_eq!(chats.len(), 1);
+            assert_eq!(chats[0].kind, "terminal");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rust_v11_old_chats_schema_migrates_to_agent_chat_schema() {
+        let path = temp_db_path("rust-v11-agent-chat");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE projects (
+                   project_root   TEXT NOT NULL PRIMARY KEY,
+                   display_name   TEXT NOT NULL,
+                   created_at     INTEGER NOT NULL,
+                   last_opened_at INTEGER NOT NULL,
+                   sort_order     INTEGER NOT NULL DEFAULT 0,
+                   archived_at    INTEGER
+                 );
+                 CREATE TABLE chats (
+                   chat_id          TEXT NOT NULL PRIMARY KEY,
+                   project_root     TEXT NOT NULL REFERENCES projects(project_root) ON DELETE CASCADE,
+                   title            TEXT NOT NULL,
+                   agent_id         TEXT NOT NULL,
+                   skill_id         TEXT,
+                   session_id       TEXT,
+                   labels_json      TEXT,
+                   status           TEXT,
+                   task_brief_text  TEXT,
+                   created_at       INTEGER NOT NULL,
+                   last_activity_at INTEGER NOT NULL,
+                   sort_order       INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Proj', 1, 2);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, created_at, last_activity_at)
+                   VALUES ('c1', '/p', 'Chat', 'claude', 1, 3);
+                 PRAGMA user_version = 11;",
+            )
+            .unwrap();
+            assert_eq!(user_version(&conn), 11);
+            assert!(!has_column(&conn, "chats", "kind").unwrap());
+            assert!(!table_exists(&conn, "agent_sessions").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            assert!(has_column(&db.lock(), "chats", "kind").unwrap());
+            assert!(table_exists(&db.lock(), "agent_sessions").unwrap());
+            assert!(table_exists(&db.lock(), "agent_messages").unwrap());
+            assert!(table_exists(&db.lock(), "agent_items").unwrap());
+
+            let chats = db.list_chats("/p").unwrap();
+            assert_eq!(chats.len(), 1);
+            assert_eq!(chats[0].kind, "terminal");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn agent_session_create_update_and_latest() {
+        let db = Database::open_in_memory().unwrap();
+        db.agent_session_create(&AgentSessionRow {
+            id: "s1".into(),
+            chat_id: "c1".into(),
+            provider: "codex".into(),
+            provider_session_id: None,
+            model: Some("gpt-5".into()),
+            status: "running".into(),
+            created_at: 10,
+        })
+        .unwrap();
+        db.agent_session_create(&AgentSessionRow {
+            id: "s2".into(),
+            chat_id: "c1".into(),
+            provider: "codex".into(),
+            provider_session_id: None,
+            model: Some("gpt-5".into()),
+            status: "running".into(),
+            created_at: 20,
+        })
+        .unwrap();
+        db.agent_session_create(&AgentSessionRow {
+            id: "s3".into(),
+            chat_id: "c1".into(),
+            provider: "codex".into(),
+            provider_session_id: None,
+            model: Some("gpt-5".into()),
+            status: "running".into(),
+            created_at: 20,
+        })
+        .unwrap();
+
+        db.agent_session_set_provider_session_id("s3", "provider-3")
+            .unwrap();
+        db.agent_session_set_status("s3", "done").unwrap();
+
+        let latest = db.latest_agent_session_for_chat("c1").unwrap().unwrap();
+        assert_eq!(latest.id, "s3");
+        assert_eq!(latest.provider_session_id.as_deref(), Some("provider-3"));
+        assert_eq!(latest.status, "done");
+        assert!(db
+            .latest_agent_session_for_chat("missing")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn agent_timeline_entry_serializes_camel_case_fields() {
+        assert_eq!(
+            serde_json::to_value(AgentTimelineEntry::Message {
+                seq: 7,
+                role: "assistant".into(),
+                content: "done".into(),
+                created_at: 42,
+            })
+            .unwrap(),
+            serde_json::json!({
+                "entryType": "message",
+                "seq": 7,
+                "role": "assistant",
+                "content": "done",
+                "createdAt": 42
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(AgentTimelineEntry::Item {
+                seq: 8,
+                kind: "toolResult".into(),
+                payload: r#"{"ok":true}"#.into(),
+                created_at: 43,
+            })
+            .unwrap(),
+            serde_json::json!({
+                "entryType": "item",
+                "seq": 8,
+                "kind": "toolResult",
+                "payload": r#"{"ok":true}"#,
+                "createdAt": 43
+            })
+        );
+    }
+
+    #[test]
+    fn agent_appends_allocate_strictly_increasing_seq() {
+        let db = Database::open_in_memory().unwrap();
+        let first = db.agent_message_append("s1", "c1", "user", "hello").unwrap();
+        let second = db
+            .agent_item_append("s1", "c1", "toolCall", r#"{"name":"build"}"#)
+            .unwrap();
+        let third = db
+            .agent_message_append("s1", "c1", "assistant", "done")
+            .unwrap();
+        let other = db
+            .agent_item_append("s2", "other", "toolCall", r#"{"name":"test"}"#)
+            .unwrap();
+
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
+        assert_eq!(third, 3);
+        assert_eq!(other, 1);
+    }
+
+    #[test]
+    fn agent_timeline_returns_messages_and_items_ordered_by_seq() {
+        let db = Database::open_in_memory().unwrap();
+        db.agent_message_append("s1", "c1", "user", "hello")
+            .unwrap();
+        db.agent_item_append("s1", "c1", "toolCall", r#"{"name":"build"}"#)
+            .unwrap();
+        db.agent_item_append("s1", "c1", "toolResult", r#"{"ok":true}"#)
+            .unwrap();
+
+        let timeline = db.agent_timeline_for_chat("c1").unwrap();
+        assert_eq!(timeline.len(), 3);
+        match &timeline[0] {
+            AgentTimelineEntry::Message {
+                seq,
+                role,
+                content,
+                created_at,
+            } => {
+                assert_eq!(*seq, 1);
+                assert_eq!(role, "user");
+                assert_eq!(content, "hello");
+                assert!(*created_at > 0);
+            }
+            _ => panic!("expected message"),
+        }
+        match &timeline[1] {
+            AgentTimelineEntry::Item {
+                seq,
+                kind,
+                payload,
+                created_at,
+            } => {
+                assert_eq!(*seq, 2);
+                assert_eq!(kind, "toolCall");
+                assert_eq!(payload, r#"{"name":"build"}"#);
+                assert!(*created_at > 0);
+            }
+            _ => panic!("expected item"),
+        }
+        match &timeline[2] {
+            AgentTimelineEntry::Item {
+                seq,
+                kind,
+                payload,
+                created_at,
+            } => {
+                assert_eq!(*seq, 3);
+                assert_eq!(kind, "toolResult");
+                assert_eq!(payload, r#"{"ok":true}"#);
+                assert!(*created_at > 0);
+            }
+            _ => panic!("expected item"),
+        }
     }
 
     /// A DB stamped one past LATEST (a genuine downgrade / newer schema) is
@@ -1320,7 +1813,7 @@ mod tests {
 
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
 
             // Projects synthesized from project_settings — not empty.
             let projects = db.list_projects(false).unwrap();
@@ -1395,7 +1888,7 @@ mod tests {
 
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
 
             // Row with a URL got flipped to 'manual'…
             let with_url = db.get_settings("/with_url").unwrap().unwrap();
@@ -1441,7 +1934,7 @@ mod tests {
 
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
 
             // No duplicate/synthesized project; the existing row is untouched.
             let projects = db.list_projects(false).unwrap();
@@ -1489,7 +1982,7 @@ mod tests {
 
         {
             let db = Database::open(&path).unwrap();
-            assert_eq!(user_version(&db.lock()), RUST_BASELINE);
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
 
             // The deliberate 'auto'-with-URL choice MUST NOT be flipped.
             let s = db.get_settings("/p").unwrap().unwrap();

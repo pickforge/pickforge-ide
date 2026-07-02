@@ -273,13 +273,17 @@ impl CodexAppClient {
         text: &str,
         model: Option<String>,
         effort: Option<String>,
+        images: &[String],
     ) -> Result<String, CodexAppError> {
         let mut params = Map::new();
         params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
-        params.insert(
-            "input".to_string(),
-            Value::Array(vec![json!({ "type": "text", "text": text })]),
-        );
+        let mut input = images
+            .iter()
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| json!({ "type": "localImage", "path": path }))
+            .collect::<Vec<_>>();
+        input.push(json!({ "type": "text", "text": text }));
+        params.insert("input".to_string(), Value::Array(input));
         if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
             params.insert("model".to_string(), Value::String(model));
         }

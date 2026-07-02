@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
-import { resolve, delimiter, join } from "node:path";
-import { existsSync } from "node:fs";
+import { resolve, delimiter, extname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   getSessionMessages,
@@ -93,7 +93,7 @@ type StartCommand = {
   allowedTools?: string[];
 };
 
-type SendCommand = { op: "send"; chatId: string; text: string };
+type SendCommand = { op: "send"; chatId: string; text: string; images?: string[] };
 type ApproveCommand = {
   op: "approve";
   chatId: string;
@@ -135,12 +135,55 @@ export function createPermissionGate(): PermissionGate {
   };
 }
 
-export function createUserTextMessage(text: string): SDKUserMessage {
+type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+
+function imageMediaType(path: string): ImageMediaType {
+  switch (extname(path).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    default:
+      throw new Error(`unsupported image type: ${path}`);
+  }
+}
+
+export function createUserTextMessage(
+  text: string,
+  images: string[] = [],
+): SDKUserMessage | null {
+  const imageBlocks = images.flatMap((path) => {
+    if (path.trim().length === 0) return [];
+    try {
+      return [
+        {
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: imageMediaType(path),
+            data: readFileSync(path, "base64"),
+          },
+        },
+      ];
+    } catch (error) {
+      writeStderr(`skipping image ${path}: ${errorMessage(error)}`);
+      return [];
+    }
+  });
+  const content =
+    text.trim().length > 0 ? [...imageBlocks, { type: "text" as const, text }] : imageBlocks;
+  if (content.length === 0) return null;
+
   return {
     type: "user",
     message: {
       role: "user",
-      content: [{ type: "text", text }],
+      content,
     },
     parent_tool_use_id: null,
     session_id: "",
@@ -203,6 +246,11 @@ export function resetBridgeStateForTests(): void {
 
 export function serializeError(error: unknown): string {
   if (error instanceof Error) return error.stack ?? error.message;
+  return String(error);
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
   return String(error);
 }
 
@@ -307,7 +355,8 @@ async function handleCommand(
     case "send": {
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
-      chat.queue.push(createUserTextMessage(command.text));
+      const message = createUserTextMessage(command.text, command.images ?? []);
+      if (message) chat.queue.push(message);
       return;
     }
     case "approve": {

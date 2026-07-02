@@ -282,7 +282,21 @@ impl AgentChatManager {
         Ok(session_id)
     }
 
-    pub fn send(&self, session_id: &str, text: &str) -> Result<(), AgentChatError> {
+    pub fn send(
+        &self,
+        session_id: &str,
+        text: &str,
+        effort: Option<String>,
+        model: Option<String>,
+        images: Option<Vec<String>>,
+    ) -> Result<(), AgentChatError> {
+        let effort = non_empty(effort);
+        let turn_model = non_empty(model);
+        let images = images
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|path| !path.trim().is_empty())
+            .collect::<Vec<_>>();
         let mut inner = self.lock_inner()?;
         let state = inner
             .get_mut(session_id)
@@ -295,7 +309,8 @@ impl AgentChatManager {
         let project_root = state.project_root.clone();
         let provider = state.provider;
         let engine = state.engine;
-        let model = state.model.clone();
+        let session_model = state.model.clone();
+        let codex_model = turn_model.clone().or_else(|| session_model.clone());
         let provider_session_id = state.provider_session_id.clone();
         let session_id_owned = session_id.to_string();
 
@@ -327,7 +342,7 @@ impl AgentChatManager {
             }));
             drop(inner);
 
-            match client.turn_start(&thread_id, text, model, None) {
+            match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
                     *turn_id.lock().map_err(|_| {
                         AgentChatError::Spawn("agent turn lock poisoned".to_string())
@@ -367,8 +382,8 @@ impl AgentChatManager {
                     CodexTurnOptions {
                         prompt: text.to_string(),
                         cwd: project_root,
-                        model,
-                        effort: None,
+                        model: codex_model,
+                        effort,
                         resume_thread_id: provider_session_id,
                         binary: self.codex_binary(),
                     },
@@ -383,7 +398,7 @@ impl AgentChatManager {
                     ClaudeTurnOptions {
                         prompt: text.to_string(),
                         cwd: project_root,
-                        model,
+                        model: session_model,
                         resume_session_id: provider_session_id,
                         permission_mode: None,
                         allowed_tools: None,
@@ -402,7 +417,7 @@ impl AgentChatManager {
                     client: Arc::clone(&client),
                     chat_id: chat_id.clone(),
                 }));
-                match client.chat_send(&chat_id, text) {
+                match client.chat_send(&chat_id, text, &images) {
                     Ok(()) => return Ok(()),
                     Err(err) => {
                         state.active_turn = None;
@@ -1284,7 +1299,15 @@ done
         assert!(start_log.contains(r#""sandbox":"workspace-write""#));
         assert!(start_log.contains(r#""approvalPolicy":"on-request""#));
 
-        manager.send(&session_id, "hello v2").unwrap();
+        manager
+            .send(
+                &session_id,
+                "hello v2",
+                Some("high".to_string()),
+                None,
+                Some(vec!["/tmp/pickforge-shot.png".to_string()]),
+            )
+            .unwrap();
         let approval_events = wait_for_events(&events, |events| {
             events
                 .iter()
@@ -1314,6 +1337,15 @@ done
             text.contains(r#""id":42"#) && text.contains(r#""decision":"approved""#)
         });
         assert!(approval_log.contains(r#""method":"turn/start""#));
+        assert!(approval_log.contains(r#""effort":"high""#));
+        assert!(approval_log.contains(r#""type":"localImage""#));
+        assert!(approval_log.contains(r#""path":"/tmp/pickforge-shot.png""#));
+        assert!(approval_log.contains(r#""type":"text""#));
+        assert!(approval_log.contains(r#""text":"hello v2""#));
+        assert!(
+            approval_log.find(r#""type":"localImage""#).unwrap()
+                < approval_log.find(r#""text":"hello v2""#).unwrap()
+        );
 
         wait_for_events(&events, |events| {
             matches!(
@@ -1343,6 +1375,70 @@ done
             matches!(entry, AgentTimelineEntry::Item { kind, .. }
                 if kind == "approvalRequest" || kind == "rateLimits")
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_codex_send_forwards_per_turn_model() {
+        let script = test_script(
+            "codex-app-turn-model",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-model"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-model"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-model","turn":{"id":"turn-model","status":"completed"}}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-model-v2",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                Some("gpt-session".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        manager
+            .send(
+                &session_id,
+                "hello",
+                None,
+                Some("gpt-turn".to_string()),
+                None,
+            )
+            .unwrap();
+        let log = wait_for_file(&log, |text| text.contains(r#""method":"turn/start""#));
+        let start_line = log
+            .lines()
+            .find(|line| line.contains(r#""method":"thread/start""#))
+            .unwrap();
+        let turn_line = log
+            .lines()
+            .find(|line| line.contains(r#""method":"turn/start""#))
+            .unwrap();
+        assert!(start_line.contains(r#""model":"gpt-session""#));
+        assert!(turn_line.contains(r#""model":"gpt-turn""#));
+        assert!(!turn_line.contains("gpt-session"));
     }
 
     #[cfg(unix)]
@@ -1393,7 +1489,7 @@ done
             )
             .unwrap();
 
-        manager.send(&session_id, "start").unwrap();
+        manager.send(&session_id, "start", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             events
                 .iter()
@@ -1548,7 +1644,7 @@ done
             )
             .unwrap();
 
-        manager.send(&session_id, "first").unwrap();
+        manager.send(&session_id, "first", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),
@@ -1575,7 +1671,9 @@ done
             .unwrap();
         assert_eq!(restarted_id, session_id);
         wait_for_process_exit(first_pid);
-        manager.send(&restarted_id, "second").unwrap();
+        manager
+            .send(&restarted_id, "second", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),
@@ -1649,7 +1747,7 @@ done
             )
             .unwrap();
 
-        manager.send(&session_id, "first").unwrap();
+        manager.send(&session_id, "first", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),
@@ -1676,7 +1774,9 @@ done
             .unwrap();
         assert_eq!(restarted_id, session_id);
         wait_for_process_exit(first_pid);
-        manager.send(&restarted_id, "second").unwrap();
+        manager
+            .send(&restarted_id, "second", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),
@@ -1787,7 +1887,7 @@ printf '%s\n' \
             )
             .unwrap();
 
-        manager.send(&session_id, "hello").unwrap();
+        manager.send(&session_id, "hello", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             matches!(events.last(), Some(AgentEvent::TurnDone { .. }))
         });
@@ -1824,6 +1924,56 @@ printf '%s\n' \
 
     #[cfg(unix)]
     #[test]
+    fn v1_codex_send_forwards_per_turn_model() {
+        let script = test_script(
+            "codex-v1-turn-model",
+            r#"#!/bin/sh
+log="$0.args"
+: > "$log"
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$log"
+done
+printf '%s\n' \
+'{"type":"thread.started","thread_id":"thread-v1-model"}' \
+'{"type":"turn.started"}' \
+'{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.args");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-model-v1",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V1,
+                Some("gpt-session".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        manager
+            .send(
+                &session_id,
+                "hello",
+                None,
+                Some("gpt-turn".to_string()),
+                None,
+            )
+            .unwrap();
+        wait_for_events(&events, |events| {
+            matches!(events.last(), Some(AgentEvent::TurnDone { .. }))
+        });
+        let args = wait_for_file(&log, |text| text.contains("gpt-turn"));
+        assert!(args.lines().any(|line| line == "gpt-turn"));
+        assert!(!args.lines().any(|line| line == "gpt-session"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn claude_turn_persists_session_and_assistant_message() {
         let script = test_script(
             "claude-clean",
@@ -1849,7 +1999,7 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"c
             )
             .unwrap();
 
-        manager.send(&session_id, "hello").unwrap();
+        manager.send(&session_id, "hello", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             matches!(events.last(), Some(AgentEvent::TurnDone { .. }))
         });
@@ -1889,7 +2039,7 @@ sleep 5
             )
             .unwrap();
 
-        manager.send(&session_id, "first").unwrap();
+        manager.send(&session_id, "first", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             events
                 .iter()
@@ -1897,7 +2047,7 @@ sleep 5
         });
 
         assert!(matches!(
-            manager.send(&session_id, "second"),
+            manager.send(&session_id, "second", None, None, None),
             Err(AgentChatError::TurnActive)
         ));
         manager.interrupt(&session_id).unwrap();
@@ -1932,7 +2082,7 @@ exec sleep 5
             )
             .unwrap();
 
-        manager.send(&session_id, "stop").unwrap();
+        manager.send(&session_id, "stop", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             events
                 .iter()
@@ -1981,7 +2131,7 @@ printf '%s\n' \
                 sink,
             )
             .unwrap();
-        manager.send(&session_id, "first").unwrap();
+        manager.send(&session_id, "first", None, None, None).unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),

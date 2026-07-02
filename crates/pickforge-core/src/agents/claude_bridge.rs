@@ -234,14 +234,25 @@ impl ClaudeBridgeClient {
         }
     }
 
-    pub fn chat_send(&self, chat_id: &str, text: &str) -> Result<(), ClaudeBridgeError> {
+    pub fn chat_send(
+        &self,
+        chat_id: &str,
+        text: &str,
+        images: &[String],
+    ) -> Result<(), ClaudeBridgeError> {
         let chat = self.chat(chat_id)?;
         begin_chat_turn(&chat, chat_id)?;
-        let result = self.send_value(json!({
-            "op": "send",
-            "chatId": chat_id,
-            "text": text,
-        }));
+        let mut op = Map::new();
+        op.insert("op".to_string(), Value::String("send".to_string()));
+        op.insert("chatId".to_string(), Value::String(chat_id.to_string()));
+        op.insert("text".to_string(), Value::String(text.to_string()));
+        if !images.is_empty() {
+            op.insert(
+                "images".to_string(),
+                Value::Array(images.iter().cloned().map(Value::String).collect()),
+            );
+        }
+        let result = self.send_value(Value::Object(op));
         if result.is_err() {
             chat.turn_active.store(false, Ordering::SeqCst);
         }
@@ -1121,7 +1132,9 @@ done
                 sink,
             )
             .unwrap();
-        client.chat_send("chat-1", "hello").unwrap();
+        client
+            .chat_send("chat-1", "hello", &["/tmp/pickforge-shot.png".to_string()])
+            .unwrap();
 
         let snapshot = wait_for_events(&events, |events| {
             terminal_event_count(events) == 1
@@ -1198,6 +1211,7 @@ done
         assert!(log.contains(r#""resumeSessionId":"session-0""#));
         assert!(log.contains(r#""permissionMode":"acceptEdits""#));
         assert!(log.contains(r#""allowedTools":["Bash"]"#));
+        assert!(log.contains(r#""images":["/tmp/pickforge-shot.png"]"#));
         assert!(log.contains(r#""decision":"acceptForSession""#));
     }
 
@@ -1211,12 +1225,12 @@ done
         client
             .chat_start("chat-1", script.dir.clone(), None, None, None, None, sink)
             .unwrap();
-        client.chat_send("chat-1", "first").unwrap();
+        client.chat_send("chat-1", "first", &[]).unwrap();
         wait_for_events(&events, |events| {
             turn_started_count(events) == 1 && terminal_event_count(events) == 1
         });
 
-        client.chat_send("chat-1", "second").unwrap();
+        client.chat_send("chat-1", "second", &[]).unwrap();
         let snapshot = wait_for_events(&events, |events| {
             turn_started_count(events) == 2 && terminal_event_count(events) == 2
         });
@@ -1234,8 +1248,8 @@ done
         client
             .chat_start("chat-1", script.dir.clone(), None, None, None, None, sink)
             .unwrap();
-        client.chat_send("chat-1", "first").unwrap();
-        let error = client.chat_send("chat-1", "second").unwrap_err();
+        client.chat_send("chat-1", "first", &[]).unwrap();
+        let error = client.chat_send("chat-1", "second", &[]).unwrap_err();
 
         assert!(matches!(
             error,
@@ -1256,7 +1270,7 @@ done
         client
             .chat_start("chat-1", script.dir.clone(), None, None, None, None, sink)
             .unwrap();
-        client.chat_send("chat-1", "first").unwrap();
+        client.chat_send("chat-1", "first", &[]).unwrap();
 
         wait_for_events(&events, |events| {
             matches!(

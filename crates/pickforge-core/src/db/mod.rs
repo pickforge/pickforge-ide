@@ -805,6 +805,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn agent_session_set_model(&self, id: &str, model: Option<&str>) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE agent_sessions SET model = ?2 WHERE id = ?1",
+            params![id, model],
+        )?;
+        Ok(())
+    }
+
     pub fn latest_agent_session_for_chat(
         &self,
         chat_id: &str,

@@ -1,3 +1,4 @@
+mod agent_chat_commands;
 mod cdp_commands;
 mod db_commands;
 mod device_commands;
@@ -12,14 +13,17 @@ mod vm_commands;
 mod watch_commands;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use pickforge_core::{pickforge_home, CdpClient, Database, PtyManager, VmServiceClient};
+use pickforge_core::{
+    agents::AgentChatManager, pickforge_home, CdpClient, Database, PtyManager, VmServiceClient,
+};
 
-fn open_database() -> Database {
+fn open_database() -> Arc<Database> {
     let path = pickforge_home(None)
         .map(|home| PathBuf::from(home).join("pickforge.db"))
         .unwrap_or_else(|_| PathBuf::from("pickforge.db"));
-    Database::open(&path).expect("failed to open pickforge database")
+    Arc::new(Database::open(&path).expect("failed to open pickforge database"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -50,7 +54,7 @@ pub fn run() {
     // a new root is added only by the user-mediated `pick_project_dir`, and
     // `project_delete`/`project_set_archived` reseed it as projects leave the set.
     let approved_roots = fs_commands::ApprovedRoots::default();
-    fs_commands::seed_approved_roots(&approved_roots, &database);
+    fs_commands::seed_approved_roots(&approved_roots, database.as_ref());
 
     builder
         .manage(PtyManager::new())
@@ -60,7 +64,8 @@ pub fn run() {
         .manage(mirror_commands::MirrorManager::new())
         .manage(logcat_commands::LogcatManager::new())
         .manage(approved_roots)
-        .manage(database)
+        .manage(AgentChatManager::new(Arc::clone(&database)))
+        .manage(Arc::clone(&database))
         .manage(mcp_commands::McpState::new())
         .invoke_handler(tauri::generate_handler![
             pty_commands::pty_spawn,
@@ -110,6 +115,10 @@ pub fn run() {
             db_commands::run_finish,
             db_commands::agent_run_insert,
             db_commands::agent_run_finish,
+            agent_chat_commands::agent_chat_start,
+            agent_chat_commands::agent_chat_send,
+            agent_chat_commands::agent_chat_interrupt,
+            agent_chat_commands::agent_chat_history,
             vm_commands::vm_connect,
             vm_commands::vm_disconnect,
             vm_commands::vm_status,

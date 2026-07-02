@@ -4,17 +4,20 @@
 use pickforge_core::{
     AgentRunLog, Chat, Database, PickHistory, Project, ProjectSettings, RunSessionLog,
 };
+use std::sync::Arc;
 use tauri::State;
 
 use crate::fs_commands::{ensure_root_approved, register_project_root, ApprovedRoots};
 
 #[tauri::command]
 pub fn projects_list(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     roots: State<'_, ApprovedRoots>,
     include_archived: bool,
 ) -> Result<Vec<Project>, String> {
-    let projects = db.list_projects(include_archived).map_err(|e| e.to_string())?;
+    let projects = db
+        .list_projects(include_archived)
+        .map_err(|e| e.to_string())?;
     register_active_roots(&roots, &projects);
     Ok(projects)
 }
@@ -36,7 +39,7 @@ fn register_active_roots(roots: &ApprovedRoots, projects: &[Project]) {
 
 #[tauri::command]
 pub fn project_upsert(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     roots: State<'_, ApprovedRoots>,
     project: Project,
 ) -> Result<(), String> {
@@ -54,7 +57,7 @@ pub fn project_upsert(
 
 #[tauri::command]
 pub fn project_set_archived(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     roots: State<'_, ApprovedRoots>,
     root: String,
     archived_at: Option<i64>,
@@ -64,25 +67,25 @@ pub fn project_set_archived(
     // Archiving drops the project from the active set; reseed so its root is no
     // longer approved (unarchiving re-adds it). Reseed unconditionally — it's
     // cheap and keeps the registry exactly in sync with the live set.
-    roots.reseed(&db);
+    roots.reseed(db.as_ref());
     Ok(())
 }
 
 #[tauri::command]
-pub fn project_touch(db: State<'_, Database>, root: String, ts: i64) -> Result<(), String> {
+pub fn project_touch(db: State<'_, Arc<Database>>, root: String, ts: i64) -> Result<(), String> {
     db.touch_project(&root, ts).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn project_delete(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     roots: State<'_, ApprovedRoots>,
     root: String,
 ) -> Result<(), String> {
     db.delete_project(&root).map_err(|e| e.to_string())?;
     // The registry only grows otherwise; rebuild it from the live project set so
     // a removed root doesn't stay approved for the rest of the process lifetime.
-    roots.reseed(&db);
+    roots.reseed(db.as_ref());
     Ok(())
 }
 
@@ -91,7 +94,7 @@ pub fn project_delete(
 /// and race a concurrent rename/touch.
 #[tauri::command]
 pub fn update_project_sort_order(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     root: String,
     sort_order: i64,
 ) -> Result<(), String> {
@@ -100,17 +103,17 @@ pub fn update_project_sort_order(
 }
 
 #[tauri::command]
-pub fn chats_list(db: State<'_, Database>, project_root: String) -> Result<Vec<Chat>, String> {
+pub fn chats_list(db: State<'_, Arc<Database>>, project_root: String) -> Result<Vec<Chat>, String> {
     db.list_chats(&project_root).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn chat_upsert(db: State<'_, Database>, chat: Chat) -> Result<(), String> {
+pub fn chat_upsert(db: State<'_, Arc<Database>>, chat: Chat) -> Result<(), String> {
     db.upsert_chat(&chat).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn chat_delete(db: State<'_, Database>, chat_id: String) -> Result<(), String> {
+pub fn chat_delete(db: State<'_, Arc<Database>>, chat_id: String) -> Result<(), String> {
     db.delete_chat(&chat_id).map_err(|e| e.to_string())
 }
 
@@ -118,7 +121,7 @@ pub fn chat_delete(db: State<'_, Database>, chat_id: String) -> Result<(), Strin
 /// can't race the full-row `chat_upsert` and clobber a live `session_id`.
 #[tauri::command]
 pub fn update_chat_title(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     chat_id: String,
     title: String,
 ) -> Result<(), String> {
@@ -130,7 +133,7 @@ pub fn update_chat_title(
 /// `session_id`, so it can't race a concurrent title write. `None` clears it.
 #[tauri::command]
 pub fn update_chat_session_id(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     chat_id: String,
     session_id: Option<String>,
 ) -> Result<(), String> {
@@ -143,7 +146,7 @@ pub fn update_chat_session_id(
 /// and persist a stale recovery handle.
 #[tauri::command]
 pub fn update_chat_sort_order(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     chat_id: String,
     sort_order: i64,
 ) -> Result<(), String> {
@@ -153,48 +156,53 @@ pub fn update_chat_sort_order(
 
 #[tauri::command]
 pub fn settings_get(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     root: String,
 ) -> Result<Option<ProjectSettings>, String> {
     db.get_settings(&root).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn settings_upsert(db: State<'_, Database>, settings: ProjectSettings) -> Result<(), String> {
+pub fn settings_upsert(
+    db: State<'_, Arc<Database>>,
+    settings: ProjectSettings,
+) -> Result<(), String> {
     db.upsert_settings(&settings).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn picks_list(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     project_root: String,
     limit: i64,
 ) -> Result<Vec<PickHistory>, String> {
-    db.list_picks(&project_root, limit).map_err(|e| e.to_string())
+    db.list_picks(&project_root, limit)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn pick_insert(db: State<'_, Database>, pick: PickHistory) -> Result<i64, String> {
+pub fn pick_insert(db: State<'_, Arc<Database>>, pick: PickHistory) -> Result<i64, String> {
     db.insert_pick(&pick).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn runs_list(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     project_root: String,
     limit: i64,
 ) -> Result<Vec<RunSessionLog>, String> {
-    db.list_runs(&project_root, limit).map_err(|e| e.to_string())
+    db.list_runs(&project_root, limit)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn run_insert(db: State<'_, Database>, run: RunSessionLog) -> Result<(), String> {
+pub fn run_insert(db: State<'_, Arc<Database>>, run: RunSessionLog) -> Result<(), String> {
     db.insert_run(&run).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn run_finish(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     session_id: String,
     ended_at: i64,
     exit_reason: Option<String>,
@@ -205,13 +213,13 @@ pub fn run_finish(
 }
 
 #[tauri::command]
-pub fn agent_run_insert(db: State<'_, Database>, run: AgentRunLog) -> Result<i64, String> {
+pub fn agent_run_insert(db: State<'_, Arc<Database>>, run: AgentRunLog) -> Result<i64, String> {
     db.insert_agent_run(&run).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn agent_run_finish(
-    db: State<'_, Database>,
+    db: State<'_, Arc<Database>>,
     id: i64,
     finished_at: i64,
     exit_code: Option<i64>,

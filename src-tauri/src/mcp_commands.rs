@@ -28,7 +28,6 @@ use std::sync::{Arc, Mutex};
 use pickforge_core::android;
 use pickforge_core::mcp::{self, ActiveTarget, InspectorKind, LiveState, ProjectContext};
 use pickforge_core::targets::Capability;
-#[cfg(unix)]
 use pickforge_core::ContextStorageService;
 use serde::Deserialize;
 use serde_json::Value;
@@ -561,9 +560,18 @@ pub async fn mcp_start(
 #[tauri::command]
 pub async fn mcp_start(
     _state: State<'_, McpState>,
-    _project_root: String,
+    project_root: String,
 ) -> Result<McpStartResult, String> {
-    Err(MCP_SOCKET_UNSUPPORTED.to_string())
+    let resolved = ContextStorageService::new()
+        .ensure(&project_root, None)
+        .map_err(|e| e.to_string())?;
+
+    Ok(McpStartResult {
+        endpoint: String::new(),
+        context_dir: resolved.context_dir,
+        runs_dir: resolved.runs_dir,
+        chats_dir: resolved.chats_dir,
+    })
 }
 
 /// Bind a fresh server instance: prepare a private runtime dir, bind the socket,

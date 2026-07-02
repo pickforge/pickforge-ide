@@ -405,7 +405,37 @@ impl CodexAppClient {
     }
 
     pub fn kill(&self) -> Result<(), CodexAppError> {
-        signal_state_child(&self.state);
+        kill_state_child(&self.state);
+        Ok(())
+    }
+
+    pub fn shutdown(&self) -> Result<(), CodexAppError> {
+        self.state.closed.store(true, Ordering::SeqCst);
+        fail_pending(&self.state, "codex app-server shutdown");
+        if let Ok(mut tx) = self.writer_tx.lock() {
+            if let Some(tx) = tx.take() {
+                let _ = tx.send(WriterMessage::Shutdown);
+            }
+        }
+        self.kill()?;
+        if let Ok(mut thread) = self.reader_thread.lock() {
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut thread) = self.writer_thread.lock() {
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut thread) = self.stderr_thread.lock() {
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut subscriptions) = self.state.subscriptions.lock() {
+            subscriptions.clear();
+        }
         Ok(())
     }
 
@@ -484,28 +514,7 @@ impl CodexAppClient {
 
 impl Drop for CodexAppClient {
     fn drop(&mut self) {
-        self.state.closed.store(true, Ordering::SeqCst);
-        if let Ok(mut tx) = self.writer_tx.lock() {
-            if let Some(tx) = tx.take() {
-                let _ = tx.send(WriterMessage::Shutdown);
-            }
-        }
-        let _ = self.kill();
-        if let Ok(mut thread) = self.reader_thread.lock() {
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
-            }
-        }
-        if let Ok(mut thread) = self.writer_thread.lock() {
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
-            }
-        }
-        if let Ok(mut thread) = self.stderr_thread.lock() {
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
-            }
-        }
+        let _ = self.shutdown();
     }
 }
 
@@ -989,14 +998,6 @@ fn bounded_reap_state_child(state: &Arc<ClientState>, timeout: Duration) {
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn signal_state_child(state: &Arc<ClientState>) {
-    if let Ok(mut child) = state.child.lock() {
-        if let Some(child) = child.as_mut() {
-            signal_child(child);
-        }
     }
 }
 

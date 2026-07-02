@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
-import { resolve } from "node:path";
+import { resolve, delimiter, join } from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   getSessionMessages,
@@ -213,6 +214,15 @@ function writeStderr(message: string): void {
   process.stderr.write(`[claude-bridge] ${message}\n`);
 }
 
+function resolveClaudeCli(): string | null {
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, "claude");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function buildOptions(
   command: StartCommand,
   gate: PermissionGate,
@@ -224,6 +234,8 @@ function buildOptions(
     includePartialMessages: true,
     canUseTool: createPermissionHandler(command.chatId, gate, emit),
   };
+  const cli = resolveClaudeCli();
+  if (cli) options.pathToClaudeCodeExecutable = cli;
   if (command.model) options.model = command.model;
   if (command.resumeSessionId) options.resume = command.resumeSessionId;
   if (command.allowedTools) options.allowedTools = command.allowedTools;

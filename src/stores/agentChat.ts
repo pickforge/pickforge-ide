@@ -13,6 +13,7 @@ import {
   type AgentTimelineEntry,
 } from "../lib/agentChat";
 import { estimateCostUsd } from "../lib/agentPricing";
+import { loadAgentEngine } from "../lib/chatDefaults";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat } from "./workspace";
@@ -72,6 +73,7 @@ export type AgentChatTotals = {
 
 export interface AgentChatState {
   sessionId: string | null;
+  projectRoot: string | null;
   provider: AgentProvider;
   model: string | null;
   turnActive: boolean;
@@ -117,6 +119,7 @@ export interface EnsureAgentChatOptions {
 function emptyState(provider: AgentProvider, model: string | null): AgentChatState {
   return {
     sessionId: null,
+    projectRoot: null,
     provider,
     model,
     turnActive: false,
@@ -143,6 +146,16 @@ function emptyTotals(): AgentChatTotals {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function appendOptimisticUserMessage(chatId: string, seq: number, text: string) {
+  const chat = chats[chatId];
+  if (!chat) return;
+  setChats(chatId, {
+    turnActive: true,
+    error: null,
+    timeline: [...chat.timeline, { type: "userMessage", seq, text }],
+  });
 }
 
 function takeSeq(chatId: string): number {
@@ -542,17 +555,18 @@ export async function ensureAgentChat(
   model: string | null,
   options: EnsureAgentChatOptions = {},
 ): Promise<void> {
+  if (!chats[chatId]) setChats(chatId, emptyState(provider, model));
+  setChats(chatId, { projectRoot, provider, model });
   if (chats[chatId]?.sessionId) return;
   const existing = ensurePromises.get(chatId);
   if (existing) return existing;
-  if (!chats[chatId]) setChats(chatId, emptyState(provider, model));
 
   const promise = (async () => {
     try {
       if (!chats[chatId].historyLoaded) {
         const history = await agentChatHistory(chatId);
         const loaded = stateFromHistory(chatId, provider, model, history);
-        setChats(chatId, loaded);
+        setChats(chatId, { ...loaded, projectRoot });
       }
       if (chats[chatId].sessionId) return;
       const sessionId = await agentChatStart({
@@ -563,7 +577,7 @@ export async function ensureAgentChat(
         ...options,
         onEvent: (event) => receiveAgentEvent(chatId, event),
       });
-      setChats(chatId, { sessionId, provider, model, error: null });
+      setChats(chatId, { sessionId, projectRoot, provider, model, error: null });
     } catch (error) {
       if (chats[chatId]) setChats(chatId, { error: errorText(error) });
       throw error;
@@ -577,19 +591,32 @@ export async function ensureAgentChat(
 }
 
 export async function sendAgentMessage(chatId: string, text: string): Promise<void> {
-  const sessionId = chats[chatId]?.sessionId;
-  if (!sessionId) throw new Error("Agent chat is not started");
-  const optimisticSeq = takeSeq(chatId);
-  setChats(chatId, {
-    turnActive: true,
-    error: null,
-    timeline: [
-      ...chats[chatId].timeline,
-      { type: "userMessage", seq: optimisticSeq, text },
-    ],
-  });
+  const chat = chats[chatId];
+  if (!chat) throw new Error("Agent chat is not started");
+  let sessionId = chat.sessionId;
+  const projectRoot = chat.projectRoot;
+  if (!sessionId && !projectRoot) throw new Error("Agent chat is not started");
+  let optimisticSeq = takeSeq(chatId);
+  appendOptimisticUserMessage(chatId, optimisticSeq, text);
   if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
+    if (!sessionId) {
+      if (!projectRoot) throw new Error("Agent chat is not started");
+      await ensureAgentChat(chatId, projectRoot, chat.provider, chat.model, {
+        engine: loadAgentEngine(),
+      });
+      sessionId = chats[chatId]?.sessionId ?? null;
+      if (!sessionId) throw new Error("Agent chat is not started");
+      const hasOptimisticMessage = chats[chatId]?.timeline.some(
+        (item) => item.type === "userMessage" && item.seq === optimisticSeq,
+      );
+      if (!hasOptimisticMessage) {
+        optimisticSeq = takeSeq(chatId);
+        appendOptimisticUserMessage(chatId, optimisticSeq, text);
+      } else {
+        setChats(chatId, { error: null });
+      }
+    }
     await agentChatSend(sessionId, text);
   } catch (error) {
     if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {

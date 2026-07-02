@@ -305,6 +305,43 @@ impl ClaudeBridgeClient {
         Ok(())
     }
 
+    pub fn shutdown(&self) -> Result<(), ClaudeBridgeError> {
+        self.state.closed.store(true, Ordering::SeqCst);
+        fail_pending(&self.state, "claude bridge shutdown");
+        fail_start_waiters(&self.state, "claude bridge shutdown");
+        if let Ok(mut tx) = self.writer_tx.lock() {
+            if let Some(tx) = tx.take() {
+                let _ = tx.send(WriterMessage::Line(json!({ "op": "shutdown" }).to_string()));
+                let _ = tx.send(WriterMessage::Shutdown);
+            }
+        }
+
+        if !reap_state_child_if_exited(&self.state) {
+            std::thread::sleep(SHUTDOWN_GRACE);
+            self.kill()?;
+        }
+
+        if let Ok(mut thread) = self.reader_thread.lock() {
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut thread) = self.writer_thread.lock() {
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut thread) = self.stderr_thread.lock() {
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut chats) = self.state.chats.lock() {
+            chats.clear();
+        }
+        Ok(())
+    }
+
     pub fn is_closed(&self) -> bool {
         self.state.closed.load(Ordering::SeqCst)
     }
@@ -393,34 +430,7 @@ impl ClaudeBridgeClient {
 
 impl Drop for ClaudeBridgeClient {
     fn drop(&mut self) {
-        self.state.closed.store(true, Ordering::SeqCst);
-        if let Ok(mut tx) = self.writer_tx.lock() {
-            if let Some(tx) = tx.take() {
-                let _ = tx.send(WriterMessage::Line(json!({ "op": "shutdown" }).to_string()));
-                let _ = tx.send(WriterMessage::Shutdown);
-            }
-        }
-
-        if !reap_state_child_if_exited(&self.state) {
-            std::thread::sleep(SHUTDOWN_GRACE);
-            kill_state_child(&self.state);
-        }
-
-        if let Ok(mut thread) = self.reader_thread.lock() {
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
-            }
-        }
-        if let Ok(mut thread) = self.writer_thread.lock() {
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
-            }
-        }
-        if let Ok(mut thread) = self.stderr_thread.lock() {
-            if let Some(thread) = thread.take() {
-                let _ = thread.join();
-            }
-        }
+        let _ = self.shutdown();
     }
 }
 

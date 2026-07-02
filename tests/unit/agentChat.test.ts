@@ -630,6 +630,76 @@ describe("sendAgentMessage", () => {
     expect(agentChat(chatId)?.turnActive).toBe(false);
     expect(agentChat(chatId)?.error).toBe("send failed");
   });
+
+  it("retries a failed start when sending and delivers the message", async () => {
+    const chatId = nextChatId();
+    let startCount = 0;
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") {
+        startCount += 1;
+        if (startCount === 1) return Promise.reject(new Error("bridge down"));
+        return Promise.resolve("session-2");
+      }
+      if (cmd === "agent_chat_send") return Promise.resolve();
+      return Promise.resolve(null);
+    });
+
+    await expect(ensureAgentChat(chatId, "/project", "codex", null)).rejects.toThrow(
+      "bridge down",
+    );
+
+    expect(agentChat(chatId)?.sessionId).toBeNull();
+    expect(agentChat(chatId)?.error).toBe("bridge down");
+
+    await sendAgentMessage(chatId, "hello");
+
+    const startCalls = tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start");
+    expect(startCalls).toHaveLength(2);
+    expect(startCalls[1][1]).toEqual(
+      expect.objectContaining({
+        chatId,
+        projectRoot: "/project",
+        provider: "codex",
+        model: null,
+        engine: "v2",
+      }),
+    );
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-2",
+      text: "hello",
+    });
+    expect(timeline(chatId)).toEqual([{ type: "userMessage", seq: 1, text: "hello" }]);
+    expect(agentChat(chatId)?.error).toBeNull();
+  });
+
+  it("rolls back the optimistic message when the retry fails", async () => {
+    const chatId = nextChatId();
+    let startCount = 0;
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") {
+        startCount += 1;
+        if (startCount === 1) return Promise.reject(new Error("bridge down"));
+        return Promise.reject(new Error("still down"));
+      }
+      if (cmd === "agent_chat_send") return Promise.resolve();
+      return Promise.resolve(null);
+    });
+
+    await expect(ensureAgentChat(chatId, "/project", "codex", null)).rejects.toThrow(
+      "bridge down",
+    );
+    await expect(sendAgentMessage(chatId, "hello")).rejects.toThrow("still down");
+
+    expect(agentChat(chatId)?.error).toBe("still down");
+    expect(agentChat(chatId)?.turnActive).toBe(false);
+    expect(timeline(chatId)).toEqual([]);
+    expect(activity.agentTurnCleared).toHaveBeenCalledWith(chatId);
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(
+      0,
+    );
+  });
 });
 
 describe("agentChat → chatActivity wiring", () => {

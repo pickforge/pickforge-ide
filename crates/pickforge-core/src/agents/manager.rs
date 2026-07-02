@@ -544,40 +544,54 @@ impl AgentChatManager {
             if !client.is_closed() {
                 return Ok(Arc::clone(client));
             }
-            clients.remove(&project_root);
+        }
+        let evicted = clients.remove(&project_root);
+
+        let spawned = spawn_codex_app(CodexAppOptions {
+            cwd: project_root.clone(),
+            binary: self.codex_binary(),
+        })
+        .map(Arc::new);
+        if let Ok(client) = spawned.as_ref() {
+            clients.insert(project_root, Arc::clone(client));
+        }
+        drop(clients);
+
+        if let Some(client) = evicted {
+            self.evict_codex_app_client(&client);
         }
 
-        let client = Arc::new(
-            spawn_codex_app(CodexAppOptions {
-                cwd: project_root.clone(),
-                binary: self.codex_binary(),
-            })
-            .map_err(|err| AgentChatError::Spawn(err.to_string()))?,
-        );
-        clients.insert(project_root, Arc::clone(&client));
-        Ok(client)
+        spawned.map_err(|err| AgentChatError::Spawn(err.to_string()))
     }
 
     fn cached_codex_app_client(
         &self,
         project_root: &PathBuf,
     ) -> Result<Arc<CodexAppClient>, AgentChatError> {
-        let mut clients = self
-            .codex_app_clients
-            .lock()
-            .map_err(|_| AgentChatError::Spawn("codex app client lock poisoned".to_string()))?;
-        let Some(client) = clients.get(project_root) else {
-            return Err(AgentChatError::Spawn(
-                "codex app-server client is not running".to_string(),
-            ));
+        let evicted = {
+            let mut clients = self
+                .codex_app_clients
+                .lock()
+                .map_err(|_| AgentChatError::Spawn("codex app client lock poisoned".to_string()))?;
+            let Some(client) = clients.get(project_root) else {
+                return Err(AgentChatError::Spawn(
+                    "codex app-server client is not running".to_string(),
+                ));
+            };
+            if !client.is_closed() {
+                return Ok(Arc::clone(client));
+            }
+            clients.remove(project_root)
         };
-        if client.is_closed() {
-            clients.remove(project_root);
+        if let Some(client) = evicted {
+            self.evict_codex_app_client(&client);
             return Err(AgentChatError::Spawn(
                 "codex app-server client is not running".to_string(),
             ));
         }
-        Ok(Arc::clone(client))
+        Err(AgentChatError::Spawn(
+            "codex app-server client is not running".to_string(),
+        ))
     }
 
     fn claude_bridge_client(&self) -> Result<Arc<ClaudeBridgeClient>, AgentChatError> {
@@ -589,38 +603,106 @@ impl AgentChatManager {
             if !client.is_closed() {
                 return Ok(Arc::clone(client));
             }
-            *bridge = None;
+        }
+        let evicted = bridge.take();
+
+        let spawned = spawn_claude_bridge(ClaudeBridgeOptions {
+            runtime: self.claude_binary(),
+            script: None,
+            app_root: self.app_root.clone(),
+        })
+        .map(Arc::new);
+        if let Ok(client) = spawned.as_ref() {
+            *bridge = Some(Arc::clone(client));
+        }
+        drop(bridge);
+
+        if let Some(client) = evicted {
+            self.evict_claude_bridge_client(&client);
         }
 
-        let client = Arc::new(
-            spawn_claude_bridge(ClaudeBridgeOptions {
-                runtime: self.claude_binary(),
-                script: None,
-                app_root: self.app_root.clone(),
-            })
-            .map_err(|err| AgentChatError::Spawn(err.to_string()))?,
-        );
-        *bridge = Some(Arc::clone(&client));
-        Ok(client)
+        spawned.map_err(|err| AgentChatError::Spawn(err.to_string()))
     }
 
     fn cached_claude_bridge_client(&self) -> Result<Arc<ClaudeBridgeClient>, AgentChatError> {
-        let mut bridge = self
-            .claude_bridge
-            .lock()
-            .map_err(|_| AgentChatError::Spawn("claude bridge lock poisoned".to_string()))?;
-        let Some(client) = bridge.as_ref() else {
-            return Err(AgentChatError::Spawn(
-                "claude bridge client is not running".to_string(),
-            ));
+        let evicted = {
+            let mut bridge = self
+                .claude_bridge
+                .lock()
+                .map_err(|_| AgentChatError::Spawn("claude bridge lock poisoned".to_string()))?;
+            let Some(client) = bridge.as_ref() else {
+                return Err(AgentChatError::Spawn(
+                    "claude bridge client is not running".to_string(),
+                ));
+            };
+            if !client.is_closed() {
+                return Ok(Arc::clone(client));
+            }
+            bridge.take()
         };
-        if client.is_closed() {
-            *bridge = None;
+        if let Some(client) = evicted {
+            self.evict_claude_bridge_client(&client);
             return Err(AgentChatError::Spawn(
                 "claude bridge client is not running".to_string(),
             ));
         }
-        Ok(Arc::clone(client))
+        Err(AgentChatError::Spawn(
+            "claude bridge client is not running".to_string(),
+        ))
+    }
+
+    fn evict_codex_app_client(&self, client: &Arc<CodexAppClient>) {
+        for turn in self.clear_active_turns_for_codex_app_client(client) {
+            turn.reap();
+        }
+        let _ = client.shutdown();
+    }
+
+    fn evict_claude_bridge_client(&self, client: &Arc<ClaudeBridgeClient>) {
+        for turn in self.clear_active_turns_for_claude_bridge_client(client) {
+            turn.reap();
+        }
+        let _ = client.shutdown();
+    }
+
+    fn clear_active_turns_for_codex_app_client(
+        &self,
+        client: &Arc<CodexAppClient>,
+    ) -> Vec<ActiveTurn> {
+        let Ok(mut inner) = self.inner.lock() else {
+            return Vec::new();
+        };
+        inner
+            .values_mut()
+            .filter_map(|state| {
+                let should_clear = state
+                    .active_turn
+                    .as_ref()
+                    .map(|turn| turn.references_codex_app_client(client))
+                    .unwrap_or(false);
+                should_clear.then(|| state.active_turn.take()).flatten()
+            })
+            .collect()
+    }
+
+    fn clear_active_turns_for_claude_bridge_client(
+        &self,
+        client: &Arc<ClaudeBridgeClient>,
+    ) -> Vec<ActiveTurn> {
+        let Ok(mut inner) = self.inner.lock() else {
+            return Vec::new();
+        };
+        inner
+            .values_mut()
+            .filter_map(|state| {
+                let should_clear = state
+                    .active_turn
+                    .as_ref()
+                    .map(|turn| turn.references_claude_bridge_client(client))
+                    .unwrap_or(false);
+                should_clear.then(|| state.active_turn.take()).flatten()
+            })
+            .collect()
     }
 
     fn unsubscribe_replaced_codex_threads(&self, chat_id: &str, current_session_id: &str) {
@@ -802,6 +884,32 @@ impl ActiveTurn {
             }
             _ => None,
         })
+    }
+
+    fn references_codex_app_client(&self, target: &Arc<CodexAppClient>) -> bool {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|handle| match handle.as_ref() {
+                Some(ActiveTurnHandle::CodexApp { client, .. }) => {
+                    Some(Arc::ptr_eq(client, target))
+                }
+                _ => None,
+            })
+            .unwrap_or(false)
+    }
+
+    fn references_claude_bridge_client(&self, target: &Arc<ClaudeBridgeClient>) -> bool {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|handle| match handle.as_ref() {
+                Some(ActiveTurnHandle::ClaudeBridge { client, .. }) => {
+                    Some(Arc::ptr_eq(client, target))
+                }
+                _ => None,
+            })
+            .unwrap_or(false)
     }
 
     fn reap(&self) {
@@ -1080,6 +1188,20 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[cfg(unix)]
+    fn process_alive(pid: i32) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    fn wait_for_process_exit(pid: i32) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while process_alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!process_alive(pid), "process {pid} should be gone");
     }
 
     #[test]
@@ -1377,6 +1499,8 @@ if [ -f "$count_file" ]; then
 fi
 count=$((count + 1))
 printf '%s' "$count" > "$count_file"
+pid_file="$0.pid.$count"
+printf '%s' "$$" > "$pid_file"
 printf 'spawn:%s\n' "$count" >> "$log"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
@@ -1394,6 +1518,8 @@ while IFS= read -r line; do
       if [ "$count" = "1" ]; then
         printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-dead"}}}'
         printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-dead","turnId":"turn-dead"}}'
+        exec 1>&-
+        sleep 30
         exit 0
       fi
       printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-ok"}}}'
@@ -1406,6 +1532,7 @@ done
 "#,
         );
         let count_file = script.path.with_file_name("fake-agent.count");
+        let first_pid_file = script.path.with_file_name("fake-agent.pid.1");
         let db = Arc::new(Database::open_in_memory().unwrap());
         let manager = codex_manager(Arc::clone(&db), &script);
         let (events, sink) = event_sink();
@@ -1429,6 +1556,11 @@ done
             )
         });
         wait_for_status(&db, "chat-dead", "failed");
+        let first_pid: i32 = wait_for_file(&first_pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(first_pid));
 
         let restarted_id = manager
             .start(
@@ -1442,6 +1574,7 @@ done
             )
             .unwrap();
         assert_eq!(restarted_id, session_id);
+        wait_for_process_exit(first_pid);
         manager.send(&restarted_id, "second").unwrap();
         wait_for_events(&events, |events| {
             matches!(
@@ -1453,6 +1586,107 @@ done
         });
         let row = wait_for_status(&db, "chat-dead", "idle");
         assert_eq!(row.provider_session_id.as_deref(), Some("thread-respawn"));
+        assert_eq!(std::fs::read_to_string(count_file).unwrap(), "2");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_claude_dead_bridge_next_start_respawns_and_kills_evicted_child() {
+        let script = test_script(
+            "claude-bridge-dead-respawn",
+            r#"#!/bin/sh
+log="$0.stdin"
+count_file="$0.count"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+pid_file="$0.pid.$count"
+printf '%s' "$$" > "$pid_file"
+printf 'spawn:%s\n' "$count" >> "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  chat_id=$(printf '%s\n' "$line" | sed 's/.*"chatId":"\([^"]*\)".*/\1/')
+  case "$line" in
+    *'"op":"start"'*)
+      printf '{"ev":"started","chatId":"%s"}\n' "$chat_id"
+      ;;
+    *'"op":"send"'*)
+      if [ "$count" = "1" ]; then
+        printf '{"ev":"raw","chatId":"%s","message":{"type":"stream_event","event":{"type":"message_start"}}}\n' "$chat_id"
+        exec 1>&-
+        sleep 30
+        exit 0
+      fi
+      printf '{"ev":"raw","chatId":"%s","message":{"type":"system","subtype":"init","session_id":"claude-respawn"}}\n' "$chat_id"
+      printf '{"ev":"raw","chatId":"%s","message":{"type":"stream_event","event":{"type":"message_start"}}}\n' "$chat_id"
+      printf '{"ev":"raw","chatId":"%s","message":{"type":"assistant","message":{"content":[{"type":"text","text":"after respawn"}]}}}\n' "$chat_id"
+      printf '{"ev":"raw","chatId":"%s","message":{"type":"result","subtype":"success","usage":{"input_tokens":1,"cache_read_input_tokens":0,"output_tokens":1},"total_cost_usd":0.01}}\n' "$chat_id"
+      ;;
+    *'"op":"shutdown"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        );
+        let count_file = script.path.with_file_name("fake-agent.count");
+        let first_pid_file = script.path.with_file_name("fake-agent.pid.1");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = claude_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-claude-dead",
+                script.dir.clone(),
+                AgentProvider::ClaudeCode,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                Arc::clone(&sink),
+            )
+            .unwrap();
+
+        manager.send(&session_id, "first").unwrap();
+        wait_for_events(&events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnFailed { error }) if error == "agent process exited"
+            )
+        });
+        wait_for_status(&db, "chat-claude-dead", "failed");
+        let first_pid: i32 = wait_for_file(&first_pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(first_pid));
+
+        let restarted_id = manager
+            .start(
+                "chat-claude-dead",
+                script.dir.clone(),
+                AgentProvider::ClaudeCode,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        assert_eq!(restarted_id, session_id);
+        wait_for_process_exit(first_pid);
+        manager.send(&restarted_id, "second").unwrap();
+        wait_for_events(&events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnDone {
+                    status: TurnStatus::Completed
+                })
+            )
+        });
+        let row = wait_for_status(&db, "chat-claude-dead", "idle");
+        assert_eq!(row.provider_session_id.as_deref(), Some("claude-respawn"));
         assert_eq!(std::fs::read_to_string(count_file).unwrap(), "2");
     }
 

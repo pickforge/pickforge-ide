@@ -45,6 +45,7 @@ import {
   recordChatAttention,
   recordChatOutput,
   setActiveChatForActivity,
+  setStagedChatsForActivity,
   setWindowFocusForActivity,
 } from "../../src/stores/chatActivity";
 
@@ -66,12 +67,14 @@ beforeEach(() => {
   store.findChat.mockClear();
   store.setChatTitle.mockClear();
   setActiveChatForActivity(null);
+  setStagedChatsForActivity([]);
   setWindowFocusForActivity(true);
 });
 
 afterEach(() => {
   ids.splice(0).forEach(clearChatActivity);
   setActiveChatForActivity(null);
+  setStagedChatsForActivity([]);
   setWindowFocusForActivity(true);
   vi.clearAllTimers();
   vi.useRealTimers();
@@ -424,6 +427,74 @@ describe("chatActivity — structured agent chat turns", () => {
     expect(chatBusy(id)).toBe(false);
     expect(chatAttention(id)).toBe(false);
     expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+});
+
+describe("chatActivity — staged orchestra chats", () => {
+  it("does not alert when a staged chat finishes while the window is focused", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+    setStagedChatsForActivity([id]);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("alerts exactly once when a staged chat finishes while the window is blurred", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+    setStagedChatsForActivity([id]);
+    setWindowFocusForActivity(false);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores non-active focused attention after a chat is unstaged", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+    setStagedChatsForActivity([id]);
+    setStagedChatsForActivity([]);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not double-chime when the active chat is also staged", () => {
+    const id = seed(null);
+    setActiveChatForActivity(id);
+    setStagedChatsForActivity([id]);
+    setWindowFocusForActivity(false);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears existing attention when a focused window stages the chat", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+    expect(chatAttention(id)).toBe(true);
+
+    setStagedChatsForActivity([id]);
+
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
   });
 });
 

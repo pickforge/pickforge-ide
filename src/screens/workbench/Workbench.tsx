@@ -31,7 +31,8 @@ import {
 import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
 import { selectedLanes } from "../../stores/orchestra";
 import { chatBackend } from "../../stores/chatSessions";
-import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity } from "../../stores/chatActivity";
+import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity, setStagedChatsForActivity } from "../../stores/chatActivity";
+import { orchestraOpen, setOrchestraOpen, stagedChatIds } from "../../stores/orchestraStage";
 import { isChatArchived } from "../../stores/chatArchive";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
@@ -60,7 +61,6 @@ interface MountedHost {
 export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
-  const [orchestraOpen, setOrchestraOpen] = createSignal(false);
   const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
@@ -99,6 +99,10 @@ export function WorkbenchScreen() {
 
   createEffect(() => {
     setActiveChatForActivity(workspace.activeChatId);
+  });
+
+  createEffect(() => {
+    setStagedChatsForActivity(stagedChatIds());
   });
 
   // First-run coach-marks: start the first time the workbench is the visible
@@ -287,7 +291,7 @@ export function WorkbenchScreen() {
             classList={{ "pf-orch-tab--on": orchestraOpen() }}
             title="Toggle orchestration view"
             disabled={!workspace.activeRoot}
-            onClick={() => setOrchestraOpen((v) => !v)}
+            onClick={() => setOrchestraOpen(!orchestraOpen())}
           >
             <IconGrid size={13} /> Orchestra
           </button>

@@ -1,10 +1,10 @@
 // Per-chat agent activity: `busy` while an agent pane is streaming output, and
 // `attention` (amber bracket + chime) once it goes quiet or rings the bell —
 // but only for output the user did NOT watch happen. "Unseen" means the chat
-// wasn't active, or the window wasn't focused; output that streamed while the
-// user was looking (including the echo of their own keystrokes) never alerts.
+// wasn't active/staged, or the window wasn't focused; output that streamed
+// while the user was looking (including the echo of their own keystrokes) never alerts.
 // Attention persists across later output and clears only when the user comes
-// back to the chat (activation, or window refocus on the active chat).
+// back to the chat (activation, staging, or window refocus on visible chats).
 import { createSignal } from "solid-js";
 import { hasAgentPane, isAgentPane } from "../lib/chatAutoName";
 import { playAttentionSound } from "../lib/attentionSound";
@@ -29,6 +29,7 @@ const states = new Map<string, ChatActivityState>();
 const [activity, setActivity] = createSignal<Record<string, ChatActivityState>>({});
 const cycles = new Map<string, BusyCycle>();
 let activeChatId: string | null = null;
+let stagedChatIds: ReadonlySet<string> = new Set();
 let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
 
 if (typeof window !== "undefined") {
@@ -47,9 +48,10 @@ function write(chatId: string, patch: Partial<ChatActivityState>) {
 }
 
 /** The user is not looking at this chat right now: it isn't the active chat,
- *  or the window itself is unfocused. Only unseen activity may raise attention. */
+ *  isn't staged on screen, or the window itself is unfocused. Only unseen
+ *  activity may raise attention. */
 function isUnseen(chatId: string): boolean {
-  return activeChatId !== chatId || !windowFocused;
+  return !windowFocused || (activeChatId !== chatId && !stagedChatIds.has(chatId));
 }
 
 function clearCycle(chatId: string): BusyCycle | undefined {
@@ -96,9 +98,18 @@ export function setActiveChatForActivity(chatId: string | null) {
   if (chatId && windowFocused) markChatSeen(chatId);
 }
 
+export function setStagedChatsForActivity(chatIds: string[]) {
+  stagedChatIds = new Set(chatIds);
+  if (windowFocused) {
+    for (const chatId of stagedChatIds) markChatSeen(chatId);
+  }
+}
+
 export function setWindowFocusForActivity(focused: boolean) {
   windowFocused = focused;
-  if (focused && activeChatId) markChatSeen(activeChatId);
+  if (!focused) return;
+  if (activeChatId) markChatSeen(activeChatId);
+  for (const chatId of stagedChatIds) markChatSeen(chatId);
 }
 
 // ---- visible-output scanner ----

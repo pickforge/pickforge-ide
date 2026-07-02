@@ -59,6 +59,7 @@ import { loadDefaultChatKind, loadLastAgentProvider, setLastAgentProvider } from
 import { type AgentProvider } from "../../lib/agentChat";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
+import { isChatStaged } from "../../stores/orchestraStage";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
 import { pickProjectDir } from "../../lib/opener";
 
@@ -342,10 +343,10 @@ export function ProjectsPane() {
       <div
         class="pf-chat-row"
         classList={{
-          active: workspace.activeChatId === id,
+          active: workspace.activeChatId === id || (!p.archived && isChatStaged(id)),
           "pf-chat-row--archived": p.archived,
           "pf-chat-row--busy": !p.archived && chatBusy(id) && !chatAttention(id),
-          "pf-chat-row--attention": !p.archived && workspace.activeChatId !== id && chatAttention(id),
+          "pf-chat-row--attention": !p.archived && workspace.activeChatId !== id && !isChatStaged(id) && chatAttention(id),
           "pf-drop-before": edgeFor("chat", id) === "before",
           "pf-drop-after": edgeFor("chat", id) === "after",
         }}

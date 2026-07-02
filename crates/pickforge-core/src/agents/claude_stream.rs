@@ -326,6 +326,8 @@ impl ClaudeStreamParser {
             cached_input_tokens: u64_at(usage, "cache_read_input_tokens").unwrap_or_default(),
             output_tokens: u64_at(usage, "output_tokens").unwrap_or_default(),
             cost_usd: f64_at(value, "total_cost_usd"),
+            context_used: None,
+            context_window: None,
         }];
 
         if string_at(value, "subtype") == Some("success") {
@@ -744,7 +746,10 @@ mod tests {
     }
 
     fn terminal_event_count(events: &[AgentEvent]) -> usize {
-        events.iter().filter(|event| is_terminal_event(event)).count()
+        events
+            .iter()
+            .filter(|event| is_terminal_event(event))
+            .count()
     }
 
     #[cfg(unix)]
@@ -795,10 +800,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn wait_for_events<F>(
-        events: &Arc<Mutex<Vec<AgentEvent>>>,
-        predicate: F,
-    ) -> Vec<AgentEvent>
+    fn wait_for_events<F>(events: &Arc<Mutex<Vec<AgentEvent>>>, predicate: F) -> Vec<AgentEvent>
     where
         F: Fn(&[AgentEvent]) -> bool,
     {
@@ -820,13 +822,38 @@ mod tests {
         script: &TestScript,
     ) -> (ClaudeStreamTurn, Arc<Mutex<Vec<AgentEvent>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let sink_events = Arc::clone(&events);
-        let turn = spawn_claude_turn(runner_opts(script.path.clone()), move |event| {
-            sink_events.lock().unwrap().push(event);
-        })
-        .unwrap();
+        let turn = spawn_test_turn(script, &events);
 
         (turn, events)
+    }
+
+    #[cfg(unix)]
+    fn spawn_test_turn(
+        script: &TestScript,
+        events: &Arc<Mutex<Vec<AgentEvent>>>,
+    ) -> ClaudeStreamTurn {
+        for attempt in 0..10 {
+            let sink_events = Arc::clone(events);
+            match spawn_claude_turn(runner_opts(script.path.clone()), move |event| {
+                sink_events.lock().unwrap().push(event);
+            }) {
+                Ok(turn) => return turn,
+                Err(error) if is_text_file_busy(&error) && attempt < 9 => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("spawn claude turn: {error:?}"),
+            }
+        }
+        unreachable!("retry loop returns or panics")
+    }
+
+    #[cfg(unix)]
+    fn is_text_file_busy(error: &AgentSpawnError) -> bool {
+        matches!(
+            error,
+            AgentSpawnError::Spawn { source, .. }
+                if source.raw_os_error() == Some(libc::ETXTBSY)
+        )
     }
 
     #[test]
@@ -954,7 +981,9 @@ mod tests {
                     input_tokens: 1,
                     cached_input_tokens: 2,
                     output_tokens: 3,
-                    cost_usd: Some(0.5)
+                    cost_usd: Some(0.5),
+                    context_used: None,
+                    context_window: None
                 },
                 AgentEvent::TurnFailed { error }
             ] if error == "error_during_execution"
@@ -1007,7 +1036,9 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"c
                     input_tokens: 1,
                     cached_input_tokens: 2,
                     output_tokens: 3,
-                    cost_usd: Some(0.25)
+                    cost_usd: Some(0.25),
+                    context_used: None,
+                    context_window: None
                 },
                 AgentEvent::TurnDone {
                     status: TurnStatus::Completed

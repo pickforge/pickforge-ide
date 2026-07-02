@@ -298,6 +298,8 @@ fn parse_usage(value: &Value) -> AgentEvent {
             .unwrap_or(0),
         output_tokens: u64_field(usage, &["output_tokens"]).unwrap_or(0),
         cost_usd: None,
+        context_used: None,
+        context_window: None,
     }
 }
 
@@ -717,18 +719,35 @@ mod tests {
         script: &TempScript,
         events: Arc<Mutex<Vec<AgentEvent>>>,
     ) -> CodexExecTurn {
-        spawn_codex_turn(
-            CodexTurnOptions {
-                prompt: "prompt".to_string(),
-                cwd: script.dir.clone(),
-                model: None,
-                effort: None,
-                resume_thread_id: None,
-                binary: Some(script.path.to_string_lossy().to_string()),
-            },
-            move |event| events.lock().expect("events lock").push(event),
+        for attempt in 0..10 {
+            let sink_events = Arc::clone(&events);
+            match spawn_codex_turn(
+                CodexTurnOptions {
+                    prompt: "prompt".to_string(),
+                    cwd: script.dir.clone(),
+                    model: None,
+                    effort: None,
+                    resume_thread_id: None,
+                    binary: Some(script.path.to_string_lossy().to_string()),
+                },
+                move |event| sink_events.lock().expect("events lock").push(event),
+            ) {
+                Ok(turn) => return turn,
+                Err(error) if is_text_file_busy(&error) && attempt < 9 => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("spawn codex turn: {error:?}"),
+            }
+        }
+        unreachable!("retry loop returns or panics")
+    }
+
+    #[cfg(unix)]
+    fn is_text_file_busy(error: &AgentSpawnError) -> bool {
+        matches!(
+            error,
+            AgentSpawnError::Io(source) if source.raw_os_error() == Some(libc::ETXTBSY)
         )
-        .expect("spawn codex turn")
     }
 
     #[cfg(unix)]
@@ -791,6 +810,8 @@ mod tests {
                     cached_input_tokens: 4736,
                     output_tokens: 32,
                     cost_usd: None,
+                    context_used: None,
+                    context_window: None,
                 },
             ]
         );
@@ -909,6 +930,8 @@ printf '%s\n' \
                     cached_input_tokens: 0,
                     output_tokens: 2,
                     cost_usd: None,
+                    context_used: None,
+                    context_window: None,
                 },
                 AgentEvent::TurnDone {
                     status: TurnStatus::Completed,

@@ -73,6 +73,11 @@ pub enum AgentEvent {
         cached_input_tokens: u64,
         output_tokens: u64,
         cost_usd: Option<f64>,
+        context_used: Option<u64>,
+        context_window: Option<u64>,
+    },
+    RateLimits {
+        payload: String,
     },
     TurnDone {
         status: TurnStatus,
@@ -238,6 +243,11 @@ mod tests {
                 cached_input_tokens: 2,
                 output_tokens: 5,
                 cost_usd: Some(0.25),
+                context_used: Some(15),
+                context_window: Some(100),
+            },
+            AgentEvent::RateLimits {
+                payload: r#"{"primary":{"usedPercent":1}}"#.to_string(),
             },
             AgentEvent::TurnDone {
                 status: TurnStatus::Completed,
@@ -304,9 +314,19 @@ mod tests {
                 cached_input_tokens: 2,
                 output_tokens: 5,
                 cost_usd: Some(0.25),
+                context_used: Some(15),
+                context_window: Some(100),
             })
             .unwrap(),
-            r#"{"kind":"usage","inputTokens":10,"cachedInputTokens":2,"outputTokens":5,"costUsd":0.25}"#
+            r#"{"kind":"usage","inputTokens":10,"cachedInputTokens":2,"outputTokens":5,"costUsd":0.25,"contextUsed":15,"contextWindow":100}"#
+        );
+
+        assert_eq!(
+            serde_json::to_string(&AgentEvent::RateLimits {
+                payload: r#"{"primary":{"usedPercent":1}}"#.to_string(),
+            })
+            .unwrap(),
+            r#"{"kind":"rateLimits","payload":"{\"primary\":{\"usedPercent\":1}}"}"#
         );
 
         assert_eq!(

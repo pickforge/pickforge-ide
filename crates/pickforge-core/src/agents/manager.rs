@@ -352,7 +352,8 @@ fn handle_runner_event(
         | AgentEvent::ToolUse { .. }
         | AgentEvent::WebSearch { .. }
         | AgentEvent::PlanUpdate { .. }
-        | AgentEvent::Usage { .. } => {
+        | AgentEvent::Usage { .. }
+        | AgentEvent::RateLimits { .. } => {
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
                 errors.push(err);
             }

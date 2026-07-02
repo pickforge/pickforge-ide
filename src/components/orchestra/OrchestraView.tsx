@@ -1,4 +1,4 @@
-import { type JSX, For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
+import { type JSX, For, Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js";
 import { AgentChatView } from "../chat/AgentChatView";
 import { FloatingMenu } from "../FloatingMenu";
 import { ForgeEmptyState, MonoEyebrow } from "../ui";
@@ -10,6 +10,7 @@ import {
   IconMore,
   IconPlus,
   IconRefresh,
+  IconSplit,
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
 import { AGENTS, loadAgentModels } from "../../lib/agentModels";
@@ -32,7 +33,10 @@ import {
   newTaskId,
   refreshUsage,
   removeSelectedLane,
+  reorderSelectedLane,
   selectedLanes,
+  selectedLayout,
+  setSelectedLayout,
   taskList,
   tasksFor,
   upsertTask,
@@ -105,12 +109,82 @@ interface LaneNotice {
   error: boolean;
 }
 
-export function OrchestraView(props: { projectRoot: string }): JSX.Element {
+const LEDGER_MIN_WIDTH = 220;
+const LEDGER_DEFAULT_WIDTH = 288;
+const LEDGER_WIDTH_KEY = "pickforge.orchestraLedgerWidth";
+
+function loadLedgerWidth(): number {
+  const raw = Number(localStorage.getItem(LEDGER_WIDTH_KEY));
+  return Number.isFinite(raw) && raw >= LEDGER_MIN_WIDTH ? raw : LEDGER_DEFAULT_WIDTH;
+}
+
+function formatK(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  if (Math.abs(n) < 1000) return String(n);
+  return `${(n / 1000).toFixed(1)}k`;
+}
+
+export function OrchestraView(props: {
+  projectRoot: string;
+  focusChat?: { chatId: string; at: number } | null;
+}): JSX.Element {
   const [ledgerOpen, setLedgerOpen] = createSignal(true);
+  const [ledgerWidth, setLedgerWidth] = createSignal(loadLedgerWidth());
   const [addMenu, setAddMenu] = createSignal<AddMenu | null>(null);
   const [handoff, setHandoff] = createSignal<HandoffMenu | null>(null);
   const [draft, setDraft] = createSignal("");
   const [notices, setNotices] = createSignal<Record<string, LaneNotice>>({});
+  const [dragIndex, setDragIndex] = createSignal<number | null>(null);
+  const [dropIndex, setDropIndex] = createSignal<number | null>(null);
+  const [flashChat, setFlashChat] = createSignal<string | null>(null);
+
+  let orchEl: HTMLDivElement | undefined;
+  const laneEls = new Map<string, HTMLElement>();
+
+  let resizing = false;
+  const onResizeMove = (event: PointerEvent) => {
+    if (!resizing || !orchEl) return;
+    const rect = orchEl.getBoundingClientRect();
+    const max = Math.round(rect.width * 0.5);
+    const next = Math.max(LEDGER_MIN_WIDTH, Math.min(max, Math.round(event.clientX - rect.left)));
+    setLedgerWidth(next);
+  };
+  const endResize = () => {
+    if (!resizing) return;
+    resizing = false;
+    document.body.classList.remove("pf-resizing");
+    window.removeEventListener("pointermove", onResizeMove);
+    window.removeEventListener("pointerup", endResize);
+    localStorage.setItem(LEDGER_WIDTH_KEY, String(ledgerWidth()));
+  };
+  const startResize = (event: PointerEvent) => {
+    event.preventDefault();
+    resizing = true;
+    document.body.classList.add("pf-resizing");
+    window.addEventListener("pointermove", onResizeMove);
+    window.addEventListener("pointerup", endResize);
+  };
+  onCleanup(endResize);
+
+  let flashTimer: number | undefined;
+  let lastFocusAt = 0;
+  createEffect(() => {
+    const target = props.focusChat;
+    if (!target || target.at === lastFocusAt) return;
+    lastFocusAt = target.at;
+    if (!selectedLanes(props.projectRoot).includes(target.chatId)) return;
+    const el = laneEls.get(target.chatId);
+    if (el) {
+      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest", inline: "nearest" });
+    }
+    setFlashChat(target.chatId);
+    if (flashTimer) window.clearTimeout(flashTimer);
+    flashTimer = window.setTimeout(() => setFlashChat(null), 900);
+  });
+  onCleanup(() => {
+    if (flashTimer) window.clearTimeout(flashTimer);
+  });
 
   createEffect(() => {
     const root = props.projectRoot;
@@ -134,6 +208,34 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
   const lanes = () => selectedLanes(props.projectRoot);
   const tasks = () => taskList(props.projectRoot).items;
   const usage = () => usageSummary(props.projectRoot).items;
+  const layout = () => selectedLayout(props.projectRoot);
+
+  const gridStyle = (): JSX.CSSProperties => {
+    const count = lanes().length;
+    const mode = layout();
+    if (mode === "rows") {
+      return {
+        "grid-template-columns": "minmax(0, 1fr)",
+        "grid-template-rows": `repeat(${count}, minmax(0, 1fr))`,
+      };
+    }
+    if (mode === "grid") {
+      const cols = Math.min(2, count);
+      const rows = Math.max(1, Math.ceil(count / Math.max(1, cols)));
+      return {
+        "grid-template-columns": `repeat(${cols}, minmax(0, 1fr))`,
+        "grid-template-rows": `repeat(${rows}, minmax(0, 1fr))`,
+      };
+    }
+    return { "grid-template-columns": `repeat(${count}, minmax(0, 1fr))` };
+  };
+
+  const onLaneDrop = (index: number) => {
+    const from = dragIndex();
+    if (from !== null && from !== index) reorderSelectedLane(props.projectRoot, from, index);
+    setDragIndex(null);
+    setDropIndex(null);
+  };
 
   const eligibleChats = () =>
     chatsFor(props.projectRoot).filter(
@@ -247,12 +349,26 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
     }
   };
 
-  const LaneHeader = (p: { chatId: string }) => {
+  const LaneHeader = (p: { chatId: string; index: number }) => {
     const provider = () => providerOf(p.chatId);
     const busy = () => chatBusy(p.chatId);
     const attention = () => chatAttention(p.chatId);
     return (
-      <div class="pf-orch-lane-head">
+      <div
+        class="pf-orch-lane-head"
+        draggable={true}
+        onDragStart={(e) => {
+          setDragIndex(p.index);
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", p.chatId);
+          }
+        }}
+        onDragEnd={() => {
+          setDragIndex(null);
+          setDropIndex(null);
+        }}
+      >
         <span
           class="pf-orch-lane-dot"
           classList={{ "pf-orch-lane-dot--busy": busy(), "pf-orch-lane-dot--attention": attention() }}
@@ -281,9 +397,32 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
     );
   };
 
-  const Lane = (p: { chatId: string }) => (
-    <div class="pf-orch-lane">
-      <LaneHeader chatId={p.chatId} />
+  const Lane = (p: { chatId: string; index: number }) => {
+    onCleanup(() => {
+      laneEls.delete(p.chatId);
+    });
+    return (
+    <div
+      class="pf-orch-lane"
+      ref={(el) => laneEls.set(p.chatId, el)}
+      classList={{
+        "pf-orch-lane--flash": flashChat() === p.chatId,
+        "pf-orch-lane--dragging": dragIndex() === p.index,
+        "pf-orch-lane--drop":
+          dragIndex() !== null && dragIndex() !== p.index && dropIndex() === p.index,
+      }}
+      onDragOver={(e) => {
+        if (dragIndex() === null) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        setDropIndex(p.index);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        onLaneDrop(p.index);
+      }}
+    >
+      <LaneHeader chatId={p.chatId} index={p.index} />
       <Show when={notices()[p.chatId]}>
         {(notice) => (
           <div
@@ -304,7 +443,8 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
         />
       </div>
     </div>
-  );
+    );
+  };
 
   const LaneSelect = (p: {
     value: string | null;
@@ -388,31 +528,24 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
         when={usage().length > 0}
         fallback={<div class="pf-orch-usage-empty">No usage recorded.</div>}
       >
-        <div class="pf-orch-usage-table">
-          <div class="pf-orch-usage-row pf-orch-usage-row--head">
-            <span>provider</span>
-            <span>chats</span>
-            <span>turns</span>
-            <span>in</span>
-            <span>cached</span>
-            <span>out</span>
-            <span>cost</span>
-          </div>
+        <div class="pf-orch-usage-cards">
           <For each={usage()}>
             {(row) => (
-              <div class="pf-orch-usage-row">
-                <span class="pf-orch-usage-prov">
-                  {row.provider}
+              <div class="pf-orch-usage-card">
+                <div class="pf-orch-usage-card-head">
+                  <span class="pf-orch-usage-card-prov">{row.provider}</span>
                   <Show when={row.model}>
-                    <span class="pf-orch-usage-model">{row.model}</span>
+                    <span class="pf-orch-usage-card-model">{row.model}</span>
                   </Show>
-                </span>
-                <span>{row.chats}</span>
-                <span>{row.turns ?? "—"}</span>
-                <span>{row.inputTokens}</span>
-                <span>{row.cachedInputTokens}</span>
-                <span>{row.outputTokens}</span>
-                <span>{rowCost(row)}</span>
+                </div>
+                <div class="pf-orch-usage-card-meta">
+                  {row.chats} chats · {row.turns == null ? "—" : `${row.turns} turns`}
+                </div>
+                <div class="pf-orch-usage-card-tokens">
+                  {formatK(row.inputTokens)} in · {formatK(row.cachedInputTokens)} cached ·{" "}
+                  {formatK(row.outputTokens)} out
+                </div>
+                <div class="pf-orch-usage-card-cost">{rowCost(row)}</div>
               </div>
             )}
           </For>
@@ -422,8 +555,12 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
   );
 
   return (
-    <div class="pf-orch">
-      <div class="pf-orch-ledger" classList={{ "pf-orch-ledger--closed": !ledgerOpen() }}>
+    <div class="pf-orch" ref={(el) => (orchEl = el)}>
+      <div
+        class="pf-orch-ledger"
+        classList={{ "pf-orch-ledger--closed": !ledgerOpen() }}
+        style={ledgerOpen() ? { width: `${ledgerWidth()}px` } : undefined}
+      >
         <div class="pf-orch-ledger-head">
           <button
             class="pf-orch-ledger-toggle"
@@ -467,6 +604,12 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
         </Show>
       </div>
 
+      <Show when={ledgerOpen()}>
+        <div class="pf-orch-ledger-resizer" title="Drag to resize" onPointerDown={startResize}>
+          <span class="pf-orch-ledger-resizer-grip" />
+        </div>
+      </Show>
+
       <div class="pf-orch-grid-wrap">
         <Show
           when={lanes().length > 0}
@@ -488,17 +631,44 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
         >
           <div class="pf-orch-grid-bar">
             <MonoEyebrow text="Lanes" />
-            <Show when={lanes().length < 4}>
-              <button class="pf-orch-add-lane" onClick={openAddMenu}>
-                <IconPlus size={13} /> Add lane
-              </button>
-            </Show>
+            <div class="pf-orch-grid-bar-tools">
+              <Show when={lanes().length > 1}>
+                <div class="pf-orch-layout-toggle" role="group" aria-label="Lane layout">
+                  <button
+                    class="pf-orch-layout-btn"
+                    classList={{ "pf-orch-layout-btn--on": layout() === "columns" }}
+                    title="Columns"
+                    onClick={() => setSelectedLayout(props.projectRoot, "columns")}
+                  >
+                    <IconSplit dir="left" size={13} />
+                  </button>
+                  <button
+                    class="pf-orch-layout-btn"
+                    classList={{ "pf-orch-layout-btn--on": layout() === "rows" }}
+                    title="Rows"
+                    onClick={() => setSelectedLayout(props.projectRoot, "rows")}
+                  >
+                    <IconSplit dir="up" size={13} />
+                  </button>
+                  <button
+                    class="pf-orch-layout-btn"
+                    classList={{ "pf-orch-layout-btn--on": layout() === "grid" }}
+                    title="Grid"
+                    onClick={() => setSelectedLayout(props.projectRoot, "grid")}
+                  >
+                    <IconGrid size={13} />
+                  </button>
+                </div>
+              </Show>
+              <Show when={lanes().length < 4}>
+                <button class="pf-orch-add-lane" onClick={openAddMenu}>
+                  <IconPlus size={13} /> Add lane
+                </button>
+              </Show>
+            </div>
           </div>
-          <div
-            class="pf-orch-grid"
-            style={{ "grid-template-columns": `repeat(${lanes().length}, minmax(0, 1fr))` }}
-          >
-            <For each={lanes()}>{(chatId) => <Lane chatId={chatId} />}</For>
+          <div class="pf-orch-grid" style={gridStyle()}>
+            <For each={lanes()}>{(chatId, i) => <Lane chatId={chatId} index={i()} />}</For>
           </div>
         </Show>
       </div>

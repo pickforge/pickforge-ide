@@ -11,6 +11,9 @@ import {
 const MAX_LANES = 4;
 const ALL_USAGE_KEY = "__all__";
 
+export type OrchestraLayout = "columns" | "rows" | "grid";
+const LAYOUTS: OrchestraLayout[] = ["columns", "rows", "grid"];
+
 export interface OrchestraTaskListState {
   items: OrchestraTask[];
   loading: boolean;
@@ -28,12 +31,14 @@ export interface OrchestraUsageState {
 export interface OrchestraState {
   tasksByRoot: Record<string, OrchestraTaskListState>;
   lanesByRoot: Record<string, string[]>;
+  layoutByRoot: Record<string, OrchestraLayout>;
   usageByRoot: Record<string, OrchestraUsageState>;
 }
 
 const [state, setState] = createStore<OrchestraState>({
   tasksByRoot: {},
   lanesByRoot: {},
+  layoutByRoot: {},
   usageByRoot: {},
 });
 
@@ -232,6 +237,35 @@ export function reorderSelectedLane(projectRoot: string, fromIndex: number, toIn
   const target = Math.max(0, Math.min(toIndex, next.length));
   next.splice(target, 0, item);
   persistLanes(projectRoot, next);
+}
+
+function layoutStorageKey(projectRoot: string): string {
+  return `pickforge.orchestraLayout.${projectRoot}`;
+}
+
+function loadLayout(projectRoot: string): OrchestraLayout {
+  try {
+    const raw = localStorage.getItem(layoutStorageKey(projectRoot));
+    return raw && (LAYOUTS as string[]).includes(raw) ? (raw as OrchestraLayout) : "columns";
+  } catch {
+    return "columns";
+  }
+}
+
+function ensureLayout(projectRoot: string) {
+  if (!(projectRoot in state.layoutByRoot)) {
+    setState("layoutByRoot", projectRoot, loadLayout(projectRoot));
+  }
+}
+
+export function selectedLayout(projectRoot: string): OrchestraLayout {
+  ensureLayout(projectRoot);
+  return state.layoutByRoot[projectRoot] ?? "columns";
+}
+
+export function setSelectedLayout(projectRoot: string, layout: OrchestraLayout) {
+  setState("layoutByRoot", projectRoot, layout);
+  localStorage.setItem(layoutStorageKey(projectRoot), layout);
 }
 
 function usageKey(projectRoot?: string | null): string {

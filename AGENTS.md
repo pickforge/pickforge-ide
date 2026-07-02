@@ -75,3 +75,15 @@ keep new UI consistent with it.
 - Frontend: Playwright VRT specs and baselines live under `tests/vrt/`.
 
 Canonical brand assets live in `assets/branding/`.
+
+## Releasing
+
+- Bump the version in `src-tauri/tauri.conf.json` and `package.json`, land it on
+  `main`, then tag `vX.Y.Z` and push the tag. CI builds installers for every
+  platform, signs the updater artifacts, and creates a **draft** release —
+  review it, polish the notes, and publish.
+- The GitHub release description is the single source of release notes. The
+  website (pickforge.dev/pickforge) reads the latest release from the GitHub
+  API in the browser, so a normal release needs **no website change**.
+- Only touch `landing-page` (`src/pages/products.ts`) when install methods,
+  supported platforms, or positioning change.

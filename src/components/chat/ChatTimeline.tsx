@@ -59,6 +59,7 @@ function renderItem(item: AgentTimelineItem): JSX.Element {
           cachedInputTokens={item.cachedInputTokens}
           outputTokens={item.outputTokens}
           costUsd={item.costUsd}
+          estimatedCostUsd={item.estimatedCostUsd}
         />
       );
   }

@@ -20,16 +20,26 @@ export function Composer(props: {
   onInterrupt: () => void;
   onProviderChange?: (provider: AgentProvider) => void;
   onModelChange?: (model: string | null) => void;
+  supportsSteer?: boolean;
+  onSteer?: (text: string) => void;
+  emberYielded?: boolean;
 }): JSX.Element {
   const [text, setText] = createSignal("");
   let field!: HTMLTextAreaElement;
 
-  const canSend = () => text().trim().length > 0 && !props.turnActive;
+  const steering = () => props.turnActive && !!props.supportsSteer && !!props.onSteer;
+  const canSend = () => text().trim().length > 0 && (!props.turnActive || steering());
+  const placeholder = () => (steering() ? "Steer the running turn…" : "Message the agent…");
 
   const submit = () => {
     const value = text().trim();
-    if (!value || props.turnActive) return;
-    props.onSend(value);
+    if (!value) return;
+    if (props.turnActive) {
+      if (!steering()) return;
+      props.onSteer!(value);
+    } else {
+      props.onSend(value);
+    }
     setText("");
     field.style.height = "auto";
   };
@@ -79,7 +89,7 @@ export function Composer(props: {
           ref={field}
           class="pf-chat-textarea"
           rows={1}
-          placeholder="Message the agent…"
+          placeholder={placeholder()}
           value={text()}
           onInput={(e) => {
             setText(e.currentTarget.value);
@@ -93,6 +103,7 @@ export function Composer(props: {
             <button
               type="button"
               class="pf-chat-send"
+              classList={{ "pf-chat-send--yield": props.emberYielded }}
               disabled={!canSend()}
               onClick={submit}
             >
@@ -103,6 +114,7 @@ export function Composer(props: {
           <button
             type="button"
             class="pf-chat-send pf-chat-send--stop"
+            classList={{ "pf-chat-send--yield": props.emberYielded }}
             onClick={() => props.onInterrupt()}
           >
             Stop

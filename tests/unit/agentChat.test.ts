@@ -33,6 +33,7 @@ vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isCha
 
 import {
   agentChat,
+  approveAgentRequest,
   disposeAgentChat,
   ensureAgentChat,
   interruptAgentChat,
@@ -54,14 +55,16 @@ function mockInvoke(history: AgentTimelineEntry[] = []) {
     if (cmd === "agent_chat_start") return Promise.resolve("session-1");
     if (cmd === "agent_chat_send") return Promise.resolve();
     if (cmd === "agent_chat_interrupt") return Promise.resolve();
+    if (cmd === "agent_chat_approve") return Promise.resolve();
+    if (cmd === "agent_chat_steer") return Promise.resolve();
     return Promise.resolve(null);
   });
 }
 
-async function startChat(history: AgentTimelineEntry[] = []) {
+async function startChat(history: AgentTimelineEntry[] = [], model: string | null = null) {
   const chatId = nextChatId();
   mockInvoke(history);
-  await ensureAgentChat(chatId, "/project", "codex", null);
+  await ensureAgentChat(chatId, "/project", "codex", model);
   const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
   return {
     chatId,
@@ -81,6 +84,48 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+function cumulativeUsageEvents(): AgentEvent[] {
+  return [
+    {
+      kind: "usage",
+      inputTokens: 100,
+      cachedInputTokens: 10,
+      outputTokens: 20,
+      costUsd: 0.01,
+      contextUsed: 1_000,
+      contextWindow: 100_000,
+    },
+    {
+      kind: "usage",
+      inputTokens: 300,
+      cachedInputTokens: 30,
+      outputTokens: 60,
+      costUsd: 0.03,
+      contextUsed: 3_000,
+      contextWindow: 100_000,
+    },
+    {
+      kind: "usage",
+      inputTokens: 600,
+      cachedInputTokens: 60,
+      outputTokens: 120,
+      costUsd: 0.06,
+      contextUsed: 6_000,
+      contextWindow: 100_000,
+    },
+  ];
+}
+
+function historyFromEvents(events: AgentEvent[]): AgentTimelineEntry[] {
+  return events.map((event, index) => ({
+    entryType: "item",
+    seq: index + 1,
+    kind: event.kind,
+    payload: JSON.stringify(event),
+    createdAt: index + 1,
+  }));
 }
 
 beforeEach(() => {
@@ -172,12 +217,20 @@ describe("agentChat store reducer", () => {
     const { chatId, emit } = await startChat();
 
     emit({ kind: "turnStarted" });
+    emit({
+      kind: "approvalRequest",
+      approvalId: "approval-1",
+      approvalKind: "command",
+      detail: "Run bun test",
+    });
     expect(agentChat(chatId)?.turnActive).toBe(true);
+    expect(agentChat(chatId)?.approvals).toHaveLength(1);
 
     emit({ kind: "turnFailed", error: "boom" });
 
     expect(agentChat(chatId)?.turnActive).toBe(false);
     expect(agentChat(chatId)?.error).toBe("boom");
+    expect(agentChat(chatId)?.approvals).toEqual([]);
   });
 
   it("finalizes streaming items on turn done", async () => {
@@ -193,7 +246,42 @@ describe("agentChat store reducer", () => {
     ]);
   });
 
-  it("surfaces approval requests as tool use items", async () => {
+  it("stores approval requests and clears them on turn done", async () => {
+    const { chatId, emit } = await startChat();
+    const detail = JSON.stringify({
+      toolName: "Bash",
+      input: { command: "bun test", cwd: "/project" },
+      reason: "verify",
+    });
+
+    emit({
+      kind: "approvalRequest",
+      approvalId: "approval-1",
+      approvalKind: "command",
+      detail,
+    });
+
+    expect(agentChat(chatId)?.approvals).toEqual([
+      {
+        approvalId: "approval-1",
+        kind: "command",
+        detail,
+        parsed: {
+          command: "bun test",
+          cwd: "/project",
+          reason: "verify",
+          toolName: "Bash",
+        },
+      },
+    ]);
+    expect(timeline(chatId)).toEqual([]);
+
+    emit({ kind: "turnDone", status: "completed" });
+
+    expect(agentChat(chatId)?.approvals).toEqual([]);
+  });
+
+  it("approves requests through IPC and removes pending approvals", async () => {
     const { chatId, emit } = await startChat();
 
     emit({
@@ -203,14 +291,137 @@ describe("agentChat store reducer", () => {
       detail: "Run bun test",
     });
 
+    await approveAgentRequest(chatId, "approval-1", "acceptForSession");
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_approve", {
+      sessionId: "session-1",
+      approvalId: "approval-1",
+      decision: "acceptForSession",
+    });
+    expect(agentChat(chatId)?.approvals).toEqual([]);
+  });
+
+  it("does not restore approvals when approve IPC fails", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "approvalRequest",
+      approvalId: "approval-1",
+      approvalKind: "command",
+      detail: "Run bun test",
+    });
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_approve") return Promise.reject(new Error("approval failed"));
+      return Promise.resolve(null);
+    });
+
+    await expect(approveAgentRequest(chatId, "approval-1", "accept")).rejects.toThrow(
+      "approval failed",
+    );
+
+    expect(agentChat(chatId)?.approvals).toEqual([]);
+    expect(agentChat(chatId)?.error).toBe("approval failed");
+  });
+
+  it("accumulates usage totals with reported cost", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "usage",
+      inputTokens: 100,
+      cachedInputTokens: 10,
+      outputTokens: 20,
+      costUsd: 0.12,
+    });
+    emit({
+      kind: "usage",
+      inputTokens: 300,
+      cachedInputTokens: 30,
+      outputTokens: 40,
+      costUsd: 0.24,
+    });
+
+    expect(agentChat(chatId)?.totals).toEqual({
+      inputTokens: 400,
+      cachedInputTokens: 40,
+      outputTokens: 60,
+      costUsd: 0.36,
+      estimated: false,
+    });
     expect(timeline(chatId)).toMatchObject([
-      {
-        type: "toolUse",
-        itemId: "approval-1",
-        name: "approval required",
-        detail: "Run bun test",
-      },
+      { type: "usage", costUsd: 0.12, estimatedCostUsd: null },
+      { type: "usage", costUsd: 0.24, estimatedCostUsd: null },
     ]);
+  });
+
+  it("assigns cumulative usage snapshots instead of adding them", async () => {
+    const { chatId, emit } = await startChat();
+
+    for (const event of cumulativeUsageEvents()) emit(event);
+
+    expect(agentChat(chatId)?.totals).toEqual({
+      inputTokens: 600,
+      cachedInputTokens: 60,
+      outputTokens: 120,
+      costUsd: 0.06,
+      estimated: false,
+    });
+    expect(agentChat(chatId)?.contextUsed).toBe(6_000);
+    expect(agentChat(chatId)?.contextWindow).toBe(100_000);
+    expect(timeline(chatId).filter((item) => item.type === "usage")).toHaveLength(3);
+  });
+
+  it("estimates usage totals for known models when reported cost is missing", async () => {
+    const { chatId, emit } = await startChat([], "gpt-5.3-codex-spark");
+
+    emit({
+      kind: "usage",
+      inputTokens: 1_000,
+      cachedInputTokens: 200,
+      outputTokens: 300,
+      costUsd: null,
+    });
+
+    expect(agentChat(chatId)?.totals.inputTokens).toBe(1_000);
+    expect(agentChat(chatId)?.totals.cachedInputTokens).toBe(200);
+    expect(agentChat(chatId)?.totals.outputTokens).toBe(300);
+    expect(agentChat(chatId)?.totals.costUsd).toBeCloseTo(0.000805);
+    expect(agentChat(chatId)?.totals.estimated).toBe(true);
+    expect(timeline(chatId)).toMatchObject([
+      { type: "usage", costUsd: null, estimatedCostUsd: 0.000805 },
+    ]);
+  });
+
+  it("updates context usage when present on usage events", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "usage",
+      inputTokens: 100,
+      cachedInputTokens: 0,
+      outputTokens: 20,
+      costUsd: null,
+      contextUsed: 12_000,
+      contextWindow: 200_000,
+    });
+    emit({
+      kind: "usage",
+      inputTokens: 50,
+      cachedInputTokens: 0,
+      outputTokens: 10,
+      costUsd: null,
+    });
+
+    expect(agentChat(chatId)?.contextUsed).toBe(12_000);
+    expect(agentChat(chatId)?.contextWindow).toBe(200_000);
+  });
+
+  it("stores rate limit payloads", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "rateLimits", payload: "primary 1%" });
+
+    expect(agentChat(chatId)?.rateLimits).toBe("primary 1%");
   });
 });
 
@@ -297,6 +508,50 @@ describe("agentChat history", () => {
 
     expect(timeline(chatId).map((item) => item.seq)).toEqual([4, 9, 10]);
   });
+
+  it("seeds usage totals from history items", async () => {
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "item",
+        seq: 1,
+        kind: "usage",
+        payload: JSON.stringify({
+          kind: "usage",
+          inputTokens: 1_000,
+          cachedInputTokens: 200,
+          outputTokens: 300,
+          costUsd: null,
+          contextUsed: 9_000,
+          contextWindow: 100_000,
+        }),
+        createdAt: 1,
+      },
+    ];
+
+    const { chatId } = await startChat(history, "gpt-5.3-codex-spark");
+
+    expect(agentChat(chatId)?.totals.inputTokens).toBe(1_000);
+    expect(agentChat(chatId)?.totals.cachedInputTokens).toBe(200);
+    expect(agentChat(chatId)?.totals.outputTokens).toBe(300);
+    expect(agentChat(chatId)?.totals.costUsd).toBeCloseTo(0.000805);
+    expect(agentChat(chatId)?.totals.estimated).toBe(true);
+    expect(agentChat(chatId)?.contextUsed).toBe(9_000);
+    expect(agentChat(chatId)?.contextWindow).toBe(100_000);
+  });
+
+  it("assigns cumulative usage snapshots from history to the latest totals", async () => {
+    const { chatId } = await startChat(historyFromEvents(cumulativeUsageEvents()));
+
+    expect(agentChat(chatId)?.totals).toEqual({
+      inputTokens: 600,
+      cachedInputTokens: 60,
+      outputTokens: 120,
+      costUsd: 0.06,
+      estimated: false,
+    });
+    expect(agentChat(chatId)?.contextUsed).toBe(6_000);
+    expect(agentChat(chatId)?.contextWindow).toBe(100_000);
+  });
 });
 
 describe("ensureAgentChat", () => {
@@ -330,6 +585,34 @@ describe("ensureAgentChat", () => {
 
     start.resolve("session-1");
     await Promise.all([first, second]);
+  });
+
+  it("passes v2 engine and permission overrides to start", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+
+    await ensureAgentChat(chatId, "/project", "codex", "gpt-5.3-codex-spark", {
+      engine: "v2",
+      sandbox: "workspace-write",
+      approvalPolicy: "on-request",
+      permissionMode: "default",
+      allowedTools: ["shell", "edit"],
+    });
+
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_start",
+      expect.objectContaining({
+        chatId,
+        projectRoot: "/project",
+        provider: "codex",
+        model: "gpt-5.3-codex-spark",
+        engine: "v2",
+        sandbox: "workspace-write",
+        approvalPolicy: "on-request",
+        permissionMode: "default",
+        allowedTools: ["shell", "edit"],
+      }),
+    );
   });
 });
 

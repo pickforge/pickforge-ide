@@ -276,6 +276,48 @@
   color: var(--pf-text-med);
   overflow-wrap: anywhere;
 }
+.pf-chat-file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-file-diff-toggle {
+  margin-left: auto;
+  flex: none;
+}
+
+/* ---- Unified diff ---- */
+.pf-chat-diff {
+  margin: 0;
+  padding: var(--pf-space-sm);
+  max-height: 320px;
+  overflow: auto;
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.5;
+}
+.pf-diff-line {
+  display: block;
+  padding: 0 var(--pf-space-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--pf-text-med);
+}
+.pf-diff-line--add {
+  color: var(--pf-connected);
+  background: color-mix(in srgb, var(--pf-connected) 12%, transparent);
+}
+.pf-diff-line--del {
+  color: var(--pf-error);
+  background: color-mix(in srgb, var(--pf-error) 12%, transparent);
+}
+.pf-diff-line--hunk,
+.pf-diff-line--meta {
+  color: var(--pf-text-low);
+}
 
 /* ---- Compact single-line cards (tool / mcp / web) ---- */
 .pf-chat-line {
@@ -397,6 +439,122 @@
   overflow-wrap: anywhere;
 }
 
+/* ---- Approvals: a decision moment above the composer. While visible it takes
+ * the composition's ember for the primary Allow; the composer's send yields
+ * (Rule 2 — one ember, held by state, never two at once). Quiet, not a modal. */
+.pf-approvals {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-md) var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+.pf-approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-md);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+}
+.pf-approval-line {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-hi);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pf-approval-quiet {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  overflow-wrap: anywhere;
+}
+.pf-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-xs);
+}
+.pf-approval-btn {
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-3);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-approval-btn:hover {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-approval-btn--primary {
+  border: none;
+  background: var(--pf-ember);
+  color: var(--pf-surface);
+  box-shadow: var(--pf-glow-ember-soft);
+}
+.pf-approval-btn--primary:hover {
+  color: var(--pf-surface);
+  box-shadow: var(--pf-glow-ember-strong);
+}
+.pf-approval-btn--quiet {
+  background: transparent;
+}
+
+/* ---- Context-window meter + session cost strip ---- */
+.pf-chat-context {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-xs) var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+.pf-chat-context-frac {
+  flex: none;
+  white-space: nowrap;
+}
+.pf-chat-context-track {
+  flex: 1 1 auto;
+  height: 2px;
+  min-width: 40px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-hairline);
+  overflow: hidden;
+}
+.pf-chat-context-fill {
+  display: block;
+  height: 100%;
+  background: var(--pf-text-med);
+  transition: width var(--pf-dur-standard) var(--pf-ease-forge);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-context-fill {
+    transition: none;
+  }
+}
+.pf-chat-context-cost {
+  flex: none;
+  margin-left: auto;
+  color: var(--pf-text-med);
+  white-space: nowrap;
+}
+
 /* ---- Composer ---- */
 .pf-chat-composer {
   flex: none;
@@ -502,4 +660,20 @@
 }
 .pf-chat-send--stop:hover:not(:disabled) {
   box-shadow: var(--pf-glow-ember-soft);
+}
+
+/* Ember yields to the approval prompt while a decision is pending: the send /
+ * stop affordance drops to a neutral outline so the composition keeps one ember. */
+.pf-chat-send--yield,
+.pf-chat-send--yield:disabled {
+  background: transparent;
+  color: var(--pf-text-med);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  box-shadow: none;
+}
+.pf-chat-send--yield:hover:not(:disabled) {
+  transform: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+  box-shadow: none;
 }

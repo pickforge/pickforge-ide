@@ -1,13 +1,18 @@
 import { createStore, produce } from "solid-js/store";
 import {
+  agentChatApprove,
   agentChatHistory,
   agentChatInterrupt,
   agentChatSend,
   agentChatStart,
+  agentChatSteer,
+  type AgentApprovalDecision,
+  type AgentEngine,
   type AgentEvent,
   type AgentProvider,
   type AgentTimelineEntry,
 } from "../lib/agentChat";
+import { estimateCostUsd } from "../lib/agentPricing";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat } from "./workspace";
@@ -42,7 +47,28 @@ export type AgentTimelineItem =
       cachedInputTokens: number;
       outputTokens: number;
       costUsd: number | null;
+      estimatedCostUsd: number | null;
     };
+
+export type AgentApproval = {
+  approvalId: string;
+  kind: "command" | "fileChange" | "toolUse";
+  detail: string;
+  parsed?: {
+    command?: string;
+    cwd?: string;
+    reason?: string;
+    toolName?: string;
+  };
+};
+
+export type AgentChatTotals = {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  estimated: boolean;
+};
 
 export interface AgentChatState {
   sessionId: string | null;
@@ -51,6 +77,11 @@ export interface AgentChatState {
   turnActive: boolean;
   error: string | null;
   timeline: AgentTimelineItem[];
+  approvals: AgentApproval[];
+  contextUsed: number | null;
+  contextWindow: number | null;
+  rateLimits: string | null;
+  totals: AgentChatTotals;
   historyLoaded: boolean;
 }
 
@@ -75,6 +106,14 @@ export function agentChat(chatId: string): AgentChatState | undefined {
   return chats[chatId];
 }
 
+export interface EnsureAgentChatOptions {
+  engine?: AgentEngine;
+  sandbox?: string;
+  approvalPolicy?: string;
+  permissionMode?: string;
+  allowedTools?: string[];
+}
+
 function emptyState(provider: AgentProvider, model: string | null): AgentChatState {
   return {
     sessionId: null,
@@ -83,7 +122,22 @@ function emptyState(provider: AgentProvider, model: string | null): AgentChatSta
     turnActive: false,
     error: null,
     timeline: [],
+    approvals: [],
+    contextUsed: null,
+    contextWindow: null,
+    rateLimits: null,
+    totals: emptyTotals(),
     historyLoaded: false,
+  };
+}
+
+function emptyTotals(): AgentChatTotals {
+  return {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    estimated: false,
   };
 }
 
@@ -106,6 +160,62 @@ function lastPlanIndex(timeline: AgentTimelineItem[]): number {
     if (timeline[i].type === "plan") return i;
   }
   return -1;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringProp(record: Record<string, unknown> | null, keys: string[]): string | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function parseApprovalDetail(detail: string): AgentApproval["parsed"] | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(detail);
+  } catch {
+    return undefined;
+  }
+
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  const input = asRecord(record.input);
+  const parsed: AgentApproval["parsed"] = {};
+  const command = stringProp(record, ["command"]) ?? stringProp(input, ["command"]);
+  const cwd = stringProp(record, ["cwd"]) ?? stringProp(input, ["cwd"]);
+  const reason = stringProp(record, ["reason"]) ?? stringProp(input, ["reason"]);
+  const toolName =
+    stringProp(record, ["toolName", "tool_name", "name"]) ??
+    stringProp(input, ["toolName", "tool_name", "name"]);
+
+  if (command) parsed.command = command;
+  if (cwd) parsed.cwd = cwd;
+  if (reason) parsed.reason = reason;
+  if (toolName) parsed.toolName = toolName;
+
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
+function approvalFromEvent(
+  event: Extract<AgentEvent, { kind: "approvalRequest" }>,
+): AgentApproval {
+  const parsed = parseApprovalDetail(event.detail);
+  const approval: AgentApproval = {
+    approvalId: event.approvalId,
+    kind: event.approvalKind,
+    detail: event.detail,
+  };
+  if (parsed) approval.parsed = parsed;
+  return approval;
 }
 
 function finalizeStreaming(chat: AgentChatState): AgentChatState {
@@ -186,6 +296,62 @@ function reduceThinkingFinal(
     ...chat.timeline,
     { type: "thinking", seq: nextSeq(), text, streaming: false },
   ]);
+}
+
+function reduceUsageEvent(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "usage" }>,
+  nextSeq: () => number,
+): AgentChatState {
+  const estimatedCostUsd =
+    event.costUsd === null
+      ? estimateCostUsd(chat.model, {
+          inputTokens: event.inputTokens,
+          cachedInputTokens: event.cachedInputTokens,
+          outputTokens: event.outputTokens,
+        })
+      : null;
+  const costUsd = event.costUsd ?? estimatedCostUsd ?? 0;
+  const contextUsed = event.contextUsed === undefined ? chat.contextUsed : event.contextUsed;
+  const contextWindow =
+    event.contextWindow === undefined ? chat.contextWindow : event.contextWindow;
+  const cumulative = event.contextUsed != null;
+  const totals = cumulative
+    ? {
+        inputTokens: event.inputTokens,
+        cachedInputTokens: event.cachedInputTokens,
+        outputTokens: event.outputTokens,
+        costUsd,
+        estimated: event.costUsd == null,
+      }
+    : {
+        inputTokens: chat.totals.inputTokens + event.inputTokens,
+        cachedInputTokens: chat.totals.cachedInputTokens + event.cachedInputTokens,
+        outputTokens: chat.totals.outputTokens + event.outputTokens,
+        costUsd: chat.totals.costUsd + costUsd,
+        estimated: chat.totals.estimated || estimatedCostUsd !== null,
+      };
+
+  return withTimeline(
+    {
+      ...chat,
+      contextUsed,
+      contextWindow,
+      totals,
+    },
+    [
+      ...chat.timeline,
+      {
+        type: "usage",
+        seq: nextSeq(),
+        inputTokens: event.inputTokens,
+        cachedInputTokens: event.cachedInputTokens,
+        outputTokens: event.outputTokens,
+        costUsd: event.costUsd,
+        estimatedCostUsd,
+      },
+    ],
+  );
 }
 
 function reduceAgentEvent(
@@ -300,32 +466,15 @@ function reduceAgentEvent(
       return withTimeline(chat, timeline);
     }
     case "usage":
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "usage",
-          seq: nextSeq(),
-          inputTokens: event.inputTokens,
-          cachedInputTokens: event.cachedInputTokens,
-          outputTokens: event.outputTokens,
-          costUsd: event.costUsd,
-        },
-      ]);
+      return reduceUsageEvent(chat, event, nextSeq);
+    case "rateLimits":
+      return { ...chat, rateLimits: event.payload };
     case "turnDone":
-      return { ...finalizeStreaming(chat), turnActive: false };
+      return { ...finalizeStreaming(chat), turnActive: false, approvals: [] };
     case "turnFailed":
-      return { ...finalizeStreaming(chat), turnActive: false, error: event.error };
+      return { ...finalizeStreaming(chat), turnActive: false, error: event.error, approvals: [] };
     case "approvalRequest":
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "toolUse",
-          seq: nextSeq(),
-          itemId: event.approvalId,
-          name: "approval required",
-          detail: event.detail,
-        },
-      ]);
+      return { ...chat, approvals: [...chat.approvals, approvalFromEvent(event)] };
     case "commandOutput":
     case "noise":
       return chat;
@@ -391,6 +540,7 @@ export async function ensureAgentChat(
   projectRoot: string,
   provider: AgentProvider,
   model: string | null,
+  options: EnsureAgentChatOptions = {},
 ): Promise<void> {
   if (chats[chatId]?.sessionId) return;
   const existing = ensurePromises.get(chatId);
@@ -410,6 +560,7 @@ export async function ensureAgentChat(
         projectRoot,
         provider,
         model,
+        ...options,
         onEvent: (event) => receiveAgentEvent(chatId, event),
       });
       setChats(chatId, { sessionId, provider, model, error: null });
@@ -452,6 +603,56 @@ export async function sendAgentMessage(chatId: string, text: string): Promise<vo
       ),
     });
     if (activityEligible(chatId)) agentTurnCleared(chatId);
+    throw error;
+  }
+}
+
+export async function approveAgentRequest(
+  chatId: string,
+  approvalId: string,
+  decision: AgentApprovalDecision,
+): Promise<void> {
+  const chat = chats[chatId];
+  const sessionId = chat?.sessionId;
+  if (!sessionId) throw new Error("Agent chat is not started");
+
+  if (chat.approvals.some((approval) => approval.approvalId === approvalId)) {
+    setChats(chatId, {
+      approvals: chat.approvals.filter((item) => item.approvalId !== approvalId),
+    });
+  }
+
+  try {
+    await agentChatApprove(sessionId, approvalId, decision);
+  } catch (error) {
+    if (chats[chatId]) setChats(chatId, { error: errorText(error) });
+    throw error;
+  }
+}
+
+export async function steerAgentChat(chatId: string, text: string): Promise<void> {
+  const sessionId = chats[chatId]?.sessionId;
+  if (!sessionId) throw new Error("Agent chat is not started");
+  const optimisticSeq = takeSeq(chatId);
+  setChats(chatId, {
+    error: null,
+    timeline: [
+      ...chats[chatId].timeline,
+      { type: "userMessage", seq: optimisticSeq, text },
+    ],
+  });
+  try {
+    await agentChatSteer(sessionId, text);
+  } catch (error) {
+    if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
+      nextSeqByChat.set(chatId, optimisticSeq);
+    }
+    setChats(chatId, {
+      error: errorText(error),
+      timeline: (chats[chatId]?.timeline ?? []).filter(
+        (item) => item.type !== "userMessage" || item.seq !== optimisticSeq,
+      ),
+    });
     throw error;
   }
 }

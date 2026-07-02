@@ -1,6 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type AgentProvider = "claudeCode" | "codex";
+export type AgentEngine = "v1" | "v2";
+export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
 export type AgentEvent =
   | { kind: "sessionStarted"; providerSessionId: string }
@@ -54,7 +56,10 @@ export type AgentEvent =
       cachedInputTokens: number;
       outputTokens: number;
       costUsd: number | null;
+      contextUsed?: number | null;
+      contextWindow?: number | null;
     }
+  | { kind: "rateLimits"; payload: string }
   | { kind: "turnDone"; status: "completed" | "interrupted" }
   | { kind: "turnFailed"; error: string }
   | { kind: "noise"; line: string }
@@ -86,6 +91,11 @@ export interface AgentChatStartOptions {
   projectRoot: string;
   provider: AgentProvider;
   model?: string | null;
+  engine?: AgentEngine;
+  sandbox?: string;
+  approvalPolicy?: string;
+  permissionMode?: string;
+  allowedTools?: string[];
   onEvent: (event: AgentEvent) => void;
 }
 
@@ -98,6 +108,11 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
     projectRoot: opts.projectRoot,
     provider: opts.provider,
     model: opts.model ?? null,
+    engine: opts.engine ?? null,
+    sandbox: opts.sandbox ?? null,
+    approvalPolicy: opts.approvalPolicy ?? null,
+    permissionMode: opts.permissionMode ?? null,
+    allowedTools: opts.allowedTools ?? null,
     onEvent,
   });
 }
@@ -108,6 +123,18 @@ export function agentChatSend(sessionId: string, text: string): Promise<void> {
 
 export function agentChatInterrupt(sessionId: string): Promise<void> {
   return invoke("agent_chat_interrupt", { sessionId });
+}
+
+export function agentChatApprove(
+  sessionId: string,
+  approvalId: string,
+  decision: AgentApprovalDecision,
+): Promise<void> {
+  return invoke("agent_chat_approve", { sessionId, approvalId, decision });
+}
+
+export function agentChatSteer(sessionId: string, text: string): Promise<void> {
+  return invoke("agent_chat_steer", { sessionId, text });
 }
 
 export function agentChatHistory(chatId: string): Promise<AgentTimelineEntry[]> {

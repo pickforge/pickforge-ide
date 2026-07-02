@@ -55,6 +55,8 @@ import {
   workspace,
 } from "../../stores/workspace";
 import { AGENTS } from "../../lib/agentModels";
+import { loadDefaultChatKind, loadLastAgentProvider, setLastAgentProvider } from "../../lib/chatDefaults";
+import { type AgentProvider } from "../../lib/agentChat";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
@@ -138,7 +140,20 @@ export function ProjectsPane() {
   };
   const newAgentChat = (root: string, provider: string) => {
     if (!chatsExpanded(root)) toggleChats(root);
+    if (provider === "claudeCode" || provider === "codex") {
+      setLastAgentProvider(provider as AgentProvider);
+    }
     void addChat(DEFAULT_CHAT_TITLE, provider, root, "agent");
+  };
+  const newChatFromButton = (root: string, e: MouseEvent) => {
+    const kind = loadDefaultChatKind();
+    if (kind === "ask") {
+      openFromButton("newchat", root, e);
+      return;
+    }
+    e.stopPropagation();
+    if (kind === "terminal") newTerminalChat(root);
+    else newAgentChat(root, loadLastAgentProvider());
   };
   const toggleArchivedFor = (root: string) =>
     setShowArchived((s) => {
@@ -462,7 +477,7 @@ export function ProjectsPane() {
           <Show when={renaming() === root} fallback={<span class="pf-rail-row-label">{p.project.displayName}</span>}>
             <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
           </Show>
-          <button class="pf-rail-row-action" title="New chat" onClick={(e) => openFromButton("newchat", root, e)}>
+          <button class="pf-rail-row-action" title="New chat" onClick={(e) => newChatFromButton(root, e)}>
             <IconPlus size={14} />
           </button>
           <button class="pf-rail-row-action" title="Project options" onClick={(e) => openFromButton("project", root, e)}>

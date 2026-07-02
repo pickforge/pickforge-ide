@@ -30,6 +30,14 @@ import {
   setFileOpenMode,
   type FileOpenMode,
 } from "../stores/fileOpenSettings";
+import {
+  loadAgentEngine,
+  loadDefaultChatKind,
+  setAgentEngine,
+  setDefaultChatKind,
+  type DefaultChatKind,
+} from "../lib/chatDefaults";
+import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
@@ -47,6 +55,10 @@ function Section(props: { title: string; children: any }) {
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
+  const [defaultChatKind, setDefaultChatKindSig] = createSignal<DefaultChatKind>(
+    loadDefaultChatKind(),
+  );
+  const [agentEngine, setAgentEngineSig] = createSignal<AgentEngine>(loadAgentEngine());
   const [archived, setArchived] = createSignal<db.Project[]>([]);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
 
@@ -59,6 +71,18 @@ export function SettingsScreen() {
   const changeModel = (agentId: string, model: string) => {
     setAgentModel(agentId, model || null);
     setModels(loadAgentModels());
+  };
+
+  const changeDefaultChatKind = (kind: string) => {
+    const value = kind as DefaultChatKind;
+    setDefaultChatKind(value);
+    setDefaultChatKindSig(value);
+  };
+
+  const changeAgentEngine = (engine: string) => {
+    const value = engine as AgentEngine;
+    setAgentEngine(value);
+    setAgentEngineSig(value);
   };
 
   const restore = async (root: string) => {
@@ -131,6 +155,37 @@ export function SettingsScreen() {
               </div>
             )}
           </For>
+        </Section>
+
+        <Section title="Chats">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">New chat creates</span>
+            <Dropdown
+              class="pf-settings-dropdown"
+              value={defaultChatKind()}
+              onChange={changeDefaultChatKind}
+              options={[
+                { value: "ask", label: "Ask each time" },
+                { value: "terminal", label: "Terminal" },
+                { value: "agent", label: "Agent chat" },
+              ]}
+            />
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Agent chat engine
+              <span class="pf-settings-hint-inline">interactive approvals + steering, or one-shot CLI</span>
+            </span>
+            <Dropdown
+              class="pf-settings-dropdown"
+              value={agentEngine()}
+              onChange={changeAgentEngine}
+              options={[
+                { value: "v2", label: "v2 (interactive)" },
+                { value: "v1", label: "v1 (one-shot CLI)" },
+              ]}
+            />
+          </div>
         </Section>
 
         <Section title="Quick launch">

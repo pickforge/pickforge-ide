@@ -10,7 +10,10 @@ export function TokenBadge(props: {
   cachedInputTokens: number;
   outputTokens: number;
   costUsd: number | null;
+  estimatedCostUsd?: number | null;
 }): JSX.Element {
+  const cost = () => (props.costUsd !== null ? props.costUsd : props.estimatedCostUsd ?? null);
+  const estimated = () => props.costUsd === null && (props.estimatedCostUsd ?? null) !== null;
   return (
     <div class="pf-chat-tokens">
       <span class="pf-chat-tokens-part">{fmt(props.inputTokens)} in</span>
@@ -18,9 +21,9 @@ export function TokenBadge(props: {
         <span class="pf-chat-tokens-part">{fmt(props.cachedInputTokens)} cached</span>
       </Show>
       <span class="pf-chat-tokens-part">{fmt(props.outputTokens)} out</span>
-      <Show when={props.costUsd !== null}>
+      <Show when={cost() !== null}>
         <span class="pf-chat-tokens-part pf-chat-tokens-cost">
-          ${props.costUsd!.toFixed(4)}
+          {estimated() ? "~" : ""}${cost()!.toFixed(4)}
         </span>
       </Show>
     </div>

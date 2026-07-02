@@ -118,14 +118,17 @@ impl ClaudeBridgeClient {
             pending: Mutex::new(HashMap::new()),
             starts: Mutex::new(HashMap::new()),
             chats: Mutex::new(HashMap::new()),
+            closed: AtomicBool::new(false),
             next_id: AtomicI64::new(1),
         });
         let (writer_tx, writer_rx) = mpsc::channel();
 
         let writer_thread = match std::thread::Builder::new()
             .name("claude-bridge-writer".to_string())
-            .spawn(move || write_loop(stdin, writer_rx))
-        {
+            .spawn({
+                let writer_state = Arc::clone(&state);
+                move || write_loop(stdin, writer_rx, writer_state)
+            }) {
             Ok(thread) => thread,
             Err(error) => {
                 kill_state_child(&state);
@@ -302,6 +305,10 @@ impl ClaudeBridgeClient {
         Ok(())
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.state.closed.load(Ordering::SeqCst)
+    }
+
     fn register_chat(
         &self,
         chat_id: String,
@@ -366,6 +373,9 @@ impl ClaudeBridgeClient {
     }
 
     fn send_value(&self, value: Value) -> Result<(), ClaudeBridgeError> {
+        if self.is_closed() {
+            return Err(ClaudeBridgeError::WriterClosed);
+        }
         let line = serde_json::to_string(&value)?;
         let tx = self
             .writer_tx
@@ -374,13 +384,16 @@ impl ClaudeBridgeClient {
             .as_ref()
             .cloned()
             .ok_or(ClaudeBridgeError::WriterClosed)?;
-        tx.send(WriterMessage::Line(line))
-            .map_err(|_| ClaudeBridgeError::WriterClosed)
+        tx.send(WriterMessage::Line(line)).map_err(|_| {
+            close_state(&self.state, "claude bridge writer closed");
+            ClaudeBridgeError::WriterClosed
+        })
     }
 }
 
 impl Drop for ClaudeBridgeClient {
     fn drop(&mut self) {
+        self.state.closed.store(true, Ordering::SeqCst);
         if let Ok(mut tx) = self.writer_tx.lock() {
             if let Some(tx) = tx.take() {
                 let _ = tx.send(WriterMessage::Line(json!({ "op": "shutdown" }).to_string()));
@@ -416,6 +429,7 @@ struct ClientState {
     pending: Mutex<HashMap<String, PendingSender>>,
     starts: Mutex<HashMap<String, StartSender>>,
     chats: Mutex<HashMap<String, Arc<ChatRuntime>>>,
+    closed: AtomicBool,
     next_id: AtomicI64,
 }
 
@@ -434,12 +448,13 @@ enum WriterMessage {
     Shutdown,
 }
 
-fn write_loop(stdin: impl Write, rx: mpsc::Receiver<WriterMessage>) {
+fn write_loop(stdin: impl Write, rx: mpsc::Receiver<WriterMessage>, state: Arc<ClientState>) {
     let mut writer = BufWriter::new(stdin);
     for message in rx {
         match message {
             WriterMessage::Line(line) => {
                 if writeln!(writer, "{line}").is_err() || writer.flush().is_err() {
+                    close_state(&state, "claude bridge stdin closed");
                     break;
                 }
             }
@@ -457,8 +472,7 @@ fn read_loop(stdout: impl Read, state: Arc<ClientState>) {
         handle_incoming_line(&state, &line);
     }
 
-    fail_pending(&state, "claude bridge stdout closed");
-    fail_start_waiters(&state, "claude bridge stdout closed");
+    close_state(&state, "claude bridge stdout closed");
     let _ = poll_state_child_exit(&state, CHILD_EXIT_TIMEOUT);
 }
 
@@ -651,6 +665,15 @@ fn fail_start_waiters(state: &Arc<ClientState>, message: &str) {
             let _ = tx.send(Err(message.to_string()));
         }
     }
+}
+
+fn close_state(state: &Arc<ClientState>, pending_message: &str) {
+    if state.closed.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    fail_pending(state, pending_message);
+    fail_start_waiters(state, pending_message);
+    dispatch_fatal(state, None, "agent process exited".to_string());
 }
 
 fn remove_pending(state: &Arc<ClientState>, id: &str) {
@@ -933,6 +956,49 @@ done
     }
 
     #[cfg(unix)]
+    fn exit_mid_turn_script() -> TestScript {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "pickforge-claude-bridge-exit-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let runtime = dir.join("fake-bridge");
+        let stdin_log = dir.join("stdin.jsonl");
+        let body = format!(
+            r#"#!/bin/sh
+log='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"op":"start"'*)
+      printf '%s\n' '{{"ev":"started","chatId":"chat-1"}}'
+      ;;
+    *'"op":"send"'*)
+      printf '%s\n' '{{"ev":"raw","chatId":"chat-1","message":{{"type":"stream_event","event":{{"type":"message_start"}}}}}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+            stdin_log.display()
+        );
+        fs::write(&runtime, body).unwrap();
+        let mut permissions = fs::metadata(&runtime).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&runtime, permissions).unwrap();
+
+        TestScript {
+            dir,
+            runtime,
+            stdin_log,
+        }
+    }
+
+    #[cfg(unix)]
     fn client_opts(script: &TestScript) -> ClaudeBridgeOptions {
         ClaudeBridgeOptions {
             runtime: Some(script.runtime.to_string_lossy().to_string()),
@@ -1168,5 +1234,26 @@ done
         wait_for_events(&events, |events| turn_started_count(events) == 1);
         let log = wait_for_file(&script.stdin_log, |log| log.contains(r#""op":"send""#));
         assert_eq!(log.matches(r#""op":"send""#).count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exiting_bridge_broadcasts_turn_failed_and_marks_closed() {
+        let script = exit_mid_turn_script();
+        let client = spawn_test_client(&script);
+        let (events, sink) = event_sink();
+
+        client
+            .chat_start("chat-1", script.dir.clone(), None, None, None, None, sink)
+            .unwrap();
+        client.chat_send("chat-1", "first").unwrap();
+
+        wait_for_events(&events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnFailed { error }) if error == "agent process exited"
+            )
+        });
+        assert!(client.is_closed());
     }
 }

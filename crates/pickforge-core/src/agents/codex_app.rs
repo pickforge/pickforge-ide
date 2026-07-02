@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -167,14 +167,17 @@ impl CodexAppClient {
             child: Mutex::new(Some(child)),
             pending: Mutex::new(HashMap::new()),
             subscriptions: Mutex::new(HashMap::new()),
+            closed: AtomicBool::new(false),
             next_id: AtomicI64::new(1),
         });
         let (writer_tx, writer_rx) = mpsc::channel();
 
         let writer_thread = match std::thread::Builder::new()
             .name("codex-app-writer".to_string())
-            .spawn(move || write_loop(stdin, writer_rx))
-        {
+            .spawn({
+                let writer_state = Arc::clone(&state);
+                move || write_loop(stdin, writer_rx, writer_state)
+            }) {
             Ok(thread) => thread,
             Err(error) => {
                 kill_state_child(&state);
@@ -397,6 +400,10 @@ impl CodexAppClient {
         Ok(())
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.state.closed.load(Ordering::SeqCst)
+    }
+
     pub fn kill(&self) -> Result<(), CodexAppError> {
         signal_state_child(&self.state);
         Ok(())
@@ -457,6 +464,9 @@ impl CodexAppClient {
     }
 
     fn send_value(&self, value: Value) -> Result<(), CodexAppError> {
+        if self.is_closed() {
+            return Err(CodexAppError::WriterClosed);
+        }
         let line = serde_json::to_string(&value)?;
         let tx = self
             .writer_tx
@@ -465,13 +475,16 @@ impl CodexAppClient {
             .as_ref()
             .cloned()
             .ok_or(CodexAppError::WriterClosed)?;
-        tx.send(WriterMessage::Line(line))
-            .map_err(|_| CodexAppError::WriterClosed)
+        tx.send(WriterMessage::Line(line)).map_err(|_| {
+            close_state(&self.state, "codex app-server writer closed");
+            CodexAppError::WriterClosed
+        })
     }
 }
 
 impl Drop for CodexAppClient {
     fn drop(&mut self) {
+        self.state.closed.store(true, Ordering::SeqCst);
         if let Ok(mut tx) = self.writer_tx.lock() {
             if let Some(tx) = tx.take() {
                 let _ = tx.send(WriterMessage::Shutdown);
@@ -500,6 +513,7 @@ struct ClientState {
     child: Mutex<Option<Child>>,
     pending: Mutex<HashMap<i64, PendingSender>>,
     subscriptions: Mutex<HashMap<String, Arc<dyn Fn(AgentEvent) + Send + Sync>>>,
+    closed: AtomicBool,
     next_id: AtomicI64,
 }
 
@@ -526,12 +540,13 @@ enum IncomingLine {
     None,
 }
 
-fn write_loop(stdin: impl Write, rx: mpsc::Receiver<WriterMessage>) {
+fn write_loop(stdin: impl Write, rx: mpsc::Receiver<WriterMessage>, state: Arc<ClientState>) {
     let mut writer = BufWriter::new(stdin);
     for message in rx {
         match message {
             WriterMessage::Line(line) => {
                 if writeln!(writer, "{line}").is_err() || writer.flush().is_err() {
+                    close_state(&state, "codex app-server stdin closed");
                     break;
                 }
             }
@@ -552,7 +567,7 @@ fn read_loop(stdout: impl Read, state: Arc<ClientState>) {
             IncomingLine::None => {}
         }
     }
-    fail_pending(&state, "codex app-server stdout closed");
+    close_state(&state, "codex app-server stdout closed");
     bounded_reap_state_child(&state, CHILD_REAP_TIMEOUT);
 }
 
@@ -897,6 +912,22 @@ fn fail_pending(state: &Arc<ClientState>, message: &str) {
             let _ = tx.send(Err(message.to_string()));
         }
     }
+}
+
+fn close_state(state: &Arc<ClientState>, pending_message: &str) {
+    if state.closed.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    fail_pending(state, pending_message);
+    dispatch_events(
+        state,
+        vec![RoutedEvent {
+            thread_id: None,
+            event: AgentEvent::TurnFailed {
+                error: "agent process exited".to_string(),
+            },
+        }],
+    );
 }
 
 fn remove_pending(state: &Arc<ClientState>, id: i64) {

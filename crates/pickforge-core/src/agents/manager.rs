@@ -1,14 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem::ManuallyDrop;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::db::{AgentSessionRow, Database, DbError};
 
+use super::claude_bridge::{spawn as spawn_claude_bridge, ClaudeBridgeClient, ClaudeBridgeOptions};
 use super::claude_stream::{spawn_claude_turn, ClaudeStreamTurn, ClaudeTurnOptions};
+use super::codex_app::{spawn as spawn_codex_app, CodexAppClient, CodexAppOptions, RequestIdRepr};
 use super::codex_exec::{spawn_codex_turn, CodexExecTurn, CodexTurnOptions};
 use super::event::AgentEvent;
 
@@ -39,10 +41,46 @@ impl FromStr for AgentProvider {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    V1,
+    V2,
+}
+
+impl Default for Engine {
+    fn default() -> Self {
+        Self::V2
+    }
+}
+
+impl FromStr for Engine {
+    type Err = AgentChatError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "v1" => Ok(Self::V1),
+            "v2" => Ok(Self::V2),
+            _ => Err(AgentChatError::BadEngine),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentStartOverrides {
+    pub sandbox: Option<String>,
+    pub approval_policy: Option<String>,
+    pub permission_mode: Option<String>,
+    pub allowed_tools: Option<Vec<String>>,
+}
+
 #[derive(Clone)]
 pub struct AgentChatManager {
     db: Arc<Database>,
+    app_root: PathBuf,
     inner: Arc<Mutex<HashMap<String, SessionState>>>,
+    codex_app_clients: Arc<Mutex<HashMap<PathBuf, Arc<CodexAppClient>>>>,
+    claude_bridge: Arc<Mutex<Option<Arc<ClaudeBridgeClient>>>>,
+    starting_chats: Arc<Mutex<HashSet<String>>>,
     #[cfg(test)]
     test_binaries: TestBinaries,
 }
@@ -51,6 +89,7 @@ struct SessionState {
     chat_id: String,
     project_root: PathBuf,
     provider: AgentProvider,
+    engine: Engine,
     model: Option<String>,
     provider_session_id: Option<String>,
     sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
@@ -65,6 +104,16 @@ struct ActiveTurn {
 enum ActiveTurnHandle {
     Codex(CodexExecTurn),
     Claude(ClaudeStreamTurn),
+    CodexApp {
+        client: Arc<CodexAppClient>,
+        thread_id: String,
+        turn_id: Arc<Mutex<Option<String>>>,
+        pending_interrupt: Arc<AtomicBool>,
+    },
+    ClaudeBridge {
+        client: Arc<ClaudeBridgeClient>,
+        chat_id: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -79,13 +128,21 @@ pub enum AgentChatError {
     Spawn(String),
     #[error("unknown agent provider")]
     BadProvider,
+    #[error("unknown agent engine")]
+    BadEngine,
+    #[error("unsupported agent chat operation: {0}")]
+    Unsupported(String),
 }
 
 impl AgentChatManager {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Database>, app_root: PathBuf) -> Self {
         Self {
             db,
+            app_root,
             inner: Arc::new(Mutex::new(HashMap::new())),
+            codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
+            claude_bridge: Arc::new(Mutex::new(None)),
+            starting_chats: Arc::new(Mutex::new(HashSet::new())),
             #[cfg(test)]
             test_binaries: TestBinaries::default(),
         }
@@ -96,12 +153,14 @@ impl AgentChatManager {
         chat_id: &str,
         project_root: PathBuf,
         provider: AgentProvider,
+        engine: Engine,
         model: Option<String>,
+        overrides: AgentStartOverrides,
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     ) -> Result<String, AgentChatError> {
-        let mut inner = self.lock_inner()?;
+        let _start_guard = self.acquire_start_guard(chat_id)?;
         let latest = self.db.latest_agent_session_for_chat(chat_id)?;
-        let (session_id, provider_session_id) =
+        let (session_id, mut provider_session_id) =
             match latest.filter(|row| row.provider == provider.as_str()) {
                 Some(row) => {
                     if row.model != model {
@@ -125,27 +184,100 @@ impl AgentChatManager {
                 }
             };
 
-        if let Some(state) = inner.get_mut(&session_id) {
-            state.chat_id = chat_id.to_string();
-            state.project_root = project_root;
-            state.provider = provider;
-            state.model = model;
-            state.provider_session_id = provider_session_id;
-            state.sink = sink;
+        let codex_app_client = if engine == Engine::V2 && provider == AgentProvider::Codex {
+            let client = self.codex_app_client(project_root.clone())?;
+            let sandbox = overrides
+                .sandbox
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("workspace-write");
+            let approval_policy = overrides
+                .approval_policy
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("on-request");
+            let thread = if let Some(thread_id) = non_empty(provider_session_id.clone()) {
+                match client.thread_resume(&thread_id, project_root.clone()) {
+                    Ok(thread) => thread,
+                    Err(_) => client
+                        .thread_start(
+                            project_root.clone(),
+                            model.clone(),
+                            sandbox,
+                            approval_policy,
+                        )
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?,
+                }
+            } else {
+                client
+                    .thread_start(
+                        project_root.clone(),
+                        model.clone(),
+                        sandbox,
+                        approval_policy,
+                    )
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?
+            };
+            self.db
+                .agent_session_set_provider_session_id(&session_id, &thread.thread_id)?;
+            provider_session_id = Some(thread.thread_id.clone());
+            Some((client, thread.thread_id))
         } else {
-            inner.insert(
+            None
+        };
+
+        {
+            let mut inner = self.lock_inner()?;
+            upsert_session_state(
+                &mut inner,
                 session_id.clone(),
                 SessionState {
                     chat_id: chat_id.to_string(),
-                    project_root,
+                    project_root: project_root.clone(),
                     provider,
-                    model,
-                    provider_session_id,
+                    engine,
+                    model: model.clone(),
+                    provider_session_id: provider_session_id.clone(),
                     sink,
                     active_turn: None,
                 },
             );
         }
+
+        match (engine, provider) {
+            (Engine::V2, AgentProvider::Codex) => {
+                if let Some((client, thread_id)) = codex_app_client {
+                    client
+                        .subscribe(
+                            &thread_id,
+                            self.wrapping_sink(session_id.clone(), chat_id.to_string()),
+                        )
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                }
+            }
+            (Engine::V2, AgentProvider::ClaudeCode) => {
+                let client = self.claude_bridge_client()?;
+                client
+                    .chat_start(
+                        &session_id,
+                        project_root,
+                        model,
+                        provider_session_id,
+                        Some(
+                            overrides
+                                .permission_mode
+                                .filter(|value| !value.trim().is_empty())
+                                .unwrap_or_else(|| "default".to_string()),
+                        ),
+                        overrides.allowed_tools,
+                        self.wrapping_sink(session_id.clone(), chat_id.to_string()),
+                    )
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+            }
+            (Engine::V1, _) => {}
+        }
+
+        self.unsubscribe_replaced_codex_threads(chat_id, &session_id);
 
         Ok(session_id)
     }
@@ -162,6 +294,7 @@ impl AgentChatManager {
         let chat_id = state.chat_id.clone();
         let project_root = state.project_root.clone();
         let provider = state.provider;
+        let engine = state.engine;
         let model = state.model.clone();
         let provider_session_id = state.provider_session_id.clone();
         let session_id_owned = session_id.to_string();
@@ -170,45 +303,116 @@ impl AgentChatManager {
             .agent_message_append(session_id, &chat_id, "user", text)?;
         self.db.agent_session_set_status(session_id, "running")?;
 
-        let db = Arc::clone(&self.db);
-        let sink_inner = Arc::clone(&self.inner);
-        let sink_session_id = session_id_owned.clone();
-        let sink_chat_id = chat_id.clone();
-        let wrapped_sink = move |event| {
-            handle_runner_event(&db, &sink_inner, &sink_session_id, &sink_chat_id, event);
+        if engine == Engine::V2 && provider == AgentProvider::Codex {
+            let Some(thread_id) = non_empty(provider_session_id) else {
+                let _ = self.db.agent_session_set_status(session_id, "failed");
+                return Err(AgentChatError::Spawn(
+                    "codex app-server session has no thread id".to_string(),
+                ));
+            };
+            let client = match self.codex_app_client(project_root) {
+                Ok(client) => client,
+                Err(err) => {
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
+                    return Err(err);
+                }
+            };
+            let turn_id = Arc::new(Mutex::new(None));
+            let pending_interrupt = Arc::new(AtomicBool::new(false));
+            state.active_turn = Some(ActiveTurn::new(ActiveTurnHandle::CodexApp {
+                client: Arc::clone(&client),
+                thread_id: thread_id.clone(),
+                turn_id: Arc::clone(&turn_id),
+                pending_interrupt: Arc::clone(&pending_interrupt),
+            }));
+            drop(inner);
+
+            match client.turn_start(&thread_id, text, model, None) {
+                Ok(started_turn_id) => {
+                    *turn_id.lock().map_err(|_| {
+                        AgentChatError::Spawn("agent turn lock poisoned".to_string())
+                    })? = Some(started_turn_id);
+                    if pending_interrupt.load(Ordering::SeqCst) {
+                        let turn_id = turn_id
+                            .lock()
+                            .map_err(|_| {
+                                AgentChatError::Spawn("agent turn lock poisoned".to_string())
+                            })?
+                            .clone()
+                            .ok_or_else(|| {
+                                AgentChatError::Spawn(
+                                    "codex app-server turn id missing".to_string(),
+                                )
+                            })?;
+                        client
+                            .turn_interrupt(&thread_id, &turn_id)
+                            .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                    }
+                    return Ok(());
+                }
+                Err(err) => {
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
+                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                        turn.reap();
+                    }
+                    return Err(AgentChatError::Spawn(err.to_string()));
+                }
+            }
+        }
+
+        let result = match (engine, provider) {
+            (Engine::V1, AgentProvider::Codex) => {
+                let wrapped_sink = self.wrapping_sink(session_id_owned.clone(), chat_id.clone());
+                spawn_codex_turn(
+                    CodexTurnOptions {
+                        prompt: text.to_string(),
+                        cwd: project_root,
+                        model,
+                        effort: None,
+                        resume_thread_id: provider_session_id,
+                        binary: self.codex_binary(),
+                    },
+                    move |event| wrapped_sink(event),
+                )
+                .map(ActiveTurnHandle::Codex)
+                .map_err(|err| AgentChatError::Spawn(err.to_string()))
+            }
+            (Engine::V1, AgentProvider::ClaudeCode) => {
+                let wrapped_sink = self.wrapping_sink(session_id_owned.clone(), chat_id.clone());
+                spawn_claude_turn(
+                    ClaudeTurnOptions {
+                        prompt: text.to_string(),
+                        cwd: project_root,
+                        model,
+                        resume_session_id: provider_session_id,
+                        permission_mode: None,
+                        allowed_tools: None,
+                        binary: self.claude_binary(),
+                    },
+                    move |event| wrapped_sink(event),
+                )
+                .map(ActiveTurnHandle::Claude)
+                .map_err(|err| AgentChatError::Spawn(err.to_string()))
+            }
+            (Engine::V2, AgentProvider::Codex) => unreachable!("handled before match"),
+            (Engine::V2, AgentProvider::ClaudeCode) => {
+                let client = self.claude_bridge_client()?;
+                let chat_id = session_id_owned.clone();
+                state.active_turn = Some(ActiveTurn::new(ActiveTurnHandle::ClaudeBridge {
+                    client: Arc::clone(&client),
+                    chat_id: chat_id.clone(),
+                }));
+                match client.chat_send(&chat_id, text) {
+                    Ok(()) => return Ok(()),
+                    Err(err) => {
+                        state.active_turn = None;
+                        Err(AgentChatError::Spawn(err.to_string()))
+                    }
+                }
+            }
         };
 
-        let turn = match provider {
-            AgentProvider::Codex => spawn_codex_turn(
-                CodexTurnOptions {
-                    prompt: text.to_string(),
-                    cwd: project_root,
-                    model,
-                    effort: None,
-                    resume_thread_id: provider_session_id,
-                    binary: self.codex_binary(),
-                },
-                wrapped_sink,
-            )
-            .map(ActiveTurnHandle::Codex)
-            .map_err(|err| AgentChatError::Spawn(err.to_string())),
-            AgentProvider::ClaudeCode => spawn_claude_turn(
-                ClaudeTurnOptions {
-                    prompt: text.to_string(),
-                    cwd: project_root,
-                    model,
-                    resume_session_id: provider_session_id,
-                    permission_mode: None,
-                    allowed_tools: None,
-                    binary: self.claude_binary(),
-                },
-                wrapped_sink,
-            )
-            .map(ActiveTurnHandle::Claude)
-            .map_err(|err| AgentChatError::Spawn(err.to_string())),
-        };
-
-        match turn {
+        match result {
             Ok(turn) => {
                 state.active_turn = Some(ActiveTurn::new(turn));
                 Ok(())
@@ -217,6 +421,69 @@ impl AgentChatManager {
                 let _ = self.db.agent_session_set_status(session_id, "failed");
                 Err(err)
             }
+        }
+    }
+
+    pub fn approve(
+        &self,
+        session_id: &str,
+        approval_id: &str,
+        decision: &str,
+    ) -> Result<(), AgentChatError> {
+        let (engine, provider, project_root) = {
+            let inner = self.lock_inner()?;
+            let state = inner
+                .get(session_id)
+                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            (state.engine, state.provider, state.project_root.clone())
+        };
+
+        match (engine, provider) {
+            (Engine::V2, AgentProvider::Codex) => self
+                .cached_codex_app_client(&project_root)?
+                .respond_approval(RequestIdRepr::from_serialized(approval_id), decision)
+                .map_err(|err| AgentChatError::Spawn(err.to_string())),
+            (Engine::V2, AgentProvider::ClaudeCode) => self
+                .cached_claude_bridge_client()?
+                .chat_approve(session_id, approval_id, decision)
+                .map_err(|err| AgentChatError::Spawn(err.to_string())),
+            (Engine::V1, _) => Err(AgentChatError::Unsupported(
+                "approvals require the v2 agent engine".to_string(),
+            )),
+        }
+    }
+
+    pub fn steer(&self, session_id: &str, text: &str) -> Result<(), AgentChatError> {
+        let (engine, provider, active_turn) = {
+            let inner = self.lock_inner()?;
+            let state = inner
+                .get(session_id)
+                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            (state.engine, state.provider, state.active_turn.clone())
+        };
+
+        match (engine, provider) {
+            (Engine::V2, AgentProvider::Codex) => {
+                let Some(active_turn) = active_turn else {
+                    return Err(AgentChatError::Unsupported(
+                        "codex steering requires an active turn".to_string(),
+                    ));
+                };
+                let Some((client, thread_id, turn_id)) = active_turn.codex_app_turn()? else {
+                    return Err(AgentChatError::Unsupported(
+                        "codex steering requires an active v2 turn".to_string(),
+                    ));
+                };
+                client
+                    .turn_steer(&thread_id, &turn_id, text)
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))
+            }
+            (Engine::V2, AgentProvider::ClaudeCode) => Err(AgentChatError::Unsupported(
+                "claude steering is not supported until SDK steering is available".to_string(),
+            )),
+            (Engine::V1, _) => Err(AgentChatError::Unsupported(
+                "steering requires the v2 agent engine".to_string(),
+            )),
         }
     }
 
@@ -235,6 +502,159 @@ impl AgentChatManager {
         Ok(())
     }
 
+    fn acquire_start_guard(&self, chat_id: &str) -> Result<StartGuard, AgentChatError> {
+        let chat_id = chat_id.to_string();
+        loop {
+            {
+                let mut starting = self.starting_chats.lock().map_err(|_| {
+                    AgentChatError::Spawn("agent chat start guard lock poisoned".to_string())
+                })?;
+                if starting.insert(chat_id.clone()) {
+                    return Ok(StartGuard {
+                        chat_id,
+                        starting: Arc::clone(&self.starting_chats),
+                    });
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn wrapping_sink(
+        &self,
+        session_id: String,
+        chat_id: String,
+    ) -> Arc<dyn Fn(AgentEvent) + Send + Sync> {
+        let db = Arc::clone(&self.db);
+        let sink_inner = Arc::clone(&self.inner);
+        Arc::new(move |event| {
+            handle_runner_event(&db, &sink_inner, &session_id, &chat_id, event);
+        })
+    }
+
+    fn codex_app_client(
+        &self,
+        project_root: PathBuf,
+    ) -> Result<Arc<CodexAppClient>, AgentChatError> {
+        let mut clients = self
+            .codex_app_clients
+            .lock()
+            .map_err(|_| AgentChatError::Spawn("codex app client lock poisoned".to_string()))?;
+        if let Some(client) = clients.get(&project_root) {
+            if !client.is_closed() {
+                return Ok(Arc::clone(client));
+            }
+            clients.remove(&project_root);
+        }
+
+        let client = Arc::new(
+            spawn_codex_app(CodexAppOptions {
+                cwd: project_root.clone(),
+                binary: self.codex_binary(),
+            })
+            .map_err(|err| AgentChatError::Spawn(err.to_string()))?,
+        );
+        clients.insert(project_root, Arc::clone(&client));
+        Ok(client)
+    }
+
+    fn cached_codex_app_client(
+        &self,
+        project_root: &PathBuf,
+    ) -> Result<Arc<CodexAppClient>, AgentChatError> {
+        let mut clients = self
+            .codex_app_clients
+            .lock()
+            .map_err(|_| AgentChatError::Spawn("codex app client lock poisoned".to_string()))?;
+        let Some(client) = clients.get(project_root) else {
+            return Err(AgentChatError::Spawn(
+                "codex app-server client is not running".to_string(),
+            ));
+        };
+        if client.is_closed() {
+            clients.remove(project_root);
+            return Err(AgentChatError::Spawn(
+                "codex app-server client is not running".to_string(),
+            ));
+        }
+        Ok(Arc::clone(client))
+    }
+
+    fn claude_bridge_client(&self) -> Result<Arc<ClaudeBridgeClient>, AgentChatError> {
+        let mut bridge = self
+            .claude_bridge
+            .lock()
+            .map_err(|_| AgentChatError::Spawn("claude bridge lock poisoned".to_string()))?;
+        if let Some(client) = bridge.as_ref() {
+            if !client.is_closed() {
+                return Ok(Arc::clone(client));
+            }
+            *bridge = None;
+        }
+
+        let client = Arc::new(
+            spawn_claude_bridge(ClaudeBridgeOptions {
+                runtime: self.claude_binary(),
+                script: None,
+                app_root: self.app_root.clone(),
+            })
+            .map_err(|err| AgentChatError::Spawn(err.to_string()))?,
+        );
+        *bridge = Some(Arc::clone(&client));
+        Ok(client)
+    }
+
+    fn cached_claude_bridge_client(&self) -> Result<Arc<ClaudeBridgeClient>, AgentChatError> {
+        let mut bridge = self
+            .claude_bridge
+            .lock()
+            .map_err(|_| AgentChatError::Spawn("claude bridge lock poisoned".to_string()))?;
+        let Some(client) = bridge.as_ref() else {
+            return Err(AgentChatError::Spawn(
+                "claude bridge client is not running".to_string(),
+            ));
+        };
+        if client.is_closed() {
+            *bridge = None;
+            return Err(AgentChatError::Spawn(
+                "claude bridge client is not running".to_string(),
+            ));
+        }
+        Ok(Arc::clone(client))
+    }
+
+    fn unsubscribe_replaced_codex_threads(&self, chat_id: &str, current_session_id: &str) {
+        let threads = self
+            .inner
+            .lock()
+            .ok()
+            .map(|inner| {
+                inner
+                    .iter()
+                    .filter_map(|(session_id, state)| {
+                        if session_id == current_session_id
+                            || state.chat_id != chat_id
+                            || state.provider != AgentProvider::Codex
+                            || state.engine != Engine::V2
+                        {
+                            return None;
+                        }
+                        Some((
+                            state.project_root.clone(),
+                            state.provider_session_id.clone()?,
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        for (project_root, thread_id) in threads {
+            if let Ok(client) = self.cached_codex_app_client(&project_root) {
+                let _ = client.unsubscribe(&thread_id);
+            }
+        }
+    }
+
     fn lock_inner(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, HashMap<String, SessionState>>, AgentChatError> {
@@ -246,12 +666,17 @@ impl AgentChatManager {
     #[cfg(test)]
     fn with_test_binaries(
         db: Arc<Database>,
+        app_root: PathBuf,
         codex_binary: Option<String>,
         claude_binary: Option<String>,
     ) -> Self {
         Self {
             db,
+            app_root,
             inner: Arc::new(Mutex::new(HashMap::new())),
+            codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
+            claude_bridge: Arc::new(Mutex::new(None)),
+            starting_chats: Arc::new(Mutex::new(HashSet::new())),
             test_binaries: TestBinaries {
                 codex: codex_binary,
                 claude: claude_binary,
@@ -280,6 +705,37 @@ impl AgentChatManager {
     }
 }
 
+struct StartGuard {
+    chat_id: String,
+    starting: Arc<Mutex<HashSet<String>>>,
+}
+
+impl Drop for StartGuard {
+    fn drop(&mut self) {
+        if let Ok(mut starting) = self.starting.lock() {
+            starting.remove(&self.chat_id);
+        }
+    }
+}
+
+fn upsert_session_state(
+    inner: &mut HashMap<String, SessionState>,
+    session_id: String,
+    state: SessionState,
+) {
+    if let Some(existing) = inner.get_mut(&session_id) {
+        existing.chat_id = state.chat_id;
+        existing.project_root = state.project_root;
+        existing.provider = state.provider;
+        existing.engine = state.engine;
+        existing.model = state.model;
+        existing.provider_session_id = state.provider_session_id;
+        existing.sink = state.sink;
+    } else {
+        inner.insert(session_id, state);
+    }
+}
+
 impl ActiveTurn {
     fn new(handle: ActiveTurnHandle) -> Self {
         Self {
@@ -299,8 +755,53 @@ impl ActiveTurn {
             Some(ActiveTurnHandle::Claude(turn)) => turn
                 .kill()
                 .map_err(|err| AgentChatError::Spawn(err.to_string())),
+            Some(ActiveTurnHandle::CodexApp {
+                client,
+                thread_id,
+                turn_id,
+                pending_interrupt,
+            }) => {
+                let turn_id = turn_id
+                    .lock()
+                    .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?
+                    .clone();
+                let Some(turn_id) = turn_id else {
+                    pending_interrupt.store(true, Ordering::SeqCst);
+                    return Ok(());
+                };
+                client
+                    .turn_interrupt(thread_id, &turn_id)
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))
+            }
+            Some(ActiveTurnHandle::ClaudeBridge { client, chat_id }) => client
+                .chat_interrupt(chat_id)
+                .map_err(|err| AgentChatError::Spawn(err.to_string())),
             None => Ok(()),
         }
+    }
+
+    fn codex_app_turn(
+        &self,
+    ) -> Result<Option<(Arc<CodexAppClient>, String, String)>, AgentChatError> {
+        let handle = self
+            .inner
+            .lock()
+            .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?;
+        Ok(match handle.as_ref() {
+            Some(ActiveTurnHandle::CodexApp {
+                client,
+                thread_id,
+                turn_id,
+                ..
+            }) => {
+                let turn_id = turn_id
+                    .lock()
+                    .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?
+                    .clone();
+                turn_id.map(|turn_id| (Arc::clone(client), thread_id.clone(), turn_id))
+            }
+            _ => None,
+        })
     }
 
     fn reap(&self) {
@@ -352,8 +853,7 @@ fn handle_runner_event(
         | AgentEvent::ToolUse { .. }
         | AgentEvent::WebSearch { .. }
         | AgentEvent::PlanUpdate { .. }
-        | AgentEvent::Usage { .. }
-        | AgentEvent::RateLimits { .. } => {
+        | AgentEvent::Usage { .. } => {
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
                 errors.push(err);
             }
@@ -378,6 +878,7 @@ fn handle_runner_event(
         | AgentEvent::CommandOutput { .. }
         | AgentEvent::TurnStarted
         | AgentEvent::Noise { .. }
+        | AgentEvent::RateLimits { .. }
         | AgentEvent::ApprovalRequest { .. } => {}
     }
 
@@ -444,6 +945,10 @@ fn next_session_id(now: i64) -> String {
     format!("asess-{now}-{suffix}")
 }
 
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
 #[cfg(test)]
 #[derive(Clone, Default)]
 struct TestBinaries {
@@ -453,7 +958,7 @@ struct TestBinaries {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Barrier, Mutex};
     use std::time::{Duration, Instant};
 
     use crate::agents::event::TurnStatus;
@@ -499,6 +1004,7 @@ mod tests {
     fn codex_manager(db: Arc<Database>, script: &TestScript) -> AgentChatManager {
         AgentChatManager::with_test_binaries(
             db,
+            script.dir.clone(),
             Some(script.path.to_string_lossy().to_string()),
             None,
         )
@@ -508,6 +1014,7 @@ mod tests {
     fn claude_manager(db: Arc<Database>, script: &TestScript) -> AgentChatManager {
         AgentChatManager::with_test_binaries(
             db,
+            script.dir.clone(),
             None,
             Some(script.path.to_string_lossy().to_string()),
         )
@@ -560,6 +1067,21 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn wait_for_file(path: &PathBuf, predicate: impl Fn(&str) -> bool) -> String {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let value = std::fs::read_to_string(path).unwrap_or_default();
+            if predicate(&value) {
+                return value;
+            }
+            if Instant::now() >= deadline {
+                panic!("timed out waiting for {}", path.display());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn provider_parse_is_exact() {
         assert_eq!(
@@ -575,12 +1097,429 @@ mod tests {
     }
 
     #[test]
+    fn engine_parse_defaults_to_v2_shape() {
+        assert_eq!("v1".parse::<Engine>().unwrap(), Engine::V1);
+        assert_eq!("v2".parse::<Engine>().unwrap(), Engine::V2);
+        assert!("V2".parse::<Engine>().is_err());
+    }
+
+    #[test]
     fn session_ids_include_a_counter_suffix() {
         let first = next_session_id(42);
         let second = next_session_id(42);
         assert_ne!(first, second);
         assert!(first.starts_with("asess-42-"));
         assert!(second.starts_with("asess-42-"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_codex_start_send_approval_and_idle_flow() {
+        let script = test_script(
+            "codex-app-flow",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-v2"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-v2"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-v2","turnId":"turn-v2"}}'
+      printf '%s\n' '{"id":42,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-v2","turnId":"turn-v2","itemId":"cmd-1","command":"cargo check"}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-v2","turnId":"turn-v2","item":{"id":"msg-1","type":"agentMessage","text":"assistant v2"}}}'
+      printf '%s\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-v2","tokenUsage":{"total":{"inputTokens":1,"cachedInputTokens":0,"outputTokens":2,"totalTokens":3},"modelContextWindow":100}}}'
+      printf '%s\n' '{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":10}}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-v2","turn":{"id":"turn-v2","status":"completed"}}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-v2",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                Some("gpt-5".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        let start_log = wait_for_file(&log, |text| text.contains(r#""method":"thread/start""#));
+        assert!(start_log.contains(r#""sandbox":"workspace-write""#));
+        assert!(start_log.contains(r#""approvalPolicy":"on-request""#));
+
+        manager.send(&session_id, "hello v2").unwrap();
+        let approval_events = wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::ApprovalRequest { .. }))
+        });
+        let approval_id = approval_events
+            .iter()
+            .find_map(|event| match event {
+                AgentEvent::ApprovalRequest {
+                    approval_id,
+                    kind,
+                    detail,
+                } => {
+                    assert_eq!(*kind, super::super::event::ApprovalKind::Command);
+                    assert!(detail.contains("cargo check"));
+                    Some(approval_id.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(approval_id, "42");
+
+        manager
+            .approve(&session_id, &approval_id, "approved")
+            .unwrap();
+        let approval_log = wait_for_file(&log, |text| {
+            text.contains(r#""id":42"#) && text.contains(r#""decision":"approved""#)
+        });
+        assert!(approval_log.contains(r#""method":"turn/start""#));
+
+        wait_for_events(&events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnDone {
+                    status: TurnStatus::Completed
+                })
+            )
+        });
+        let row = wait_for_status(&db, "chat-v2", "idle");
+        assert_eq!(row.id, session_id);
+        assert_eq!(row.provider_session_id.as_deref(), Some("thread-v2"));
+
+        let timeline = db.agent_timeline_for_chat("chat-v2").unwrap();
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
+                if role == "user" && content == "hello v2")
+        }));
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
+                if role == "assistant" && content == "assistant v2")
+        }));
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Item { kind, .. } if kind == "usage")
+        }));
+        assert!(!timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Item { kind, .. }
+                if kind == "approvalRequest" || kind == "rateLimits")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_codex_steer_and_interrupt_serialize_ops() {
+        let script = test_script(
+            "codex-app-control",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-live"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-live"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-live","turnId":"turn-live"}}'
+      ;;
+    *'"method":"turn/steer"'*)
+      printf '%s\n' '{"id":4,"result":{}}'
+      ;;
+    *'"method":"turn/interrupt"'*)
+      printf '%s\n' '{"id":5,"result":{}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-live","turn":{"id":"turn-live","status":"interrupted"}}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-control",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        manager.send(&session_id, "start").unwrap();
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnStarted))
+        });
+
+        manager.steer(&session_id, "adjust").unwrap();
+        manager.interrupt(&session_id).unwrap();
+
+        let log_text = wait_for_file(&log, |text| {
+            text.contains(r#""method":"turn/steer""#)
+                && text.contains(r#""expectedTurnId":"turn-live""#)
+                && text.contains(r#""method":"turn/interrupt""#)
+                && text.contains(r#""turnId":"turn-live""#)
+        });
+        assert!(log_text.contains(r#""text":"adjust""#));
+        wait_for_events(&events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnDone {
+                    status: TurnStatus::Interrupted
+                })
+            )
+        });
+        wait_for_status(&db, "chat-control", "idle");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_codex_resume_failure_starts_fresh_thread() {
+        let script = test_script(
+            "codex-app-resume-fallback",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{"id":2,"error":{"message":"missing thread"}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":3,"result":{"thread":{"id":"fresh-thread"}}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.agent_session_create(&AgentSessionRow {
+            id: "existing-session".to_string(),
+            chat_id: "chat-resume".to_string(),
+            provider: AgentProvider::Codex.as_str().to_string(),
+            provider_session_id: Some("stale-thread".to_string()),
+            model: None,
+            status: "idle".to_string(),
+            created_at: 1,
+        })
+        .unwrap();
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+
+        let session_id = manager
+            .start(
+                "chat-resume",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        assert_eq!(session_id, "existing-session");
+        let row = db
+            .latest_agent_session_for_chat("chat-resume")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.provider_session_id.as_deref(), Some("fresh-thread"));
+        let log = wait_for_file(&log, |text| {
+            text.contains(r#""method":"thread/resume""#)
+                && text.contains(r#""method":"thread/start""#)
+        });
+        assert!(log.contains("stale-thread"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_codex_dead_client_broadcasts_failure_and_next_start_respawns() {
+        let script = test_script(
+            "codex-app-dead-respawn",
+            r#"#!/bin/sh
+log="$0.stdin"
+count_file="$0.count"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+printf 'spawn:%s\n' "$count" >> "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-dead"}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-respawn"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      if [ "$count" = "1" ]; then
+        printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-dead"}}}'
+        printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-dead","turnId":"turn-dead"}}'
+        exit 0
+      fi
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-ok"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-respawn","turnId":"turn-ok"}}'
+      printf '%s\n' '{"method":"item/completed","params":{"threadId":"thread-respawn","turnId":"turn-ok","item":{"id":"msg-1","type":"agentMessage","text":"after respawn"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-respawn","turn":{"id":"turn-ok","status":"completed"}}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let count_file = script.path.with_file_name("fake-agent.count");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-dead",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                Arc::clone(&sink),
+            )
+            .unwrap();
+
+        manager.send(&session_id, "first").unwrap();
+        wait_for_events(&events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnFailed { error }) if error == "agent process exited"
+            )
+        });
+        wait_for_status(&db, "chat-dead", "failed");
+
+        let restarted_id = manager
+            .start(
+                "chat-dead",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        assert_eq!(restarted_id, session_id);
+        manager.send(&restarted_id, "second").unwrap();
+        wait_for_events(&events, |events| {
+            matches!(
+                events.last(),
+                Some(AgentEvent::TurnDone {
+                    status: TurnStatus::Completed
+                })
+            )
+        });
+        let row = wait_for_status(&db, "chat-dead", "idle");
+        assert_eq!(row.provider_session_id.as_deref(), Some("thread-respawn"));
+        assert_eq!(std::fs::read_to_string(count_file).unwrap(), "2");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_start_for_same_chat_reuses_one_session() {
+        let script = test_script(
+            "codex-app-concurrent-start",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      sleep 0.1
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-concurrent"}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{"id":3,"result":{"thread":{"id":"thread-concurrent"}}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = Arc::new(codex_manager(Arc::clone(&db), &script));
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let manager = Arc::clone(&manager);
+                let barrier = Arc::clone(&barrier);
+                let project_root = script.dir.clone();
+                std::thread::spawn(move || {
+                    let (_events, sink) = event_sink();
+                    barrier.wait();
+                    manager
+                        .start(
+                            "chat-concurrent",
+                            project_root,
+                            AgentProvider::Codex,
+                            Engine::V2,
+                            None,
+                            AgentStartOverrides::default(),
+                            sink,
+                        )
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        let ids = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids[0], ids[1]);
+        let row = db
+            .latest_agent_session_for_chat("chat-concurrent")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.id, ids[0]);
+        let log = wait_for_file(&log, |text| text.contains(r#""method":"thread/resume""#));
+        assert_eq!(log.matches(r#""method":"thread/start""#).count(), 1);
     }
 
     #[cfg(unix)]
@@ -607,7 +1546,9 @@ printf '%s\n' \
                 "chat-1",
                 script.dir.clone(),
                 AgentProvider::Codex,
+                Engine::V1,
                 Some("gpt-5".to_string()),
+                AgentStartOverrides::default(),
                 sink,
             )
             .unwrap();
@@ -667,7 +1608,9 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"c
                 "chat-claude",
                 script.dir.clone(),
                 AgentProvider::ClaudeCode,
+                Engine::V1,
                 Some("sonnet".to_string()),
+                AgentStartOverrides::default(),
                 sink,
             )
             .unwrap();
@@ -705,7 +1648,9 @@ sleep 5
                 "chat-active",
                 script.dir.clone(),
                 AgentProvider::Codex,
+                Engine::V1,
                 None,
+                AgentStartOverrides::default(),
                 sink,
             )
             .unwrap();
@@ -746,7 +1691,9 @@ exec sleep 5
                 "chat-kill",
                 script.dir.clone(),
                 AgentProvider::Codex,
+                Engine::V1,
                 None,
+                AgentStartOverrides::default(),
                 sink,
             )
             .unwrap();
@@ -794,7 +1741,9 @@ printf '%s\n' \
                 "chat-restart",
                 script.dir.clone(),
                 AgentProvider::Codex,
+                Engine::V1,
                 Some("gpt-5".to_string()),
+                AgentStartOverrides::default(),
                 sink,
             )
             .unwrap();
@@ -809,14 +1758,16 @@ printf '%s\n' \
         });
         wait_for_status(&db, "chat-restart", "idle");
 
-        let restarted = AgentChatManager::new(Arc::clone(&db));
+        let restarted = AgentChatManager::new(Arc::clone(&db), script.dir.clone());
         let (_events2, sink2) = event_sink();
         let reused_id = restarted
             .start(
                 "chat-restart",
                 script.dir.clone(),
                 AgentProvider::Codex,
+                Engine::V1,
                 Some("gpt-5.1".to_string()),
+                AgentStartOverrides::default(),
                 sink2,
             )
             .unwrap();
@@ -844,7 +1795,9 @@ printf '%s\n' \
                 "chat-restart",
                 script.dir.clone(),
                 AgentProvider::ClaudeCode,
+                Engine::V1,
                 None,
+                AgentStartOverrides::default(),
                 sink3,
             )
             .unwrap();

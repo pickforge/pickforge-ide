@@ -6,4 +6,4 @@ pub mod event;
 pub mod manager;
 
 pub use event::*;
-pub use manager::{AgentChatError, AgentChatManager, AgentProvider};
+pub use manager::{AgentChatError, AgentChatManager, AgentProvider, AgentStartOverrides, Engine};

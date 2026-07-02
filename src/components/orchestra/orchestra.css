@@ -430,12 +430,15 @@
   color: var(--pf-text-hi);
   border-color: var(--pf-hairline-strong);
 }
-.pf-orch-add-lane--corner {
-  position: absolute;
-  top: var(--pf-space-sm);
-  right: var(--pf-space-sm);
-  z-index: 2;
-  background: var(--pf-surface-2);
+/* Slim persistent header row above the lane grid — keeps the add-lane pill in
+ * its own hit area (never overlapping a lane header) at every lane count. */
+.pf-orch-grid-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm) 0;
 }
 
 /* ---- Empty state ---- */

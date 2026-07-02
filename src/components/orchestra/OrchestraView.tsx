@@ -486,17 +486,20 @@ export function OrchestraView(props: { projectRoot: string }): JSX.Element {
             </div>
           }
         >
+          <div class="pf-orch-grid-bar">
+            <MonoEyebrow text="Lanes" />
+            <Show when={lanes().length < 4}>
+              <button class="pf-orch-add-lane" onClick={openAddMenu}>
+                <IconPlus size={13} /> Add lane
+              </button>
+            </Show>
+          </div>
           <div
             class="pf-orch-grid"
             style={{ "grid-template-columns": `repeat(${lanes().length}, minmax(0, 1fr))` }}
           >
             <For each={lanes()}>{(chatId) => <Lane chatId={chatId} />}</For>
           </div>
-          <Show when={lanes().length < 4}>
-            <button class="pf-orch-add-lane pf-orch-add-lane--corner" onClick={openAddMenu}>
-              <IconPlus size={13} /> Add lane
-            </button>
-          </Show>
         </Show>
       </div>
 

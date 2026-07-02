@@ -354,22 +354,36 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   display: flex;
   flex-direction: column;
 }
+/* Free-form binary split canvas: lanes are absolutely positioned from a
+ * computed fractional layout; the gutters between frames double as divider gaps
+ * (mirrors TerminalHost). The cell is click-through so the divider in the gutter
+ * stays grabbable; the inset frame carries the visible card. */
 .pf-orch-grid {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
-  display: grid;
-  gap: var(--pf-space-xs);
-  padding: var(--pf-space-xs);
 }
 .pf-orch-lane {
+  position: absolute;
+  pointer-events: none;
+}
+.pf-orch-lane-frame {
+  position: absolute;
+  inset: var(--pf-space-xs);
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  pointer-events: auto;
   border-radius: var(--pf-radius-md);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-1);
   overflow: hidden;
+  transition: opacity var(--pf-dur-standard) var(--pf-ease-forge);
+}
+/* Dragged lane dims; the drop overlay shows where it will land. */
+.pf-orch-lane-frame--dragging {
+  opacity: 0.5;
 }
 .pf-orch-lane-head {
   flex: none;
@@ -379,6 +393,17 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   padding: var(--pf-space-xs) var(--pf-space-sm);
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-2);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+body.pf-orch-moving .pf-orch-lane-head {
+  cursor: grabbing;
+}
+/* During a lane drag, stop the embedded chat from swallowing the pointer so the
+ * global move/up handlers and hit-testing stay smooth. */
+body.pf-orch-moving .pf-orch-lane-body {
+  pointer-events: none;
 }
 .pf-orch-lane-dot {
   width: 6px;
@@ -463,6 +488,9 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   color: var(--pf-text-hi);
   background: var(--pf-item-fill);
 }
+.pf-orch-icon--active {
+  color: var(--pf-ember);
+}
 
 /* ---- Add lane affordance ---- */
 .pf-orch-add-lane {
@@ -534,25 +562,147 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   background: var(--pf-surface-3);
 }
 
-/* Drag-to-reorder: the grabbed lane dims, the hovered target shows a quiet
- * hairline-strong ring. The lane header is the drag handle. */
-.pf-orch-lane-head {
-  cursor: grab;
-  user-select: none;
+/* ---- draggable seams (mirror TerminalHost dividers) ---- */
+.pf-orch-divider {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.pf-orch-lane-head:active {
-  cursor: grabbing;
+.pf-orch-divider--row {
+  width: 11px;
+  transform: translateX(-50%);
+  cursor: col-resize;
 }
-.pf-orch-lane--dragging {
-  opacity: 0.5;
+.pf-orch-divider--col {
+  height: 11px;
+  transform: translateY(-50%);
+  cursor: row-resize;
 }
-.pf-orch-lane--drop {
-  box-shadow: inset 0 0 0 1px var(--pf-hairline-strong);
+.pf-orch-divider-grip {
+  background: transparent;
+  border-radius: var(--pf-radius-pill);
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    box-shadow var(--pf-dur-fast) var(--pf-ease-forge);
 }
+.pf-orch-divider--row .pf-orch-divider-grip {
+  width: 2px;
+  height: 26px;
+}
+.pf-orch-divider--col .pf-orch-divider-grip {
+  width: 26px;
+  height: 2px;
+}
+.pf-orch-divider:hover .pf-orch-divider-grip,
+body.pf-resizing .pf-orch-divider-grip {
+  background: var(--pf-ember);
+  box-shadow: 0 0 10px -2px var(--pf-ember);
+}
+
+/* ---- lane rearrange: drop indicator (mirror TerminalHost .pf-drop) ----
+ * The frame gutter is baked into every zone's offsets (padding on a positioned
+ * ancestor does not offset absolutely-positioned children), so the zone hugs
+ * .pf-orch-lane-frame exactly and half-zones are half of the frame, not half
+ * of the raw cell. */
+.pf-orch-drop {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+}
+.pf-orch-drop-zone {
+  position: absolute;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-bracket-width) solid var(--pf-ember);
+  background: var(--pf-ember-glow);
+  box-shadow: var(--pf-glow-ember-soft);
+  animation: pf-orch-drop-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+@keyframes pf-orch-drop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.pf-orch-drop-zone--center {
+  inset: var(--pf-space-xs);
+}
+.pf-orch-drop-zone--left {
+  top: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  left: var(--pf-space-xs);
+  width: calc(50% - var(--pf-space-xs));
+}
+.pf-orch-drop-zone--right {
+  top: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  width: calc(50% - var(--pf-space-xs));
+}
+.pf-orch-drop-zone--up {
+  left: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  top: var(--pf-space-xs);
+  height: calc(50% - var(--pf-space-xs));
+}
+.pf-orch-drop-zone--down {
+  left: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  height: calc(50% - var(--pf-space-xs));
+}
+
+/* ---- directional split menu (mirror TerminalHost .pf-split-tile) ---- */
+.pf-orch-split-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-xs);
+}
+.pf-orch-split-tile {
+  --pf-split-fill: var(--pf-text-low);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: 84px;
+  padding: var(--pf-space-md) var(--pf-space-sm) var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    transform var(--pf-dur-micro) var(--pf-ease-forge);
+}
+.pf-orch-split-tile:hover {
+  --pf-split-fill: var(--pf-ember);
+  background: var(--pf-surface-3);
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-orch-split-tile:active {
+  transform: scale(0.96);
+}
+.pf-orch-split-tile .pf-icon {
+  color: var(--pf-text-med);
+}
+.pf-orch-split-tile-label {
+  white-space: nowrap;
+}
+
 /* Quiet focus flash when a lane is activated from the sidebar. A hairline ring
  * holds for the flash window (feedback under reduced motion); the pulse is
  * motion-only and collapses to nothing when reduced. */
-.pf-orch-lane--flash {
+.pf-orch-lane-frame--flash {
   box-shadow: inset 0 0 0 1px var(--pf-hairline-strong);
   animation: pf-orch-lane-flash var(--pf-dur-slow) var(--pf-ease-forge);
 }
@@ -568,7 +718,8 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pf-orch-lane--flash {
+  .pf-orch-lane-frame--flash,
+  .pf-orch-drop-zone {
     animation: none;
   }
 }

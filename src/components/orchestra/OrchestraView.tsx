@@ -1,4 +1,14 @@
-import { type JSX, For, Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js";
+import {
+  type JSX,
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 import { AgentChatView } from "../chat/AgentChatView";
 import { FloatingMenu } from "../FloatingMenu";
 import { ForgeEmptyState, MonoEyebrow } from "../ui";
@@ -11,6 +21,7 @@ import {
   IconPlus,
   IconRefresh,
   IconSplit,
+  IconSplitTrigger,
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
 import { AGENTS, loadAgentModels } from "../../lib/agentModels";
@@ -27,16 +38,24 @@ import { estimateCostUsd } from "../../lib/agentPricing";
 import { agentChat, sendAgentMessage } from "../../stores/agentChat";
 import { chatAttention, chatBusy } from "../../stores/chatActivity";
 import {
+  type LaneDir,
+  type LaneNode,
+  type LaneRegion,
+  MAX_LANES,
+  addLaneAt,
   addSelectedLane,
+  applyLayoutPreset,
+  commitLaneLayout,
   deleteTask,
+  detectLayoutPreset,
+  laneTree,
   loadTasks,
+  moveLane,
   newTaskId,
   refreshUsage,
   removeSelectedLane,
-  reorderSelectedLane,
   selectedLanes,
-  selectedLayout,
-  setSelectedLayout,
+  setLaneSplitRatio,
   taskList,
   tasksFor,
   upsertTask,
@@ -92,6 +111,53 @@ function nextStatus(status: OrchestraTaskStatus): OrchestraTaskStatus {
   return STATUS_ORDER[(index + 1) % STATUS_ORDER.length];
 }
 
+// ---- lane split layout (mirrors TerminalHost.computeLayout) ----
+interface LaneRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+interface LaneDividerRect {
+  id: string;
+  dir: "row" | "col";
+  rect: LaneRect;
+  bounds: LaneRect;
+}
+
+function computeLaneLayout(
+  node: LaneNode | null,
+  rect: LaneRect,
+  leaves: Map<string, LaneRect>,
+  dividers: LaneDividerRect[],
+): void {
+  if (!node) return;
+  if (node.kind === "leaf") {
+    leaves.set(node.chatId, rect);
+    return;
+  }
+  if (node.dir === "row") {
+    const aw = rect.w * node.ratio;
+    computeLaneLayout(node.a, { x: rect.x, y: rect.y, w: aw, h: rect.h }, leaves, dividers);
+    computeLaneLayout(node.b, { x: rect.x + aw, y: rect.y, w: rect.w - aw, h: rect.h }, leaves, dividers);
+    dividers.push({ id: node.id, dir: "row", rect: { x: rect.x + aw, y: rect.y, w: 0, h: rect.h }, bounds: rect });
+  } else {
+    const ah = rect.h * node.ratio;
+    computeLaneLayout(node.a, { x: rect.x, y: rect.y, w: rect.w, h: ah }, leaves, dividers);
+    computeLaneLayout(node.b, { x: rect.x, y: rect.y + ah, w: rect.w, h: rect.h - ah }, leaves, dividers);
+    dividers.push({ id: node.id, dir: "col", rect: { x: rect.x, y: rect.y + ah, w: rect.w, h: 0 }, bounds: rect });
+  }
+}
+
+const pct = (v: number) => `${v * 100}%`;
+
+const SPLIT_TILES: { dir: LaneDir; label: string }[] = [
+  { dir: "left", label: "Open left" },
+  { dir: "right", label: "Open right" },
+  { dir: "up", label: "Open top" },
+  { dir: "down", label: "Open bottom" },
+];
+
 interface AddMenu {
   x: number;
   y: number;
@@ -134,11 +200,16 @@ export function OrchestraView(props: {
   const [handoff, setHandoff] = createSignal<HandoffMenu | null>(null);
   const [draft, setDraft] = createSignal("");
   const [notices, setNotices] = createSignal<Record<string, LaneNotice>>({});
-  const [dragIndex, setDragIndex] = createSignal<number | null>(null);
-  const [dropIndex, setDropIndex] = createSignal<number | null>(null);
+  const [dragChat, setDragChat] = createSignal<string | null>(null);
+  const [drop, setDrop] = createSignal<{ chatId: string; region: LaneRegion } | null>(null);
+  const [splitMenu, setSplitMenu] = createSignal<{ chatId: string; x: number; y: number } | null>(null);
+  // When set, the next lane picked from the add-menu is inserted beside a target
+  // in a direction (from a lane's split menu) instead of appended to the root.
+  const [pendingTarget, setPendingTarget] = createSignal<{ chatId: string; dir: LaneDir } | null>(null);
   const [flashChat, setFlashChat] = createSignal<string | null>(null);
 
   let orchEl: HTMLDivElement | undefined;
+  let gridEl: HTMLDivElement | undefined;
   const laneEls = new Map<string, HTMLElement>();
 
   let resizing = false;
@@ -205,37 +276,113 @@ export function OrchestraView(props: {
   const errorText = (error: unknown) =>
     error instanceof Error ? error.message : String(error);
 
+  const tree = () => laneTree(props.projectRoot);
   const lanes = () => selectedLanes(props.projectRoot);
   const tasks = () => taskList(props.projectRoot).items;
   const usage = () => usageSummary(props.projectRoot).items;
-  const layout = () => selectedLayout(props.projectRoot);
+  const preset = () => detectLayoutPreset(tree());
 
-  const gridStyle = (): JSX.CSSProperties => {
-    const count = lanes().length;
-    const mode = layout();
-    if (mode === "rows") {
-      return {
-        "grid-template-columns": "minmax(0, 1fr)",
-        "grid-template-rows": `repeat(${count}, minmax(0, 1fr))`,
-      };
-    }
-    if (mode === "grid") {
-      const cols = Math.min(2, count);
-      const rows = Math.max(1, Math.ceil(count / Math.max(1, cols)));
-      return {
-        "grid-template-columns": `repeat(${cols}, minmax(0, 1fr))`,
-        "grid-template-rows": `repeat(${rows}, minmax(0, 1fr))`,
-      };
-    }
-    return { "grid-template-columns": `repeat(${count}, minmax(0, 1fr))` };
-  };
+  // Absolute rects + divider seams recomputed whenever the tree changes.
+  const layout = createMemo(() => {
+    const map = new Map<string, LaneRect>();
+    const divs: LaneDividerRect[] = [];
+    computeLaneLayout(tree(), { x: 0, y: 0, w: 1, h: 1 }, map, divs);
+    return { map, divs };
+  });
 
-  const onLaneDrop = (index: number) => {
-    const from = dragIndex();
-    if (from !== null && from !== index) reorderSelectedLane(props.projectRoot, from, index);
-    setDragIndex(null);
-    setDropIndex(null);
+  // ---- divider drag → live ratio (mirrors TerminalHost) ----
+  let ratioDrag: { id: string; dir: "row" | "col"; bounds: LaneRect } | null = null;
+  const onRatioMove = (e: PointerEvent) => {
+    if (!ratioDrag || !gridEl) return;
+    const box = gridEl.getBoundingClientRect();
+    const fx = (e.clientX - box.left) / box.width;
+    const fy = (e.clientY - box.top) / box.height;
+    const local =
+      ratioDrag.dir === "row"
+        ? (fx - ratioDrag.bounds.x) / ratioDrag.bounds.w
+        : (fy - ratioDrag.bounds.y) / ratioDrag.bounds.h;
+    setLaneSplitRatio(props.projectRoot, ratioDrag.id, local);
   };
+  const endRatioDrag = () => {
+    if (!ratioDrag) return;
+    ratioDrag = null;
+    document.body.classList.remove("pf-resizing");
+    window.removeEventListener("pointermove", onRatioMove);
+    window.removeEventListener("pointerup", endRatioDrag);
+    // Ratio moves are store-only while dragging; write-through once on release.
+    commitLaneLayout(props.projectRoot);
+  };
+  const startRatioDrag = (e: PointerEvent, d: LaneDividerRect) => {
+    e.preventDefault();
+    ratioDrag = { id: d.id, dir: d.dir, bounds: d.bounds };
+    document.body.classList.add("pf-resizing");
+    window.addEventListener("pointermove", onRatioMove);
+    window.addEventListener("pointerup", endRatioDrag);
+  };
+  onCleanup(endRatioDrag);
+
+  // ---- lane rearrange: drag a lane by its header onto another lane ----
+  // Drop on the centre swaps the two lanes; drop on an edge moves the dragged
+  // lane to that side of the target. Chat ids are reused throughout, so the
+  // dragged chat is repositioned, never remounted.
+  let laneDrag: { chatId: string; startX: number; startY: number; active: boolean } | null = null;
+  const hitTest = (cx: number, cy: number): { chatId: string; region: LaneRegion } | null => {
+    if (!gridEl) return null;
+    const box = gridEl.getBoundingClientRect();
+    const fx = (cx - box.left) / box.width;
+    const fy = (cy - box.top) / box.height;
+    for (const [chatId, r] of layout().map) {
+      if (fx < r.x || fx > r.x + r.w || fy < r.y || fy > r.y + r.h) continue;
+      const lx = (fx - r.x) / r.w;
+      const ly = (fy - r.y) / r.h;
+      const edge = Math.min(lx, 1 - lx, ly, 1 - ly);
+      let region: LaneRegion = "center";
+      if (edge < 0.28) {
+        if (edge === lx) region = "left";
+        else if (edge === 1 - lx) region = "right";
+        else if (edge === ly) region = "up";
+        else region = "down";
+      }
+      return { chatId, region };
+    }
+    return null;
+  };
+  const onLaneDragMove = (e: PointerEvent) => {
+    if (!laneDrag) return;
+    if (!laneDrag.active) {
+      if (Math.abs(e.clientX - laneDrag.startX) + Math.abs(e.clientY - laneDrag.startY) < 6) return;
+      laneDrag.active = true;
+      setDragChat(laneDrag.chatId);
+      document.body.classList.add("pf-orch-moving");
+    }
+    e.preventDefault();
+    const hit = hitTest(e.clientX, e.clientY);
+    setDrop(hit && hit.chatId !== laneDrag.chatId ? hit : null);
+  };
+  const endLaneDrag = () => {
+    const ld = laneDrag;
+    const target = drop();
+    laneDrag = null;
+    window.removeEventListener("pointermove", onLaneDragMove);
+    window.removeEventListener("pointerup", endLaneDrag);
+    document.body.classList.remove("pf-orch-moving");
+    setDragChat(null);
+    setDrop(null);
+    if (ld?.active && target && target.chatId !== ld.chatId) {
+      moveLane(props.projectRoot, ld.chatId, target.chatId, target.region);
+    }
+  };
+  const startLaneDrag = (e: PointerEvent, chatId: string) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest(".pf-orch-icon")) return; // controls aren't handles
+    if (lanes().length <= 1) return; // nothing to rearrange against
+    laneDrag = { chatId, startX: e.clientX, startY: e.clientY, active: false };
+    window.addEventListener("pointermove", onLaneDragMove);
+    window.addEventListener("pointerup", endLaneDrag);
+  };
+  onCleanup(() => {
+    if (laneDrag) endLaneDrag();
+  });
 
   const eligibleChats = () =>
     chatsFor(props.projectRoot).filter(
@@ -246,8 +393,31 @@ export function OrchestraView(props: {
 
   const openAddMenu = (event: MouseEvent) => {
     event.stopPropagation();
+    setPendingTarget(null); // grid-bar pill appends to the root
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     setAddMenu({ x: rect.right, y: rect.bottom + 4, mode: "root" });
+  };
+
+  const openSplitMenu = (chatId: string, event: MouseEvent) => {
+    event.stopPropagation();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    setSplitMenu({ chatId, x: rect.right, y: rect.bottom + 4 });
+  };
+
+  // A direction was chosen from a lane's split menu: remember the target + side,
+  // then hand off to the normal add-lane flow (pick existing / create new). The
+  // chosen chat lands via addLaneAt (see placeLane).
+  const pickSplitDir = (chatId: string, dir: LaneDir, x: number, y: number) => {
+    setSplitMenu(null);
+    setPendingTarget({ chatId, dir });
+    setAddMenu({ x, y, mode: "root" });
+  };
+
+  const placeLane = (chatId: string) => {
+    const target = pendingTarget();
+    if (target) addLaneAt(props.projectRoot, target.chatId, target.dir, chatId);
+    else addSelectedLane(props.projectRoot, chatId);
+    setPendingTarget(null);
   };
 
   const openHandoff = (source: string, event: MouseEvent) => {
@@ -257,7 +427,7 @@ export function OrchestraView(props: {
   };
 
   const addExistingLane = (chatId: string) => {
-    addSelectedLane(props.projectRoot, chatId);
+    placeLane(chatId);
     setAddMenu(null);
   };
 
@@ -265,7 +435,7 @@ export function OrchestraView(props: {
     setAddMenu(null);
     await addChat(DEFAULT_CHAT_TITLE, provider, props.projectRoot, "agent");
     const created = workspace.activeChatId;
-    if (created) addSelectedLane(props.projectRoot, created);
+    if (created) placeLane(created);
   };
 
   const patchTask = (task: OrchestraTask, patch: Partial<OrchestraTask>) => {
@@ -349,25 +519,16 @@ export function OrchestraView(props: {
     }
   };
 
-  const LaneHeader = (p: { chatId: string; index: number }) => {
+  const LaneHeader = (p: { chatId: string }) => {
     const provider = () => providerOf(p.chatId);
     const busy = () => chatBusy(p.chatId);
     const attention = () => chatAttention(p.chatId);
+    const capped = () => lanes().length >= MAX_LANES;
     return (
       <div
         class="pf-orch-lane-head"
-        draggable={true}
-        onDragStart={(e) => {
-          setDragIndex(p.index);
-          if (e.dataTransfer) {
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData("text/plain", p.chatId);
-          }
-        }}
-        onDragEnd={() => {
-          setDragIndex(null);
-          setDropIndex(null);
-        }}
+        title="Drag to move this lane"
+        onPointerDown={(e) => startLaneDrag(e, p.chatId)}
       >
         <span
           class="pf-orch-lane-dot"
@@ -379,70 +540,71 @@ export function OrchestraView(props: {
           <span class="pf-orch-lane-model">{modelLabel(provider())}</span>
         </Show>
         <span class="pf-orch-lane-spacer" />
-        <button
-          class="pf-orch-icon"
-          title="Handoff"
-          onClick={(e) => openHandoff(p.chatId, e)}
-        >
+        <Show when={!capped()}>
+          <button
+            class="pf-orch-icon"
+            classList={{ "pf-orch-icon--active": splitMenu()?.chatId === p.chatId }}
+            title="New lane beside…"
+            onClick={(e) => openSplitMenu(p.chatId, e)}
+          >
+            <IconSplitTrigger size={14} />
+          </button>
+        </Show>
+        <button class="pf-orch-icon" title="Handoff" onClick={(e) => openHandoff(p.chatId, e)}>
           <IconMore size={14} />
         </button>
-        <button
-          class="pf-orch-icon"
-          title="Remove lane"
-          onClick={() => removeLane(p.chatId)}
-        >
+        <button class="pf-orch-icon" title="Remove lane" onClick={() => removeLane(p.chatId)}>
           <IconClose size={13} />
         </button>
       </div>
     );
   };
 
-  const Lane = (p: { chatId: string; index: number }) => {
+  const Lane = (p: { chatId: string }) => {
     onCleanup(() => {
       laneEls.delete(p.chatId);
     });
+    const rect = () => layout().map.get(p.chatId) ?? { x: 0, y: 0, w: 1, h: 1 };
     return (
-    <div
-      class="pf-orch-lane"
-      ref={(el) => laneEls.set(p.chatId, el)}
-      classList={{
-        "pf-orch-lane--flash": flashChat() === p.chatId,
-        "pf-orch-lane--dragging": dragIndex() === p.index,
-        "pf-orch-lane--drop":
-          dragIndex() !== null && dragIndex() !== p.index && dropIndex() === p.index,
-      }}
-      onDragOver={(e) => {
-        if (dragIndex() === null) return;
-        e.preventDefault();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-        setDropIndex(p.index);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        onLaneDrop(p.index);
-      }}
-    >
-      <LaneHeader chatId={p.chatId} index={p.index} />
-      <Show when={notices()[p.chatId]}>
-        {(notice) => (
-          <div
-            class="pf-orch-lane-notice"
-            classList={{ "pf-orch-lane-notice--error": notice().error }}
-            role={notice().error ? "alert" : "status"}
-          >
-            {notice().text}
+      <div
+        class="pf-orch-lane"
+        style={{
+          left: pct(rect().x),
+          top: pct(rect().y),
+          width: pct(rect().w),
+          height: pct(rect().h),
+        }}
+      >
+        <div
+          class="pf-orch-lane-frame"
+          ref={(el) => laneEls.set(p.chatId, el)}
+          classList={{
+            "pf-orch-lane-frame--flash": flashChat() === p.chatId,
+            "pf-orch-lane-frame--dragging": dragChat() === p.chatId,
+          }}
+        >
+          <LaneHeader chatId={p.chatId} />
+          <Show when={notices()[p.chatId]}>
+            {(notice) => (
+              <div
+                class="pf-orch-lane-notice"
+                classList={{ "pf-orch-lane-notice--error": notice().error }}
+                role={notice().error ? "alert" : "status"}
+              >
+                {notice().text}
+              </div>
+            )}
+          </Show>
+          <div class="pf-orch-lane-body">
+            <AgentChatView
+              chatId={p.chatId}
+              projectRoot={props.projectRoot}
+              provider={providerOf(p.chatId)}
+              model={loadAgentModels()[providerOf(p.chatId)] ?? null}
+            />
           </div>
-        )}
-      </Show>
-      <div class="pf-orch-lane-body">
-        <AgentChatView
-          chatId={p.chatId}
-          projectRoot={props.projectRoot}
-          provider={providerOf(p.chatId)}
-          model={loadAgentModels()[providerOf(p.chatId)] ?? null}
-        />
+        </div>
       </div>
-    </div>
     );
   };
 
@@ -636,42 +798,112 @@ export function OrchestraView(props: {
                 <div class="pf-orch-layout-toggle" role="group" aria-label="Lane layout">
                   <button
                     class="pf-orch-layout-btn"
-                    classList={{ "pf-orch-layout-btn--on": layout() === "columns" }}
+                    classList={{ "pf-orch-layout-btn--on": preset() === "columns" }}
                     title="Columns"
-                    onClick={() => setSelectedLayout(props.projectRoot, "columns")}
+                    onClick={() => applyLayoutPreset(props.projectRoot, "columns")}
                   >
                     <IconSplit dir="left" size={13} />
                   </button>
                   <button
                     class="pf-orch-layout-btn"
-                    classList={{ "pf-orch-layout-btn--on": layout() === "rows" }}
+                    classList={{ "pf-orch-layout-btn--on": preset() === "rows" }}
                     title="Rows"
-                    onClick={() => setSelectedLayout(props.projectRoot, "rows")}
+                    onClick={() => applyLayoutPreset(props.projectRoot, "rows")}
                   >
                     <IconSplit dir="up" size={13} />
                   </button>
                   <button
                     class="pf-orch-layout-btn"
-                    classList={{ "pf-orch-layout-btn--on": layout() === "grid" }}
+                    classList={{ "pf-orch-layout-btn--on": preset() === "grid" }}
                     title="Grid"
-                    onClick={() => setSelectedLayout(props.projectRoot, "grid")}
+                    onClick={() => applyLayoutPreset(props.projectRoot, "grid")}
                   >
                     <IconGrid size={13} />
                   </button>
                 </div>
               </Show>
-              <Show when={lanes().length < 4}>
+              <Show when={lanes().length < MAX_LANES}>
                 <button class="pf-orch-add-lane" onClick={openAddMenu}>
                   <IconPlus size={13} /> Add lane
                 </button>
               </Show>
             </div>
           </div>
-          <div class="pf-orch-grid" style={gridStyle()}>
-            <For each={lanes()}>{(chatId, i) => <Lane chatId={chatId} index={i()} />}</For>
+          {/* Free-form binary split canvas: lanes are absolutely positioned from
+              the computed layout so a rearranged lane is repositioned, never
+              remounted (AgentChatView keeps its composer/scroll). */}
+          <div class="pf-orch-grid" ref={(el) => (gridEl = el)}>
+            <For each={lanes()}>{(chatId) => <Lane chatId={chatId} />}</For>
+
+            {/* draggable seams */}
+            <For each={layout().divs}>
+              {(d) => (
+                <div
+                  class="pf-orch-divider"
+                  classList={{
+                    "pf-orch-divider--row": d.dir === "row",
+                    "pf-orch-divider--col": d.dir === "col",
+                  }}
+                  style={
+                    d.dir === "row"
+                      ? { left: pct(d.rect.x), top: pct(d.rect.y), height: pct(d.rect.h) }
+                      : { left: pct(d.rect.x), top: pct(d.rect.y), width: pct(d.rect.w) }
+                  }
+                  onPointerDown={(e) => startRatioDrag(e, d)}
+                >
+                  <span class="pf-orch-divider-grip" />
+                </div>
+              )}
+            </For>
+
+            {/* drop indicator: highlights the side/centre the dragged lane lands */}
+            <Show when={drop()}>
+              {(d) => {
+                const r = () => layout().map.get(d().chatId);
+                return (
+                  <Show when={r()}>
+                    <div
+                      class="pf-orch-drop"
+                      style={{
+                        left: pct(r()!.x),
+                        top: pct(r()!.y),
+                        width: pct(r()!.w),
+                        height: pct(r()!.h),
+                      }}
+                    >
+                      <div class={`pf-orch-drop-zone pf-orch-drop-zone--${d().region}`} />
+                    </div>
+                  </Show>
+                );
+              }}
+            </Show>
           </div>
         </Show>
       </div>
+
+      <Show when={splitMenu()}>
+        {(menu) => (
+          <FloatingMenu
+            anchor={{ x: menu().x, y: menu().y, align: "end" }}
+            onClose={() => setSplitMenu(null)}
+          >
+            <div class="pf-menu-label">New lane beside</div>
+            <div class="pf-orch-split-grid">
+              <For each={SPLIT_TILES}>
+                {(tile) => (
+                  <button
+                    class="pf-orch-split-tile"
+                    onClick={() => pickSplitDir(menu().chatId, tile.dir, menu().x, menu().y)}
+                  >
+                    <IconSplit dir={tile.dir} size={26} />
+                    <span class="pf-orch-split-tile-label">{tile.label}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </FloatingMenu>
+        )}
+      </Show>
 
       <Show when={addMenu()}>
         {(menu) => (

@@ -31,7 +31,8 @@ pub use targets::{
 };
 
 pub use db::{
-    AgentRunLog, Chat, Database, DbError, PickHistory, Project, ProjectSettings, RunSessionLog,
+    AgentRunLog, AgentUsageSummary, Chat, Database, DbError, OrchestraTask, PickHistory, Project,
+    ProjectSettings, RunSessionLog,
 };
 
 pub use process::{

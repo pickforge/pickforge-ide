@@ -115,6 +115,7 @@ export function App() {
             {(n) => (
               <button
                 class="pf-nav-btn"
+                data-tour={n.route === "settings" ? "settings" : undefined}
                 classList={{ active: route() === n.route }}
                 onClick={() => navigate(n.route)}
               >

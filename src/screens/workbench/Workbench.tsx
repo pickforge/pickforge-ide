@@ -9,8 +9,8 @@ import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
 import { DeviceMirror } from "../../components/DeviceMirror";
 import { DebugConsole } from "./DebugConsole";
-import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
-import { layout, type PaneId } from "../../stores/workbenchLayout";
+import { DockPanel, PaneShell } from "./Dock";
+import { type PaneId } from "../../stores/workbenchLayout";
 import { TerminalHost } from "../../components/TerminalHost";
 import { AgentChatView } from "../../components/chat/AgentChatView";
 import { OrchestraView } from "../../components/orchestra/OrchestraView";
@@ -29,6 +29,7 @@ import {
   quickLaunchItems,
 } from "../../stores/quickLaunch";
 import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
+import { selectedLanes } from "../../stores/orchestra";
 import { chatBackend } from "../../stores/chatSessions";
 import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity } from "../../stores/chatActivity";
 import { isChatArchived } from "../../stores/chatArchive";
@@ -47,6 +48,8 @@ import {
 } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
+import { Tour } from "../../components/Tour";
+import { startTour, tourSeen } from "../../stores/tour";
 import "./workbench.css";
 
 interface MountedHost {
@@ -58,6 +61,7 @@ export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
   const [orchestraOpen, setOrchestraOpen] = createSignal(false);
+  const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
   // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
@@ -95,6 +99,41 @@ export function WorkbenchScreen() {
 
   createEffect(() => {
     setActiveChatForActivity(workspace.activeChatId);
+  });
+
+  // First-run coach-marks: start the first time the workbench is the visible
+  // screen and the tour is unseen, after a beat so data-tour anchors exist to
+  // measure via getBoundingClientRect.
+  let tourKicked = false;
+  createEffect(() => {
+    if (tourKicked || tourSeen() || route() !== "workbench") return;
+    tourKicked = true;
+    setTimeout(() => {
+      if (route() === "workbench" && !tourSeen()) startTour();
+    }, 600);
+  });
+
+  let prevChatId = workspace.activeChatId;
+  let prevRoot = workspace.activeRoot;
+  let prevOrchOpen = orchestraOpen();
+  createEffect(() => {
+    const id = workspace.activeChatId;
+    const root = workspace.activeRoot;
+    const open = orchestraOpen();
+    const chatChanged = id !== prevChatId;
+    const wasOpen = prevOrchOpen;
+    const priorRoot = prevRoot;
+    prevChatId = id;
+    prevRoot = root;
+    prevOrchOpen = open;
+    if (!open || !wasOpen || !chatChanged || !id) return;
+    const chat = findChat(id);
+    if (!chat || chat.projectRoot !== priorRoot) return;
+    if (selectedLanes(chat.projectRoot).includes(id)) {
+      setLaneFocus({ chatId: id, at: Date.now() });
+    } else {
+      setOrchestraOpen(false);
+    }
   });
 
   // Mount a host the first time its chat becomes active; keep it after. AWAIT the
@@ -199,62 +238,62 @@ export function WorkbenchScreen() {
   return (
     <div class="pf-workbench-wrap">
       <div class="pf-workbench">
-      <Show when={layout().leftVisible} fallback={<DockRevealHandle dock="left" />}>
-        <DockColumn dock="left" render={renderPane} />
-        <DockResizer dock="left" />
-      </Show>
+      <DockPanel dock="left" render={renderPane} />
 
       <main class="pf-workbench-center pf-reveal">
-        <Show
-          when={workbenchPrefs().quickLaunchVisible}
-          fallback={
-            <button
-              class="pf-launch-reveal"
-              title="Show quick launch"
-              onClick={() => setQuickLaunchVisible(true)}
-            >
-              <IconChevronDown size={12} /> Quick launch
-            </button>
-          }
-        >
-          <div class="pf-launch">
-            <MonoEyebrow text="Quick launch" tick />
-            <div class="pf-chips">
-              <For each={quickLaunchItems()}>
-                {(item, i) => {
-                  const bin = binaryForItem(item);
-                  return (
-                    <Chip
-                      label={item.label}
-                      hint={item.hotkey ?? undefined}
-                      ember={i() === 0}
-                      disabled={bin ? available()[bin] === false : false}
-                      onClick={() => launchItem(item, commandForItem(item))}
-                    />
-                  );
-                }}
-              </For>
+        <div class="pf-launch-bar" data-tour="quicklaunch">
+          <Show
+            when={workbenchPrefs().quickLaunchVisible}
+            fallback={
+              <button
+                class="pf-launch-reveal"
+                title="Show quick launch"
+                onClick={() => setQuickLaunchVisible(true)}
+              >
+                <IconChevronDown size={12} /> Quick launch
+              </button>
+            }
+          >
+            <div class="pf-launch">
+              <MonoEyebrow text="Quick launch" tick />
+              <div class="pf-chips">
+                <For each={quickLaunchItems()}>
+                  {(item, i) => {
+                    const bin = binaryForItem(item);
+                    return (
+                      <Chip
+                        label={item.label}
+                        hint={item.hotkey ?? undefined}
+                        ember={i() === 0}
+                        disabled={bin ? available()[bin] === false : false}
+                        onClick={() => launchItem(item, commandForItem(item))}
+                      />
+                    );
+                  }}
+                </For>
+              </div>
+              <button
+                class="pf-launch-hide"
+                title="Hide quick launch"
+                onClick={() => setQuickLaunchVisible(false)}
+              >
+                <IconClose size={13} />
+              </button>
             </div>
-            <button
-              class="pf-orch-tab"
-              classList={{ "pf-orch-tab--on": orchestraOpen() }}
-              title="Toggle orchestration view"
-              disabled={!workspace.activeRoot}
-              onClick={() => setOrchestraOpen((v) => !v)}
-            >
-              <IconGrid size={13} /> Orchestra
-            </button>
-            <button
-              class="pf-launch-hide"
-              title="Hide quick launch"
-              onClick={() => setQuickLaunchVisible(false)}
-            >
-              <IconClose size={13} />
-            </button>
-          </div>
-        </Show>
+          </Show>
+          <button
+            class="pf-orch-tab"
+            data-tour="orchestra"
+            classList={{ "pf-orch-tab--on": orchestraOpen() }}
+            title="Toggle orchestration view"
+            disabled={!workspace.activeRoot}
+            onClick={() => setOrchestraOpen((v) => !v)}
+          >
+            <IconGrid size={13} /> Orchestra
+          </button>
+        </div>
 
-        <div class="pf-workbench-terminal">
+        <div class="pf-workbench-terminal" data-tour="chat">
           {/* All visited chats stay mounted; only the active one is shown. */}
           <div class="pf-term-mounts" classList={{ "pf-term-mounts--hidden": orchestraOpen() }}>
           <For each={mounted()}>
@@ -349,16 +388,13 @@ export function WorkbenchScreen() {
           </div>
           <Show when={orchestraOpen() && workspace.activeRoot}>
             <div class="pf-term-slot pf-orch-slot">
-              <OrchestraView projectRoot={workspace.activeRoot!} />
+              <OrchestraView projectRoot={workspace.activeRoot!} focusChat={laneFocus()} />
             </div>
           </Show>
         </div>
       </main>
 
-      <Show when={layout().rightVisible} fallback={<DockRevealHandle dock="right" />}>
-        <DockResizer dock="right" />
-        <DockColumn dock="right" render={renderPane} />
-      </Show>
+      <DockPanel dock="right" render={renderPane} />
       </div>
 
       {/* Always mounted so a run survives collapsing the panel / navigation;
@@ -366,6 +402,8 @@ export function WorkbenchScreen() {
       <div class="pf-dc-host" classList={{ "pf-dc-host--hidden": !runConsole.open() }}>
         <DebugConsole />
       </div>
+
+      <Tour />
     </div>
   );
 }

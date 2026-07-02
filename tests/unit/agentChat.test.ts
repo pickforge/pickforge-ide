@@ -23,12 +23,50 @@ const activity = vi.hoisted(() => ({
   agentTurnCleared: vi.fn(),
 }));
 const workspace = vi.hoisted(() => ({
+  chats: new Map<string, {
+    chatId: string;
+    projectRoot: string;
+    title: string;
+    kind: string;
+    agentId: string;
+  }>(),
+  makeChat: (id: string, overrides = {}) => ({
+    chatId: id,
+    projectRoot: "/project",
+    title: "Existing chat",
+    kind: "agent",
+    agentId: "codex",
+    skillId: null,
+    sessionId: null,
+    labelsJson: null,
+    status: null,
+    taskBriefText: null,
+    createdAt: 1,
+    lastActivityAt: 1,
+    sortOrder: 0,
+    ...overrides,
+  }),
   findChat: vi.fn(),
+  setChatTitle: vi.fn(async (id: string, title: string) => {
+    const chat = workspace.chats.get(id);
+    if (chat) chat.title = title;
+  }),
+  setChatAgent: vi.fn(async (id: string, agentId: string, kind = "agent") => {
+    const chat = workspace.chats.get(id);
+    if (chat) {
+      chat.agentId = agentId;
+      chat.kind = kind;
+    }
+  }),
   isChatArchived: vi.fn(),
 }));
 
 vi.mock("../../src/stores/chatActivity", () => activity);
-vi.mock("../../src/stores/workspace", () => ({ findChat: workspace.findChat }));
+vi.mock("../../src/stores/workspace", () => ({
+  findChat: workspace.findChat,
+  setChatTitle: workspace.setChatTitle,
+  setChatAgent: workspace.setChatAgent,
+}));
 vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isChatArchived }));
 
 import {
@@ -38,9 +76,17 @@ import {
   ensureAgentChat,
   interruptAgentChat,
   sendAgentMessage,
+  setAgentChatEffort,
+  setAgentChatModel,
+  switchAgentChatProvider,
   type AgentTimelineItem,
 } from "../../src/stores/agentChat";
-import type { AgentEvent, AgentTimelineEntry } from "../../src/lib/agentChat";
+import {
+  agentChatSend,
+  agentSkillsList,
+  type AgentEvent,
+  type AgentTimelineEntry,
+} from "../../src/lib/agentChat";
 
 let counter = 0;
 
@@ -145,8 +191,38 @@ beforeEach(() => {
   activity.agentTurnStarted.mockClear();
   activity.agentTurnDone.mockClear();
   activity.agentTurnCleared.mockClear();
-  workspace.findChat.mockReset().mockImplementation((id: string) => ({ chatId: id }));
+  workspace.chats.clear();
+  workspace.setChatTitle.mockClear();
+  workspace.setChatAgent.mockClear();
+  workspace.findChat.mockReset().mockImplementation((id: string) => (
+    workspace.chats.get(id) ?? workspace.makeChat(id)
+  ));
   workspace.isChatArchived.mockReset().mockReturnValue(false);
+});
+
+describe("agentChat IPC wrappers", () => {
+  it("normalizes empty send options", async () => {
+    tauri.invoke.mockResolvedValue(undefined);
+
+    await agentChatSend("session-1", "hello");
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-1",
+      text: "hello",
+      effort: null,
+      model: null,
+      images: [],
+    });
+  });
+
+  it("lists provider skills", async () => {
+    const skills = [{ trigger: "/" as const, name: "init", description: "Initialize" }];
+    tauri.invoke.mockResolvedValue(skills);
+
+    await expect(agentSkillsList("codex")).resolves.toEqual(skills);
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_skills_list", { provider: "codex" });
+  });
 });
 
 describe("agentChat store reducer", () => {
@@ -692,9 +768,72 @@ describe("ensureAgentChat", () => {
       }),
     );
   });
+
+  it("updates the selected model in frontend state only", async () => {
+    const { chatId } = await startChat([], "gpt-old");
+
+    setAgentChatModel(chatId, "gpt-new");
+
+    expect(agentChat(chatId)?.model).toBe("gpt-new");
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(1);
+  });
 });
 
 describe("sendAgentMessage", () => {
+  it("passes codex effort and images through and keeps images on the optimistic item", async () => {
+    const { chatId } = await startChat([], "gpt-5.3-codex-spark");
+    const images = ["data:image/png;base64,abc"];
+
+    setAgentChatEffort(chatId, "high");
+    await sendAgentMessage(chatId, "inspect this", images);
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-1",
+      text: "inspect this",
+      effort: "high",
+      model: "gpt-5.3-codex-spark",
+      images,
+    });
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "inspect this", images },
+    ]);
+  });
+
+  it("passes updated codex model per turn without restarting", async () => {
+    const { chatId } = await startChat([], "gpt-old");
+
+    setAgentChatModel(chatId, "gpt-new");
+    await sendAgentMessage(chatId, "hello");
+
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(
+      1,
+    );
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-1",
+      text: "hello",
+      effort: null,
+      model: "gpt-new",
+      images: [],
+    });
+  });
+
+  it("does not apply effort to non-codex sends", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "claudeCode", "claude-model");
+
+    setAgentChatEffort(chatId, "high");
+    await sendAgentMessage(chatId, "hello");
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-1",
+      text: "hello",
+      effort: null,
+      model: null,
+      images: [],
+    });
+  });
+
   it("rolls back the optimistic user message when send fails", async () => {
     const { chatId } = await startChat();
     tauri.invoke.mockImplementation((cmd: string) => {
@@ -746,6 +885,9 @@ describe("sendAgentMessage", () => {
     expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
       sessionId: "session-2",
       text: "hello",
+      effort: null,
+      model: null,
+      images: [],
     });
     expect(timeline(chatId)).toEqual([{ type: "userMessage", seq: 1, text: "hello" }]);
     expect(agentChat(chatId)?.error).toBeNull();
@@ -777,6 +919,91 @@ describe("sendAgentMessage", () => {
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(
       0,
     );
+  });
+});
+
+describe("switchAgentChatProvider", () => {
+  it("disposes, persists the provider marker, and starts a fresh provider session", async () => {
+    const chatId = nextChatId();
+    workspace.chats.set(chatId, workspace.makeChat(chatId, { agentId: "codex", kind: "agent" }));
+    const history: AgentTimelineEntry[] = [
+      { entryType: "message", seq: 1, role: "user", content: "before", createdAt: 1 },
+      { entryType: "message", seq: 2, role: "assistant", content: "after", createdAt: 2 },
+    ];
+    mockInvoke(history);
+    await ensureAgentChat(chatId, "/project", "codex", "gpt-old");
+
+    await expect(switchAgentChatProvider(chatId, "claudeCode", "claude-new")).resolves.toBe(true);
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_interrupt", { sessionId: "session-1" });
+    expect(workspace.setChatAgent).toHaveBeenCalledWith(chatId, "claudeCode", "agent");
+    expect(workspace.chats.get(chatId)?.agentId).toBe("claudeCode");
+    const starts = tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start");
+    expect(starts).toHaveLength(2);
+    expect(starts[1][1]).toEqual(
+      expect.objectContaining({
+        chatId,
+        projectRoot: "/project",
+        provider: "claudeCode",
+        model: "claude-new",
+        engine: "v2",
+      }),
+    );
+    expect(agentChat(chatId)).toMatchObject({
+      provider: "claudeCode",
+      model: "claude-new",
+      providerSwitched: true,
+      contextUsed: null,
+      contextWindow: null,
+    });
+    expect(timeline(chatId)).toMatchObject([
+      { type: "userMessage", seq: 1, text: "before" },
+      { type: "assistantText", seq: 2, text: "after" },
+    ]);
+  });
+
+  it("rejects provider switching while a turn is active", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "turnStarted" });
+
+    await expect(switchAgentChatProvider(chatId, "claudeCode", "claude-new")).rejects.toThrow(
+      "Cannot switch provider while a turn is active",
+    );
+    expect(workspace.setChatAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent chat auto-rename", () => {
+  it("renames a default-titled chat once after the first completed turn", async () => {
+    const chatId = nextChatId();
+    workspace.chats.set(chatId, workspace.makeChat(chatId, { title: "New chat" }));
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    await sendAgentMessage(chatId, "fix the login bug");
+    emit({ kind: "textFinal", itemId: null, text: "I will trace it." });
+    emit({ kind: "turnDone", status: "completed" });
+    await sendAgentMessage(chatId, "also update the test");
+    emit({ kind: "turnDone", status: "completed" });
+
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(1);
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(chatId, "Fix the login bug");
+  });
+
+  it("does not rename a custom-titled chat", async () => {
+    const chatId = nextChatId();
+    workspace.chats.set(chatId, workspace.makeChat(chatId, { title: "Custom title" }));
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+
+    await sendAgentMessage(chatId, "fix the login bug");
+    startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
+
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
   });
 });
 

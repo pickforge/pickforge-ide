@@ -23,6 +23,8 @@ import {
 } from "../stores/windowControls";
 import { hostPlatform } from "../lib/platform";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
+import { startTour } from "../stores/tour";
+import { navigate } from "../router";
 import { recoverChatSessions, setRecoverChatSessions } from "../stores/chatSessions";
 import {
   fileOpenSettings,
@@ -370,6 +372,13 @@ export function SettingsScreen() {
           <div class="pf-settings-row">
             <span class="pf-settings-label">Panel layout</span>
             <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Product tour
+              <span class="pf-settings-hint-inline">a quick guided walkthrough</span>
+            </span>
+            <button class="pf-text-btn" onClick={() => { navigate("workbench"); startTour(); }}>Replay tour</button>
           </div>
         </Section>
 

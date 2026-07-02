@@ -477,7 +477,7 @@ export function ProjectsPane() {
           <Show when={renaming() === root} fallback={<span class="pf-rail-row-label">{p.project.displayName}</span>}>
             <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
           </Show>
-          <button class="pf-rail-row-action" title="New chat" onClick={(e) => newChatFromButton(root, e)}>
+          <button class="pf-rail-row-action" data-tour="new-chat" title="New chat" onClick={(e) => newChatFromButton(root, e)}>
             <IconPlus size={14} />
           </button>
           <button class="pf-rail-row-action" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
@@ -573,7 +573,7 @@ export function ProjectsPane() {
   };
 
   return (
-    <div class="pf-pane-scroll">
+    <div class="pf-pane-scroll" data-tour="projects">
       <div class="pf-pane-toolbar">
         <button
           class="pf-icon-btn"

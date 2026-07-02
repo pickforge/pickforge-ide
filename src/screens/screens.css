@@ -180,17 +180,31 @@
   flex-direction: column;
   gap: var(--pf-space-sm);
 }
+/* Single flex line: label + command/agent grow, then shortcut, AI chip and the
+   remove ✕ pinned at the row's end. */
 .pf-ql-row {
-  display: grid;
-  grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.4fr) auto auto;
+  display: flex;
   align-items: center;
   gap: var(--pf-space-sm);
+}
+.pf-ql-label {
+  flex: 0 1 130px;
+}
+.pf-ql-cmd {
+  flex: 1 1 160px;
+}
+.pf-ql-row .pf-ql-hotkey,
+.pf-ql-row .pf-ql-ai,
+.pf-ql-row .pf-icon-btn {
+  flex: none;
 }
 .pf-ql-row--conflict .pf-ql-hotkey {
   border-color: var(--pf-warning);
   color: var(--pf-warning);
 }
 .pf-ql-agent {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-body-sm);
   color: var(--pf-text-med);
@@ -320,9 +334,15 @@
 
 .pf-seg {
   display: inline-flex;
+  /* Never shrink in a space-between row: a long label (e.g. the "Recover chat
+     sessions" hint) must push, not squeeze the pill so "On" clips. */
+  flex: none;
   border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
   border-radius: var(--pf-radius-md);
   overflow: hidden;
+}
+.pf-seg button {
+  white-space: nowrap;
 }
 .pf-seg button {
   border: none;

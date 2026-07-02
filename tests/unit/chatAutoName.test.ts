@@ -23,6 +23,7 @@ vi.mock("../../src/stores/workspace", () => ({
 import {
   armChatAutoName,
   cleanOscTitle,
+  deriveAgentChatTitle,
   forgetChatAutoName,
   handleOscTitle,
   hasAgentPane,
@@ -93,6 +94,33 @@ describe("cleanOscTitle — noise filter", () => {
     expect(cleanOscTitle('"add a dark mode toggle"')).toBe("Add a dark mode toggle");
     // A summary that merely contains a slash but has spaces is kept.
     expect(cleanOscTitle("Refactor src/auth flow")).toBe("Refactor src/auth flow");
+  });
+});
+
+describe("deriveAgentChatTitle", () => {
+  it("truncates long titles on a word boundary", () => {
+    expect(
+      deriveAgentChatTitle(
+        "please refactor the authentication flow so settings handles expired sessions gracefully",
+      ),
+    ).toBe("Please refactor the authentication flow so…");
+  });
+
+  it("strips markdown, quotes, and urls", () => {
+    expect(
+      deriveAgentChatTitle(
+        '> ## "fix [login](https://example.test) **redirect** `bug`" https://example.test/details',
+      ),
+    ).toBe("Fix login redirect bug");
+  });
+
+  it("falls back to the first assistant text for generic short user text", () => {
+    expect(
+      deriveAgentChatTitle(
+        "hi",
+        "I can help wire the image paste path into the agent chat store.",
+      ),
+    ).toBe("I can help wire the image paste path into…");
   });
 });
 

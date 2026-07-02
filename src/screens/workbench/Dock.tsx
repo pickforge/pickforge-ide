@@ -3,7 +3,7 @@
 // lets the others fill the freed space and vertical dividers can re-weight a
 // pair. Pane drags show a header drag image and an insertion placeholder. The
 // center terminal column is never a dock, so terminal hosts never remount.
-import { createSignal, For, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import {
   isCollapsed,
   layout,
@@ -227,6 +227,53 @@ export function DockResizer(props: { dock: DockId }) {
     >
       <span class="pf-dock-resizer-grip" />
     </div>
+  );
+}
+
+// The dock in the workbench flex row: an always-mounted panel whose width eases
+// between its resized width and 0 (a drawer), with the inner DockColumn pinned
+// to its own width so the panes never reflow-squish during the transition. When
+// hidden, a reveal handle replaces the resizer; the DockColumn is unmounted a
+// beat after the close animation so hidden panes stop running (device mirror,
+// git scans). The center terminal column is untouched, so hosts never remount.
+export function DockPanel(props: { dock: DockId; render: (pane: PaneId) => JSX.Element }) {
+  const left = props.dock === "left";
+  const visible = () => (left ? layout().leftVisible : layout().rightVisible);
+  const width = () => (left ? layout().leftWidth : layout().rightWidth);
+  const [rendered, setRendered] = createSignal(visible());
+  createEffect(() => {
+    if (visible()) {
+      setRendered(true);
+      return;
+    }
+    const t = setTimeout(() => setRendered(false), 300);
+    onCleanup(() => clearTimeout(t));
+  });
+  const panel = (
+    <div
+      class="pf-dock-panel"
+      classList={{
+        "pf-dock-panel--left": left,
+        "pf-dock-panel--right": !left,
+        "pf-dock-panel--hidden": !visible(),
+      }}
+      style={{ width: visible() ? `${width()}px` : "0px" }}
+    >
+      <Show when={rendered()}>
+        <DockColumn dock={props.dock} render={props.render} />
+      </Show>
+    </div>
+  );
+  const edge = (
+    <Show when={visible()} fallback={<DockRevealHandle dock={props.dock} />}>
+      <DockResizer dock={props.dock} />
+    </Show>
+  );
+  return (
+    <>
+      {left ? panel : edge}
+      {left ? edge : panel}
+    </>
   );
 }
 

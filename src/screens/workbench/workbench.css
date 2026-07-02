@@ -128,6 +128,24 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-dock-reveal:hover { color: var(--pf-text-hi); background: var(--pf-item-fill); }
 .pf-flip-x { transform: scaleX(-1); }
 
+/* Show/hide drawer: the panel width eases between its resized width and 0, while
+   the inner dock keeps its own pinned width (overflow-clipped) so panes never
+   reflow-squish. The right dock anchors its content to the right edge so it
+   slides out that way. Manual dock resize snaps (body.pf-resizing). */
+.pf-dock-panel {
+  display: flex;
+  flex: none;
+  min-height: 0;
+  overflow: hidden;
+  transition: width var(--pf-dur-standard) var(--pf-ease-forge);
+}
+.pf-dock-panel--right {
+  justify-content: flex-end;
+}
+body.pf-resizing .pf-dock-panel {
+  transition: none;
+}
+
 /* ---- pane shell ---- */
 .pf-pane-shell {
   display: flex;
@@ -327,16 +345,38 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-sc-list {
   flex: 1 1 0;
 }
-/* Sub-repo section header (monorepos) — a mono eyebrow with branch + count. */
+/* Sub-repo section header (monorepos) — a clickable mono eyebrow with a collapse
+   chevron, branch + count. Toggles its file list. */
 .pf-sc-section {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--pf-space-sm);
+  width: 100%;
   margin: var(--pf-space-sm) 0 var(--pf-space-xs);
-  padding: 0 var(--pf-space-xs);
+  padding: 2px var(--pf-space-xs);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-sc-section:hover {
+  background: var(--pf-item-fill);
 }
 .pf-sc-section:first-child {
   margin-top: 0;
+}
+.pf-sc-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--pf-text-low);
+  transition: transform var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-sc-section--collapsed .pf-sc-section-chevron {
+  transform: rotate(-90deg);
 }
 .pf-sc-section-name {
   font-family: var(--pf-font-mono);
@@ -1154,13 +1194,22 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 
 /* ---- center: launch + terminal ---- */
+/* The header row: quick-launch (or its reveal) on the left, the Orchestra
+   toggle pinned to the right so it stays reachable when quick launch is
+   collapsed. */
+.pf-launch-bar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
 .pf-launch {
   display: flex;
   align-items: center;
   gap: var(--pf-space-lg);
   padding: var(--pf-space-sm) var(--pf-space-lg);
-  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .pf-chips {
   display: flex;
@@ -1172,6 +1221,7 @@ body.pf-resizing .pf-dock-resizer-grip {
    focused terminal owns the workbench ember. */
 .pf-orch-tab {
   margin-left: auto;
+  margin-right: var(--pf-space-lg);
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-xs);

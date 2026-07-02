@@ -5,6 +5,7 @@
 //! PTY subsystem; later phases add transcript, process runner, device bridges,
 //! target adapters, VM Service, storage and agent prep.
 
+pub mod agents;
 pub mod android;
 pub mod cdp;
 pub mod db;

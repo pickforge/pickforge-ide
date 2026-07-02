@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"019f2238-06b9-7bf0-ba07-8051bf532f20"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Running the command now and I’ll return the exact output."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/usr/bin/zsh -lc \"echo pickforge-fixture && printf 'line2\\\\n'\"","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/usr/bin/zsh -lc \"echo pickforge-fixture && printf 'line2\\\\n'\"","aggregated_output":"pickforge-fixture\nline2\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"`pickforge-fixture`  \n`line2`"}}
+{"type":"turn.completed","usage":{"input_tokens":25027,"cached_input_tokens":20480,"output_tokens":131,"reasoning_output_tokens":65}}

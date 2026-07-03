@@ -632,10 +632,13 @@ function stateFromHistory(
     maxSeq = Math.max(maxSeq, entry.seq);
     if (entry.entryType === "message") {
       if (entry.role === "user") {
-        chat = withTimeline(chat, [
-          ...chat.timeline,
-          { type: "userMessage", seq: entry.seq, text: entry.content },
-        ]);
+        chat = {
+          ...withTimeline(chat, [
+            ...chat.timeline,
+            { type: "userMessage", seq: entry.seq, text: entry.content },
+          ]),
+          error: null,
+        };
       } else if (entry.role === "assistant") {
         chat = withTimeline(chat, [
           ...chat.timeline,
@@ -663,6 +666,7 @@ function stateFromHistory(
     if (!event) continue;
     if (event.kind === "thinkingFinal" && isBlankText(event.text)) continue;
     chat = reduceAgentEvent(chat, event, () => entry.seq);
+    if (event.kind === "turnDone") chat = { ...chat, error: null };
   }
   nextSeqByChat.set(chatId, maxSeq + 1);
   return chat;

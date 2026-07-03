@@ -646,6 +646,36 @@ describe("agentChat history", () => {
     ]);
   });
 
+  it("clears stale persisted failure errors after newer turns", async () => {
+    const failedTurn = {
+      entryType: "item" as const,
+      seq: 1,
+      kind: "turnFailed",
+      payload: JSON.stringify({ kind: "turnFailed", error: "old failure" }),
+      createdAt: 1,
+    };
+    const userMessage: AgentTimelineEntry = {
+      entryType: "message",
+      seq: 2,
+      role: "user",
+      content: "retry",
+      createdAt: 2,
+    };
+    const doneTurn = {
+      entryType: "item" as const,
+      seq: 2,
+      kind: "turnDone",
+      payload: JSON.stringify({ kind: "turnDone", status: "completed" }),
+      createdAt: 2,
+    };
+
+    const userSuperseded = await startChat([failedTurn, userMessage]);
+    const doneSuperseded = await startChat([failedTurn, doneTurn]);
+
+    expect(agentChat(userSuperseded.chatId)?.error).toBeNull();
+    expect(agentChat(doneSuperseded.chatId)?.error).toBeNull();
+  });
+
   it("continues live item seqs after loaded history", async () => {
     const history: AgentTimelineEntry[] = [
       {

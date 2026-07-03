@@ -29,7 +29,7 @@ import {
   quickLaunchItems,
 } from "../../stores/quickLaunch";
 import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
-import { removeChatFromOrchestra, selectedLanes } from "../../stores/orchestra";
+import { clearProjectOrchestra, removeChatFromOrchestra, selectedLanes } from "../../stores/orchestra";
 import { chatBackend } from "../../stores/chatSessions";
 import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity, setStagedChatsForActivity } from "../../stores/chatActivity";
 import { orchestraOpen, setOrchestraOpen, stagedChatIds } from "../../stores/orchestraStage";
@@ -62,6 +62,7 @@ export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
   const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
+  const [pendingOrchestraCleanup, setPendingOrchestraCleanup] = createSignal<MountedHost[]>([]);
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
   // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
@@ -103,6 +104,33 @@ export function WorkbenchScreen() {
 
   createEffect(() => {
     setStagedChatsForActivity(stagedChatIds());
+  });
+
+  createEffect(() => {
+    const pending = pendingOrchestraCleanup();
+    if (!pending.length) return;
+    const ready = pending.filter((item) => !isChatDestroying(item.chatId));
+    if (!ready.length) return;
+
+    const readyIds = new Set(ready.map((item) => item.chatId));
+    const projectRoots = new Set(workspace.projects.map((project) => project.projectRoot));
+    const clearedRoots = new Set<string>();
+
+    setPendingOrchestraCleanup((items) => items.filter((item) => !readyIds.has(item.chatId)));
+
+    for (const item of ready) {
+      if (!projectRoots.has(item.projectRoot)) {
+        if (!clearedRoots.has(item.projectRoot)) {
+          clearProjectOrchestra(item.projectRoot);
+          clearedRoots.add(item.projectRoot);
+        }
+        continue;
+      }
+      if (findChat(item.chatId)) continue;
+      void removeChatFromOrchestra(item.projectRoot, item.chatId).catch((error) =>
+        console.error("[pickforge] removeChatFromOrchestra failed", error),
+      );
+    }
   });
 
   // First-run coach-marks: start the first time the workbench is the visible
@@ -181,8 +209,10 @@ export function WorkbenchScreen() {
       deleteTerminalHost(chatId);
       disposeAgentChat(chatId);
       if (chat) {
-        void removeChatFromOrchestra(chat.projectRoot, chatId).catch((error) =>
-          console.error("[pickforge] removeChatFromOrchestra failed", error),
+        setPendingOrchestraCleanup((items) =>
+          items.some((item) => item.chatId === chatId)
+            ? items
+            : [...items, { chatId, projectRoot: chat.projectRoot }],
         );
       }
     });

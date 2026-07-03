@@ -39,6 +39,7 @@ import {
 import { estimateCostUsd } from "../../lib/agentPricing";
 import { agentChat, sendAgentMessage } from "../../stores/agentChat";
 import { chatAttention, chatBusy } from "../../stores/chatActivity";
+import { isChatArchived } from "../../stores/chatArchive";
 import {
   type LaneDir,
   type LaneNode,
@@ -300,6 +301,12 @@ export function OrchestraView(props: {
 
   const tree = () => laneTree(props.projectRoot);
   const lanes = () => selectedLanes(props.projectRoot);
+  const projectChats = () => chatsFor(props.projectRoot);
+  const projectChatIds = createMemo(() => new Set(projectChats().map((chat) => chat.chatId)));
+  const renderableLanes = createMemo(() => {
+    const chatIds = projectChatIds();
+    return lanes().filter((chatId) => chatIds.has(chatId));
+  });
   const tasks = () => taskList(props.projectRoot).items;
   const usage = () => usageSummary(props.projectRoot).items;
   const preset = () => detectLayoutPreset(tree());
@@ -425,8 +432,11 @@ export function OrchestraView(props: {
   });
 
   const eligibleChats = () =>
-    chatsFor(props.projectRoot).filter(
-      (chat) => chat.kind === "agent" && !lanes().includes(chat.chatId),
+    projectChats().filter(
+      (chat) =>
+        chat.kind === "agent" &&
+        !isChatArchived(chat.chatId) &&
+        !lanes().includes(chat.chatId),
     );
 
   const otherLanes = (source: string) => lanes().filter((id) => id !== source);
@@ -903,7 +913,7 @@ export function OrchestraView(props: {
               the computed layout so a rearranged lane is repositioned, never
               remounted (AgentChatView keeps its composer/scroll). */}
           <div class="pf-orch-grid" ref={(el) => (gridEl = el)}>
-            <For each={lanes()}>{(chatId) => <Lane chatId={chatId} />}</For>
+            <For each={renderableLanes()}>{(chatId) => <Lane chatId={chatId} />}</For>
 
             {/* draggable seams */}
             <For each={layout().divs}>

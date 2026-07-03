@@ -391,7 +391,15 @@ impl AgentChatManager {
             if !images.is_empty() {
                 let payload =
                     serde_json::json!({ "kind": "attachments", "paths": images }).to_string();
-                seqs.push(db.agent_item_append(&session_id_owned, &chat_id, "attachments", &payload)?);
+                match db.agent_item_append(&session_id_owned, &chat_id, "attachments", &payload) {
+                    Ok(seq) => seqs.push(seq),
+                    // The message committed but its attachments didn't — roll the
+                    // message back too so a half-persisted prompt never survives.
+                    Err(err) => {
+                        let _ = db.agent_prompt_rollback(&chat_id, &seqs);
+                        return Err(err.into());
+                    }
+                }
             }
             Ok(seqs)
         };
@@ -1294,28 +1302,31 @@ fn handle_runner_event(
     let mut errors = Vec::new();
     let mut active_turn = None;
 
-    // A disposed session (chat deleted / provider switched) may still receive
-    // queued provider events before its subscription is torn down. Those must
-    // not recreate agent_messages/agent_items rows for a gone chat (the tables
-    // have no chat FK). Terminal events run their own presence checks below.
-    let session_present = inner
+    // Turn-scoped events for a session that no longer owns a turn are stale and
+    // must be dropped entirely (not persisted, not forwarded):
+    //  - a disposed session (chat deleted / provider switched) may still get
+    //    queued events before its subscription tears down — persisting them
+    //    would recreate rows for a gone chat (tables have no chat FK);
+    //  - a V2 turn whose start errored (e.g. timed out after the app-server
+    //    accepted it) has its handle cleared, but the server can still emit a
+    //    late turn/started + items whose terminal would then be skipped,
+    //    wedging the UI as running.
+    // SessionStarted/RateLimits/Noise are not turn-scoped and always pass.
+    let (session_present, has_turn, is_v2) = inner
         .lock()
-        .map(|states| states.contains_key(session_id))
-        .unwrap_or(false);
-    let persists = matches!(
+        .map(|states| {
+            states.get(session_id).map_or((false, false, false), |state| {
+                (true, state.active_turn.is_some(), state.engine == Engine::V2)
+            })
+        })
+        .unwrap_or((false, false, false));
+    let turn_scoped = !matches!(
         &event,
-        AgentEvent::TextFinal { .. }
-            | AgentEvent::ThinkingFinal { .. }
-            | AgentEvent::CommandStarted { .. }
-            | AgentEvent::CommandDone { .. }
-            | AgentEvent::FileChange { .. }
-            | AgentEvent::McpToolCall { .. }
-            | AgentEvent::ToolUse { .. }
-            | AgentEvent::WebSearch { .. }
-            | AgentEvent::PlanUpdate { .. }
-            | AgentEvent::Usage { .. }
+        AgentEvent::SessionStarted { .. }
+            | AgentEvent::RateLimits { .. }
+            | AgentEvent::Noise { .. }
     );
-    if persists && !session_present {
+    if turn_scoped && (!session_present || (is_v2 && !has_turn)) {
         return;
     }
 

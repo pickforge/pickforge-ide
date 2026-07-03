@@ -105,7 +105,7 @@ export function Composer(props: {
   model: string | null;
   effort?: string | null;
   turnActive: boolean;
-  onSend: (text: string, images?: string[]) => void;
+  onSend: (text: string, images?: string[]) => void | Promise<void>;
   onInterrupt: () => void;
   onProviderChange?: (provider: AgentProvider) => void;
   onModelChange?: (model: string | null) => void;
@@ -290,9 +290,10 @@ export function Composer(props: {
   };
 
   const submit = () => {
-    const value = text().trim();
-    const pending = images();
-    if (!value && pending.length === 0) return;
+    const savedText = text();
+    const value = savedText.trim();
+    const savedImages = [...images()];
+    if (!value && savedImages.length === 0) return;
     const clearImages = !props.turnActive;
     if (props.turnActive) {
       if (!steering() || !value) return;
@@ -302,7 +303,16 @@ export function Composer(props: {
     } else {
       pasteGeneration += 1;
       droppedPasteGeneration = null;
-      props.onSend(value, pending.length > 0 ? pending : undefined);
+      const result = props.onSend(value, savedImages.length > 0 ? savedImages : undefined);
+      setText("");
+      if (clearImages) setImages([]);
+      field.style.height = "auto";
+      void Promise.resolve(result).catch(() => {
+        setText(savedText);
+        setImages(savedImages);
+        autosize();
+      });
+      return;
     }
     setText("");
     if (clearImages) setImages([]);

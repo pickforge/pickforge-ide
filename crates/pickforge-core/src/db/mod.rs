@@ -2266,6 +2266,28 @@ mod tests {
     }
 
     #[test]
+    fn agent_prompt_rollback_removes_only_the_named_seqs() {
+        let db = Database::open_in_memory().unwrap();
+        seed_agent_chat(&db, "/p-rb", "c-rb");
+        seed_agent_session_with_model(&db, "s-rb", "c-rb", "claudeCode", Some("claude-opus-4-8"));
+
+        let kept = db.agent_message_append("s-rb", "c-rb", "user", "earlier").unwrap();
+        let msg = db.agent_message_append("s-rb", "c-rb", "user", "rolled back").unwrap();
+        let item = db
+            .agent_item_append("s-rb", "c-rb", "attachments", r#"{"paths":["/tmp/a.png"]}"#)
+            .unwrap();
+
+        db.agent_prompt_rollback("c-rb", &[msg, item]).unwrap();
+
+        let timeline = db.agent_timeline_for_chat("c-rb").unwrap();
+        assert_eq!(timeline.len(), 1);
+        assert!(matches!(
+            &timeline[0],
+            AgentTimelineEntry::Message { seq, content, .. } if *seq == kept && content == "earlier"
+        ));
+    }
+
+    #[test]
     fn delete_project_removes_agent_rows_and_orchestra_tasks() {
         let db = Database::open_in_memory().unwrap();
         seed_agent_chat(&db, "/p-delete", "c-delete");

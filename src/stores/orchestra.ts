@@ -1,4 +1,4 @@
-import { createStore, reconcile } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import {
   agentUsageSummary,
   orchestraTaskDelete,
@@ -508,6 +508,16 @@ export function removeSelectedLane(projectRoot: string, chatId: string) {
   const tree = laneTree(projectRoot);
   if (!tree || !collectLaneChatIds(tree).includes(chatId)) return;
   persistLaneTree(projectRoot, removeLaneLeaf(tree, chatId));
+}
+
+export function clearProjectOrchestra(projectRoot: string) {
+  if (!projectRoot) return;
+  setState("tasksByRoot", produce((items) => { delete items[projectRoot]; }));
+  setState("laneTreeByRoot", produce((items) => { delete items[projectRoot]; }));
+  setState("usageByRoot", produce((items) => { delete items[projectRoot]; }));
+  localStorage.removeItem(laneTreeKey(projectRoot));
+  localStorage.removeItem(legacyLanesKey(projectRoot));
+  localStorage.removeItem(legacyLayoutKey(projectRoot));
 }
 
 export async function removeChatFromOrchestra(projectRoot: string, chatId: string): Promise<void> {

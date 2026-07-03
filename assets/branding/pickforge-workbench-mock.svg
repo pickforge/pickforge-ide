@@ -17,7 +17,7 @@
     <g>
       <rect x="1008" y="12" width="168" height="24" rx="12" fill="#FF7A1A" fill-opacity="0.05" stroke="#FF7A1A" stroke-opacity="0.3"/>
       <circle cx="1024" cy="24" r="3" fill="#FF7A1A"/>
-      <text x="1034" y="28" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#FF7A1A">WIDGET PICKED</text>
+      <text x="1034" y="28" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#FF7A1A">COMPONENT PICKED</text>
     </g>
     <line x1="0" y1="48" x2="1200" y2="48" stroke="#F2F2F3" stroke-opacity="0.08"/>
 
@@ -34,7 +34,7 @@
     <rect x="164" y="172" width="120" height="10" rx="3" fill="#F2F2F3" fill-opacity="0.16"/>
     <rect x="164" y="190" width="98" height="8" rx="3" fill="#F2F2F3" fill-opacity="0.08"/>
     <rect x="164" y="204" width="108" height="8" rx="3" fill="#F2F2F3" fill-opacity="0.08"/>
-    <!-- picked widget: button with ember selection bracket -->
+    <!-- picked component: button with ember selection bracket -->
     <rect x="176" y="238" width="96" height="34" rx="8" fill="#F2F2F3" fill-opacity="0.08" stroke="#F2F2F3" stroke-opacity="0.14"/>
     <rect x="196" y="252" width="56" height="7" rx="3" fill="#F2F2F3" fill-opacity="0.25"/>
     <g stroke="#FF7A1A" stroke-width="2" stroke-linecap="square" fill="none">
@@ -49,9 +49,9 @@
     <rect x="208" y="376" width="32" height="4" rx="2" fill="#F2F2F3" fill-opacity="0.2"/>
     <text x="224" y="424" text-anchor="middle" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.4" fill="#6E6E75" fill-opacity="0.7">picked · ElevatedButton</text>
 
-    <!-- ===== widget context pane ===== -->
+    <!-- ===== component context pane ===== -->
     <rect x="448" y="72" width="360" height="360" rx="10" fill="#0F0F11" stroke="#F2F2F3" stroke-opacity="0.08"/>
-    <text x="468" y="100" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">WIDGET CONTEXT</text>
+    <text x="468" y="100" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">COMPONENT CONTEXT</text>
     <!-- ancestor chain -->
     <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="12">
       <text x="468" y="132" fill="#F2F2F3" fill-opacity="0.45">MaterialApp</text>
@@ -83,13 +83,13 @@
     <text x="852" y="100" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">CHAT · CLAUDE CODE</text>
     <rect x="852" y="114" width="304" height="294" rx="6" fill="#0A0A0B" fill-opacity="0.6" stroke="#F2F2F3" stroke-opacity="0.05"/>
     <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="12.5">
-      <text x="868" y="144" fill="#F2F2F3">› widget context dispatched</text>
+      <text x="868" y="144" fill="#F2F2F3">› component context dispatched</text>
       <text x="884" y="162" fill="#F2F2F3" fill-opacity="0.7">.pickforge/initial-prompt.md</text>
       <text x="868" y="188" fill="#FF7A1A">✓ read checkout_card.dart</text>
       <text x="868" y="206" fill="#FF7A1A">✓ edit · padding 12 → 16</text>
       <text x="868" y="232" fill="#F2F2F3">› hot reload</text>
       <text x="868" y="250" fill="#FF7A1A">✓ reloaded in 0.4s</text>
-      <text x="868" y="276" fill="#F2F2F3" fill-opacity="0.7">● pick the next widget…</text>
+      <text x="868" y="276" fill="#F2F2F3" fill-opacity="0.7">● pick the next component…</text>
       <text x="868" y="302" fill="#F2F2F3">▌</text>
     </g>
 
@@ -98,7 +98,7 @@
     <text x="44" y="484" font-family="Geist Mono, JetBrains Mono, monospace" font-size="10" letter-spacing="1.8" fill="#6E6E75">.PICKFORGE/ · THE ONLY FOLDER IT WRITES</text>
     <g font-family="Geist Mono, JetBrains Mono, monospace" font-size="12" fill="#F2F2F3">
       <text x="44" y="514" fill-opacity="0.6">skill-active.md      current skill directive</text>
-      <text x="44" y="536" fill-opacity="0.6">widget-context.md    selected widget details</text>
+      <text x="44" y="536" fill-opacity="0.6">context.md           selected component details</text>
       <text x="44" y="558" fill-opacity="0.6">screenshot.png       flutter render</text>
       <text x="44" y="580" fill-opacity="0.6">device-screen.png    device + highlight</text>
       <text x="44" y="602" fill-opacity="0.6">initial-prompt.md    what reached the agent</text>

@@ -115,9 +115,9 @@ createEffect(() => {
 export function mcpEnv(projectRoot: string | null): Record<string, string> {
   const b = binding();
   if (!b || !projectRoot || b.projectRoot !== projectRoot) return {};
-  return {
-    PICKFORGE_IPC_ENDPOINT: b.endpoint,
+  const env = {
     PICKFORGE_PROJECT_ROOT: b.projectRoot,
     PICKFORGE_CONTEXT_DIR: b.contextDir,
   };
+  return b.endpoint ? { PICKFORGE_IPC_ENDPOINT: b.endpoint, ...env } : env;
 }

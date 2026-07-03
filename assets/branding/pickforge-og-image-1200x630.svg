@@ -45,7 +45,7 @@
   <text x="180" y="138" font-family="Geist, Inter, sans-serif" font-size="38" font-weight="700" fill="#F2F2F3" letter-spacing="-0.02em">Pickforge</text>
   <!-- Tagline -->
   <text x="80" y="350" font-family="Geist, Inter, sans-serif" font-size="68" font-weight="700" fill="url(#text)" letter-spacing="-0.025em">A product forge for AI,</text>
-  <text x="80" y="430" font-family="Geist, Inter, sans-serif" font-size="68" font-weight="700" fill="url(#text)" letter-spacing="-0.025em">Flutter, and developer tools.</text>
+  <text x="80" y="430" font-family="Geist, Inter, sans-serif" font-size="68" font-weight="700" fill="url(#text)" letter-spacing="-0.025em">mobile, and developer tools.</text>
   <!-- Sub -->
   <text x="80" y="490" font-family="Geist Mono, JetBrains Mono, monospace" font-size="20" fill="#6E6E75" letter-spacing="0.18em">LOCAL-FIRST · OPEN SOURCE · BUILT FOR DEVS</text>
   <!-- URL -->

@@ -129,7 +129,7 @@ they do not replace manual dogfood on real desktop hosts.
 - [ ] macOS dogfood pass completed before public release.
 - [ ] Windows dogfood pass completed before public release.
 - [x] Signing/notarization/package-manager blockers are recorded before tagging public builds.
-- [ ] Linux release signing secret is configured or the unsigned-release decision is explicitly approved.
+- [x] Linux release signing secret is configured or the unsigned-release decision is explicitly approved. Unsigned v0.1.0 approved by the owner (2026-07-02); updater artifacts are minisign-signed.
 - [x] Blockers recorded as issues or follow-up plan items.
 
 Release blockers are tracked in `docs/release-blockers.md`.

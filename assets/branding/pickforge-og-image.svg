@@ -35,7 +35,7 @@
   </g>
   <text x="180" y="132" font-family="Geist, Inter, Arial, sans-serif" font-size="38" font-weight="750" fill="#F2F2F3" letter-spacing="-0.02em">PickForge</text>
   <text x="80" y="330" font-family="Geist, Inter, Arial, sans-serif" font-size="72" font-weight="760" fill="url(#titleGradient)" letter-spacing="-0.025em">PickForge</text>
-  <text x="80" y="410" font-family="Geist, Inter, Arial, sans-serif" font-size="46" font-weight="700" fill="#F2F2F3" fill-opacity="0.88" letter-spacing="-0.02em">Widget-level AI context for Flutter.</text>
-  <text x="80" y="505" font-family="Geist Mono, JetBrains Mono, monospace" font-size="19" font-weight="500" fill="#6E6E75" letter-spacing="0.18em">FLUTTER · AGENTS · LOCAL</text>
+  <text x="80" y="410" font-family="Geist, Inter, Arial, sans-serif" font-size="46" font-weight="700" fill="#F2F2F3" fill-opacity="0.88" letter-spacing="-0.02em">The full mobile agent suite.</text>
+  <text x="80" y="505" font-family="Geist Mono, JetBrains Mono, monospace" font-size="19" font-weight="500" fill="#6E6E75" letter-spacing="0.18em">MOBILE · AGENTS · LOCAL</text>
   <text x="80" y="565" font-family="Geist Mono, JetBrains Mono, monospace" font-size="20" font-weight="500" fill="#FF7A1A">pickforge.dev/pickforge</text>
 </svg>

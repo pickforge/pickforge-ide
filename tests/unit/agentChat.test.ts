@@ -904,6 +904,28 @@ describe("sendAgentMessage", () => {
     expect(agentChat(chatId)?.error).toBe("send failed");
   });
 
+  it("does not recreate a disposed chat when an in-flight send fails", async () => {
+    const { chatId } = await startChat();
+    const send = deferred<void>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_send") return send.promise;
+      return Promise.resolve(null);
+    });
+
+    const sending = sendAgentMessage(chatId, "hello");
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "hello", optimistic: true },
+    ]);
+
+    disposeAgentChat(chatId);
+    const expectation = expect(sending).rejects.toThrow("send failed");
+    send.reject(new Error("send failed"));
+    await expectation;
+
+    expect(agentChat(chatId)).toBeUndefined();
+    expect(activity.agentTurnCleared).not.toHaveBeenCalledWith(chatId);
+  });
+
   it("retries a failed start when sending and delivers the message", async () => {
     const chatId = nextChatId();
     let startCount = 0;

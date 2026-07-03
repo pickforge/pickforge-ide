@@ -308,9 +308,11 @@ export function Composer(props: {
       if (clearImages) setImages([]);
       field.style.height = "auto";
       void Promise.resolve(result).catch(() => {
-        setText(savedText);
-        setImages(savedImages);
-        autosize();
+        if (text().trim().length === 0 && images().length === 0) {
+          setText(savedText);
+          setImages(savedImages);
+          autosize();
+        }
       });
       return;
     }

@@ -44,6 +44,7 @@ import {
   type LaneDir,
   type LaneNode,
   type LaneRegion,
+  type OrchestraLayout,
   MAX_LANES,
   addLaneAt,
   addSelectedLane,
@@ -168,6 +169,27 @@ const SPLIT_TILES: { dir: LaneDir; label: string }[] = [
   { dir: "down", label: "Open bottom" },
 ];
 
+function pruneLaneTree(node: LaneNode | null, chatIds: Set<string>): LaneNode | null {
+  if (!node) return null;
+  if (node.kind === "leaf") return chatIds.has(node.chatId) ? node : null;
+  const a = pruneLaneTree(node.a, chatIds);
+  const b = pruneLaneTree(node.b, chatIds);
+  if (!a) return b;
+  if (!b) return a;
+  if (a === node.a && b === node.b) return node;
+  return { ...node, a, b };
+}
+
+function collectLaneIds(node: LaneNode | null, out: string[] = []): string[] {
+  if (!node) return out;
+  if (node.kind === "leaf") out.push(node.chatId);
+  else {
+    collectLaneIds(node.a, out);
+    collectLaneIds(node.b, out);
+  }
+  return out;
+}
+
 interface AddMenu {
   x: number;
   y: number;
@@ -224,6 +246,33 @@ export function OrchestraView(props: {
   let gridEl: HTMLDivElement | undefined;
   const laneEls = new Map<string, HTMLElement>();
 
+  const rawTree = () => laneTree(props.projectRoot);
+  const rawLanes = () => selectedLanes(props.projectRoot);
+  const projectChats = () => chatsFor(props.projectRoot);
+  const chatsLoaded = () => workspace.chatsByRoot[props.projectRoot] !== undefined;
+  const projectChatIds = createMemo(() => new Set(projectChats().map((chat) => chat.chatId)));
+  const liveTree = createMemo(() => pruneLaneTree(rawTree(), projectChatIds()));
+  const liveLanes = createMemo(() => collectLaneIds(liveTree()));
+  const activeSplitMenu = createMemo(() => {
+    const menu = splitMenu();
+    return menu && liveLanes().includes(menu.chatId) ? menu : null;
+  });
+  const activeHandoff = createMemo(() => {
+    const menu = handoff();
+    return menu && liveLanes().includes(menu.source) ? menu : null;
+  });
+  const pruneDeadLanes = () => {
+    if (!chatsLoaded()) return;
+    const chatIds = projectChatIds();
+    for (const chatId of rawLanes()) {
+      if (!chatIds.has(chatId)) removeSelectedLane(props.projectRoot, chatId);
+    }
+  };
+  const applyLiveLayoutPreset = (preset: OrchestraLayout) => {
+    pruneDeadLanes();
+    applyLayoutPreset(props.projectRoot, preset);
+  };
+
   let resizing = false;
   const onResizeMove = (event: PointerEvent) => {
     if (!resizing || !orchEl) return;
@@ -264,7 +313,7 @@ export function OrchestraView(props: {
     const target = props.focusChat;
     if (!target || target.at === lastFocusAt) return;
     lastFocusAt = target.at;
-    if (!selectedLanes(props.projectRoot).includes(target.chatId)) return;
+    if (!liveLanes().includes(target.chatId)) return;
     const el = laneEls.get(target.chatId);
     if (el) {
       const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -287,6 +336,10 @@ export function OrchestraView(props: {
     });
   });
 
+  createEffect(() => {
+    pruneDeadLanes();
+  });
+
   const setNotice = (chatId: string, text: string, error: boolean) =>
     setNotices((all) => ({ ...all, [chatId]: { text, error } }));
   const clearNotice = (chatId: string) =>
@@ -299,23 +352,15 @@ export function OrchestraView(props: {
   const errorText = (error: unknown) =>
     error instanceof Error ? error.message : String(error);
 
-  const tree = () => laneTree(props.projectRoot);
-  const lanes = () => selectedLanes(props.projectRoot);
-  const projectChats = () => chatsFor(props.projectRoot);
-  const projectChatIds = createMemo(() => new Set(projectChats().map((chat) => chat.chatId)));
-  const renderableLanes = createMemo(() => {
-    const chatIds = projectChatIds();
-    return lanes().filter((chatId) => chatIds.has(chatId));
-  });
   const tasks = () => taskList(props.projectRoot).items;
   const usage = () => usageSummary(props.projectRoot).items;
-  const preset = () => detectLayoutPreset(tree());
+  const preset = () => detectLayoutPreset(liveTree());
 
   // Absolute rects + divider seams recomputed whenever the tree changes.
   const layout = createMemo(() => {
     const map = new Map<string, LaneRect>();
     const divs: LaneDividerRect[] = [];
-    computeLaneLayout(tree(), { x: 0, y: 0, w: 1, h: 1 }, map, divs);
+    computeLaneLayout(liveTree(), { x: 0, y: 0, w: 1, h: 1 }, map, divs);
     return { map, divs };
   });
 
@@ -421,7 +466,7 @@ export function OrchestraView(props: {
   const startLaneDrag = (e: PointerEvent, chatId: string) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest(".pf-orch-icon")) return; // controls aren't handles
-    if (lanes().length <= 1) return; // nothing to rearrange against
+    if (liveLanes().length <= 1) return; // nothing to rearrange against
     laneDrag = { chatId, startX: e.clientX, startY: e.clientY, active: false };
     window.addEventListener("pointermove", onLaneDragMove);
     window.addEventListener("pointerup", endLaneDrag);
@@ -436,10 +481,10 @@ export function OrchestraView(props: {
       (chat) =>
         chat.kind === "agent" &&
         !isChatArchived(chat.chatId) &&
-        !lanes().includes(chat.chatId),
+        !liveLanes().includes(chat.chatId),
     );
 
-  const otherLanes = (source: string) => lanes().filter((id) => id !== source);
+  const otherLanes = (source: string) => liveLanes().filter((id) => id !== source);
 
   const openAddMenu = (event: MouseEvent) => {
     event.stopPropagation();
@@ -464,6 +509,7 @@ export function OrchestraView(props: {
   };
 
   const placeLane = (chatId: string) => {
+    pruneDeadLanes();
     const target = pendingTarget();
     if (target) addLaneAt(props.projectRoot, target.chatId, target.dir, chatId);
     else addSelectedLane(props.projectRoot, chatId);
@@ -574,7 +620,7 @@ export function OrchestraView(props: {
     const provider = () => providerOf(p.chatId);
     const busy = () => chatBusy(p.chatId);
     const attention = () => chatAttention(p.chatId);
-    const capped = () => lanes().length >= MAX_LANES;
+    const capped = () => liveLanes().length >= MAX_LANES;
     return (
       <div
         class="pf-orch-lane-head"
@@ -696,7 +742,7 @@ export function OrchestraView(props: {
       onChange={(e) => p.onSelect(e.currentTarget.value || null)}
     >
       <option value="">—</option>
-      <For each={lanes()}>
+      <For each={liveLanes()}>
         {(chatId) => <option value={chatId}>{laneTitle(chatId)}</option>}
       </For>
     </select>
@@ -854,7 +900,7 @@ export function OrchestraView(props: {
 
       <div class="pf-orch-grid-wrap">
         <Show
-          when={lanes().length > 0}
+          when={liveLanes().length > 0}
           fallback={
             <div class="pf-orch-empty">
               <ForgeEmptyState
@@ -874,13 +920,13 @@ export function OrchestraView(props: {
           <div class="pf-orch-grid-bar">
             <MonoEyebrow text="Lanes" />
             <div class="pf-orch-grid-bar-tools">
-              <Show when={lanes().length > 1}>
+              <Show when={liveLanes().length > 1}>
                 <div class="pf-orch-layout-toggle" role="group" aria-label="Lane layout">
                   <button
                     class="pf-orch-layout-btn"
                     classList={{ "pf-orch-layout-btn--on": preset() === "columns" }}
                     title="Columns"
-                    onClick={() => applyLayoutPreset(props.projectRoot, "columns")}
+                    onClick={() => applyLiveLayoutPreset("columns")}
                   >
                     <IconSplit dir="left" size={13} />
                   </button>
@@ -888,7 +934,7 @@ export function OrchestraView(props: {
                     class="pf-orch-layout-btn"
                     classList={{ "pf-orch-layout-btn--on": preset() === "rows" }}
                     title="Rows"
-                    onClick={() => applyLayoutPreset(props.projectRoot, "rows")}
+                    onClick={() => applyLiveLayoutPreset("rows")}
                   >
                     <IconSplit dir="up" size={13} />
                   </button>
@@ -896,13 +942,13 @@ export function OrchestraView(props: {
                     class="pf-orch-layout-btn"
                     classList={{ "pf-orch-layout-btn--on": preset() === "grid" }}
                     title="Grid"
-                    onClick={() => applyLayoutPreset(props.projectRoot, "grid")}
+                    onClick={() => applyLiveLayoutPreset("grid")}
                   >
                     <IconGrid size={13} />
                   </button>
                 </div>
               </Show>
-              <Show when={lanes().length < MAX_LANES}>
+              <Show when={liveLanes().length < MAX_LANES}>
                 <button class="pf-orch-add-lane" onClick={openAddMenu}>
                   <IconPlus size={13} /> Add lane
                 </button>
@@ -913,7 +959,7 @@ export function OrchestraView(props: {
               the computed layout so a rearranged lane is repositioned, never
               remounted (AgentChatView keeps its composer/scroll). */}
           <div class="pf-orch-grid" ref={(el) => (gridEl = el)}>
-            <For each={renderableLanes()}>{(chatId) => <Lane chatId={chatId} />}</For>
+            <For each={liveLanes()}>{(chatId) => <Lane chatId={chatId} />}</For>
 
             {/* draggable seams */}
             <For each={layout().divs}>
@@ -961,7 +1007,7 @@ export function OrchestraView(props: {
         </Show>
       </div>
 
-      <Show when={splitMenu()}>
+      <Show when={activeSplitMenu()}>
         {(menu) => (
           <FloatingMenu
             anchor={{ x: menu().x, y: menu().y, align: "end" }}
@@ -1042,7 +1088,7 @@ export function OrchestraView(props: {
         )}
       </Show>
 
-      <Show when={handoff()}>
+      <Show when={activeHandoff()}>
         {(menu) => (
           <FloatingMenu anchor={{ x: menu().x, y: menu().y, align: "end" }} onClose={() => setHandoff(null)}>
             <Switch>

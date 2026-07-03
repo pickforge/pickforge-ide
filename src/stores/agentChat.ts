@@ -820,6 +820,8 @@ export async function sendAgentMessage(
   text: string,
   images: string[] = [],
 ): Promise<void> {
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
   const chat = chats[chatId];
   if (!chat) throw new Error("Agent chat is not started");
   let sessionId = chat.sessionId;
@@ -853,6 +855,7 @@ export async function sendAgentMessage(
     }
     await agentChatSend(sessionId, text, sendOptions(chats[chatId] ?? chat, imageList));
   } catch (error) {
+    if (stale()) throw error;
     if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
       nextSeqByChat.set(chatId, optimisticSeq);
     }
@@ -892,6 +895,8 @@ export async function approveAgentRequest(
 }
 
 export async function steerAgentChat(chatId: string, text: string): Promise<void> {
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
   const sessionId = chats[chatId]?.sessionId;
   if (!sessionId) throw new Error("Agent chat is not started");
   const optimisticSeq = takeSeq(chatId);
@@ -905,6 +910,7 @@ export async function steerAgentChat(chatId: string, text: string): Promise<void
   try {
     await agentChatSteer(sessionId, text);
   } catch (error) {
+    if (stale()) throw error;
     if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
       nextSeqByChat.set(chatId, optimisticSeq);
     }

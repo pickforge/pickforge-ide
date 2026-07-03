@@ -49,12 +49,14 @@ function fakeQuery(
   overrides: {
     interrupt?: () => Promise<void>;
     setModel?: (model?: string) => Promise<void>;
+    setPermissionMode?: (mode: string) => Promise<void>;
   } = {},
 ) {
   const closed = deferred<void>();
   const queryObject = {
     interrupt: vi.fn(overrides.interrupt ?? (() => Promise.resolve())),
     setModel: vi.fn(overrides.setModel ?? (() => Promise.resolve())),
+    setPermissionMode: vi.fn(overrides.setPermissionMode ?? (() => Promise.resolve())),
     close: vi.fn(() => closed.resolve()),
     async *[Symbol.asyncIterator]() {
       await closed.promise;
@@ -313,6 +315,45 @@ describe("dispatchCommand", () => {
     expect(chatQuery.setModel).toHaveBeenNthCalledWith(2, "fast");
     expect(activeModel).toBe("fast");
     expect(events).not.toContainEqual(expect.objectContaining({ ev: "fatal" }));
+  });
+
+  it("waits for a pending permission mode mutation before sending", async () => {
+    const modeChange = deferred<void>();
+    const chatQuery = fakeQuery({ setPermissionMode: () => modeChange.promise });
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+    const { emit } = eventsCollector();
+
+    dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
+    const prompt = vi.mocked(query).mock.calls[0]?.[0].prompt as AsyncIterable<unknown>;
+    const iterator = prompt[Symbol.asyncIterator]();
+    let delivered = false;
+    const nextMessage = iterator.next().then((result) => {
+      delivered = true;
+      return result;
+    });
+
+    dispatchCommand({ op: "setPermissionMode", chatId: "chat-1", mode: "plan" }, emit);
+    await flushMicrotasks();
+
+    expect(chatQuery.setPermissionMode).toHaveBeenCalledWith("plan");
+
+    dispatchCommand({ op: "send", chatId: "chat-1", text: "hello" }, emit);
+    await flushMicrotasks();
+
+    expect(delivered).toBe(false);
+
+    modeChange.resolve();
+
+    await expect(nextMessage).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      },
+    });
   });
 
   it("waits for a pending model mutation before sending", async () => {

@@ -103,6 +103,8 @@ struct SessionState {
     last_turn_model: Option<String>,
     /// Start overrides, kept so a dead bridge chat (claude CLI exit between
     /// turns) can be restarted transparently on the next send.
+    sandbox: Option<String>,
+    approval_policy: Option<String>,
     effort: Option<String>,
     permission_mode: Option<String>,
     allowed_tools: Option<Vec<String>>,
@@ -261,6 +263,8 @@ impl AgentChatManager {
                     engine,
                     model: model.clone(),
                     last_turn_model: None,
+                    sandbox: non_empty(overrides.sandbox.clone()),
+                    approval_policy: non_empty(overrides.approval_policy.clone()),
                     effort: overrides.effort.clone(),
                     permission_mode: overrides.permission_mode.clone(),
                     allowed_tools: overrides.allowed_tools.clone(),
@@ -353,7 +357,17 @@ impl AgentChatManager {
         // dead one, and eviction relocks `inner` — holding it across that call
         // would self-deadlock the manager. The turn is claimed atomically via
         // claim_turn once a handle exists.
-        let (chat_id, project_root, provider, engine, session_model, provider_session_id, restart) = {
+        let (
+            chat_id,
+            project_root,
+            provider,
+            engine,
+            session_model,
+            provider_session_id,
+            sandbox,
+            approval_policy,
+            restart,
+        ) = {
             let mut inner = self.lock_inner()?;
             let state = inner
                 .get_mut(session_id)
@@ -372,6 +386,8 @@ impl AgentChatManager {
                 state.engine,
                 state.model.clone(),
                 state.provider_session_id.clone(),
+                state.sandbox.clone(),
+                state.approval_policy.clone(),
                 (
                     state.effort.clone(),
                     state.permission_mode.clone(),
@@ -446,7 +462,15 @@ impl AgentChatManager {
             // only an orphaned (timed-out) turn is interrupted, never a legit
             // one on the same thread.
             client.begin_turn_start(&thread_id);
-            match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
+            match client.turn_start(
+                &thread_id,
+                text,
+                codex_model,
+                effort.clone(),
+                &images,
+                sandbox,
+                approval_policy,
+            ) {
                 Ok(started_turn_id) => {
                     client.finish_turn_start_ok(&thread_id, &started_turn_id);
                     // Disposed while turn/start was in flight: the session (and
@@ -787,6 +811,61 @@ impl AgentChatManager {
             client
                 .chat_set_model(session_id, model.as_deref())
                 .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub fn set_mode(
+        &self,
+        session_id: &str,
+        sandbox: Option<String>,
+        approval_policy: Option<String>,
+        permission_mode: Option<String>,
+    ) -> Result<(), AgentChatError> {
+        let sandbox = sandbox.map(|value| non_empty(Some(value)));
+        let approval_policy = approval_policy.map(|value| non_empty(Some(value)));
+        let permission_mode = permission_mode.map(|value| non_empty(Some(value)));
+        let push_permission_mode = {
+            let mut inner = self.lock_inner()?;
+            let state = inner
+                .get_mut(session_id)
+                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            if let Some(sandbox) = sandbox {
+                state.sandbox = sandbox;
+            }
+            if let Some(approval_policy) = approval_policy {
+                state.approval_policy = approval_policy;
+            }
+            if let Some(permission_mode) = permission_mode {
+                state.permission_mode = permission_mode.clone();
+                if let Some(permission_mode) = permission_mode {
+                    if state.engine == Engine::V2 && state.provider == AgentProvider::ClaudeCode {
+                        Some(permission_mode)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(permission_mode) = push_permission_mode {
+            let client = match self.cached_claude_bridge_client() {
+                Ok(client) => Some(client),
+                Err(AgentChatError::Spawn(message))
+                    if message == "claude bridge client is not running" => None,
+                Err(err) => return Err(err),
+            };
+            if let Some(client) = client {
+                if client.chat_started(session_id) {
+                    client
+                        .chat_set_permission_mode(session_id, &permission_mode)
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                }
+            }
         }
         Ok(())
     }
@@ -1170,6 +1249,8 @@ fn upsert_session_state(
         existing.provider = state.provider;
         existing.engine = state.engine;
         existing.model = state.model;
+        existing.sandbox = state.sandbox;
+        existing.approval_policy = state.approval_policy;
         existing.effort = state.effort;
         existing.permission_mode = state.permission_mode;
         existing.allowed_tools = state.allowed_tools;
@@ -1930,6 +2011,68 @@ done
 
     #[cfg(unix)]
     #[test]
+    fn v2_codex_set_mode_applies_to_next_turn() {
+        let script = test_script(
+            "codex-app-turn-mode",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-mode"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-mode"}}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-mode","turn":{"id":"turn-mode","status":"completed"}}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-mode-v2",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                Some("gpt-5".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        manager
+            .set_mode(
+                &session_id,
+                Some("read-only".to_string()),
+                Some("never".to_string()),
+                None,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "hello", None, None, None)
+            .unwrap();
+
+        let log = wait_for_file(&log, |text| text.contains(r#""method":"turn/start""#));
+        let turn_line = log
+            .lines()
+            .find(|line| line.contains(r#""method":"turn/start""#))
+            .unwrap();
+        assert!(turn_line.contains(r#""approvalPolicy":"never""#));
+        assert!(turn_line.contains(r#""sandboxPolicy":{"type":"readOnly"}"#));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn v2_codex_steer_and_interrupt_serialize_ops() {
         let script = test_script(
             "codex-app-control",
@@ -2275,6 +2418,53 @@ done
         let row = wait_for_status(&db, "chat-claude-dead", "idle");
         assert_eq!(row.provider_session_id.as_deref(), Some("claude-respawn"));
         assert_eq!(std::fs::read_to_string(count_file).unwrap(), "2");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v2_claude_set_mode_writes_permission_mode_to_bridge() {
+        let script = test_script(
+            "claude-bridge-set-mode",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  chat_id=$(printf '%s\n' "$line" | sed 's/.*"chatId":"\([^"]*\)".*/\1/')
+  case "$line" in
+    *'"op":"start"'*)
+      printf '{"ev":"started","chatId":"%s"}\n' "$chat_id"
+      ;;
+    *'"op":"shutdown"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = claude_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-claude-mode",
+                script.dir.clone(),
+                AgentProvider::ClaudeCode,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        manager
+            .set_mode(&session_id, None, None, Some("plan".to_string()))
+            .unwrap();
+
+        let log = wait_for_file(&log, |text| text.contains(r#""op":"setPermissionMode""#));
+        assert!(log.contains(r#""chatId":"#));
+        assert!(log.contains(r#""mode":"plan""#));
     }
 
     #[cfg(unix)]

@@ -127,6 +127,7 @@ type ApproveCommand = {
 type InterruptCommand = { op: "interrupt"; chatId: string };
 type CloseCommand = { op: "close"; chatId: string };
 type SetModelCommand = { op: "setModel"; chatId: string; model?: string | null };
+type SetPermissionModeCommand = { op: "setPermissionMode"; chatId: string; mode: string };
 type ListSessionsCommand = { op: "listSessions"; reqId: string; cwd: string };
 type SessionMessagesCommand = {
   op: "sessionMessages";
@@ -142,6 +143,7 @@ export type ParentCommand =
   | InterruptCommand
   | CloseCommand
   | SetModelCommand
+  | SetPermissionModeCommand
   | ListSessionsCommand
   | SessionMessagesCommand
   | ShutdownCommand;
@@ -374,6 +376,32 @@ function queueModelMutation(
   return queuedMutation;
 }
 
+function queuePermissionModeMutation(
+  chat: ChatSession,
+  mode: PermissionMode,
+  emit: (event: BridgeEvent) => void,
+): Promise<void> {
+  const previousMutation = chat.mutationChain.catch(() => undefined);
+  const nextMutation = previousMutation
+    .then(async () => {
+      await chat.query.setPermissionMode(mode);
+      chat.mutationFailure = null;
+    })
+    .catch((error: unknown) => {
+      chat.mutationFailure = { error };
+      emit({ ev: "fatal", chatId: chat.chatId, error: serializeError(error) });
+      throw error;
+    });
+  let queuedMutation: Promise<void>;
+  queuedMutation = nextMutation.finally(() => {
+    if (chat.mutationChain === queuedMutation && chat.mutationFailure) {
+      chat.mutationChain = Promise.resolve();
+    }
+  });
+  chat.mutationChain = queuedMutation;
+  return queuedMutation;
+}
+
 async function awaitMutationChain(chat: ChatSession): Promise<void> {
   const mutationChain = chat.mutationChain;
   try {
@@ -510,6 +538,16 @@ async function handleCommand(
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
       try {
         await queueModelMutation(chat, command.model ?? null, emit);
+      } catch {
+        return;
+      }
+      return;
+    }
+    case "setPermissionMode": {
+      const chat = chats.get(command.chatId);
+      if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
+      try {
+        await queuePermissionModeMutation(chat, command.mode as PermissionMode, emit);
       } catch {
         return;
       }

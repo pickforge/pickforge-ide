@@ -107,6 +107,10 @@ struct SessionState {
     provider_session_id: Option<String>,
     sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     active_turn: Option<ActiveTurn>,
+    /// A V1 terminal event arrived before the turn handle was claimed — the
+    /// claim then reports this so it doesn't install a handle for a dead
+    /// process (leaving the session wedged as running).
+    terminal_pending: bool,
     /// Unanswered approval requests, keyed by approval id. Replayed to the new
     /// sink when a reloaded webview re-attaches mid-turn — without this the
     /// rebuilt UI has no prompt while the agent stays blocked waiting.
@@ -261,6 +265,7 @@ impl AgentChatManager {
                     provider_session_id: provider_session_id.clone(),
                     sink: Arc::clone(&sink),
                     active_turn: None,
+                    terminal_pending: false,
                     pending_approvals: Vec::new(),
                 },
             );
@@ -375,17 +380,23 @@ impl AgentChatManager {
         let codex_model = turn_model.or_else(|| session_model.clone());
         let session_id_owned = session_id.to_string();
 
-        // Persisted only once the provider has accepted the turn — a rejected
-        // send must not leave a phantom prompt in history. Attachments ride
-        // along as a timeline item so restored history keeps the images.
-        let persist_prompt = |db: &Database| -> Result<(), AgentChatError> {
-            db.agent_message_append(&session_id_owned, &chat_id, "user", text)?;
+        // Persist the prompt BEFORE the provider dispatch so it always wins the
+        // sequence race against assistant/usage events the reader thread may
+        // append the instant the turn starts — otherwise reloaded history can
+        // show the reply before the prompt. A dispatch that fails, or a session
+        // disposed mid-flight, rolls these rows back so no phantom prompt (or
+        // orphan of a deleted chat) survives.
+        let persist_prompt = |db: &Database| -> Result<Vec<i64>, AgentChatError> {
+            let mut seqs = vec![db.agent_message_append(&session_id_owned, &chat_id, "user", text)?];
             if !images.is_empty() {
                 let payload =
                     serde_json::json!({ "kind": "attachments", "paths": images }).to_string();
-                db.agent_item_append(&session_id_owned, &chat_id, "attachments", &payload)?;
+                seqs.push(db.agent_item_append(&session_id_owned, &chat_id, "attachments", &payload)?);
             }
-            Ok(())
+            Ok(seqs)
+        };
+        let rollback_prompt = |seqs: &[i64]| {
+            let _ = self.db.agent_prompt_rollback(&chat_id, seqs);
         };
 
         self.db.agent_session_set_status(session_id, "running")?;
@@ -406,7 +417,7 @@ impl AgentChatManager {
             };
             let turn_id = Arc::new(Mutex::new(None));
             let pending_interrupt = Arc::new(AtomicBool::new(false));
-            self.claim_turn(
+            if !self.claim_turn(
                 session_id,
                 ActiveTurn::new(ActiveTurnHandle::CodexApp {
                     client: Arc::clone(&client),
@@ -414,11 +425,19 @@ impl AgentChatManager {
                     turn_id: Arc::clone(&turn_id),
                     pending_interrupt: Arc::clone(&pending_interrupt),
                 }),
-            )?;
+            )? {
+                return Ok(());
+            }
+            let prompt_seqs = persist_prompt(&self.db)?;
 
             match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
-                    persist_prompt(&self.db)?;
+                    // Disposed while turn/start was in flight: the session (and
+                    // its just-installed turn) is gone — drop the orphan prompt.
+                    if !self.session_present(session_id) {
+                        rollback_prompt(&prompt_seqs);
+                        return Ok(());
+                    }
                     *turn_id.lock().map_err(|_| {
                         AgentChatError::Spawn("agent turn lock poisoned".to_string())
                     })? = Some(started_turn_id);
@@ -442,6 +461,7 @@ impl AgentChatManager {
                     return Ok(());
                 }
                 Err(err) => {
+                    rollback_prompt(&prompt_seqs);
                     let _ = self.db.agent_session_set_status(session_id, "failed");
                     if let Some(turn) = clear_active_turn(&self.inner, session_id) {
                         turn.reap();
@@ -451,7 +471,65 @@ impl AgentChatManager {
             }
         }
 
-        let result = match (engine, provider) {
+        if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
+            let client = self.claude_bridge_client()?;
+            // The bridge chat dies with its claude CLI process (crash, auth
+            // expiry, idle exit) while the session stays resumable — restart it
+            // transparently instead of sending into a void.
+            if !client.chat_started(&session_id_owned) {
+                let (effort, permission_mode, allowed_tools) = restart;
+                if let Err(err) = client.chat_start(
+                    &session_id_owned,
+                    project_root.clone(),
+                    session_model.clone(),
+                    effort,
+                    provider_session_id.clone(),
+                    Some(
+                        permission_mode
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or_else(|| "default".to_string()),
+                    ),
+                    allowed_tools,
+                    self.wrapping_sink(session_id_owned.clone(), chat_id.clone()),
+                ) {
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
+                    return Err(AgentChatError::Spawn(err.to_string()));
+                }
+            }
+            if !self.claim_turn(
+                session_id,
+                ActiveTurn::new(ActiveTurnHandle::ClaudeBridge {
+                    client: Arc::clone(&client),
+                    chat_id: session_id_owned.clone(),
+                }),
+            )? {
+                return Ok(());
+            }
+            let prompt_seqs = persist_prompt(&self.db)?;
+            return match client.chat_send(&session_id_owned, text, &images) {
+                Ok(()) => {
+                    if !self.session_present(session_id) {
+                        rollback_prompt(&prompt_seqs);
+                    }
+                    Ok(())
+                }
+                Err(err) => {
+                    rollback_prompt(&prompt_seqs);
+                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                        turn.reap();
+                    }
+                    Err(AgentChatError::Spawn(err.to_string()))
+                }
+            };
+        }
+
+        // V1 one-shot engine: the handle only exists after spawn, so a fast
+        // process failure can emit its terminal event before the turn is
+        // claimed. persist_prompt runs before spawn (seq order), and claim_turn
+        // reports whether a terminal already landed so a stale handle isn't
+        // installed on a dead process.
+        let prompt_seqs = persist_prompt(&self.db)?;
+        let spawned = match (engine, provider) {
             (Engine::V1, AgentProvider::Codex) => {
                 let wrapped_sink = self.wrapping_sink(session_id_owned.clone(), chat_id.clone());
                 spawn_codex_turn(
@@ -485,86 +563,65 @@ impl AgentChatManager {
                 .map(ActiveTurnHandle::Claude)
                 .map_err(|err| AgentChatError::Spawn(err.to_string()))
             }
-            (Engine::V2, AgentProvider::Codex) => unreachable!("handled before match"),
-            (Engine::V2, AgentProvider::ClaudeCode) => {
-                let client = self.claude_bridge_client()?;
-                // The bridge chat dies with its claude CLI process (crash, auth
-                // expiry, idle exit) while the session stays resumable —
-                // restart it transparently instead of sending into a void.
-                if !client.chat_started(&session_id_owned) {
-                    let (effort, permission_mode, allowed_tools) = restart;
-                    if let Err(err) = client.chat_start(
-                        &session_id_owned,
-                        project_root.clone(),
-                        session_model.clone(),
-                        effort,
-                        provider_session_id.clone(),
-                        Some(
-                            permission_mode
-                                .filter(|value| !value.trim().is_empty())
-                                .unwrap_or_else(|| "default".to_string()),
-                        ),
-                        allowed_tools,
-                        self.wrapping_sink(session_id_owned.clone(), chat_id.clone()),
-                    ) {
-                        let _ = self.db.agent_session_set_status(session_id, "failed");
-                        return Err(AgentChatError::Spawn(err.to_string()));
-                    }
-                }
-                self.claim_turn(
-                    session_id,
-                    ActiveTurn::new(ActiveTurnHandle::ClaudeBridge {
-                        client: Arc::clone(&client),
-                        chat_id: session_id_owned.clone(),
-                    }),
-                )?;
-                match client.chat_send(&session_id_owned, text, &images) {
-                    Ok(()) => {
-                        persist_prompt(&self.db)?;
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        if let Some(turn) = clear_active_turn(&self.inner, session_id) {
-                            turn.reap();
-                        }
-                        Err(AgentChatError::Spawn(err.to_string()))
-                    }
-                }
-            }
+            (Engine::V2, _) => unreachable!("handled before match"),
         };
 
-        match result {
+        match spawned {
             Ok(turn) => {
                 let turn = ActiveTurn::new(turn);
-                if let Err(err) = self.claim_turn(session_id, turn.clone()) {
-                    // Lost a concurrent-send race after spawning: kill the
-                    // duplicate run rather than leaking it.
-                    let _ = turn.kill();
-                    turn.reap();
-                    return Err(err);
+                match self.claim_turn(session_id, turn.clone()) {
+                    // A terminal event already surfaced for this send (or it was
+                    // disposed): don't install a handle for an ended process.
+                    Ok(false) | Err(AgentChatError::UnknownSession(_)) => {
+                        let _ = turn.kill();
+                        turn.reap();
+                        if !self.session_present(session_id) {
+                            rollback_prompt(&prompt_seqs);
+                        }
+                        Ok(())
+                    }
+                    Ok(true) => Ok(()),
+                    Err(err) => {
+                        let _ = turn.kill();
+                        turn.reap();
+                        rollback_prompt(&prompt_seqs);
+                        Err(err)
+                    }
                 }
-                persist_prompt(&self.db)?;
-                Ok(())
             }
             Err(err) => {
+                rollback_prompt(&prompt_seqs);
                 let _ = self.db.agent_session_set_status(session_id, "failed");
                 Err(err)
             }
         }
     }
 
-    /// Atomically install a turn handle; fails with TurnActive if another
-    /// send won the race first.
-    fn claim_turn(&self, session_id: &str, turn: ActiveTurn) -> Result<(), AgentChatError> {
+    /// Atomically install a turn handle. Returns `Ok(true)` when installed,
+    /// `Ok(false)` when a terminal event already fired for this pending send
+    /// (V1 race) so the caller must not treat the turn as active. Errors with
+    /// TurnActive if another send won the race, UnknownSession if disposed.
+    fn claim_turn(&self, session_id: &str, turn: ActiveTurn) -> Result<bool, AgentChatError> {
         let mut inner = self.lock_inner()?;
         let state = inner
             .get_mut(session_id)
             .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+        if state.terminal_pending {
+            state.terminal_pending = false;
+            return Ok(false);
+        }
         if state.active_turn.is_some() {
             return Err(AgentChatError::TurnActive);
         }
         state.active_turn = Some(turn);
-        Ok(())
+        Ok(true)
+    }
+
+    fn session_present(&self, session_id: &str) -> bool {
+        self.inner
+            .lock()
+            .map(|inner| inner.contains_key(session_id))
+            .unwrap_or(false)
     }
 
     pub fn approve(
@@ -582,10 +639,25 @@ impl AgentChatManager {
         };
 
         let result = match (engine, provider) {
-            (Engine::V2, AgentProvider::Codex) => self
-                .cached_codex_app_client(&project_root)?
-                .respond_approval(RequestIdRepr::from_serialized(approval_id), decision)
-                .map_err(|err| AgentChatError::Spawn(err.to_string())),
+            (Engine::V2, AgentProvider::Codex) => {
+                let client = self.cached_codex_app_client(&project_root)?;
+                let request_id = RequestIdRepr::from_serialized(approval_id);
+                // A permission-escalation grant has no cancel in its response
+                // shape, so cancel must interrupt the turn. Do it before the
+                // (deny) response so the app-server sees the intent.
+                if decision == "cancel" && client.is_permission_request(&request_id) {
+                    let active_turn = self
+                        .lock_inner()?
+                        .get(session_id)
+                        .and_then(|state| state.active_turn.clone());
+                    if let Some(turn) = active_turn {
+                        let _ = turn.kill();
+                    }
+                }
+                client
+                    .respond_approval(request_id, decision)
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))
+            }
             (Engine::V2, AgentProvider::ClaudeCode) => self
                 .cached_claude_bridge_client()?
                 .chat_approve(session_id, approval_id, decision)
@@ -1236,6 +1308,9 @@ fn handle_runner_event(
             }
         }
         AgentEvent::TurnDone { .. } => {
+            if terminal_should_skip(inner, session_id) {
+                return;
+            }
             if let Err(err) = db.agent_session_set_status(session_id, "idle") {
                 errors.push(err.to_string());
             }
@@ -1243,19 +1318,7 @@ fn handle_runner_event(
             clear_pending_approvals(inner, session_id);
         }
         AgentEvent::TurnFailed { .. } => {
-            // A shared client's crash is broadcast to every subscribed session;
-            // only sessions actually running a turn own the failure. Without
-            // this gate, idle chats get phantom failures persisted.
-            let has_turn = inner
-                .lock()
-                .ok()
-                .map(|states| {
-                    states
-                        .get(session_id)
-                        .is_some_and(|state| state.active_turn.is_some())
-                })
-                .unwrap_or(false);
-            if !has_turn {
+            if terminal_should_skip(inner, session_id) {
                 return;
             }
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
@@ -1348,6 +1411,32 @@ fn clear_active_turn(
             .get_mut(session_id)
             .and_then(|state| state.active_turn.take())
     })
+}
+
+/// Whether a terminal event should be ignored. A session that already owns an
+/// active turn keeps it (not skipped). Otherwise: a V2 session with no turn is
+/// a broadcast to an idle codex-app subscriber (its shared client crashed) —
+/// skip so idle chats don't get phantom failures. A V1 session with no turn hit
+/// the spawn-vs-terminal race: mark `terminal_pending` so the imminent claim
+/// aborts, and process the terminal so the session isn't wedged as running.
+fn terminal_should_skip(
+    inner: &Arc<Mutex<HashMap<String, SessionState>>>,
+    session_id: &str,
+) -> bool {
+    let Ok(mut states) = inner.lock() else {
+        return true;
+    };
+    let Some(state) = states.get_mut(session_id) else {
+        return true;
+    };
+    if state.active_turn.is_some() {
+        return false;
+    }
+    if state.engine == Engine::V2 {
+        return true;
+    }
+    state.terminal_pending = true;
+    false
 }
 
 fn clear_pending_approvals(

@@ -600,6 +600,10 @@ impl Database {
               WHERE chat_id IN (SELECT chat_id FROM chats WHERE project_root = ?1)",
             params![root],
         )?;
+        tx.execute(
+            "DELETE FROM orchestra_tasks WHERE project_root = ?1",
+            params![root],
+        )?;
         tx.execute("DELETE FROM projects WHERE project_root = ?1", params![root])?;
         tx.commit()?;
         Ok(())
@@ -978,6 +982,29 @@ impl Database {
             params![session_id, chat_id, seq, kind, payload_json, now_millis()],
         )?;
         Ok(seq)
+    }
+
+    /// Remove prompt rows persisted optimistically before a send that then
+    /// failed or was disposed mid-flight — matched by the seqs returned from
+    /// the appends.
+    pub fn agent_prompt_rollback(&self, chat_id: &str, seqs: &[i64]) -> Result<(), DbError> {
+        if seqs.is_empty() {
+            return Ok(());
+        }
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        for seq in seqs {
+            tx.execute(
+                "DELETE FROM agent_messages WHERE chat_id = ?1 AND seq = ?2",
+                params![chat_id, seq],
+            )?;
+            tx.execute(
+                "DELETE FROM agent_items WHERE chat_id = ?1 AND seq = ?2",
+                params![chat_id, seq],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn agent_timeline_for_chat(
@@ -2239,20 +2266,35 @@ mod tests {
     }
 
     #[test]
-    fn delete_project_removes_agent_rows_for_project_chats() {
+    fn delete_project_removes_agent_rows_and_orchestra_tasks() {
         let db = Database::open_in_memory().unwrap();
         seed_agent_chat(&db, "/p-delete", "c-delete");
         seed_agent_session_with_model(&db, "s-delete", "c-delete", "codex", Some("gpt-5"));
         append_usage(&db, "s-delete", "c-delete", 10, 1, 2, Some(0.10), None);
         db.agent_message_append("s-delete", "c-delete", "user", "hello")
             .unwrap();
+        db.orchestra_task_upsert(&OrchestraTask {
+            id: "task-delete".into(),
+            project_root: "/p-delete".into(),
+            title: "Delete me".into(),
+            status: "pending".into(),
+            builder_chat_id: Some("c-delete".into()),
+            reviewer_chat_id: None,
+            note: None,
+            sort_order: 0,
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
 
         assert_eq!(db.agent_usage_summary(None).unwrap().len(), 1);
+        assert_eq!(db.orchestra_tasks_for_project("/p-delete").unwrap().len(), 1);
 
         db.delete_project("/p-delete").unwrap();
 
         assert!(db.agent_usage_summary(None).unwrap().is_empty());
         assert!(db.list_chats("/p-delete").unwrap().is_empty());
+        assert!(db.orchestra_tasks_for_project("/p-delete").unwrap().is_empty());
 
         let conn = db.lock();
         let sessions: i64 = conn

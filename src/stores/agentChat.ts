@@ -107,6 +107,7 @@ export interface AgentChatState {
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
 const nextSeqByChat = new Map<string, number>();
 const ensurePromises = new Map<string, Promise<void>>();
+const pendingSetModelByChat = new Map<string, Promise<void>>();
 // Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
 const ensureGenerations = new Map<string, number>();
 const autoRenameChecked = new Set<string>();
@@ -743,7 +744,20 @@ export function setAgentChatModel(chatId: string, model: string | null) {
   // running query (SDK setModel) or the picker silently lies until the next
   // session. Codex reads the model per turn, so the store update suffices.
   if (chat.provider === "claudeCode" && chat.sessionId) {
-    void agentChatSetModel(chat.sessionId, model).catch(() => undefined);
+    const sessionId = chat.sessionId;
+    let pendingSetModel: Promise<void> | undefined;
+    pendingSetModel = (async () => {
+      try {
+        await agentChatSetModel(sessionId, model);
+      } catch {
+        return;
+      } finally {
+        if (pendingSetModelByChat.get(chatId) === pendingSetModel) {
+          pendingSetModelByChat.delete(chatId);
+        }
+      }
+    })();
+    pendingSetModelByChat.set(chatId, pendingSetModel);
   }
 }
 
@@ -829,6 +843,9 @@ export async function sendAgentMessage(
       } else {
         setChats(chatId, { error: null });
       }
+    }
+    if ((chats[chatId] ?? chat).provider === "claudeCode") {
+      await pendingSetModelByChat.get(chatId);
     }
     await agentChatSend(sessionId, text, sendOptions(chats[chatId] ?? chat, imageList));
   } catch (error) {
@@ -924,5 +941,6 @@ export function disposeAgentChat(chatId: string) {
   interruptedByUser.delete(chatId);
   nextSeqByChat.delete(chatId);
   ensurePromises.delete(chatId);
+  pendingSetModelByChat.delete(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
 }

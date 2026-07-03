@@ -332,6 +332,17 @@ impl CodexAppClient {
         .map(|_| ())
     }
 
+    /// Whether this approval is a permission-escalation request (answered with
+    /// a grant profile, not a `{decision}`). Cancel on these must interrupt the
+    /// turn — the response shape has no cancel.
+    pub fn is_permission_request(&self, request_id: &RequestIdRepr) -> bool {
+        self.state
+            .pending_permissions
+            .lock()
+            .map(|pending| pending.contains_key(&request_id.approval_id()))
+            .unwrap_or(false)
+    }
+
     pub fn respond_approval(
         &self,
         request_id: RequestIdRepr,
@@ -408,6 +419,16 @@ impl CodexAppClient {
     }
 
     pub fn unsubscribe(&self, thread_id: &str) -> Result<(), CodexAppError> {
+        // Tell the app-server to release the thread too — dropping only the
+        // local sink leaves it loaded/subscribed until process exit, leaking
+        // resources across chat deletes and provider switches. Best-effort: a
+        // closed client or a server that already dropped it must not fail the
+        // local cleanup below.
+        if !self.is_closed() {
+            let mut params = Map::new();
+            params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
+            let _ = self.request("thread/unsubscribe", Value::Object(params), REQUEST_TIMEOUT);
+        }
         self.state
             .subscriptions
             .lock()
@@ -1018,8 +1039,10 @@ fn approval_response_message(request_id: RequestIdRepr, decision: &str) -> Value
 
 /// Answer for `item/permissions/requestApproval`: an accepted grant echoes the
 /// requested profile (scoped to the turn, or the session for "accept for
-/// session"); a decline grants an empty profile so the turn can proceed
-/// without the escalation instead of blocking forever.
+/// session"); a plain decline grants an empty profile so the turn proceeds
+/// without the escalation. `cancel` is distinct — the caller interrupts the
+/// turn instead of sending this, so it is treated like decline here as a
+/// fallback only.
 fn permission_response_message(
     request_id: RequestIdRepr,
     decision: &str,

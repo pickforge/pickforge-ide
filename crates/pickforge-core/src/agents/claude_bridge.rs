@@ -104,6 +104,13 @@ impl ClaudeBridgeClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // A packaged GUI app doesn't inherit the login-shell PATH, so the
+        // sidecar can't find the user's `claude` (or `bun`) install. Spawn with
+        // the enriched shell environment like the other runners do.
+        command.env_clear();
+        for (key, value) in crate::process::user_shell_environment().clone() {
+            command.env(key, value);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -568,8 +575,21 @@ fn handle_incoming_line(state: &Arc<ClientState>, line: &str) {
         Some("chatClosed") => {
             // The bridge dropped this chat (query ended or errored). Remove the
             // runtime so chat_send fails fast and the manager can restart the
-            // chat instead of streaming prompts into a void.
+            // chat instead of streaming prompts into a void. If a send raced
+            // ahead and installed a turn, emit a terminal failure first — the
+            // bridge's own `fatal` for that send would arrive after the chat is
+            // gone and get dropped, leaving the manager stuck as running.
             if let Some(chat_id) = string_field(&value, &["chatId"]) {
+                if let Some(chat) = chat_runtime(state, &chat_id) {
+                    if chat.turn_active.load(Ordering::SeqCst) {
+                        dispatch_chat_event(
+                            &chat,
+                            AgentEvent::TurnFailed {
+                                error: "claude chat ended before the turn completed".to_string(),
+                            },
+                        );
+                    }
+                }
                 remove_chat(state, &chat_id);
             }
         }

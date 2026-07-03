@@ -71,6 +71,11 @@ function eventsCollector() {
   };
 }
 
+function expectAllowResult(result: unknown, input: Record<string, unknown>) {
+  expect(result).toEqual({ behavior: "allow", updatedInput: input });
+  expect((result as { updatedInput: Record<string, unknown> }).updatedInput).toBe(input);
+}
+
 beforeEach(() => {
   resetBridgeStateForTests();
   sdk.getSessionMessages.mockReset();
@@ -98,13 +103,19 @@ describe("PushableAsyncQueue", () => {
 
 describe("permissionResultForDecision", () => {
   it("maps approval decisions to SDK permission results", () => {
-    expect(permissionResultForDecision("accept")).toEqual({ behavior: "allow" });
-    expect(permissionResultForDecision("acceptForSession")).toEqual({ behavior: "allow" });
-    expect(permissionResultForDecision("decline")).toEqual({
+    const acceptInput = { command: "bun test" };
+    const sessionInput = { file_path: "/project/src/main.ts" };
+
+    expectAllowResult(permissionResultForDecision("accept", acceptInput), acceptInput);
+    expectAllowResult(
+      permissionResultForDecision("acceptForSession", sessionInput),
+      sessionInput,
+    );
+    expect(permissionResultForDecision("decline", acceptInput)).toEqual({
       behavior: "deny",
       message: "denied by user",
     });
-    expect(permissionResultForDecision("cancel")).toEqual({
+    expect(permissionResultForDecision("cancel", acceptInput)).toEqual({
       behavior: "deny",
       message: "cancelled",
       interrupt: true,
@@ -129,10 +140,11 @@ describe("createPermissionHandler", () => {
     const gate = createPermissionGate();
     const events: BridgeEvent[] = [];
     const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+    const firstInput = { command: "bun test" };
 
     const first = handler(
       "Bash",
-      { command: "bun test" },
+      firstInput,
       {
         toolUseID: "req-1",
         signal: new AbortController().signal,
@@ -145,23 +157,25 @@ describe("createPermissionHandler", () => {
         chatId: "chat-1",
         requestId: "req-1",
         toolName: "Bash",
-        input: { command: "bun test" },
+        input: firstInput,
       },
     ]);
 
     expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
-    await expect(first).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await first, firstInput);
+
+    const secondInput = { command: "bun test" };
 
     const second = await handler(
       "Bash",
-      { command: "bun test" },
+      secondInput,
       {
         toolUseID: "req-2",
         signal: new AbortController().signal,
       },
     );
 
-    expect(second).toEqual({ behavior: "allow" });
+    expectAllowResult(second, secondInput);
     expect(events).toHaveLength(1);
     expect(gate.pendingApprovals.has("req-2")).toBe(false);
   });
@@ -170,14 +184,15 @@ describe("createPermissionHandler", () => {
     const gate = createPermissionGate();
     const events: BridgeEvent[] = [];
     const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+    const input = { command: "bun test" };
 
     const first = handler(
       "Bash",
-      { command: "bun test" },
+      input,
       { toolUseID: "req-1", signal: new AbortController().signal },
     );
     expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
-    await expect(first).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await first, input);
 
     void handler(
       "Bash",
@@ -194,21 +209,24 @@ describe("createPermissionHandler", () => {
     const gate = createPermissionGate();
     const events: BridgeEvent[] = [];
     const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+    const firstInput = { notebook_path: "/notes/a.ipynb" };
 
     const first = handler(
       "NotebookEdit",
-      { notebook_path: "/notes/a.ipynb" },
+      firstInput,
       { toolUseID: "req-1", signal: new AbortController().signal },
     );
     expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
-    await expect(first).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await first, firstInput);
+
+    const secondInput = { notebook_path: "/notes/a.ipynb" };
 
     const second = await handler(
       "NotebookEdit",
-      { notebook_path: "/notes/a.ipynb" },
+      secondInput,
       { toolUseID: "req-2", signal: new AbortController().signal },
     );
-    expect(second).toEqual({ behavior: "allow" });
+    expectAllowResult(second, secondInput);
     expect(events).toHaveLength(1);
 
     const third = handler(
@@ -234,7 +252,8 @@ describe("dispatchCommand", () => {
     dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
 
     const options = vi.mocked(query).mock.calls[0]?.[0].options;
-    const permission = options?.canUseTool?.("Bash", { command: "bun test" }, {
+    const input = { command: "bun test" };
+    const permission = options?.canUseTool?.("Bash", input, {
       toolUseID: "approval-1",
       signal: new AbortController().signal,
     });
@@ -247,14 +266,14 @@ describe("dispatchCommand", () => {
       decision: "accept",
     }, emit);
 
-    await expect(permission).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await permission, input);
     expect(chatQuery.interrupt).toHaveBeenCalledTimes(1);
     expect(events).toContainEqual({
       ev: "approvalRequest",
       chatId: "chat-1",
       requestId: "approval-1",
       toolName: "Bash",
-      input: { command: "bun test" },
+      input,
     });
 
     interrupt.resolve();

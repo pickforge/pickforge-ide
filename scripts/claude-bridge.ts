@@ -55,6 +55,7 @@ export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "canc
 
 export type PendingApproval = {
   scopeKey: string;
+  input: Record<string, unknown>;
   resolve: (result: PermissionResult) => void;
 };
 
@@ -221,9 +222,12 @@ export function createUserTextMessage(
   };
 }
 
-export function permissionResultForDecision(decision: ApprovalDecision): PermissionResult {
+export function permissionResultForDecision(
+  decision: ApprovalDecision,
+  input: Record<string, unknown>,
+): PermissionResult {
   if (decision === "accept" || decision === "acceptForSession") {
-    return { behavior: "allow" };
+    return { behavior: "allow", updatedInput: input };
   }
   if (decision === "decline") {
     return { behavior: "deny", message: "denied by user" };
@@ -239,7 +243,7 @@ export function resolveApprovalDecision(
   const pending = gate.pendingApprovals.get(requestId);
   if (!pending) return false;
   if (decision === "acceptForSession") gate.alwaysAllow.add(pending.scopeKey);
-  pending.resolve(permissionResultForDecision(decision));
+  pending.resolve(permissionResultForDecision(decision, pending.input));
   return true;
 }
 
@@ -250,7 +254,7 @@ export function createPermissionHandler(
 ): CanUseTool {
   return async (toolName, input, { toolUseID, signal }) => {
     const scopeKey = approvalScopeKey(toolName, input);
-    if (gate.alwaysAllow.has(scopeKey)) return { behavior: "allow" };
+    if (gate.alwaysAllow.has(scopeKey)) return { behavior: "allow", updatedInput: input };
     if (signal.aborted) return { behavior: "deny", message: "cancelled", interrupt: true };
 
     return await new Promise<PermissionResult>((resolveResult) => {
@@ -262,7 +266,7 @@ export function createPermissionHandler(
       };
 
       signal.addEventListener("abort", abort, { once: true });
-      gate.pendingApprovals.set(toolUseID, { scopeKey, resolve: finish });
+      gate.pendingApprovals.set(toolUseID, { scopeKey, input, resolve: finish });
       emit({ ev: "approvalRequest", chatId, requestId: toolUseID, toolName, input });
     });
   };

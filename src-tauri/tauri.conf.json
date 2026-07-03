@@ -42,7 +42,7 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
-    "externalBin": ["binaries/pickforge-mcp"],
+    "externalBin": ["binaries/pickforge-mcp", "binaries/pickforge-claude-bridge"],
     "resources": {
       "../scripts/claude-bridge.ts": "scripts/claude-bridge.ts"
     },

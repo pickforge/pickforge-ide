@@ -169,6 +169,7 @@ impl CodexAppClient {
             subscriptions: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             next_id: AtomicI64::new(1),
+            pending_permissions: Mutex::new(HashMap::new()),
         });
         let (writer_tx, writer_rx) = mpsc::channel();
 
@@ -336,7 +337,18 @@ impl CodexAppClient {
         request_id: RequestIdRepr,
         decision: &str,
     ) -> Result<(), CodexAppError> {
-        self.send_value(approval_response_message(request_id, decision))
+        let requested = self
+            .state
+            .pending_permissions
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.remove(&request_id.approval_id()));
+        match requested {
+            Some(permissions) => {
+                self.send_value(permission_response_message(request_id, decision, permissions))
+            }
+            None => self.send_value(approval_response_message(request_id, decision)),
+        }
     }
 
     pub fn thread_list(&self, cwd: Option<String>) -> Result<Value, CodexAppError> {
@@ -528,6 +540,10 @@ struct ClientState {
     subscriptions: Mutex<HashMap<String, Arc<dyn Fn(AgentEvent) + Send + Sync>>>,
     closed: AtomicBool,
     next_id: AtomicI64,
+    /// Requested permission profiles by approval id — `item/permissions/
+    /// requestApproval` answers with `{permissions, scope}` rather than the
+    /// `{decision}` shape command/fileChange approvals use.
+    pending_permissions: Mutex<HashMap<String, Value>>,
 }
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
@@ -550,6 +566,14 @@ enum IncomingLine {
         result: Result<Value, String>,
     },
     Events(Vec<RoutedEvent>),
+    /// A permission-escalation request: surfaced like any approval, but the
+    /// requested profile must be remembered so the eventual answer can echo
+    /// the grant back in the shape this method expects.
+    PermissionRequest {
+        approval_id: String,
+        permissions: Value,
+        events: Vec<RoutedEvent>,
+    },
     None,
 }
 
@@ -577,6 +601,16 @@ fn read_loop(stdout: impl Read, state: Arc<ClientState>) {
         match parse_incoming_line(&line) {
             IncomingLine::Response { id, result } => complete_pending(&state, id, result),
             IncomingLine::Events(events) => dispatch_events(&state, events),
+            IncomingLine::PermissionRequest {
+                approval_id,
+                permissions,
+                events,
+            } => {
+                if let Ok(mut pending) = state.pending_permissions.lock() {
+                    pending.insert(approval_id, permissions);
+                }
+                dispatch_events(&state, events);
+            }
             IncomingLine::None => {}
         }
     }
@@ -618,7 +652,20 @@ fn parse_incoming_line(line: &str) -> IncomingLine {
     let method = method.unwrap_or_default();
     let params = value.get("params").unwrap_or(&Value::Null);
     if let Some(id) = value.get("id") {
-        return IncomingLine::Events(server_request_events(method, id, params));
+        let events = server_request_events(method, id, params);
+        if method == "item/permissions/requestApproval" {
+            if let Some(request_id) = RequestIdRepr::from_value(id) {
+                return IncomingLine::PermissionRequest {
+                    approval_id: request_id.approval_id(),
+                    permissions: params
+                        .get("permissions")
+                        .cloned()
+                        .unwrap_or_else(|| Value::Object(Map::new())),
+                    events,
+                };
+            }
+        }
+        return IncomingLine::Events(events);
     }
 
     IncomingLine::Events(notification_events(method, params))
@@ -631,6 +678,7 @@ fn server_request_events(method: &str, id: &Value, params: &Value) -> Vec<Routed
     let kind = match method {
         "item/commandExecution/requestApproval" => ApprovalKind::Command,
         "item/fileChange/requestApproval" => ApprovalKind::FileChange,
+        "item/permissions/requestApproval" => ApprovalKind::ToolUse,
         _ => return Vec::new(),
     };
 
@@ -968,6 +1016,39 @@ fn approval_response_message(request_id: RequestIdRepr, decision: &str) -> Value
     Value::Object(message)
 }
 
+/// Answer for `item/permissions/requestApproval`: an accepted grant echoes the
+/// requested profile (scoped to the turn, or the session for "accept for
+/// session"); a decline grants an empty profile so the turn can proceed
+/// without the escalation instead of blocking forever.
+fn permission_response_message(
+    request_id: RequestIdRepr,
+    decision: &str,
+    requested: Value,
+) -> Value {
+    let granted = matches!(decision, "accept" | "acceptForSession");
+    let mut result = Map::new();
+    result.insert(
+        "permissions".to_string(),
+        if granted {
+            requested
+        } else {
+            Value::Object(Map::new())
+        },
+    );
+    if granted {
+        let scope = if decision == "acceptForSession" {
+            "session"
+        } else {
+            "turn"
+        };
+        result.insert("scope".to_string(), Value::String(scope.to_string()));
+    }
+    let mut message = Map::new();
+    message.insert("id".to_string(), request_id.to_value());
+    message.insert("result".to_string(), Value::Object(result));
+    Value::Object(message)
+}
+
 fn thread_info_from_result(result: &Value) -> Result<ThreadInfo, CodexAppError> {
     let thread = result
         .get("thread")
@@ -1203,6 +1284,48 @@ mod tests {
     #[test]
     fn handshake_fixture_skips_remote_control_status() {
         assert!(fixture_events("appserver-handshake.jsonl").is_empty());
+    }
+
+    #[test]
+    fn permission_request_is_surfaced_and_answered_in_grant_shape() {
+        let line = r#"{"id":7,"method":"item/permissions/requestApproval","params":{"threadId":"t1","itemId":"i1","turnId":"u1","cwd":"/p","startedAtMs":1,"permissions":{"network":{"allowAll":true}}}}"#;
+        let IncomingLine::PermissionRequest {
+            approval_id,
+            permissions,
+            events,
+        } = parse_incoming_line(line)
+        else {
+            panic!("expected a permission request");
+        };
+
+        assert_eq!(permissions, json!({"network": {"allowAll": true}}));
+        assert!(matches!(
+            events.as_slice(),
+            [RoutedEvent {
+                thread_id: Some(thread_id),
+                event: AgentEvent::ApprovalRequest {
+                    kind: ApprovalKind::ToolUse,
+                    ..
+                },
+            }] if thread_id == "t1"
+        ));
+
+        let granted = permission_response_message(
+            RequestIdRepr::from_serialized(&approval_id),
+            "acceptForSession",
+            permissions.clone(),
+        );
+        assert_eq!(granted["id"], json!(7));
+        assert_eq!(granted["result"]["scope"], "session");
+        assert_eq!(granted["result"]["permissions"], permissions);
+
+        let declined = permission_response_message(
+            RequestIdRepr::from_serialized(&approval_id),
+            "decline",
+            permissions,
+        );
+        assert_eq!(declined["result"]["permissions"], json!({}));
+        assert!(declined["result"].get("scope").is_none());
     }
 
     #[test]

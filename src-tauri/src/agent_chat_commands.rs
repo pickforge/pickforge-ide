@@ -83,6 +83,15 @@ pub async fn agent_chat_send(
     model: Option<String>,
     images: Option<Vec<String>>,
 ) -> Result<(), String> {
+    let images = images
+        .map(|paths| {
+            paths
+                .into_iter()
+                .filter(|path| !path.trim().is_empty())
+                .map(|path| validated_stashed_image(&path))
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?;
     let mgr = mgr.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         mgr.send(&session_id, &text, effort, model, images)
@@ -90,6 +99,22 @@ pub async fn agent_chat_send(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Only files produced by `agent_stash_image` may ride along with a prompt —
+/// the renderer must not be able to attach arbitrary local paths.
+fn validated_stashed_image(path: &str) -> Result<String, String> {
+    let stash_dir = std::env::temp_dir()
+        .join("pickforge-images")
+        .canonicalize()
+        .map_err(|_| "image attachment rejected: not a stashed image".to_string())?;
+    let canonical = Path::new(path)
+        .canonicalize()
+        .map_err(|_| "image attachment rejected: not a stashed image".to_string())?;
+    if !canonical.starts_with(&stash_dir) {
+        return Err("image attachment rejected: not a stashed image".to_string());
+    }
+    Ok(canonical.to_string_lossy().into_owned())
 }
 
 #[tauri::command]

@@ -605,6 +605,17 @@ function parseAgentEvent(payload: string): AgentEvent | null {
   }
 }
 
+/** Payload of a persisted "attachments" item: the image paths a prompt shipped. */
+function parseAttachmentPaths(payload: string): string[] {
+  try {
+    const parsed = JSON.parse(payload) as { paths?: unknown };
+    if (!Array.isArray(parsed.paths)) return [];
+    return parsed.paths.filter((path): path is string => typeof path === "string");
+  } catch {
+    return [];
+  }
+}
+
 function stateFromHistory(
   chatId: string,
   provider: AgentProvider,
@@ -626,6 +637,21 @@ function stateFromHistory(
           ...chat.timeline,
           { type: "assistantText", seq: entry.seq, text: entry.content, streaming: false },
         ]);
+      }
+      continue;
+    }
+    if (entry.kind === "attachments") {
+      const paths = parseAttachmentPaths(entry.payload);
+      if (paths.length > 0) {
+        const timeline = chat.timeline.slice();
+        for (let i = timeline.length - 1; i >= 0; i -= 1) {
+          const item = timeline[i];
+          if (item.type === "userMessage") {
+            timeline[i] = { ...item, images: paths };
+            break;
+          }
+        }
+        chat = withTimeline(chat, timeline);
       }
       continue;
     }

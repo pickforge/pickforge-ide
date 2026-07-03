@@ -22,6 +22,10 @@ const CHILD_EXIT_POLL: Duration = Duration::from_millis(10);
 pub struct ClaudeBridgeOptions {
     pub runtime: Option<String>,
     pub script: Option<PathBuf>,
+    /// A self-contained bridge executable (the `pickforge-claude-bridge`
+    /// sidecar in packaged builds). When set it runs directly — no Bun, no
+    /// script argument.
+    pub standalone: Option<PathBuf>,
     pub app_root: PathBuf,
 }
 
@@ -76,16 +80,26 @@ impl ClaudeBridgeClient {
         let ClaudeBridgeOptions {
             runtime,
             script,
+            standalone,
             app_root,
         } = opts;
-        let runtime = runtime
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "bun".to_string());
-        let script = script.unwrap_or_else(|| app_root.join("scripts").join("claude-bridge.ts"));
+        let (runtime, script) = match standalone {
+            Some(binary) => (binary.to_string_lossy().into_owned(), None),
+            None => (
+                runtime
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "bun".to_string()),
+                Some(
+                    script.unwrap_or_else(|| app_root.join("scripts").join("claude-bridge.ts")),
+                ),
+            ),
+        };
 
         let mut command = Command::new(&runtime);
+        if let Some(script) = script {
+            command.arg(script);
+        }
         command
-            .arg(script)
             .current_dir(app_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1041,6 +1055,7 @@ done
         ClaudeBridgeOptions {
             runtime: Some(script.runtime.to_string_lossy().to_string()),
             script: Some(script.dir.join("ignored.ts")),
+            standalone: None,
             app_root: script.dir.clone(),
         }
     }

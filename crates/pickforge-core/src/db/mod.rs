@@ -634,8 +634,22 @@ impl Database {
     }
 
     pub fn delete_chat(&self, chat_id: &str) -> Result<(), DbError> {
-        self.lock()
-            .execute("DELETE FROM chats WHERE chat_id = ?1", params![chat_id])?;
+        // Agent tables reference chats by plain chat_id (no FK cascade); drop
+        // them with the chat or orphaned sessions/items keep counting in the
+        // global usage summary.
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM agent_items WHERE chat_id = ?1", params![chat_id])?;
+        tx.execute(
+            "DELETE FROM agent_messages WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+        tx.execute(
+            "DELETE FROM agent_sessions WHERE chat_id = ?1",
+            params![chat_id],
+        )?;
+        tx.execute("DELETE FROM chats WHERE chat_id = ?1", params![chat_id])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -976,7 +990,7 @@ impl Database {
     ) -> Result<Vec<AgentUsageSummary>, DbError> {
         let sql = if project_root.is_some() {
             "SELECT s.provider AS provider,
-                    s.model AS model,
+                    COALESCE(json_extract(ai.payload, '$.model'), s.model) AS model,
                     s.chat_id AS chat_id,
                     ai.session_id AS session_id,
                     json_extract(ai.payload, '$.contextUsed') AS context_used,
@@ -993,7 +1007,7 @@ impl Database {
                 .to_string()
         } else {
             "SELECT s.provider AS provider,
-                    s.model AS model,
+                    COALESCE(json_extract(ai.payload, '$.model'), s.model) AS model,
                     s.chat_id AS chat_id,
                     ai.session_id AS session_id,
                     json_extract(ai.payload, '$.contextUsed') AS context_used,

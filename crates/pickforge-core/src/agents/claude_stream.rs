@@ -358,9 +358,14 @@ impl ClaudeStreamParser {
         let model_usage = value.get("modelUsage").and_then(Value::as_object);
         let mut events = vec![match model_usage.filter(|models| !models.is_empty()) {
             Some(models) => AgentEvent::Usage {
+                // Cache writes are prompt tokens too — folding them into input
+                // keeps usage rows reconciled with the context meter.
                 input_tokens: models
                     .values()
-                    .filter_map(|entry| u64_at(entry, "inputTokens"))
+                    .map(|entry| {
+                        u64_at(entry, "inputTokens").unwrap_or_default()
+                            + u64_at(entry, "cacheCreationInputTokens").unwrap_or_default()
+                    })
                     .sum(),
                 cached_input_tokens: models
                     .values()
@@ -1099,7 +1104,7 @@ mod tests {
             events.as_slice(),
             [
                 AgentEvent::Usage {
-                    input_tokens: 29,
+                    input_tokens: 23915,
                     cached_input_tokens: 522513,
                     output_tokens: 85,
                     cost_usd: Some(0.05),

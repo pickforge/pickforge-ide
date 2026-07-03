@@ -140,6 +140,30 @@ describe("createPermissionHandler", () => {
     expect(events).toHaveLength(1);
     expect(gate.pendingApprovals.has("req-2")).toBe(false);
   });
+
+  it("re-prompts when the same tool is used with a different command", async () => {
+    const gate = createPermissionGate();
+    const events: BridgeEvent[] = [];
+    const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+
+    const first = handler(
+      "Bash",
+      { command: "bun test" },
+      { toolUseID: "req-1", signal: new AbortController().signal },
+    );
+    expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
+    await expect(first).resolves.toEqual({ behavior: "allow" });
+
+    void handler(
+      "Bash",
+      { command: "rm -rf /" },
+      { toolUseID: "req-2", signal: new AbortController().signal },
+    );
+
+    expect(events).toHaveLength(2);
+    expect(gate.pendingApprovals.has("req-2")).toBe(true);
+    expect(resolveApprovalDecision(gate, "req-2", "decline")).toBe(true);
+  });
 });
 
 describe("dispatchCommand", () => {

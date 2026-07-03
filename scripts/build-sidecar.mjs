@@ -42,3 +42,15 @@ const dest = join(destDir, `pickforge-mcp-${triple}${ext}`);
 mkdirSync(destDir, { recursive: true });
 copyFileSync(built, dest);
 console.log(`[sidecar] staged ${dest}`);
+
+// The Claude bridge runs on the Agent SDK — a packaged app has neither Bun nor
+// the repo's node_modules, so compile it into a self-contained executable and
+// ship it the same way. Dev keeps spawning `bun scripts/claude-bridge.ts`.
+const bridgeDest = join(destDir, `pickforge-claude-bridge-${triple}${ext}`);
+console.log("[sidecar] bun build --compile scripts/claude-bridge.ts");
+execFileSync(
+  "bun",
+  ["build", "--compile", join(root, "scripts", "claude-bridge.ts"), "--outfile", bridgeDest],
+  { cwd: root, stdio: "inherit" },
+);
+console.log(`[sidecar] staged ${bridgeDest}`);

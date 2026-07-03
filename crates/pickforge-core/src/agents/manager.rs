@@ -95,9 +95,17 @@ struct SessionState {
     provider: AgentProvider,
     engine: Engine,
     model: Option<String>,
+    /// Model the most recent turn was sent with (per-turn override or the
+    /// session model at send time). Usage rows persist this so a later model
+    /// switch can't re-attribute earlier turns.
+    last_turn_model: Option<String>,
     provider_session_id: Option<String>,
     sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     active_turn: Option<ActiveTurn>,
+    /// Unanswered approval requests, keyed by approval id. Replayed to the new
+    /// sink when a reloaded webview re-attaches mid-turn — without this the
+    /// rebuilt UI has no prompt while the agent stays blocked waiting.
+    pending_approvals: Vec<(String, AgentEvent)>,
 }
 
 #[derive(Clone)]
@@ -241,11 +249,35 @@ impl AgentChatManager {
                     provider,
                     engine,
                     model: model.clone(),
+                    last_turn_model: None,
                     provider_session_id: provider_session_id.clone(),
-                    sink,
+                    sink: Arc::clone(&sink),
                     active_turn: None,
+                    pending_approvals: Vec::new(),
                 },
             );
+        }
+
+        // A webview reload re-attaches to a session the manager kept alive; the
+        // rebuilt store starts from persisted history, which excludes transient
+        // turn state. Replay it so a running turn and its unanswered approvals
+        // survive the reload.
+        let replay = {
+            let inner = self.lock_inner()?;
+            inner
+                .get(&session_id)
+                .map(|state| {
+                    let mut events = Vec::new();
+                    if state.active_turn.is_some() {
+                        events.push(AgentEvent::TurnStarted);
+                    }
+                    events.extend(state.pending_approvals.iter().map(|(_, event)| event.clone()));
+                    events
+                })
+                .unwrap_or_default()
+        };
+        for event in replay {
+            sink(event);
         }
 
         match (engine, provider) {
@@ -318,9 +350,24 @@ impl AgentChatManager {
         let codex_model = turn_model.clone().or_else(|| session_model.clone());
         let provider_session_id = state.provider_session_id.clone();
         let session_id_owned = session_id.to_string();
+        state.last_turn_model = match provider {
+            AgentProvider::Codex => codex_model.clone(),
+            AgentProvider::ClaudeCode => session_model.clone(),
+        };
 
-        self.db
-            .agent_message_append(session_id, &chat_id, "user", text)?;
+        // Persisted only once the provider has accepted the turn — a rejected
+        // send must not leave a phantom prompt in history. Attachments ride
+        // along as a timeline item so restored history keeps the images.
+        let persist_prompt = |db: &Database| -> Result<(), AgentChatError> {
+            db.agent_message_append(&session_id_owned, &chat_id, "user", text)?;
+            if !images.is_empty() {
+                let payload =
+                    serde_json::json!({ "kind": "attachments", "paths": images }).to_string();
+                db.agent_item_append(&session_id_owned, &chat_id, "attachments", &payload)?;
+            }
+            Ok(())
+        };
+
         self.db.agent_session_set_status(session_id, "running")?;
 
         if engine == Engine::V2 && provider == AgentProvider::Codex {
@@ -349,6 +396,7 @@ impl AgentChatManager {
 
             match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
+                    persist_prompt(&self.db)?;
                     *turn_id.lock().map_err(|_| {
                         AgentChatError::Spawn("agent turn lock poisoned".to_string())
                     })? = Some(started_turn_id);
@@ -423,7 +471,10 @@ impl AgentChatManager {
                     chat_id: chat_id.clone(),
                 }));
                 match client.chat_send(&chat_id, text, &images) {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => {
+                        persist_prompt(&self.db)?;
+                        return Ok(());
+                    }
                     Err(err) => {
                         state.active_turn = None;
                         Err(AgentChatError::Spawn(err.to_string()))
@@ -434,6 +485,7 @@ impl AgentChatManager {
 
         match result {
             Ok(turn) => {
+                persist_prompt(&self.db)?;
                 state.active_turn = Some(ActiveTurn::new(turn));
                 Ok(())
             }
@@ -458,7 +510,7 @@ impl AgentChatManager {
             (state.engine, state.provider, state.project_root.clone())
         };
 
-        match (engine, provider) {
+        let result = match (engine, provider) {
             (Engine::V2, AgentProvider::Codex) => self
                 .cached_codex_app_client(&project_root)?
                 .respond_approval(RequestIdRepr::from_serialized(approval_id), decision)
@@ -470,7 +522,15 @@ impl AgentChatManager {
             (Engine::V1, _) => Err(AgentChatError::Unsupported(
                 "approvals require the v2 agent engine".to_string(),
             )),
+        };
+        if result.is_ok() {
+            if let Ok(mut states) = self.inner.lock() {
+                if let Some(state) = states.get_mut(session_id) {
+                    state.pending_approvals.retain(|(id, _)| id != approval_id);
+                }
+            }
         }
+        result
     }
 
     pub fn steer(&self, session_id: &str, text: &str) -> Result<(), AgentChatError> {
@@ -656,6 +716,7 @@ impl AgentChatManager {
         let spawned = spawn_claude_bridge(ClaudeBridgeOptions {
             runtime: self.claude_binary(),
             script: None,
+            standalone: bridge_sidecar_path(),
             app_root: self.app_root.clone(),
         })
         .map(Arc::new);
@@ -834,6 +895,26 @@ impl AgentChatManager {
     }
 }
 
+/// Packaged builds ship the bridge as the self-contained
+/// `pickforge-claude-bridge` sidecar next to the app binary (Tauri
+/// externalBin); dev builds have no such file and fall back to
+/// `bun scripts/claude-bridge.ts`.
+fn bridge_sidecar_path() -> Option<PathBuf> {
+    // Dev builds iterate on the live script — `tauri dev` stages externalBin
+    // next to the debug exe, and a stale compiled bridge must not shadow it.
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let name = if cfg!(windows) {
+        "pickforge-claude-bridge.exe"
+    } else {
+        "pickforge-claude-bridge"
+    };
+    let candidate = exe_dir.join(name);
+    candidate.is_file().then_some(candidate)
+}
+
 struct StartGuard {
     chat_id: String,
     starting: Arc<Mutex<HashSet<String>>>,
@@ -1007,9 +1088,18 @@ fn handle_runner_event(
         | AgentEvent::McpToolCall { .. }
         | AgentEvent::ToolUse { .. }
         | AgentEvent::WebSearch { .. }
-        | AgentEvent::PlanUpdate { .. }
-        | AgentEvent::Usage { .. } => {
+        | AgentEvent::PlanUpdate { .. } => {
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
+                errors.push(err);
+            }
+        }
+        AgentEvent::Usage { .. } => {
+            let model = inner.lock().ok().and_then(|states| {
+                states.get(session_id).and_then(|state| {
+                    state.last_turn_model.clone().or_else(|| state.model.clone())
+                })
+            });
+            if let Err(err) = append_usage_item(db, session_id, chat_id, &event, model) {
                 errors.push(err);
             }
         }
@@ -1018,6 +1108,7 @@ fn handle_runner_event(
                 errors.push(err.to_string());
             }
             active_turn = clear_active_turn(inner, session_id);
+            clear_pending_approvals(inner, session_id);
         }
         AgentEvent::TurnFailed { .. } => {
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
@@ -1027,14 +1118,23 @@ fn handle_runner_event(
                 errors.push(err.to_string());
             }
             active_turn = clear_active_turn(inner, session_id);
+            clear_pending_approvals(inner, session_id);
+        }
+        AgentEvent::ApprovalRequest { approval_id, .. } => {
+            if let Ok(mut states) = inner.lock() {
+                if let Some(state) = states.get_mut(session_id) {
+                    state
+                        .pending_approvals
+                        .push((approval_id.clone(), event.clone()));
+                }
+            }
         }
         AgentEvent::TextDelta { .. }
         | AgentEvent::ThinkingDelta { .. }
         | AgentEvent::CommandOutput { .. }
         | AgentEvent::TurnStarted
         | AgentEvent::Noise { .. }
-        | AgentEvent::RateLimits { .. }
-        | AgentEvent::ApprovalRequest { .. } => {}
+        | AgentEvent::RateLimits { .. } => {}
     }
 
     if let Some(turn) = active_turn {
@@ -1056,6 +1156,32 @@ fn append_item(
     event: &AgentEvent,
 ) -> Result<(), String> {
     let value = serde_json::to_value(event).map_err(|err| err.to_string())?;
+    append_item_value(db, session_id, chat_id, value)
+}
+
+/// Usage rows carry the model that served the turn — sessions can switch
+/// models, so attribution must be captured when the event lands, not joined
+/// from the mutable session row later.
+fn append_usage_item(
+    db: &Database,
+    session_id: &str,
+    chat_id: &str,
+    event: &AgentEvent,
+    model: Option<String>,
+) -> Result<(), String> {
+    let mut value = serde_json::to_value(event).map_err(|err| err.to_string())?;
+    if let (Some(object), Some(model)) = (value.as_object_mut(), model) {
+        object.insert("model".to_string(), serde_json::Value::String(model));
+    }
+    append_item_value(db, session_id, chat_id, value)
+}
+
+fn append_item_value(
+    db: &Database,
+    session_id: &str,
+    chat_id: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
     let kind = value
         .get("kind")
         .and_then(serde_json::Value::as_str)
@@ -1075,6 +1201,17 @@ fn clear_active_turn(
             .get_mut(session_id)
             .and_then(|state| state.active_turn.take())
     })
+}
+
+fn clear_pending_approvals(
+    inner: &Arc<Mutex<HashMap<String, SessionState>>>,
+    session_id: &str,
+) {
+    if let Ok(mut states) = inner.lock() {
+        if let Some(state) = states.get_mut(session_id) {
+            state.pending_approvals.clear();
+        }
+    }
 }
 
 fn sink_for_session(

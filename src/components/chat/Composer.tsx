@@ -9,7 +9,8 @@ import {
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
-import { IconForgeFlame, IconIngot } from "../icons";
+import { Dropdown, type DropdownOption } from "../Dropdown";
+import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI } from "../icons";
 import "./chat.css";
 
 const PROVIDERS = AGENTS.filter(
@@ -151,11 +152,39 @@ export function Composer(props: {
       props.provider === "codex" ? (codexEffortOverride() ?? fallback) : fallback;
     return resolved && effortOptions().includes(resolved) ? resolved : null;
   };
-  const effectiveEffort = () =>
-    props.effort && effortOptions().includes(props.effort)
-      ? props.effort
-      : defaultEffort();
-  const forgeHeat = () => EFFORT_HEAT[effectiveEffort() ?? ""] ?? 0.4;
+  const providerDropdownOptions = (): DropdownOption[] =>
+    PROVIDERS.map((agent) => ({
+      value: agent.id,
+      label: agent.label,
+      icon: () =>
+        agent.id === "claudeCode" ? <IconClaude size={13} /> : <IconOpenAI size={13} />,
+    }));
+
+  const modelDropdownOptions = (): DropdownOption[] =>
+    modelsFor(props.provider).map((m) => ({
+      value: m.id,
+      label: m.label,
+      icon: () => <IconIngot size={13} />,
+    }));
+
+  const effortDropdownOptions = (): DropdownOption[] => {
+    const options = effortOptions().map((level) => ({
+      value: level === defaultEffort() ? "" : level,
+      label:
+        level === defaultEffort()
+          ? `${EFFORT_LABELS[level] ?? level} (default)`
+          : (EFFORT_LABELS[level] ?? level),
+      icon: () => <IconForgeFlame size={13} level={EFFORT_HEAT[level] ?? 0.4} />,
+    }));
+    if (!defaultEffort()) {
+      options.unshift({
+        value: "",
+        label: "Default",
+        icon: () => <IconForgeFlame size={13} level={0.4} />,
+      });
+    }
+    return options;
+  };
 
   createEffect(() => {
     if (props.provider === "codex") ensureCodexEffortOverride();
@@ -304,70 +333,41 @@ export function Composer(props: {
   return (
     <div class="pf-chat-composer">
       <div class="pf-chat-composer-pickers">
-        <select
-          class="pf-chat-select"
+        <Dropdown
+          class="pf-chat-dd"
+          up
           disabled={props.turnActive}
           value={props.provider}
-          onChange={(e) => {
-            const next = e.currentTarget.value as AgentProvider;
-            // The switch may need confirmation (or be rejected): snap the
-            // select back now; an accepted switch updates props.provider.
-            e.currentTarget.value = props.provider;
-            props.onProviderChange?.(next);
-          }}
-        >
-          <For each={PROVIDERS}>
-            {(agent) => <option value={agent.id}>{agent.label}</option>}
-          </For>
-        </select>
-        <span class="pf-chat-picker">
-          <IconIngot size={13} class="pf-chat-picker-icon" />
-          <select
-            class="pf-chat-select pf-chat-select--icon"
-            disabled={props.turnActive || modelsFor(props.provider).length === 0}
-            value={props.model ?? ""}
+          onChange={(value) => props.onProviderChange?.(value as AgentProvider)}
+          options={providerDropdownOptions()}
+        />
+        <Dropdown
+          class="pf-chat-dd"
+          up
+          disabled={props.turnActive || modelsFor(props.provider).length === 0}
+          value={props.model ?? ""}
+          title={
+            props.provider === "claudeCode"
+              ? "Model applies to new sessions"
+              : undefined
+          }
+          onChange={(value) => props.onModelChange?.(value || null)}
+          options={modelDropdownOptions()}
+        />
+        <Show when={effortOptions().length > 0}>
+          <Dropdown
+            class="pf-chat-dd"
+            up
+            disabled={props.turnActive}
+            value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
             title={
               props.provider === "claudeCode"
-                ? "Model applies to new sessions"
+                ? "Effort applies to new sessions"
                 : undefined
             }
-            onChange={(e) =>
-              props.onModelChange?.(e.currentTarget.value || null)
-            }
-          >
-            <For each={modelsFor(props.provider)}>
-              {(m) => <option value={m.id}>{m.label}</option>}
-            </For>
-          </select>
-        </span>
-        <Show when={effortOptions().length > 0}>
-          <span class="pf-chat-picker">
-            <IconForgeFlame size={13} level={forgeHeat()} class="pf-chat-picker-icon" />
-            <select
-              class="pf-chat-select pf-chat-select--icon"
-              disabled={props.turnActive}
-              value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
-              title={
-                props.provider === "claudeCode"
-                  ? "Effort applies to new sessions"
-                  : undefined
-              }
-              onChange={(e) => props.onEffortChange?.(e.currentTarget.value)}
-            >
-              <Show when={!defaultEffort()}>
-                <option value="">Default</option>
-              </Show>
-              <For each={effortOptions()}>
-                {(level) =>
-                  level === defaultEffort() ? (
-                    <option value="">{`${EFFORT_LABELS[level] ?? level} (default)`}</option>
-                  ) : (
-                    <option value={level}>{EFFORT_LABELS[level] ?? level}</option>
-                  )
-                }
-              </For>
-            </select>
-          </span>
+            onChange={(value) => props.onEffortChange?.(value)}
+            options={effortDropdownOptions()}
+          />
         </Show>
       </div>
       <Show when={pasteError()}>

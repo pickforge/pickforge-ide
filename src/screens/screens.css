@@ -135,6 +135,13 @@
   font-size: var(--pf-size-body-md);
   color: var(--pf-text-hi);
 }
+/* Provider brand mark beside the label — monochrome, in the text palette. */
+.pf-settings-brand {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: var(--pf-space-sm);
+  color: var(--pf-text-med);
+}
 .pf-settings-muted {
   font-size: var(--pf-size-body-sm);
   color: var(--pf-text-low);

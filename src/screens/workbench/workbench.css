@@ -922,6 +922,23 @@ body.pf-resizing .pf-dock-panel {
   box-shadow: var(--pf-shadow-overlay);
   animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
 }
+/* Inline text field inside a floating menu (the new-chat title ask). */
+.pf-menu-input {
+  margin: var(--pf-space-xs) var(--pf-space-xs) var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-hi);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-menu-input::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-menu-input:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+}
 .pf-menu-label {
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
@@ -1516,6 +1533,20 @@ body.pf-resizing .pf-dock-panel {
   white-space: nowrap;
   font-size: var(--pf-size-body-sm);
 }
+/* Leading glyph on the trigger and option rows (brand mark, ingot, flame). */
+.pf-dropdown-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--pf-text-low);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-dropdown-trigger:hover:not(:disabled) .pf-dropdown-icon,
+.pf-dropdown--open .pf-dropdown-trigger .pf-dropdown-icon,
+.pf-dropdown-option:hover .pf-dropdown-icon,
+.pf-dropdown-option--on .pf-dropdown-icon {
+  color: var(--pf-text-med);
+}
 .pf-dropdown-chevron {
   flex: none;
   color: var(--pf-text-low);
@@ -1544,6 +1575,11 @@ body.pf-resizing .pf-dock-panel {
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   box-shadow: var(--pf-shadow-overlay);
   animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+/* Bottom-anchored pickers (the chat composer) open upward. */
+.pf-dropdown-menu--up {
+  top: auto;
+  bottom: calc(100% + var(--pf-space-xs));
 }
 .pf-dropdown-option {
   display: flex;

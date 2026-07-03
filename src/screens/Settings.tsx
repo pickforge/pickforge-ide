@@ -13,7 +13,13 @@ import {
 } from "../stores/quickLaunch";
 import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { Dropdown } from "../components/Dropdown";
-import { IconClose, IconPlus } from "../components/icons";
+import {
+  IconClaude,
+  IconClose,
+  IconIngot,
+  IconOpenAI,
+  IconPlus,
+} from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
 import {
@@ -34,8 +40,10 @@ import {
 } from "../stores/fileOpenSettings";
 import {
   loadAgentEngine,
+  loadAskChatTitle,
   loadDefaultChatKind,
   setAgentEngine,
+  setAskChatTitle,
   setDefaultChatKind,
   type DefaultChatKind,
 } from "../lib/chatDefaults";
@@ -61,6 +69,7 @@ export function SettingsScreen() {
     loadDefaultChatKind(),
   );
   const [agentEngine, setAgentEngineSig] = createSignal<AgentEngine>(loadAgentEngine());
+  const [askChatTitle, setAskChatTitleSig] = createSignal(loadAskChatTitle());
   const [archived, setArchived] = createSignal<db.Project[]>([]);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
 
@@ -85,6 +94,11 @@ export function SettingsScreen() {
     const value = engine as AgentEngine;
     setAgentEngine(value);
     setAgentEngineSig(value);
+  };
+
+  const changeAskChatTitle = (on: boolean) => {
+    setAskChatTitle(on);
+    setAskChatTitleSig(on);
   };
 
   const restore = async (root: string) => {
@@ -142,7 +156,15 @@ export function SettingsScreen() {
           <For each={AGENTS}>
             {(agent) => (
               <div class="pf-settings-row">
-                <span class="pf-settings-label">{agent.label}</span>
+                <span class="pf-settings-label">
+                  <Show when={agent.id === "claudeCode"}>
+                    <span class="pf-settings-brand"><IconClaude size={14} /></span>
+                  </Show>
+                  <Show when={agent.id === "codex"}>
+                    <span class="pf-settings-brand"><IconOpenAI size={14} /></span>
+                  </Show>
+                  {agent.label}
+                </span>
                 <Show
                   when={agent.models.length > 0}
                   fallback={<span class="pf-settings-muted">CLI default</span>}
@@ -151,7 +173,11 @@ export function SettingsScreen() {
                     class="pf-settings-dropdown"
                     value={models()[agent.id] ?? ""}
                     onChange={(v) => changeModel(agent.id, v)}
-                    options={agent.models.map((m) => ({ value: m.id, label: m.label }))}
+                    options={agent.models.map((m) => ({
+                      value: m.id,
+                      label: m.label,
+                      icon: () => <IconIngot size={13} />,
+                    }))}
                   />
                 </Show>
               </div>
@@ -172,6 +198,16 @@ export function SettingsScreen() {
                 { value: "agent", label: "Agent chat" },
               ]}
             />
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Ask for a chat title
+              <span class="pf-settings-hint-inline">a name field in the new-chat menu; empty keeps auto-naming</span>
+            </span>
+            <div class="pf-seg">
+              <button classList={{ active: askChatTitle() }} onClick={() => changeAskChatTitle(true)}>On</button>
+              <button classList={{ active: !askChatTitle() }} onClick={() => changeAskChatTitle(false)}>Off</button>
+            </div>
           </div>
           <div class="pf-settings-row">
             <span class="pf-settings-label">

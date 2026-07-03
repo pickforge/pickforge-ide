@@ -18,7 +18,8 @@
   min-height: 0;
   overflow: hidden;
   border-right: var(--pf-hairline-width) solid var(--pf-hairline);
-  background: var(--pf-surface-1);
+  /* The panel is stage; its sections are surface-1 cards (chat convention). */
+  background: var(--pf-surface);
   transition: width var(--pf-dur-standard) var(--pf-ease-forge);
 }
 /* No easing while dragging the ledger resizer — the width tracks the pointer. */
@@ -92,6 +93,17 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   overflow-y: auto;
   padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
   gap: var(--pf-space-sm);
+}
+/* Ledger sections share the chat surface's card convention — hairline ring,
+ * pane radius, own surface — instead of floating bare on the panel. */
+.pf-orch-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
 }
 
 /* ---- Tasks ---- */
@@ -274,8 +286,10 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   flex-direction: column;
   gap: var(--pf-space-xs);
   margin-top: auto;
-  padding-top: var(--pf-space-sm);
-  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
 }
 .pf-orch-usage-head {
   display: flex;
@@ -425,6 +439,20 @@ body.pf-orch-moving .pf-orch-lane-body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Inline lane rename — same footprint as the title it replaces. */
+.pf-orch-lane-rename {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0 var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-orch-lane-rename:focus {
+  outline: none;
 }
 .pf-orch-lane-mark {
   flex: none;

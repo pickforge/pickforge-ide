@@ -47,3 +47,19 @@ export function loadLastAgentProvider(): AgentProvider {
 export function setLastAgentProvider(provider: AgentProvider) {
   localStorage.setItem(PROVIDER_KEY, provider);
 }
+
+const ASK_TITLE_KEY = "pickforge.askChatTitle";
+
+/** Whether the new-chat flow asks for a title up front (default on). An empty
+ *  title falls back to the default name + auto-naming from the first message. */
+export function loadAskChatTitle(): boolean {
+  try {
+    return localStorage.getItem(ASK_TITLE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function setAskChatTitle(on: boolean) {
+  localStorage.setItem(ASK_TITLE_KEY, on ? "true" : "false");
+}

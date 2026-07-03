@@ -301,7 +301,11 @@ function buildOptions(
 
 function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): void {
   if (chats.has(command.chatId)) {
-    throw new Error(`chat already started: ${command.chatId}`);
+    // Re-attach, not a failure: the webview reloaded (or re-ensured) while this
+    // bridge kept the session alive. The query is still live — ack so the new
+    // client-side sink takes over instead of failing the whole ensure.
+    emit({ ev: "started", chatId: command.chatId });
+    return;
   }
 
   const queue = new PushableAsyncQueue<SDKUserMessage>();

@@ -686,50 +686,15 @@
   display: flex;
   gap: var(--pf-space-sm);
 }
-.pf-chat-select {
-  appearance: none;
-  padding: var(--pf-space-xs) var(--pf-space-md);
-  border-radius: var(--pf-radius-sm);
-  border: var(--pf-hairline-width) solid var(--pf-hairline);
-  background: var(--pf-surface-2);
-  color: var(--pf-text-med);
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-body-sm);
-  cursor: pointer;
-  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
-    color var(--pf-dur-fast) var(--pf-ease-forge);
+/* Composer pickers use the app's one Dropdown (Settings look = the standard).
+ * Content-sized triggers; menus open upward and size to their options. */
+.pf-chat-dd .pf-dropdown-trigger {
+  padding: var(--pf-space-xs) var(--pf-space-sm);
 }
-.pf-chat-select:hover:not(:disabled) {
-  border-color: var(--pf-hairline-strong);
-  color: var(--pf-text-hi);
-}
-.pf-chat-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-/* Picker chips with a leading glyph (ingot = model, forge flame = effort). The
- * icon overlays the select's padding, stays quiet gray, and never intercepts
- * the click — the whole chip is the select. */
-.pf-chat-picker {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.pf-chat-picker-icon {
-  position: absolute;
-  left: var(--pf-space-sm);
-  pointer-events: none;
-  color: var(--pf-text-low);
-  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-chat-picker:hover .pf-chat-picker-icon {
-  color: var(--pf-text-med);
-}
-.pf-chat-picker:has(select:disabled) .pf-chat-picker-icon {
-  opacity: 0.5;
-}
-.pf-chat-select--icon {
-  padding-left: calc(var(--pf-space-sm) + 13px + var(--pf-space-xs));
+.pf-chat-dd .pf-dropdown-menu {
+  right: auto;
+  min-width: 100%;
+  width: max-content;
 }
 .pf-chat-composer-input {
   position: relative;

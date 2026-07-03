@@ -26,6 +26,7 @@ import {
 import { type AgentProvider } from "../../lib/agentChat";
 import { AGENTS, loadAgentModels } from "../../lib/agentModels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
+import { loadAskChatTitle, loadLastAgentProvider } from "../../lib/chatDefaults";
 import { PROMPT_TEMPLATES } from "../../lib/promptTemplates";
 import { gitDiff, gitStatus } from "../../lib/git";
 import { buildWorkingDiff, fillDiffTemplate } from "./diff";
@@ -61,7 +62,14 @@ import {
   upsertTask,
   usageSummary,
 } from "../../stores/orchestra";
-import { addChat, chatsFor, ensureChatsLoaded, findChat, workspace } from "../../stores/workspace";
+import {
+  addChat,
+  chatsFor,
+  ensureChatsLoaded,
+  findChat,
+  setChatTitle,
+  workspace,
+} from "../../stores/workspace";
 import "./orchestra.css";
 
 const AGENT_PROVIDERS = AGENTS.filter((a) => a.id === "claudeCode" || a.id === "codex");
@@ -203,6 +211,8 @@ export function OrchestraView(props: {
   const [dragChat, setDragChat] = createSignal<string | null>(null);
   const [drop, setDrop] = createSignal<{ chatId: string; region: LaneRegion } | null>(null);
   const [splitMenu, setSplitMenu] = createSignal<{ chatId: string; x: number; y: number } | null>(null);
+  const [renamingLane, setRenamingLane] = createSignal<string | null>(null);
+  const [newLaneTitle, setNewLaneTitle] = createSignal("");
   // When set, the next lane picked from the add-menu is inserted beside a target
   // in a direction (from a lane's split menu) instead of appended to the root.
   const [pendingTarget, setPendingTarget] = createSignal<{ chatId: string; dir: LaneDir } | null>(null);
@@ -431,9 +441,10 @@ export function OrchestraView(props: {
     setAddMenu(null);
   };
 
-  const createLane = async (provider: string) => {
+  const createLane = async (provider: string, title?: string) => {
     setAddMenu(null);
-    await addChat(DEFAULT_CHAT_TITLE, provider, props.projectRoot, "agent");
+    setNewLaneTitle("");
+    await addChat(title?.trim() || DEFAULT_CHAT_TITLE, provider, props.projectRoot, "agent");
     const created = workspace.activeChatId;
     if (created) placeLane(created);
   };
@@ -534,7 +545,34 @@ export function OrchestraView(props: {
           class="pf-orch-lane-dot"
           classList={{ "pf-orch-lane-dot--busy": busy(), "pf-orch-lane-dot--attention": attention() }}
         />
-        <span class="pf-orch-lane-title">{laneTitle(p.chatId)}</span>
+        <Show
+          when={renamingLane() === p.chatId}
+          fallback={
+            <span
+              class="pf-orch-lane-title"
+              title="Double-click to rename"
+              onDblClick={() => setRenamingLane(p.chatId)}
+            >
+              {laneTitle(p.chatId)}
+            </span>
+          }
+        >
+          <input
+            class="pf-orch-lane-rename"
+            value={laneTitle(p.chatId)}
+            ref={(el) => setTimeout(() => { el.focus(); el.select(); })}
+            onPointerDown={(e) => e.stopPropagation()}
+            onBlur={() => setRenamingLane(null)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                void setChatTitle(p.chatId, e.currentTarget.value);
+                setRenamingLane(null);
+              } else if (e.key === "Escape") {
+                setRenamingLane(null);
+              }
+            }}
+          />
+        </Show>
         <span class="pf-orch-lane-mark">{PROVIDER_MARK[provider()] ?? "AI"}</span>
         <Show when={modelLabel(provider())}>
           <span class="pf-orch-lane-model">{modelLabel(provider())}</span>
@@ -736,30 +774,32 @@ export function OrchestraView(props: {
         </div>
         <Show when={ledgerOpen()}>
           <div class="pf-orch-ledger-body">
-            <div class="pf-orch-tasks">
-              <For
-                each={tasks()}
-                fallback={<div class="pf-orch-tasks-empty">No tasks yet.</div>}
-              >
-                {(task) => <TaskRow task={task} />}
-              </For>
-            </div>
-            <div class="pf-orch-add">
-              <input
-                class="pf-orch-add-input"
-                placeholder="Add task…"
-                value={draft()}
-                onInput={(e) => setDraft(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addTask();
-                  }
-                }}
-              />
-              <button class="pf-orch-add-btn" title="Add task" onClick={addTask}>
-                <IconPlus size={14} />
-              </button>
+            <div class="pf-orch-card">
+              <div class="pf-orch-tasks">
+                <For
+                  each={tasks()}
+                  fallback={<div class="pf-orch-tasks-empty">No tasks yet.</div>}
+                >
+                  {(task) => <TaskRow task={task} />}
+                </For>
+              </div>
+              <div class="pf-orch-add">
+                <input
+                  class="pf-orch-add-input"
+                  placeholder="Add task…"
+                  value={draft()}
+                  onInput={(e) => setDraft(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTask();
+                    }
+                  }}
+                />
+                <button class="pf-orch-add-btn" title="Add task" onClick={addTask}>
+                  <IconPlus size={14} />
+                </button>
+              </div>
             </div>
             <UsageDashboard />
           </div>
@@ -931,9 +971,27 @@ export function OrchestraView(props: {
               </Match>
               <Match when={menu().mode === "new"}>
                 <div class="pf-menu-label">New agent chat</div>
+                <Show when={loadAskChatTitle()}>
+                  <input
+                    class="pf-menu-input"
+                    placeholder="Title (optional)"
+                    value={newLaneTitle()}
+                    ref={(el) => setTimeout(() => el.focus())}
+                    onInput={(e) => setNewLaneTitle(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void createLane(loadLastAgentProvider(), newLaneTitle());
+                      }
+                    }}
+                  />
+                </Show>
                 <For each={AGENT_PROVIDERS}>
                   {(agent) => (
-                    <button class="pf-menu-item" onClick={() => void createLane(agent.id)}>
+                    <button
+                      class="pf-menu-item"
+                      onClick={() => void createLane(agent.id, newLaneTitle())}
+                    >
                       {agent.label}
                     </button>
                   )}
@@ -949,6 +1007,17 @@ export function OrchestraView(props: {
           <FloatingMenu anchor={{ x: menu().x, y: menu().y, align: "end" }} onClose={() => setHandoff(null)}>
             <Switch>
               <Match when={menu().mode === "root"}>
+                <button
+                  class="pf-menu-item"
+                  onClick={() => {
+                    const id = menu().source;
+                    setHandoff(null);
+                    setRenamingLane(id);
+                  }}
+                >
+                  Rename chat…
+                </button>
+                <div class="pf-menu-sep" />
                 <button
                   class="pf-menu-item"
                   onClick={() => setHandoff({ ...menu(), mode: "reply" })}

@@ -55,7 +55,12 @@ import {
   workspace,
 } from "../../stores/workspace";
 import { AGENTS } from "../../lib/agentModels";
-import { loadDefaultChatKind, loadLastAgentProvider, setLastAgentProvider } from "../../lib/chatDefaults";
+import {
+  loadAskChatTitle,
+  loadDefaultChatKind,
+  loadLastAgentProvider,
+  setLastAgentProvider,
+} from "../../lib/chatDefaults";
 import { type AgentProvider } from "../../lib/agentChat";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
@@ -135,20 +140,22 @@ export function ProjectsPane() {
 
   const moveTo = (root: string, groupId: string | null) => { assignProject(root, groupId); closeMenu(); };
   const newGroupFor = (root: string) => { const id = createGroup(); assignProject(root, id); closeMenu(); setRenaming(id); };
-  const newTerminalChat = (root: string) => {
+  const newTerminalChat = (root: string, title?: string) => {
     if (!chatsExpanded(root)) toggleChats(root);
-    void addChat(DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
+    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
   };
-  const newAgentChat = (root: string, provider: string) => {
+  const newAgentChat = (root: string, provider: string, title?: string) => {
     if (!chatsExpanded(root)) toggleChats(root);
     if (provider === "claudeCode" || provider === "codex") {
       setLastAgentProvider(provider as AgentProvider);
     }
-    void addChat(DEFAULT_CHAT_TITLE, provider, root, "agent");
+    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, provider, root, "agent");
   };
   const newChatFromButton = (root: string, e: MouseEvent) => {
     const kind = loadDefaultChatKind();
-    if (kind === "ask") {
+    // The title ask lives in the new-chat menu, so an enabled ask opens the
+    // menu even when a fixed default kind would otherwise create directly.
+    if (kind === "ask" || loadAskChatTitle()) {
       openFromButton("newchat", root, e);
       return;
     }
@@ -288,19 +295,45 @@ export function ProjectsPane() {
     </>
   );
 
-  const NewChatMenu = (p: { root: string }) => (
-    <>
-      <div class="pf-menu-label">New chat</div>
-      <button class="pf-menu-item pf-menu-item--accent" onClick={() => { newTerminalChat(p.root); closeMenu(); }}>Terminal</button>
-      <div class="pf-menu-sep" />
-      <div class="pf-menu-label">Agent</div>
-      <For each={AGENT_CHAT_PROVIDERS}>
-        {(a) => (
-          <button class="pf-menu-item" onClick={() => { newAgentChat(p.root, a.id); closeMenu(); }}>{a.label}</button>
-        )}
-      </For>
-    </>
-  );
+  const NewChatMenu = (p: { root: string }) => {
+    const [title, setTitle] = createSignal("");
+    // Enter in the title field creates the default kind without reaching for a
+    // kind button; an empty title keeps the default name + auto-naming.
+    const createDefault = () => {
+      const kind = loadDefaultChatKind();
+      if (kind === "agent") newAgentChat(p.root, loadLastAgentProvider(), title());
+      else newTerminalChat(p.root, title());
+      closeMenu();
+    };
+    return (
+      <>
+        <div class="pf-menu-label">New chat</div>
+        <Show when={loadAskChatTitle()}>
+          <input
+            class="pf-menu-input"
+            placeholder="Title (optional)"
+            value={title()}
+            ref={(el) => setTimeout(() => el.focus())}
+            onInput={(e) => setTitle(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                createDefault();
+              }
+            }}
+          />
+        </Show>
+        <button class="pf-menu-item pf-menu-item--accent" onClick={() => { newTerminalChat(p.root, title()); closeMenu(); }}>Terminal</button>
+        <div class="pf-menu-sep" />
+        <div class="pf-menu-label">Agent</div>
+        <For each={AGENT_CHAT_PROVIDERS}>
+          {(a) => (
+            <button class="pf-menu-item" onClick={() => { newAgentChat(p.root, a.id, title()); closeMenu(); }}>{a.label}</button>
+          )}
+        </For>
+      </>
+    );
+  };
 
   const doArchiveChat = (id: string) => {
     const chat = chatsFor(workspace.activeRoot ?? "").find((c) => c.chatId === id);

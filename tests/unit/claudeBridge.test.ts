@@ -18,6 +18,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import {
   PushableAsyncQueue,
+  approvalScopeKey,
   createUserTextMessage,
   createPermissionGate,
   createPermissionHandler,
@@ -39,9 +40,9 @@ function deferred<T = void>() {
 }
 
 async function flushMicrotasks() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 10; i += 1) {
+    await Promise.resolve();
+  }
 }
 
 function fakeQuery(
@@ -111,6 +112,18 @@ describe("permissionResultForDecision", () => {
   });
 });
 
+describe("approvalScopeKey", () => {
+  it("scopes file-like tool inputs by their path aliases", () => {
+    expect(approvalScopeKey("NotebookEdit", { notebook_path: "/notes/a.ipynb" })).toBe(
+      "NotebookEdit\u0000/notes/a.ipynb",
+    );
+    expect(approvalScopeKey("Read", { path: "/notes/a.md" })).toBe("Read\u0000/notes/a.md");
+    expect(approvalScopeKey("Edit", { file_path: "/notes/a.md", path: "/other.md" })).toBe(
+      "Edit\u0000/notes/a.md",
+    );
+  });
+});
+
 describe("createPermissionHandler", () => {
   it("short-circuits future requests for always-allowed tools", async () => {
     const gate = createPermissionGate();
@@ -175,6 +188,39 @@ describe("createPermissionHandler", () => {
     expect(events).toHaveLength(2);
     expect(gate.pendingApprovals.has("req-2")).toBe(true);
     expect(resolveApprovalDecision(gate, "req-2", "decline")).toBe(true);
+  });
+
+  it("re-prompts NotebookEdit when the notebook path changes", async () => {
+    const gate = createPermissionGate();
+    const events: BridgeEvent[] = [];
+    const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+
+    const first = handler(
+      "NotebookEdit",
+      { notebook_path: "/notes/a.ipynb" },
+      { toolUseID: "req-1", signal: new AbortController().signal },
+    );
+    expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
+    await expect(first).resolves.toEqual({ behavior: "allow" });
+
+    const second = await handler(
+      "NotebookEdit",
+      { notebook_path: "/notes/a.ipynb" },
+      { toolUseID: "req-2", signal: new AbortController().signal },
+    );
+    expect(second).toEqual({ behavior: "allow" });
+    expect(events).toHaveLength(1);
+
+    const third = handler(
+      "NotebookEdit",
+      { notebook_path: "/notes/b.ipynb" },
+      { toolUseID: "req-3", signal: new AbortController().signal },
+    );
+
+    expect(events).toHaveLength(2);
+    expect(gate.pendingApprovals.has("req-3")).toBe(true);
+    expect(resolveApprovalDecision(gate, "req-3", "decline")).toBe(true);
+    await expect(third).resolves.toEqual({ behavior: "deny", message: "denied by user" });
   });
 });
 
@@ -284,6 +330,51 @@ describe("dispatchCommand", () => {
         message: {
           role: "user",
           content: [{ type: "text", text: "hello" }],
+        },
+      },
+    });
+  });
+
+  it("does not send a prompt when a pending model mutation rejects", async () => {
+    const modelChange = deferred<void>();
+    const chatQuery = fakeQuery({ setModel: () => modelChange.promise });
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+    const { events, emit } = eventsCollector();
+
+    dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
+    const prompt = vi.mocked(query).mock.calls[0]?.[0].prompt as AsyncIterable<unknown>;
+    const iterator = prompt[Symbol.asyncIterator]();
+    let delivered = false;
+    const nextMessage = iterator.next().then((result) => {
+      delivered = true;
+      return result;
+    });
+
+    dispatchCommand({ op: "setModel", chatId: "chat-1", model: "invalid-model" }, emit);
+    await flushMicrotasks();
+    dispatchCommand({ op: "send", chatId: "chat-1", text: "blocked" }, emit);
+    await flushMicrotasks();
+
+    expect(delivered).toBe(false);
+
+    modelChange.reject(new Error("invalid model"));
+    await flushMicrotasks();
+
+    expect(delivered).toBe(false);
+    expect(events.filter((event) => event.ev === "fatal")).toEqual([
+      { ev: "fatal", chatId: "chat-1", error: expect.stringContaining("invalid model") },
+      { ev: "fatal", chatId: "chat-1", error: expect.stringContaining("invalid model") },
+    ]);
+
+    dispatchCommand({ op: "send", chatId: "chat-1", text: "after failure" }, emit);
+
+    await expect(nextMessage).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "after failure" }],
         },
       },
     });

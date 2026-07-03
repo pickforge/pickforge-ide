@@ -201,13 +201,13 @@ export function WorkbenchScreen() {
     // the async detection below is still pending when the screen is disposed.
 
     // Tear down a chat's host (and shells) only when the chat is deleted.
-    const offDelete = onChatDeleted((chatId) => {
+    const offDelete = onChatDeleted(async (chatId) => {
       const chat = findChat(chatId);
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
       clearChatActivity(chatId);
       forgetChatAutoName(chatId);
       deleteTerminalHost(chatId);
-      disposeAgentChat(chatId);
+      await disposeAgentChat(chatId);
       if (chat) {
         setPendingOrchestraCleanup((items) =>
           items.some((item) => item.chatId === chatId)

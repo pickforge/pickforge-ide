@@ -814,7 +814,7 @@ export async function switchAgentChatProvider(
   const projectRoot = current?.projectRoot ?? row?.projectRoot ?? null;
   if (!projectRoot) throw new Error("Agent chat is not started");
 
-  disposeAgentChat(chatId);
+  await disposeAgentChat(chatId);
   await setChatAgent(chatId, provider, "agent");
   await ensureAgentChat(chatId, projectRoot, provider, model, {
     engine: loadAgentEngine(),
@@ -952,17 +952,15 @@ export async function interruptAgentChat(chatId: string): Promise<void> {
     interruptedByUser.delete(chatId);
     throw error;
   }
-  if (chats[chatId]) setChats(chatId, { turnActive: false });
-  if (activityEligible(chatId)) agentTurnCleared(chatId);
 }
 
 /** The chat was deleted or is switching provider: release the backend session
  *  (kills any running turn, closes the bridge chat / thread subscription),
  *  then drop the store entry so any late events for this chat are ignored
  *  instead of resurrecting activity state. */
-export function disposeAgentChat(chatId: string) {
+export async function disposeAgentChat(chatId: string): Promise<void> {
   const sessionId = chats[chatId]?.sessionId;
-  if (sessionId) void agentChatDispose(sessionId).catch(() => undefined);
+  const dispose = sessionId ? agentChatDispose(sessionId).catch(() => undefined) : Promise.resolve();
   // Invalidate any in-flight ensure: its awaited continuations must not write
   // stale session state into a disposed (or re-created) chat entry.
   ensureGenerations.set(chatId, (ensureGenerations.get(chatId) ?? 0) + 1);
@@ -972,4 +970,5 @@ export function disposeAgentChat(chatId: string) {
   pendingSetModelByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
+  await dispose;
 }

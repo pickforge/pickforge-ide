@@ -441,13 +441,14 @@ impl AgentChatManager {
             let prompt_seqs =
                 persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
 
+            // Arm cancellation BEFORE the request so a turn/started arriving
+            // during the wait is captured, then reconcile on the outcome so
+            // only an orphaned (timed-out) turn is interrupted, never a legit
+            // one on the same thread.
+            client.begin_turn_start(&thread_id);
             match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
-                    // Record this legit turn id so the read loop can tell it
-                    // apart from an orphaned timed-out turn on the same thread
-                    // (a prior start that the app-server accepted but whose
-                    // response we never got) and cancel only the orphan.
-                    client.record_expected_turn(&thread_id, &started_turn_id);
+                    client.finish_turn_start_ok(&thread_id, &started_turn_id);
                     // Disposed while turn/start was in flight: the session (and
                     // its just-installed turn) is gone — drop the orphan prompt.
                     // dispose() could only arm pending_interrupt (the turn id
@@ -484,12 +485,13 @@ impl AgentChatManager {
                 }
                 Err(err) => {
                     // A local timeout doesn't mean the app-server rejected the
-                    // turn — it may have accepted and started running it. Flag
-                    // the thread so the read loop interrupts that turn once its
-                    // late turn/started reveals the id, instead of letting it
-                    // run headlessly after we report the send failed.
+                    // turn — it may have accepted and started running it, so
+                    // stay armed and interrupt that orphan once its turn/started
+                    // is seen. Any other error means no turn was created.
                     if matches!(err, CodexAppError::RequestTimeout { .. }) {
-                        client.cancel_pending_turn(&thread_id);
+                        client.finish_turn_start_timeout(&thread_id);
+                    } else {
+                        client.finish_turn_start_err(&thread_id);
                     }
                     rollback_prompt(&prompt_seqs);
                     let _ = self.db.agent_session_set_status(session_id, "failed");

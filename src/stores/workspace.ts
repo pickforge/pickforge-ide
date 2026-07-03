@@ -36,10 +36,16 @@ export const workspace = state;
 // Chat-deletion notifier so the workbench can dispose that chat's terminal host
 // (and its shells). Visited chat hosts are kept mounted across project/chat
 // switches, so they can only be torn down on an explicit delete.
-const chatDeletedListeners = new Set<(chatId: string) => void>();
-export function onChatDeleted(fn: (chatId: string) => void): () => void {
+type ChatDeletedListener = (chatId: string) => void | Promise<void>;
+
+const chatDeletedListeners = new Set<ChatDeletedListener>();
+export function onChatDeleted(fn: ChatDeletedListener): () => void {
   chatDeletedListeners.add(fn);
   return () => chatDeletedListeners.delete(fn);
+}
+
+async function notifyChatDeleted(chatId: string) {
+  await Promise.all([...chatDeletedListeners].map((fn) => fn(chatId)));
 }
 
 // Chats mid-teardown (delete or backend-migration): the host is removed up front
@@ -216,7 +222,7 @@ export async function renameProject(root: string, displayName: string) {
 }
 
 /** DESTRUCTIVELY tear a chat down (delete, not close): mark it so its mounted
- *  panes KILL (not detach) on unmount, fire the deletion notifiers (which unmount
+ *  panes KILL (not detach) on unmount, await the deletion notifiers (which unmount
  *  the host — killing the live PTY + its process group), THEN destroy the stored
  *  dtach/tmux session so nothing lingers. Order matters: killing the mounted pane
  *  first means we never detach-then-destroy (which would strand a live shell);
@@ -230,7 +236,7 @@ async function destroyChat(chatId: string, sessionId: string | null) {
   markDestroying(chatId);
   // Unmount the host now (synchronous) so its panes hit the kill teardown while
   // the mark is set, BEFORE we destroy the session/socket below.
-  chatDeletedListeners.forEach((fn) => fn(chatId));
+  await notifyChatDeleted(chatId);
   if (sessionId) {
     await ptyDestroyChatSession(sessionId).catch((e) =>
       console.error("[pickforge] pty_destroy_chat_session failed", e),
@@ -247,7 +253,7 @@ async function destroyChat(chatId: string, sessionId: string | null) {
  *  findChat already returns undefined and the host can't remount). */
 async function destroyExternallyDeletedChat(chatId: string, sessionId: string | null) {
   markChatForKill(chatId);
-  chatDeletedListeners.forEach((fn) => fn(chatId));
+  await notifyChatDeleted(chatId);
   if (sessionId) {
     await ptyDestroyChatSession(sessionId).catch((e) =>
       console.error("[pickforge] pty_destroy_chat_session failed", e),

@@ -74,7 +74,11 @@ export function approvalScopeKey(toolName: string, input: Record<string, unknown
       ? input.command
       : typeof input.file_path === "string"
         ? input.file_path
-        : "";
+        : typeof input.notebook_path === "string"
+          ? input.notebook_path
+          : typeof input.path === "string"
+            ? input.path
+            : "";
   return `${toolName}\u0000${scope}`;
 }
 
@@ -343,20 +347,28 @@ function queueModelMutation(
   model: string | null,
   emit: (event: BridgeEvent) => void,
 ): Promise<void> {
-  chat.model = model;
-  chat.mutationChain = chat.mutationChain
-    .then(() => chat.query.setModel(model ?? undefined))
+  const previousMutation = chat.mutationChain.catch(() => undefined);
+  chat.mutationChain = previousMutation
+    .then(async () => {
+      await chat.query.setModel(model ?? undefined);
+      chat.model = model;
+    })
     .catch((error: unknown) => {
       emit({ ev: "fatal", chatId: chat.chatId, error: serializeError(error) });
+      throw error;
     });
   return chat.mutationChain;
 }
 
 async function awaitMutationChain(chat: ChatSession): Promise<void> {
+  const mutationChain = chat.mutationChain;
   try {
-    await chat.mutationChain;
-  } catch {
-    chat.mutationChain = Promise.resolve();
+    await mutationChain;
+  } catch (error) {
+    if (chat.mutationChain === mutationChain) {
+      chat.mutationChain = Promise.resolve();
+    }
+    throw error;
   }
 }
 
@@ -369,7 +381,7 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
     // change rides along so the re-attached picker stays truthful.
     const nextModel = command.model ?? null;
     if (existing.model !== nextModel) {
-      void queueModelMutation(existing, nextModel, emit);
+      void queueModelMutation(existing, nextModel, emit).catch(() => undefined);
     }
     emit({ ev: "started", chatId: command.chatId });
     return;
@@ -473,7 +485,11 @@ async function handleCommand(
     case "setModel": {
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
-      await queueModelMutation(chat, command.model ?? null, emit);
+      try {
+        await queueModelMutation(chat, command.model ?? null, emit);
+      } catch {
+        return;
+      }
       return;
     }
     case "listSessions": {

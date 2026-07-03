@@ -1234,15 +1234,39 @@ describe("agentChat → chatActivity wiring", () => {
 
     emit({ kind: "turnStarted" });
     await interruptAgentChat(chatId);
-    expect(activity.agentTurnCleared).toHaveBeenCalledTimes(1);
+    expect(agentChat(chatId)?.turnActive).toBe(true);
+    expect(activity.agentTurnCleared).not.toHaveBeenCalled();
 
     emit({ kind: "turnFailed", error: "interrupted" });
+    expect(agentChat(chatId)?.turnActive).toBe(false);
     expect(activity.agentTurnDone).not.toHaveBeenCalled();
-    expect(activity.agentTurnCleared).toHaveBeenCalledTimes(2);
+    expect(activity.agentTurnCleared).toHaveBeenCalledTimes(1);
 
     emit({ kind: "turnStarted" });
     emit({ kind: "turnDone", status: "completed" });
     expect(activity.agentTurnDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps dispose pending until the backend session is released", async () => {
+    const { chatId } = await startChat();
+    const dispose = deferred<void>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_dispose") return dispose.promise;
+      return Promise.resolve(null);
+    });
+
+    let settled = false;
+    const pending = disposeAgentChat(chatId).then(() => {
+      settled = true;
+    });
+
+    expect(agentChat(chatId)).toBeUndefined();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    dispose.resolve();
+    await pending;
+    expect(settled).toBe(true);
   });
 
   it("dispose drops the store entry and ignores late events", async () => {
@@ -1250,7 +1274,7 @@ describe("agentChat → chatActivity wiring", () => {
 
     emit({ kind: "turnStarted" });
     activity.agentTurnStarted.mockClear();
-    disposeAgentChat(chatId);
+    await disposeAgentChat(chatId);
 
     expect(agentChat(chatId)).toBeUndefined();
     expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_dispose")).toBe(true);

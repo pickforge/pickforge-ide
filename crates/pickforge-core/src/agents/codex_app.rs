@@ -172,7 +172,9 @@ impl CodexAppClient {
             pending_permissions: Mutex::new(HashMap::new()),
             writer_tx: Mutex::new(Some(writer_tx.clone())),
             cancel_pending_turns: Mutex::new(HashSet::new()),
+            starting_turns: Mutex::new(HashSet::new()),
             expected_turns: Mutex::new(HashMap::new()),
+            deferred_turns: Mutex::new(HashMap::new()),
         });
 
         let writer_thread = match std::thread::Builder::new()
@@ -303,22 +305,80 @@ impl CodexAppClient {
         .ok_or_else(|| CodexAppError::BadResponse("missing turn id".to_string()))
     }
 
-    /// Flag a thread so the read loop interrupts an ORPHAN turn — one whose
-    /// `turn/started` id is not the expected (confirmed-legit) id — used when a
-    /// `turn/start` times out after the app-server accepted it, leaving a turn
-    /// running headlessly. Matching by expected id means a retry's own turn is
-    /// never cancelled, only the abandoned one.
-    pub fn cancel_pending_turn(&self, thread_id: &str) {
+    /// Mark a `turn/start` as in flight. Armed BEFORE the request so a
+    /// `turn/started` that arrives during the (possibly long) wait is captured
+    /// rather than missed, and deferred (not interrupted) until the start
+    /// resolves and we know whether that turn is the legit one.
+    pub fn begin_turn_start(&self, thread_id: &str) {
         if let Ok(mut set) = self.state.cancel_pending_turns.lock() {
+            set.insert(thread_id.to_string());
+        }
+        if let Ok(mut set) = self.state.starting_turns.lock() {
             set.insert(thread_id.to_string());
         }
     }
 
-    /// Record the turn id a successful `turn/start` returned so the read loop
-    /// can tell this legit turn apart from an orphaned timed-out one.
-    pub fn record_expected_turn(&self, thread_id: &str, turn_id: &str) {
+    /// The start succeeded: `turn_id` is the legit turn. Reconcile deferred
+    /// `turn/started`s — drop the legit one, interrupt the rest as orphans —
+    /// and disarm (turns serialize per thread, so a prior orphan has ended).
+    pub fn finish_turn_start_ok(&self, thread_id: &str, turn_id: &str) {
         if let Ok(mut map) = self.state.expected_turns.lock() {
             map.insert(thread_id.to_string(), turn_id.to_string());
+        }
+        self.clear_starting(thread_id);
+        let orphans = self.take_deferred(thread_id, Some(turn_id));
+        self.disarm(thread_id);
+        self.interrupt_all(thread_id, orphans);
+    }
+
+    /// The start timed out — the app-server may have accepted it, so any turn
+    /// seen while it was in flight is an orphan. Stay armed so a `turn/started`
+    /// arriving later (no start in flight) is interrupted on sight.
+    pub fn finish_turn_start_timeout(&self, thread_id: &str) {
+        self.clear_starting(thread_id);
+        let orphans = self.take_deferred(thread_id, None);
+        self.interrupt_all(thread_id, orphans);
+    }
+
+    /// The start failed for a non-timeout reason (no turn was created for it).
+    /// Interrupt anything deferred during it, but don't newly arm.
+    pub fn finish_turn_start_err(&self, thread_id: &str) {
+        self.clear_starting(thread_id);
+        let orphans = self.take_deferred(thread_id, None);
+        self.interrupt_all(thread_id, orphans);
+    }
+
+    fn clear_starting(&self, thread_id: &str) {
+        if let Ok(mut set) = self.state.starting_turns.lock() {
+            set.remove(thread_id);
+        }
+    }
+
+    fn disarm(&self, thread_id: &str) {
+        if let Ok(mut set) = self.state.cancel_pending_turns.lock() {
+            set.remove(thread_id);
+        }
+    }
+
+    /// Drain a thread's deferred turn ids, excluding `keep` (the legit id).
+    fn take_deferred(&self, thread_id: &str, keep: Option<&str>) -> Vec<String> {
+        let Ok(mut map) = self.state.deferred_turns.lock() else {
+            return Vec::new();
+        };
+        let Some(mut set) = map.remove(thread_id) else {
+            return Vec::new();
+        };
+        if let Some(keep) = keep {
+            set.remove(keep);
+        }
+        set.into_iter().collect()
+    }
+
+    fn interrupt_all(&self, thread_id: &str, turn_ids: Vec<String>) {
+        // Fire-and-forget: don't block the send thread on each orphan's
+        // interrupt response.
+        for turn_id in turn_ids {
+            send_turn_interrupt(&self.state, thread_id, &turn_id);
         }
     }
 
@@ -591,14 +651,21 @@ struct ClientState {
     // On the writer side so the read loop can interrupt a turn whose start
     // request timed out (see cancel_pending_turns).
     writer_tx: Mutex<Option<mpsc::Sender<WriterMessage>>>,
-    /// Threads with an orphaned turn to interrupt: a `turn/start` timed out
-    /// locally after the app-server accepted it, so the turn keeps running
-    /// headlessly. When a `turn/started` reveals a turn id that is NOT this
-    /// thread's expected (legit) id, the read loop cancels that orphan and
-    /// disarms the flag — a matching (legit retry) turn is left alone.
+    // --- headless-turn cancellation (a turn/start that times out after the
+    // app-server accepted it leaves a turn running; it must be interrupted
+    // without cancelling a legitimate retry on the same thread) ---
+    /// Threads that may have an orphaned turn to interrupt.
     cancel_pending_turns: Mutex<HashSet<String>>,
+    /// Threads with a `turn/start` request currently in flight. While a start
+    /// is in flight, an incoming `turn/started` is ambiguous (it may be this
+    /// start's own turn, whose response hasn't arrived yet), so it is deferred
+    /// and reconciled when the start resolves rather than interrupted on sight.
+    starting_turns: Mutex<HashSet<String>>,
     /// The turn id each thread's most recent successful `turn/start` returned.
     expected_turns: Mutex<HashMap<String, String>>,
+    /// `turn/started` ids seen while a start was in flight — reconciled against
+    /// the resolved turn id (the legit one is dropped, the rest are orphans).
+    deferred_turns: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
@@ -986,9 +1053,14 @@ fn routed(params: &Value, event: AgentEvent) -> Vec<RoutedEvent> {
     }]
 }
 
-/// If a notification reveals the turn id of a thread whose start timed out,
-/// fire a `turn/interrupt` (fire-and-forget: the read loop can't block on its
-/// own response) so the headless turn is stopped, then clear the flag.
+/// React to a `turn/started` on a thread that has an outstanding
+/// cancel-on-timeout: an orphaned turn (from a timed-out start the app-server
+/// accepted) must be interrupted, but a legitimate turn must not be. A turn
+/// seen WHILE a start is in flight is ambiguous — it may be that start's own
+/// turn whose response hasn't arrived — so it is deferred and reconciled when
+/// the start resolves (finish_turn_start_*). Only when armed with NO start in
+/// flight is the turn unambiguously an orphan; interrupt it on sight (fire and
+/// forget — the read loop must not block on the interrupt's own response).
 fn interrupt_cancelled_turn(state: &Arc<ClientState>, line: &str) {
     if state
         .cancel_pending_turns
@@ -1024,8 +1096,7 @@ fn interrupt_cancelled_turn(state: &Arc<ClientState>, line: &str) {
     let Some(turn_id) = turn_id else {
         return;
     };
-    // Only the ORPHAN turn (id != the thread's confirmed-legit id) is cancelled;
-    // a legit retry turn matches the expected id and is left running.
+    // A turn already confirmed legit is never an orphan.
     let is_expected = state
         .expected_turns
         .lock()
@@ -1034,20 +1105,39 @@ fn interrupt_cancelled_turn(state: &Arc<ClientState>, line: &str) {
     if is_expected {
         return;
     }
+    // Ambiguous while a start is in flight — defer for reconciliation.
+    let starting = state
+        .starting_turns
+        .lock()
+        .map(|set| set.contains(&thread_id))
+        .unwrap_or(false);
+    if starting {
+        if let Ok(mut map) = state.deferred_turns.lock() {
+            map.entry(thread_id).or_default().insert(turn_id);
+        }
+        return;
+    }
+    // Armed, no start in flight: an unambiguous orphan — interrupt and disarm.
     if let Ok(mut set) = state.cancel_pending_turns.lock() {
         set.remove(&thread_id);
     }
+    send_turn_interrupt(state, &thread_id, &turn_id);
+}
+
+/// Send a `turn/interrupt` without waiting for its response (the read loop must
+/// not block on its own reply; the send thread need not either).
+fn send_turn_interrupt(state: &Arc<ClientState>, thread_id: &str, turn_id: &str) {
     let id = state.next_id.fetch_add(1, Ordering::SeqCst);
-    let line = serde_json::to_string(&json!({
+    let Ok(line) = serde_json::to_string(&json!({
         "id": id,
         "method": "turn/interrupt",
         "params": { "threadId": thread_id, "turnId": turn_id },
-    }));
-    if let Ok(line) = line {
-        if let Ok(tx) = state.writer_tx.lock() {
-            if let Some(tx) = tx.as_ref() {
-                let _ = tx.send(WriterMessage::Line(line));
-            }
+    })) else {
+        return;
+    };
+    if let Ok(tx) = state.writer_tx.lock() {
+        if let Some(tx) = tx.as_ref() {
+            let _ = tx.send(WriterMessage::Line(line));
         }
     }
 }
@@ -1417,43 +1507,37 @@ mod tests {
             pending_permissions: Mutex::new(HashMap::new()),
             writer_tx: Mutex::new(Some(tx)),
             cancel_pending_turns: Mutex::new(HashSet::new()),
+            starting_turns: Mutex::new(HashSet::new()),
             expected_turns: Mutex::new(HashMap::new()),
+            deferred_turns: Mutex::new(HashMap::new()),
         });
         let orphan = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-orphan"}}}"#;
 
-        // Not flagged: the late turn/started is left alone.
+        // Not armed: the late turn/started is left alone.
         interrupt_cancelled_turn(&state, orphan);
         assert!(rx.try_recv().is_err());
 
-        // Flag the thread (its start timed out) and record the LEGIT retry turn.
-        state
-            .cancel_pending_turns
-            .lock()
-            .unwrap()
-            .insert("t1".to_string());
-        state
-            .expected_turns
-            .lock()
-            .unwrap()
-            .insert("t1".to_string(), "turn-legit".to_string());
-
-        // The legit retry turn matches the expected id — never interrupted.
-        let legit = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-legit"}}}"#;
-        interrupt_cancelled_turn(&state, legit);
-        assert!(rx.try_recv().is_err());
-        assert!(!state.cancel_pending_turns.lock().unwrap().is_empty());
-
-        // The orphaned (timed-out) turn is interrupted, and the flag disarms.
+        // Armed AND a start in flight: an incoming turn/started is ambiguous, so
+        // it is deferred (not interrupted), even the orphan's.
+        state.cancel_pending_turns.lock().unwrap().insert("t1".into());
+        state.starting_turns.lock().unwrap().insert("t1".into());
         interrupt_cancelled_turn(&state, orphan);
+        let retry = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-legit"}}}"#;
+        interrupt_cancelled_turn(&state, retry);
+        assert!(rx.try_recv().is_err());
+        assert_eq!(state.deferred_turns.lock().unwrap()["t1"].len(), 2);
+
+        // Armed, no start in flight: an unambiguous orphan is interrupted on
+        // sight and the thread disarms.
+        state.starting_turns.lock().unwrap().remove("t1");
+        let late = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-late"}}}"#;
+        interrupt_cancelled_turn(&state, late);
         let WriterMessage::Line(line) = rx.try_recv().unwrap() else {
             panic!("expected an interrupt line");
         };
         assert!(line.contains("turn/interrupt"));
-        assert!(line.contains("turn-orphan"));
-        assert!(line.contains("t1"));
+        assert!(line.contains("turn-late"));
         assert!(state.cancel_pending_turns.lock().unwrap().is_empty());
-        interrupt_cancelled_turn(&state, orphan);
-        assert!(rx.try_recv().is_err());
     }
 
     #[test]

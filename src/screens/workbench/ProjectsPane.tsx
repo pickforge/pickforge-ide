@@ -370,7 +370,7 @@ export function ProjectsPane() {
           class="pf-menu-item"
           onClick={() =>
             askConfirm({
-              text: `Archive ${name()}?`,
+              text: `Archive "${name()}"?`,
               label: "Archive project",
               run: () => void archiveProject(p.root),
             })
@@ -382,7 +382,7 @@ export function ProjectsPane() {
           class="pf-menu-item pf-menu-item--danger"
           onClick={() =>
             askConfirm({
-              text: `Delete ${name()} and its chats?`,
+              text: `Delete "${name()}" and its chats?`,
               label: "Delete project",
               danger: true,
               run: () => void deleteProject(p.root),
@@ -476,7 +476,7 @@ export function ProjectsPane() {
         class="pf-menu-item"
         onClick={() =>
           askConfirm({
-            text: `Archive ${findChat(p.id)?.title ?? "this chat"}?`,
+            text: `Archive "${findChat(p.id)?.title ?? "this chat"}"?`,
             label: "Archive chat",
             run: () => doArchiveChat(p.id),
           })
@@ -499,7 +499,7 @@ export function ProjectsPane() {
         class="pf-menu-item pf-menu-item--danger"
         onClick={() =>
           askConfirm({
-            text: `Delete ${findChat(p.id)?.title ?? "this chat"}? Its transcript is removed.`,
+            text: `Delete "${findChat(p.id)?.title ?? "this chat"}"? Its transcript is removed.`,
             label: "Delete chat",
             danger: true,
             run: () => void deleteChat(p.id),

@@ -346,11 +346,6 @@ export function Composer(props: {
           up
           disabled={props.turnActive || modelsFor(props.provider).length === 0}
           value={props.model ?? ""}
-          title={
-            props.provider === "claudeCode"
-              ? "Model applies to new sessions"
-              : undefined
-          }
           onChange={(value) => props.onModelChange?.(value || null)}
           options={modelDropdownOptions()}
         />

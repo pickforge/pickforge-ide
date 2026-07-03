@@ -507,6 +507,33 @@ impl AgentChatManager {
         }
     }
 
+    /// Apply a model change to a LIVE session. Claude bridge sessions switch
+    /// via the SDK's setModel (like `/model` in the CLI); codex sessions carry
+    /// the model per turn, so only the stored default updates.
+    pub fn set_model(
+        &self,
+        session_id: &str,
+        model: Option<String>,
+    ) -> Result<(), AgentChatError> {
+        let model = non_empty(model);
+        let (provider, engine) = {
+            let mut inner = self.lock_inner()?;
+            let state = inner
+                .get_mut(session_id)
+                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            state.model = model.clone();
+            (state.provider, state.engine)
+        };
+        self.db.agent_session_set_model(session_id, model.as_deref())?;
+        if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
+            let client = self.claude_bridge_client()?;
+            client
+                .chat_set_model(session_id, model.as_deref())
+                .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+        }
+        Ok(())
+    }
+
     pub fn interrupt(&self, session_id: &str) -> Result<(), AgentChatError> {
         let active_turn = {
             let inner = self.lock_inner()?;

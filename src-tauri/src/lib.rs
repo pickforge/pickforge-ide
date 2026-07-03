@@ -144,6 +144,7 @@ pub fn run() {
             db_commands::agent_run_finish,
             agent_chat_commands::agent_chat_start,
             agent_chat_commands::agent_chat_send,
+            agent_chat_commands::agent_chat_set_model,
             agent_chat_commands::agent_chat_interrupt,
             agent_chat_commands::agent_chat_approve,
             agent_chat_commands::agent_chat_steer,

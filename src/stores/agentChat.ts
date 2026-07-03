@@ -4,6 +4,7 @@ import {
   agentChatHistory,
   agentChatInterrupt,
   agentChatSend,
+  agentChatSetModel,
   agentChatStart,
   agentChatSteer,
   type AgentApprovalDecision,
@@ -693,8 +694,15 @@ export async function ensureAgentChat(
 }
 
 export function setAgentChatModel(chatId: string, model: string | null) {
-  if (!chats[chatId]) return;
+  const chat = chats[chatId];
+  if (!chat) return;
   setChats(chatId, { model });
+  // A live claude session pins its model at start — push the change into the
+  // running query (SDK setModel) or the picker silently lies until the next
+  // session. Codex reads the model per turn, so the store update suffices.
+  if (chat.provider === "claudeCode" && chat.sessionId) {
+    void agentChatSetModel(chat.sessionId, model).catch(() => undefined);
+  }
 }
 
 export function clearProviderSwitched(chatId: string) {

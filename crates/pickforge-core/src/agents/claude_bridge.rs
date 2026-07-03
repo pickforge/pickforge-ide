@@ -284,6 +284,19 @@ impl ClaudeBridgeClient {
         }))
     }
 
+    /// Switch the live query's model mid-session (the SDK's `setModel`).
+    pub fn chat_set_model(
+        &self,
+        chat_id: &str,
+        model: Option<&str>,
+    ) -> Result<(), ClaudeBridgeError> {
+        self.send_value(json!({
+            "op": "setModel",
+            "chatId": chat_id,
+            "model": model,
+        }))
+    }
+
     pub fn list_sessions(&self, cwd: PathBuf) -> Result<Value, ClaudeBridgeError> {
         self.request(
             |req_id| {

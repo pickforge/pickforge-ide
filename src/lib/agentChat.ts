@@ -154,6 +154,13 @@ export function codexConfigDefaultEffort(): Promise<string | null> {
   return invoke<string | null>("codex_config_default_effort");
 }
 
+export function agentChatSetModel(
+  sessionId: string,
+  model: string | null,
+): Promise<void> {
+  return invoke("agent_chat_set_model", { sessionId, model });
+}
+
 export function agentChatInterrupt(sessionId: string): Promise<void> {
   return invoke("agent_chat_interrupt", { sessionId });
 }

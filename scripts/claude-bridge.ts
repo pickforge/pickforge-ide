@@ -102,6 +102,7 @@ type ApproveCommand = {
   decision: ApprovalDecision;
 };
 type InterruptCommand = { op: "interrupt"; chatId: string };
+type SetModelCommand = { op: "setModel"; chatId: string; model?: string | null };
 type ListSessionsCommand = { op: "listSessions"; reqId: string; cwd: string };
 type SessionMessagesCommand = {
   op: "sessionMessages";
@@ -115,6 +116,7 @@ export type ParentCommand =
   | SendCommand
   | ApproveCommand
   | InterruptCommand
+  | SetModelCommand
   | ListSessionsCommand
   | SessionMessagesCommand
   | ShutdownCommand;
@@ -124,6 +126,8 @@ type ChatSession = {
   queue: PushableAsyncQueue<SDKUserMessage>;
   query: Query;
   gate: PermissionGate;
+  /** The model the live query currently runs (null = CLI default). */
+  model: string | null;
 };
 
 const chats = new Map<string, ChatSession>();
@@ -300,10 +304,17 @@ function buildOptions(
 }
 
 function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): void {
-  if (chats.has(command.chatId)) {
+  const existing = chats.get(command.chatId);
+  if (existing) {
     // Re-attach, not a failure: the webview reloaded (or re-ensured) while this
     // bridge kept the session alive. The query is still live — ack so the new
-    // client-side sink takes over instead of failing the whole ensure.
+    // client-side sink takes over instead of failing the whole ensure. A model
+    // change rides along so the re-attached picker stays truthful.
+    const nextModel = command.model ?? null;
+    if (existing.model !== nextModel) {
+      existing.model = nextModel;
+      void existing.query.setModel(nextModel ?? undefined);
+    }
     emit({ ev: "started", chatId: command.chatId });
     return;
   }
@@ -311,7 +322,13 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
   const queue = new PushableAsyncQueue<SDKUserMessage>();
   const gate = createPermissionGate();
   const runningQuery = query({ prompt: queue, options: buildOptions(command, gate, emit) });
-  const chat = { chatId: command.chatId, queue, query: runningQuery, gate };
+  const chat = {
+    chatId: command.chatId,
+    queue,
+    query: runningQuery,
+    gate,
+    model: command.model ?? null,
+  };
   chats.set(command.chatId, chat);
   emit({ ev: "started", chatId: command.chatId });
   void consumeChat(chat, emit);
@@ -384,6 +401,13 @@ async function handleCommand(
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
       await chat.query.interrupt();
+      return;
+    }
+    case "setModel": {
+      const chat = chats.get(command.chatId);
+      if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
+      chat.model = command.model ?? null;
+      await chat.query.setModel(command.model ?? undefined);
       return;
     }
     case "listSessions": {

@@ -133,11 +133,13 @@ export function Composer(props: {
   });
 
   const effortOptions = () => modelOption(props.provider, props.model)?.efforts ?? [];
-  const defaultEffortLabel = () => {
+  // The default level is folded into its own option ("High (default)") rather
+  // than a separate Default entry; picking it sends no explicit effort.
+  const defaultEffort = () => {
     const fallback = modelOption(props.provider, props.model)?.defaultEffort;
     const resolved =
       props.provider === "codex" ? (codexEffortOverride() ?? fallback) : fallback;
-    return resolved ? `Default (${EFFORT_LABELS[resolved] ?? resolved})` : "Default";
+    return resolved && effortOptions().includes(resolved) ? resolved : null;
   };
 
   createEffect(() => {
@@ -324,7 +326,7 @@ export function Composer(props: {
           <select
             class="pf-chat-select"
             disabled={props.turnActive}
-            value={props.effort ?? ""}
+            value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
             title={
               props.provider === "claudeCode"
                 ? "Effort applies to new sessions"
@@ -332,9 +334,17 @@ export function Composer(props: {
             }
             onChange={(e) => props.onEffortChange?.(e.currentTarget.value)}
           >
-            <option value="">{defaultEffortLabel()}</option>
+            <Show when={!defaultEffort()}>
+              <option value="">Default</option>
+            </Show>
             <For each={effortOptions()}>
-              {(level) => <option value={level}>{EFFORT_LABELS[level] ?? level}</option>}
+              {(level) =>
+                level === defaultEffort() ? (
+                  <option value="">{`${EFFORT_LABELS[level] ?? level} (default)`}</option>
+                ) : (
+                  <option value={level}>{EFFORT_LABELS[level] ?? level}</option>
+                )
+              }
             </For>
           </select>
         </Show>

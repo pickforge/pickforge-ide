@@ -1,6 +1,15 @@
 import { type JSX, For, Show } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { renderMarkdown } from "../../lib/markdown";
 import "./chat.css";
+
+// A plain <a href> click would navigate the whole webview away from the app.
+// No URL-safe opener exists (open_path canonicalizes against approved roots and
+// rejects URLs; no opener/shell plugin is wired), so anchor clicks are cancelled
+// rather than routed externally.
+function onMarkdownClick(e: MouseEvent): void {
+  if ((e.target as HTMLElement | null)?.closest("a")) e.preventDefault();
+}
 
 export function ChatBubble(props: {
   role: "user" | "assistant";
@@ -40,7 +49,11 @@ export function ChatBubble(props: {
           </div>
         </Show>
         <Show when={props.text.length > 0}>
-          <span class="pf-chat-bubble-text">{props.text}</span>
+          <div
+            class="pf-chat-md"
+            onClick={onMarkdownClick}
+            innerHTML={renderMarkdown(props.text)}
+          />
         </Show>
         <Show when={props.streaming}>
           <span class="pf-chat-caret" aria-hidden="true" />

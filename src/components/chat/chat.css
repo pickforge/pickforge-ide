@@ -15,7 +15,7 @@
  * reading material, so message text, thinking, command lines/output, diffs,
  * token/meter values and user bubbles opt back into selection. Buttons, chips,
  * and tags stay non-selectable. */
-.pf-chat-bubble-text,
+.pf-chat-md,
 .pf-chat-thinking-body,
 .pf-chat-command-line,
 .pf-chat-command-glyph,
@@ -80,9 +80,111 @@
   padding-left: 0;
   padding-right: 0;
 }
-.pf-chat-bubble-text {
-  white-space: pre-wrap;
+/* ---- Markdown message body ---- */
+.pf-chat-md {
   overflow-wrap: anywhere;
+}
+.pf-chat-md > :first-child {
+  margin-top: 0;
+}
+.pf-chat-md > :last-child {
+  margin-bottom: 0;
+}
+.pf-chat-md p {
+  margin: var(--pf-space-sm) 0;
+}
+.pf-chat-md h1,
+.pf-chat-md h2,
+.pf-chat-md h3,
+.pf-chat-md h4,
+.pf-chat-md h5,
+.pf-chat-md h6 {
+  margin: var(--pf-space-md) 0 var(--pf-space-sm);
+  font-weight: var(--pf-weight-semibold);
+  line-height: 1.3;
+}
+.pf-chat-md h1 {
+  font-size: var(--pf-size-title-lg);
+}
+.pf-chat-md h2 {
+  font-size: var(--pf-size-title-md);
+}
+.pf-chat-md h3 {
+  font-size: var(--pf-size-title-sm);
+}
+.pf-chat-md h4,
+.pf-chat-md h5,
+.pf-chat-md h6 {
+  font-size: var(--pf-size-body-md);
+}
+.pf-chat-md ul,
+.pf-chat-md ol {
+  margin: var(--pf-space-sm) 0;
+  padding-left: var(--pf-space-lg);
+}
+.pf-chat-md li {
+  margin: var(--pf-space-xs) 0;
+}
+.pf-chat-md blockquote {
+  margin: var(--pf-space-sm) 0;
+  padding-left: var(--pf-space-md);
+  border-left: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  color: var(--pf-text-med);
+}
+.pf-chat-md a {
+  color: var(--pf-info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.pf-chat-md code {
+  font-family: var(--pf-font-mono);
+  font-size: 0.92em;
+  padding: 0.1em 0.35em;
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-item-fill);
+}
+.pf-chat-md pre {
+  margin: var(--pf-space-sm) 0;
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface);
+  overflow-x: auto;
+}
+.pf-chat-md pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--pf-size-mono);
+  white-space: pre;
+}
+.pf-chat-md hr {
+  margin: var(--pf-space-md) 0;
+  border: none;
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-chat-md img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--pf-radius-sm);
+}
+.pf-chat-md table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: var(--pf-space-sm) 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.pf-chat-md th,
+.pf-chat-md td {
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  text-align: left;
+}
+.pf-chat-md th {
+  font-weight: var(--pf-weight-semibold);
 }
 .pf-chat-bubble-images {
   display: flex;

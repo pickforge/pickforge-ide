@@ -71,7 +71,7 @@ const AGENT_CHAT_HISTORY: AgentTimelineEntry[] = [
   item(5, {
     kind: "textFinal",
     itemId: "assistant-1",
-    text: "Built a deterministic VRT fixture for the structured chat surface. It covers the message flow, completed tool work, file changes, planning, and token usage without live streaming state.",
+    text: "Built a deterministic VRT fixture for the structured chat surface. It covers the **message flow**, completed tool work, file changes, planning, and token usage without live streaming state.\n\n## Markdown coverage\n\n- Inline `code` and *emphasis*\n- A fenced block:\n\n```ts\nconst snapshot = await page.screenshot();\n```",
   }),
   item(6, {
     kind: "commandStarted",

@@ -9,6 +9,7 @@ import {
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
+import { IconForgeFlame, IconIngot } from "../icons";
 import "./chat.css";
 
 const PROVIDERS = AGENTS.filter(
@@ -22,6 +23,15 @@ const EFFORT_LABELS: Record<string, string> = {
   high: "High",
   xhigh: "X-High",
   max: "Max",
+};
+
+// Forge heat per effort level — drives the flame icon's solid core.
+const EFFORT_HEAT: Record<string, number> = {
+  low: 0.15,
+  medium: 0.4,
+  high: 0.6,
+  xhigh: 0.8,
+  max: 1,
 };
 
 // A ~/.codex/config.toml `model_reasoning_effort` override beats the model's
@@ -141,6 +151,11 @@ export function Composer(props: {
       props.provider === "codex" ? (codexEffortOverride() ?? fallback) : fallback;
     return resolved && effortOptions().includes(resolved) ? resolved : null;
   };
+  const effectiveEffort = () =>
+    props.effort && effortOptions().includes(props.effort)
+      ? props.effort
+      : defaultEffort();
+  const forgeHeat = () => EFFORT_HEAT[effectiveEffort() ?? ""] ?? 0.4;
 
   createEffect(() => {
     if (props.provider === "codex") ensureCodexEffortOverride();
@@ -305,48 +320,54 @@ export function Composer(props: {
             {(agent) => <option value={agent.id}>{agent.label}</option>}
           </For>
         </select>
-        <select
-          class="pf-chat-select"
-          disabled={props.turnActive || modelsFor(props.provider).length === 0}
-          value={props.model ?? ""}
-          title={
-            props.provider === "claudeCode"
-              ? "Model applies to new sessions"
-              : undefined
-          }
-          onChange={(e) =>
-            props.onModelChange?.(e.currentTarget.value || null)
-          }
-        >
-          <For each={modelsFor(props.provider)}>
-            {(m) => <option value={m.id}>{m.label}</option>}
-          </For>
-        </select>
-        <Show when={effortOptions().length > 0}>
+        <span class="pf-chat-picker">
+          <IconIngot size={13} class="pf-chat-picker-icon" />
           <select
-            class="pf-chat-select"
-            disabled={props.turnActive}
-            value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
+            class="pf-chat-select pf-chat-select--icon"
+            disabled={props.turnActive || modelsFor(props.provider).length === 0}
+            value={props.model ?? ""}
             title={
               props.provider === "claudeCode"
-                ? "Effort applies to new sessions"
+                ? "Model applies to new sessions"
                 : undefined
             }
-            onChange={(e) => props.onEffortChange?.(e.currentTarget.value)}
+            onChange={(e) =>
+              props.onModelChange?.(e.currentTarget.value || null)
+            }
           >
-            <Show when={!defaultEffort()}>
-              <option value="">Default</option>
-            </Show>
-            <For each={effortOptions()}>
-              {(level) =>
-                level === defaultEffort() ? (
-                  <option value="">{`${EFFORT_LABELS[level] ?? level} (default)`}</option>
-                ) : (
-                  <option value={level}>{EFFORT_LABELS[level] ?? level}</option>
-                )
-              }
+            <For each={modelsFor(props.provider)}>
+              {(m) => <option value={m.id}>{m.label}</option>}
             </For>
           </select>
+        </span>
+        <Show when={effortOptions().length > 0}>
+          <span class="pf-chat-picker">
+            <IconForgeFlame size={13} level={forgeHeat()} class="pf-chat-picker-icon" />
+            <select
+              class="pf-chat-select pf-chat-select--icon"
+              disabled={props.turnActive}
+              value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
+              title={
+                props.provider === "claudeCode"
+                  ? "Effort applies to new sessions"
+                  : undefined
+              }
+              onChange={(e) => props.onEffortChange?.(e.currentTarget.value)}
+            >
+              <Show when={!defaultEffort()}>
+                <option value="">Default</option>
+              </Show>
+              <For each={effortOptions()}>
+                {(level) =>
+                  level === defaultEffort() ? (
+                    <option value="">{`${EFFORT_LABELS[level] ?? level} (default)`}</option>
+                  ) : (
+                    <option value={level}>{EFFORT_LABELS[level] ?? level}</option>
+                  )
+                }
+              </For>
+            </select>
+          </span>
         </Show>
       </div>
       <Show when={pasteError()}>

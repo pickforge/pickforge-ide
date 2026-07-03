@@ -256,3 +256,37 @@ export function IconRestart(props: IconProps): JSX.Element {
     </Svg>
   );
 }
+
+// Model picker: a cast ingot — the metal being worked. The inner line is the
+// top facet of the cast.
+export function IconIngot(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M5 5h6l2.25 6H2.75z" />
+      <path d="M5.6 7.4h4.8" />
+    </Svg>
+  );
+}
+
+const FLAME_PATH =
+  "M8 2.6C6.1 5.1 4.7 6.9 4.7 9.2a3.3 3.3 0 0 0 6.6 0C11.3 6.9 9.9 5.1 8 2.6Z";
+
+// Effort picker: forge heat. The outline is the flame; the solid core rises
+// with the effort level (0..1), anchored at the flame's base.
+export function IconForgeFlame(
+  props: IconProps & { level?: number },
+): JSX.Element {
+  const level = () => Math.max(0, Math.min(1, props.level ?? 0.5));
+  const scale = () => 0.28 + 0.62 * level();
+  return (
+    <Svg {...props}>
+      <path d={FLAME_PATH} />
+      <path
+        d={FLAME_PATH}
+        fill="currentColor"
+        stroke="none"
+        transform={`translate(8 12.1) scale(${scale()}) translate(-8 -12.1)`}
+      />
+    </Svg>
+  );
+}

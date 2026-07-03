@@ -209,16 +209,18 @@ export function AgentChatView(props: {
         />
       </Show>
       <div class="pf-chat-footer">
-        <Show when={state()}>
-          {(chat) => (
-            <ContextMeter
-              contextUsed={chat().contextUsed}
-              contextWindow={chat().contextWindow}
-              totals={chat().totals}
-            />
-          )}
-        </Show>
         <Composer
+          meter={
+            <Show when={state()}>
+              {(chat) => (
+                <ContextMeter
+                  contextUsed={chat().contextUsed}
+                  contextWindow={chat().contextWindow}
+                  totals={chat().totals}
+                />
+              )}
+            </Show>
+          }
           provider={provider()}
           model={model()}
           effort={effort()}

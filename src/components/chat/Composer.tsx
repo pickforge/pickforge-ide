@@ -113,6 +113,7 @@ export function Composer(props: {
   supportsSteer?: boolean;
   onSteer?: (text: string) => void;
   emberYielded?: boolean;
+  meter?: JSX.Element;
 }): JSX.Element {
   const [text, setText] = createSignal("");
   const [dismissed, setDismissed] = createSignal(false);
@@ -363,6 +364,9 @@ export function Composer(props: {
             onChange={(value) => props.onEffortChange?.(value)}
             options={effortDropdownOptions()}
           />
+        </Show>
+        <Show when={props.meter}>
+          <div class="pf-chat-composer-meter">{props.meter}</div>
         </Show>
       </div>
       <Show when={pasteError()}>

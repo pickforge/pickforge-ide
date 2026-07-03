@@ -25,6 +25,10 @@ pub struct ClaudeStreamParser {
     terminal_emitted: bool,
     open_blocks: HashMap<usize, OpenBlock>,
     tools: HashMap<String, RememberedTool>,
+    // Live context size: the latest main-thread assistant message's usage
+    // (prompt + cache + output) is the conversation's current footprint.
+    context_used: Option<u64>,
+    assistant_model: Option<String>,
 }
 
 impl ClaudeStreamParser {
@@ -157,6 +161,7 @@ impl ClaudeStreamParser {
     }
 
     fn handle_assistant(&mut self, value: &Value) -> Vec<AgentEvent> {
+        self.record_context(value);
         value
             .get("message")
             .and_then(|message| message.get("content"))
@@ -168,6 +173,29 @@ impl ClaudeStreamParser {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn record_context(&mut self, value: &Value) {
+        // Subagent (Task) messages carry parent_tool_use_id and describe a
+        // different context, not this conversation's.
+        if value
+            .get("parent_tool_use_id")
+            .is_some_and(|parent| !parent.is_null())
+        {
+            return;
+        }
+        let Some(message) = value.get("message") else {
+            return;
+        };
+        if let Some(usage) = message.get("usage") {
+            let used = context_size(usage);
+            if used > 0 {
+                self.context_used = Some(used);
+            }
+        }
+        if let Some(model) = string_at(message, "model") {
+            self.assistant_model = Some(model.to_string());
+        }
     }
 
     fn map_assistant_block(&mut self, block: &Value) -> Vec<AgentEvent> {
@@ -322,13 +350,38 @@ impl ClaudeStreamParser {
         self.terminal_emitted = true;
 
         let usage = value.get("usage").unwrap_or(&Value::Null);
-        let mut events = vec![AgentEvent::Usage {
-            input_tokens: u64_at(usage, "input_tokens").unwrap_or_default(),
-            cached_input_tokens: u64_at(usage, "cache_read_input_tokens").unwrap_or_default(),
-            output_tokens: u64_at(usage, "output_tokens").unwrap_or_default(),
-            cost_usd: f64_at(value, "total_cost_usd"),
-            context_used: None,
-            context_window: None,
+        // `modelUsage` and `total_cost_usd` are session-cumulative running
+        // counters (the plain `usage` object is per-turn). Prefer them so the
+        // event is a consistent cumulative snapshot the store can diff, and so
+        // the context meter rides along. Without `modelUsage`, fall back to
+        // the per-turn shape with no context data.
+        let model_usage = value.get("modelUsage").and_then(Value::as_object);
+        let mut events = vec![match model_usage.filter(|models| !models.is_empty()) {
+            Some(models) => AgentEvent::Usage {
+                input_tokens: models
+                    .values()
+                    .filter_map(|entry| u64_at(entry, "inputTokens"))
+                    .sum(),
+                cached_input_tokens: models
+                    .values()
+                    .filter_map(|entry| u64_at(entry, "cacheReadInputTokens"))
+                    .sum(),
+                output_tokens: models
+                    .values()
+                    .filter_map(|entry| u64_at(entry, "outputTokens"))
+                    .sum(),
+                cost_usd: f64_at(value, "total_cost_usd"),
+                context_used: Some(self.context_used.unwrap_or_else(|| context_size(usage))),
+                context_window: context_window_for(models, self.assistant_model.as_deref()),
+            },
+            None => AgentEvent::Usage {
+                input_tokens: u64_at(usage, "input_tokens").unwrap_or_default(),
+                cached_input_tokens: u64_at(usage, "cache_read_input_tokens").unwrap_or_default(),
+                output_tokens: u64_at(usage, "output_tokens").unwrap_or_default(),
+                cost_usd: f64_at(value, "total_cost_usd"),
+                context_used: None,
+                context_window: None,
+            },
         }];
 
         if string_at(value, "subtype") == Some("success") {
@@ -635,6 +688,34 @@ fn f64_at(value: &Value, key: &str) -> Option<f64> {
 
 fn usize_at(value: &Value, key: &str) -> Option<usize> {
     u64_at(value, key).and_then(|index| usize::try_from(index).ok())
+}
+
+/// Total tokens an API `usage` object occupies in the context window.
+fn context_size(usage: &Value) -> u64 {
+    u64_at(usage, "input_tokens").unwrap_or_default()
+        + u64_at(usage, "cache_creation_input_tokens").unwrap_or_default()
+        + u64_at(usage, "cache_read_input_tokens").unwrap_or_default()
+        + u64_at(usage, "output_tokens").unwrap_or_default()
+}
+
+/// Context window of the conversation's main model. `modelUsage` keys are the
+/// requested model ids (e.g. `claude-haiku-4-5`) while assistant messages
+/// report resolved ids (e.g. `claude-haiku-4-5-20251001`), so match by prefix.
+/// Subagents may add entries for other models; with no match and more than one
+/// entry the window is unknowable, so report nothing.
+fn context_window_for(
+    models: &serde_json::Map<String, Value>,
+    assistant_model: Option<&str>,
+) -> Option<u64> {
+    let matched = assistant_model.and_then(|model| {
+        models
+            .iter()
+            .find(|(key, _)| model.starts_with(key.as_str()) || key.starts_with(model))
+            .map(|(_, entry)| entry)
+    });
+    matched
+        .or_else(|| (models.len() == 1).then(|| models.values().next()).flatten())
+        .and_then(|entry| u64_at(entry, "contextWindow"))
 }
 
 fn input_string(input: &Value, keys: &[&str]) -> Option<String> {
@@ -998,6 +1079,54 @@ mod tests {
                 },
                 AgentEvent::TurnFailed { error }
             ] if error == "error_during_execution"
+        ));
+    }
+
+    #[test]
+    fn result_with_model_usage_emits_cumulative_snapshot_and_context() {
+        let mut parser = ClaudeStreamParser::new();
+        parser.push_line(
+            r#"{"type":"assistant","parent_tool_use_id":"task-1","message":{"model":"claude-sonnet-5","usage":{"input_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":500000,"output_tokens":9},"content":[]}}"#,
+        );
+        parser.push_line(
+            r#"{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","usage":{"input_tokens":10,"cache_creation_input_tokens":1373,"cache_read_input_tokens":22513,"output_tokens":4},"content":[]}}"#,
+        );
+        let events = parser.push_line(
+            r#"{"type":"result","subtype":"success","usage":{"input_tokens":10,"cache_read_input_tokens":22513,"output_tokens":33},"total_cost_usd":0.05,"modelUsage":{"claude-haiku-4-5":{"inputTokens":20,"outputTokens":76,"cacheReadInputTokens":22513,"cacheCreationInputTokens":23886,"costUSD":0.05,"contextWindow":200000},"claude-sonnet-5":{"inputTokens":9,"outputTokens":9,"cacheReadInputTokens":500000,"cacheCreationInputTokens":0,"costUSD":0.01,"contextWindow":1000000}}}"#,
+        );
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AgentEvent::Usage {
+                    input_tokens: 29,
+                    cached_input_tokens: 522513,
+                    output_tokens: 85,
+                    cost_usd: Some(0.05),
+                    context_used: Some(23900),
+                    context_window: Some(200000),
+                },
+                AgentEvent::TurnDone {
+                    status: TurnStatus::Completed
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn result_with_model_usage_falls_back_to_turn_usage_for_context() {
+        let mut parser = ClaudeStreamParser::new();
+        let events = parser.push_line(
+            r#"{"type":"result","subtype":"success","usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":22513,"output_tokens":33},"total_cost_usd":0.05,"modelUsage":{"claude-haiku-4-5":{"inputTokens":10,"outputTokens":33,"cacheReadInputTokens":22513,"cacheCreationInputTokens":1000,"costUSD":0.05,"contextWindow":200000}}}"#,
+        );
+
+        assert!(matches!(
+            events.first(),
+            Some(AgentEvent::Usage {
+                context_used: Some(23556),
+                context_window: Some(200000),
+                ..
+            })
         ));
     }
 

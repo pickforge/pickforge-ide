@@ -647,13 +647,18 @@
   background: var(--pf-surface-1);
 }
 
-/* ---- Context-window meter + session cost strip ---- */
+/* ---- Context-window meter + session cost, inline at the pickers' right ---- */
+.pf-chat-composer-meter {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  min-width: 0;
+}
 .pf-chat-context {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--pf-space-md);
-  padding: var(--pf-space-sm) var(--pf-space-lg) 0;
+  gap: var(--pf-space-sm);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-label-sm);
   color: var(--pf-text-low);
@@ -663,9 +668,9 @@
   white-space: nowrap;
 }
 .pf-chat-context-track {
-  flex: 1 1 auto;
+  flex: none;
+  width: 72px;
   height: 2px;
-  min-width: 40px;
   border-radius: var(--pf-radius-pill);
   background: var(--pf-hairline);
   overflow: hidden;
@@ -683,7 +688,6 @@
 }
 .pf-chat-context-cost {
   flex: none;
-  margin-left: auto;
   color: var(--pf-text-med);
   white-space: nowrap;
 }
@@ -698,6 +702,8 @@
 }
 .pf-chat-composer-pickers {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: var(--pf-space-sm);
 }
 /* Composer pickers use the app's one Dropdown (Settings look = the standard).

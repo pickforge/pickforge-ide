@@ -64,6 +64,8 @@ export type AgentEvent =
       costUsd: number | null;
       contextUsed?: number | null;
       contextWindow?: number | null;
+      /** Persisted rows carry the model that served the turn. */
+      model?: string | null;
     }
   | { kind: "rateLimits"; payload: string }
   | { kind: "turnDone"; status: "completed" | "interrupted" }
@@ -163,6 +165,11 @@ export function agentChatSetModel(
 
 export function agentChatInterrupt(sessionId: string): Promise<void> {
   return invoke("agent_chat_interrupt", { sessionId });
+}
+
+/** Release the session's provider resources (bridge chat / thread subscription). */
+export function agentChatDispose(sessionId: string): Promise<void> {
+  return invoke("agent_chat_dispose", { sessionId });
 }
 
 export function agentChatApprove(

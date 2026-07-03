@@ -2,6 +2,7 @@ import { createStore, produce } from "solid-js/store";
 import {
   agentChatApprove,
   agentChatHistory,
+  agentChatDispose,
   agentChatInterrupt,
   agentChatSend,
   agentChatSetModel,
@@ -21,7 +22,7 @@ import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 
 export type AgentTimelineItem =
-  | { type: "userMessage"; seq: number; text: string; images?: string[] }
+  | { type: "userMessage"; seq: number; text: string; images?: string[]; optimistic?: boolean }
   | { type: "assistantText"; seq: number; text: string; streaming: boolean }
   | { type: "thinking"; seq: number; text: string; streaming: boolean }
   | {
@@ -106,6 +107,8 @@ export interface AgentChatState {
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
 const nextSeqByChat = new Map<string, number>();
 const ensurePromises = new Map<string, Promise<void>>();
+// Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
+const ensureGenerations = new Map<string, number>();
 const autoRenameChecked = new Set<string>();
 
 // Chats whose active turn the user just interrupted: the backend still emits
@@ -180,8 +183,8 @@ function appendOptimisticUserMessage(
   if (!chat) return;
   const message: AgentTimelineItem =
     images.length > 0
-      ? { type: "userMessage", seq, text, images: [...images] }
-      : { type: "userMessage", seq, text };
+      ? { type: "userMessage", seq, text, images: [...images], optimistic: true }
+      : { type: "userMessage", seq, text, optimistic: true };
   setChats(chatId, {
     turnActive: true,
     error: null,
@@ -366,7 +369,7 @@ function reduceUsageEvent(
 ): AgentChatState {
   const estimatedCostUsd =
     event.costUsd === null
-      ? estimateCostUsd(chat.model, {
+      ? estimateCostUsd(event.model ?? chat.model, {
           inputTokens: event.inputTokens,
           cachedInputTokens: event.cachedInputTokens,
           outputTokens: event.outputTokens,
@@ -683,11 +686,19 @@ export async function ensureAgentChat(
   const existing = ensurePromises.get(chatId);
   if (existing) return existing;
 
-  const promise = (async () => {
+  // disposeAgentChat bumps the generation; a stale ensure must stop writing —
+  // its awaited continuations would otherwise resurrect the old provider's
+  // session into a disposed or re-created chat entry.
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
+
+  let promise: Promise<void> | undefined;
+  promise = (async () => {
     try {
       if (!chats[chatId].historyLoaded) {
         const previous = chats[chatId];
         const history = await agentChatHistory(chatId);
+        if (stale()) return;
         const loaded = stateFromHistory(chatId, provider, model, history);
         setChats(chatId, {
           ...loaded,
@@ -696,7 +707,7 @@ export async function ensureAgentChat(
           providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
         });
       }
-      if (chats[chatId].sessionId) return;
+      if (stale() || chats[chatId].sessionId) return;
       const sessionId = await agentChatStart({
         chatId,
         projectRoot,
@@ -706,12 +717,17 @@ export async function ensureAgentChat(
         effort: chats[chatId].effort,
         onEvent: (event) => receiveAgentEvent(chatId, event),
       });
+      if (stale()) {
+        // Started for a chat that was disposed mid-flight — release it.
+        void agentChatDispose(sessionId).catch(() => undefined);
+        return;
+      }
       setChats(chatId, { sessionId, projectRoot, provider, model, error: null });
     } catch (error) {
-      if (chats[chatId]) setChats(chatId, { error: errorText(error) });
+      if (!stale() && chats[chatId]) setChats(chatId, { error: errorText(error) });
       throw error;
     } finally {
-      ensurePromises.delete(chatId);
+      if (ensurePromises.get(chatId) === promise) ensurePromises.delete(chatId);
     }
   })();
 
@@ -805,7 +821,7 @@ export async function sendAgentMessage(
       sessionId = chats[chatId]?.sessionId ?? null;
       if (!sessionId) throw new Error("Agent chat is not started");
       const hasOptimisticMessage = chats[chatId]?.timeline.some(
-        (item) => item.type === "userMessage" && item.seq === optimisticSeq,
+        (item) => item.type === "userMessage" && item.optimistic && item.seq === optimisticSeq,
       );
       if (!hasOptimisticMessage) {
         optimisticSeq = takeSeq(chatId);
@@ -823,7 +839,7 @@ export async function sendAgentMessage(
       turnActive: false,
       error: errorText(error),
       timeline: (chats[chatId]?.timeline ?? []).filter(
-        (item) => item.type !== "userMessage" || item.seq !== optimisticSeq,
+        (item) => item.type !== "userMessage" || !item.optimistic || item.seq !== optimisticSeq,
       ),
     });
     if (activityEligible(chatId)) agentTurnCleared(chatId);
@@ -862,7 +878,7 @@ export async function steerAgentChat(chatId: string, text: string): Promise<void
     error: null,
     timeline: [
       ...chats[chatId].timeline,
-      { type: "userMessage", seq: optimisticSeq, text },
+      { type: "userMessage", seq: optimisticSeq, text, optimistic: true },
     ],
   });
   try {
@@ -874,7 +890,7 @@ export async function steerAgentChat(chatId: string, text: string): Promise<void
     setChats(chatId, {
       error: errorText(error),
       timeline: (chats[chatId]?.timeline ?? []).filter(
-        (item) => item.type !== "userMessage" || item.seq !== optimisticSeq,
+        (item) => item.type !== "userMessage" || !item.optimistic || item.seq !== optimisticSeq,
       ),
     });
     throw error;
@@ -895,12 +911,16 @@ export async function interruptAgentChat(chatId: string): Promise<void> {
   if (activityEligible(chatId)) agentTurnCleared(chatId);
 }
 
-/** The chat was deleted: best-effort stop the backend turn (there is no stop
- *  command — interrupt is the closest), then drop the store entry so any late
- *  events for this chat are ignored instead of resurrecting activity state. */
+/** The chat was deleted or is switching provider: release the backend session
+ *  (kills any running turn, closes the bridge chat / thread subscription),
+ *  then drop the store entry so any late events for this chat are ignored
+ *  instead of resurrecting activity state. */
 export function disposeAgentChat(chatId: string) {
   const sessionId = chats[chatId]?.sessionId;
-  if (sessionId) void agentChatInterrupt(sessionId).catch(() => undefined);
+  if (sessionId) void agentChatDispose(sessionId).catch(() => undefined);
+  // Invalidate any in-flight ensure: its awaited continuations must not write
+  // stale session state into a disposed (or re-created) chat entry.
+  ensureGenerations.set(chatId, (ensureGenerations.get(chatId) ?? 0) + 1);
   interruptedByUser.delete(chatId);
   nextSeqByChat.delete(chatId);
   ensurePromises.delete(chatId);

@@ -99,6 +99,11 @@ struct SessionState {
     /// session model at send time). Usage rows persist this so a later model
     /// switch can't re-attribute earlier turns.
     last_turn_model: Option<String>,
+    /// Start overrides, kept so a dead bridge chat (claude CLI exit between
+    /// turns) can be restarted transparently on the next send.
+    effort: Option<String>,
+    permission_mode: Option<String>,
+    allowed_tools: Option<Vec<String>>,
     provider_session_id: Option<String>,
     sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     active_turn: Option<ActiveTurn>,
@@ -250,6 +255,9 @@ impl AgentChatManager {
                     engine,
                     model: model.clone(),
                     last_turn_model: None,
+                    effort: overrides.effort.clone(),
+                    permission_mode: overrides.permission_mode.clone(),
+                    allowed_tools: overrides.allowed_tools.clone(),
                     provider_session_id: provider_session_id.clone(),
                     sink: Arc::clone(&sink),
                     active_turn: None,
@@ -334,26 +342,38 @@ impl AgentChatManager {
             .into_iter()
             .filter(|path| !path.trim().is_empty())
             .collect::<Vec<_>>();
-        let mut inner = self.lock_inner()?;
-        let state = inner
-            .get_mut(session_id)
-            .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
-        if state.active_turn.is_some() {
-            return Err(AgentChatError::TurnActive);
-        }
-
-        let chat_id = state.chat_id.clone();
-        let project_root = state.project_root.clone();
-        let provider = state.provider;
-        let engine = state.engine;
-        let session_model = state.model.clone();
-        let codex_model = turn_model.clone().or_else(|| session_model.clone());
-        let provider_session_id = state.provider_session_id.clone();
-        let session_id_owned = session_id.to_string();
-        state.last_turn_model = match provider {
-            AgentProvider::Codex => codex_model.clone(),
-            AgentProvider::ClaudeCode => session_model.clone(),
+        // Snapshot under a short lock: acquiring a provider client can evict a
+        // dead one, and eviction relocks `inner` — holding it across that call
+        // would self-deadlock the manager. The turn is claimed atomically via
+        // claim_turn once a handle exists.
+        let (chat_id, project_root, provider, engine, session_model, provider_session_id, restart) = {
+            let mut inner = self.lock_inner()?;
+            let state = inner
+                .get_mut(session_id)
+                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            if state.active_turn.is_some() {
+                return Err(AgentChatError::TurnActive);
+            }
+            state.last_turn_model = match state.provider {
+                AgentProvider::Codex => turn_model.clone().or_else(|| state.model.clone()),
+                AgentProvider::ClaudeCode => state.model.clone(),
+            };
+            (
+                state.chat_id.clone(),
+                state.project_root.clone(),
+                state.provider,
+                state.engine,
+                state.model.clone(),
+                state.provider_session_id.clone(),
+                (
+                    state.effort.clone(),
+                    state.permission_mode.clone(),
+                    state.allowed_tools.clone(),
+                ),
+            )
         };
+        let codex_model = turn_model.or_else(|| session_model.clone());
+        let session_id_owned = session_id.to_string();
 
         // Persisted only once the provider has accepted the turn — a rejected
         // send must not leave a phantom prompt in history. Attachments ride
@@ -386,13 +406,15 @@ impl AgentChatManager {
             };
             let turn_id = Arc::new(Mutex::new(None));
             let pending_interrupt = Arc::new(AtomicBool::new(false));
-            state.active_turn = Some(ActiveTurn::new(ActiveTurnHandle::CodexApp {
-                client: Arc::clone(&client),
-                thread_id: thread_id.clone(),
-                turn_id: Arc::clone(&turn_id),
-                pending_interrupt: Arc::clone(&pending_interrupt),
-            }));
-            drop(inner);
+            self.claim_turn(
+                session_id,
+                ActiveTurn::new(ActiveTurnHandle::CodexApp {
+                    client: Arc::clone(&client),
+                    thread_id: thread_id.clone(),
+                    turn_id: Arc::clone(&turn_id),
+                    pending_interrupt: Arc::clone(&pending_interrupt),
+                }),
+            )?;
 
             match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
@@ -400,7 +422,8 @@ impl AgentChatManager {
                     *turn_id.lock().map_err(|_| {
                         AgentChatError::Spawn("agent turn lock poisoned".to_string())
                     })? = Some(started_turn_id);
-                    if pending_interrupt.load(Ordering::SeqCst) {
+                    // swap: exactly one of send()/kill() fires the interrupt.
+                    if pending_interrupt.swap(false, Ordering::SeqCst) {
                         let turn_id = turn_id
                             .lock()
                             .map_err(|_| {
@@ -465,18 +488,45 @@ impl AgentChatManager {
             (Engine::V2, AgentProvider::Codex) => unreachable!("handled before match"),
             (Engine::V2, AgentProvider::ClaudeCode) => {
                 let client = self.claude_bridge_client()?;
-                let chat_id = session_id_owned.clone();
-                state.active_turn = Some(ActiveTurn::new(ActiveTurnHandle::ClaudeBridge {
-                    client: Arc::clone(&client),
-                    chat_id: chat_id.clone(),
-                }));
-                match client.chat_send(&chat_id, text, &images) {
+                // The bridge chat dies with its claude CLI process (crash, auth
+                // expiry, idle exit) while the session stays resumable —
+                // restart it transparently instead of sending into a void.
+                if !client.chat_started(&session_id_owned) {
+                    let (effort, permission_mode, allowed_tools) = restart;
+                    if let Err(err) = client.chat_start(
+                        &session_id_owned,
+                        project_root.clone(),
+                        session_model.clone(),
+                        effort,
+                        provider_session_id.clone(),
+                        Some(
+                            permission_mode
+                                .filter(|value| !value.trim().is_empty())
+                                .unwrap_or_else(|| "default".to_string()),
+                        ),
+                        allowed_tools,
+                        self.wrapping_sink(session_id_owned.clone(), chat_id.clone()),
+                    ) {
+                        let _ = self.db.agent_session_set_status(session_id, "failed");
+                        return Err(AgentChatError::Spawn(err.to_string()));
+                    }
+                }
+                self.claim_turn(
+                    session_id,
+                    ActiveTurn::new(ActiveTurnHandle::ClaudeBridge {
+                        client: Arc::clone(&client),
+                        chat_id: session_id_owned.clone(),
+                    }),
+                )?;
+                match client.chat_send(&session_id_owned, text, &images) {
                     Ok(()) => {
                         persist_prompt(&self.db)?;
                         return Ok(());
                     }
                     Err(err) => {
-                        state.active_turn = None;
+                        if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                            turn.reap();
+                        }
                         Err(AgentChatError::Spawn(err.to_string()))
                     }
                 }
@@ -485,8 +535,15 @@ impl AgentChatManager {
 
         match result {
             Ok(turn) => {
+                let turn = ActiveTurn::new(turn);
+                if let Err(err) = self.claim_turn(session_id, turn.clone()) {
+                    // Lost a concurrent-send race after spawning: kill the
+                    // duplicate run rather than leaking it.
+                    let _ = turn.kill();
+                    turn.reap();
+                    return Err(err);
+                }
                 persist_prompt(&self.db)?;
-                state.active_turn = Some(ActiveTurn::new(turn));
                 Ok(())
             }
             Err(err) => {
@@ -494,6 +551,20 @@ impl AgentChatManager {
                 Err(err)
             }
         }
+    }
+
+    /// Atomically install a turn handle; fails with TurnActive if another
+    /// send won the race first.
+    fn claim_turn(&self, session_id: &str, turn: ActiveTurn) -> Result<(), AgentChatError> {
+        let mut inner = self.lock_inner()?;
+        let state = inner
+            .get_mut(session_id)
+            .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+        if state.active_turn.is_some() {
+            return Err(AgentChatError::TurnActive);
+        }
+        state.active_turn = Some(turn);
+        Ok(())
     }
 
     pub fn approve(
@@ -845,6 +916,40 @@ impl AgentChatManager {
         }
     }
 
+    /// Release a session's provider resources: the claude bridge keeps a
+    /// resident `claude` CLI process per chat and codex keeps a thread
+    /// subscription — without this, deleting a chat (or switching provider)
+    /// leaks them until app exit.
+    pub fn dispose(&self, session_id: &str) {
+        let removed = self
+            .lock_inner()
+            .ok()
+            .and_then(|mut inner| inner.remove(session_id));
+        let Some(state) = removed else {
+            return;
+        };
+        if let Some(turn) = state.active_turn {
+            let _ = turn.kill();
+            turn.reap();
+        }
+        match (state.engine, state.provider) {
+            (Engine::V2, AgentProvider::ClaudeCode) => {
+                if let Ok(client) = self.cached_claude_bridge_client() {
+                    let _ = client.chat_close(session_id);
+                }
+            }
+            (Engine::V2, AgentProvider::Codex) => {
+                if let Some(thread_id) = state.provider_session_id {
+                    if let Ok(client) = self.cached_codex_app_client(&state.project_root) {
+                        let _ = client.unsubscribe(&thread_id);
+                    }
+                }
+            }
+            (Engine::V1, _) => {}
+        }
+        let _ = self.db.agent_session_set_status(session_id, "idle");
+    }
+
     fn lock_inner(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, HashMap<String, SessionState>>, AgentChatError> {
@@ -939,6 +1044,9 @@ fn upsert_session_state(
         existing.provider = state.provider;
         existing.engine = state.engine;
         existing.model = state.model;
+        existing.effort = state.effort;
+        existing.permission_mode = state.permission_mode;
+        existing.allowed_tools = state.allowed_tools;
         existing.provider_session_id = state.provider_session_id;
         existing.sink = state.sink;
     } else {
@@ -954,37 +1062,61 @@ impl ActiveTurn {
     }
 
     fn kill(&self) -> Result<(), AgentChatError> {
-        let handle = self
-            .inner
-            .lock()
-            .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?;
-        match handle.as_ref() {
-            Some(ActiveTurnHandle::Codex(turn)) => turn
-                .kill()
-                .map_err(|err| AgentChatError::Spawn(err.to_string())),
-            Some(ActiveTurnHandle::Claude(turn)) => turn
-                .kill()
-                .map_err(|err| AgentChatError::Spawn(err.to_string())),
-            Some(ActiveTurnHandle::CodexApp {
-                client,
-                thread_id,
-                turn_id,
-                pending_interrupt,
-            }) => {
-                let turn_id = turn_id
-                    .lock()
-                    .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?
-                    .clone();
-                let Some(turn_id) = turn_id else {
+        // turn_interrupt blocks on a response only the client's reader thread
+        // can deliver, and that thread takes this same handle mutex in reap()
+        // when the turn completes — so the blocking call must happen with the
+        // mutex released.
+        let codex_interrupt = {
+            let handle = self
+                .inner
+                .lock()
+                .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?;
+            match handle.as_ref() {
+                Some(ActiveTurnHandle::Codex(turn)) => {
+                    return turn
+                        .kill()
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()));
+                }
+                Some(ActiveTurnHandle::Claude(turn)) => {
+                    return turn
+                        .kill()
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()));
+                }
+                Some(ActiveTurnHandle::ClaudeBridge { client, chat_id }) => {
+                    return client
+                        .chat_interrupt(chat_id)
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()));
+                }
+                Some(ActiveTurnHandle::CodexApp {
+                    client,
+                    thread_id,
+                    turn_id,
+                    pending_interrupt,
+                }) => {
+                    // Arm the flag BEFORE reading the turn id: a send() racing
+                    // to publish the id is then guaranteed to observe it. The
+                    // swap makes send()/kill() fire the interrupt exactly once.
                     pending_interrupt.store(true, Ordering::SeqCst);
-                    return Ok(());
-                };
-                client
-                    .turn_interrupt(thread_id, &turn_id)
-                    .map_err(|err| AgentChatError::Spawn(err.to_string()))
+                    let turn_id = turn_id
+                        .lock()
+                        .map_err(|_| {
+                            AgentChatError::Spawn("agent turn lock poisoned".to_string())
+                        })?
+                        .clone();
+                    match turn_id {
+                        Some(turn_id) if pending_interrupt.swap(false, Ordering::SeqCst) => {
+                            Some((Arc::clone(client), thread_id.clone(), turn_id))
+                        }
+                        _ => None,
+                    }
+                }
+                None => None,
             }
-            Some(ActiveTurnHandle::ClaudeBridge { client, chat_id }) => client
-                .chat_interrupt(chat_id)
+        };
+
+        match codex_interrupt {
+            Some((client, thread_id, turn_id)) => client
+                .turn_interrupt(&thread_id, &turn_id)
                 .map_err(|err| AgentChatError::Spawn(err.to_string())),
             None => Ok(()),
         }
@@ -1111,6 +1243,21 @@ fn handle_runner_event(
             clear_pending_approvals(inner, session_id);
         }
         AgentEvent::TurnFailed { .. } => {
+            // A shared client's crash is broadcast to every subscribed session;
+            // only sessions actually running a turn own the failure. Without
+            // this gate, idle chats get phantom failures persisted.
+            let has_turn = inner
+                .lock()
+                .ok()
+                .map(|states| {
+                    states
+                        .get(session_id)
+                        .is_some_and(|state| state.active_turn.is_some())
+                })
+                .unwrap_or(false);
+            if !has_turn {
+                return;
+            }
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
                 errors.push(err);
             }

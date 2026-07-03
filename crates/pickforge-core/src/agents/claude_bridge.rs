@@ -298,6 +298,24 @@ impl ClaudeBridgeClient {
         }))
     }
 
+    /// Whether the bridge still holds a live query for this chat.
+    pub fn chat_started(&self, chat_id: &str) -> bool {
+        self.state
+            .chats
+            .lock()
+            .map(|chats| chats.contains_key(chat_id))
+            .unwrap_or(false)
+    }
+
+    /// Close the chat's query, releasing its resident claude CLI process.
+    pub fn chat_close(&self, chat_id: &str) -> Result<(), ClaudeBridgeError> {
+        remove_chat(&self.state, chat_id);
+        self.send_value(json!({
+            "op": "close",
+            "chatId": chat_id,
+        }))
+    }
+
     /// Switch the live query's model mid-session (the SDK's `setModel`).
     pub fn chat_set_model(
         &self,
@@ -547,6 +565,14 @@ fn handle_incoming_line(state: &Arc<ClientState>, line: &str) {
         Some("raw") => handle_raw_event(state, &value),
         Some("approvalRequest") => handle_approval_request(state, &value),
         Some("turnClosed") => {}
+        Some("chatClosed") => {
+            // The bridge dropped this chat (query ended or errored). Remove the
+            // runtime so chat_send fails fast and the manager can restart the
+            // chat instead of streaming prompts into a void.
+            if let Some(chat_id) = string_field(&value, &["chatId"]) {
+                remove_chat(state, &chat_id);
+            }
+        }
         Some("fatal") => {
             let error = value
                 .get("error")

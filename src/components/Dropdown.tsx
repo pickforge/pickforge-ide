@@ -50,6 +50,9 @@ export function Dropdown(props: {
       window.removeEventListener("keydown", onKey);
     }
   });
+  createEffect(() => {
+    if (props.disabled) setOpen(false);
+  });
   onCleanup(() => {
     window.removeEventListener("pointerdown", onPointer);
     window.removeEventListener("keydown", onKey);
@@ -92,6 +95,10 @@ export function Dropdown(props: {
                 role="option"
                 aria-selected={o.value === props.value}
                 onClick={() => {
+                  if (props.disabled) {
+                    setOpen(false);
+                    return;
+                  }
                   props.onChange(o.value);
                   setOpen(false);
                 }}

@@ -383,7 +383,17 @@ impl ClaudeStreamParser {
                 input_tokens: u64_at(usage, "input_tokens").unwrap_or_default(),
                 cached_input_tokens: u64_at(usage, "cache_read_input_tokens").unwrap_or_default(),
                 output_tokens: u64_at(usage, "output_tokens").unwrap_or_default(),
-                cost_usd: f64_at(value, "total_cost_usd"),
+                // total_cost_usd is a session-cumulative counter, but this
+                // additive row (contextUsed absent) would be summed per turn.
+                // A present-but-empty modelUsage means a multi-turn v2 session
+                // (only an error result with no API call gets here) — drop the
+                // cost rather than re-count the whole session. A missing key
+                // is the single-turn v1 CLI, where cumulative == per-turn.
+                cost_usd: if value.get("modelUsage").is_some() {
+                    None
+                } else {
+                    f64_at(value, "total_cost_usd")
+                },
                 context_used: None,
                 context_window: None,
             },

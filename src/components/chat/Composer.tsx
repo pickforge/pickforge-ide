@@ -283,6 +283,7 @@ export function Composer(props: {
     const value = text().trim();
     const pending = images();
     if (!value && pending.length === 0) return;
+    const clearImages = !props.turnActive;
     if (props.turnActive) {
       if (!steering() || !value) return;
       props.onSteer!(value);
@@ -290,7 +291,7 @@ export function Composer(props: {
       props.onSend(value, pending.length > 0 ? pending : undefined);
     }
     setText("");
-    setImages([]);
+    if (clearImages) setImages([]);
     field.style.height = "auto";
   };
 

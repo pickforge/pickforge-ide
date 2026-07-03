@@ -118,6 +118,20 @@ fn validated_stashed_image(path: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn agent_chat_dispose(
+    mgr: State<'_, AgentChatManager>,
+    session_id: String,
+) -> Result<(), String> {
+    let mgr = mgr.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        mgr.dispose(&session_id);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn agent_chat_set_model(
     mgr: State<'_, AgentChatManager>,
     session_id: String,

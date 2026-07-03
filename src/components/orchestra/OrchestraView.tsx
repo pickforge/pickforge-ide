@@ -230,12 +230,20 @@ export function OrchestraView(props: {
     const next = Math.max(LEDGER_MIN_WIDTH, Math.min(max, Math.round(event.clientX - rect.left)));
     setLedgerWidth(next);
   };
-  const endResize = () => {
+  const cleanupResize = () => {
     if (!resizing) return;
     resizing = false;
     document.body.classList.remove("pf-resizing");
     window.removeEventListener("pointermove", onResizeMove);
     window.removeEventListener("pointerup", endResize);
+    window.removeEventListener("pointercancel", cancelResize);
+  };
+  const cancelResize = () => {
+    cleanupResize();
+  };
+  const endResize = () => {
+    if (!resizing) return;
+    cleanupResize();
     localStorage.setItem(LEDGER_WIDTH_KEY, String(ledgerWidth()));
   };
   const startResize = (event: PointerEvent) => {
@@ -244,6 +252,7 @@ export function OrchestraView(props: {
     document.body.classList.add("pf-resizing");
     window.addEventListener("pointermove", onResizeMove);
     window.addEventListener("pointerup", endResize);
+    window.addEventListener("pointercancel", cancelResize);
   };
   onCleanup(endResize);
 
@@ -313,12 +322,20 @@ export function OrchestraView(props: {
         : (fy - ratioDrag.bounds.y) / ratioDrag.bounds.h;
     setLaneSplitRatio(props.projectRoot, ratioDrag.id, local);
   };
-  const endRatioDrag = () => {
+  const cleanupRatioDrag = () => {
     if (!ratioDrag) return;
     ratioDrag = null;
     document.body.classList.remove("pf-resizing");
     window.removeEventListener("pointermove", onRatioMove);
     window.removeEventListener("pointerup", endRatioDrag);
+    window.removeEventListener("pointercancel", cancelRatioDrag);
+  };
+  const cancelRatioDrag = () => {
+    cleanupRatioDrag();
+  };
+  const endRatioDrag = () => {
+    if (!ratioDrag) return;
+    cleanupRatioDrag();
     // Ratio moves are store-only while dragging; write-through once on release.
     commitLaneLayout(props.projectRoot);
   };
@@ -328,6 +345,7 @@ export function OrchestraView(props: {
     document.body.classList.add("pf-resizing");
     window.addEventListener("pointermove", onRatioMove);
     window.addEventListener("pointerup", endRatioDrag);
+    window.addEventListener("pointercancel", cancelRatioDrag);
   };
   onCleanup(endRatioDrag);
 
@@ -369,15 +387,23 @@ export function OrchestraView(props: {
     const hit = hitTest(e.clientX, e.clientY);
     setDrop(hit && hit.chatId !== laneDrag.chatId ? hit : null);
   };
-  const endLaneDrag = () => {
+  const cleanupLaneDrag = () => {
     const ld = laneDrag;
     const target = drop();
     laneDrag = null;
     window.removeEventListener("pointermove", onLaneDragMove);
     window.removeEventListener("pointerup", endLaneDrag);
+    window.removeEventListener("pointercancel", cancelLaneDrag);
     document.body.classList.remove("pf-orch-moving");
     setDragChat(null);
     setDrop(null);
+    return { ld, target };
+  };
+  const cancelLaneDrag = () => {
+    cleanupLaneDrag();
+  };
+  const endLaneDrag = () => {
+    const { ld, target } = cleanupLaneDrag();
     if (ld?.active && target && target.chatId !== ld.chatId) {
       moveLane(props.projectRoot, ld.chatId, target.chatId, target.region);
     }
@@ -389,6 +415,7 @@ export function OrchestraView(props: {
     laneDrag = { chatId, startX: e.clientX, startY: e.clientY, active: false };
     window.addEventListener("pointermove", onLaneDragMove);
     window.addEventListener("pointerup", endLaneDrag);
+    window.addEventListener("pointercancel", cancelLaneDrag);
   };
   onCleanup(() => {
     if (laneDrag) endLaneDrag();

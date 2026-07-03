@@ -314,8 +314,17 @@ export function ProjectsPane() {
         edge,
       });
     };
-    const up = () => {
+    const cleanup = () => {
       window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+    };
+    const cancel = () => {
+      cleanup();
+      setChatDrag(null);
+    };
+    const up = () => {
+      cleanup();
       const drag = chatDrag();
       setChatDrag(null);
       if (!active) return;
@@ -328,6 +337,7 @@ export function ProjectsPane() {
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up, { once: true });
+    window.addEventListener("pointercancel", cancel, { once: true });
   };
 
   const RenameField = (props: { value: string; commit: (v: string) => void }) => (

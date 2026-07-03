@@ -583,8 +583,25 @@ impl Database {
     }
 
     pub fn delete_project(&self, root: &str) -> Result<(), DbError> {
-        self.lock()
-            .execute("DELETE FROM projects WHERE project_root = ?1", params![root])?;
+        let conn = self.lock();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM agent_items
+              WHERE chat_id IN (SELECT chat_id FROM chats WHERE project_root = ?1)",
+            params![root],
+        )?;
+        tx.execute(
+            "DELETE FROM agent_messages
+              WHERE chat_id IN (SELECT chat_id FROM chats WHERE project_root = ?1)",
+            params![root],
+        )?;
+        tx.execute(
+            "DELETE FROM agent_sessions
+              WHERE chat_id IN (SELECT chat_id FROM chats WHERE project_root = ?1)",
+            params![root],
+        )?;
+        tx.execute("DELETE FROM projects WHERE project_root = ?1", params![root])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1037,23 +1054,24 @@ impl Database {
         for row in rows {
             let row = row?;
             if row.context_used.is_some() {
-                cumulative
+                // The session-level accumulator only tracks the running
+                // counters (reset-aware); each row's GAIN is attributed to the
+                // model that served that turn, so a mid-session model switch
+                // can't re-attribute earlier usage.
+                let delta = cumulative
                     .entry(row.session_id.clone())
-                    .or_insert_with(|| CumulativeUsageAccumulator::new(&row))
+                    .or_default()
                     .add(&row);
+                summaries
+                    .entry((row.provider.clone(), row.model.clone()))
+                    .or_default()
+                    .add_cumulative_delta(&row, delta);
             } else {
                 summaries
                     .entry((row.provider.clone(), row.model.clone()))
                     .or_default()
                     .add_additive(&row);
             }
-        }
-
-        for session in cumulative.into_values() {
-            summaries
-                .entry((session.provider.clone(), session.model.clone()))
-                .or_default()
-                .add_cumulative(session);
         }
 
         Ok(summaries
@@ -1282,20 +1300,26 @@ impl UsageSummaryAccumulator {
         self.cost_usd += row.cost_usd.unwrap_or(0.0);
     }
 
-    fn add_cumulative(&mut self, session: CumulativeUsageAccumulator) {
-        self.chats.insert(session.chat_id);
+    fn add_cumulative_delta(&mut self, row: &AgentUsageRow, delta: CumulativeDelta) {
+        self.chats.insert(row.chat_id.clone());
         self.has_cumulative = true;
-        self.input_tokens += session.input_tokens.total;
-        self.cached_input_tokens += session.cached_input_tokens.total;
-        self.output_tokens += session.output_tokens.total;
-        self.cost_usd += session.cost_usd.total;
+        self.input_tokens += delta.input_tokens;
+        self.cached_input_tokens += delta.cached_input_tokens;
+        self.output_tokens += delta.output_tokens;
+        self.cost_usd += delta.cost_usd;
     }
 }
 
+/// What one cumulative snapshot gained over the session's previous one.
+struct CumulativeDelta {
+    input_tokens: i64,
+    cached_input_tokens: i64,
+    output_tokens: i64,
+    cost_usd: f64,
+}
+
+#[derive(Default)]
 struct CumulativeUsageAccumulator {
-    provider: String,
-    model: Option<String>,
-    chat_id: String,
     input_tokens: CumulativeI64,
     cached_input_tokens: CumulativeI64,
     output_tokens: CumulativeI64,
@@ -1303,23 +1327,13 @@ struct CumulativeUsageAccumulator {
 }
 
 impl CumulativeUsageAccumulator {
-    fn new(row: &AgentUsageRow) -> Self {
-        Self {
-            provider: row.provider.clone(),
-            model: row.model.clone(),
-            chat_id: row.chat_id.clone(),
-            input_tokens: CumulativeI64::default(),
-            cached_input_tokens: CumulativeI64::default(),
-            output_tokens: CumulativeI64::default(),
-            cost_usd: CumulativeF64::default(),
+    fn add(&mut self, row: &AgentUsageRow) -> CumulativeDelta {
+        CumulativeDelta {
+            input_tokens: self.input_tokens.add(row.input_tokens),
+            cached_input_tokens: self.cached_input_tokens.add(row.cached_input_tokens),
+            output_tokens: self.output_tokens.add(row.output_tokens),
+            cost_usd: self.cost_usd.add(row.cost_usd),
         }
-    }
-
-    fn add(&mut self, row: &AgentUsageRow) {
-        self.input_tokens.add(row.input_tokens);
-        self.cached_input_tokens.add(row.cached_input_tokens);
-        self.output_tokens.add(row.output_tokens);
-        self.cost_usd.add(row.cost_usd);
     }
 }
 
@@ -1330,14 +1344,17 @@ struct CumulativeI64 {
 }
 
 impl CumulativeI64 {
-    fn add(&mut self, value: Option<i64>) {
-        if let Some(value) = value {
-            self.total += match self.previous {
-                Some(previous) if value >= previous => value - previous,
-                _ => value,
-            };
-            self.previous = Some(value);
-        }
+    fn add(&mut self, value: Option<i64>) -> i64 {
+        let Some(value) = value else {
+            return 0;
+        };
+        let gained = match self.previous {
+            Some(previous) if value >= previous => value - previous,
+            _ => value,
+        };
+        self.total += gained;
+        self.previous = Some(value);
+        gained
     }
 }
 
@@ -1348,14 +1365,17 @@ struct CumulativeF64 {
 }
 
 impl CumulativeF64 {
-    fn add(&mut self, value: Option<f64>) {
-        if let Some(value) = value {
-            self.total += match self.previous {
-                Some(previous) if value >= previous => value - previous,
-                _ => value,
-            };
-            self.previous = Some(value);
-        }
+    fn add(&mut self, value: Option<f64>) -> f64 {
+        let Some(value) = value else {
+            return 0.0;
+        };
+        let gained = match self.previous {
+            Some(previous) if value >= previous => value - previous,
+            _ => value,
+        };
+        self.total += gained;
+        self.previous = Some(value);
+        gained
     }
 }
 
@@ -2216,6 +2236,37 @@ mod tests {
             .iter()
             .find(|summary| summary.provider == provider && summary.model.as_deref() == model)
             .unwrap()
+    }
+
+    #[test]
+    fn delete_project_removes_agent_rows_for_project_chats() {
+        let db = Database::open_in_memory().unwrap();
+        seed_agent_chat(&db, "/p-delete", "c-delete");
+        seed_agent_session_with_model(&db, "s-delete", "c-delete", "codex", Some("gpt-5"));
+        append_usage(&db, "s-delete", "c-delete", 10, 1, 2, Some(0.10), None);
+        db.agent_message_append("s-delete", "c-delete", "user", "hello")
+            .unwrap();
+
+        assert_eq!(db.agent_usage_summary(None).unwrap().len(), 1);
+
+        db.delete_project("/p-delete").unwrap();
+
+        assert!(db.agent_usage_summary(None).unwrap().is_empty());
+        assert!(db.list_chats("/p-delete").unwrap().is_empty());
+
+        let conn = db.lock();
+        let sessions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))
+            .unwrap();
+        let messages: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_messages", [], |row| row.get(0))
+            .unwrap();
+        let items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_items", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(sessions, 0);
+        assert_eq!(messages, 0);
+        assert_eq!(items, 0);
     }
 
     #[test]

@@ -101,6 +101,7 @@ function mockInvoke(history: AgentTimelineEntry[] = []) {
     if (cmd === "agent_chat_start") return Promise.resolve("session-1");
     if (cmd === "agent_chat_send") return Promise.resolve();
     if (cmd === "agent_chat_interrupt") return Promise.resolve();
+    if (cmd === "agent_chat_dispose") return Promise.resolve();
     if (cmd === "agent_chat_approve") return Promise.resolve();
     if (cmd === "agent_chat_steer") return Promise.resolve();
     return Promise.resolve(null);
@@ -780,6 +781,25 @@ describe("ensureAgentChat", () => {
 });
 
 describe("sendAgentMessage", () => {
+  it("re-appends the sent message when history replay clobbers the optimistic row", async () => {
+    // An existing chat's first persisted row is a user message with seq 1 —
+    // sending before history loads must not mistake it for the optimistic row
+    // (which also takes seq 1) and silently drop the fresh prompt.
+    const chatId = nextChatId();
+    mockInvoke([
+      { entryType: "message", seq: 1, role: "user", content: "old prompt", createdAt: 1 },
+    ]);
+
+    const ensuring = ensureAgentChat(chatId, "/project", "codex", null);
+    await sendAgentMessage(chatId, "fresh prompt");
+    await ensuring;
+
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "old prompt" },
+      { type: "userMessage", seq: 2, text: "fresh prompt", optimistic: true },
+    ]);
+  });
+
   it("passes codex effort and images through and keeps images on the optimistic item", async () => {
     const { chatId } = await startChat([], "gpt-5.3-codex-spark");
     const images = ["data:image/png;base64,abc"];
@@ -795,7 +815,7 @@ describe("sendAgentMessage", () => {
       images,
     });
     expect(timeline(chatId)).toEqual([
-      { type: "userMessage", seq: 1, text: "inspect this", images },
+      { type: "userMessage", seq: 1, text: "inspect this", images, optimistic: true },
     ]);
   });
 
@@ -889,7 +909,9 @@ describe("sendAgentMessage", () => {
       model: null,
       images: [],
     });
-    expect(timeline(chatId)).toEqual([{ type: "userMessage", seq: 1, text: "hello" }]);
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "hello", optimistic: true },
+    ]);
     expect(agentChat(chatId)?.error).toBeNull();
   });
 
@@ -935,7 +957,7 @@ describe("switchAgentChatProvider", () => {
 
     await expect(switchAgentChatProvider(chatId, "claudeCode", "claude-new")).resolves.toBe(true);
 
-    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_interrupt", { sessionId: "session-1" });
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_dispose", { sessionId: "session-1" });
     expect(workspace.setChatAgent).toHaveBeenCalledWith(chatId, "claudeCode", "agent");
     expect(workspace.chats.get(chatId)?.agentId).toBe("claudeCode");
     const starts = tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start");
@@ -1096,7 +1118,7 @@ describe("agentChat → chatActivity wiring", () => {
     disposeAgentChat(chatId);
 
     expect(agentChat(chatId)).toBeUndefined();
-    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_interrupt")).toBe(true);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_dispose")).toBe(true);
 
     emit({ kind: "turnDone", status: "completed" });
     expect(agentChat(chatId)).toBeUndefined();

@@ -69,7 +69,6 @@ import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } fro
 import { pickProjectDir } from "../../lib/opener";
 
 const PROJECT_MIME = "application/x-pf-project";
-const CHAT_MIME = "application/x-pf-chat";
 
 // Providers a structured agent chat can drive (AgentChatView backends). Reuses
 // the AGENTS profile labels so the picker stays in sync with the model settings.
@@ -85,8 +84,15 @@ async function pickProject() {
   if (dir) await addProject(dir, basename(dir));
 }
 
-type MenuKind = "project" | "group" | "chat" | "newchat";
+type MenuKind = "project" | "group" | "chat" | "newchat" | "confirm";
 interface MenuState { kind: MenuKind; id: string; x: number; y: number; align: "start" | "end" }
+
+interface PendingConfirm {
+  text: string;
+  label: string;
+  danger?: boolean;
+  run: () => void;
+}
 
 export function ProjectsPane() {
   const [menu, setMenu] = createSignal<MenuState | null>(null);
@@ -109,8 +115,40 @@ export function ProjectsPane() {
     return m && m.kind === kind && m.id === id ? m.edge : null;
   };
 
-  const closeMenu = () => setMenu(null);
+  const closeMenu = () => {
+    setMenu(null);
+    setPendingConfirm(null);
+  };
   onCleanup(closeMenu);
+
+  // Destructive menu actions swap the open menu for a confirm step in place —
+  // the action only runs on the explicit confirm click.
+  const [pendingConfirm, setPendingConfirm] = createSignal<PendingConfirm | null>(null);
+  const askConfirm = (confirm: PendingConfirm) => {
+    setPendingConfirm(confirm);
+    setMenu((m) => (m ? { ...m, kind: "confirm" } : m));
+  };
+
+  const ConfirmMenu = () => (
+    <Show when={pendingConfirm()}>
+      {(c) => (
+        <>
+          <div class="pf-menu-label">{c().text}</div>
+          <button
+            class="pf-menu-item"
+            classList={{ "pf-menu-item--danger": c().danger }}
+            onClick={() => {
+              c().run();
+              closeMenu();
+            }}
+          >
+            {c().label}
+          </button>
+          <button class="pf-menu-item" onClick={closeMenu}>Cancel</button>
+        </>
+      )}
+    </Show>
+  );
 
   const openFromButton = (kind: MenuKind, id: string, e: MouseEvent) => {
     e.stopPropagation();
@@ -213,37 +251,83 @@ export function ProjectsPane() {
   };
 
   // ---- chat reorder drag (within a project) ----
-  const allowChatDrop = (e: DragEvent) => {
-    if (e.dataTransfer?.types.includes(CHAT_MIME)) {
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    }
+  // Pointer-based, not HTML5 dnd: webkit's drag events were unreliable here
+  // (missed targets in row gaps, giant default drag images, delayed drops).
+  // A pressed row past a small threshold becomes a compact floating ghost; the
+  // slot it would land in renders an ember line, matching the lane drag accent.
+  const chatRowEls = new Map<string, HTMLElement>();
+  const [chatDrag, setChatDrag] = createSignal<{
+    id: string;
+    root: string;
+    title: string;
+    x: number;
+    y: number;
+    targetId: string | null;
+    edge: DropEdge | null;
+  } | null>(null);
+  let suppressChatClick = false;
+
+  const chatDragEdge = (id: string): DropEdge | null => {
+    const d = chatDrag();
+    return d && d.targetId === id ? d.edge : null;
   };
-  // Drop onto a specific row: insert before or after it by where the pointer sits
-  // relative to the row's midpoint, so reordering works in BOTH directions.
-  const dropOnChat = (root: string, targetId: string, e: DragEvent) => {
-    const id = e.dataTransfer?.getData(CHAT_MIME);
-    const edge = edgeFor("chat", targetId);
-    setDropMark(null);
-    if (!id) return;
-    // Only reorder within the same project.
-    if (!chatsFor(root).some((c) => c.chatId === id)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const order = chatsFor(root)
-      .filter((c) => !isChatArchived(c.chatId))
-      .map((c) => c.chatId);
-    void reorderChat(id, edge ? beforeIdForDrop(order, targetId, edge) : null);
-  };
-  // Drop onto the children container's empty space → append to the end.
-  const dropChatAtEnd = (root: string, e: DragEvent) => {
-    const id = e.dataTransfer?.getData(CHAT_MIME);
-    setDropMark(null);
-    if (!id) return;
-    if (!chatsFor(root).some((c) => c.chatId === id)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    void reorderChat(id, null);
+
+  const startChatDrag = (e: PointerEvent, chat: Chat, root: string) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, input")) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const orderIds = () =>
+      chatsFor(root)
+        .filter((c) => !isChatArchived(c.chatId))
+        .map((c) => c.chatId);
+    let active = false;
+
+    const move = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
+        active = true;
+      }
+      const ids = orderIds();
+      let targetId: string | null = null;
+      let edge: DropEdge | null = null;
+      for (const rowId of ids) {
+        const rect = chatRowEls.get(rowId)?.getBoundingClientRect();
+        if (!rect) continue;
+        if (ev.clientY <= rect.bottom) {
+          targetId = rowId;
+          edge = dropEdgeForRect(ev.clientY, rect);
+          break;
+        }
+      }
+      if (!targetId && ids.length > 0) {
+        targetId = ids[ids.length - 1];
+        edge = "after";
+      }
+      setChatDrag({
+        id: chat.chatId,
+        root,
+        title: chatTitleOverride(chat.chatId) ?? chat.title,
+        x: ev.clientX,
+        y: ev.clientY,
+        targetId,
+        edge,
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      const drag = chatDrag();
+      setChatDrag(null);
+      if (!active) return;
+      // The pointer went down on a row, so the browser fires a click on
+      // pointerup even after a drag — swallow that one click.
+      suppressChatClick = true;
+      setTimeout(() => (suppressChatClick = false), 0);
+      if (!drag?.targetId || !drag.edge) return;
+      void reorderChat(drag.id, beforeIdForDrop(orderIds(), drag.targetId, drag.edge));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
   };
 
   const RenameField = (props: { value: string; commit: (v: string) => void }) => (
@@ -282,8 +366,31 @@ export function ProjectsPane() {
         </For>
         <button class="pf-menu-item pf-menu-item--accent" onClick={() => newGroupFor(p.root)}>New group…</button>
         <div class="pf-menu-sep" />
-        <button class="pf-menu-item" onClick={() => { void archiveProject(p.root); closeMenu(); }}>Archive</button>
-        <button class="pf-menu-item pf-menu-item--danger" onClick={() => { void deleteProject(p.root); closeMenu(); }}>Delete</button>
+        <button
+          class="pf-menu-item"
+          onClick={() =>
+            askConfirm({
+              text: `Archive ${name()}?`,
+              label: "Archive project",
+              run: () => void archiveProject(p.root),
+            })
+          }
+        >
+          Archive
+        </button>
+        <button
+          class="pf-menu-item pf-menu-item--danger"
+          onClick={() =>
+            askConfirm({
+              text: `Delete ${name()} and its chats?`,
+              label: "Delete project",
+              danger: true,
+              run: () => void deleteProject(p.root),
+            })
+          }
+        >
+          Delete
+        </button>
       </>
     );
   };
@@ -291,7 +398,19 @@ export function ProjectsPane() {
   const GroupMenu = (p: { id: string }) => (
     <>
       <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
-      <button class="pf-menu-item pf-menu-item--danger" onClick={() => { removeGroup(p.id); closeMenu(); }}>Remove group</button>
+      <button
+        class="pf-menu-item pf-menu-item--danger"
+        onClick={() =>
+          askConfirm({
+            text: "Remove this group? Its projects move to Ungrouped.",
+            label: "Remove group",
+            danger: true,
+            run: () => removeGroup(p.id),
+          })
+        }
+      >
+        Remove group
+      </button>
     </>
   );
 
@@ -353,7 +472,18 @@ export function ProjectsPane() {
     <>
       <button class="pf-menu-item" onClick={() => { selectChat(p.id); closeMenu(); }}>Open</button>
       <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
-      <button class="pf-menu-item" onClick={() => doArchiveChat(p.id)}>Archive</button>
+      <button
+        class="pf-menu-item"
+        onClick={() =>
+          askConfirm({
+            text: `Archive ${findChat(p.id)?.title ?? "this chat"}?`,
+            label: "Archive chat",
+            run: () => doArchiveChat(p.id),
+          })
+        }
+      >
+        Archive
+      </button>
       <Show when={recoverChatSessions() && findChat(p.id)?.kind !== "agent"}>
         <div class="pf-menu-sep" />
         <button
@@ -365,35 +495,43 @@ export function ProjectsPane() {
         </button>
       </Show>
       <div class="pf-menu-sep" />
-      <button class="pf-menu-item pf-menu-item--danger" onClick={() => { void deleteChat(p.id); closeMenu(); }}>Delete</button>
+      <button
+        class="pf-menu-item pf-menu-item--danger"
+        onClick={() =>
+          askConfirm({
+            text: `Delete ${findChat(p.id)?.title ?? "this chat"}? Its transcript is removed.`,
+            label: "Delete chat",
+            danger: true,
+            run: () => void deleteChat(p.id),
+          })
+        }
+      >
+        Delete
+      </button>
     </>
   );
 
   // ---- chat rows + a project's chat children ----
   const ChatRow = (p: { chat: Chat; root: string; archived?: boolean }) => {
     const id = p.chat.chatId;
+    onCleanup(() => chatRowEls.delete(id));
     return (
       <div
         class="pf-chat-row"
+        ref={(el) => chatRowEls.set(id, el)}
         classList={{
           active: workspace.activeChatId === id || (!p.archived && isChatStaged(id)),
           "pf-chat-row--archived": p.archived,
           "pf-chat-row--busy": !p.archived && chatBusy(id) && !chatAttention(id),
           "pf-chat-row--attention": !p.archived && workspace.activeChatId !== id && !isChatStaged(id) && chatAttention(id),
-          "pf-drop-before": edgeFor("chat", id) === "before",
-          "pf-drop-after": edgeFor("chat", id) === "after",
+          "pf-chat-row--dragging": chatDrag()?.id === id,
+          "pf-drop-ember": chatDragEdge(id) !== null,
+          "pf-drop-before": chatDragEdge(id) === "before",
+          "pf-drop-after": chatDragEdge(id) === "after",
         }}
-        draggable={!p.archived}
-        onDragStart={(e) => {
-          e.stopPropagation();
-          e.dataTransfer?.setData(CHAT_MIME, id);
-          if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-        }}
-        onDragOver={p.archived ? undefined : (e) => { allowChatDrop(e); markEdge("chat", id)(e); }}
-        onDragLeave={() => clearMark("chat", id)}
-        onDrop={p.archived ? undefined : (e) => dropOnChat(p.root, id, e)}
-        onDragEnd={() => setDropMark(null)}
-        onClick={() => !p.archived && selectChat(id)}
+        onPointerDown={p.archived ? undefined : (e) => startChatDrag(e, p.chat, p.root)}
+        onDragStart={(e) => e.preventDefault()}
+        onClick={() => !p.archived && !suppressChatClick && selectChat(id)}
         onContextMenu={(e) => !p.archived && openFromContext("chat", id, e)}
       >
         <span class="pf-chat-dot" />
@@ -444,11 +582,7 @@ export function ProjectsPane() {
     const archOpen = () => showArchived().has(p.root);
     return (
       <Collapse open={chatsExpanded(p.root)}>
-        <div
-          class="pf-chat-children"
-          onDragOver={allowChatDrop}
-          onDrop={(e) => dropChatAtEnd(p.root, e)}
-        >
+        <div class="pf-chat-children">
           <For each={visible()} fallback={<div class="pf-chat-empty">No chats yet</div>}>
             {(chat) => <ChatRow chat={chat} root={p.root} />}
           </For>
@@ -460,9 +594,9 @@ export function ProjectsPane() {
               Archived
               <span class="pf-group-count">{archived().length}</span>
             </button>
-            <Show when={archOpen()}>
+            <Collapse open={archOpen()}>
               <For each={archived()}>{(chat) => <ChatRow chat={chat} root={p.root} archived />}</For>
-            </Show>
+            </Collapse>
           </Show>
         </div>
       </Collapse>
@@ -526,30 +660,39 @@ export function ProjectsPane() {
     );
   };
 
+  // One bubble per project: the header AND its chats live inside the same grid
+  // card. A card with its chats open spans the full row so the list reads as a
+  // contained group instead of chats spilling loose beneath the tile grid.
   const ProjectCard = (p: { project: Project }) => {
     const root = p.project.projectRoot;
     const count = () => chatsFor(root).filter((c) => !isChatArchived(c.chatId)).length;
     return (
-      <>
+      <div
+        class="pf-proj-card"
+        classList={{
+          active: workspace.activeRoot === root,
+          "pf-proj-card--open": chatsExpanded(root),
+          "pf-drop-before-x": edgeFor("project", root) === "before",
+          "pf-drop-after-x": edgeFor("project", root) === "after",
+        }}
+        onDragOver={(e) => { allowProjectDrop(e); markEdge("project", root, "x")(e); }}
+        onDragLeave={() => clearMark("project", root)}
+        onDrop={(e) => dropProjectReorder(root, e)}
+        onContextMenu={(e) => openFromContext("project", root, e)}
+      >
         <div
-          class="pf-proj-card"
-          classList={{
-            active: workspace.activeRoot === root,
-            "pf-drop-before-x": edgeFor("project", root) === "before",
-            "pf-drop-after-x": edgeFor("project", root) === "after",
-          }}
+          class="pf-proj-card-head"
           draggable={true}
           onDragStart={(e) => projectDragStart(root, e)}
-          onDragOver={(e) => { allowProjectDrop(e); markEdge("project", root, "x")(e); }}
-          onDragLeave={() => clearMark("project", root)}
-          onDrop={(e) => dropProjectReorder(root, e)}
           onDragEnd={() => setDropMark(null)}
           onClick={() => openProject(root)}
-          onContextMenu={(e) => openFromContext("project", root, e)}
         >
           <div class="pf-proj-card-top">
             <span class="pf-proj-card-mark">{p.project.displayName.charAt(0).toUpperCase()}</span>
             <ProjectTwisty root={root} />
+            <button class="pf-proj-card-menu" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
+              <IconMore size={14} />
+            </button>
           </div>
           <div class="pf-proj-card-meta">
             <Show when={renaming() === root} fallback={<span class="pf-proj-card-name">{p.project.displayName}</span>}>
@@ -559,16 +702,9 @@ export function ProjectsPane() {
               <span class="pf-proj-card-count">{count()} chat{count() === 1 ? "" : "s"}</span>
             </Show>
           </div>
-          <button class="pf-proj-card-menu" title="Project options" onClick={(e) => openFromButton("project", root, e)}>
-            <IconMore size={14} />
-          </button>
         </div>
-        <Show when={chatsExpanded(root)}>
-          <div class="pf-grid-chats">
-            <ChatChildren root={root} />
-          </div>
-        </Show>
-      </>
+        <ChatChildren root={root} />
+      </div>
     );
   };
 
@@ -652,11 +788,11 @@ export function ProjectsPane() {
                     }
                   >
                     <GroupHeader group={bucket.group!} count={bucket.projects.length} projects={bucket.projects} />
-                    <Show when={!bucket.group!.collapsed}>
+                    <Collapse open={!bucket.group!.collapsed}>
                       <div onDragOver={allowProjectDrop} onDrop={(e) => dropIntoGroup(bucket.group!.id, e)}>
                         <ProjectsBody projects={bucket.projects} />
                       </div>
-                    </Show>
+                    </Collapse>
                   </Show>
                 </div>
               )}
@@ -664,6 +800,17 @@ export function ProjectsPane() {
           </Show>
         </Show>
       </div>
+
+      <Show when={chatDrag()}>
+        {(d) => (
+          <div
+            class="pf-chat-drag-ghost"
+            style={{ left: `${d().x + 12}px`, top: `${d().y + 10}px` }}
+          >
+            {d().title}
+          </div>
+        )}
+      </Show>
 
       <Show when={menu()}>
         {(m) => (
@@ -673,6 +820,7 @@ export function ProjectsPane() {
               <Match when={m().kind === "group"}><GroupMenu id={m().id} /></Match>
               <Match when={m().kind === "chat"}><ChatMenu id={m().id} /></Match>
               <Match when={m().kind === "newchat"}><NewChatMenu root={m().id} /></Match>
+              <Match when={m().kind === "confirm"}><ConfirmMenu /></Match>
             </Switch>
           </FloatingMenu>
         )}

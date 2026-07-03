@@ -292,6 +292,32 @@ body.pf-resizing .pf-dock-panel {
 .pf-drop-after::after {
   bottom: 0;
 }
+/* The pointer-based chat drag uses the ember accent (like the lane drag): the
+ * line marks the slot the row will land in, and the pressed row dims. */
+.pf-drop-ember.pf-drop-before::before,
+.pf-drop-ember.pf-drop-after::after {
+  background: var(--pf-ember);
+  height: var(--pf-bracket-width);
+}
+.pf-chat-row--dragging {
+  opacity: 0.45;
+}
+.pf-chat-drag-ghost {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: color-mix(in srgb, var(--pf-surface-2) 94%, transparent);
+  box-shadow: var(--pf-shadow-overlay);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+}
 .pf-drop-before-x::before,
 .pf-drop-after-x::after {
   top: 0;
@@ -801,7 +827,7 @@ body.pf-resizing .pf-dock-panel {
 .pf-proj-card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--pf-space-xs);
 }
 .pf-proj-card-count {
   font-family: var(--pf-font-mono);
@@ -811,11 +837,13 @@ body.pf-resizing .pf-dock-panel {
   color: var(--pf-text-low);
   flex: none;
 }
-.pf-grid-chats {
+/* A card with open chats spans the full row: one bubble holds the header and
+ * its chat rows, instead of chats spilling loose beneath the tile grid. */
+.pf-proj-card--open {
   grid-column: 1 / -1;
 }
-.pf-grid-chats .pf-chat-children {
-  margin-left: var(--pf-space-xs);
+.pf-proj-card .pf-chat-children {
+  padding-top: var(--pf-space-xs);
 }
 
 /* ---- projects: view toggle, groups, grid, menus ---- */
@@ -1046,14 +1074,19 @@ body.pf-resizing .pf-dock-panel {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-sm);
   padding: var(--pf-space-md);
   border-radius: var(--pf-radius-md);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-2);
-  cursor: pointer;
   transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
     background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+/* Only the header opens the project — chat rows inside keep their own clicks. */
+.pf-proj-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  cursor: pointer;
 }
 .pf-proj-card:hover {
   border-color: var(--pf-hairline-strong);
@@ -1125,25 +1158,26 @@ body.pf-resizing .pf-dock-panel {
   white-space: nowrap;
   min-width: 0;
 }
+/* The twisty and the menu are siblings in the top row with real hit areas —
+ * an absolute corner menu used to overlap the twisty and made both untappable. */
+.pf-proj-card-top .pf-tree-twisty {
+  margin-left: auto;
+}
+.pf-proj-card-top .pf-tree-twisty,
 .pf-proj-card-menu {
-  position: absolute;
-  top: var(--pf-space-xs);
-  right: var(--pf-space-xs);
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+.pf-proj-card-menu {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
   border: none;
   background: transparent;
   color: var(--pf-text-low);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge),
-    color var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-proj-card:hover .pf-proj-card-menu {
-  opacity: 1;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-proj-card-menu:hover {
   color: var(--pf-text-hi);

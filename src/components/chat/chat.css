@@ -850,6 +850,12 @@
   align-items: center;
   justify-content: center;
   padding: var(--pf-space-sm) var(--pf-space-lg);
+  /* Match the single-row textarea's box so the pair reads as one aligned row
+   * (line-height + vertical padding + hairlines); on multiline growth the
+   * button stays anchored to the last line via the row's flex-end. */
+  min-height: calc(
+    1.5 * var(--pf-size-body-lg) + 2 * var(--pf-space-sm) + 2 * var(--pf-hairline-width)
+  );
   border: none;
   border-radius: var(--pf-radius-md);
   background: var(--pf-ember);

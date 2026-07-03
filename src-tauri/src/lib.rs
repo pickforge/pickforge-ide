@@ -153,6 +153,7 @@ pub fn run() {
             agent_chat_commands::agent_chat_history,
             agent_chat_commands::agent_skills_list,
             agent_chat_commands::agent_stash_image,
+            agent_chat_commands::agent_stash_image_from_path,
             agent_chat_commands::codex_config_default_effort,
             vm_commands::vm_connect,
             vm_commands::vm_disconnect,

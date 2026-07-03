@@ -1,4 +1,13 @@
-import { type JSX, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  type JSX,
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
 import {
@@ -6,10 +15,12 @@ import {
   type AgentSkill,
   agentSkillsList,
   agentStashImage,
+  agentStashImageFromPath,
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
+import { registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
 import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
 import "./chat.css";
@@ -76,6 +87,15 @@ const ACCEPTED_MIME_EXT: Record<string, string> = {
   "image/gif": "gif",
   "image/webp": "webp",
 };
+const ACCEPTED_PATH_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+
+function acceptedPathExt(path: string): string | null {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return null;
+  const ext = name.slice(dot + 1).toLowerCase();
+  return ACCEPTED_PATH_EXT.has(ext) ? ext : null;
+}
 
 function readBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -124,6 +144,8 @@ export function Composer(props: {
   const [skills, setSkills] = createSignal<AgentSkill[]>([]);
   const [images, setImages] = createSignal<string[]>([]);
   const [pasteError, setPasteError] = createSignal<string | null>(null);
+  const [dropHover, setDropHover] = createSignal(false);
+  let root!: HTMLDivElement;
   let field!: HTMLTextAreaElement;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
   let pasteGeneration = 0;
@@ -300,6 +322,46 @@ export function Composer(props: {
     }
   };
 
+  const onPathDrop = (paths: string[]) => {
+    if (props.turnActive) {
+      showPasteError("Images can't be attached while a turn is running", 4000);
+      return;
+    }
+    const files = paths.filter((path) => acceptedPathExt(path));
+    if (files.length !== paths.length) {
+      showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
+    }
+    if (files.length === 0) return;
+    const generation = pasteGeneration;
+    for (const path of files) {
+      void agentStashImageFromPath(path)
+        .then((stashedPath) => {
+          if (generation !== pasteGeneration) {
+            if (droppedPasteGeneration !== generation) {
+              droppedPasteGeneration = generation;
+              showPasteError("Image dropped because send already started", 4000);
+            }
+            return;
+          }
+          setImages((cur) => [...cur, stashedPath]);
+          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+          setPasteError(null);
+        })
+        .catch((error) => {
+          showPasteError(error instanceof Error ? error.message : String(error));
+        });
+    }
+  };
+
+  onMount(() => {
+    const unregister = registerPathDropTarget({
+      el: root,
+      onPaths: onPathDrop,
+      setHover: setDropHover,
+    });
+    onCleanup(unregister);
+  });
+
   const submit = () => {
     const savedText = text();
     const value = savedText.trim();
@@ -379,7 +441,11 @@ export function Composer(props: {
   };
 
   return (
-    <div class="pf-chat-composer">
+    <div
+      ref={root}
+      class="pf-chat-composer"
+      classList={{ "pf-chat-composer--drop": dropHover() }}
+    >
       <div class="pf-chat-composer-pickers">
         <Dropdown
           class="pf-chat-dd"

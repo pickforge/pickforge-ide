@@ -1,15 +1,13 @@
-// OS file/image drag-and-drop INTO the embedded terminals. In Tauri v2 the
+// OS file/image drag-and-drop INTO registered targets. In Tauri v2 the
 // webview INTERCEPTS native file drops — they never reach HTML drop handlers —
 // so we subscribe to Tauri's own drag-drop event, which gives us the dropped
 // file PATHS plus the drop POSITION (physical pixels). We hit-test that point
-// against every live terminal pane and write the (shell-safe, space-joined)
-// paths into the pane under the cursor — no trailing newline, so the user
-// submits. This is how agents like Claude Code receive a dropped image.
+// against every live target, with last-registered wins on overlap.
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { shquote } from "./runTargets";
 
 /** A terminal pane that can receive a dropped path. Registered on mount. */
-interface DropTarget {
+interface TerminalDropTarget {
   /** The pane's terminal element — used to hit-test the drop position. */
   el: HTMLElement;
   /** Write text into this pane's pty (no newline). If the pty hasn't spawned
@@ -19,6 +17,14 @@ interface DropTarget {
   /** Toggle the subtle drop-highlight while a drag hovers this pane. */
   setHover: (on: boolean) => void;
 }
+
+interface PathDropTarget {
+  el: HTMLElement;
+  onPaths: (paths: string[]) => void;
+  setHover: (on: boolean) => void;
+}
+
+type DropTarget = TerminalDropTarget | PathDropTarget;
 
 const targets = new Set<DropTarget>();
 let unlisten: Promise<UnlistenFn[]> | null = null;
@@ -50,9 +56,9 @@ function toCssPoint(pos: { x: number; y: number }): { x: number; y: number } {
   return { x: pos.x / dpr, y: pos.y / dpr };
 }
 
-/** The frontmost pane under the point — last-registered wins on overlap, which
- *  maps to the topmost stacking pane in practice (a hidden host scores no hit). */
-function paneAt(x: number, y: number): DropTarget | null {
+/** The frontmost target under the point — last-registered wins on overlap, which
+ *  maps to the topmost stacking target in practice (hidden hosts score no hit). */
+function targetAt(x: number, y: number): DropTarget | null {
   let found: DropTarget | null = null;
   for (const t of targets) if (hitTarget(t, x, y)) found = t;
   return found;
@@ -75,22 +81,26 @@ function ensureListener(): void {
         clearHover();
         if (!paths?.length || !position) return;
         const { x, y } = toCssPoint(position);
-        const pane = paneAt(x, y);
-        if (!pane) return; // dropped outside any terminal — ignore
-        pane.write(quotePaths(paths));
+        const target = targetAt(x, y);
+        if (!target) return;
+        if ("onPaths" in target) {
+          target.onPaths(paths);
+        } else {
+          target.write(quotePaths(paths));
+        }
       },
     ),
     listen<{ position?: { x: number; y: number } }>("tauri://drag-over", (e) => {
       const pos = e.payload.position;
       if (!pos) return;
       const { x, y } = toCssPoint(pos);
-      const pane = paneAt(x, y);
-      for (const t of targets) t.setHover(t === pane);
+      const target = targetAt(x, y);
+      for (const t of targets) t.setHover(t === target);
     }),
     listen("tauri://drag-leave", clearHover),
   ]).catch((err) => {
     // Plain-browser / VRT mock has no Tauri event bus — drag-drop is a no-op.
-    console.debug("[pickforge] terminal drag-drop unavailable", err);
+    console.debug("[pickforge] native drag-drop unavailable", err);
     return [];
   });
 }
@@ -98,7 +108,15 @@ function ensureListener(): void {
 /** Register a terminal pane as a drop target. Call on mount; the returned
  *  function unregisters it on unmount (no leak). The shared Tauri listener
  *  starts on the first registration and simply idles once all panes are gone. */
-export function registerDropTarget(t: DropTarget): () => void {
+export function registerDropTarget(t: TerminalDropTarget): () => void {
+  targets.add(t);
+  ensureListener();
+  return () => {
+    targets.delete(t);
+  };
+}
+
+export function registerPathDropTarget(t: PathDropTarget): () => void {
   targets.add(t);
   ensureListener();
   return () => {

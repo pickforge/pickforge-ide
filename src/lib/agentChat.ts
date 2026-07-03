@@ -151,6 +151,10 @@ export function agentStashImage(dataBase64: string, ext: string): Promise<string
   return invoke<string>("agent_stash_image", { dataBase64, ext });
 }
 
+export function agentStashImageFromPath(path: string): Promise<string> {
+  return invoke<string>("agent_stash_image_from_path", { path });
+}
+
 /** The `model_reasoning_effort` override from ~/.codex/config.toml, if set. */
 export function codexConfigDefaultEffort(): Promise<string | null> {
   return invoke<string | null>("codex_config_default_effort");

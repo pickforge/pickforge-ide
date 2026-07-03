@@ -14,6 +14,7 @@ import {
   type AgentProvider,
   type AgentSkill,
   agentSkillsList,
+  agentStashClipboardImage,
   agentStashImage,
   agentStashImageFromPath,
   codexConfigDefaultEffort,
@@ -280,9 +281,12 @@ export function Composer(props: {
     const data = event.clipboardData;
     if (!data) return;
     const files: { file: File; ext: string }[] = [];
+    let fileItems = 0;
     let unsupported = 0;
     for (const item of Array.from(data.items)) {
-      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      if (item.kind !== "file") continue;
+      fileItems += 1;
+      if (!item.type.startsWith("image/")) continue;
       const ext = ACCEPTED_MIME_EXT[item.type];
       if (!ext) {
         unsupported += 1;
@@ -291,7 +295,34 @@ export function Composer(props: {
       const file = item.getAsFile();
       if (file) files.push({ file, ext });
     }
-    if (files.length === 0 && unsupported === 0) return;
+    if (files.length === 0 && unsupported === 0) {
+      if (fileItems > 0 || data.types.length > 0) return;
+      event.preventDefault();
+      if (props.turnActive) {
+        showPasteError("Images can't be attached while a turn is running", 4000);
+        return;
+      }
+      const generation = pasteGeneration;
+      void agentStashClipboardImage()
+        .then((path) => {
+          if (generation !== pasteGeneration) {
+            if (droppedPasteGeneration !== generation) {
+              droppedPasteGeneration = generation;
+              showPasteError("Image dropped because send already started", 4000);
+            }
+            return;
+          }
+          setImages((cur) => [...cur, path]);
+          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+          setPasteError(null);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message === "clipboard has no image") return;
+          showPasteError(message);
+        });
+      return;
+    }
     event.preventDefault();
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);

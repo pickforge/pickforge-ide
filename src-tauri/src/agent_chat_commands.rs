@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -7,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose, Engine as _};
+use image::{codecs::png::PngEncoder, ColorType, ImageEncoder, RgbaImage};
 use pickforge_core::agents::{
     list_agent_skills, AgentChatManager, AgentEvent, AgentProvider, AgentSkill,
     AgentStartOverrides, Engine,
@@ -304,6 +306,28 @@ pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, Str
 }
 
 #[tauri::command]
+pub async fn agent_stash_clipboard_image() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        let clipboard_image = clipboard.get_image().map_err(|e| match e {
+            arboard::Error::ContentNotAvailable => "clipboard has no image".to_string(),
+            _ => e.to_string(),
+        })?;
+        let bytes = encode_rgba_png(
+            clipboard_image.width,
+            clipboard_image.height,
+            clipboard_image.bytes,
+            MAX_STASH_IMAGE_BYTES,
+        )?;
+        write_stashed_image("png", |file| {
+            file.write_all(&bytes).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn agent_stash_image_from_path(path: String) -> Result<String, String> {
     let source = PathBuf::from(path);
     let ext = validate_image_extension(
@@ -325,6 +349,36 @@ pub fn agent_stash_image_from_path(path: String) -> Result<String, String> {
             .map(|_| ())
             .map_err(|e| e.to_string())
     })
+}
+
+fn encode_rgba_png(
+    width: usize,
+    height: usize,
+    bytes: Cow<'_, [u8]>,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let expected = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "image dimensions are too large".to_string())?;
+    if bytes.len() != expected {
+        return Err(format!(
+            "image RGBA buffer length mismatch: expected {expected} bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let width = u32::try_from(width).map_err(|_| "image width is too large".to_string())?;
+    let height = u32::try_from(height).map_err(|_| "image height is too large".to_string())?;
+    let image = RgbaImage::from_raw(width, height, bytes.into_owned())
+        .ok_or_else(|| "image RGBA buffer length mismatch".to_string())?;
+    let mut encoded = Vec::new();
+    PngEncoder::new(&mut encoded)
+        .write_image(image.as_raw(), width, height, ColorType::Rgba8.into())
+        .map_err(|e| e.to_string())?;
+    if encoded.len() > max_bytes {
+        return Err("image exceeds 10 MB limit".to_string());
+    }
+    Ok(encoded)
 }
 
 fn validate_image_extension(ext: &str) -> Result<String, String> {
@@ -479,6 +533,27 @@ mod tests {
     fn agent_stash_image_rejects_decoded_data_over_10mb() {
         let encoded = "A".repeat((MAX_STASH_IMAGE_BYTES / 3 + 1) * 4);
         let error = agent_stash_image(encoded, "png".to_string()).unwrap_err();
+
+        assert_eq!(error, "image exceeds 10 MB limit");
+    }
+
+    #[test]
+    fn encode_rgba_png_writes_png_magic_bytes() {
+        let png = encode_rgba_png(
+            1,
+            1,
+            Cow::Borrowed(&[255, 0, 0, 255]),
+            MAX_STASH_IMAGE_BYTES,
+        )
+        .unwrap();
+
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn encode_rgba_png_rejects_encoded_output_over_limit() {
+        let error =
+            encode_rgba_png(1, 1, Cow::Borrowed(&[0, 0, 0, 255]), 8).unwrap_err();
 
         assert_eq!(error, "image exceeds 10 MB limit");
     }

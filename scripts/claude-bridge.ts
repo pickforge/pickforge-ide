@@ -352,6 +352,14 @@ function queueModelMutation(
   return chat.mutationChain;
 }
 
+async function awaitMutationChain(chat: ChatSession): Promise<void> {
+  try {
+    await chat.mutationChain;
+  } catch {
+    chat.mutationChain = Promise.resolve();
+  }
+}
+
 function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): void {
   const existing = chats.get(command.chatId);
   if (existing) {
@@ -437,6 +445,7 @@ async function handleCommand(
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
       const message = createUserTextMessage(command.text, command.images ?? []);
       if (!message) throw new Error("no sendable content: all image attachments were unreadable");
+      await awaitMutationChain(chat);
       chat.queue.push(message);
       return;
     }

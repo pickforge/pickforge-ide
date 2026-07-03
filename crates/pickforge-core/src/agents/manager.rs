@@ -441,13 +441,13 @@ impl AgentChatManager {
             let prompt_seqs =
                 persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
 
-            // Drop any stale cancel flag from a PRIOR timed-out start BEFORE
-            // issuing this one — the reader thread can process this turn's
-            // turn/started right after the response returns, so clearing after
-            // turn_start would race and interrupt the fresh (retry) turn.
-            client.clear_pending_turn_cancel(&thread_id);
             match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
+                    // Record this legit turn id so the read loop can tell it
+                    // apart from an orphaned timed-out turn on the same thread
+                    // (a prior start that the app-server accepted but whose
+                    // response we never got) and cancel only the orphan.
+                    client.record_expected_turn(&thread_id, &started_turn_id);
                     // Disposed while turn/start was in flight: the session (and
                     // its just-installed turn) is gone — drop the orphan prompt.
                     // dispose() could only arm pending_interrupt (the turn id

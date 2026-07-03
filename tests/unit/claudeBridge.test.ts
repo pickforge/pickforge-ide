@@ -250,6 +250,45 @@ describe("dispatchCommand", () => {
     expect(events).not.toContainEqual(expect.objectContaining({ ev: "fatal" }));
   });
 
+  it("waits for a pending model mutation before sending", async () => {
+    const modelChange = deferred<void>();
+    const chatQuery = fakeQuery({ setModel: () => modelChange.promise });
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+    const { emit } = eventsCollector();
+
+    dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
+    const prompt = vi.mocked(query).mock.calls[0]?.[0].prompt as AsyncIterable<unknown>;
+    const iterator = prompt[Symbol.asyncIterator]();
+    let delivered = false;
+    const nextMessage = iterator.next().then((result) => {
+      delivered = true;
+      return result;
+    });
+
+    dispatchCommand({ op: "setModel", chatId: "chat-1", model: "claude-opus-4-1" }, emit);
+    await flushMicrotasks();
+
+    expect(chatQuery.setModel).toHaveBeenCalledWith("claude-opus-4-1");
+
+    dispatchCommand({ op: "send", chatId: "chat-1", text: "hello" }, emit);
+    await flushMicrotasks();
+
+    expect(delivered).toBe(false);
+
+    modelChange.resolve();
+
+    await expect(nextMessage).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      },
+    });
+  });
+
   it("does not let a slow op on one chat delay another chat's send", async () => {
     const interrupt = deferred<void>();
     const chatAQuery = fakeQuery({ interrupt: () => interrupt.promise });

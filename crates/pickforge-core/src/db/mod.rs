@@ -669,6 +669,17 @@ impl Database {
             "DELETE FROM agent_sessions WHERE chat_id = ?1",
             params![chat_id],
         )?;
+        // Detach the chat from any orchestra task it was assigned to — the
+        // Workbench-side cleanup runs after this delete and can miss (crash,
+        // second app instance), leaving builder/reviewer columns dangling.
+        tx.execute(
+            "UPDATE orchestra_tasks SET builder_chat_id = NULL WHERE builder_chat_id = ?1",
+            params![chat_id],
+        )?;
+        tx.execute(
+            "UPDATE orchestra_tasks SET reviewer_chat_id = NULL WHERE reviewer_chat_id = ?1",
+            params![chat_id],
+        )?;
         tx.execute("DELETE FROM chats WHERE chat_id = ?1", params![chat_id])?;
         tx.commit()?;
         Ok(())
@@ -2285,6 +2296,33 @@ mod tests {
             &timeline[0],
             AgentTimelineEntry::Message { seq, content, .. } if *seq == kept && content == "earlier"
         ));
+    }
+
+    #[test]
+    fn delete_chat_detaches_orchestra_task_assignments() {
+        let db = Database::open_in_memory().unwrap();
+        seed_agent_chat(&db, "/p-detach", "c-builder");
+        seed_agent_chat(&db, "/p-detach", "c-reviewer");
+        db.orchestra_task_upsert(&OrchestraTask {
+            id: "task-detach".into(),
+            project_root: "/p-detach".into(),
+            title: "Wire it".into(),
+            status: "pending".into(),
+            builder_chat_id: Some("c-builder".into()),
+            reviewer_chat_id: Some("c-reviewer".into()),
+            note: None,
+            sort_order: 0,
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
+
+        db.delete_chat("c-builder").unwrap();
+
+        let tasks = db.orchestra_tasks_for_project("/p-detach").unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].builder_chat_id, None);
+        assert_eq!(tasks[0].reviewer_chat_id.as_deref(), Some("c-reviewer"));
     }
 
     #[test]

@@ -250,8 +250,10 @@ export function OrchestraView(props: {
   const rawLanes = () => selectedLanes(props.projectRoot);
   const projectChats = () => chatsFor(props.projectRoot);
   const chatsLoaded = () => workspace.chatsByRoot[props.projectRoot] !== undefined;
-  const projectChatIds = createMemo(() => new Set(projectChats().map((chat) => chat.chatId)));
-  const liveTree = createMemo(() => pruneLaneTree(rawTree(), projectChatIds()));
+  const liveProjectChatIds = createMemo(() =>
+    new Set(projectChats().filter((chat) => !isChatArchived(chat.chatId)).map((chat) => chat.chatId)),
+  );
+  const liveTree = createMemo(() => pruneLaneTree(rawTree(), liveProjectChatIds()));
   const liveLanes = createMemo(() => collectLaneIds(liveTree()));
   const activeSplitMenu = createMemo(() => {
     const menu = splitMenu();
@@ -263,7 +265,7 @@ export function OrchestraView(props: {
   });
   const pruneDeadLanes = () => {
     if (!chatsLoaded()) return;
-    const chatIds = projectChatIds();
+    const chatIds = liveProjectChatIds();
     for (const chatId of rawLanes()) {
       if (!chatIds.has(chatId)) removeSelectedLane(props.projectRoot, chatId);
     }

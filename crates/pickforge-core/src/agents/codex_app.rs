@@ -172,6 +172,7 @@ impl CodexAppClient {
             pending_permissions: Mutex::new(HashMap::new()),
             writer_tx: Mutex::new(Some(writer_tx.clone())),
             cancel_pending_turns: Mutex::new(HashSet::new()),
+            expected_turns: Mutex::new(HashMap::new()),
         });
 
         let writer_thread = match std::thread::Builder::new()
@@ -302,19 +303,22 @@ impl CodexAppClient {
         .ok_or_else(|| CodexAppError::BadResponse("missing turn id".to_string()))
     }
 
-    /// Flag a thread so the read loop interrupts its next turn once the id is
-    /// known — used when a `turn/start` times out after the app-server accepted
-    /// it, leaving a turn running headlessly.
+    /// Flag a thread so the read loop interrupts an ORPHAN turn — one whose
+    /// `turn/started` id is not the expected (confirmed-legit) id — used when a
+    /// `turn/start` times out after the app-server accepted it, leaving a turn
+    /// running headlessly. Matching by expected id means a retry's own turn is
+    /// never cancelled, only the abandoned one.
     pub fn cancel_pending_turn(&self, thread_id: &str) {
         if let Ok(mut set) = self.state.cancel_pending_turns.lock() {
             set.insert(thread_id.to_string());
         }
     }
 
-    /// Clear a pending-cancel flag (a turn started cleanly, so keep it).
-    pub fn clear_pending_turn_cancel(&self, thread_id: &str) {
-        if let Ok(mut set) = self.state.cancel_pending_turns.lock() {
-            set.remove(thread_id);
+    /// Record the turn id a successful `turn/start` returned so the read loop
+    /// can tell this legit turn apart from an orphaned timed-out one.
+    pub fn record_expected_turn(&self, thread_id: &str, turn_id: &str) {
+        if let Ok(mut map) = self.state.expected_turns.lock() {
+            map.insert(thread_id.to_string(), turn_id.to_string());
         }
     }
 
@@ -587,11 +591,14 @@ struct ClientState {
     // On the writer side so the read loop can interrupt a turn whose start
     // request timed out (see cancel_pending_turns).
     writer_tx: Mutex<Option<mpsc::Sender<WriterMessage>>>,
-    /// Threads whose next turn must be interrupted: a `turn/start` timed out
+    /// Threads with an orphaned turn to interrupt: a `turn/start` timed out
     /// locally after the app-server accepted it, so the turn keeps running
-    /// headlessly. When the late `turn/started` reveals the turn id, the read
-    /// loop cancels it and clears the entry.
+    /// headlessly. When a `turn/started` reveals a turn id that is NOT this
+    /// thread's expected (legit) id, the read loop cancels that orphan and
+    /// disarms the flag — a matching (legit retry) turn is left alone.
     cancel_pending_turns: Mutex<HashSet<String>>,
+    /// The turn id each thread's most recent successful `turn/start` returned.
+    expected_turns: Mutex<HashMap<String, String>>,
 }
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
@@ -1017,6 +1024,16 @@ fn interrupt_cancelled_turn(state: &Arc<ClientState>, line: &str) {
     let Some(turn_id) = turn_id else {
         return;
     };
+    // Only the ORPHAN turn (id != the thread's confirmed-legit id) is cancelled;
+    // a legit retry turn matches the expected id and is left running.
+    let is_expected = state
+        .expected_turns
+        .lock()
+        .map(|map| map.get(&thread_id).is_some_and(|expected| expected == &turn_id))
+        .unwrap_or(false);
+    if is_expected {
+        return;
+    }
     if let Ok(mut set) = state.cancel_pending_turns.lock() {
         set.remove(&thread_id);
     }
@@ -1400,30 +1417,42 @@ mod tests {
             pending_permissions: Mutex::new(HashMap::new()),
             writer_tx: Mutex::new(Some(tx)),
             cancel_pending_turns: Mutex::new(HashSet::new()),
+            expected_turns: Mutex::new(HashMap::new()),
         });
-        let started = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-9"}}}"#;
+        let orphan = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-orphan"}}}"#;
 
         // Not flagged: the late turn/started is left alone.
-        interrupt_cancelled_turn(&state, started);
+        interrupt_cancelled_turn(&state, orphan);
         assert!(rx.try_recv().is_err());
 
-        // Flag the thread (its start timed out): the id reveal triggers an interrupt.
+        // Flag the thread (its start timed out) and record the LEGIT retry turn.
         state
             .cancel_pending_turns
             .lock()
             .unwrap()
             .insert("t1".to_string());
-        interrupt_cancelled_turn(&state, started);
+        state
+            .expected_turns
+            .lock()
+            .unwrap()
+            .insert("t1".to_string(), "turn-legit".to_string());
+
+        // The legit retry turn matches the expected id — never interrupted.
+        let legit = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-legit"}}}"#;
+        interrupt_cancelled_turn(&state, legit);
+        assert!(rx.try_recv().is_err());
+        assert!(!state.cancel_pending_turns.lock().unwrap().is_empty());
+
+        // The orphaned (timed-out) turn is interrupted, and the flag disarms.
+        interrupt_cancelled_turn(&state, orphan);
         let WriterMessage::Line(line) = rx.try_recv().unwrap() else {
             panic!("expected an interrupt line");
         };
         assert!(line.contains("turn/interrupt"));
-        assert!(line.contains("turn-9"));
+        assert!(line.contains("turn-orphan"));
         assert!(line.contains("t1"));
-
-        // Flag cleared, so a repeat notification does not double-interrupt.
         assert!(state.cancel_pending_turns.lock().unwrap().is_empty());
-        interrupt_cancelled_turn(&state, started);
+        interrupt_cancelled_turn(&state, orphan);
         assert!(rx.try_recv().is_err());
     }
 

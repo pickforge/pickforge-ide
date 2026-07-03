@@ -64,6 +64,7 @@ import {
 import { type AgentProvider } from "../../lib/agentChat";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
+import { removeChatFromOrchestra } from "../../stores/orchestra";
 import { isChatStaged } from "../../stores/orchestraStage";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
 import { pickProjectDir } from "../../lib/opener";
@@ -466,13 +467,18 @@ export function ProjectsPane() {
   };
 
   const doArchiveChat = (id: string) => {
-    const chat = chatsFor(workspace.activeRoot ?? "").find((c) => c.chatId === id);
+    const chat = findChat(id);
+    const root = chat?.projectRoot ?? workspace.activeRoot;
     archiveChat(id);
+    if (root) {
+      void removeChatFromOrchestra(root, id).catch((error) =>
+        console.error("[pickforge] removeChatFromOrchestra failed", error),
+      );
+    }
     // An archived row renders no busy/attention state — drop the activity too,
     // or a pending quiet-timer would chime with no visible source.
     clearChatActivity(id);
     if (workspace.activeChatId === id) {
-      const root = chat?.projectRoot ?? workspace.activeRoot;
       const next = root ? chatsFor(root).find((c) => c.chatId !== id && !isChatArchived(c.chatId)) : undefined;
       selectChat(next?.chatId ?? null);
     }

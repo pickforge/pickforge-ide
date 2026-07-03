@@ -1003,6 +1003,42 @@ describe("sendAgentMessage", () => {
     expect(activity.agentTurnCleared).not.toHaveBeenCalledWith(chatId);
   });
 
+  it("aborts a Claude send when the chat is disposed during a pending model update", async () => {
+    const chatId = nextChatId();
+    const setModel = deferred<void>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_chat_set_model") return setModel.promise;
+      if (cmd === "agent_chat_send") return Promise.resolve();
+      if (cmd === "agent_chat_dispose") return Promise.resolve();
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "claudeCode", "claude-old");
+    setAgentChatModel(chatId, "claude-new");
+    await flushPromises();
+
+    const sending = sendAgentMessage(chatId, "hello");
+    await flushPromises();
+
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "hello", optimistic: true },
+    ]);
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(
+      0,
+    );
+
+    await disposeAgentChat(chatId);
+    setModel.resolve(undefined);
+    await expect(sending).resolves.toBeUndefined();
+
+    expect(agentChat(chatId)).toBeUndefined();
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(
+      0,
+    );
+  });
+
   it("retries a failed start when sending and delivers the message", async () => {
     const chatId = nextChatId();
     let startCount = 0;

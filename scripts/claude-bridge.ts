@@ -151,6 +151,7 @@ type ChatSession = {
   query: Query;
   gate: PermissionGate;
   mutationChain: Promise<void>;
+  mutationFailure: { error: unknown } | null;
   /** The model the live query currently runs (null = CLI default). */
   model: string | null;
 };
@@ -348,16 +349,25 @@ function queueModelMutation(
   emit: (event: BridgeEvent) => void,
 ): Promise<void> {
   const previousMutation = chat.mutationChain.catch(() => undefined);
-  chat.mutationChain = previousMutation
+  const nextMutation = previousMutation
     .then(async () => {
       await chat.query.setModel(model ?? undefined);
       chat.model = model;
+      chat.mutationFailure = null;
     })
     .catch((error: unknown) => {
+      chat.mutationFailure = { error };
       emit({ ev: "fatal", chatId: chat.chatId, error: serializeError(error) });
       throw error;
     });
-  return chat.mutationChain;
+  let queuedMutation: Promise<void>;
+  queuedMutation = nextMutation.finally(() => {
+    if (chat.mutationChain === queuedMutation && chat.mutationFailure) {
+      chat.mutationChain = Promise.resolve();
+    }
+  });
+  chat.mutationChain = queuedMutation;
+  return queuedMutation;
 }
 
 async function awaitMutationChain(chat: ChatSession): Promise<void> {
@@ -368,6 +378,14 @@ async function awaitMutationChain(chat: ChatSession): Promise<void> {
     if (chat.mutationChain === mutationChain) {
       chat.mutationChain = Promise.resolve();
     }
+    if (chat.mutationFailure?.error === error) {
+      chat.mutationFailure = null;
+    }
+    throw error;
+  }
+  if (chat.mutationFailure) {
+    const { error } = chat.mutationFailure;
+    chat.mutationFailure = null;
     throw error;
   }
 }
@@ -396,6 +414,7 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
     query: runningQuery,
     gate,
     mutationChain: Promise.resolve(),
+    mutationFailure: null,
     model: command.model ?? null,
   };
   chats.set(command.chatId, chat);

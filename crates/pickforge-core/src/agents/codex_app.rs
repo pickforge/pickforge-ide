@@ -175,6 +175,7 @@ impl CodexAppClient {
             starting_turns: Mutex::new(HashSet::new()),
             expected_turns: Mutex::new(HashMap::new()),
             deferred_turns: Mutex::new(HashMap::new()),
+            cancelled_orphans: Mutex::new(HashMap::new()),
         });
 
         let writer_thread = match std::thread::Builder::new()
@@ -341,10 +342,13 @@ impl CodexAppClient {
     }
 
     /// The start failed for a non-timeout reason (no turn was created for it).
-    /// Interrupt anything deferred during it, but don't newly arm.
+    /// Interrupt anything deferred during it and disarm — begin_turn_start armed
+    /// this thread, but without a running turn a later notification must not be
+    /// mistaken for an orphan and cancel legitimate follow-up activity.
     pub fn finish_turn_start_err(&self, thread_id: &str) {
         self.clear_starting(thread_id);
         let orphans = self.take_deferred(thread_id, None);
+        self.disarm(thread_id);
         self.interrupt_all(thread_id, orphans);
     }
 
@@ -666,6 +670,10 @@ struct ClientState {
     /// `turn/started` ids seen while a start was in flight — reconciled against
     /// the resolved turn id (the legit one is dropped, the rest are orphans).
     deferred_turns: Mutex<HashMap<String, HashSet<String>>>,
+    /// Orphan turn ids that have been interrupted; their subsequent events are
+    /// suppressed so they aren't forwarded/persisted as a retry's turn (an
+    /// orphan terminal must not clear the retry's active turn).
+    cancelled_orphans: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
@@ -721,6 +729,12 @@ fn read_loop(stdout: impl Read, state: Arc<ClientState>) {
             break;
         };
         interrupt_cancelled_turn(&state, &line);
+        // Drop events belonging to an interrupted orphan turn so they aren't
+        // forwarded/persisted as the retry's turn (its terminal would otherwise
+        // clear the retry's active turn).
+        if is_cancelled_orphan_line(&state, &line) {
+            continue;
+        }
         match parse_incoming_line(&line) {
             IncomingLine::Response { id, result } => complete_pending(&state, id, result),
             IncomingLine::Events(events) => dispatch_events(&state, events),
@@ -1124,9 +1138,62 @@ fn interrupt_cancelled_turn(state: &Arc<ClientState>, line: &str) {
     send_turn_interrupt(state, &thread_id, &turn_id);
 }
 
+/// Whether a notification line belongs to an interrupted orphan turn (so its
+/// events must be dropped). On the orphan's terminal (`turn/completed`, which
+/// an interrupted turn still emits) the id is forgotten, keeping the set bounded.
+fn is_cancelled_orphan_line(state: &Arc<ClientState>, line: &str) -> bool {
+    if state
+        .cancelled_orphans
+        .lock()
+        .map(|map| map.is_empty())
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        return false;
+    };
+    let Some(method) = value.get("method").and_then(Value::as_str) else {
+        return false;
+    };
+    let params = value.get("params").unwrap_or(&Value::Null);
+    let Some(thread_id) = string_field(params, &["threadId"]) else {
+        return false;
+    };
+    let turn_id = params
+        .get("turn")
+        .and_then(|turn| string_field(turn, &["id"]))
+        .or_else(|| string_field(params, &["turnId"]));
+    let Some(turn_id) = turn_id else {
+        return false;
+    };
+    let Ok(mut map) = state.cancelled_orphans.lock() else {
+        return false;
+    };
+    let Some(ids) = map.get_mut(&thread_id) else {
+        return false;
+    };
+    if !ids.contains(&turn_id) {
+        return false;
+    }
+    if method == "turn/completed" {
+        ids.remove(&turn_id);
+        if ids.is_empty() {
+            map.remove(&thread_id);
+        }
+    }
+    true
+}
+
 /// Send a `turn/interrupt` without waiting for its response (the read loop must
-/// not block on its own reply; the send thread need not either).
+/// not block on its own reply; the send thread need not either). Records the
+/// interrupted turn as a cancelled orphan so its trailing events are suppressed.
 fn send_turn_interrupt(state: &Arc<ClientState>, thread_id: &str, turn_id: &str) {
+    if let Ok(mut map) = state.cancelled_orphans.lock() {
+        map.entry(thread_id.to_string())
+            .or_default()
+            .insert(turn_id.to_string());
+    }
     let id = state.next_id.fetch_add(1, Ordering::SeqCst);
     let Ok(line) = serde_json::to_string(&json!({
         "id": id,
@@ -1510,6 +1577,7 @@ mod tests {
             starting_turns: Mutex::new(HashSet::new()),
             expected_turns: Mutex::new(HashMap::new()),
             deferred_turns: Mutex::new(HashMap::new()),
+            cancelled_orphans: Mutex::new(HashMap::new()),
         });
         let orphan = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-orphan"}}}"#;
 
@@ -1538,6 +1606,42 @@ mod tests {
         assert!(line.contains("turn/interrupt"));
         assert!(line.contains("turn-late"));
         assert!(state.cancel_pending_turns.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn suppresses_interrupted_orphan_events_until_its_terminal() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let state = Arc::new(ClientState {
+            child: Mutex::new(None),
+            pending: Mutex::new(HashMap::new()),
+            subscriptions: Mutex::new(HashMap::new()),
+            closed: AtomicBool::new(false),
+            next_id: AtomicI64::new(1),
+            pending_permissions: Mutex::new(HashMap::new()),
+            writer_tx: Mutex::new(Some(tx)),
+            cancel_pending_turns: Mutex::new(HashSet::new()),
+            starting_turns: Mutex::new(HashSet::new()),
+            expected_turns: Mutex::new(HashMap::new()),
+            deferred_turns: Mutex::new(HashMap::new()),
+            cancelled_orphans: Mutex::new(HashMap::new()),
+        });
+        let item = r#"{"method":"item/started","params":{"threadId":"t1","turnId":"orphan","item":{"type":"webSearch","id":"w","query":"x"}}}"#;
+        let legit = r#"{"method":"item/started","params":{"threadId":"t1","turnId":"legit","item":{"type":"webSearch","id":"w","query":"x"}}}"#;
+        let done = r#"{"method":"turn/completed","params":{"threadId":"t1","turnId":"orphan","turn":{"id":"orphan","status":"aborted"}}}"#;
+
+        // Nothing cancelled yet: pass everything.
+        assert!(!is_cancelled_orphan_line(&state, item));
+
+        // Mark the orphan cancelled — its events are suppressed, a legit turn's
+        // are not.
+        send_turn_interrupt(&state, "t1", "orphan");
+        assert!(is_cancelled_orphan_line(&state, item));
+        assert!(!is_cancelled_orphan_line(&state, legit));
+
+        // The orphan's terminal is suppressed too and clears the entry.
+        assert!(is_cancelled_orphan_line(&state, done));
+        assert!(state.cancelled_orphans.lock().unwrap().is_empty());
+        assert!(!is_cancelled_orphan_line(&state, item));
     }
 
     #[test]

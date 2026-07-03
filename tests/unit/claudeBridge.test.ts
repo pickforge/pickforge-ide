@@ -380,6 +380,52 @@ describe("dispatchCommand", () => {
     });
   });
 
+  it("does not send the next prompt after an idle model mutation rejects", async () => {
+    const chatQuery = fakeQuery({
+      setModel: () => Promise.reject(new Error("invalid model")),
+    });
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+    const { events, emit } = eventsCollector();
+
+    dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
+    const prompt = vi.mocked(query).mock.calls[0]?.[0].prompt as AsyncIterable<unknown>;
+    const iterator = prompt[Symbol.asyncIterator]();
+    let delivered = false;
+    const nextMessage = iterator.next().then((result) => {
+      delivered = true;
+      return result;
+    });
+
+    dispatchCommand({ op: "setModel", chatId: "chat-1", model: "invalid-model" }, emit);
+    await flushMicrotasks();
+
+    expect(events.filter((event) => event.ev === "fatal")).toEqual([
+      { ev: "fatal", chatId: "chat-1", error: expect.stringContaining("invalid model") },
+    ]);
+
+    dispatchCommand({ op: "send", chatId: "chat-1", text: "blocked" }, emit);
+    await flushMicrotasks();
+
+    expect(delivered).toBe(false);
+    expect(events.filter((event) => event.ev === "fatal")).toEqual([
+      { ev: "fatal", chatId: "chat-1", error: expect.stringContaining("invalid model") },
+      { ev: "fatal", chatId: "chat-1", error: expect.stringContaining("invalid model") },
+    ]);
+
+    dispatchCommand({ op: "send", chatId: "chat-1", text: "after failure" }, emit);
+
+    await expect(nextMessage).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "after failure" }],
+        },
+      },
+    });
+  });
+
   it("does not let a slow op on one chat delay another chat's send", async () => {
     const interrupt = deferred<void>();
     const chatAQuery = fakeQuery({ interrupt: () => interrupt.promise });

@@ -856,6 +856,7 @@ export async function sendAgentMessage(
         engine: loadAgentEngine(),
         effort: chat.effort,
       });
+      if (stale()) return;
       sessionId = chats[chatId]?.sessionId ?? null;
       if (!sessionId) throw new Error("Agent chat is not started");
       const hasOptimisticMessage = chats[chatId]?.timeline.some(
@@ -868,10 +869,23 @@ export async function sendAgentMessage(
         setChats(chatId, { error: null });
       }
     }
-    if ((chats[chatId] ?? chat).provider === "claudeCode") {
+
+    const sendTarget = () => {
+      const current = chats[chatId];
+      const currentSessionId = current?.sessionId ?? null;
+      if (!current || !currentSessionId || currentSessionId !== sessionId) return null;
+      return { chat: current, sessionId: currentSessionId };
+    };
+
+    let target = sendTarget();
+    if (!target) return;
+    if (target.chat.provider === "claudeCode") {
       await pendingSetModelByChat.get(chatId)?.promise;
+      if (stale()) return;
+      target = sendTarget();
+      if (!target) return;
     }
-    await agentChatSend(sessionId, text, sendOptions(chats[chatId] ?? chat, imageList));
+    await agentChatSend(target.sessionId, text, sendOptions(target.chat, imageList));
   } catch (error) {
     if (stale()) throw error;
     if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {

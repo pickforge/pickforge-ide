@@ -178,6 +178,7 @@ impl ClaudeBridgeClient {
         chat_id: &str,
         cwd: PathBuf,
         model: Option<String>,
+        effort: Option<String>,
         resume_session_id: Option<String>,
         permission_mode: Option<String>,
         allowed_tools: Option<Vec<String>>,
@@ -199,6 +200,9 @@ impl ClaudeBridgeClient {
         op.insert("cwd".to_string(), Value::String(path_string(cwd)));
         if let Some(model) = non_empty(model) {
             op.insert("model".to_string(), Value::String(model));
+        }
+        if let Some(effort) = non_empty(effort) {
+            op.insert("effort".to_string(), Value::String(effort));
         }
         if let Some(session_id) = non_empty(resume_session_id) {
             op.insert("resumeSessionId".to_string(), Value::String(session_id));
@@ -1126,6 +1130,7 @@ done
                 "chat-1",
                 script.dir.clone(),
                 Some("sonnet".to_string()),
+                Some("high".to_string()),
                 Some("session-0".to_string()),
                 Some("acceptEdits".to_string()),
                 Some(vec!["Bash".to_string()]),
@@ -1223,7 +1228,7 @@ done
         let (events, sink) = event_sink();
 
         client
-            .chat_start("chat-1", script.dir.clone(), None, None, None, None, sink)
+            .chat_start("chat-1", script.dir.clone(), None, None, None, None, None, sink)
             .unwrap();
         client.chat_send("chat-1", "first", &[]).unwrap();
         wait_for_events(&events, |events| {
@@ -1246,7 +1251,7 @@ done
         let (events, sink) = event_sink();
 
         client
-            .chat_start("chat-1", script.dir.clone(), None, None, None, None, sink)
+            .chat_start("chat-1", script.dir.clone(), None, None, None, None, None, sink)
             .unwrap();
         client.chat_send("chat-1", "first", &[]).unwrap();
         let error = client.chat_send("chat-1", "second", &[]).unwrap_err();
@@ -1268,7 +1273,7 @@ done
         let (events, sink) = event_sink();
 
         client
-            .chat_start("chat-1", script.dir.clone(), None, None, None, None, sink)
+            .chat_start("chat-1", script.dir.clone(), None, None, None, None, None, sink)
             .unwrap();
         client.chat_send("chat-1", "first", &[]).unwrap();
 

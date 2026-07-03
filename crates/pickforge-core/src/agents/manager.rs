@@ -71,6 +71,10 @@ pub struct AgentStartOverrides {
     pub approval_policy: Option<String>,
     pub permission_mode: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
+    /// Reasoning effort for the session. Claude bridge sessions apply it at
+    /// start (the SDK fixes effort per query); Codex applies effort per turn
+    /// via `send`, so this is ignored there.
+    pub effort: Option<String>,
 }
 
 #[derive(Clone)]
@@ -262,6 +266,7 @@ impl AgentChatManager {
                         &session_id,
                         project_root,
                         model,
+                        overrides.effort,
                         provider_session_id,
                         Some(
                             overrides

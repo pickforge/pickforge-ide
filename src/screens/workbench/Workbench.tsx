@@ -368,12 +368,14 @@ export function WorkbenchScreen() {
                 />
                   }
                 >
-                  <AgentChatView
-                    chatId={h.chatId}
-                    projectRoot={h.projectRoot}
-                    provider={provider}
-                    model={loadAgentModels()[provider] ?? null}
-                  />
+                  <div class="pf-agent-slot">
+                    <AgentChatView
+                      chatId={h.chatId}
+                      projectRoot={h.projectRoot}
+                      provider={provider}
+                      model={loadAgentModels()[provider] ?? null}
+                    />
+                  </div>
                 </Show>
               </div>
               );

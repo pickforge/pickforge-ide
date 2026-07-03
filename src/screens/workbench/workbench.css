@@ -1407,6 +1407,16 @@ body.pf-resizing .pf-dock-panel {
 .pf-term-slot {
   height: 100%;
 }
+/* Agent chats share the terminal stage. Frame them like a pane card — hairline
+ * ring, pane radius, clipped corners — so the composer footer reads as part of
+ * a bounded card instead of a full-bleed black band against the textured field. */
+.pf-agent-slot {
+  height: 100%;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface);
+  overflow: hidden;
+}
 .pf-term-empty {
   height: 100%;
   display: flex;

@@ -1,4 +1,12 @@
-import { type JSX, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js";
+import {
+  type JSX,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import {
   agentChat,
   approveAgentRequest,
@@ -12,7 +20,14 @@ import {
   switchAgentChatProvider,
 } from "../../stores/agentChat";
 import { type AgentProvider } from "../../lib/agentChat";
-import { loadAgentModels, setAgentModel } from "../../lib/agentModels";
+import {
+  AGENTS,
+  loadAgentEfforts,
+  loadAgentModels,
+  modelOption,
+  setAgentEffort,
+  setAgentModel,
+} from "../../lib/agentModels";
 import { loadAgentEngine } from "../../lib/chatDefaults";
 import { ChatTimeline } from "./ChatTimeline";
 import { Composer } from "./Composer";
@@ -58,14 +73,40 @@ export function AgentChatView(props: {
   onMount(() => {
     void ensureAgentChat(props.chatId, props.projectRoot, provider(), model(), {
       engine: loadAgentEngine(),
+      effort: loadAgentEfforts()[provider()] ?? null,
     });
   });
 
-  const onProviderChange = (next: AgentProvider) => {
-    if (state()?.turnActive || next === provider()) return;
+  // Switching providers abandons the session's context, so a chat that already
+  // has content asks first instead of switching on a stray select change.
+  const [pendingProvider, setPendingProvider] = createSignal<AgentProvider | null>(null);
+  const providerLabel = (id: AgentProvider) =>
+    AGENTS.find((agent) => agent.id === id)?.label ?? id;
+
+  const doSwitch = (next: AgentProvider) => {
     const nextModel = loadAgentModels()[next] ?? null;
-    void switchAgentChatProvider(props.chatId, next, nextModel).catch(() => undefined);
+    const nextEffort = loadAgentEfforts()[next] ?? null;
+    void switchAgentChatProvider(props.chatId, next, nextModel, nextEffort).catch(
+      () => undefined,
+    );
   };
+
+  const onProviderChange = (next: AgentProvider) => {
+    const chat = state();
+    if (chat?.turnActive || next === provider()) return;
+    // Until the persisted history has loaded, an empty timeline proves nothing
+    // — err on the side of confirming rather than silently dropping context.
+    const mayHaveContext = (chat?.timeline.length ?? 0) > 0 || !chat?.historyLoaded;
+    if (mayHaveContext) {
+      setPendingProvider(next);
+      return;
+    }
+    doSwitch(next);
+  };
+
+  createEffect(() => {
+    if (state()?.turnActive) setPendingProvider(null);
+  });
 
   const onModelChange = (next: string | null) => {
     setAgentModel(provider(), next);
@@ -73,8 +114,19 @@ export function AgentChatView(props: {
   };
 
   const onEffortChange = (next: string) => {
+    setAgentEffort(provider(), next);
     setAgentChatEffort(props.chatId, next);
   };
+
+  // A model/provider change can leave a selected effort the new model does not
+  // accept — drop THIS CHAT back to the default without touching the persisted
+  // per-provider preference (inspecting another model must not erase it).
+  createEffect(() => {
+    const current = effort();
+    if (!current) return;
+    const supported = modelOption(provider(), model())?.efforts ?? [];
+    if (!supported.includes(current)) setAgentChatEffort(props.chatId, "");
+  });
 
   return (
     <div class="pf-chat-view">
@@ -93,6 +145,40 @@ export function AgentChatView(props: {
             ✕
           </button>
         </div>
+      </Show>
+      <Show when={pendingProvider()}>
+        {(next) => (
+          <div
+            class="pf-chat-switch-confirm"
+            role="group"
+            aria-label="Confirm provider switch"
+          >
+            <span class="pf-chat-switch-notice-text">
+              Switch to {providerLabel(next())}? A new session starts — this chat's
+              context does not carry over.
+            </span>
+            <div class="pf-chat-switch-confirm-actions">
+              <button
+                type="button"
+                class="pf-approval-btn"
+                onClick={() => {
+                  const target = next();
+                  setPendingProvider(null);
+                  doSwitch(target);
+                }}
+              >
+                Switch
+              </button>
+              <button
+                type="button"
+                class="pf-approval-btn pf-approval-btn--quiet"
+                onClick={() => setPendingProvider(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </Show>
       <Show when={state()?.error}>
         {(message) => (

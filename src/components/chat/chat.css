@@ -517,6 +517,23 @@
 .pf-chat-switch-notice-dismiss:hover {
   color: var(--pf-text-hi);
 }
+/* Pending provider switch: same quiet row as the notice, plus a decision.
+ * Buttons stay neutral (Rule 2 — the composer's send keeps the ember). */
+.pf-chat-switch-confirm {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  animation: pf-chat-notice-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+.pf-chat-switch-confirm-actions {
+  flex: none;
+  display: flex;
+  gap: var(--pf-space-sm);
+}
 @keyframes pf-chat-notice-in {
   from {
     opacity: 0;
@@ -526,7 +543,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pf-chat-switch-notice {
+  .pf-chat-switch-notice,
+  .pf-chat-switch-confirm {
     animation: none;
   }
 }

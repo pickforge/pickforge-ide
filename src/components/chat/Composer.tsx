@@ -1,7 +1,13 @@
 import { type JSX, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { AGENTS, type AgentProfile } from "../../lib/agentModels";
-import { type AgentProvider, type AgentSkill, agentSkillsList, agentStashImage } from "../../lib/agentChat";
+import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
+import {
+  type AgentProvider,
+  type AgentSkill,
+  agentSkillsList,
+  agentStashImage,
+  codexConfigDefaultEffort,
+} from "../../lib/agentChat";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import "./chat.css";
 
@@ -10,13 +16,25 @@ const PROVIDERS = AGENTS.filter(
     a.id === "claudeCode" || a.id === "codex",
 );
 
-const EFFORTS: { value: string; label: string }[] = [
-  { value: "", label: "Default" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "Xhigh" },
-];
+const EFFORT_LABELS: Record<string, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "X-High",
+  max: "Max",
+};
+
+// A ~/.codex/config.toml `model_reasoning_effort` override beats the model's
+// own default for turns sent without an explicit effort. Fetched once.
+const [codexEffortOverride, setCodexEffortOverride] = createSignal<string | null>(null);
+let codexEffortOverrideRequested = false;
+function ensureCodexEffortOverride() {
+  if (codexEffortOverrideRequested) return;
+  codexEffortOverrideRequested = true;
+  void codexConfigDefaultEffort()
+    .then((value) => setCodexEffortOverride(value?.trim() || null))
+    .catch(() => undefined);
+}
 
 const skillsCache = new Map<AgentProvider, AgentSkill[]>();
 const skillsInflight = new Map<AgentProvider, Promise<AgentSkill[]>>();
@@ -112,6 +130,18 @@ export function Composer(props: {
     void loadSkills(provider).then((list) => {
       if (props.provider === provider) setSkills(list);
     });
+  });
+
+  const effortOptions = () => modelOption(props.provider, props.model)?.efforts ?? [];
+  const defaultEffortLabel = () => {
+    const fallback = modelOption(props.provider, props.model)?.defaultEffort;
+    const resolved =
+      props.provider === "codex" ? (codexEffortOverride() ?? fallback) : fallback;
+    return resolved ? `Default (${EFFORT_LABELS[resolved] ?? resolved})` : "Default";
+  };
+
+  createEffect(() => {
+    if (props.provider === "codex") ensureCodexEffortOverride();
   });
 
   const steering = () => props.turnActive && !!props.supportsSteer && !!props.onSteer;
@@ -261,9 +291,13 @@ export function Composer(props: {
           class="pf-chat-select"
           disabled={props.turnActive}
           value={props.provider}
-          onChange={(e) =>
-            props.onProviderChange?.(e.currentTarget.value as AgentProvider)
-          }
+          onChange={(e) => {
+            const next = e.currentTarget.value as AgentProvider;
+            // The switch may need confirmation (or be rejected): snap the
+            // select back now; an accepted switch updates props.provider.
+            e.currentTarget.value = props.provider;
+            props.onProviderChange?.(next);
+          }}
         >
           <For each={PROVIDERS}>
             {(agent) => <option value={agent.id}>{agent.label}</option>}
@@ -286,14 +320,21 @@ export function Composer(props: {
             {(m) => <option value={m.id}>{m.label}</option>}
           </For>
         </select>
-        <Show when={props.provider === "codex"}>
+        <Show when={effortOptions().length > 0}>
           <select
             class="pf-chat-select"
+            disabled={props.turnActive}
             value={props.effort ?? ""}
+            title={
+              props.provider === "claudeCode"
+                ? "Effort applies to new sessions"
+                : undefined
+            }
             onChange={(e) => props.onEffortChange?.(e.currentTarget.value)}
           >
-            <For each={EFFORTS}>
-              {(option) => <option value={option.value}>{option.label}</option>}
+            <option value="">{defaultEffortLabel()}</option>
+            <For each={effortOptions()}>
+              {(level) => <option value={level}>{EFFORT_LABELS[level] ?? level}</option>}
             </For>
           </select>
         </Show>

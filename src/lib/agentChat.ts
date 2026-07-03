@@ -97,6 +97,7 @@ export interface AgentChatStartOptions {
   projectRoot: string;
   provider: AgentProvider;
   model?: string | null;
+  effort?: string | null;
   engine?: AgentEngine;
   sandbox?: string;
   approvalPolicy?: string;
@@ -120,6 +121,7 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
     projectRoot: opts.projectRoot,
     provider: opts.provider,
     model: opts.model ?? null,
+    effort: opts.effort ?? null,
     engine: opts.engine ?? null,
     sandbox: opts.sandbox ?? null,
     approvalPolicy: opts.approvalPolicy ?? null,
@@ -145,6 +147,11 @@ export function agentChatSend(
 
 export function agentStashImage(dataBase64: string, ext: string): Promise<string> {
   return invoke<string>("agent_stash_image", { dataBase64, ext });
+}
+
+/** The `model_reasoning_effort` override from ~/.codex/config.toml, if set. */
+export function codexConfigDefaultEffort(): Promise<string | null> {
+  return invoke<string | null>("codex_config_default_effort");
 }
 
 export function agentChatInterrupt(sessionId: string): Promise<void> {

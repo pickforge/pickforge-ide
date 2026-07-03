@@ -88,6 +88,7 @@ type StartCommand = {
   chatId: string;
   cwd: string;
   model?: string | null;
+  effort?: string | null;
   resumeSessionId?: string | null;
   permissionMode?: string;
   allowedTools?: string[];
@@ -262,6 +263,13 @@ function writeStderr(message: string): void {
   process.stderr.write(`[claude-bridge] ${message}\n`);
 }
 
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+function isEffortLevel(value: string): value is EffortLevel {
+  return (EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
 function resolveClaudeCli(): string | null {
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     if (!dir) continue;
@@ -285,6 +293,7 @@ function buildOptions(
   const cli = resolveClaudeCli();
   if (cli) options.pathToClaudeCodeExecutable = cli;
   if (command.model) options.model = command.model;
+  if (command.effort && isEffortLevel(command.effort)) options.effort = command.effort;
   if (command.resumeSessionId) options.resume = command.resumeSessionId;
   if (command.allowedTools) options.allowedTools = command.allowedTools;
   return options;

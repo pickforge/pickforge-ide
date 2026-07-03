@@ -126,6 +126,8 @@ export function agentChat(chatId: string): AgentChatState | undefined {
 
 export interface EnsureAgentChatOptions {
   engine?: AgentEngine;
+  /** Seeds the chat's effort; claude bridge sessions apply it at start. */
+  effort?: string | null;
   sandbox?: string;
   approvalPolicy?: string;
   permissionMode?: string;
@@ -642,8 +644,14 @@ export async function ensureAgentChat(
   model: string | null,
   options: EnsureAgentChatOptions = {},
 ): Promise<void> {
-  if (!chats[chatId]) setChats(chatId, emptyState(provider, model));
+  const created = !chats[chatId];
+  if (created) setChats(chatId, emptyState(provider, model));
   setChats(chatId, { projectRoot, provider, model });
+  // Seed the effort only on a fresh entry — a remount must not clobber a
+  // per-chat effort tweak with the persisted per-provider default.
+  if (created && options.effort !== undefined) {
+    setChats(chatId, { effort: options.effort?.trim() || null });
+  }
   if (chats[chatId]?.sessionId) return;
   const existing = ensurePromises.get(chatId);
   if (existing) return existing;
@@ -668,6 +676,7 @@ export async function ensureAgentChat(
         provider,
         model,
         ...options,
+        effort: chats[chatId].effort,
         onEvent: (event) => receiveAgentEvent(chatId, event),
       });
       setChats(chatId, { sessionId, projectRoot, provider, model, error: null });
@@ -710,6 +719,7 @@ export async function switchAgentChatProvider(
   chatId: string,
   provider: AgentProvider,
   model: string | null,
+  effort: string | null = null,
 ): Promise<boolean> {
   const current = chats[chatId];
   if (current?.turnActive) throw new Error("Cannot switch provider while a turn is active");
@@ -720,7 +730,10 @@ export async function switchAgentChatProvider(
 
   disposeAgentChat(chatId);
   await setChatAgent(chatId, provider, "agent");
-  await ensureAgentChat(chatId, projectRoot, provider, model, { engine: loadAgentEngine() });
+  await ensureAgentChat(chatId, projectRoot, provider, model, {
+    engine: loadAgentEngine(),
+    effort,
+  });
   if (chats[chatId]) {
     setChats(chatId, {
       providerSwitched: true,
@@ -753,6 +766,7 @@ export async function sendAgentMessage(
       if (!projectRoot) throw new Error("Agent chat is not started");
       await ensureAgentChat(chatId, projectRoot, chat.provider, chat.model, {
         engine: loadAgentEngine(),
+        effort: chat.effort,
       });
       sessionId = chats[chatId]?.sessionId ?? null;
       if (!sessionId) throw new Error("Agent chat is not started");

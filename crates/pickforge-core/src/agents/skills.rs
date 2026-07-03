@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -14,10 +15,20 @@ pub struct AgentSkill {
 }
 
 pub fn list_agent_skills(provider: AgentProvider) -> Vec<AgentSkill> {
-    let Some(home) = std::env::var_os("HOME") else {
-        return Vec::new();
-    };
-    list_agent_skills_from_home(provider, Path::new(&home))
+    match provider {
+        AgentProvider::ClaudeCode => {
+            let Some(home) = resolve_home() else {
+                return Vec::new();
+            };
+            list_agent_skills_from_home(provider, &home)
+        }
+        AgentProvider::Codex => {
+            let Some(codex_home) = resolve_codex_home() else {
+                return Vec::new();
+            };
+            list_codex_skills_from_home(&codex_home)
+        }
+    }
 }
 
 pub fn list_agent_skills_from_home(provider: AgentProvider, home: &Path) -> Vec<AgentSkill> {
@@ -33,6 +44,40 @@ pub fn list_agent_skills_from_home(provider: AgentProvider, home: &Path) -> Vec<
         }
     }
     dedupe_and_sort(skills)
+}
+
+fn list_codex_skills_from_home(codex_home: &Path) -> Vec<AgentSkill> {
+    let mut skills = Vec::new();
+    scan_codex_prompt_dir(&codex_home.join("prompts"), &mut skills);
+    dedupe_and_sort(skills)
+}
+
+fn resolve_codex_home() -> Option<PathBuf> {
+    env_path("CODEX_HOME").or_else(|| resolve_home().map(|home| home.join(".codex")))
+}
+
+fn resolve_home() -> Option<PathBuf> {
+    env_path("HOME")
+        .or_else(|| env_path("USERPROFILE"))
+        .or_else(|| {
+            let mut drive = env_os("HOMEDRIVE")?;
+            let path = env_os("HOMEPATH")?;
+            drive.push(path);
+            Some(PathBuf::from(drive))
+        })
+}
+
+fn env_path(key: &str) -> Option<PathBuf> {
+    env_os(key).map(PathBuf::from)
+}
+
+fn env_os(key: &str) -> Option<OsString> {
+    let value = std::env::var_os(key)?;
+    if value.to_string_lossy().trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn scan_claude_skill_dir(root: &Path, out: &mut Vec<AgentSkill>) {
@@ -308,6 +353,65 @@ mod tests {
     }
 
     #[test]
+    fn list_agent_skills_falls_back_to_userprofile() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let home = TempHome::new("userprofile");
+        home.write(
+            ".claude/skills/review/SKILL.md",
+            "---\nname: review-code\ndescription: Review code changes\n---\n",
+        );
+
+        let old_home = std::env::var_os("HOME");
+        let old_userprofile = std::env::var_os("USERPROFILE");
+        let old_homedrive = std::env::var_os("HOMEDRIVE");
+        let old_homepath = std::env::var_os("HOMEPATH");
+        std::env::remove_var("HOME");
+        std::env::set_var("USERPROFILE", &home.path);
+        std::env::remove_var("HOMEDRIVE");
+        std::env::remove_var("HOMEPATH");
+        let skills = list_agent_skills(AgentProvider::ClaudeCode);
+        restore_env("HOME", old_home);
+        restore_env("USERPROFILE", old_userprofile);
+        restore_env("HOMEDRIVE", old_homedrive);
+        restore_env("HOMEPATH", old_homepath);
+
+        assert_eq!(
+            skills,
+            vec![AgentSkill {
+                trigger: "/".to_string(),
+                name: "review-code".to_string(),
+                description: "Review code changes".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn list_agent_skills_honors_codex_home() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let home = TempHome::new("home-codex");
+        let codex_home = TempHome::new("codex-home");
+        home.write(".codex/prompts/home.md", "Home prompt\n");
+        codex_home.write("prompts/override.md", "Override prompt\n");
+
+        let old_home = std::env::var_os("HOME");
+        let old_codex_home = std::env::var_os("CODEX_HOME");
+        std::env::set_var("HOME", &home.path);
+        std::env::set_var("CODEX_HOME", &codex_home.path);
+        let skills = list_agent_skills(AgentProvider::Codex);
+        restore_env("HOME", old_home);
+        restore_env("CODEX_HOME", old_codex_home);
+
+        assert_eq!(
+            skills,
+            vec![AgentSkill {
+                trigger: "$".to_string(),
+                name: "override".to_string(),
+                description: "Override prompt".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn missing_skill_dirs_return_empty_lists() {
         let home = TempHome::new("empty");
         assert!(list_agent_skills_from_home(AgentProvider::ClaudeCode, &home.path).is_empty());
@@ -315,10 +419,14 @@ mod tests {
     }
 
     fn restore_home(old_home: Option<std::ffi::OsString>) {
-        if let Some(old_home) = old_home {
-            std::env::set_var("HOME", old_home);
+        restore_env("HOME", old_home);
+    }
+
+    fn restore_env(key: &str, old_value: Option<std::ffi::OsString>) {
+        if let Some(old_value) = old_value {
+            std::env::set_var(key, old_value);
         } else {
-            std::env::remove_var("HOME");
+            std::env::remove_var(key);
         }
     }
 }

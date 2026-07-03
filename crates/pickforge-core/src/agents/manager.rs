@@ -10,7 +10,9 @@ use crate::db::{AgentSessionRow, Database, DbError};
 
 use super::claude_bridge::{spawn as spawn_claude_bridge, ClaudeBridgeClient, ClaudeBridgeOptions};
 use super::claude_stream::{spawn_claude_turn, ClaudeStreamTurn, ClaudeTurnOptions};
-use super::codex_app::{spawn as spawn_codex_app, CodexAppClient, CodexAppOptions, RequestIdRepr};
+use super::codex_app::{
+    spawn as spawn_codex_app, CodexAppClient, CodexAppError, CodexAppOptions, RequestIdRepr,
+};
 use super::codex_exec::{spawn_codex_turn, CodexExecTurn, CodexTurnOptions};
 use super::event::AgentEvent;
 
@@ -441,6 +443,9 @@ impl AgentChatManager {
 
             match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
+                    // Turn started cleanly — drop any stale cancel flag so it
+                    // can't interrupt this turn's late turn/started.
+                    client.clear_pending_turn_cancel(&thread_id);
                     // Disposed while turn/start was in flight: the session (and
                     // its just-installed turn) is gone — drop the orphan prompt.
                     // dispose() could only arm pending_interrupt (the turn id
@@ -476,6 +481,14 @@ impl AgentChatManager {
                     return Ok(());
                 }
                 Err(err) => {
+                    // A local timeout doesn't mean the app-server rejected the
+                    // turn — it may have accepted and started running it. Flag
+                    // the thread so the read loop interrupts that turn once its
+                    // late turn/started reveals the id, instead of letting it
+                    // run headlessly after we report the send failed.
+                    if matches!(err, CodexAppError::RequestTimeout { .. }) {
+                        client.cancel_pending_turn(&thread_id);
+                    }
                     rollback_prompt(&prompt_seqs);
                     let _ = self.db.agent_session_set_status(session_id, "failed");
                     if let Some(turn) = clear_active_turn(&self.inner, session_id) {

@@ -107,7 +107,8 @@ export interface AgentChatState {
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
 const nextSeqByChat = new Map<string, number>();
 const ensurePromises = new Map<string, Promise<void>>();
-const pendingSetModelByChat = new Map<string, Promise<void>>();
+const pendingSetModelByChat = new Map<string, { promise: Promise<void>; sequence: number }>();
+const setModelRequestSeqByChat = new Map<string, number>();
 // Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
 const ensureGenerations = new Map<string, number>();
 const autoRenameChecked = new Set<string>();
@@ -584,6 +585,30 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   }
 }
 
+function queueAgentChatSetModel(chatId: string, sessionId: string, model: string | null) {
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  const sequence = (setModelRequestSeqByChat.get(chatId) ?? 0) + 1;
+  setModelRequestSeqByChat.set(chatId, sequence);
+  const previous = pendingSetModelByChat.get(chatId)?.promise ?? Promise.resolve();
+  const promise = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const current = chats[chatId];
+      if ((ensureGenerations.get(chatId) ?? 0) !== generation) return;
+      if (!current || current.provider !== "claudeCode" || current.sessionId !== sessionId) return;
+      await agentChatSetModel(sessionId, model);
+    })
+    .catch(() => undefined);
+  pendingSetModelByChat.set(chatId, { promise, sequence });
+  void promise.then(() => {
+    const pending = pendingSetModelByChat.get(chatId);
+    if (pending?.promise === promise && pending.sequence === sequence) {
+      pendingSetModelByChat.delete(chatId);
+      setModelRequestSeqByChat.delete(chatId);
+    }
+  });
+}
+
 function maybeAutoRenameAfterFirstTurn(chatId: string) {
   if (autoRenameChecked.has(chatId)) return;
   autoRenameChecked.add(chatId);
@@ -704,7 +729,8 @@ export async function ensureAgentChat(
         const previous = chats[chatId];
         const history = await agentChatHistory(chatId);
         if (stale()) return;
-        const loaded = stateFromHistory(chatId, provider, model, history);
+        const loadedModel = chats[chatId]?.model ?? model;
+        const loaded = stateFromHistory(chatId, provider, loadedModel, history);
         setChats(chatId, {
           ...loaded,
           projectRoot,
@@ -713,11 +739,12 @@ export async function ensureAgentChat(
         });
       }
       if (stale() || chats[chatId].sessionId) return;
+      const startModel = chats[chatId]?.model ?? model;
       const sessionId = await agentChatStart({
         chatId,
         projectRoot,
         provider,
-        model,
+        model: startModel,
         ...options,
         effort: chats[chatId].effort,
         onEvent: (event) => receiveAgentEvent(chatId, event),
@@ -727,7 +754,11 @@ export async function ensureAgentChat(
         void agentChatDispose(sessionId).catch(() => undefined);
         return;
       }
-      setChats(chatId, { sessionId, projectRoot, provider, model, error: null });
+      const currentModel = chats[chatId]?.model ?? startModel;
+      setChats(chatId, { sessionId, projectRoot, provider, model: currentModel, error: null });
+      if (provider === "claudeCode" && currentModel !== startModel) {
+        queueAgentChatSetModel(chatId, sessionId, currentModel);
+      }
     } catch (error) {
       if (!stale() && chats[chatId]) setChats(chatId, { error: errorText(error) });
       throw error;
@@ -748,20 +779,7 @@ export function setAgentChatModel(chatId: string, model: string | null) {
   // running query (SDK setModel) or the picker silently lies until the next
   // session. Codex reads the model per turn, so the store update suffices.
   if (chat.provider === "claudeCode" && chat.sessionId) {
-    const sessionId = chat.sessionId;
-    let pendingSetModel: Promise<void> | undefined;
-    pendingSetModel = (async () => {
-      try {
-        await agentChatSetModel(sessionId, model);
-      } catch {
-        return;
-      } finally {
-        if (pendingSetModelByChat.get(chatId) === pendingSetModel) {
-          pendingSetModelByChat.delete(chatId);
-        }
-      }
-    })();
-    pendingSetModelByChat.set(chatId, pendingSetModel);
+    queueAgentChatSetModel(chatId, chat.sessionId, model);
   }
 }
 
@@ -851,7 +869,7 @@ export async function sendAgentMessage(
       }
     }
     if ((chats[chatId] ?? chat).provider === "claudeCode") {
-      await pendingSetModelByChat.get(chatId);
+      await pendingSetModelByChat.get(chatId)?.promise;
     }
     await agentChatSend(sessionId, text, sendOptions(chats[chatId] ?? chat, imageList));
   } catch (error) {
@@ -952,5 +970,6 @@ export function disposeAgentChat(chatId: string) {
   nextSeqByChat.delete(chatId);
   ensurePromises.delete(chatId);
   pendingSetModelByChat.delete(chatId);
+  setModelRequestSeqByChat.delete(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
 }

@@ -133,6 +133,10 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function flushPromises() {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
+
 function cumulativeUsageEvents(): AgentEvent[] {
   return [
     {
@@ -804,6 +808,79 @@ describe("ensureAgentChat", () => {
         allowedTools: ["shell", "edit"],
       }),
     );
+  });
+
+  it("starts with the current model after async setup and keeps later changes", async () => {
+    const chatId = nextChatId();
+    const history = deferred<AgentTimelineEntry[]>();
+    const start = deferred<string>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return history.promise;
+      if (cmd === "agent_chat_start") return start.promise;
+      return Promise.resolve(null);
+    });
+
+    const ensuring = ensureAgentChat(chatId, "/project", "codex", "gpt-old");
+    setAgentChatModel(chatId, "gpt-history");
+    history.resolve([]);
+    await flushPromises();
+
+    const startCalls = tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start");
+    expect(startCalls).toHaveLength(1);
+    expect(startCalls[0][1]).toEqual(expect.objectContaining({ model: "gpt-history" }));
+
+    setAgentChatModel(chatId, "gpt-start");
+    start.resolve("session-1");
+    await ensuring;
+
+    expect(agentChat(chatId)?.model).toBe("gpt-start");
+  });
+
+  it("serializes live claude model updates and continues after a failure", async () => {
+    const chatId = nextChatId();
+    const setModels: Array<{
+      promise: Promise<void>;
+      resolve: (value: void) => void;
+      reject: (reason?: unknown) => void;
+    }> = [];
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_chat_set_model") {
+        const next = deferred<void>();
+        setModels.push(next);
+        return next.promise;
+      }
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "claudeCode", "claude-old");
+    setAgentChatModel(chatId, "claude-mid");
+    setAgentChatModel(chatId, "claude-new");
+    await flushPromises();
+
+    const setModelCalls = () =>
+      tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_set_model");
+
+    expect(setModelCalls()).toHaveLength(1);
+    expect(setModelCalls()[0][1]).toEqual({
+      sessionId: "session-1",
+      model: "claude-mid",
+    });
+
+    setModels[0].reject(new Error("set failed"));
+    await flushPromises();
+
+    expect(setModelCalls()).toHaveLength(2);
+    expect(setModelCalls()[1][1]).toEqual({
+      sessionId: "session-1",
+      model: "claude-new",
+    });
+
+    setModels[1].resolve(undefined);
+    await flushPromises();
+
+    expect(agentChat(chatId)?.model).toBe("claude-new");
   });
 
   it("updates the selected model in frontend state only", async () => {

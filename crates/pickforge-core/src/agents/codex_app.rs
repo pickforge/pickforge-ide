@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -84,7 +84,6 @@ impl From<&str> for RequestIdRepr {
 
 pub struct CodexAppClient {
     state: Arc<ClientState>,
-    writer_tx: Mutex<Option<mpsc::Sender<WriterMessage>>>,
     writer_thread: Mutex<Option<JoinHandle<()>>>,
     reader_thread: Mutex<Option<JoinHandle<()>>>,
     stderr_thread: Mutex<Option<JoinHandle<()>>>,
@@ -163,6 +162,7 @@ impl CodexAppClient {
             return Err(CodexAppError::MissingPipe("stderr"));
         };
 
+        let (writer_tx, writer_rx) = mpsc::channel();
         let state = Arc::new(ClientState {
             child: Mutex::new(Some(child)),
             pending: Mutex::new(HashMap::new()),
@@ -170,8 +170,9 @@ impl CodexAppClient {
             closed: AtomicBool::new(false),
             next_id: AtomicI64::new(1),
             pending_permissions: Mutex::new(HashMap::new()),
+            writer_tx: Mutex::new(Some(writer_tx.clone())),
+            cancel_pending_turns: Mutex::new(HashSet::new()),
         });
-        let (writer_tx, writer_rx) = mpsc::channel();
 
         let writer_thread = match std::thread::Builder::new()
             .name("codex-app-writer".to_string())
@@ -216,7 +217,6 @@ impl CodexAppClient {
 
         let client = Self {
             state,
-            writer_tx: Mutex::new(Some(writer_tx)),
             writer_thread: Mutex::new(Some(writer_thread)),
             reader_thread: Mutex::new(Some(reader_thread)),
             stderr_thread: Mutex::new(Some(stderr_thread)),
@@ -300,6 +300,22 @@ impl CodexAppClient {
             &["id"],
         )
         .ok_or_else(|| CodexAppError::BadResponse("missing turn id".to_string()))
+    }
+
+    /// Flag a thread so the read loop interrupts its next turn once the id is
+    /// known — used when a `turn/start` times out after the app-server accepted
+    /// it, leaving a turn running headlessly.
+    pub fn cancel_pending_turn(&self, thread_id: &str) {
+        if let Ok(mut set) = self.state.cancel_pending_turns.lock() {
+            set.insert(thread_id.to_string());
+        }
+    }
+
+    /// Clear a pending-cancel flag (a turn started cleanly, so keep it).
+    pub fn clear_pending_turn_cancel(&self, thread_id: &str) {
+        if let Ok(mut set) = self.state.cancel_pending_turns.lock() {
+            set.remove(thread_id);
+        }
     }
 
     pub fn turn_interrupt(&self, thread_id: &str, turn_id: &str) -> Result<(), CodexAppError> {
@@ -451,7 +467,7 @@ impl CodexAppClient {
     pub fn shutdown(&self) -> Result<(), CodexAppError> {
         self.state.closed.store(true, Ordering::SeqCst);
         fail_pending(&self.state, "codex app-server shutdown");
-        if let Ok(mut tx) = self.writer_tx.lock() {
+        if let Ok(mut tx) = self.state.writer_tx.lock() {
             if let Some(tx) = tx.take() {
                 let _ = tx.send(WriterMessage::Shutdown);
             }
@@ -538,6 +554,7 @@ impl CodexAppClient {
         }
         let line = serde_json::to_string(&value)?;
         let tx = self
+            .state
             .writer_tx
             .lock()
             .map_err(|_| CodexAppError::LockPoisoned("writer"))?
@@ -567,6 +584,14 @@ struct ClientState {
     /// requestApproval` answers with `{permissions, scope}` rather than the
     /// `{decision}` shape command/fileChange approvals use.
     pending_permissions: Mutex<HashMap<String, Value>>,
+    // On the writer side so the read loop can interrupt a turn whose start
+    // request timed out (see cancel_pending_turns).
+    writer_tx: Mutex<Option<mpsc::Sender<WriterMessage>>>,
+    /// Threads whose next turn must be interrupted: a `turn/start` timed out
+    /// locally after the app-server accepted it, so the turn keeps running
+    /// headlessly. When the late `turn/started` reveals the turn id, the read
+    /// loop cancels it and clears the entry.
+    cancel_pending_turns: Mutex<HashSet<String>>,
 }
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
@@ -621,6 +646,7 @@ fn read_loop(stdout: impl Read, state: Arc<ClientState>) {
         let Ok(line) = line else {
             break;
         };
+        interrupt_cancelled_turn(&state, &line);
         match parse_incoming_line(&line) {
             IncomingLine::Response { id, result } => complete_pending(&state, id, result),
             IncomingLine::Events(events) => dispatch_events(&state, events),
@@ -951,6 +977,62 @@ fn routed(params: &Value, event: AgentEvent) -> Vec<RoutedEvent> {
         thread_id: string_field(params, &["threadId"]),
         event,
     }]
+}
+
+/// If a notification reveals the turn id of a thread whose start timed out,
+/// fire a `turn/interrupt` (fire-and-forget: the read loop can't block on its
+/// own response) so the headless turn is stopped, then clear the flag.
+fn interrupt_cancelled_turn(state: &Arc<ClientState>, line: &str) {
+    if state
+        .cancel_pending_turns
+        .lock()
+        .map(|set| set.is_empty())
+        .unwrap_or(true)
+    {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        return;
+    };
+    if value.get("method").and_then(Value::as_str).is_none() {
+        return;
+    }
+    let params = value.get("params").unwrap_or(&Value::Null);
+    let Some(thread_id) = string_field(params, &["threadId"]) else {
+        return;
+    };
+    let flagged = state
+        .cancel_pending_turns
+        .lock()
+        .map(|set| set.contains(&thread_id))
+        .unwrap_or(false);
+    if !flagged {
+        return;
+    }
+    // turn/started carries `turn.id`; item notifications carry `turnId`.
+    let turn_id = params
+        .get("turn")
+        .and_then(|turn| string_field(turn, &["id"]))
+        .or_else(|| string_field(params, &["turnId"]));
+    let Some(turn_id) = turn_id else {
+        return;
+    };
+    if let Ok(mut set) = state.cancel_pending_turns.lock() {
+        set.remove(&thread_id);
+    }
+    let id = state.next_id.fetch_add(1, Ordering::SeqCst);
+    let line = serde_json::to_string(&json!({
+        "id": id,
+        "method": "turn/interrupt",
+        "params": { "threadId": thread_id, "turnId": turn_id },
+    }));
+    if let Ok(line) = line {
+        if let Ok(tx) = state.writer_tx.lock() {
+            if let Some(tx) = tx.as_ref() {
+                let _ = tx.send(WriterMessage::Line(line));
+            }
+        }
+    }
 }
 
 fn dispatch_events(state: &Arc<ClientState>, events: Vec<RoutedEvent>) {
@@ -1304,6 +1386,45 @@ mod tests {
                 _ => Vec::new(),
             })
             .collect()
+    }
+
+    #[test]
+    fn interrupts_a_timed_out_turn_once_its_id_arrives() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state = Arc::new(ClientState {
+            child: Mutex::new(None),
+            pending: Mutex::new(HashMap::new()),
+            subscriptions: Mutex::new(HashMap::new()),
+            closed: AtomicBool::new(false),
+            next_id: AtomicI64::new(1),
+            pending_permissions: Mutex::new(HashMap::new()),
+            writer_tx: Mutex::new(Some(tx)),
+            cancel_pending_turns: Mutex::new(HashSet::new()),
+        });
+        let started = r#"{"method":"turn/started","params":{"threadId":"t1","turn":{"id":"turn-9"}}}"#;
+
+        // Not flagged: the late turn/started is left alone.
+        interrupt_cancelled_turn(&state, started);
+        assert!(rx.try_recv().is_err());
+
+        // Flag the thread (its start timed out): the id reveal triggers an interrupt.
+        state
+            .cancel_pending_turns
+            .lock()
+            .unwrap()
+            .insert("t1".to_string());
+        interrupt_cancelled_turn(&state, started);
+        let WriterMessage::Line(line) = rx.try_recv().unwrap() else {
+            panic!("expected an interrupt line");
+        };
+        assert!(line.contains("turn/interrupt"));
+        assert!(line.contains("turn-9"));
+        assert!(line.contains("t1"));
+
+        // Flag cleared, so a repeat notification does not double-interrupt.
+        assert!(state.cancel_pending_turns.lock().unwrap().is_empty());
+        interrupt_cancelled_turn(&state, started);
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

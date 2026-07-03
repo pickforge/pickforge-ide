@@ -228,7 +228,7 @@ export function AgentChatView(props: {
           supportsSteer={provider() === "codex"}
           emberYielded={hasApprovals()}
           onSend={(text, images) => sendAgentMessage(props.chatId, text, images)}
-          onSteer={(text) => void steerAgentChat(props.chatId, text)}
+          onSteer={(text) => steerAgentChat(props.chatId, text)}
           onInterrupt={() => void interruptAgentChat(props.chatId)}
           onProviderChange={onProviderChange}
           onModelChange={onModelChange}

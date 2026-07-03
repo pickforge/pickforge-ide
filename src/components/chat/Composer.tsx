@@ -111,7 +111,7 @@ export function Composer(props: {
   onModelChange?: (model: string | null) => void;
   onEffortChange?: (effort: string) => void;
   supportsSteer?: boolean;
-  onSteer?: (text: string) => void;
+  onSteer?: (text: string) => void | Promise<void>;
   emberYielded?: boolean;
   meter?: JSX.Element;
 }): JSX.Element {
@@ -299,7 +299,16 @@ export function Composer(props: {
       if (!steering() || !value) return;
       pasteGeneration += 1;
       droppedPasteGeneration = null;
-      props.onSteer!(value);
+      const result = props.onSteer!(value);
+      setText("");
+      field.style.height = "auto";
+      void Promise.resolve(result).catch(() => {
+        if (text().trim().length === 0 && images().length === 0) {
+          setText(savedText);
+          autosize();
+        }
+      });
+      return;
     } else {
       pasteGeneration += 1;
       droppedPasteGeneration = null;

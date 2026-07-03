@@ -1,4 +1,6 @@
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -10,6 +12,7 @@ use pickforge_core::agents::{
     AgentStartOverrides, Engine,
 };
 use pickforge_core::db::{AgentTimelineEntry, Database};
+use pickforge_core::pickforge_home;
 use tauri::ipc::Channel;
 use tauri::State;
 
@@ -104,8 +107,7 @@ pub async fn agent_chat_send(
 /// Only files produced by `agent_stash_image` may ride along with a prompt —
 /// the renderer must not be able to attach arbitrary local paths.
 fn validated_stashed_image(path: &str) -> Result<String, String> {
-    let stash_dir = std::env::temp_dir()
-        .join("pickforge-images")
+    let stash_dir = stash_image_dir()
         .canonicalize()
         .map_err(|_| "image attachment rejected: not a stashed image".to_string())?;
     let canonical = Path::new(path)
@@ -283,8 +285,8 @@ pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, Str
     if bytes.len() > MAX_STASH_IMAGE_BYTES {
         return Err("image exceeds 10 MB limit".to_string());
     }
-    let dir = std::env::temp_dir().join("pickforge-images");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = stash_image_dir();
+    create_stash_image_dir(&dir)?;
     gc_stale_stashed_images(&dir);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -294,11 +296,14 @@ pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, Str
     loop {
         let counter = IMAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = dir.join(format!("{millis}-{counter}.{ext}"));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            options.mode(0o600);
+        }
+
+        match options.open(&path) {
             Ok(mut file) => {
                 file.write_all(&bytes).map_err(|e| e.to_string())?;
                 return path
@@ -309,6 +314,29 @@ pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, Str
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e.to_string()),
         }
+    }
+}
+
+fn stash_image_dir() -> PathBuf {
+    pickforge_home(None)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("pickforge-images")
+}
+
+fn create_stash_image_dir(dir: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        builder.mode(0o700);
+        builder.create(dir).map_err(|e| e.to_string())?;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())
     }
 }
 

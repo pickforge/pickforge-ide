@@ -23,10 +23,15 @@ vi.mock("../../src/stores/workspace", () => ({
 import {
   armChatAutoName,
   cleanOscTitle,
+  deriveAgentChatTitle,
+  forgetChatAutoName,
   handleOscTitle,
+  hasAgentPane,
   isAgentPane,
   markChatTitleManual,
   maybeAutoNameChat,
+  revokeAgentPane,
+  transferAgentPaneOwnership,
   DEFAULT_CHAT_TITLE,
 } from "../../src/lib/chatAutoName";
 
@@ -89,6 +94,33 @@ describe("cleanOscTitle — noise filter", () => {
     expect(cleanOscTitle('"add a dark mode toggle"')).toBe("Add a dark mode toggle");
     // A summary that merely contains a slash but has spaces is kept.
     expect(cleanOscTitle("Refactor src/auth flow")).toBe("Refactor src/auth flow");
+  });
+});
+
+describe("deriveAgentChatTitle", () => {
+  it("truncates long titles on a word boundary", () => {
+    expect(
+      deriveAgentChatTitle(
+        "please refactor the authentication flow so settings handles expired sessions gracefully",
+      ),
+    ).toBe("Please refactor the authentication flow so…");
+  });
+
+  it("strips markdown, quotes, and urls", () => {
+    expect(
+      deriveAgentChatTitle(
+        '> ## "fix [login](https://example.test) **redirect** `bug`" https://example.test/details',
+      ),
+    ).toBe("Fix login redirect bug");
+  });
+
+  it("falls back to the first assistant text for generic short user text", () => {
+    expect(
+      deriveAgentChatTitle(
+        "hi",
+        "I can help wire the image paste path into the agent chat store.",
+      ),
+    ).toBe("I can help wire the image paste path into…");
   });
 });
 
@@ -213,11 +245,13 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
     expect(isAgentPane(id, "pane-0")).toBe(false);
   });
 
-  it("is true for the pane a chip/hotkey armed, false for any other split pane", () => {
+  it("is true for every pane a chip/hotkey armed", () => {
     const id = mkChat();
     armChatAutoName(id, "pane-0");
+    armChatAutoName(id, "pane-1");
     expect(isAgentPane(id, "pane-0")).toBe(true);
-    expect(isAgentPane(id, "pane-1")).toBe(false);
+    expect(isAgentPane(id, "pane-1")).toBe(true);
+    expect(isAgentPane(id, "pane-2")).toBe(false);
   });
 
   it("marks the pane when a recognised agent command is hand-typed", () => {
@@ -230,11 +264,84 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
     expect(isAgentPane(id, "pane-0")).toBe(true);
   });
 
-  it("stops being an agent pane after a manual rename clears ownership", () => {
+  it("marks hand-typed agent commands in non-default titled chats", () => {
+    const id = mkChat("Existing title");
+    maybeAutoNameChat(id, "codex --model gpt-5.5 fix the bug", "pane-0");
+    expect(isAgentPane(id, "pane-0")).toBe(true);
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+  });
+
+  it("transfers agent activity ownership to a remounted pane id", () => {
+    const id = mkChat();
+    armChatAutoName(id, "pane-0");
+    transferAgentPaneOwnership(id, "pane-0", "pane-remount");
+    expect(isAgentPane(id, "pane-0")).toBe(false);
+    expect(isAgentPane(id, "pane-remount")).toBe(true);
+  });
+
+  it("keeps agent activity ownership after a manual rename", () => {
     const id = mkChat();
     armChatAutoName(id, "pane-0");
     expect(isAgentPane(id, "pane-0")).toBe(true);
     markChatTitleManual(id);
+    expect(isAgentPane(id, "pane-0")).toBe(true);
+  });
+
+  it("marks a hand-typed launch in another pane of a chip-armed default chat", () => {
+    const id = mkChat();
+    armChatAutoName(id, "pane-0"); // chip launch — pane-0 armed for the title
+    maybeAutoNameChat(id, "codex fix the tests", "pane-1");
+    expect(isAgentPane(id, "pane-1")).toBe(true);
+    // The arming stands: the first real prompt in pane-0 still names the chat.
+    maybeAutoNameChat(id, "refactor the auth flow", "pane-0");
+    expect(store.chats.get(id)!.title).toBe("Refactor the auth flow");
+  });
+
+  it("revoking a closed pane removes its activity and title claims", () => {
+    const id = mkChat();
+    armChatAutoName(id, "pane-0");
+    expect(hasAgentPane(id)).toBe(true);
+    revokeAgentPane(id, "pane-0");
     expect(isAgentPane(id, "pane-0")).toBe(false);
+    expect(hasAgentPane(id)).toBe(false);
+    handleOscTitle(id, "pane-0", "Ghost pane summary");
+    vi.advanceTimersByTime(2000);
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+  });
+
+  it("forgetChatAutoName drops all state and cancels a pending OSC commit", () => {
+    const id = mkChat();
+    armChatAutoName(id, "pane-0");
+    handleOscTitle(id, "pane-0", "About to be deleted");
+    forgetChatAutoName(id);
+    vi.advanceTimersByTime(2000);
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+    expect(isAgentPane(id, "pane-0")).toBe(false);
+  });
+});
+
+describe("title authority — the newest agent launch names the chat", () => {
+  let counter = 3000;
+  const mkChat = (title = DEFAULT_CHAT_TITLE): string => {
+    const id = `authority-chat-${++counter}`;
+    store.chats.set(id, { chatId: id, title });
+    return id;
+  };
+
+  it("a newer launch takes naming over; the stale agent pane is ignored", () => {
+    const id = mkChat();
+    // Hand-typed claude in a split names the chat and holds title authority.
+    maybeAutoNameChat(id, "claude fix the login bug", "pane-1");
+    expect(store.chats.get(id)!.title).toBe("Fix the login bug");
+
+    // A chip-launched codex in the primary takes the authority with it.
+    armChatAutoName(id, "pane-0");
+    handleOscTitle(id, "pane-1", "Stale claude summary");
+    vi.advanceTimersByTime(1200);
+    expect(store.chats.get(id)!.title).toBe("Fix the login bug");
+
+    handleOscTitle(id, "pane-0", "Codex task summary");
+    vi.advanceTimersByTime(1200);
+    expect(store.chats.get(id)!.title).toBe("Codex task summary");
   });
 });

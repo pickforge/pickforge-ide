@@ -9,11 +9,15 @@ import { InspectorPanel } from "./InspectorPanel";
 import { SourceControl } from "./SourceControl";
 import { DeviceMirror } from "../../components/DeviceMirror";
 import { DebugConsole } from "./DebugConsole";
-import { DockColumn, DockResizer, DockRevealHandle, PaneShell } from "./Dock";
-import { layout, type PaneId } from "../../stores/workbenchLayout";
+import { DockPanel, PaneShell } from "./Dock";
+import { type PaneId } from "../../stores/workbenchLayout";
 import { TerminalHost } from "../../components/TerminalHost";
+import { AgentChatView } from "../../components/chat/AgentChatView";
+import { OrchestraView } from "../../components/orchestra/OrchestraView";
+import { disposeAgentChat } from "../../stores/agentChat";
+import { loadAgentModels } from "../../lib/agentModels";
 import { Chip, ForgeEmptyState, MonoEyebrow, PaneReveal } from "../../components/ui";
-import { IconChevronDown, IconClose, IconTerminal } from "../../components/icons";
+import { IconChevronDown, IconClose, IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
 import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
 import { editorCommand } from "../../stores/fileOpenSettings";
@@ -25,12 +29,28 @@ import {
   quickLaunchItems,
 } from "../../stores/quickLaunch";
 import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
+import { clearProjectOrchestra, removeChatFromOrchestra, selectedLanes } from "../../stores/orchestra";
 import { chatBackend } from "../../stores/chatSessions";
+import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity, setStagedChatsForActivity } from "../../stores/chatActivity";
+import { orchestraOpen, setOrchestraOpen, stagedChatIds } from "../../stores/orchestraStage";
+import { isChatArchived } from "../../stores/chatArchive";
 import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import { armChatAutoName, handleOscTitle, maybeAutoNameChat } from "../../lib/chatAutoName";
+import {
+  armChatAutoName,
+  chatHadAgentSession,
+  clearChatAgentSession,
+  forgetChatAutoName,
+  handleOscTitle,
+  markChatSessionPane,
+  maybeAutoNameChat,
+  revokeAgentPane,
+  transferAgentPaneOwnership,
+} from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
+import { Tour } from "../../components/Tour";
+import { startTour, tourSeen } from "../../stores/tour";
 import "./workbench.css";
 
 interface MountedHost {
@@ -41,6 +61,8 @@ interface MountedHost {
 export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
+  const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
+  const [pendingOrchestraCleanup, setPendingOrchestraCleanup] = createSignal<MountedHost[]>([]);
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
   // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
@@ -76,6 +98,76 @@ export function WorkbenchScreen() {
   // second reactive read) never kicks off two binds / two mounts for one chat.
   const binding = new Set<string>();
 
+  createEffect(() => {
+    setActiveChatForActivity(workspace.activeChatId);
+  });
+
+  createEffect(() => {
+    setStagedChatsForActivity(stagedChatIds());
+  });
+
+  createEffect(() => {
+    const pending = pendingOrchestraCleanup();
+    if (!pending.length) return;
+    const ready = pending.filter((item) => !isChatDestroying(item.chatId));
+    if (!ready.length) return;
+
+    const readyIds = new Set(ready.map((item) => item.chatId));
+    const projectRoots = new Set(workspace.projects.map((project) => project.projectRoot));
+    const clearedRoots = new Set<string>();
+
+    setPendingOrchestraCleanup((items) => items.filter((item) => !readyIds.has(item.chatId)));
+
+    for (const item of ready) {
+      if (!projectRoots.has(item.projectRoot)) {
+        if (!clearedRoots.has(item.projectRoot)) {
+          clearProjectOrchestra(item.projectRoot);
+          clearedRoots.add(item.projectRoot);
+        }
+        continue;
+      }
+      if (findChat(item.chatId)) continue;
+      void removeChatFromOrchestra(item.projectRoot, item.chatId).catch((error) =>
+        console.error("[pickforge] removeChatFromOrchestra failed", error),
+      );
+    }
+  });
+
+  // First-run coach-marks: start the first time the workbench is the visible
+  // screen and the tour is unseen, after a beat so data-tour anchors exist to
+  // measure via getBoundingClientRect.
+  let tourKicked = false;
+  createEffect(() => {
+    if (tourKicked || tourSeen() || route() !== "workbench") return;
+    tourKicked = true;
+    setTimeout(() => {
+      if (route() === "workbench" && !tourSeen()) startTour();
+    }, 600);
+  });
+
+  let prevChatId = workspace.activeChatId;
+  let prevRoot = workspace.activeRoot;
+  let prevOrchOpen = orchestraOpen();
+  createEffect(() => {
+    const id = workspace.activeChatId;
+    const root = workspace.activeRoot;
+    const open = orchestraOpen();
+    const chatChanged = id !== prevChatId;
+    const wasOpen = prevOrchOpen;
+    const priorRoot = prevRoot;
+    prevChatId = id;
+    prevRoot = root;
+    prevOrchOpen = open;
+    if (!open || !wasOpen || !chatChanged || !id) return;
+    const chat = findChat(id);
+    if (!chat || chat.projectRoot !== priorRoot) return;
+    if (selectedLanes(chat.projectRoot).includes(id)) {
+      setLaneFocus({ chatId: id, at: Date.now() });
+    } else {
+      setOrchestraOpen(false);
+    }
+  });
+
   // Mount a host the first time its chat becomes active; keep it after. AWAIT the
   // project's MCP endpoint before mounting, so the very first shell carries the
   // discovery env (PICKFORGE_IPC_ENDPOINT). `TerminalPane` reads `props.env` once
@@ -109,9 +201,20 @@ export function WorkbenchScreen() {
     // the async detection below is still pending when the screen is disposed.
 
     // Tear down a chat's host (and shells) only when the chat is deleted.
-    const offDelete = onChatDeleted((chatId) => {
+    const offDelete = onChatDeleted(async (chatId) => {
+      const chat = findChat(chatId);
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
+      clearChatActivity(chatId);
+      forgetChatAutoName(chatId);
       deleteTerminalHost(chatId);
+      await disposeAgentChat(chatId);
+      if (chat) {
+        setPendingOrchestraCleanup((items) =>
+          items.some((item) => item.chatId === chatId)
+            ? items
+            : [...items, { chatId, projectRoot: chat.projectRoot }],
+        );
+      }
     });
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;
@@ -175,60 +278,76 @@ export function WorkbenchScreen() {
   return (
     <div class="pf-workbench-wrap">
       <div class="pf-workbench">
-      <Show when={layout().leftVisible} fallback={<DockRevealHandle dock="left" />}>
-        <DockColumn dock="left" render={renderPane} />
-        <DockResizer dock="left" />
-      </Show>
+      <DockPanel dock="left" render={renderPane} />
 
       <main class="pf-workbench-center pf-reveal">
-        <Show
-          when={workbenchPrefs().quickLaunchVisible}
-          fallback={
-            <button
-              class="pf-launch-reveal"
-              title="Show quick launch"
-              onClick={() => setQuickLaunchVisible(true)}
-            >
-              <IconChevronDown size={12} /> Quick launch
-            </button>
-          }
-        >
-          <div class="pf-launch">
-            <MonoEyebrow text="Quick launch" tick />
-            <div class="pf-chips">
-              <For each={quickLaunchItems()}>
-                {(item, i) => {
-                  const bin = binaryForItem(item);
-                  return (
-                    <Chip
-                      label={item.label}
-                      hint={item.hotkey ?? undefined}
-                      ember={i() === 0}
-                      disabled={bin ? available()[bin] === false : false}
-                      onClick={() => launchItem(item, commandForItem(item))}
-                    />
-                  );
-                }}
-              </For>
+        <div class="pf-launch-bar" data-tour="quicklaunch">
+          <Show
+            when={workbenchPrefs().quickLaunchVisible}
+            fallback={
+              <button
+                class="pf-launch-reveal"
+                title="Show quick launch"
+                onClick={() => setQuickLaunchVisible(true)}
+              >
+                <IconChevronDown size={12} /> Quick launch
+              </button>
+            }
+          >
+            <div class="pf-launch">
+              <MonoEyebrow text="Quick launch" tick />
+              <div class="pf-chips">
+                <For each={quickLaunchItems()}>
+                  {(item, i) => {
+                    const bin = binaryForItem(item);
+                    return (
+                      <Chip
+                        label={item.label}
+                        hint={item.hotkey ?? undefined}
+                        ember={i() === 0}
+                        disabled={bin ? available()[bin] === false : false}
+                        onClick={() => launchItem(item, commandForItem(item))}
+                      />
+                    );
+                  }}
+                </For>
+              </div>
+              <button
+                class="pf-launch-hide"
+                title="Hide quick launch"
+                onClick={() => setQuickLaunchVisible(false)}
+              >
+                <IconClose size={13} />
+              </button>
             </div>
-            <button
-              class="pf-launch-hide"
-              title="Hide quick launch"
-              onClick={() => setQuickLaunchVisible(false)}
-            >
-              <IconClose size={13} />
-            </button>
-          </div>
-        </Show>
+          </Show>
+          <button
+            class="pf-orch-tab"
+            data-tour="orchestra"
+            classList={{ "pf-orch-tab--on": orchestraOpen() }}
+            title="Toggle orchestration view"
+            disabled={!workspace.activeRoot}
+            onClick={() => setOrchestraOpen(!orchestraOpen())}
+          >
+            <IconGrid size={13} /> Orchestra
+          </button>
+        </div>
 
-        <div class="pf-workbench-terminal">
+        <div class="pf-workbench-terminal" data-tour="chat">
           {/* All visited chats stay mounted; only the active one is shown. */}
+          <div class="pf-term-mounts" classList={{ "pf-term-mounts--hidden": orchestraOpen() }}>
           <For each={mounted()}>
-            {(h) => (
+            {(h) => {
+              const chat = findChat(h.chatId);
+              const provider = (chat?.agentId ?? "claudeCode") as "claudeCode" | "codex";
+              return (
               <div
                 class="pf-term-slot"
                 style={{ display: workspace.activeChatId === h.chatId ? "block" : "none" }}
               >
+                <Show
+                  when={chat?.kind === "agent"}
+                  fallback={
                 <TerminalHost
                   cwd={h.projectRoot}
                   env={mcpEnv(h.projectRoot)}
@@ -243,19 +362,60 @@ export function WorkbenchScreen() {
                       projectRoot: h.projectRoot,
                       sessionId: storedSessionId,
                       backend: chatBackend(h.chatId, storedSessionId),
-                      onSession: (info) => {
+                      onSession: (info, paneId) => {
                         // Persist the resolved recovery id (narrow write). On a raw
                         // degrade with no id we leave the stored one alone.
                         if (info.sessionId) void setChatSessionId(h.chatId, info.sessionId);
+                        // Fresh session: whatever agent flag the old one carried
+                        // died with it. Clear BEFORE markChatSessionPane, which
+                        // re-persists when a chip launch beat this spawn report.
+                        if (!info.attached) clearChatAgentSession(h.chatId);
+                        markChatSessionPane(h.chatId, paneId);
+                        if (info.attached && chatHadAgentSession(h.chatId)) {
+                          // The live session survived a restart/pane-close with an
+                          // agent launched into it — re-mark the recovered pane so
+                          // busy/attention still work, but let the re-attach screen
+                          // replay pass without counting as fresh activity.
+                          armChatAutoName(h.chatId, paneId);
+                          graceChatUnseen(h.chatId, REATTACH_REPLAY_GRACE_MS);
+                        }
                       },
                     };
                   })()}
                   onReady={(handle) => setTerminalHost(h.chatId, handle)}
+                  onOutput={(chunk, paneId) => {
+                    // An archived chat renders no indicator anywhere — never let
+                    // its still-running shell drive activity or an orphan chime.
+                    if (!isChatArchived(h.chatId)) recordChatOutput(h.chatId, paneId, chunk);
+                  }}
+                  onBell={(paneId) => {
+                    if (!isChatArchived(h.chatId)) recordChatAttention(h.chatId, paneId);
+                  }}
+                  onNotification={(_, paneId) => {
+                    if (!isChatArchived(h.chatId)) recordChatAttention(h.chatId, paneId);
+                  }}
+                  onPrimaryPaneRemount={(fromPaneId, toPaneId) => transferAgentPaneOwnership(h.chatId, fromPaneId, toPaneId)}
+                  onPaneClosed={(paneId) => {
+                    revokeAgentPane(h.chatId, paneId);
+                    handlePaneClosed(h.chatId, paneId);
+                  }}
                   onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
                   onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
                 />
+                  }
+                >
+                  <div class="pf-agent-slot">
+                    <AgentChatView
+                      chatId={h.chatId}
+                      projectRoot={h.projectRoot}
+                      provider={provider}
+                      model={loadAgentModels()[provider] ?? null}
+                    />
+                  </div>
+                </Show>
               </div>
-            )}
+              );
+            }}
           </For>
           <Show when={workspace.loaded && !workspace.activeChatId}>
             <div class="pf-term-empty">
@@ -267,13 +427,16 @@ export function WorkbenchScreen() {
               />
             </div>
           </Show>
+          </div>
+          <Show when={orchestraOpen() && workspace.activeRoot}>
+            <div class="pf-term-slot pf-orch-slot">
+              <OrchestraView projectRoot={workspace.activeRoot!} focusChat={laneFocus()} />
+            </div>
+          </Show>
         </div>
       </main>
 
-      <Show when={layout().rightVisible} fallback={<DockRevealHandle dock="right" />}>
-        <DockResizer dock="right" />
-        <DockColumn dock="right" render={renderPane} />
-      </Show>
+      <DockPanel dock="right" render={renderPane} />
       </div>
 
       {/* Always mounted so a run survives collapsing the panel / navigation;
@@ -281,6 +444,8 @@ export function WorkbenchScreen() {
       <div class="pf-dc-host" classList={{ "pf-dc-host--hidden": !runConsole.open() }}>
         <DebugConsole />
       </div>
+
+      <Tour />
     </div>
   );
 }

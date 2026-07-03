@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"019f2237-c21f-7482-a517-7acbf5e2d6cf"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"This session was recorded with model `gpt-5.3-codex-spark` but is resuming with `gpt-5.5`. Consider switching back to `gpt-5.3-codex-spark` as it may affect Codex performance."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"hello from codex"}}
+{"type":"turn.completed","usage":{"input_tokens":28782,"cached_input_tokens":9728,"output_tokens":40,"reasoning_output_tokens":22}}

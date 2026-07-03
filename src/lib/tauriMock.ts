@@ -1,17 +1,21 @@
 // VRT-only Tauri mock. When VITE_PICKFORGE_VRT=1, install a fake
 // window.__TAURI_INTERNALS__ so the app renders with sample data in a plain
 // browser (Playwright), with no Tauri runtime.
+import type { AgentEvent, AgentTimelineEntry } from "./agentChat";
 
 const now = 1_750_000_000_000;
+const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
+
+const AGENT_CHAT_FIXTURE = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
 
 const SAMPLE_PROJECTS = [
   { projectRoot: "/home/dev/acme-app", displayName: "acme-app", createdAt: now, lastOpenedAt: now, sortOrder: 0, archivedAt: null },
   { projectRoot: "/home/dev/widgets", displayName: "widgets", createdAt: now, lastOpenedAt: now, sortOrder: 1, archivedAt: null },
 ];
 const SAMPLE_CHATS = [
-  { chatId: "chat-1", projectRoot: "/home/dev/acme-app", title: "Login screen", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
-  { chatId: "chat-2", projectRoot: "/home/dev/acme-app", title: "Settings polish", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 1 },
-  { chatId: "chat-3", projectRoot: "/home/dev/widgets", title: "Slider refactor", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
+  { chatId: "chat-1", projectRoot: "/home/dev/acme-app", title: "Login screen", kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
+  { chatId: "chat-2", projectRoot: "/home/dev/acme-app", title: "Settings polish", kind: "terminal", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 1 },
+  { chatId: "chat-3", projectRoot: "/home/dev/widgets", title: "Slider refactor", kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
 ];
 const SAMPLE_PICKS = [
   { id: 1, projectRoot: "/home/dev/acme-app", widgetClass: "LoginButton", creationFile: "lib/login.dart", creationLine: 42, skillId: "s", agentId: "claudeCode", terminalId: "t", chatId: null, pickedAt: now, widgetContextJson: "{}" },
@@ -20,9 +24,119 @@ const SAMPLE_RUNS = [
   { sessionId: "run-1", projectRoot: "/home/dev/acme-app", startedAt: now, endedAt: now + 9000, avdId: null, avdName: "Pixel_10", serial: "emulator-5554", vmServiceUrl: null, targetFile: "lib/main.dart", connectionMode: "auto", exitReason: "done", exitCode: 0, hotReloadCount: 7, hotRestartCount: 1, errorCount: 0, lastError: null },
 ];
 
+function agentChatFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_AGENT_CHAT_FIXTURE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function chatsForProject(projectRoot: unknown) {
+  const chats = SAMPLE_CHATS.filter((c) => c.projectRoot === projectRoot);
+  if (!agentChatFixtureEnabled() || projectRoot !== AGENT_CHAT_FIXTURE.projectRoot) {
+    return chats;
+  }
+  return [AGENT_CHAT_FIXTURE, ...chats];
+}
+
+function item(seq: number, event: AgentEvent): AgentTimelineEntry {
+  return {
+    entryType: "item",
+    seq,
+    kind: event.kind,
+    payload: JSON.stringify(event),
+    createdAt: now,
+  };
+}
+
+const AGENT_CHAT_HISTORY: AgentTimelineEntry[] = [
+  {
+    entryType: "message",
+    seq: 1,
+    role: "user",
+    content: "Stabilize the structured agent chat UI for visual regression.",
+    createdAt: now,
+  },
+  item(2, { kind: "turnStarted" }),
+  item(3, {
+    kind: "thinkingFinal",
+    itemId: "thinking-1",
+    text: "Review fixture coverage, keep the surface deterministic, and verify that completed turns leave the composer idle.",
+  }),
+  item(4, {
+    kind: "textDelta",
+    text: "Built a deterministic VRT fixture for the structured chat surface. ",
+  }),
+  item(5, {
+    kind: "textFinal",
+    itemId: "assistant-1",
+    text: "Built a deterministic VRT fixture for the structured chat surface. It covers the message flow, completed tool work, file changes, planning, and token usage without live streaming state.",
+  }),
+  item(6, {
+    kind: "commandStarted",
+    itemId: "cmd-1",
+    command: "bun run vrt -- tests/vrt/agent-chat.spec.ts",
+    cwd: "/home/dev/acme-app",
+  }),
+  item(7, {
+    kind: "commandDone",
+    itemId: "cmd-1",
+    exitCode: 0,
+    status: "completed",
+    outputTail: "1 passed (2.4s)\nSnapshot written: agent-chat.png\nNo visual diffs found",
+  }),
+  item(8, {
+    kind: "fileChange",
+    itemId: "files-1",
+    changes: [
+      { path: "src/lib/tauriMock.ts", kind: "modify", diff: null },
+      { path: "tests/vrt/agent-chat.spec.ts", kind: "add", diff: null },
+    ],
+  }),
+  item(9, {
+    kind: "planUpdate",
+    items: [
+      { text: "Mock a representative persisted timeline", completed: true },
+      { text: "Capture the idle composer state", completed: true },
+      { text: "Run the full validation gate", completed: false },
+    ],
+  }),
+  item(10, {
+    kind: "usage",
+    inputTokens: 18420,
+    cachedInputTokens: 4096,
+    outputTokens: 2310,
+    costUsd: 0.0873,
+  }),
+  item(11, { kind: "turnDone", status: "completed" }),
+];
+
+const MOCK_ORCHESTRA_TASKS: { id: string; projectRoot: string }[] = [];
+
+const MOCK_USAGE_SUMMARY = [
+  { provider: "claudeCode", model: "claude-haiku-4-5", chats: 2, turns: 14, inputTokens: 48210, cachedInputTokens: 21050, outputTokens: 9640, costUsd: 0.31 },
+  { provider: "codex", model: "gpt-5.3-codex-spark", chats: 1, turns: null, inputTokens: 22400, cachedInputTokens: 8000, outputTokens: 4120, costUsd: 0 },
+];
+
 const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
+  orchestra_task_upsert: (a) => {
+    const task = a.task as { id: string; projectRoot: string };
+    const index = MOCK_ORCHESTRA_TASKS.findIndex((t) => t.id === task.id);
+    if (index >= 0) MOCK_ORCHESTRA_TASKS[index] = task;
+    else MOCK_ORCHESTRA_TASKS.push(task);
+    return null;
+  },
+  orchestra_task_delete: (a) => {
+    const index = MOCK_ORCHESTRA_TASKS.findIndex((t) => t.id === a.id);
+    if (index >= 0) MOCK_ORCHESTRA_TASKS.splice(index, 1);
+    return null;
+  },
+  orchestra_tasks_list: (a) =>
+    MOCK_ORCHESTRA_TASKS.filter((t) => t.projectRoot === a.projectRoot),
+  agent_usage_summary: () => MOCK_USAGE_SUMMARY,
   projects_list: () => SAMPLE_PROJECTS,
-  chats_list: (a) => SAMPLE_CHATS.filter((c) => c.projectRoot === a.projectRoot),
+  chats_list: (a) => chatsForProject(a.projectRoot),
   settings_get: () => null,
   detect_binaries: (a) => (a.names as string[]).map(() => true),
   target_detect: () => ({ targetId: "flutter", displayName: "Flutter", confidence: "exact", priority: 100, capabilities: ["detect", "launch", "hotReload", "captureScreenshot", "streamLogs", "inspectSelection"] }),
@@ -56,6 +170,10 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   mcp_publish_state: () => null,
   mcp_push_log: () => null,
   mcp_stop: () => null,
+  agent_chat_history: (a) => a.chatId === AGENT_CHAT_FIXTURE.chatId ? AGENT_CHAT_HISTORY : [],
+  agent_chat_start: (a) => `vrt-session-${a.chatId}`,
+  agent_chat_send: () => null,
+  agent_chat_interrupt: () => null,
   "plugin:app|version": () => "0.1.0",
   open_path: () => null,
   git_status: () => ({

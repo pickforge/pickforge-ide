@@ -4,6 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 
+fn default_chat_kind() -> String {
+    "terminal".to_string()
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -23,6 +27,8 @@ pub struct Chat {
     pub project_root: String,
     pub title: String,
     pub agent_id: String,
+    #[serde(default = "default_chat_kind")]
+    pub kind: String,
     pub skill_id: Option<String>,
     pub session_id: Option<String>,
     pub labels_json: Option<String>,
@@ -136,4 +142,63 @@ pub struct AgentRunLog {
     #[serde(default)]
     pub hot_reload_count: i64,
     pub wrapper_script_path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionRow {
+    pub id: String,
+    pub chat_id: String,
+    pub provider: String,
+    pub provider_session_id: Option<String>,
+    pub model: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraTask {
+    pub id: String,
+    pub project_root: String,
+    pub title: String,
+    pub status: String,
+    pub builder_chat_id: Option<String>,
+    pub reviewer_chat_id: Option<String>,
+    pub note: Option<String>,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUsageSummary {
+    pub provider: String,
+    pub model: Option<String>,
+    pub chats: i64,
+    pub turns: Option<i64>,
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub cost_usd: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "entryType", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum AgentTimelineEntry {
+    #[serde(rename = "message")]
+    Message {
+        seq: i64,
+        role: String,
+        content: String,
+        created_at: i64,
+    },
+    #[serde(rename = "item")]
+    Item {
+        seq: i64,
+        kind: String,
+        payload: String,
+        created_at: i64,
+    },
 }

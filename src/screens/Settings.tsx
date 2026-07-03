@@ -13,7 +13,13 @@ import {
 } from "../stores/quickLaunch";
 import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { Dropdown } from "../components/Dropdown";
-import { IconClose, IconPlus } from "../components/icons";
+import {
+  IconClaude,
+  IconClose,
+  IconIngot,
+  IconOpenAI,
+  IconPlus,
+} from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
 import {
@@ -23,6 +29,8 @@ import {
 } from "../stores/windowControls";
 import { hostPlatform } from "../lib/platform";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
+import { startTour } from "../stores/tour";
+import { navigate } from "../router";
 import { recoverChatSessions, setRecoverChatSessions } from "../stores/chatSessions";
 import {
   fileOpenSettings,
@@ -30,6 +38,16 @@ import {
   setFileOpenMode,
   type FileOpenMode,
 } from "../stores/fileOpenSettings";
+import {
+  loadAgentEngine,
+  loadAskChatTitle,
+  loadDefaultChatKind,
+  setAgentEngine,
+  setAskChatTitle,
+  setDefaultChatKind,
+  type DefaultChatKind,
+} from "../lib/chatDefaults";
+import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
@@ -47,6 +65,11 @@ function Section(props: { title: string; children: any }) {
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
+  const [defaultChatKind, setDefaultChatKindSig] = createSignal<DefaultChatKind>(
+    loadDefaultChatKind(),
+  );
+  const [agentEngine, setAgentEngineSig] = createSignal<AgentEngine>(loadAgentEngine());
+  const [askChatTitle, setAskChatTitleSig] = createSignal(loadAskChatTitle());
   const [archived, setArchived] = createSignal<db.Project[]>([]);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
 
@@ -59,6 +82,23 @@ export function SettingsScreen() {
   const changeModel = (agentId: string, model: string) => {
     setAgentModel(agentId, model || null);
     setModels(loadAgentModels());
+  };
+
+  const changeDefaultChatKind = (kind: string) => {
+    const value = kind as DefaultChatKind;
+    setDefaultChatKind(value);
+    setDefaultChatKindSig(value);
+  };
+
+  const changeAgentEngine = (engine: string) => {
+    const value = engine as AgentEngine;
+    setAgentEngine(value);
+    setAgentEngineSig(value);
+  };
+
+  const changeAskChatTitle = (on: boolean) => {
+    setAskChatTitle(on);
+    setAskChatTitleSig(on);
   };
 
   const restore = async (root: string) => {
@@ -116,7 +156,15 @@ export function SettingsScreen() {
           <For each={AGENTS}>
             {(agent) => (
               <div class="pf-settings-row">
-                <span class="pf-settings-label">{agent.label}</span>
+                <span class="pf-settings-label">
+                  <Show when={agent.id === "claudeCode"}>
+                    <span class="pf-settings-brand"><IconClaude size={14} /></span>
+                  </Show>
+                  <Show when={agent.id === "codex"}>
+                    <span class="pf-settings-brand"><IconOpenAI size={14} /></span>
+                  </Show>
+                  {agent.label}
+                </span>
                 <Show
                   when={agent.models.length > 0}
                   fallback={<span class="pf-settings-muted">CLI default</span>}
@@ -125,12 +173,57 @@ export function SettingsScreen() {
                     class="pf-settings-dropdown"
                     value={models()[agent.id] ?? ""}
                     onChange={(v) => changeModel(agent.id, v)}
-                    options={agent.models.map((m) => ({ value: m.id, label: m.label }))}
+                    options={agent.models.map((m) => ({
+                      value: m.id,
+                      label: m.label,
+                      icon: () => <IconIngot size={13} />,
+                    }))}
                   />
                 </Show>
               </div>
             )}
           </For>
+        </Section>
+
+        <Section title="Chats">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">New chat creates</span>
+            <Dropdown
+              class="pf-settings-dropdown"
+              value={defaultChatKind()}
+              onChange={changeDefaultChatKind}
+              options={[
+                { value: "ask", label: "Ask each time" },
+                { value: "terminal", label: "Terminal" },
+                { value: "agent", label: "Agent chat" },
+              ]}
+            />
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Ask for a chat title
+              <span class="pf-settings-hint-inline">a name field in the new-chat menu; empty keeps auto-naming</span>
+            </span>
+            <div class="pf-seg">
+              <button classList={{ active: askChatTitle() }} onClick={() => changeAskChatTitle(true)}>On</button>
+              <button classList={{ active: !askChatTitle() }} onClick={() => changeAskChatTitle(false)}>Off</button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Agent chat engine
+              <span class="pf-settings-hint-inline">interactive approvals + steering, or one-shot CLI</span>
+            </span>
+            <Dropdown
+              class="pf-settings-dropdown"
+              value={agentEngine()}
+              onChange={changeAgentEngine}
+              options={[
+                { value: "v2", label: "v2 (interactive)" },
+                { value: "v1", label: "v1 (one-shot CLI)" },
+              ]}
+            />
+          </div>
         </Section>
 
         <Section title="Quick launch">
@@ -315,6 +408,13 @@ export function SettingsScreen() {
           <div class="pf-settings-row">
             <span class="pf-settings-label">Panel layout</span>
             <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Product tour
+              <span class="pf-settings-hint-inline">a quick guided walkthrough</span>
+            </span>
+            <button class="pf-text-btn" onClick={() => { navigate("workbench"); startTour(); }}>Replay tour</button>
           </div>
         </Section>
 

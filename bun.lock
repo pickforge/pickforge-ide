@@ -5,6 +5,7 @@
     "": {
       "name": "pickforge-tauri",
       "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "0.3.198",
         "@tauri-apps/api": "^2",
         "@tauri-apps/plugin-dialog": "^2",
         "@tauri-apps/plugin-process": "^2.3.1",
@@ -29,6 +30,8 @@
     },
   },
   "packages": {
+    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.3.198", "", { "optionalDependencies": { "@anthropic-ai/claude-agent-sdk-darwin-arm64": "0.3.198", "@anthropic-ai/claude-agent-sdk-darwin-x64": "0.3.198", "@anthropic-ai/claude-agent-sdk-linux-arm64": "0.3.198", "@anthropic-ai/claude-agent-sdk-linux-arm64-musl": "0.3.198", "@anthropic-ai/claude-agent-sdk-linux-x64": "0.3.198", "@anthropic-ai/claude-agent-sdk-linux-x64-musl": "0.3.198", "@anthropic-ai/claude-agent-sdk-win32-arm64": "0.3.198", "@anthropic-ai/claude-agent-sdk-win32-x64": "0.3.198" }, "peerDependencies": { "@anthropic-ai/sdk": ">=0.93.0", "@modelcontextprotocol/sdk": "^1.29.0", "zod": "^4.0.0" }, "optionalPeers": ["@anthropic-ai/sdk", "@modelcontextprotocol/sdk", "zod"] }, "sha512-xt469sSCyclTPtzpLAg0Aschy665GiRMgZKabSmESbGUA5/H56HcILVOiFxclXswkeMUk2fQxfHJUY9UZfiTnA=="],
+
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 
     "@babel/compat-data": ["@babel/compat-data@7.29.7", "", {}, "sha512-locTkQyKvwIEgBzVrn8693ebc97F2U8ZHjbXwDXJ5Fn2TCpNwTlKcaKLkdHop5c/icOFE7qt7Q9JC5hnKNa6Gg=="],

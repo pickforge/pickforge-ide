@@ -1,0 +1,930 @@
+/* Agent-chat surface. Tokens only (Rule 1). One ember per composition (Rule 2):
+ * the composer's send/turn affordance is the only ember here. Everything else is
+ * surface, hairline, text, or a semantic status color. */
+
+/* ---- View shell ---- */
+.pf-chat-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--pf-surface);
+}
+
+/* The desktop shell disables selection globally (global.css); chat content is
+ * reading material, so message text, thinking, command lines/output, diffs,
+ * token/meter values and user bubbles opt back into selection. Buttons, chips,
+ * and tags stay non-selectable. */
+.pf-chat-bubble-text,
+.pf-chat-thinking-body,
+.pf-chat-command-line,
+.pf-chat-command-glyph,
+.pf-chat-meta,
+.pf-chat-tail,
+.pf-chat-diff,
+.pf-chat-file-kind,
+.pf-chat-file-path,
+.pf-chat-line-name,
+.pf-chat-line-detail,
+.pf-chat-plan-text,
+.pf-chat-tokens,
+.pf-chat-context-frac,
+.pf-chat-context-cost,
+.pf-approval-line,
+.pf-approval-quiet {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ---- Timeline ---- */
+.pf-chat-timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.pf-chat-timeline-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-lg);
+}
+
+/* ---- Bubbles ---- */
+.pf-chat-bubble-row {
+  display: flex;
+}
+.pf-chat-bubble-row--user {
+  justify-content: flex-end;
+}
+.pf-chat-bubble-row--assistant {
+  justify-content: flex-start;
+}
+.pf-chat-bubble {
+  max-width: 78%;
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-lg);
+  line-height: 1.55;
+  color: var(--pf-text-hi);
+}
+.pf-chat-bubble--user {
+  background: var(--pf-surface-2);
+}
+.pf-chat-bubble--assistant {
+  background: transparent;
+  border-color: transparent;
+  max-width: 100%;
+  padding-left: 0;
+  padding-right: 0;
+}
+.pf-chat-bubble-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pf-chat-bubble-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-xs);
+  margin-bottom: var(--pf-space-sm);
+}
+.pf-chat-bubble-img {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+
+/* Streaming caret: a quiet in-progress mark, gated by reduced motion. */
+.pf-chat-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--pf-text-med);
+  border-radius: 1px;
+  animation: pf-chat-blink var(--pf-dur-pulse) var(--pf-ease-out) infinite;
+}
+@keyframes pf-chat-blink {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-caret {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ---- Thinking ---- */
+.pf-chat-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-thinking-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--pf-text-low);
+}
+.pf-chat-thinking-chevron {
+  width: 6px;
+  height: 6px;
+  border-right: var(--pf-hairline-width) solid var(--pf-text-low);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-text-low);
+  transform: rotate(-45deg);
+  transition: transform var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-thinking-chevron--open {
+  transform: rotate(45deg);
+}
+.pf-chat-thinking-body {
+  padding: var(--pf-space-xs) 0 var(--pf-space-xs) var(--pf-space-md);
+  border-left: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-md);
+  line-height: 1.5;
+  color: var(--pf-text-low);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Working dots for streaming affordances. */
+.pf-chat-working {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.pf-chat-working span {
+  width: 4px;
+  height: 4px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-text-low);
+  animation: pf-chat-bounce var(--pf-dur-pulse) var(--pf-ease-out) infinite;
+}
+.pf-chat-working span:nth-child(2) {
+  animation-delay: var(--pf-dur-fast);
+}
+.pf-chat-working span:nth-child(3) {
+  animation-delay: calc(var(--pf-dur-fast) * 2);
+}
+@keyframes pf-chat-bounce {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-working span {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+/* The awaiting-output row: instant feedback from send until the first stream. */
+.pf-chat-working-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) 0;
+}
+.pf-chat-working-label {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+
+/* ---- Cards (command / files / plan) ---- */
+.pf-chat-card {
+  padding: var(--pf-space-md);
+  background: var(--pf-surface-1);
+}
+.pf-chat-command {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-command-head {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-command-glyph {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-low);
+  flex: none;
+}
+.pf-chat-command-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-hi);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pf-chat-command-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+}
+.pf-chat-meta {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+.pf-chat-tail-toggle {
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-med);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-tail-toggle:hover {
+  color: var(--pf-text-hi);
+}
+.pf-chat-tail {
+  margin: 0;
+  padding: var(--pf-space-sm);
+  max-height: 260px;
+  overflow: auto;
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.5;
+  color: var(--pf-text-med);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Files ---- */
+.pf-chat-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-files-head,
+.pf-chat-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-files-list,
+.pf-chat-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-file-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-sm);
+  min-width: 0;
+}
+.pf-chat-file-kind {
+  flex: none;
+  min-width: 7ch;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-chat-file-path {
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-med);
+  overflow-wrap: anywhere;
+}
+.pf-chat-file {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-file-diff-toggle {
+  margin-left: auto;
+  flex: none;
+}
+
+/* ---- Unified diff ---- */
+.pf-chat-diff {
+  margin: 0;
+  padding: var(--pf-space-sm);
+  max-height: 320px;
+  overflow: auto;
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.5;
+}
+.pf-diff-line {
+  display: block;
+  padding: 0 var(--pf-space-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--pf-text-med);
+}
+.pf-diff-line--add {
+  color: var(--pf-connected);
+  background: color-mix(in srgb, var(--pf-connected) 12%, transparent);
+}
+.pf-diff-line--del {
+  color: var(--pf-error);
+  background: color-mix(in srgb, var(--pf-error) 12%, transparent);
+}
+.pf-diff-line--hunk,
+.pf-diff-line--meta {
+  color: var(--pf-text-low);
+}
+
+/* ---- Compact single-line cards (tool / mcp / web) ---- */
+.pf-chat-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-item-fill);
+  min-width: 0;
+}
+.pf-chat-line-tag {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-chat-line-name {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-med);
+  overflow-wrap: anywhere;
+}
+.pf-chat-line-sep {
+  color: var(--pf-text-low);
+  padding: 0 2px;
+}
+.pf-chat-line-detail {
+  min-width: 0;
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Plan ---- */
+.pf-chat-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-plan-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-plan-mark {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-med);
+}
+.pf-chat-plan-text {
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-md);
+  color: var(--pf-text-hi);
+}
+.pf-chat-plan-item--done .pf-chat-plan-mark {
+  color: var(--pf-connected);
+}
+.pf-chat-plan-item--done .pf-chat-plan-text {
+  color: var(--pf-text-low);
+  text-decoration: line-through;
+}
+
+/* ---- Token usage ---- */
+.pf-chat-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+.pf-chat-tokens-part {
+  white-space: nowrap;
+}
+.pf-chat-tokens-part + .pf-chat-tokens-part::before {
+  content: "·";
+  margin-right: var(--pf-space-sm);
+  color: var(--pf-text-low);
+}
+.pf-chat-tokens-cost {
+  color: var(--pf-text-med);
+}
+
+/* ---- Error row ---- */
+.pf-chat-error {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+.pf-chat-error-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: var(--pf-radius-pill);
+  border: var(--pf-hairline-width) solid var(--pf-error);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  font-weight: var(--pf-weight-bold);
+  color: var(--pf-error);
+}
+.pf-chat-error-text {
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-md);
+  color: var(--pf-error);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Provider-switch notice: a quiet, dismissible line in the timeline area.
+ * Auto-fades after a beat unless reduced motion holds it until dismissed. ---- */
+.pf-chat-switch-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  animation: pf-chat-notice-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+.pf-chat-switch-notice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  overflow-wrap: anywhere;
+}
+.pf-chat-switch-notice-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-switch-notice-dismiss:hover {
+  color: var(--pf-text-hi);
+}
+/* Pending provider switch: same quiet row as the notice, plus a decision.
+ * Buttons stay neutral (Rule 2 — the composer's send keeps the ember). */
+.pf-chat-switch-confirm {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  animation: pf-chat-notice-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+.pf-chat-switch-confirm-actions {
+  flex: none;
+  display: flex;
+  gap: var(--pf-space-sm);
+}
+@keyframes pf-chat-notice-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-switch-notice,
+  .pf-chat-switch-confirm {
+    animation: none;
+  }
+}
+
+/* ---- Approvals: a decision moment above the composer. While visible it takes
+ * the composition's ember for the primary Allow; the composer's send yields
+ * (Rule 2 — one ember, held by state, never two at once). Quiet, not a modal. */
+.pf-approvals {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-md) var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+.pf-approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-md);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+}
+.pf-approval-line {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-hi);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pf-approval-quiet {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  overflow-wrap: anywhere;
+}
+.pf-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-xs);
+}
+.pf-approval-btn {
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-3);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-approval-btn:hover {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-approval-btn--primary {
+  border: none;
+  background: var(--pf-ember);
+  color: var(--pf-surface);
+  box-shadow: var(--pf-glow-ember-soft);
+}
+.pf-approval-btn--primary:hover {
+  color: var(--pf-surface);
+  box-shadow: var(--pf-glow-ember-strong);
+}
+.pf-approval-btn--quiet {
+  background: transparent;
+}
+
+/* ---- Composed footer: meter strip + composer share one surface, one top
+ * hairline against the timeline, and the same horizontal inset as the timeline
+ * content. No per-block borders or double gaps. ---- */
+.pf-chat-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+
+/* ---- Context-window meter + session cost, inline at the pickers' right ---- */
+.pf-chat-composer-meter {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  min-width: 0;
+}
+.pf-chat-context {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+.pf-chat-context-frac {
+  flex: none;
+  white-space: nowrap;
+}
+.pf-chat-context-track {
+  flex: none;
+  width: 72px;
+  height: 2px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-hairline);
+  overflow: hidden;
+}
+.pf-chat-context-fill {
+  display: block;
+  height: 100%;
+  background: var(--pf-text-med);
+  transition: width var(--pf-dur-standard) var(--pf-ease-forge);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-context-fill {
+    transition: none;
+  }
+}
+.pf-chat-context-cost {
+  flex: none;
+  color: var(--pf-text-med);
+  white-space: nowrap;
+}
+
+/* ---- Composer ---- */
+.pf-chat-composer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-md) var(--pf-space-lg);
+}
+.pf-chat-composer-pickers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+}
+/* Composer pickers use the app's one Dropdown (Settings look = the standard).
+ * Content-sized triggers; menus open upward and size to their options. */
+.pf-chat-dd .pf-dropdown-trigger {
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+}
+.pf-chat-dd .pf-dropdown-menu {
+  right: auto;
+  min-width: 100%;
+  width: max-content;
+}
+.pf-chat-composer-input {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--pf-space-sm);
+}
+
+/* Quiet inline paste error next to the staged thumbnails. */
+.pf-chat-paste-error {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-error);
+  overflow-wrap: anywhere;
+}
+
+/* Pasted-image thumbnails staged above the input. */
+.pf-chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-attachment {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+.pf-chat-attachment-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-chat-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: var(--pf-radius-pill);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-3);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-attachment-remove:hover {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-text-med);
+}
+
+/* Slash-template popover: a quiet list above the input. No ember (Rule 2 — the
+ * send affordance keeps the composition's single ember). */
+.pf-composer-templates {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  z-index: 20;
+  margin-bottom: var(--pf-space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--pf-space-xs);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-1);
+  box-shadow: var(--pf-shadow-overlay);
+  animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+.pf-composer-template {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.pf-composer-template--on {
+  background: var(--pf-surface-2);
+}
+.pf-composer-template-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+}
+.pf-composer-template-label {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-composer-template-kind {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-composer-template-hint {
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-chat-textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  max-height: 200px;
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-lg);
+  line-height: 1.5;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-textarea::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-chat-textarea:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+}
+
+/* The single ember of this composition: the send / turn affordance. */
+.pf-chat-send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  /* Match the single-row textarea's box so the pair reads as one aligned row
+   * (line-height + vertical padding + hairlines); on multiline growth the
+   * button stays anchored to the last line via the row's flex-end. */
+  min-height: calc(
+    1.5 * var(--pf-size-body-lg) + 2 * var(--pf-space-sm) + 2 * var(--pf-hairline-width)
+  );
+  border: none;
+  border-radius: var(--pf-radius-md);
+  background: var(--pf-ember);
+  color: var(--pf-surface);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  font-weight: var(--pf-weight-medium);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: var(--pf-glow-ember-soft);
+  transition: transform var(--pf-dur-micro) var(--pf-ease-forge),
+    box-shadow var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-send:hover:not(:disabled) {
+  transform: scale(1.02);
+  box-shadow: var(--pf-glow-ember-strong);
+}
+.pf-chat-send:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.pf-chat-send:disabled {
+  background: var(--pf-surface-3);
+  color: var(--pf-text-low);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.pf-chat-send--stop {
+  background: transparent;
+  color: var(--pf-ember);
+  border: var(--pf-hairline-width) solid var(--pf-ember);
+  box-shadow: none;
+}
+.pf-chat-send--stop:hover:not(:disabled) {
+  box-shadow: var(--pf-glow-ember-soft);
+}
+
+/* Ember yields to the approval prompt while a decision is pending: the send /
+ * stop affordance drops to a neutral outline so the composition keeps one ember. */
+.pf-chat-send--yield,
+.pf-chat-send--yield:disabled {
+  background: transparent;
+  color: var(--pf-text-med);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  box-shadow: none;
+}
+.pf-chat-send--yield:hover:not(:disabled) {
+  transform: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+  box-shadow: none;
+}

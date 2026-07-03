@@ -1,0 +1,761 @@
+/* Orchestration surface. Tokens only (Rule 1). The ledger, lane headers and the
+ * usage dashboard carry NO ember — each embedded lane is its own composition and
+ * keeps its own composer ember. Structure is hairline + semantic status color. */
+
+.pf-orch {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  background: var(--pf-surface);
+}
+
+/* ---- Ledger panel ---- */
+.pf-orch-ledger {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 288px;
+  min-height: 0;
+  overflow: hidden;
+  border-right: var(--pf-hairline-width) solid var(--pf-hairline);
+  /* The panel is stage; its sections are surface-1 cards (chat convention). */
+  background: var(--pf-surface);
+  transition: width var(--pf-dur-standard) var(--pf-ease-forge);
+}
+/* No easing while dragging the ledger resizer — the width tracks the pointer. */
+body.pf-resizing .pf-orch-ledger {
+  transition: none;
+}
+.pf-orch-ledger--closed {
+  width: 34px;
+}
+.pf-orch-ledger-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: var(--pf-space-sm) var(--pf-space-sm) var(--pf-space-xs);
+}
+.pf-orch-ledger-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  padding: var(--pf-space-xs);
+}
+.pf-orch-ledger-toggle:hover {
+  color: var(--pf-text-hi);
+}
+/* Collapsed: a slim vertical rail — chevron pinned at the top, the eyebrow
+ * rotated to read bottom-to-top so it never bleeds into the lanes bar. */
+.pf-orch-ledger--closed .pf-orch-ledger-head {
+  flex-direction: column;
+  padding: var(--pf-space-sm) 0;
+}
+.pf-orch-ledger--closed .pf-orch-ledger-toggle {
+  flex-direction: column;
+  gap: var(--pf-space-md);
+  width: 100%;
+  padding: var(--pf-space-xs) 0;
+}
+.pf-orch-ledger--closed .pf-orch-ledger-toggle .pf-eyebrow-row {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+/* Ledger resizer — matches the dock resizer affordance (hairline grip that
+ * warms to the ember while hovered/dragging). */
+.pf-orch-ledger-resizer {
+  flex: none;
+  width: 6px;
+  margin: 0 -3px;
+  z-index: 5;
+  cursor: col-resize;
+  display: flex;
+  justify-content: center;
+}
+.pf-orch-ledger-resizer-grip {
+  width: 1px;
+  background: transparent;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-ledger-resizer:hover .pf-orch-ledger-resizer-grip,
+body.pf-resizing .pf-orch-ledger-resizer-grip {
+  background: var(--pf-ember);
+}
+.pf-orch-ledger-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
+  gap: var(--pf-space-sm);
+}
+/* Ledger sections share the chat surface's card convention — hairline ring,
+ * pane radius, own surface — instead of floating bare on the panel. */
+.pf-orch-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+
+/* ---- Tasks ---- */
+.pf-orch-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+.pf-orch-tasks-empty {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  padding: var(--pf-space-sm) var(--pf-space-xs);
+}
+.pf-orch-task {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+}
+.pf-orch-task-top {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-orch-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  flex: none;
+  padding: 2px var(--pf-space-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: var(--pf-status, var(--pf-text-med));
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-status:hover {
+  border-color: var(--pf-hairline-strong);
+}
+.pf-orch-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-status, var(--pf-text-med));
+}
+.pf-orch-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-orch-task-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  opacity: 0;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    opacity var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-task:hover .pf-orch-task-del {
+  opacity: 1;
+}
+.pf-orch-task-del:hover {
+  color: var(--pf-error);
+}
+.pf-orch-task-assign {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  flex-wrap: wrap;
+}
+.pf-orch-task-key {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-orch-select {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 2px var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-select:hover {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-orch-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-orch-note::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-orch-note:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+
+/* ---- Add task ---- */
+.pf-orch-add {
+  display: flex;
+  gap: var(--pf-space-xs);
+}
+.pf-orch-add-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-orch-add-input::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-orch-add-input:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+}
+.pf-orch-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-add-btn:hover {
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+
+/* ---- Usage dashboard ---- */
+.pf-orch-usage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  margin-top: auto;
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+.pf-orch-usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pf-orch-usage-empty {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+}
+/* Per-provider stacked cards — no table, so nothing truncates at the default
+ * ledger width. Mono machine voice, tabular numerals, cost right-aligned. */
+.pf-orch-usage-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-orch-usage-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  column-gap: var(--pf-space-sm);
+  row-gap: 2px;
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  font-family: var(--pf-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.pf-orch-usage-card-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--pf-space-xs);
+  min-width: 0;
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-med);
+}
+.pf-orch-usage-card-prov {
+  flex: none;
+  text-transform: uppercase;
+  letter-spacing: var(--pf-tracking-eyebrow);
+}
+.pf-orch-usage-card-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-orch-usage-card-meta {
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-orch-usage-card-tokens {
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-med);
+}
+.pf-orch-usage-card-cost {
+  grid-column: 2;
+  grid-row: 2 / 4;
+  align-self: center;
+  text-align: right;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+}
+
+/* ---- Lane grid ---- */
+.pf-orch-grid-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Free-form binary split canvas: lanes are absolutely positioned from a
+ * computed fractional layout; the gutters between frames double as divider gaps
+ * (mirrors TerminalHost). The cell is click-through so the divider in the gutter
+ * stays grabbable; the inset frame carries the visible card. */
+.pf-orch-grid {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pf-orch-lane {
+  position: absolute;
+  pointer-events: none;
+}
+.pf-orch-lane-frame {
+  position: absolute;
+  inset: var(--pf-space-xs);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: auto;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  overflow: hidden;
+  transition: opacity var(--pf-dur-standard) var(--pf-ease-forge);
+}
+/* Dragged lane dims; the drop overlay shows where it will land. */
+.pf-orch-lane-frame--dragging {
+  opacity: 0.5;
+}
+.pf-orch-lane-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+body.pf-orch-moving .pf-orch-lane-head {
+  cursor: grabbing;
+}
+/* During a lane drag, stop the embedded chat from swallowing the pointer so the
+ * global move/up handlers and hit-testing stay smooth. */
+body.pf-orch-moving .pf-orch-lane-body {
+  pointer-events: none;
+}
+.pf-orch-lane-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-text-low);
+}
+.pf-orch-lane-dot--busy {
+  background: var(--pf-info);
+}
+.pf-orch-lane-dot--attention {
+  background: var(--pf-warning);
+}
+.pf-orch-lane-title {
+  min-width: 0;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Inline lane rename — same footprint as the title it replaces. */
+.pf-orch-lane-rename {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0 var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-orch-lane-rename:focus {
+  outline: none;
+}
+.pf-orch-lane-mark {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-orch-lane-model {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-orch-lane-spacer {
+  flex: 1 1 auto;
+}
+/* Quiet inline handoff notice under the lane header: info uses low text,
+ * failures the semantic error token. Never ember. */
+.pf-orch-lane-notice {
+  flex: none;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  overflow-wrap: anywhere;
+}
+.pf-orch-lane-notice--error {
+  color: var(--pf-error);
+}
+.pf-orch-lane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.pf-orch-lane-body > * {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pf-orch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-icon:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-item-fill);
+}
+.pf-orch-icon--active {
+  color: var(--pf-ember);
+}
+
+/* ---- Add lane affordance ---- */
+.pf-orch-add-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-add-lane:hover {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+/* Slim persistent header row above the lane grid — keeps the add-lane pill in
+ * its own hit area (never overlapping a lane header) at every lane count. */
+.pf-orch-grid-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm) 0;
+}
+.pf-orch-grid-bar-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+/* Segmented layout switch (columns / rows / 2×2). Quiet hairline group; the
+ * active segment lifts to surface-3, never ember. */
+.pf-orch-layout-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-pill);
+  overflow: hidden;
+}
+.pf-orch-layout-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-layout-btn + .pf-orch-layout-btn {
+  border-left: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-orch-layout-btn:hover {
+  color: var(--pf-text-hi);
+}
+.pf-orch-layout-btn--on {
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-3);
+}
+
+/* ---- draggable seams (mirror TerminalHost dividers) ---- */
+.pf-orch-divider {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pf-orch-divider--row {
+  width: 11px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+}
+.pf-orch-divider--col {
+  height: 11px;
+  transform: translateY(-50%);
+  cursor: row-resize;
+}
+.pf-orch-divider-grip {
+  background: transparent;
+  border-radius: var(--pf-radius-pill);
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    box-shadow var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-divider--row .pf-orch-divider-grip {
+  width: 2px;
+  height: 26px;
+}
+.pf-orch-divider--col .pf-orch-divider-grip {
+  width: 26px;
+  height: 2px;
+}
+.pf-orch-divider:hover .pf-orch-divider-grip,
+body.pf-resizing .pf-orch-divider-grip {
+  background: var(--pf-ember);
+  box-shadow: 0 0 10px -2px var(--pf-ember);
+}
+
+/* ---- lane rearrange: drop indicator (mirror TerminalHost .pf-drop) ----
+ * The frame gutter is baked into every zone's offsets (padding on a positioned
+ * ancestor does not offset absolutely-positioned children), so the zone hugs
+ * .pf-orch-lane-frame exactly and half-zones are half of the frame, not half
+ * of the raw cell. */
+.pf-orch-drop {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+}
+.pf-orch-drop-zone {
+  position: absolute;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-bracket-width) solid var(--pf-ember);
+  background: var(--pf-ember-glow);
+  box-shadow: var(--pf-glow-ember-soft);
+  animation: pf-orch-drop-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+@keyframes pf-orch-drop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.pf-orch-drop-zone--center {
+  inset: var(--pf-space-xs);
+}
+.pf-orch-drop-zone--left {
+  top: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  left: var(--pf-space-xs);
+  width: calc(50% - var(--pf-space-xs));
+}
+.pf-orch-drop-zone--right {
+  top: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  width: calc(50% - var(--pf-space-xs));
+}
+.pf-orch-drop-zone--up {
+  left: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  top: var(--pf-space-xs);
+  height: calc(50% - var(--pf-space-xs));
+}
+.pf-orch-drop-zone--down {
+  left: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  height: calc(50% - var(--pf-space-xs));
+}
+
+/* ---- directional split menu (mirror TerminalHost .pf-split-tile) ---- */
+.pf-orch-split-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-xs);
+}
+.pf-orch-split-tile {
+  --pf-split-fill: var(--pf-text-low);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: 84px;
+  padding: var(--pf-space-md) var(--pf-space-sm) var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    transform var(--pf-dur-micro) var(--pf-ease-forge);
+}
+.pf-orch-split-tile:hover {
+  --pf-split-fill: var(--pf-ember);
+  background: var(--pf-surface-3);
+  border-color: var(--pf-hairline-strong);
+  color: var(--pf-text-hi);
+}
+.pf-orch-split-tile:active {
+  transform: scale(0.96);
+}
+.pf-orch-split-tile .pf-icon {
+  color: var(--pf-text-med);
+}
+.pf-orch-split-tile-label {
+  white-space: nowrap;
+}
+
+/* Quiet focus flash when a lane is activated from the sidebar. A hairline ring
+ * holds for the flash window (feedback under reduced motion); the pulse is
+ * motion-only and collapses to nothing when reduced. */
+.pf-orch-lane-frame--flash {
+  box-shadow: inset 0 0 0 1px var(--pf-hairline-strong);
+  animation: pf-orch-lane-flash var(--pf-dur-slow) var(--pf-ease-forge);
+}
+@keyframes pf-orch-lane-flash {
+  0% {
+    box-shadow: inset 0 0 0 1px var(--pf-hairline-strong);
+  }
+  40% {
+    box-shadow: inset 0 0 0 2px var(--pf-hairline-strong);
+  }
+  100% {
+    box-shadow: inset 0 0 0 1px var(--pf-hairline-strong);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-orch-lane-frame--flash,
+  .pf-orch-drop-zone {
+    animation: none;
+  }
+}
+
+/* ---- Empty state ---- */
+.pf-orch-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

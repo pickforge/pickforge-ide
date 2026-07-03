@@ -42,30 +42,137 @@ const AGENT_BINARIES = new Set<string>([
 const VALUE_FLAGS = /^(-m|--model|--cwd|-C|--profile|--config|-c)$/;
 
 const MAX_TITLE = 48;
+const AGENT_CHAT_MAX_TITLE = 42;
+const GENERIC_AGENT_CHAT_TEXT = new Set([
+  "hi",
+  "hello",
+  "hey",
+  "yo",
+  "ok",
+  "okay",
+  "thanks",
+  "thank you",
+  "help",
+  "please help",
+  "can you help",
+  "can you help me",
+]);
 
 // chatId -> the pane id armed for auto-naming. Scoped to a pane so that, in a
 // chat with split terminals, only the pane the agent launched in can supply the
 // title — a submit in another split pane can't steal it.
 const armed = new Map<string, string>();
 
-// chatId -> the pane an agent is known to run in (the primary/session-backed pane
-// a chip/hotkey launched into, or a pane where a recognised agent command was
-// hand-typed). Unlike `armed`, this is NOT cleared once a title commits — it gates
-// the OSC-title pipeline so only the agent's own pane can claim the chat name. A
-// regular shell/editor/build in another split pane that sets OSC 2 can't rename.
-const agentPane = new Map<string, string>();
+// chatId -> panes known to be running agents (the primary/session-backed pane
+// a chip/hotkey launched into, or panes where recognised agent commands were
+// hand-typed). This is activity ownership (busy glow / attention): it is not
+// cleared by title commits or manual renames, and multiple agent panes may
+// coexist. TITLE authority is single-slot — see titleAuthority below.
+const agentPanes = new Map<string, Set<string>>();
 
-/** Record the pane an agent runs in for a chat, so the OSC-title pipeline only
- *  adopts titles from it (and never from a non-agent split pane). */
-function markAgentPane(chatId: string, paneId: string) {
-  agentPane.set(chatId, paneId);
+// chatId -> the pane of the MOST RECENT agent launch. Only this pane's OSC
+// titles may name the chat (last launch wins), so a stale agent left in a split
+// can't keep renaming after a newer launch takes over.
+const titleAuthority = new Map<string, string>();
+
+// chatId -> its session-backed (primary) pane. Lets markAgentPane persist the
+// "an agent ran in this chat's recoverable session" flag, which re-marks the
+// pane after an app restart re-attaches the still-running session.
+const sessionPane = new Map<string, string>();
+
+const agentSessionKey = (chatId: string) => `pickforge.chatAgentSession.${chatId}`;
+
+function persistChatAgentSession(chatId: string) {
+  try {
+    localStorage.setItem(agentSessionKey(chatId), "1");
+  } catch {
+    /* storage unavailable (tests) — restart re-marking degrades gracefully */
+  }
 }
 
-/** Whether `paneId` is the agent-owned pane for a chat — so a bell/notification
- *  from it counts as agent attention, but one from a plain shell or build in
- *  another split pane is ignored. Mirrors the OSC-title pane-ownership gate. */
+export function clearChatAgentSession(chatId: string) {
+  try {
+    localStorage.removeItem(agentSessionKey(chatId));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Whether an agent was launched into this chat's recoverable session — decides
+ *  re-marking the primary pane when a restart re-attaches the live session. */
+export function chatHadAgentSession(chatId: string): boolean {
+  try {
+    return localStorage.getItem(agentSessionKey(chatId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Record which pane is the chat's session-backed primary (from the pane's
+ *  spawn/attach report), so agent launches into it persist across restarts.
+ *  A chip launch can beat the spawn report — persist retroactively then. */
+export function markChatSessionPane(chatId: string, paneId: string) {
+  sessionPane.set(chatId, paneId);
+  if (isAgentPane(chatId, paneId)) persistChatAgentSession(chatId);
+}
+
+function markAgentPane(chatId: string, paneId: string) {
+  let panes = agentPanes.get(chatId);
+  if (!panes) {
+    panes = new Set<string>();
+    agentPanes.set(chatId, panes);
+  }
+  panes.add(paneId);
+  titleAuthority.set(chatId, paneId);
+  if (sessionPane.get(chatId) === paneId) persistChatAgentSession(chatId);
+}
+
 export function isAgentPane(chatId: string, paneId: string): boolean {
-  return agentPane.get(chatId) === paneId;
+  return agentPanes.get(chatId)?.has(paneId) ?? false;
+}
+
+export function hasAgentPane(chatId: string): boolean {
+  return (agentPanes.get(chatId)?.size ?? 0) > 0;
+}
+
+/** A pane's shell was killed (pane closed / survivor swapped out): drop every
+ *  claim it held so a dead pane can't gate activity or supply titles. */
+export function revokeAgentPane(chatId: string, paneId: string) {
+  const panes = agentPanes.get(chatId);
+  if (panes?.delete(paneId) && panes.size === 0) agentPanes.delete(chatId);
+  if (armed.get(chatId) === paneId) armed.delete(chatId);
+  if (titleAuthority.get(chatId) === paneId) titleAuthority.delete(chatId);
+}
+
+/** The chat was deleted: drop all of its naming/ownership state, including the
+ *  persisted agent-session flag and any pending OSC-title commit. */
+export function forgetChatAutoName(chatId: string) {
+  agentPanes.delete(chatId);
+  titleAuthority.delete(chatId);
+  sessionPane.delete(chatId);
+  armed.delete(chatId);
+  manual.delete(chatId);
+  autoNamed.delete(chatId);
+  const pending = oscPending.get(chatId);
+  if (pending) {
+    clearTimeout(pending.timer);
+    oscPending.delete(chatId);
+  }
+  clearChatAgentSession(chatId);
+}
+
+export function transferAgentPaneOwnership(
+  chatId: string | null | undefined,
+  fromPaneId: string | null | undefined,
+  toPaneId: string | null | undefined,
+) {
+  if (!chatId || !fromPaneId || !toPaneId || fromPaneId === toPaneId) return;
+  if (sessionPane.get(chatId) === fromPaneId) sessionPane.set(chatId, toPaneId);
+  const panes = agentPanes.get(chatId);
+  if (!panes?.delete(fromPaneId)) return;
+  panes.add(toPaneId);
+  if (armed.get(chatId) === fromPaneId) armed.set(chatId, toPaneId);
+  if (titleAuthority.get(chatId) === fromPaneId) titleAuthority.set(chatId, toPaneId);
 }
 
 // ---- title ownership ----
@@ -83,9 +190,8 @@ const autoNamed = new Set<string>();
  *  it alone. The rename field calls this on a real manual rename. */
 export function markChatTitleManual(chatId: string) {
   manual.add(chatId);
+  armed.delete(chatId);
   autoNamed.delete(chatId);
-  oscPaneOwner.delete(chatId);
-  agentPane.delete(chatId);
 }
 
 /** True when an auto source may (re)write this chat's title: never once the user
@@ -98,10 +204,6 @@ function canAutoOwn(chatId: string): boolean {
 }
 
 // ---- OSC 2 terminal-title pipeline ----
-// chatId -> the pane id that first emitted a usable OSC title. That pane owns
-// the chat's title for the rest of the session; titles from any other split
-// pane are ignored, so a second shell can't fight it for the name.
-const oscPaneOwner = new Map<string, string>();
 // chatId -> a pending debounce timer + the latest candidate title. The agent
 // rewrites the title rapidly while it works; we commit only after it goes quiet.
 interface OscPending {
@@ -117,20 +219,14 @@ const OSC_DEBOUNCE_MS = 1200;
 export function handleOscTitle(chatId: string, paneId: string, rawTitle: string) {
   if (!canAutoOwn(chatId)) return;
 
-  // Only the agent-owned pane may name the chat. A regular shell command,
-  // editor, or build script that sets an OSC 2 window title in another pane must
-  // not claim the chat before any agent prompt exists — consistent with the
-  // armed/first-message pane-ownership model.
-  const agent = agentPane.get(chatId);
-  if (agent === undefined || agent !== paneId) return;
+  // Only the most recent agent launch's pane may name the chat (last launch
+  // wins). A regular shell command, editor, or build script that sets an OSC 2
+  // window title in another pane can't claim the name, and a stale agent left
+  // in a split can't fight a newer launch for it.
+  if (titleAuthority.get(chatId) !== paneId) return;
 
   const title = cleanOscTitle(rawTitle);
   if (!title) return; // noise — empty, a prompt/cwd banner, the shell name, …
-
-  // First usable pane to speak owns the title; ignore the others.
-  const owner = oscPaneOwner.get(chatId);
-  if (owner === undefined) oscPaneOwner.set(chatId, paneId);
-  else if (owner !== paneId) return;
 
   const existing = oscPending.get(chatId);
   if (existing) clearTimeout(existing.timer);
@@ -143,17 +239,15 @@ export function handleOscTitle(chatId: string, paneId: string, rawTitle: string)
   oscPending.set(chatId, { timer, title });
 }
 
-/** Arm a chat so its next submitted line in `paneId` is taken as the title
- *  (agent launched via a quick-launch chip/hotkey — we already know it's an
- *  agent). No-op once the chat has a real title or without a launched pane. */
+/** Mark `paneId` as agent-owned and, for a default-titled chat, arm its next
+ *  submitted line as the title (agent launched via a quick-launch chip/hotkey). */
 export function armChatAutoName(
   chatId: string | null | undefined,
   paneId: string | null | undefined,
 ) {
   if (!chatId || !paneId) return;
-  // The agent runs in this pane — let OSC titles from it (and only it) name the
-  // chat, even if the chat already has a non-default title (the agent pane is the
-  // title authority for this session).
+  // The agent runs in this pane. OSC titles from agent-owned panes may name the
+  // chat while title ownership still allows it.
   markAgentPane(chatId, paneId);
   const chat = findChat(chatId);
   if (chat && isDefaultChatTitle(chat.title)) armed.set(chatId, paneId);
@@ -164,19 +258,26 @@ export function armChatAutoName(
  *  derive a title from the line and rename — once. */
 export function maybeAutoNameChat(chatId: string, rawLine: string, paneId: string) {
   const chat = findChat(chatId);
-  if (!chat || !isDefaultChatTitle(chat.title)) {
-    armed.delete(chatId);
-    return;
-  }
+  if (!chat) return;
 
   const line = rawLine.trim();
   if (!line) return; // ignore blank submits; stay armed
 
+  if (!isDefaultChatTitle(chat.title)) {
+    armed.delete(chatId);
+    if (matchAgentLaunch(line)) markAgentPane(chatId, paneId);
+    return;
+  }
+
   const armedPane = armed.get(chatId);
   if (armedPane !== undefined) {
     // Only the pane that received the launch may supply the title; a submit in
-    // any other split pane is ignored and the arming stands.
-    if (armedPane !== paneId) return;
+    // any other split pane leaves the arming intact — but a hand-typed agent
+    // launch there still claims ACTIVITY ownership so its glow/attention work.
+    if (armedPane !== paneId) {
+      if (matchAgentLaunch(line)) markAgentPane(chatId, paneId);
+      return;
+    }
     armed.delete(chatId);
     commit(chatId, line);
     return;
@@ -329,6 +430,56 @@ function toTitle(raw: string): string {
   if (s.length > MAX_TITLE) {
     const cut = s.slice(0, MAX_TITLE);
     const onWord = cut.replace(/\s+\S*$/, "");
+    s = `${(onWord.length >= 12 ? onWord : cut).trim()}…`;
+  }
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+export function deriveAgentChatTitle(firstUserText: string, firstAssistantText?: string): string {
+  const userTitle = cleanAgentChatTitleSource(firstUserText);
+  const assistantTitle = cleanAgentChatTitleSource(firstAssistantText ?? "");
+  const source = isTrivialAgentChatTitle(userTitle) && assistantTitle ? assistantTitle : userTitle;
+  return formatAgentChatTitle(source);
+}
+
+function cleanAgentChatTitleSource(raw: string): string {
+  return raw
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/https?:\/\/\S+|www\.\S+/gi, " ")
+    .split(/\n+/)
+    .map((line) =>
+      line
+        .replace(/^\s{0,3}>\s?/, "")
+        .replace(/^\s{0,3}#{1,6}\s+/, "")
+        .replace(/^\s*[-*+]\s+/, "")
+        .replace(/^\s*\d+[.)]\s+/, "")
+        .replace(/^\s*\[[ xX]\]\s+/, ""),
+    )
+    .join(" ")
+    .replace(/[*_~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^["'`“”‘’]+/, "")
+    .replace(/["'`“”‘’]+$/, "")
+    .trim();
+}
+
+function isTrivialAgentChatTitle(title: string): boolean {
+  const normalized = title.toLowerCase().replace(/[.!?]+$/g, "").trim();
+  return normalized.length <= 2 || GENERIC_AGENT_CHAT_TEXT.has(normalized);
+}
+
+function formatAgentChatTitle(raw: string): string {
+  let s = raw.trim();
+  if (!s) return "";
+  if (s.length > AGENT_CHAT_MAX_TITLE) {
+    const cut = s.slice(0, AGENT_CHAT_MAX_TITLE);
+    const onWord = /\S/.test(s.charAt(AGENT_CHAT_MAX_TITLE))
+      ? cut.replace(/\s+\S*$/, "").trim()
+      : cut.trim();
     s = `${(onWord.length >= 12 ? onWord : cut).trim()}…`;
   }
   return s.charAt(0).toUpperCase() + s.slice(1);

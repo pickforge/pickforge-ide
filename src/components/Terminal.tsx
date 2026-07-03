@@ -53,6 +53,10 @@ export function TerminalPane(props: {
    *  URL from `flutter run`). Streaming-decoded, so multi-byte chars are safe.
    *  Only set this when the TEXT is needed — decoding runs per chunk. */
   onOutput?: (chunk: string) => void;
+  /** Fires when the pty rings the terminal bell. */
+  onBell?: () => void;
+  /** Fires for terminal notification OSC sequences (OSC 9 / 777 notify). */
+  onNotification?: (message: string) => void;
   /** Fires when the user selects text (anchored near the pointer release), or
    *  null when the selection clears — drives the terminal "Ask AI" popup. */
   onSelectionChange?: (sel: { text: string; x: number; y: number } | null) => void;
@@ -73,9 +77,15 @@ export function TerminalPane(props: {
     /** The session id stored on the chat (preserved on a raw fallback). */
     sessionId?: string | null;
     backend: "dtach" | "tmux" | "raw";
-    /** Reports the resolved session id (and whether recovery degraded to raw)
-     *  so the host can persist it. */
-    onSession?: (info: { sessionId: string | null; backend: string; degraded: boolean }) => void;
+    /** Reports the resolved session id (and whether recovery degraded to raw,
+     *  or an existing live session was re-attached) so the host can persist it
+     *  and re-mark a recovered agent pane. */
+    onSession?: (info: {
+      sessionId: string | null;
+      backend: string;
+      degraded: boolean;
+      attached: boolean;
+    }) => void;
   };
 }) {
   let container!: HTMLDivElement;
@@ -255,6 +265,7 @@ export function TerminalPane(props: {
               sessionId: res.sessionId,
               backend: res.backend,
               degraded: res.degraded,
+              attached: res.status === "attached",
             });
             return res.ptyId;
           })
@@ -315,6 +326,31 @@ export function TerminalPane(props: {
       if (props.onTitle && !props.readOnly) {
         const onTitle = props.onTitle;
         subs.push(term.onTitleChange((title) => onTitle(title)));
+      }
+
+      if (!props.readOnly) {
+        if (props.onBell) subs.push(term.onBell(() => props.onBell?.()));
+        if (props.onNotification) {
+          const emit = props.onNotification;
+          subs.push(
+            term.parser.registerOscHandler(9, (data) => {
+              // ConEmu-family OSC 9 subcommands (9;4 taskbar progress — also
+              // systemd 257+ —, 9;9 cwd reporting, …) are numeric protocol
+              // traffic, not notifications; only free-text payloads alert.
+              if (/^\d{1,2}(;|$)/.test(data)) return true;
+              const message = data.trim();
+              if (message) emit(message);
+              return true;
+            }),
+            term.parser.registerOscHandler(777, (data) => {
+              const parts = data.split(";");
+              if (parts[0]?.toLowerCase() !== "notify") return false;
+              const message = parts.slice(1).join(" ").trim();
+              if (message) emit(message);
+              return true;
+            }),
+          );
+        }
       }
 
       // Report text selections (anchored near the pointer release) so the host

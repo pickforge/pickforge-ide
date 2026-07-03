@@ -1,0 +1,126 @@
+/* First-run coach-marks overlay. A low-alpha scrim dims the app; a hairline
+   spotlight ring frames the current target (the ring's spread box-shadow does
+   the dimming so the target stays lit). Tokens only; motion honors the
+   reduced-motion collapse via the duration tokens. */
+.pf-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+}
+.pf-tour-scrim {
+  position: fixed;
+  inset: 0;
+  animation: pf-tour-fade var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+.pf-tour-scrim:not(.pf-tour-scrim--spot) {
+  background: color-mix(in srgb, var(--pf-surface) 50%, transparent);
+}
+.pf-tour-ring {
+  position: fixed;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-bracket-width) solid var(--pf-hairline-strong);
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--pf-surface) 50%, transparent);
+  pointer-events: none;
+  transition: top var(--pf-dur-standard) var(--pf-ease-forge),
+    left var(--pf-dur-standard) var(--pf-ease-forge),
+    width var(--pf-dur-standard) var(--pf-ease-forge),
+    height var(--pf-dur-standard) var(--pf-ease-forge);
+}
+.pf-tour-card {
+  position: fixed;
+  width: 320px;
+  max-width: calc(100vw - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-lg);
+  border-radius: var(--pf-radius-lg);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-1);
+  box-shadow: var(--pf-shadow-overlay);
+  animation: pf-tour-card-in var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+.pf-tour-eyebrow {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
+.pf-tour-title {
+  font-family: var(--pf-font-sans);
+  font-weight: var(--pf-weight-semibold);
+  font-size: var(--pf-size-title-md);
+  color: var(--pf-text-hi);
+}
+.pf-tour-body {
+  margin: 0;
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.5;
+  color: var(--pf-text-med);
+}
+.pf-tour-dots {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  margin-top: var(--pf-space-xs);
+}
+.pf-tour-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-hairline-strong);
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-tour-dot--on {
+  background: var(--pf-text-hi);
+}
+.pf-tour-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-sm);
+}
+.pf-tour-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-tour-skip,
+.pf-tour-back {
+  border: none;
+  background: transparent;
+  color: var(--pf-text-low);
+  font-size: var(--pf-size-body-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-tour-skip:hover,
+.pf-tour-back:hover {
+  color: var(--pf-text-hi);
+}
+.pf-tour-next {
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-ember);
+  color: var(--pf-surface);
+  font-size: var(--pf-size-body-sm);
+  font-weight: var(--pf-weight-semibold);
+  padding: var(--pf-space-xs) var(--pf-space-lg);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-tour-next:hover {
+  background: var(--pf-ember-soft);
+}
+@keyframes pf-tour-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pf-tour-card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}

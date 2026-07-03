@@ -140,7 +140,11 @@
   --pf-hairline-strong: rgba(0, 0, 0, 0.16);
   --pf-item-fill: rgba(0, 0, 0, 0.03);
 
+  /* Status amber readable on light surfaces (the dark #f2b53a washes out). */
+  --pf-warning: #9a6700;
+
   --pf-ember-glow: rgba(229, 97, 10, 0.23);
+  --pf-glow-ember-soft: 0 0 30px -8px rgba(229, 97, 10, 0.3);
 }
 
 /* Reduced motion collapses every duration to zero (Rule 5). */

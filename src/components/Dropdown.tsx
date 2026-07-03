@@ -8,6 +8,9 @@ import { IconCheck, IconChevronDown } from "./icons";
 export interface DropdownOption {
   value: string;
   label: string;
+  /** Optional leading glyph, as a factory — the same option renders in the
+   *  list AND on the trigger, and one JSX node can't live in two places. */
+  icon?: () => JSX.Element;
   /** Optional trailing content per row (e.g. a StatusPill). */
   trailing?: JSX.Element;
 }
@@ -23,6 +26,8 @@ export function Dropdown(props: {
   bracket?: boolean;
   /** Trailing content on the trigger (e.g. the selected row's StatusPill). */
   triggerTrailing?: JSX.Element;
+  /** Open the menu above the trigger (for pickers at the bottom of a pane). */
+  up?: boolean;
   /** Extra class on the wrapper (e.g. to size it in a horizontal toolbar). */
   class?: string;
 }) {
@@ -45,6 +50,9 @@ export function Dropdown(props: {
       window.removeEventListener("keydown", onKey);
     }
   });
+  createEffect(() => {
+    if (props.disabled) setOpen(false);
+  });
   onCleanup(() => {
     window.removeEventListener("pointerdown", onPointer);
     window.removeEventListener("keydown", onKey);
@@ -66,12 +74,19 @@ export function Dropdown(props: {
         <Show when={props.bracket !== false}>
           <span class="pf-dropdown-bracket" aria-hidden="true" />
         </Show>
+        <Show when={selected()?.icon}>
+          {(icon) => <span class="pf-dropdown-icon">{icon()()}</span>}
+        </Show>
         <span class="pf-dropdown-trigger-label">{selected()?.label ?? props.placeholder ?? "Select"}</span>
         {props.triggerTrailing}
         <IconChevronDown size={12} class="pf-dropdown-chevron" />
       </button>
       <Show when={open()}>
-        <div class="pf-dropdown-menu" role="listbox">
+        <div
+          class="pf-dropdown-menu"
+          classList={{ "pf-dropdown-menu--up": props.up }}
+          role="listbox"
+        >
           <For each={props.options}>
             {(o) => (
               <button
@@ -80,6 +95,10 @@ export function Dropdown(props: {
                 role="option"
                 aria-selected={o.value === props.value}
                 onClick={() => {
+                  if (props.disabled) {
+                    setOpen(false);
+                    return;
+                  }
                   props.onChange(o.value);
                   setOpen(false);
                 }}
@@ -89,6 +108,9 @@ export function Dropdown(props: {
                     <IconCheck size={11} />
                   </Show>
                 </span>
+                <Show when={o.icon}>
+                  {(icon) => <span class="pf-dropdown-icon">{icon()()}</span>}
+                </Show>
                 <span class="pf-dropdown-option-label">{o.label}</span>
                 {o.trailing}
               </button>

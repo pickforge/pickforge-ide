@@ -17,5 +17,5 @@
     "noUnusedParameters": true,
     "lib": ["ES2021", "DOM", "DOM.Iterable"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "scripts", "vite.config.ts"]
 }

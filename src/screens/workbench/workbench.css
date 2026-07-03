@@ -128,6 +128,24 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-dock-reveal:hover { color: var(--pf-text-hi); background: var(--pf-item-fill); }
 .pf-flip-x { transform: scaleX(-1); }
 
+/* Show/hide drawer: the panel width eases between its resized width and 0, while
+   the inner dock keeps its own pinned width (overflow-clipped) so panes never
+   reflow-squish. The right dock anchors its content to the right edge so it
+   slides out that way. Manual dock resize snaps (body.pf-resizing). */
+.pf-dock-panel {
+  display: flex;
+  flex: none;
+  min-height: 0;
+  overflow: hidden;
+  transition: width var(--pf-dur-standard) var(--pf-ease-forge);
+}
+.pf-dock-panel--right {
+  justify-content: flex-end;
+}
+body.pf-resizing .pf-dock-panel {
+  transition: none;
+}
+
 /* ---- pane shell ---- */
 .pf-pane-shell {
   display: flex;
@@ -274,6 +292,32 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-drop-after::after {
   bottom: 0;
 }
+/* The pointer-based chat drag uses the ember accent (like the lane drag): the
+ * line marks the slot the row will land in, and the pressed row dims. */
+.pf-drop-ember.pf-drop-before::before,
+.pf-drop-ember.pf-drop-after::after {
+  background: var(--pf-ember);
+  height: var(--pf-bracket-width);
+}
+.pf-chat-row--dragging {
+  opacity: 0.45;
+}
+.pf-chat-drag-ghost {
+  position: fixed;
+  z-index: 100;
+  pointer-events: none;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: color-mix(in srgb, var(--pf-surface-2) 94%, transparent);
+  box-shadow: var(--pf-shadow-overlay);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+}
 .pf-drop-before-x::before,
 .pf-drop-after-x::after {
   top: 0;
@@ -327,16 +371,38 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-sc-list {
   flex: 1 1 0;
 }
-/* Sub-repo section header (monorepos) — a mono eyebrow with branch + count. */
+/* Sub-repo section header (monorepos) — a clickable mono eyebrow with a collapse
+   chevron, branch + count. Toggles its file list. */
 .pf-sc-section {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--pf-space-sm);
+  width: 100%;
   margin: var(--pf-space-sm) 0 var(--pf-space-xs);
-  padding: 0 var(--pf-space-xs);
+  padding: 2px var(--pf-space-xs);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-sc-section:hover {
+  background: var(--pf-item-fill);
 }
 .pf-sc-section:first-child {
   margin-top: 0;
+}
+.pf-sc-section-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--pf-text-low);
+  transition: transform var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-sc-section--collapsed .pf-sc-section-chevron {
+  transform: rotate(-90deg);
 }
 .pf-sc-section-name {
   font-family: var(--pf-font-mono);
@@ -667,6 +733,22 @@ body.pf-resizing .pf-dock-resizer-grip {
   color: var(--pf-text-hi);
   box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
 }
+.pf-chat-row--busy:not(.active) {
+  background: color-mix(in srgb, var(--pf-ember) 8%, transparent);
+  box-shadow: inset var(--pf-bracket-width) 0 0 color-mix(in srgb, var(--pf-ember) 58%, transparent);
+}
+.pf-chat-row--busy:not(.active):hover {
+  background: color-mix(in srgb, var(--pf-ember) 12%, var(--pf-item-fill));
+}
+.pf-chat-row--attention {
+  background: color-mix(in srgb, var(--pf-warning) 16%, var(--pf-surface-1));
+  color: var(--pf-text-hi);
+  box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-warning);
+  animation: pf-chat-attention var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
+}
+.pf-chat-row--attention:hover {
+  background: color-mix(in srgb, var(--pf-warning) 22%, var(--pf-surface-2));
+}
 .pf-chat-row--archived {
   color: var(--pf-text-low);
 }
@@ -682,6 +764,22 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 .pf-chat-row.active .pf-chat-dot {
   background: var(--pf-text-hi);
+}
+.pf-chat-row--busy .pf-chat-dot {
+  background: var(--pf-ember);
+  box-shadow: var(--pf-glow-ember-soft);
+}
+.pf-chat-row--attention .pf-chat-dot {
+  background: var(--pf-warning);
+  box-shadow: 0 0 var(--pf-space-md) color-mix(in srgb, var(--pf-warning) 70%, transparent);
+}
+@keyframes pf-chat-attention {
+  50% {
+    background: color-mix(in srgb, var(--pf-warning) 24%, var(--pf-surface-2));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-chat-row--attention { animation: none; }
 }
 .pf-chat-title {
   flex: 1;
@@ -703,6 +801,16 @@ body.pf-resizing .pf-dock-resizer-grip {
 @media (prefers-reduced-motion: reduce) {
   .pf-chat-title--typing::after { animation: none; }
 }
+.pf-chat-agent-mark {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-chat-row.active .pf-chat-agent-mark {
+  color: var(--pf-text-med);
+}
 .pf-chat-row .pf-rail-row-action {
   opacity: 0;
 }
@@ -719,7 +827,7 @@ body.pf-resizing .pf-dock-resizer-grip {
 .pf-proj-card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--pf-space-xs);
 }
 .pf-proj-card-count {
   font-family: var(--pf-font-mono);
@@ -729,11 +837,13 @@ body.pf-resizing .pf-dock-resizer-grip {
   color: var(--pf-text-low);
   flex: none;
 }
-.pf-grid-chats {
+/* A card with open chats spans the full row: one bubble holds the header and
+ * its chat rows, instead of chats spilling loose beneath the tile grid. */
+.pf-proj-card--open {
   grid-column: 1 / -1;
 }
-.pf-grid-chats .pf-chat-children {
-  margin-left: var(--pf-space-xs);
+.pf-proj-card .pf-chat-children {
+  padding-top: var(--pf-space-xs);
 }
 
 /* ---- projects: view toggle, groups, grid, menus ---- */
@@ -839,6 +949,23 @@ body.pf-resizing .pf-dock-resizer-grip {
   background: var(--pf-surface-1);
   box-shadow: var(--pf-shadow-overlay);
   animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+/* Inline text field inside a floating menu (the new-chat title ask). */
+.pf-menu-input {
+  margin: var(--pf-space-xs) var(--pf-space-xs) var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-hi);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-menu-input::placeholder {
+  color: var(--pf-text-low);
+}
+.pf-menu-input:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
 }
 .pf-menu-label {
   font-family: var(--pf-font-mono);
@@ -947,14 +1074,19 @@ body.pf-resizing .pf-dock-resizer-grip {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--pf-space-sm);
   padding: var(--pf-space-md);
   border-radius: var(--pf-radius-md);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-2);
-  cursor: pointer;
   transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
     background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+/* Only the header opens the project — chat rows inside keep their own clicks. */
+.pf-proj-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  cursor: pointer;
 }
 .pf-proj-card:hover {
   border-color: var(--pf-hairline-strong);
@@ -1026,25 +1158,26 @@ body.pf-resizing .pf-dock-resizer-grip {
   white-space: nowrap;
   min-width: 0;
 }
+/* The twisty and the menu are siblings in the top row with real hit areas —
+ * an absolute corner menu used to overlap the twisty and made both untappable. */
+.pf-proj-card-top .pf-tree-twisty {
+  margin-left: auto;
+}
+.pf-proj-card-top .pf-tree-twisty,
 .pf-proj-card-menu {
-  position: absolute;
-  top: var(--pf-space-xs);
-  right: var(--pf-space-xs);
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+.pf-proj-card-menu {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
   border: none;
   background: transparent;
   color: var(--pf-text-low);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge),
-    color var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-proj-card:hover .pf-proj-card-menu {
-  opacity: 1;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-proj-card-menu:hover {
   color: var(--pf-text-hi);
@@ -1112,13 +1245,22 @@ body.pf-resizing .pf-dock-resizer-grip {
 }
 
 /* ---- center: launch + terminal ---- */
+/* The header row: quick-launch (or its reveal) on the left, the Orchestra
+   toggle pinned to the right so it stays reachable when quick launch is
+   collapsed. */
+.pf-launch-bar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
 .pf-launch {
   display: flex;
   align-items: center;
   gap: var(--pf-space-lg);
   padding: var(--pf-space-sm) var(--pf-space-lg);
-  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .pf-chips {
   display: flex;
@@ -1126,8 +1268,42 @@ body.pf-resizing .pf-dock-resizer-grip {
   gap: var(--pf-space-sm);
   flex-wrap: wrap;
 }
-.pf-launch-hide {
+/* Orchestration toggle — a quiet mono pill in the launch row. No ember: the
+   focused terminal owns the workbench ember. */
+.pf-orch-tab {
   margin-left: auto;
+  margin-right: var(--pf-space-lg);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  flex: none;
+  padding: 3px var(--pf-space-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-low);
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-orch-tab:hover:not(:disabled) {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+.pf-orch-tab--on {
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+  background: var(--pf-surface-3);
+}
+.pf-orch-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pf-launch-hide {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1265,9 +1441,32 @@ body.pf-resizing .pf-dock-resizer-grip {
   position: relative;
   z-index: 1;
 }
+/* Wrapper around the mounted chat slots — hidden (never unmounted) while the
+   orchestration view is open so running shells/turns survive the toggle. */
+.pf-term-mounts {
+  height: 100%;
+}
+.pf-term-mounts--hidden {
+  display: none;
+}
+/* The orchestration view fills the stage like an active chat slot. */
+.pf-orch-slot {
+  position: relative;
+  z-index: 1;
+}
 /* One slot per visited chat; only the active one is display:block. */
 .pf-term-slot {
   height: 100%;
+}
+/* Agent chats share the terminal stage. Frame them like a pane card — hairline
+ * ring, pane radius, clipped corners — so the composer footer reads as part of
+ * a bounded card instead of a full-bleed black band against the textured field. */
+.pf-agent-slot {
+  height: 100%;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface);
+  overflow: hidden;
 }
 .pf-term-empty {
   height: 100%;
@@ -1368,6 +1567,20 @@ body.pf-resizing .pf-dock-resizer-grip {
   white-space: nowrap;
   font-size: var(--pf-size-body-sm);
 }
+/* Leading glyph on the trigger and option rows (brand mark, ingot, flame). */
+.pf-dropdown-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--pf-text-low);
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-dropdown-trigger:hover:not(:disabled) .pf-dropdown-icon,
+.pf-dropdown--open .pf-dropdown-trigger .pf-dropdown-icon,
+.pf-dropdown-option:hover .pf-dropdown-icon,
+.pf-dropdown-option--on .pf-dropdown-icon {
+  color: var(--pf-text-med);
+}
 .pf-dropdown-chevron {
   flex: none;
   color: var(--pf-text-low);
@@ -1396,6 +1609,11 @@ body.pf-resizing .pf-dock-resizer-grip {
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   box-shadow: var(--pf-shadow-overlay);
   animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+/* Bottom-anchored pickers (the chat composer) open upward. */
+.pf-dropdown-menu--up {
+  top: auto;
+  bottom: calc(100% + var(--pf-space-xs));
 }
 .pf-dropdown-option {
   display: flex;

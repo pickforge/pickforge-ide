@@ -1,0 +1,544 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const store = vi.hoisted(() => {
+  const chats = new Map<string, { chatId: string; title: string }>();
+  return {
+    chats,
+    findChat: vi.fn((id: string) => chats.get(id)),
+    setChatTitle: vi.fn(async (id: string, title: string) => {
+      const c = chats.get(id);
+      if (c) c.title = title;
+    }),
+  };
+});
+const sound = vi.hoisted(() => ({
+  playAttentionSound: vi.fn(),
+}));
+
+vi.mock("../../src/stores/workspace", () => ({
+  findChat: store.findChat,
+  setChatTitle: store.setChatTitle,
+}));
+vi.mock("../../src/lib/attentionSound", () => ({
+  playAttentionSound: sound.playAttentionSound,
+}));
+
+import {
+  armChatAutoName,
+  DEFAULT_CHAT_TITLE,
+  markChatTitleManual,
+  maybeAutoNameChat,
+  revokeAgentPane,
+  transferAgentPaneOwnership,
+} from "../../src/lib/chatAutoName";
+import {
+  agentTurnCleared,
+  agentTurnDone,
+  agentTurnStarted,
+  CHAT_BUSY_QUIET_MS,
+  chatAttention,
+  chatBusy,
+  clearChatActivity,
+  graceChatUnseen,
+  handlePaneClosed,
+  REATTACH_REPLAY_GRACE_MS,
+  recordChatAttention,
+  recordChatOutput,
+  setActiveChatForActivity,
+  setStagedChatsForActivity,
+  setWindowFocusForActivity,
+} from "../../src/stores/chatActivity";
+
+let counter = 0;
+const ids: string[] = [];
+
+function seed(agentPane: string | null = "pane-0") {
+  const id = `activity-chat-${++counter}`;
+  ids.push(id);
+  store.chats.set(id, { chatId: id, title: DEFAULT_CHAT_TITLE });
+  if (agentPane) armChatAutoName(id, agentPane);
+  return id;
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  sound.playAttentionSound.mockClear();
+  store.chats.clear();
+  store.findChat.mockClear();
+  store.setChatTitle.mockClear();
+  setActiveChatForActivity(null);
+  setStagedChatsForActivity([]);
+  setWindowFocusForActivity(true);
+});
+
+afterEach(() => {
+  ids.splice(0).forEach(clearChatActivity);
+  setActiveChatForActivity(null);
+  setStagedChatsForActivity([]);
+  setWindowFocusForActivity(true);
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
+describe("chatActivity — busy tracking", () => {
+  it("only marks output from an agent-owned pane as busy", () => {
+    const id = seed(null);
+    recordChatOutput(id, "pane-0", "plain shell output");
+    expect(chatBusy(id)).toBe(false);
+
+    armChatAutoName(id, "pane-0");
+    recordChatOutput(id, "pane-1", "split pane output");
+    expect(chatBusy(id)).toBe(false);
+
+    recordChatOutput(id, "pane-0", "agent is working now");
+    expect(chatBusy(id)).toBe(true);
+  });
+
+  it("keeps activity ownership after a manual rename", () => {
+    const id = seed();
+    markChatTitleManual(id);
+    store.chats.get(id)!.title = "Manual title";
+
+    recordChatOutput(id, "pane-0", "agent is still working");
+
+    expect(chatBusy(id)).toBe(true);
+  });
+
+  it("marks hand-typed agent launches in already named chats", () => {
+    const id = seed(null);
+    store.chats.get(id)!.title = "Existing title";
+
+    recordChatOutput(id, "pane-2", "ignored before launch");
+    expect(chatBusy(id)).toBe(false);
+
+    maybeAutoNameChat(id, "claude fix the flaky unit test", "pane-2");
+    recordChatOutput(id, "pane-2", "agent is now producing output");
+
+    expect(chatBusy(id)).toBe(true);
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+  });
+
+  it("supports multiple agent-owned panes in one chat", () => {
+    const id = seed(null);
+    armChatAutoName(id, "pane-0");
+    armChatAutoName(id, "pane-1");
+
+    recordChatOutput(id, "pane-0", "first agent is working");
+    expect(chatBusy(id)).toBe(true);
+
+    clearChatActivity(id);
+    recordChatOutput(id, "pane-1", "second agent is working");
+    expect(chatBusy(id)).toBe(true);
+
+    clearChatActivity(id);
+    recordChatOutput(id, "pane-2", "plain shell output");
+    expect(chatBusy(id)).toBe(false);
+  });
+
+  it("transfers activity ownership when a primary pane remounts", () => {
+    const id = seed();
+    transferAgentPaneOwnership(id, "pane-0", "pane-remount");
+
+    recordChatOutput(id, "pane-0", "old pane id should be ignored");
+    expect(chatBusy(id)).toBe(false);
+
+    recordChatOutput(id, "pane-remount", "remounted agent is working");
+    expect(chatBusy(id)).toBe(true);
+  });
+});
+
+describe("chatActivity — attention only for unseen output", () => {
+  it("raises attention with one chime after an unseen busy cycle goes quiet", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "agent produced a useful answer");
+    expect(chatBusy(id)).toBe(true);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("never alerts for output the user watched, even after switching away", () => {
+    const id = seed();
+    setActiveChatForActivity(id);
+
+    recordChatOutput(id, "pane-0", "the user is reading this answer right now");
+    setActiveChatForActivity("other-chat"); // switch away inside the quiet window
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("alerts for fresh output that streams after the user switched away", () => {
+    const id = seed();
+    setActiveChatForActivity(id);
+    recordChatOutput(id, "pane-0", "watched output does not count");
+
+    setActiveChatForActivity("other-chat");
+    recordChatOutput(id, "pane-0", "but this streamed while away");
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a tiny unseen redraw below the attention threshold", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "ok"); // 2 visible chars — a prompt tick
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("does not alert when the busy chat stays active and focused", () => {
+    const id = seed();
+    setActiveChatForActivity(id);
+
+    recordChatOutput(id, "pane-0", "agent produced a useful answer");
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("clears attention when the chat becomes active", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatAttention(id, "pane-0");
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+
+    setActiveChatForActivity(id);
+
+    expect(chatAttention(id)).toBe(false);
+  });
+
+  it("gates bell and notification attention to the agent-owned pane", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatAttention(id, "pane-1");
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+
+    recordChatAttention(id, "pane-0");
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("chatActivity — attention survives output; window focus", () => {
+  it("keeps a bell-raised attention through later output, without re-chiming", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatAttention(id, "pane-0");
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+
+    recordChatOutput(id, "pane-0", "> "); // the agent repaints its prompt line
+    expect(chatAttention(id)).toBe(true);
+
+    recordChatOutput(id, "pane-0", "a larger repaint of the whole dialog box");
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("alerts for the ACTIVE chat while the window is unfocused", () => {
+    const id = seed();
+    setActiveChatForActivity(id);
+    setWindowFocusForActivity(false);
+
+    recordChatAttention(id, "pane-0");
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+
+    setWindowFocusForActivity(true); // coming back to the window catches up
+
+    expect(chatAttention(id)).toBe(false);
+  });
+
+  it("treats output streamed into the active chat of a blurred window as unseen", () => {
+    const id = seed();
+    setActiveChatForActivity(id);
+    setWindowFocusForActivity(false);
+
+    recordChatOutput(id, "pane-0", "finished while the user was in the browser");
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the re-attach replay (output and bells) during the grace window", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+    graceChatUnseen(id, REATTACH_REPLAY_GRACE_MS);
+
+    recordChatOutput(id, "pane-0", "replayed screen from the previous session");
+    recordChatAttention(id, "pane-0"); // a replayed BEL
+    expect(chatAttention(id)).toBe(false);
+
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+
+    recordChatOutput(id, "pane-0", "fresh output after the grace expired");
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("chatActivity — escape-sequence scanning across chunks", () => {
+  it("skips escape sequences split across pty chunk boundaries", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "\x1b]2;Building the parser stage now");
+    recordChatOutput(id, "pane-0", " and more title\x07");
+    recordChatOutput(id, "pane-0", "\x1b[38;5");
+    recordChatOutput(id, "pane-0", ";214m");
+
+    expect(chatBusy(id)).toBe(false);
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+    expect(chatAttention(id)).toBe(false);
+  });
+
+  it("skips DCS payloads (sixel etc.) entirely, including a BEL inside", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "\x1bPq#0;2;0;0;0 sixel-ish payload \x07 with a bell");
+    recordChatOutput(id, "pane-0", "more payload without any escapes\x1b\\");
+
+    expect(chatBusy(id)).toBe(false);
+  });
+
+  it("recovers from an unterminated string when a new escape sequence arrives", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "\x1bPan unterminated dcs from binary spew");
+    expect(chatBusy(id)).toBe(false);
+
+    recordChatOutput(id, "pane-0", "\x1b[32mreal output is visible again after it");
+    expect(chatBusy(id)).toBe(true);
+  });
+
+  it("does not count charset designations (ESC ( B) as visible output", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "\x1b(B\x1b[m\x1b(B\x1b[m\x1b(B\x1b[m\x1b(B\x1b[m\x1b(B\x1b[m");
+
+    expect(chatBusy(id)).toBe(false);
+  });
+
+  it("still counts real text following a completed escape sequence", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "\x1b[1;32mDone:\x1b[0m all twelve tests passed");
+    expect(chatBusy(id)).toBe(true);
+
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+    expect(chatAttention(id)).toBe(true);
+  });
+});
+
+describe("chatActivity — structured agent chat turns", () => {
+  it("sets busy on turn start and clears it on turn done", () => {
+    const id = seed(null);
+    expect(chatBusy(id)).toBe(false);
+
+    agentTurnStarted(id);
+    expect(chatBusy(id)).toBe(true);
+
+    setActiveChatForActivity(id); // the user is watching this chat
+    agentTurnDone(id);
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("raises attention with one chime when a turn finishes unseen", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    expect(chatBusy(id)).toBe(true);
+    expect(chatAttention(id)).toBe(false);
+
+    agentTurnDone(id);
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not alert when a turn finishes on the active, focused chat", () => {
+    const id = seed(null);
+    setActiveChatForActivity(id);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("clears attention when the agent chat becomes active", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+    expect(chatAttention(id)).toBe(true);
+
+    setActiveChatForActivity(id);
+    expect(chatAttention(id)).toBe(false);
+  });
+
+  it("clears busy without alerting when a turn is interrupted", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    expect(chatBusy(id)).toBe(true);
+
+    agentTurnCleared(id);
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+});
+
+describe("chatActivity — staged orchestra chats", () => {
+  it("does not alert when a staged chat finishes while the window is focused", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+    setStagedChatsForActivity([id]);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("alerts exactly once when a staged chat finishes while the window is blurred", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+    setStagedChatsForActivity([id]);
+    setWindowFocusForActivity(false);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores non-active focused attention after a chat is unstaged", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+    setStagedChatsForActivity([id]);
+    setStagedChatsForActivity([]);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not double-chime when the active chat is also staged", () => {
+    const id = seed(null);
+    setActiveChatForActivity(id);
+    setStagedChatsForActivity([id]);
+    setWindowFocusForActivity(false);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears existing attention when a focused window stages the chat", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+    expect(chatAttention(id)).toBe(true);
+
+    setStagedChatsForActivity([id]);
+
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("chatActivity — pane close and archive cleanup", () => {
+  it("cancels a pending cycle when the last agent pane closes", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "streaming right up until the close");
+    expect(chatBusy(id)).toBe(true);
+
+    revokeAgentPane(id, "pane-0");
+    handlePaneClosed(id, "pane-0");
+
+    expect(chatBusy(id)).toBe(false);
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+
+  it("keeps the cycle when another agent pane remains", () => {
+    const id = seed();
+    armChatAutoName(id, "pane-1");
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-1", "second agent is still streaming");
+    revokeAgentPane(id, "pane-0");
+    handlePaneClosed(id, "pane-0");
+
+    expect(chatBusy(id)).toBe(true);
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+    expect(chatAttention(id)).toBe(true);
+  });
+
+  it("clearChatActivity drops state and pending timers", () => {
+    const id = seed();
+    setActiveChatForActivity("other-chat");
+
+    recordChatOutput(id, "pane-0", "output that would otherwise alert soon");
+    clearChatActivity(id);
+
+    vi.advanceTimersByTime(CHAT_BUSY_QUIET_MS);
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+});

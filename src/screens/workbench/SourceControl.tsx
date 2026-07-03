@@ -2,11 +2,12 @@
 // portaled unified-diff viewer. Read-only — stage/commit happen in the terminal.
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
-import { IconClose, IconRefresh } from "../../components/icons";
+import { IconChevronDown, IconClose, IconRefresh } from "../../components/icons";
 import { gitDiff, gitDiscoverRepos, gitStatus, type GitFileStatus, type GitStatus } from "../../lib/git";
 import { GitGraph } from "./GitGraph";
 import { Dropdown } from "../../components/Dropdown";
 import { workspace } from "../../stores/workspace";
+import { isScmCollapsed, toggleScmCollapsed } from "../../stores/scmCollapsed";
 
 function letter(f: GitFileStatus): string {
   if (f.untracked) return "U";
@@ -168,34 +169,47 @@ export function SourceControl() {
         <Show when={total() > 0} fallback={<div class="pf-rail-empty">No changes</div>}>
           <div class="pf-rail-list pf-sc-list">
             <For each={repos()}>
-              {(repo) => (
-                <Show when={repo.status.files.length > 0}>
-                  {/* Per-repo header — only when there are sub-repos, so a single
-                      root repo keeps the original flat list. */}
-                  <Show when={!flat()}>
-                    <div class="pf-sc-section">
-                      <span class="pf-sc-section-name" title={repo.path}>{repoName(repo.path)}</span>
-                      <Show when={repo.status.branch}>
-                        <span class="pf-sc-section-branch">{repo.status.branch}</span>
-                      </Show>
-                      <span class="pf-sc-count">{repo.status.files.length}</span>
-                    </div>
-                  </Show>
-                  <For each={repo.status.files}>
-                    {(f) => (
-                      <div
-                        class="pf-sc-row"
-                        title={f.path}
-                        onClick={() => void openDiff(repo.path, f, f.staged && !f.unstaged)}
+              {(repo) => {
+                // Sub-repo sections collapse (persisted per path); a single root
+                // repo keeps its original flat, always-open list.
+                const collapsed = () => !flat() && isScmCollapsed(repo.path);
+                return (
+                  <Show when={repo.status.files.length > 0}>
+                    <Show when={!flat()}>
+                      <button
+                        class="pf-sc-section"
+                        classList={{ "pf-sc-section--collapsed": collapsed() }}
+                        title={repo.path}
+                        onClick={() => toggleScmCollapsed(repo.path)}
                       >
-                        <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
-                        <span class="pf-sc-name">{baseName(f.path)}</span>
-                        <span class="pf-sc-dir">{dirName(f.path)}</span>
-                      </div>
-                    )}
-                  </For>
-                </Show>
-              )}
+                        <span class="pf-sc-section-chevron">
+                          <IconChevronDown size={12} />
+                        </span>
+                        <span class="pf-sc-section-name">{repoName(repo.path)}</span>
+                        <Show when={repo.status.branch}>
+                          <span class="pf-sc-section-branch">{repo.status.branch}</span>
+                        </Show>
+                        <span class="pf-sc-count">{repo.status.files.length}</span>
+                      </button>
+                    </Show>
+                    <Show when={!collapsed()}>
+                      <For each={repo.status.files}>
+                        {(f) => (
+                          <div
+                            class="pf-sc-row"
+                            title={f.path}
+                            onClick={() => void openDiff(repo.path, f, f.staged && !f.unstaged)}
+                          >
+                            <span class={`pf-sc-letter ${tone(f)}`}>{letter(f)}</span>
+                            <span class="pf-sc-name">{baseName(f.path)}</span>
+                            <span class="pf-sc-dir">{dirName(f.path)}</span>
+                          </div>
+                        )}
+                      </For>
+                    </Show>
+                  </Show>
+                );
+              }}
             </For>
           </div>
         </Show>

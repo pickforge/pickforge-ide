@@ -1,0 +1,135 @@
+name: agent-protocol-drift
+
+on:
+  schedule:
+    - cron: "20 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  codex-app-server-schema:
+    name: codex app-server schema drift
+    runs-on: ubuntu-22.04
+    env:
+      CODEX_PIN_FILE: crates/pickforge-core/fixtures/agents/codex-app-server/PINNED_VERSION
+      CODEX_SCHEMA_DIR: crates/pickforge-core/fixtures/agents/codex-app-server/schema
+      SCHEMA_CHECK_DIR: /tmp/schema-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Read pinned Codex CLI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          pin="$(cat "$CODEX_PIN_FILE")"
+          if [[ ! "$pin" =~ ^codex-cli[[:space:]]+([0-9]+[.][0-9]+[.][0-9]+)$ ]]; then
+            echo "::error::Expected $CODEX_PIN_FILE to contain 'codex-cli <major.minor.patch>'"
+            exit 1
+          fi
+          echo "CODEX_CLI_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+
+      - name: Install pinned Codex CLI
+        run: npm install -g "@openai/codex@${CODEX_CLI_VERSION}"
+
+      - name: Verify Codex CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v codex >/dev/null 2>&1; then
+            echo "::error::codex binary missing after installing @openai/codex@${CODEX_CLI_VERSION}"
+            exit 1
+          fi
+
+          codex_version_output="$(codex --version)"
+          echo "$codex_version_output"
+          installed_version="$(sed -nE 's/.*([0-9]+[.][0-9]+[.][0-9]+).*/\1/p' <<< "$codex_version_output" | head -n 1)"
+          if [[ "$installed_version" != "$CODEX_CLI_VERSION" ]]; then
+            echo "::error::Expected Codex CLI ${CODEX_CLI_VERSION}, got '${codex_version_output}'"
+            exit 1
+          fi
+
+      - name: Generate app-server schema
+        run: |
+          rm -rf "$SCHEMA_CHECK_DIR"
+          codex app-server generate-json-schema --out "$SCHEMA_CHECK_DIR"
+          test -d "$SCHEMA_CHECK_DIR"
+
+      - name: Diff committed schema
+        run: diff -ru "$CODEX_SCHEMA_DIR" "$SCHEMA_CHECK_DIR"
+
+  claude-agent-sdk-pin:
+    name: claude agent sdk pin
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Assert Claude Agent SDK dependency is exactly pinned
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const name = "@anthropic-ai/claude-agent-sdk";
+          const spec = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+          const exactSemver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+          if (!spec) {
+            console.error(`::error::${name} is not declared in package.json`);
+            process.exit(1);
+          }
+
+          if (!exactSemver.test(spec)) {
+            console.error(`::error::${name} must be exactly pinned, got '${spec}'`);
+            process.exit(1);
+          }
+
+          console.log(`${name} is exactly pinned to ${spec}`);
+          NODE
+
+      - name: Check for newer Claude Agent SDK release
+        continue-on-error: true
+        env:
+          CHANGELOG_URL: https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+          import fs from "node:fs";
+
+          const name = "@anthropic-ai/claude-agent-sdk";
+          const changelogUrl = process.env.CHANGELOG_URL;
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const pinned = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+
+          let latest;
+          try {
+            latest = execFileSync("npm", ["view", name, "version"], { encoding: "utf8" }).trim();
+          } catch (error) {
+            console.error(`::warning::Failed to check latest ${name} version with npm view`);
+            console.log(`Changelog: ${changelogUrl}`);
+            process.exit(1);
+          }
+
+          const compareSemver = (left, right) => {
+            const leftParts = left.split("-")[0].split(".").map(Number);
+            const rightParts = right.split("-")[0].split(".").map(Number);
+            for (let i = 0; i < 3; i += 1) {
+              if (leftParts[i] !== rightParts[i]) return leftParts[i] - rightParts[i];
+            }
+            return 0;
+          };
+
+          if (compareSemver(latest, pinned) > 0) {
+            console.error(`::warning::${name} has newer version ${latest}; package.json pins ${pinned}`);
+            console.log(`Changelog: ${changelogUrl}`);
+            process.exit(1);
+          }
+
+          console.log(`${name} is current at ${pinned}`);
+          NODE

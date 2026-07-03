@@ -22,7 +22,10 @@ function hostTriple() {
   return line.replace("host:", "").trim();
 }
 
-const triple = hostTriple();
+const host = hostTriple();
+const requestedTriple = process.env.TAURI_ENV_TARGET_TRIPLE || process.env.CARGO_BUILD_TARGET;
+const triple = requestedTriple || host;
+const cargoTarget = requestedTriple ? triple : null;
 // Release by default; `--debug` mirrors `tauri build --debug` so the staged
 // binary matches the bundle's profile.
 const debug = process.argv.includes("--debug");
@@ -30,12 +33,15 @@ const profile = debug ? "debug" : "release";
 
 const cargoArgs = ["build", "-p", "pickforge-mcp"];
 if (!debug) cargoArgs.push("--release");
+if (cargoTarget) cargoArgs.push("--target", cargoTarget);
 
 console.log(`[sidecar] cargo ${cargoArgs.join(" ")}`);
 execFileSync("cargo", cargoArgs, { cwd: root, stdio: "inherit" });
 
 const ext = process.platform === "win32" ? ".exe" : "";
-const built = join(root, "target", profile, `pickforge-mcp${ext}`);
+const built = cargoTarget
+  ? join(root, "target", cargoTarget, profile, `pickforge-mcp${ext}`)
+  : join(root, "target", profile, `pickforge-mcp${ext}`);
 const destDir = join(root, "src-tauri", "binaries");
 const dest = join(destDir, `pickforge-mcp-${triple}${ext}`);
 
@@ -46,6 +52,8 @@ console.log(`[sidecar] staged ${dest}`);
 // The Claude bridge runs on the Agent SDK — a packaged app has neither Bun nor
 // the repo's node_modules, so compile it into a self-contained executable and
 // ship it the same way. Dev keeps spawning `bun scripts/claude-bridge.ts`.
+// Bun cross-compilation uses bun-specific targets, not Rust triples, so this
+// only fixes the staged suffix for requested Tauri/Cargo targets.
 const bridgeDest = join(destDir, `pickforge-claude-bridge-${triple}${ext}`);
 console.log("[sidecar] bun build --compile scripts/claude-bridge.ts");
 execFileSync(

@@ -29,7 +29,7 @@ import {
   quickLaunchItems,
 } from "../../stores/quickLaunch";
 import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
-import { selectedLanes } from "../../stores/orchestra";
+import { removeChatFromOrchestra, selectedLanes } from "../../stores/orchestra";
 import { chatBackend } from "../../stores/chatSessions";
 import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity, setStagedChatsForActivity } from "../../stores/chatActivity";
 import { orchestraOpen, setOrchestraOpen, stagedChatIds } from "../../stores/orchestraStage";
@@ -174,11 +174,17 @@ export function WorkbenchScreen() {
 
     // Tear down a chat's host (and shells) only when the chat is deleted.
     const offDelete = onChatDeleted((chatId) => {
+      const chat = findChat(chatId);
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
       clearChatActivity(chatId);
       forgetChatAutoName(chatId);
       deleteTerminalHost(chatId);
       disposeAgentChat(chatId);
+      if (chat) {
+        void removeChatFromOrchestra(chat.projectRoot, chatId).catch((error) =>
+          console.error("[pickforge] removeChatFromOrchestra failed", error),
+        );
+      }
     });
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;

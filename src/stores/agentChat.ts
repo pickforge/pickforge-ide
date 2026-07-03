@@ -873,14 +873,14 @@ export async function approveAgentRequest(
   const sessionId = chat?.sessionId;
   if (!sessionId) throw new Error("Agent chat is not started");
 
-  if (chat.approvals.some((approval) => approval.approvalId === approvalId)) {
-    setChats(chatId, {
-      approvals: chat.approvals.filter((item) => item.approvalId !== approvalId),
-    });
-  }
-
   try {
     await agentChatApprove(sessionId, approvalId, decision);
+    const approvals = chats[chatId]?.approvals;
+    if (approvals?.some((approval) => approval.approvalId === approvalId)) {
+      setChats(chatId, {
+        approvals: approvals.filter((item) => item.approvalId !== approvalId),
+      });
+    }
   } catch (error) {
     if (chats[chatId]) setChats(chatId, { error: errorText(error) });
     throw error;

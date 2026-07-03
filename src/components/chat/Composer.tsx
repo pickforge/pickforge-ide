@@ -123,6 +123,8 @@ export function Composer(props: {
   const [pasteError, setPasteError] = createSignal<string | null>(null);
   let field!: HTMLTextAreaElement;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
+  let pasteGeneration = 0;
+  let droppedPasteGeneration: number | null = null;
 
   const showPasteError = (message: string, autoClearMs?: number) => {
     if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
@@ -265,10 +267,18 @@ export function Composer(props: {
     if (unsupported > 0) {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
     }
+    const generation = pasteGeneration;
     for (const { file, ext } of files) {
       void readBase64(file)
         .then((base64) => agentStashImage(base64, ext))
         .then((path) => {
+          if (generation !== pasteGeneration) {
+            if (droppedPasteGeneration !== generation) {
+              droppedPasteGeneration = generation;
+              showPasteError("Image dropped because send already started", 4000);
+            }
+            return;
+          }
           setImages((cur) => [...cur, path]);
           if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
           setPasteError(null);
@@ -286,8 +296,12 @@ export function Composer(props: {
     const clearImages = !props.turnActive;
     if (props.turnActive) {
       if (!steering() || !value) return;
+      pasteGeneration += 1;
+      droppedPasteGeneration = null;
       props.onSteer!(value);
     } else {
+      pasteGeneration += 1;
+      droppedPasteGeneration = null;
       props.onSend(value, pending.length > 0 ? pending : undefined);
     }
     setText("");

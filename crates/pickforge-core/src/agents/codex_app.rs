@@ -419,21 +419,23 @@ impl CodexAppClient {
     }
 
     pub fn unsubscribe(&self, thread_id: &str) -> Result<(), CodexAppError> {
-        // Tell the app-server to release the thread too — dropping only the
-        // local sink leaves it loaded/subscribed until process exit, leaking
-        // resources across chat deletes and provider switches. Best-effort: a
-        // closed client or a server that already dropped it must not fail the
-        // local cleanup below.
-        if !self.is_closed() {
-            let mut params = Map::new();
-            params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
-            let _ = self.request("thread/unsubscribe", Value::Object(params), REQUEST_TIMEOUT);
-        }
+        // Drop the local sink FIRST so no more events fan out to a disposed
+        // session while the server round-trip is in flight (late events would
+        // otherwise recreate rows for a deleted chat).
         self.state
             .subscriptions
             .lock()
             .map_err(|_| CodexAppError::LockPoisoned("subscriptions"))?
             .remove(thread_id);
+        // Then tell the app-server to release the thread — dropping only the
+        // local sink leaves it loaded/subscribed until process exit, leaking
+        // resources across chat deletes and provider switches. Best-effort: a
+        // closed client or a server that already dropped it must not fail.
+        if !self.is_closed() {
+            let mut params = Map::new();
+            params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
+            let _ = self.request("thread/unsubscribe", Value::Object(params), REQUEST_TIMEOUT);
+        }
         Ok(())
     }
 

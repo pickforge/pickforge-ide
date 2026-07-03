@@ -428,13 +428,20 @@ impl AgentChatManager {
             )? {
                 return Ok(());
             }
-            let prompt_seqs = persist_prompt(&self.db)?;
+            let prompt_seqs =
+                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
 
             match client.turn_start(&thread_id, text, codex_model, effort.clone(), &images) {
                 Ok(started_turn_id) => {
                     // Disposed while turn/start was in flight: the session (and
                     // its just-installed turn) is gone — drop the orphan prompt.
+                    // dispose() could only arm pending_interrupt (the turn id
+                    // wasn't known yet), so stop the now-started server turn
+                    // here or it keeps running headless.
                     if !self.session_present(session_id) {
+                        if pending_interrupt.swap(false, Ordering::SeqCst) {
+                            let _ = client.turn_interrupt(&thread_id, &started_turn_id);
+                        }
                         rollback_prompt(&prompt_seqs);
                         return Ok(());
                     }
@@ -505,7 +512,8 @@ impl AgentChatManager {
             )? {
                 return Ok(());
             }
-            let prompt_seqs = persist_prompt(&self.db)?;
+            let prompt_seqs =
+                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
             return match client.chat_send(&session_id_owned, text, &images) {
                 Ok(()) => {
                     if !self.session_present(session_id) {
@@ -528,7 +536,8 @@ impl AgentChatManager {
         // claimed. persist_prompt runs before spawn (seq order), and claim_turn
         // reports whether a terminal already landed so a stale handle isn't
         // installed on a dead process.
-        let prompt_seqs = persist_prompt(&self.db)?;
+        let prompt_seqs =
+            persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
         let spawned = match (engine, provider) {
             (Engine::V1, AgentProvider::Codex) => {
                 let wrapped_sink = self.wrapping_sink(session_id_owned.clone(), chat_id.clone());
@@ -624,6 +633,17 @@ impl AgentChatManager {
             .unwrap_or(false)
     }
 
+    /// Unwind a send that failed after the turn was claimed / status set to
+    /// running (e.g. prompt persistence errored before dispatch) so the session
+    /// isn't left wedged as active. Returns the error for `?` threading.
+    fn abort_send<E>(&self, session_id: &str, err: E) -> E {
+        let _ = self.db.agent_session_set_status(session_id, "failed");
+        if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+            turn.reap();
+        }
+        err
+    }
+
     pub fn approve(
         &self,
         session_id: &str,
@@ -677,12 +697,17 @@ impl AgentChatManager {
     }
 
     pub fn steer(&self, session_id: &str, text: &str) -> Result<(), AgentChatError> {
-        let (engine, provider, active_turn) = {
+        let (engine, provider, chat_id, active_turn) = {
             let inner = self.lock_inner()?;
             let state = inner
                 .get(session_id)
                 .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
-            (state.engine, state.provider, state.active_turn.clone())
+            (
+                state.engine,
+                state.provider,
+                state.chat_id.clone(),
+                state.active_turn.clone(),
+            )
         };
 
         match (engine, provider) {
@@ -699,7 +724,11 @@ impl AgentChatManager {
                 };
                 client
                     .turn_steer(&thread_id, &turn_id, text)
-                    .map_err(|err| AgentChatError::Spawn(err.to_string()))
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                // Record the steer as a user message so reloaded history keeps
+                // the instruction that shaped the running turn.
+                let _ = self.db.agent_message_append(session_id, &chat_id, "user", text);
+                Ok(())
             }
             (Engine::V2, AgentProvider::ClaudeCode) => Err(AgentChatError::Unsupported(
                 "claude steering is not supported until SDK steering is available".to_string(),
@@ -1264,6 +1293,31 @@ fn handle_runner_event(
 ) {
     let mut errors = Vec::new();
     let mut active_turn = None;
+
+    // A disposed session (chat deleted / provider switched) may still receive
+    // queued provider events before its subscription is torn down. Those must
+    // not recreate agent_messages/agent_items rows for a gone chat (the tables
+    // have no chat FK). Terminal events run their own presence checks below.
+    let session_present = inner
+        .lock()
+        .map(|states| states.contains_key(session_id))
+        .unwrap_or(false);
+    let persists = matches!(
+        &event,
+        AgentEvent::TextFinal { .. }
+            | AgentEvent::ThinkingFinal { .. }
+            | AgentEvent::CommandStarted { .. }
+            | AgentEvent::CommandDone { .. }
+            | AgentEvent::FileChange { .. }
+            | AgentEvent::McpToolCall { .. }
+            | AgentEvent::ToolUse { .. }
+            | AgentEvent::WebSearch { .. }
+            | AgentEvent::PlanUpdate { .. }
+            | AgentEvent::Usage { .. }
+    );
+    if persists && !session_present {
+        return;
+    }
 
     match &event {
         AgentEvent::SessionStarted {

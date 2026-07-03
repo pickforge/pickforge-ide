@@ -510,6 +510,27 @@ export function removeSelectedLane(projectRoot: string, chatId: string) {
   persistLaneTree(projectRoot, removeLaneLeaf(tree, chatId));
 }
 
+export async function removeChatFromOrchestra(projectRoot: string, chatId: string): Promise<void> {
+  if (!projectRoot || !chatId) return;
+  removeSelectedLane(projectRoot, chatId);
+
+  const current = taskState(projectRoot);
+  const tasks = current.loaded ? current.items : await loadTasks(projectRoot);
+  const now = Date.now();
+  await Promise.all(
+    tasks
+      .filter((task) => task.builderChatId === chatId || task.reviewerChatId === chatId)
+      .map((task) =>
+        upsertTask({
+          ...task,
+          builderChatId: task.builderChatId === chatId ? null : task.builderChatId,
+          reviewerChatId: task.reviewerChatId === chatId ? null : task.reviewerChatId,
+          updatedAt: now,
+        }),
+      ),
+  );
+}
+
 /** center = swap the two lanes; edge = pull source out and re-split beside target. */
 export function moveLane(
   projectRoot: string,

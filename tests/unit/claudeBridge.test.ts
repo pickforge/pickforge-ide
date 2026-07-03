@@ -329,4 +329,36 @@ describe("dispatchCommand", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("emits fatal when an image-only send has no readable images", async () => {
+    const chatQuery = fakeQuery();
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+    const { events, emit } = eventsCollector();
+    const dir = mkdtempSync(join(tmpdir(), "pickforge-claude-bridge-"));
+    const missingPath = join(dir, "missing.png");
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
+      dispatchCommand({
+        op: "send",
+        chatId: "chat-1",
+        text: " ",
+        images: [missingPath],
+      }, emit);
+
+      await Promise.resolve();
+
+      expect(events).toContainEqual({
+        ev: "fatal",
+        chatId: "chat-1",
+        error: expect.stringContaining(
+          "no sendable content: all image attachments were unreadable",
+        ),
+      });
+    } finally {
+      stderrWrite.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -8,6 +8,7 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  untrack,
 } from "solid-js";
 import { AgentChatView } from "../chat/AgentChatView";
 import { FloatingMenu } from "../FloatingMenu";
@@ -278,9 +279,11 @@ export function OrchestraView(props: {
 
   createEffect(() => {
     const root = props.projectRoot;
-    void ensureChatsLoaded(root);
-    void loadTasks(root).catch(() => undefined);
-    void refreshUsage(root).catch(() => undefined);
+    untrack(() => {
+      void ensureChatsLoaded(root);
+      void loadTasks(root).catch(() => undefined);
+      void refreshUsage(root).catch(() => undefined);
+    });
   });
 
   const setNotice = (chatId: string, text: string, error: boolean) =>

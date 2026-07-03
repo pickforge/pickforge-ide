@@ -418,19 +418,31 @@ impl ClaudeBridgeClient {
         chat_id: String,
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     ) -> Result<(), ClaudeBridgeError> {
-        self.state
+        let mut chats = self
+            .state
             .chats
             .lock()
-            .map_err(|_| ClaudeBridgeError::LockPoisoned("chats"))?
-            .insert(
-                chat_id,
-                Arc::new(ChatRuntime {
-                    sink,
-                    parser: Mutex::new(ClaudeStreamParser::new()),
-                    turn_active: AtomicBool::new(false),
-                    terminal_emitted: AtomicBool::new(false),
-                }),
-            );
+            .map_err(|_| ClaudeBridgeError::LockPoisoned("chats"))?;
+        // A reattach (webview reload while the bridge kept the chat alive) must
+        // only redirect events to the new sink — replacing the runtime would
+        // drop a live turn's parser state and reset turn_active, so a query
+        // that ends without a parsed terminal would never emit its synthetic
+        // failure and the manager's turn would hang forever.
+        if let Some(existing) = chats.get(&chat_id) {
+            if let Ok(mut slot) = existing.sink.lock() {
+                *slot = sink;
+            }
+            return Ok(());
+        }
+        chats.insert(
+            chat_id,
+            Arc::new(ChatRuntime {
+                sink: Mutex::new(sink),
+                parser: Mutex::new(ClaudeStreamParser::new()),
+                turn_active: AtomicBool::new(false),
+                terminal_emitted: AtomicBool::new(false),
+            }),
+        );
         Ok(())
     }
 
@@ -511,10 +523,18 @@ struct ClientState {
 }
 
 struct ChatRuntime {
-    sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    // Swappable so a webview reattach can redirect events to the new client
+    // sink without discarding the live parser / turn state below.
+    sink: Mutex<Arc<dyn Fn(AgentEvent) + Send + Sync>>,
     parser: Mutex<ClaudeStreamParser>,
     turn_active: AtomicBool,
     terminal_emitted: AtomicBool,
+}
+
+impl ChatRuntime {
+    fn sink(&self) -> Option<Arc<dyn Fn(AgentEvent) + Send + Sync>> {
+        self.sink.lock().ok().map(|sink| Arc::clone(&sink))
+    }
 }
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
@@ -681,7 +701,10 @@ fn dispatch_chat_event(chat: &Arc<ChatRuntime>, event: AgentEvent) {
         }
         chat.turn_active.store(false, Ordering::SeqCst);
     }
-    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| (chat.sink)(event)));
+    let Some(sink) = chat.sink() else {
+        return;
+    };
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| sink(event)));
 }
 
 fn dispatch_fatal(state: &Arc<ClientState>, chat_id: Option<&str>, error: String) {

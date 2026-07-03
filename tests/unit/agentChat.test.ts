@@ -424,7 +424,7 @@ describe("agentChat store reducer", () => {
     expect(agentChat(chatId)?.approvals).toEqual([]);
   });
 
-  it("does not restore approvals when approve IPC fails", async () => {
+  it("keeps approvals when approve IPC fails", async () => {
     const { chatId, emit } = await startChat();
 
     emit({
@@ -442,7 +442,13 @@ describe("agentChat store reducer", () => {
       "approval failed",
     );
 
-    expect(agentChat(chatId)?.approvals).toEqual([]);
+    expect(agentChat(chatId)?.approvals).toEqual([
+      {
+        approvalId: "approval-1",
+        kind: "command",
+        detail: "Run bun test",
+      },
+    ]);
     expect(agentChat(chatId)?.error).toBe("approval failed");
   });
 

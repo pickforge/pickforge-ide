@@ -424,7 +424,8 @@ async function handleCommand(
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
       const message = createUserTextMessage(command.text, command.images ?? []);
-      if (message) chat.queue.push(message);
+      if (!message) throw new Error("no sendable content: all image attachments were unreadable");
+      chat.queue.push(message);
       return;
     }
     case "approve": {

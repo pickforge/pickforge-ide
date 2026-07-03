@@ -426,10 +426,11 @@ export function ProjectsPane() {
 
   const NewChatMenu = (p: { root: string }) => {
     const [title, setTitle] = createSignal("");
-    // Enter in the title field creates the default kind without reaching for a
-    // kind button; an empty title keeps the default name + auto-naming.
+    // Enter in the title field creates only fixed default kinds; ask keeps the
+    // menu open for an explicit kind choice.
     const createDefault = () => {
       const kind = loadDefaultChatKind();
+      if (kind === "ask") return;
       if (kind === "agent") newAgentChat(p.root, loadLastAgentProvider(), title());
       else newTerminalChat(p.root, title());
       closeMenu();

@@ -38,10 +38,22 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-function fakeQuery(overrides: { interrupt?: () => Promise<void> } = {}) {
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function fakeQuery(
+  overrides: {
+    interrupt?: () => Promise<void>;
+    setModel?: (model?: string) => Promise<void>;
+  } = {},
+) {
   const closed = deferred<void>();
   const queryObject = {
     interrupt: vi.fn(overrides.interrupt ?? (() => Promise.resolve())),
+    setModel: vi.fn(overrides.setModel ?? (() => Promise.resolve())),
     close: vi.fn(() => closed.resolve()),
     async *[Symbol.asyncIterator]() {
       await closed.promise;
@@ -200,6 +212,42 @@ describe("dispatchCommand", () => {
     });
 
     interrupt.resolve();
+  });
+
+  it("serializes setModel commands per chat in submission order", async () => {
+    const slowModel = deferred<void>();
+    let activeModel: string | undefined;
+    const chatQuery = fakeQuery({
+      setModel: (model) => {
+        if (model === "slow") {
+          return slowModel.promise.then(() => {
+            activeModel = model;
+          });
+        }
+        activeModel = model;
+        return Promise.resolve();
+      },
+    });
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+    const { events, emit } = eventsCollector();
+
+    dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
+    dispatchCommand({ op: "setModel", chatId: "chat-1", model: "slow" }, emit);
+    dispatchCommand({ op: "setModel", chatId: "chat-1", model: "fast" }, emit);
+
+    await flushMicrotasks();
+
+    expect(chatQuery.setModel).toHaveBeenCalledTimes(1);
+    expect(chatQuery.setModel).toHaveBeenNthCalledWith(1, "slow");
+    expect(activeModel).toBeUndefined();
+
+    slowModel.resolve();
+    await flushMicrotasks();
+
+    expect(chatQuery.setModel).toHaveBeenCalledTimes(2);
+    expect(chatQuery.setModel).toHaveBeenNthCalledWith(2, "fast");
+    expect(activeModel).toBe("fast");
+    expect(events).not.toContainEqual(expect.objectContaining({ ev: "fatal" }));
   });
 
   it("does not let a slow op on one chat delay another chat's send", async () => {

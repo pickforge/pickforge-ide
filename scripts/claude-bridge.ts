@@ -146,6 +146,7 @@ type ChatSession = {
   queue: PushableAsyncQueue<SDKUserMessage>;
   query: Query;
   gate: PermissionGate;
+  mutationChain: Promise<void>;
   /** The model the live query currently runs (null = CLI default). */
   model: string | null;
 };
@@ -337,6 +338,20 @@ function buildOptions(
   return options;
 }
 
+function queueModelMutation(
+  chat: ChatSession,
+  model: string | null,
+  emit: (event: BridgeEvent) => void,
+): Promise<void> {
+  chat.model = model;
+  chat.mutationChain = chat.mutationChain
+    .then(() => chat.query.setModel(model ?? undefined))
+    .catch((error: unknown) => {
+      emit({ ev: "fatal", chatId: chat.chatId, error: serializeError(error) });
+    });
+  return chat.mutationChain;
+}
+
 function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): void {
   const existing = chats.get(command.chatId);
   if (existing) {
@@ -346,11 +361,7 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
     // change rides along so the re-attached picker stays truthful.
     const nextModel = command.model ?? null;
     if (existing.model !== nextModel) {
-      existing.model = nextModel;
-      // Must not float: an unhandled rejection kills the whole bridge process.
-      existing.query.setModel(nextModel ?? undefined).catch((error: unknown) => {
-        emit({ ev: "fatal", chatId: command.chatId, error: serializeError(error) });
-      });
+      void queueModelMutation(existing, nextModel, emit);
     }
     emit({ ev: "started", chatId: command.chatId });
     return;
@@ -364,6 +375,7 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
     queue,
     query: runningQuery,
     gate,
+    mutationChain: Promise.resolve(),
     model: command.model ?? null,
   };
   chats.set(command.chatId, chat);
@@ -452,8 +464,7 @@ async function handleCommand(
     case "setModel": {
       const chat = chats.get(command.chatId);
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
-      chat.model = command.model ?? null;
-      await chat.query.setModel(command.model ?? undefined);
+      await queueModelMutation(chat, command.model ?? null, emit);
       return;
     }
     case "listSessions": {

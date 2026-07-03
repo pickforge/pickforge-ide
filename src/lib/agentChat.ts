@@ -163,6 +163,18 @@ export function agentChatSetModel(
   return invoke("agent_chat_set_model", { sessionId, model });
 }
 
+export function agentChatSetMode(
+  sessionId: string,
+  overrides: { sandbox?: string; approvalPolicy?: string; permissionMode?: string },
+): Promise<void> {
+  return invoke("agent_chat_set_mode", {
+    sessionId,
+    sandbox: overrides.sandbox ?? null,
+    approvalPolicy: overrides.approvalPolicy ?? null,
+    permissionMode: overrides.permissionMode ?? null,
+  });
+}
+
 export function agentChatInterrupt(sessionId: string): Promise<void> {
   return invoke("agent_chat_interrupt", { sessionId });
 }

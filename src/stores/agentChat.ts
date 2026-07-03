@@ -5,6 +5,7 @@ import {
   agentChatDispose,
   agentChatInterrupt,
   agentChatSend,
+  agentChatSetMode,
   agentChatSetModel,
   agentChatStart,
   agentChatSteer,
@@ -14,6 +15,7 @@ import {
   type AgentProvider,
   type AgentTimelineEntry,
 } from "../lib/agentChat";
+import { modeOverrides } from "../lib/agentModes";
 import { deriveAgentChatTitle, isDefaultChatTitle } from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
@@ -91,6 +93,7 @@ export interface AgentChatState {
   provider: AgentProvider;
   model: string | null;
   effort: string | null;
+  mode: string | null;
   providerSwitched: boolean;
   turnActive: boolean;
   error: string | null;
@@ -134,6 +137,8 @@ export interface EnsureAgentChatOptions {
   engine?: AgentEngine;
   /** Seeds the chat's effort; claude bridge sessions apply it at start. */
   effort?: string | null;
+  /** Seeds the chat's mode; its overrides compose into the session start. */
+  mode?: string | null;
   sandbox?: string;
   approvalPolicy?: string;
   permissionMode?: string;
@@ -147,6 +152,7 @@ function emptyState(provider: AgentProvider, model: string | null): AgentChatSta
     provider,
     model,
     effort: null,
+    mode: null,
     providerSwitched: false,
     turnActive: false,
     error: null,
@@ -712,6 +718,10 @@ export async function ensureAgentChat(
   if (created && options.effort !== undefined) {
     setChats(chatId, { effort: options.effort?.trim() || null });
   }
+  // Seed the mode only on a fresh entry — same rationale as effort.
+  if (created && options.mode !== undefined) {
+    setChats(chatId, { mode: options.mode || null });
+  }
   if (chats[chatId]?.sessionId) return;
   const existing = ensurePromises.get(chatId);
   if (existing) return existing;
@@ -735,16 +745,21 @@ export async function ensureAgentChat(
           ...loaded,
           projectRoot,
           effort: previous?.effort ?? loaded.effort,
+          mode: previous?.mode ?? loaded.mode,
           providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
         });
       }
       if (stale() || chats[chatId].sessionId) return;
       const startModel = chats[chatId]?.model ?? model;
+      const overrides = modeOverrides(provider, chats[chatId].mode);
       const sessionId = await agentChatStart({
         chatId,
         projectRoot,
         provider,
         model: startModel,
+        sandbox: overrides.sandbox,
+        approvalPolicy: overrides.approvalPolicy,
+        permissionMode: overrides.permissionMode,
         ...options,
         effort: chats[chatId].effort,
         onEvent: (event) => receiveAgentEvent(chatId, event),
@@ -794,6 +809,18 @@ export function setAgentChatEffort(chatId: string, effort: string | null) {
   setChats(chatId, { effort: value });
 }
 
+export function setAgentChatMode(chatId: string, mode: string | null) {
+  const chat = chats[chatId];
+  if (!chat) return;
+  setChats(chatId, { mode });
+  // A live session pins its mode at start — push the change into the running
+  // session (codex applies it next turn, claude via setPermissionMode).
+  if (!chat.sessionId) return;
+  void agentChatSetMode(chat.sessionId, modeOverrides(chat.provider, mode)).catch((error) => {
+    if (chats[chatId]) setChats(chatId, { error: errorText(error) });
+  });
+}
+
 function sendOptions(chat: AgentChatState, images: string[]) {
   return {
     ...(chat.provider === "codex" ? { effort: chat.effort, model: chat.model } : {}),
@@ -806,6 +833,7 @@ export async function switchAgentChatProvider(
   provider: AgentProvider,
   model: string | null,
   effort: string | null = null,
+  mode: string | null = null,
 ): Promise<boolean> {
   const current = chats[chatId];
   if (current?.turnActive) throw new Error("Cannot switch provider while a turn is active");
@@ -819,6 +847,7 @@ export async function switchAgentChatProvider(
   await ensureAgentChat(chatId, projectRoot, provider, model, {
     engine: loadAgentEngine(),
     effort,
+    mode,
   });
   if (chats[chatId]) {
     setChats(chatId, {

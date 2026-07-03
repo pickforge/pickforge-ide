@@ -15,6 +15,7 @@ import {
   interruptAgentChat,
   sendAgentMessage,
   setAgentChatEffort,
+  setAgentChatMode,
   setAgentChatModel,
   steerAgentChat,
   switchAgentChatProvider,
@@ -28,6 +29,7 @@ import {
   setAgentEffort,
   setAgentModel,
 } from "../../lib/agentModels";
+import { loadAgentModes, setAgentMode } from "../../lib/agentModes";
 import { loadAgentEngine } from "../../lib/chatDefaults";
 import { ChatTimeline } from "./ChatTimeline";
 import { Composer } from "./Composer";
@@ -51,6 +53,7 @@ export function AgentChatView(props: {
   const model = () =>
     state()?.model ?? props.model ?? loadAgentModels()[props.provider] ?? null;
   const effort = () => state()?.effort ?? null;
+  const mode = () => state()?.mode ?? loadAgentModes()[provider()] ?? null;
 
   const approvals = createMemo(() => state()?.approvals ?? []);
   const hasApprovals = () => approvals().length > 0;
@@ -74,6 +77,7 @@ export function AgentChatView(props: {
     void ensureAgentChat(props.chatId, props.projectRoot, provider(), model(), {
       engine: loadAgentEngine(),
       effort: loadAgentEfforts()[provider()] ?? null,
+      mode: loadAgentModes()[provider()] ?? null,
     });
   });
 
@@ -86,7 +90,8 @@ export function AgentChatView(props: {
   const doSwitch = (next: AgentProvider) => {
     const nextModel = loadAgentModels()[next] ?? null;
     const nextEffort = loadAgentEfforts()[next] ?? null;
-    void switchAgentChatProvider(props.chatId, next, nextModel, nextEffort).catch(
+    const nextMode = loadAgentModes()[next] ?? null;
+    void switchAgentChatProvider(props.chatId, next, nextModel, nextEffort, nextMode).catch(
       () => undefined,
     );
   };
@@ -116,6 +121,11 @@ export function AgentChatView(props: {
   const onEffortChange = (next: string) => {
     setAgentEffort(provider(), next);
     setAgentChatEffort(props.chatId, next);
+  };
+
+  const onModeChange = (next: string) => {
+    setAgentMode(provider(), next);
+    setAgentChatMode(props.chatId, next);
   };
 
   // A model/provider change can leave a selected effort the new model does not
@@ -224,6 +234,7 @@ export function AgentChatView(props: {
           provider={provider()}
           model={model()}
           effort={effort()}
+          mode={mode()}
           turnActive={state()?.turnActive ?? false}
           supportsSteer={provider() === "codex"}
           emberYielded={hasApprovals()}
@@ -233,6 +244,7 @@ export function AgentChatView(props: {
           onProviderChange={onProviderChange}
           onModelChange={onModelChange}
           onEffortChange={onEffortChange}
+          onModeChange={onModeChange}
         />
       </div>
     </div>

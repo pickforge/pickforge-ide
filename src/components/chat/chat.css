@@ -818,6 +818,14 @@
   min-width: 100%;
   width: max-content;
 }
+/* A dangerous mode (bypass permissions / full access) is active: a quiet warm
+ * border and icon warn without shouting — the ember stays the terminal's. */
+.pf-chat-dd--warn .pf-dropdown-trigger {
+  border-color: color-mix(in srgb, var(--pf-warning) 45%, var(--pf-hairline));
+}
+.pf-chat-dd--warn .pf-dropdown-icon {
+  color: color-mix(in srgb, var(--pf-warning) 70%, var(--pf-text-low));
+}
 .pf-chat-composer-input {
   position: relative;
   display: flex;

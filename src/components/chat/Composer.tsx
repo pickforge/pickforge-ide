@@ -8,9 +8,10 @@ import {
   agentStashImage,
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
+import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { Dropdown, type DropdownOption } from "../Dropdown";
-import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI } from "../icons";
+import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
 import "./chat.css";
 
 const PROVIDERS = AGENTS.filter(
@@ -104,12 +105,14 @@ export function Composer(props: {
   provider: AgentProvider;
   model: string | null;
   effort?: string | null;
+  mode?: string | null;
   turnActive: boolean;
   onSend: (text: string, images?: string[]) => void | Promise<void>;
   onInterrupt: () => void;
   onProviderChange?: (provider: AgentProvider) => void;
   onModelChange?: (model: string | null) => void;
   onEffortChange?: (effort: string) => void;
+  onModeChange?: (mode: string) => void;
   supportsSteer?: boolean;
   onSteer?: (text: string) => void | Promise<void>;
   emberYielded?: boolean;
@@ -188,6 +191,14 @@ export function Composer(props: {
     }
     return options;
   };
+
+  const modeValue = () => props.mode ?? defaultMode(props.provider);
+  const modeDropdownOptions = (): DropdownOption[] =>
+    modeOptions(props.provider).map((m) => ({
+      value: m.id,
+      label: m.label,
+      icon: () => <IconShield size={13} />,
+    }));
 
   createEffect(() => {
     if (props.provider === "codex") ensureCodexEffortOverride();
@@ -399,6 +410,19 @@ export function Composer(props: {
             }
             onChange={(value) => props.onEffortChange?.(value)}
             options={effortDropdownOptions()}
+          />
+        </Show>
+        <Show when={modeDropdownOptions().length > 0}>
+          <Dropdown
+            class={isDangerMode(props.provider, modeValue()) ? "pf-chat-dd pf-chat-dd--warn" : "pf-chat-dd"}
+            up
+            disabled={props.turnActive}
+            value={modeValue()}
+            title={
+              props.provider === "claudeCode" ? "Permission mode" : "Sandbox & approvals"
+            }
+            onChange={(value) => props.onModeChange?.(value)}
+            options={modeDropdownOptions()}
           />
         </Show>
         <Show when={props.meter}>

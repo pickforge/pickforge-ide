@@ -198,6 +198,20 @@
     opacity: 0.6;
   }
 }
+/* The awaiting-output row: instant feedback from send until the first stream. */
+.pf-chat-working-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) 0;
+}
+.pf-chat-working-label {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-low);
+}
 
 /* ---- Cards (command / files / plan) ---- */
 .pf-chat-card {

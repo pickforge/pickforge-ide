@@ -65,7 +65,26 @@ function renderItem(item: AgentTimelineItem): JSX.Element {
   }
 }
 
-export function ChatTimeline(props: { items: AgentTimelineItem[] }): JSX.Element {
+/* Immediate turn feedback: dots + label the moment a turn is active with no
+ * stream to look at — models without thinking output (or the gap before the
+ * first delta / between tool calls) otherwise render nothing at all. */
+function WorkingRow(): JSX.Element {
+  return (
+    <div class="pf-chat-working-row" role="status" aria-label="Agent is working">
+      <span class="pf-chat-working" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span class="pf-chat-working-label">Working</span>
+    </div>
+  );
+}
+
+export function ChatTimeline(props: {
+  items: AgentTimelineItem[];
+  working?: boolean;
+}): JSX.Element {
   let scroller!: HTMLDivElement;
   let content!: HTMLDivElement;
   let nearBottom = true;
@@ -104,6 +123,9 @@ export function ChatTimeline(props: { items: AgentTimelineItem[] }): JSX.Element
           }
         >
           <For each={props.items}>{(item) => renderItem(item)}</For>
+        </Show>
+        <Show when={props.working}>
+          <WorkingRow />
         </Show>
       </div>
     </div>

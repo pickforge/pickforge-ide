@@ -128,9 +128,19 @@ export function AgentChatView(props: {
     if (!supported.includes(current)) setAgentChatEffort(props.chatId, "");
   });
 
+  // The turn is running but nothing is streaming yet (or between tool calls):
+  // show the working row instantly instead of a silent, frozen timeline.
+  const awaitingOutput = () => {
+    const chat = state();
+    if (!chat?.turnActive) return false;
+    const last = chat.timeline[chat.timeline.length - 1];
+    if (!last) return true;
+    return !((last.type === "assistantText" || last.type === "thinking") && last.streaming);
+  };
+
   return (
     <div class="pf-chat-view">
-      <ChatTimeline items={state()?.timeline ?? []} />
+      <ChatTimeline items={state()?.timeline ?? []} working={awaitingOutput()} />
       <Show when={showNotice()}>
         <div class="pf-chat-switch-notice" role="status">
           <span class="pf-chat-switch-notice-text">

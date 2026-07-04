@@ -1,6 +1,10 @@
-import { type JSX, For, Show, createEffect } from "solid-js";
+import { type JSX, For, Show, createEffect, createMemo } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { embedImageMarkers, renderMarkdown } from "../../lib/markdown";
+import {
+  embedImageMarkers,
+  referencedImageIndexes,
+  renderMarkdown,
+} from "../../lib/markdown";
 import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
@@ -15,6 +19,20 @@ function onMarkdownClick(e: MouseEvent, images?: string[]): void {
     e.preventDefault();
     return;
   }
+  openThumbTarget(target, images);
+}
+
+// Inline thumbnails hydrate as focusable button-role images — Enter/Space must
+// open the lightbox just like a click.
+function onMarkdownKeyDown(e: KeyboardEvent, images?: string[]): void {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const target = e.target as HTMLElement | null;
+  if (!target?.closest("[data-pf-image-index]")) return;
+  e.preventDefault();
+  openThumbTarget(target, images);
+}
+
+function openThumbTarget(target: HTMLElement | null, images?: string[]): void {
   const thumb = target?.closest<HTMLElement>("[data-pf-image-index]");
   if (!thumb || !images) return;
   const idx = Number(thumb.dataset.pfImageIndex);
@@ -39,8 +57,9 @@ export function ChatBubble(props: {
   };
 
   // The sanitized markdown never carries an asset path — only a zero-based
-  // index. Hydrate the real src onto each inline thumbnail after the DOM
-  // updates, keeping DOMPurify's default URI policy untouched.
+  // index. Hydrate the real src (and button semantics for keyboard users) onto
+  // each inline thumbnail after the DOM updates, keeping DOMPurify's default
+  // URI policy untouched.
   createEffect(() => {
     body();
     const images = props.images;
@@ -53,9 +72,21 @@ export function ChatBubble(props: {
           const idx = Number(img.dataset.pfImageIndex);
           if (Number.isInteger(idx) && idx >= 0 && idx < images.length) {
             img.src = convertFileSrc(images[idx]);
+            img.tabIndex = 0;
+            img.setAttribute("role", "button");
+            img.setAttribute("aria-label", "View image");
           }
         });
     });
+  });
+
+  // Marker-referenced attachments render inline within the text — repeating
+  // them in the strip above would show the same image twice.
+  const stripImages = createMemo(() => {
+    const images = props.images ?? [];
+    if (props.role !== "user" || images.length === 0) return images;
+    const referenced = referencedImageIndexes(props.text, images.length);
+    return images.filter((_, i) => !referenced.has(i));
   });
 
   return (
@@ -73,9 +104,9 @@ export function ChatBubble(props: {
           "pf-chat-bubble--assistant": props.role === "assistant",
         }}
       >
-        <Show when={props.images && props.images.length > 0}>
+        <Show when={stripImages().length > 0}>
           <div class="pf-chat-bubble-images">
-            <For each={props.images}>
+            <For each={stripImages()}>
               {(path) => (
                 <button
                   type="button"
@@ -101,6 +132,7 @@ export function ChatBubble(props: {
             ref={mdEl}
             class="pf-chat-md"
             onClick={(e) => onMarkdownClick(e, props.images)}
+            onKeyDown={(e) => onMarkdownKeyDown(e, props.images)}
             innerHTML={body()}
           />
         </Show>

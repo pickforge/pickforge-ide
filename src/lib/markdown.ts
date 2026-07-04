@@ -58,3 +58,14 @@ export function embedImageMarkers(text: string, imageCount: number): string {
     return `<img data-pf-image-index="${n - 1}" alt="" />`;
   });
 }
+
+/** Zero-based indexes of the attachments a message's `[Image #N]` markers
+ *  reference — those render inline, so the attachment strip skips them. */
+export function referencedImageIndexes(text: string, imageCount: number): Set<number> {
+  const indexes = new Set<number>();
+  for (const match of text.matchAll(/\[Image #(\d+)\]/g)) {
+    const n = Number(match[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= imageCount) indexes.add(n - 1);
+  }
+  return indexes;
+}

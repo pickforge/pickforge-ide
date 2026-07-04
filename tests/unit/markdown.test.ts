@@ -2,7 +2,7 @@
 // DOMPurify needs a real DOM. The default unit env is node (vitest.config.ts),
 // so this file opts into jsdom — the environment DOMPurify officially supports.
 import { describe, expect, it } from "vitest";
-import { embedImageMarkers, renderMarkdown } from "../../src/lib/markdown";
+import { embedImageMarkers, referencedImageIndexes, renderMarkdown } from "../../src/lib/markdown";
 
 describe("renderMarkdown", () => {
   it("renders bold, headings, and code fences to the expected tags", () => {
@@ -57,5 +57,16 @@ describe("embedImageMarkers", () => {
     expect(html).toContain("<img");
     expect(html).toContain('data-pf-image-index="0"');
     expect(html).not.toContain("&lt;img");
+  });
+});
+
+describe("referencedImageIndexes", () => {
+  it("collects zero-based indexes of in-range markers only", () => {
+    const refs = referencedImageIndexes("see [Image #1] and [Image #3] and [Image #9]", 3);
+    expect([...refs].sort()).toEqual([0, 2]);
+  });
+
+  it("returns an empty set for markerless text", () => {
+    expect(referencedImageIndexes("plain text", 2).size).toBe(0);
   });
 });

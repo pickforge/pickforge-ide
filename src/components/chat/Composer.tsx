@@ -280,6 +280,18 @@ export function Composer(props: {
   // native file-list fallback, uri-list paste, OS drop) funnels here so the
   // `[Image #N]` marker is inserted for all of them. Callers must first pass
   // their generation guard; this only runs on a still-current attachment.
+  // The marker must land where the cursor was when the paste/drop HAPPENED —
+  // stashing is async, and the user may keep typing before it resolves.
+  // Pinned per ingress event; consecutive images from one event chain their
+  // insertion points so batch attachments stay in order.
+  let markerAnchor: { generation: number; at: number | null } | null = null;
+  const pinMarkerAnchor = () => {
+    markerAnchor = {
+      generation: pasteGeneration,
+      at: document.activeElement === field ? (field.selectionStart ?? null) : null,
+    };
+  };
+
   const attachImage = (path: string) => {
     let index = 0;
     setImages((cur) => {
@@ -288,8 +300,12 @@ export function Composer(props: {
     });
     const focused = document.activeElement === field;
     const value = text();
-    const cursor = focused ? (field.selectionStart ?? value.length) : value.length;
+    const pinned =
+      markerAnchor && markerAnchor.generation === pasteGeneration ? markerAnchor.at : null;
+    const cursor =
+      pinned ?? (focused ? (field.selectionStart ?? value.length) : value.length);
     const result = insertMarker(value, index, cursor);
+    if (pinned !== null && markerAnchor) markerAnchor.at = result.cursor;
     setText(result.text);
     if (focused) {
       field.selectionStart = result.cursor;
@@ -310,6 +326,7 @@ export function Composer(props: {
   const onPaste = (event: ClipboardEvent) => {
     const data = event.clipboardData;
     if (!data) return;
+    pinMarkerAnchor();
     const files: { file: File; ext: string }[] = [];
     let fileItems = 0;
     let unsupported = 0;
@@ -434,6 +451,9 @@ export function Composer(props: {
   };
 
   const onPathDrop = (paths: string[], atGeneration?: number) => {
+    // A direct OS drop is its own ingress event; paste fallbacks arrive with
+    // the generation (and anchor) already pinned by onPaste.
+    if (atGeneration === undefined) pinMarkerAnchor();
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;

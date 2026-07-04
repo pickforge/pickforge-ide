@@ -225,8 +225,8 @@
 .pf-chat-md img[data-pf-image-index] {
   display: inline-block;
   width: auto;
-  height: 1.6em;
-  margin: 0 2px;
+  height: calc(var(--pf-size-body-lg) + var(--pf-space-sm));
+  margin: 0 calc(var(--pf-space-xs) / 2);
   vertical-align: middle;
   object-fit: cover;
   border-radius: var(--pf-radius-sm);
@@ -916,14 +916,14 @@
 }
 .pf-chat-attachment-index {
   position: absolute;
-  bottom: -6px;
-  left: -6px;
+  bottom: calc(var(--pf-space-sm) * -0.75);
+  left: calc(var(--pf-space-sm) * -0.75);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  min-width: var(--pf-space-lg);
+  height: var(--pf-space-lg);
+  padding: 0 var(--pf-space-xs);
   border-radius: var(--pf-radius-pill);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-3);
@@ -1144,8 +1144,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--pf-space-xxl);
+  height: var(--pf-space-xxl);
   padding: 0;
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   border-radius: var(--pf-radius-sm);

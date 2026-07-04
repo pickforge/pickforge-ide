@@ -428,7 +428,7 @@ fn write_stashed_image(
     }
 }
 
-fn stash_image_dir() -> PathBuf {
+pub(crate) fn stash_image_dir() -> PathBuf {
     pickforge_home(None)
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir())

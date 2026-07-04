@@ -308,7 +308,7 @@ export function Composer(props: {
           if (generation !== pasteGeneration) {
             if (droppedPasteGeneration !== generation) {
               droppedPasteGeneration = generation;
-              showPasteError("Image dropped because send already started", 4000);
+              showPasteError("Image discarded because send already started", 4000);
             }
             return;
           }
@@ -339,7 +339,7 @@ export function Composer(props: {
           if (generation !== pasteGeneration) {
             if (droppedPasteGeneration !== generation) {
               droppedPasteGeneration = generation;
-              showPasteError("Image dropped because send already started", 4000);
+              showPasteError("Image discarded because send already started", 4000);
             }
             return;
           }
@@ -370,7 +370,7 @@ export function Composer(props: {
           if (generation !== pasteGeneration) {
             if (droppedPasteGeneration !== generation) {
               droppedPasteGeneration = generation;
-              showPasteError("Image dropped because send already started", 4000);
+              showPasteError("Image discarded because send already started", 4000);
             }
             return;
           }

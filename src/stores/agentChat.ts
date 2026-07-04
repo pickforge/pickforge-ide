@@ -751,7 +751,8 @@ export async function ensureAgentChat(
       }
       if (stale() || chats[chatId].sessionId) return;
       const startModel = chats[chatId]?.model ?? model;
-      const overrides = modeOverrides(provider, chats[chatId].mode);
+      const startMode = chats[chatId].mode;
+      const overrides = modeOverrides(provider, startMode);
       const sessionId = await agentChatStart({
         chatId,
         projectRoot,
@@ -773,6 +774,14 @@ export async function ensureAgentChat(
       setChats(chatId, { sessionId, projectRoot, provider, model: currentModel, error: null });
       if (provider === "claudeCode" && currentModel !== startModel) {
         queueAgentChatSetModel(chatId, sessionId, currentModel);
+      }
+      // A mode picked while the start was in flight never reached the backend
+      // (the start captured the old overrides) — reconcile it now.
+      const currentMode = chats[chatId]?.mode ?? null;
+      if (currentMode !== startMode) {
+        void agentChatSetMode(sessionId, modeOverrides(provider, currentMode)).catch((error) => {
+          if (chats[chatId]) setChats(chatId, { error: errorText(error) });
+        });
       }
     } catch (error) {
       if (!stale() && chats[chatId]) setChats(chatId, { error: errorText(error) });

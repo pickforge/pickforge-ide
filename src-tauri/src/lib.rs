@@ -124,6 +124,7 @@ pub fn run() {
             ios_commands::ios_device_list,
             ios_commands::ios_boot_device,
             ios_commands::ios_screenshot,
+            ios_commands::ios_dump_accessibility,
             git_commands::git_status,
             git_commands::git_diff,
             git_commands::git_discover_repos,

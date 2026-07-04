@@ -23,6 +23,7 @@ pub const ALL_TOOL_NAMES: [&str; 4] =
 pub enum InspectorKind {
     VmService,
     UiAutomator,
+    IosAccessibility,
     Cdp,
     None,
 }
@@ -33,6 +34,7 @@ impl InspectorKind {
         match s {
             "vmService" => Self::VmService,
             "uiAutomator" => Self::UiAutomator,
+            "iosAccessibility" => Self::IosAccessibility,
             "cdp" => Self::Cdp,
             _ => Self::None,
         }
@@ -121,9 +123,8 @@ pub fn tool_descriptors() -> Value {
         {
             "name": GET_CURRENT_SELECTION,
             "description": "The live selected UI element for the active target: the Flutter \
-                            widget (VM Service) or the UIAutomator accessibility node. Returns \
-                            { available:false } when nothing is selected or the target lacks \
-                            selection inspection.",
+                            widget (VM Service) or accessibility node. Returns { available:false } \
+                            when nothing is selected or the target lacks selection inspection.",
             "inputSchema": empty,
         },
         {
@@ -188,6 +189,7 @@ fn get_current_selection(state: &dyn LiveState) -> ToolOutput {
     let (kind, fetched) = match target.inspector_kind {
         InspectorKind::VmService => ("flutterWidget", state.flutter_selection()),
         InspectorKind::UiAutomator => ("a11yNode", state.uiautomator_selection()),
+        InspectorKind::IosAccessibility => ("a11yNode", state.uiautomator_selection()),
         InspectorKind::Cdp | InspectorKind::None => {
             return ToolOutput::unavailable(format!(
                 "no live selection adapter for target '{}'",
@@ -342,6 +344,19 @@ mod tests {
         }
     }
 
+    fn ios_target() -> ActiveTarget {
+        ActiveTarget {
+            id: "native-ios".into(),
+            label: "Native iOS".into(),
+            capabilities: vec![
+                Capability::InspectSelection,
+                Capability::CaptureScreenshot,
+                Capability::StreamLogs,
+            ],
+            inspector_kind: InspectorKind::IosAccessibility,
+        }
+    }
+
     fn web_target() -> ActiveTarget {
         ActiveTarget {
             id: "web".into(),
@@ -393,6 +408,26 @@ mod tests {
         assert!(!out.is_error);
         assert_eq!(out.value["kind"], json!("a11yNode"));
         assert_eq!(out.value["selection"]["className"], json!("android.widget.Button"));
+    }
+
+    #[test]
+    fn from_wire_maps_ios_accessibility() {
+        assert_eq!(
+            InspectorKind::from_wire("iosAccessibility"),
+            InspectorKind::IosAccessibility
+        );
+    }
+
+    #[test]
+    fn selection_routes_to_a11y_node_for_ios_accessibility_target() {
+        let mut st = FakeState::new();
+        st.target = Some(ios_target());
+        st.uia = Ok(Some(json!({ "className": "Button" })));
+        st.flutter = Err("should not be called".into());
+        let out = call_tool(&st, GET_CURRENT_SELECTION, &Value::Null).unwrap();
+        assert!(!out.is_error);
+        assert_eq!(out.value["kind"], json!("a11yNode"));
+        assert_eq!(out.value["selection"]["className"], json!("Button"));
     }
 
     #[test]

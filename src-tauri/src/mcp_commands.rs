@@ -55,7 +55,7 @@ pub struct PublishedState {
     /// camelCase capability names from the target (`inspectSelection`, …).
     #[serde(default)]
     pub capabilities: Vec<String>,
-    /// `vmService` | `uiAutomator` | `cdp` | `none`.
+    /// `vmService` | `uiAutomator` | `iosAccessibility` | `cdp` | `none`.
     #[serde(default)]
     pub inspector_kind: String,
     #[serde(default)]
@@ -806,6 +806,38 @@ mod tests {
         // UIAutomator selection comes straight from the published snapshot.
         let sel = live.uiautomator_selection().unwrap().unwrap();
         assert_eq!(sel["className"], json!("android.widget.Button"));
+    }
+
+    #[test]
+    fn snapshot_live_state_maps_ios_accessibility_selection() {
+        let st = McpState::new();
+        st.set_published(PublishedState {
+            target_id: "native-ios".into(),
+            target_label: "Native iOS".into(),
+            capabilities: vec!["inspectSelection".into(), "streamLogs".into()],
+            inspector_kind: "iosAccessibility".into(),
+            support_tier: "useful".into(),
+            selection: Some(json!({ "className": "Button" })),
+            ..Default::default()
+        });
+        let live = live_in_project(&st);
+        let target = live.active_target().unwrap();
+        assert_eq!(target.id, "native-ios");
+        assert!(target.has(Capability::InspectSelection));
+        assert_eq!(target.inspector_kind, InspectorKind::IosAccessibility);
+        assert_eq!(
+            InspectorKind::from_wire("iosAccessibility"),
+            InspectorKind::IosAccessibility
+        );
+
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_current_selection","arguments":{}}}"#;
+        let response: Value =
+            serde_json::from_str(&mcp::handle_line(&live, line).unwrap()).unwrap();
+        assert_eq!(response["result"]["isError"], json!(false));
+        let text = response["result"]["content"][0]["text"].as_str().unwrap();
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["kind"], json!("a11yNode"));
+        assert_eq!(payload["selection"]["className"], json!("Button"));
     }
 
     #[test]

@@ -41,6 +41,35 @@ export function quotePaths(paths: string[]): string {
   return paths.map(shellQuotePath).join(" ");
 }
 
+/** Local file paths from a text/uri-list payload (what copying files in a file
+ *  manager puts on the clipboard): one URI per line, `#` lines are comments,
+ *  non-file schemes are ignored, percent-escapes are decoded. */
+export function filePathsFromUriList(text: string): string[] {
+  const paths: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const uri = line.trim();
+    if (!uri || uri.startsWith("#") || !uri.startsWith("file://")) continue;
+    let rest = uri.slice("file://".length);
+    const slash = rest.indexOf("/");
+    if (slash < 0) continue;
+    const host = rest.slice(0, slash);
+    rest = rest.slice(slash);
+    try {
+      const decoded = decodeURIComponent(rest);
+      if (host && host !== "localhost") {
+        // A real authority is a network share — keep it as a UNC path.
+        paths.push(`//${host}${decoded}`);
+        continue;
+      }
+      // Windows URIs decode to /C:/Users/... — drop the URI artifact slash.
+      paths.push(/^\/[A-Za-z]:[/\\]/.test(decoded) ? decoded.slice(1) : decoded);
+    } catch {
+      // malformed percent-escape — skip the entry rather than attach garbage
+    }
+  }
+  return paths;
+}
+
 /** Is the point inside the element's on-screen box, and is the element actually
  *  visible (a hidden host's panes report a zero-area rect)? */
 function hitTarget(t: DropTarget, x: number, y: number): boolean {

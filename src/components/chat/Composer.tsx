@@ -22,10 +22,12 @@ import {
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
+import { insertMarker, removeMarkerAndRenumber } from "../../lib/imageAnchors";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
 import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
+import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
 const PROVIDERS = AGENTS.filter(
@@ -274,9 +276,35 @@ export function Composer(props: {
     autosize();
   };
 
-  const removeImage = (path: string) => {
-    setImages((cur) => cur.filter((item) => item !== path));
+  // Every image ingress route (HTML5 item paste, native clipboard fallback,
+  // native file-list fallback, uri-list paste, OS drop) funnels here so the
+  // `[Image #N]` marker is inserted for all of them. Callers must first pass
+  // their generation guard; this only runs on a still-current attachment.
+  const attachImage = (path: string) => {
+    let index = 0;
+    setImages((cur) => {
+      index = cur.length + 1;
+      return [...cur, path];
+    });
+    const focused = document.activeElement === field;
+    const value = text();
+    const cursor = focused ? (field.selectionStart ?? value.length) : value.length;
+    const result = insertMarker(value, index, cursor);
+    setText(result.text);
+    if (focused) {
+      field.selectionStart = result.cursor;
+      field.selectionEnd = result.cursor;
+    }
+    autosize();
+    if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+    setPasteError(null);
+  };
+
+  const removeImage = (index: number) => {
+    setText((cur) => removeMarkerAndRenumber(cur, index + 1));
+    setImages((cur) => cur.filter((_, i) => i !== index));
     field.focus();
+    autosize();
   };
 
   const onPaste = (event: ClipboardEvent) => {
@@ -368,9 +396,7 @@ export function Composer(props: {
             }
             return;
           }
-          setImages((cur) => [...cur, path]);
-          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-          setPasteError(null);
+          attachImage(path);
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -399,9 +425,7 @@ export function Composer(props: {
             }
             return;
           }
-          setImages((cur) => [...cur, path]);
-          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-          setPasteError(null);
+          attachImage(path);
         })
         .catch((error) => {
           showPasteError(error instanceof Error ? error.message : String(error));
@@ -431,9 +455,7 @@ export function Composer(props: {
             }
             return;
           }
-          setImages((cur) => [...cur, stashedPath]);
-          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-          setPasteError(null);
+          attachImage(stashedPath);
         })
         .catch((error) => {
           showPasteError(error instanceof Error ? error.message : String(error));
@@ -596,21 +618,27 @@ export function Composer(props: {
       <Show when={images().length > 0}>
         <div class="pf-chat-attachments">
           <For each={images()}>
-            {(path) => (
+            {(path, i) => (
               <div class="pf-chat-attachment">
                 <img
                   class="pf-chat-attachment-img"
                   src={convertFileSrc(path)}
                   alt=""
+                  role="button"
+                  aria-label={`Preview image ${i() + 1}`}
+                  onClick={() => openLightbox(convertFileSrc(path))}
                   onError={(e) => {
                     e.currentTarget.style.visibility = "hidden";
                   }}
                 />
+                <span class="pf-chat-attachment-index" aria-hidden="true">
+                  {i() + 1}
+                </span>
                 <button
                   type="button"
                   class="pf-chat-attachment-remove"
                   aria-label="Remove image"
-                  onClick={() => removeImage(path)}
+                  onClick={() => removeImage(i())}
                 >
                   ✕
                 </button>

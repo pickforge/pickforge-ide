@@ -149,6 +149,30 @@ describe("replaceRangeWithText", () => {
     expect(result.cursor).toBe(23);
   });
 
+  it("replacing a literal duplicate marker keeps the attachment", () => {
+    const attachments = [ready(1, "/a.png")];
+    const text = "caption [Image #1] quoted [Image #1]";
+
+    const result = replaceRangeWithText(attachments, text, 26, 36, "x");
+
+    expect(result.text).toBe("caption [Image #1] quoted x");
+    expect(result.attachments).toEqual(attachments);
+    expect(result.removed).toEqual([]);
+    expect(result.cursor).toBe(27);
+  });
+
+  it("dropping the real chip leaves literal duplicates verbatim and renumbers survivors", () => {
+    const attachments = [ready(1, "/a.png"), ready(2, "/b.png")];
+    const text = "[Image #1] and [Image #1] plus [Image #2]";
+
+    const result = replaceRangeWithText(attachments, text, 0, 10, "");
+
+    expect(result.text).toBe(" and [Image #1] plus [Image #1]");
+    expect(result.attachments.map((a) => a.id)).toEqual([2]);
+    expect(result.removed.map((a) => a.id)).toEqual([1]);
+    expect(result.cursor).toBe(0);
+  });
+
   it("treats markers without a matching attachment as plain text", () => {
     const attachments = [ready(1, "/a.png")];
     const text = "x [Image #1] [Image #7] y";

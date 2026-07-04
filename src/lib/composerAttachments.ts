@@ -136,29 +136,41 @@ export function replaceRangeWithText(
   let from = Math.max(0, Math.min(start, text.length));
   let to = Math.min(Math.max(from, end), text.length);
   const count = attachments.length;
-  const chipSpans = markerSpans(text).filter((span) => span.n >= 1 && span.n <= count);
+  // Chip-backed spans follow renderComposer's rule: only the FIRST occurrence
+  // of each marker number is the attachment's anchor; literal duplicates (a
+  // pasted "[Image #1]" next to the real chip) are plain text and splice like
+  // any other characters.
+  const seen = new Set<number>();
+  const chipSpans = markerSpans(text).filter((span) => {
+    if (span.n < 1 || span.n > count || seen.has(span.n)) return false;
+    seen.add(span.n);
+    return true;
+  });
   for (const span of chipSpans) {
     if (from > span.start && from < span.end) from = span.start;
     if (to > span.start && to < span.end) to = span.end;
   }
-  const droppedNs = [
-    ...new Set(
-      chipSpans
-        .filter((span) => span.start >= from && span.end <= to)
-        .map((span) => span.n),
-    ),
-  ].sort((a, b) => b - a);
-  // Renumber only the pre-existing text around the replacement — the inserted
-  // chunk is user content and must survive verbatim even when it happens to
-  // contain marker syntax like "[Image #1]".
-  let before = text.slice(0, from);
-  let after = text.slice(to);
-  let remaining = count;
-  for (const n of droppedNs) {
-    before = removeMarkerAndRenumber(before, n, remaining);
-    after = removeMarkerAndRenumber(after, n, remaining);
-    remaining -= 1;
-  }
+  const droppedNs = chipSpans
+    .filter((span) => span.start >= from && span.end <= to)
+    .map((span) => span.n);
+  const dropped = new Set(droppedNs);
+  const shifted = (n: number) => n - droppedNs.filter((d) => d < n).length;
+  // Rebuild the surrounding text span-wise: dropped chips vanish, surviving
+  // chips renumber, and everything else — including literal duplicates and the
+  // inserted chunk — survives verbatim.
+  const rebuild = (segStart: number, segEnd: number): string => {
+    let out = "";
+    let at = segStart;
+    for (const span of chipSpans) {
+      if (span.start < segStart || span.start >= segEnd) continue;
+      out += text.slice(at, span.start);
+      if (!dropped.has(span.n)) out += `[Image #${shifted(span.n)}]`;
+      at = span.end;
+    }
+    return out + text.slice(at, segEnd);
+  };
+  const before = rebuild(0, from);
+  const after = rebuild(to, text.length);
   const droppedIds = new Set(droppedNs.map((n) => attachments[n - 1].id));
   return {
     attachments: attachments.filter((attachment) => !droppedIds.has(attachment.id)),

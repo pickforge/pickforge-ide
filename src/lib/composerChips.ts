@@ -252,6 +252,27 @@ export function setCaretAtOffset(
   sel.addRange(range);
 }
 
+/** True when a forward Delete at the collapsed caret would only consume the
+ *  trailing caret filler (no real content follows). The composer prevents the
+ *  default then: eating the filler would put WebKit back on the element-boundary
+ *  caret the filler exists to avoid, and a Delete at the end of the message is a
+ *  no-op anyway. */
+export function deleteTargetsFillerTail(root: HTMLElement): boolean {
+  const sel = activeSelection(root);
+  if (!sel || !sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  const container = range.startContainer;
+  if (container.nodeType !== 3) return false;
+  const text = container as Text;
+  if (!isFillerOnly(text.data.slice(range.startOffset))) return false;
+  let node: Node | null = text;
+  while (node && node !== root) {
+    if (node.nextSibling) return false;
+    node = node.parentNode;
+  }
+  return true;
+}
+
 /** Attachment id of the chip immediately adjacent to the collapsed caret in the
  *  given direction, or `null`. Lets the composer delete a whole chip on a single
  *  Backspace/Delete regardless of the engine's atomic-deletion behavior. */

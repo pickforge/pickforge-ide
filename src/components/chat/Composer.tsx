@@ -41,6 +41,7 @@ import {
   caretOffset,
   chipIdsInOrder,
   chipStartOffset,
+  deleteTargetsFillerTail,
   renderComposer,
   selectionOffsets,
   serializeComposer,
@@ -412,7 +413,12 @@ export function Composer(props: {
       item.kind === "template"
         ? item.template.body
         : `${item.skill.trigger}${item.skill.name} `;
-    setText(body);
+    // Staged images survive the draft replacement: their markers re-anchor at
+    // the head so the caret still lands at the end of the inserted body.
+    const markers = attachmentIds()
+      .map((_, i) => `[Image #${i + 1}]`)
+      .join(" ");
+    setText(markers ? `${markers} ${body}` : body);
     setDismissed(true);
     setSelected(0);
     field.focus();
@@ -798,6 +804,10 @@ export function Composer(props: {
       if (chipId !== null) {
         event.preventDefault();
         removeImageInPlace(chipId);
+        return;
+      }
+      if (event.key === "Delete" && deleteTargetsFillerTail(field)) {
+        event.preventDefault();
         return;
       }
     }

@@ -5,6 +5,7 @@ import {
   adjacentChipId,
   chipIdsInOrder,
   chipStartOffset,
+  deleteTargetsFillerTail,
   renderComposer,
   serializeComposer,
   setCaretAtOffset,
@@ -146,6 +147,16 @@ describe("caret filler after a trailing chip", () => {
     renderComposer(root, "hi [Image #1]", [10], buildChip);
     setCaretAtOffset(root, "hi [Image #1]".length, [10]);
     expect(adjacentChipId(root, "before")).toBe(10);
+  });
+
+  it("deleteTargetsFillerTail is true only when Delete would just eat the filler", () => {
+    renderComposer(root, "hi [Image #1]", [10], buildChip);
+    setCaretAtOffset(root, "hi [Image #1]".length, [10]);
+    expect(deleteTargetsFillerTail(root)).toBe(true);
+
+    renderComposer(root, "hi [Image #1] tail", [10], buildChip);
+    setCaretAtOffset(root, "hi [Image #1]".length, [10]);
+    expect(deleteTargetsFillerTail(root)).toBe(false);
   });
 });
 

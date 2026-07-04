@@ -307,14 +307,24 @@ export function Composer(props: {
         return;
       }
       // WebKitGTK advertises text/uri-list but getData returns "" — the URIs
-      // are only reachable through a native clipboard read. The generation is
-      // pinned at paste time so a send racing the read can't inherit images.
+      // are only reachable through a native clipboard read. The file list is
+      // read as such first (uri-list clipboards may carry no text flavor);
+      // the generation is pinned at paste time so a send racing the read
+      // can't inherit images.
       if (uriPaths.length === 0 && data.types.includes("text/uri-list")) {
         event.preventDefault();
         const generation = pasteGeneration;
-        void agentClipboardText()
-          .then((text) => {
-            const paths = filePathsFromUriList(text);
+        void agentClipboardFilePaths()
+          .then((paths) => ({ paths, text: paths.join(" ") }))
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== "clipboard has no files") throw error;
+            return agentClipboardText().then((text) => ({
+              paths: filePathsFromUriList(text),
+              text,
+            }));
+          })
+          .then(({ paths, text }) => {
             if (paths.some((path) => acceptedPathExt(path))) {
               onPathDrop(paths, generation);
               return;
@@ -328,7 +338,7 @@ export function Composer(props: {
             setText(`${field.value.slice(0, start)}${insert}${field.value.slice(end)}`);
             autosize();
           })
-          .catch((error) => {
+          .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
             if (message === "clipboard has no text") return;
             showPasteError(message);

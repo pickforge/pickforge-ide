@@ -75,6 +75,12 @@ describe("filePathsFromUriList", () => {
   it("returns nothing for plain text", () => {
     expect(filePathsFromUriList("just some text")).toEqual([]);
   });
+
+  it("normalizes Windows drive URIs to native paths", () => {
+    expect(filePathsFromUriList("file:///C:/Users/dev/pic.png")).toEqual([
+      "C:/Users/dev/pic.png",
+    ]);
+  });
 });
 
 describe("registerDropTarget — drop dispatch", () => {

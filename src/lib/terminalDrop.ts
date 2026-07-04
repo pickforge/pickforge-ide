@@ -54,7 +54,9 @@ export function filePathsFromUriList(text: string): string[] {
     if (slash < 0) continue;
     if (slash > 0) rest = rest.slice(slash);
     try {
-      paths.push(decodeURIComponent(rest));
+      const decoded = decodeURIComponent(rest);
+      // Windows URIs decode to /C:/Users/... — drop the URI artifact slash.
+      paths.push(/^\/[A-Za-z]:[/\\]/.test(decoded) ? decoded.slice(1) : decoded);
     } catch {
       // malformed percent-escape — skip the entry rather than attach garbage
     }

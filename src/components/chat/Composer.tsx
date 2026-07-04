@@ -307,14 +307,16 @@ export function Composer(props: {
         return;
       }
       // WebKitGTK advertises text/uri-list but getData returns "" — the URIs
-      // are only reachable through a native clipboard read.
+      // are only reachable through a native clipboard read. The generation is
+      // pinned at paste time so a send racing the read can't inherit images.
       if (uriPaths.length === 0 && data.types.includes("text/uri-list")) {
         event.preventDefault();
+        const generation = pasteGeneration;
         void agentClipboardText()
           .then((text) => {
             const paths = filePathsFromUriList(text);
             if (paths.some((path) => acceptedPathExt(path))) {
-              onPathDrop(paths);
+              onPathDrop(paths, generation);
               return;
             }
             // Not an image copy — restore the default paste the intercept ate.
@@ -388,7 +390,7 @@ export function Composer(props: {
     }
   };
 
-  const onPathDrop = (paths: string[]) => {
+  const onPathDrop = (paths: string[], atGeneration?: number) => {
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
@@ -398,7 +400,8 @@ export function Composer(props: {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
     }
     if (files.length === 0) return;
-    const generation = pasteGeneration;
+    const generation = atGeneration ?? pasteGeneration;
+    if (generation !== pasteGeneration) return;
     for (const path of files) {
       void agentStashImageFromPath(path)
         .then((stashedPath) => {

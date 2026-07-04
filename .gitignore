@@ -34,3 +34,6 @@ playwright-report/
 # Runtime state
 /data/
 .pickforge/
+
+# iOS run pipeline build output (xcodebuild SYMROOT)
+**/build/pickforge-ios/

@@ -192,13 +192,24 @@ describe("withDevice", () => {
       withDevice(target({ deviceConvention: "env", command: "./gradlew installDebug" }), "emulator-5556"),
     ).toBe("ANDROID_SERIAL='emulator-5556' ./gradlew installDebug");
   });
-  it("native-ios appends -destination 'id=<udid>' after the action verb", () => {
+  it("native-ios expands the build into a build→install→launch pipeline pinned to the udid", () => {
+    // A bare `xcodebuild build` only compiles; the pipeline builds a SIMULATOR
+    // .app (`-sdk iphonesimulator` — a destination alone builds the device SDK,
+    // which simctl can't install), resolves the freshly-built app, then installs
+    // + launches it on the sim so the RUNNING app is what the inspector/screenshot
+    // sees. The udid is pinned at install + launch (a simulator build is
+    // device-agnostic; the specific device is chosen there).
     expect(
       withDevice(
         target({ deviceConvention: "xcodeDestination", command: "xcodebuild build" }),
         "SIM-9F3A-1D7B",
       ),
-    ).toBe("xcodebuild build -destination 'id=SIM-9F3A-1D7B'");
+    ).toBe(
+      "xcodebuild build -configuration Debug -sdk iphonesimulator SYMROOT=build/pickforge-ios && " +
+        "APP=\"$(ls -d build/pickforge-ios/Debug-iphonesimulator/*.app | head -1)\" && " +
+        "xcrun simctl install 'SIM-9F3A-1D7B' \"$APP\" && " +
+        "xcrun simctl launch 'SIM-9F3A-1D7B' \"$(plutil -extract CFBundleIdentifier raw \"$APP/Info.plist\")\"",
+    );
   });
   it("native-ios leaves an already-pinned -destination alone", () => {
     expect(
@@ -213,7 +224,8 @@ describe("withDevice", () => {
   });
   it("native-ios: -destination-timeout is NOT a pinned destination (token-aware)", () => {
     // A near-miss flag must not be mistaken for `-destination`, or the chosen
-    // udid would be silently dropped.
+    // udid would be silently dropped and the pipeline never built. The user's
+    // extra flag is preserved verbatim ahead of the appended destination.
     expect(
       withDevice(
         target({
@@ -222,7 +234,13 @@ describe("withDevice", () => {
         }),
         "SIM-9F3A-1D7B",
       ),
-    ).toBe("xcodebuild build -destination-timeout 30 -destination 'id=SIM-9F3A-1D7B'");
+    ).toBe(
+      "xcodebuild build -destination-timeout 30 -configuration Debug " +
+        "-sdk iphonesimulator SYMROOT=build/pickforge-ios && " +
+        "APP=\"$(ls -d build/pickforge-ios/Debug-iphonesimulator/*.app | head -1)\" && " +
+        "xcrun simctl install 'SIM-9F3A-1D7B' \"$APP\" && " +
+        "xcrun simctl launch 'SIM-9F3A-1D7B' \"$(plutil -extract CFBundleIdentifier raw \"$APP/Info.plist\")\"",
+    );
   });
   it("native-ios: -destination as the trailing token still counts as pinned", () => {
     expect(

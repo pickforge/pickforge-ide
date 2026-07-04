@@ -279,10 +279,18 @@ function iosContract(): void {
   assertDetected("native-ios-app", "native-ios");
 
   const udid = "0000AAAA-1111-2222-3333-4444BBBB5555";
+  // A bare `xcodebuild build` only COMPILES — the run command must build a
+  // SIMULATOR app (`-sdk iphonesimulator`; a destination alone builds the device
+  // SDK, which simctl can't install), then `simctl install` + `simctl launch`
+  // the freshly-built app so the RUNNING app is what the screenshot / os_log
+  // panels inspect. The bundle id is read from the built app at runtime.
   expect(
     liveCommand("native-ios", udid),
-    `xcodebuild build -destination 'id=${udid}'`,
-    "native-ios run command pins -destination id=<udid>",
+    `xcodebuild build -configuration Debug -sdk iphonesimulator SYMROOT=build/pickforge-ios && ` +
+      `APP="$(ls -d build/pickforge-ios/Debug-iphonesimulator/*.app | head -1)" && ` +
+      `xcrun simctl install '${udid}' "$APP" && ` +
+      `xcrun simctl launch '${udid}' "$(plutil -extract CFBundleIdentifier raw "$APP/Info.plist")"`,
+    "native-ios run command builds → installs → launches the app on the sim",
   );
   const profile = runProfile("native-ios");
   expect(

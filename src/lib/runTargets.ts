@@ -52,9 +52,12 @@ export function defaultCommand(t: TargetDetection): string | null {
     case "native-android":
       return "./gradlew installDebug";
     case "native-ios":
-      // A plain build the user edits at the prompt. Workspace / multi-scheme
-      // projects need -workspace/-scheme; xcodebuild emits its own guidance error
-      // pointing that out rather than us guessing the wrong scheme here.
+      // The device-free base: a plain build (no simulator selected ⇒ nothing to
+      // install onto). Once a simulator udid is chosen, `withDevice` expands this
+      // into the full build→install→launch pipeline (see `iosRunCommand`).
+      // Workspace / multi-scheme projects need -workspace/-scheme; xcodebuild
+      // emits its own guidance error pointing that out rather than us guessing
+      // the wrong scheme here.
       return "xcodebuild build";
     case "web":
       return "npm run dev";
@@ -196,16 +199,52 @@ export function withDevice(t: RunTarget, serial: string | null): string {
       // native-android: prefix ANDROID_SERIAL so gradle / adb target the device.
       return `ANDROID_SERIAL=${shquote(serial)} ${t.command}`;
     case "xcodeDestination":
-      // native-ios: append `-destination 'id=<udid>'` so xcodebuild targets the
-      // chosen simulator. xcodebuild options may follow the action verb, so this
-      // stays a valid invocation; skip if the user already pinned a destination.
+      // native-ios: a plain `xcodebuild build` only COMPILES — it never installs
+      // or launches, so the app never lands on the sim to inspect. Expand the
+      // build into a self-contained build→install→launch pipeline that builds a
+      // simulator `.app` and pins the chosen udid at install + launch (see
+      // `iosRunCommand`). Skip if the user already pinned a `-destination` (they
+      // have taken manual control of device targeting — e.g. their own
+      // `-scheme`/`-destination`), leaving their edited command untouched.
       // Token-aware: `-destination-timeout` alone must NOT count as pinned.
       return /(^|\s)-destination(\s|$)/.test(t.command)
         ? t.command
-        : `${t.command} -destination ${shquote(`id=${serial}`)}`;
+        : iosRunCommand(t.command, serial);
     default:
       return t.command;
   }
+}
+
+/** The native-iOS run pipeline: `xcodebuild` BUILDS the app for the simulator,
+ *  then `simctl` INSTALLS and LAUNCHES it on the chosen simulator — a bare
+ *  `xcodebuild build` only compiles, so without this the app never appears on the
+ *  sim and the screenshot / os_log panels inspect whatever was already on screen.
+ *
+ *  Runs from the project root (the run cwd). The build pins `-sdk iphonesimulator`
+ *  so a simulator `.app` is produced: `-destination 'id=<udid>'` alone does NOT
+ *  work here — without a `-scheme` (which we won't guess from the project name)
+ *  xcodebuild ignores the destination and builds the iphoneOS/device SDK, whose
+ *  app `simctl` cannot install. `SYMROOT` steers the products into a PickForge-
+ *  owned `build/` subdir so the freshly-built `.app` is locatable by glob. The
+ *  bundle id is read from THAT app's Info.plist at runtime (never pre-baked) so
+ *  it always matches what was just built. The udid is interpolated into install
+ *  AND launch — a simulator build is device-agnostic, so the specific device is
+ *  chosen only at install/launch time.
+ *
+ *  `base` is the build invocation (default `xcodebuild build`); xcodebuild accepts
+ *  options after the action verb, so the sdk / SYMROOT flags append cleanly.
+ *  Workspace / multi-scheme projects need `-workspace`/`-scheme`; there
+ *  `xcodebuild build` emits its own clear guidance error for the user to edit. */
+export function iosRunCommand(base: string, udid: string): string {
+  const symroot = "build/pickforge-ios";
+  const app = `${symroot}/Debug-iphonesimulator/*.app`;
+  const id = shquote(udid);
+  return [
+    `${base} -configuration Debug -sdk iphonesimulator SYMROOT=${symroot}`,
+    `APP="$(ls -d ${app} | head -1)"`,
+    `xcrun simctl install ${id} "$APP"`,
+    `xcrun simctl launch ${id} "$(plutil -extract CFBundleIdentifier raw "$APP/Info.plist")"`,
+  ].join(" && ");
 }
 
 /** Convert JSONC (launch.json) to JSON: strip // and /* *​/ comments and

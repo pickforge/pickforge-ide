@@ -11,7 +11,8 @@ developers** across Flutter, React Native (Android), native Android, and web. Ep
 **Multi-framework core** — #14/#15/#16 run-control contract + per-adapter device injection ·
 #17 UIAutomator inspector · #18 forge a selected element to the agent (non-Flutter) ·
 #19 per-kind inspector copy · #20 logcat panel · #21 run/forge persistence ·
-#22 honest support-tier badge · #39 web CDP inspector + source-map select-to-source.
+#22 honest support-tier badge · #39 web CDP inspector + source-map select-to-source ·
+native-iOS accessibility inspector via `idb` (select-to-element + forge).
 
 **Agent loop** — #38 local capability-gated MCP endpoint (selection / screenshot / logs /
 context) over a unix socket, discovered via `PICKFORGE_IPC_ENDPOINT`.
@@ -33,7 +34,7 @@ onboarding reposition.
 | React Native (Android) | **Useful** | device run, UIAutomator inspector + screenshot, logcat, forge with best-effort source hints |
 | Native Android | **Useful** | Gradle run, UIAutomator inspector + logcat + forge with best-effort hints |
 | Web | **Experimental** | dev-server run, CDP DOM inspection + partial source maps |
-| iOS | **Experimental** | live `xcodebuild` run + `simctl` screenshot + `os_log` stream (proven on a real simulator); no element inspector yet — Flutter-on-iOS still gets the Deep VM-service inspector |
+| iOS | **Useful** | live `xcodebuild` run + `idb` accessibility inspector + `simctl` screenshot + `os_log` stream (proven on a real simulator), forge with best-effort hints; requires `idb` on `PATH` — Flutter-on-iOS still gets the Deep VM-service inspector |
 
 ## Live validation
 
@@ -52,10 +53,11 @@ likewise proven on a real iOS simulator (Xcode 26.6 / iOS 26.5): Tier A captured
 
 ## Remaining
 
-**iOS element inspector** — the native-iOS adapter now ships live `xcodebuild` launch,
-`simctl` screenshot, and `os_log` streaming (validated on-device). The remaining piece is
-element-tree inspection (an XCUITest/idb accessibility bridge), tracked in epic #7.
-Everything else is merged.
+The native-iOS **element inspector** now ships: `idb` dumps the booted simulator's
+accessibility hierarchy into the shared inspector for select-to-element + forge (best-effort
+handles — accessibility id / label / role — no exact source mapping), so `idb` joins `adb`
+as a device-layer dependency. With that gap closed, every framework sits at its target tier;
+further depth (e.g. exact iOS source mapping) is tracked in epic #7.
 
 ## Process
 

@@ -315,15 +315,21 @@ export function Composer(props: {
       if (uriPaths.length === 0 && data.types.includes("text/uri-list")) {
         event.preventDefault();
         const generation = pasteGeneration;
+        const readTextFlavor = () =>
+          agentClipboardText().then((text) => ({
+            paths: filePathsFromUriList(text),
+            text,
+          }));
         void agentClipboardFilePaths()
-          .then((paths: string[]) => ({ paths, text: paths.join(" ") }))
+          .then((paths: string[]) =>
+            // A non-file uri-list (e.g. a copied link) yields an empty file
+            // list — the text flavor still holds the paste payload.
+            paths.length > 0 ? { paths, text: paths.join(" ") } : readTextFlavor(),
+          )
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
             if (message !== "clipboard has no files") throw error;
-            return agentClipboardText().then((text) => ({
-              paths: filePathsFromUriList(text),
-              text,
-            }));
+            return readTextFlavor();
           })
           .then(({ paths, text }: { paths: string[]; text: string }) => {
             if (paths.some((path) => acceptedPathExt(path))) {

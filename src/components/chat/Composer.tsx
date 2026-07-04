@@ -13,6 +13,7 @@ import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
 import {
   type AgentProvider,
   type AgentSkill,
+  agentClipboardFilePaths,
   agentClipboardText,
   agentSkillsList,
   agentStashClipboardImage,
@@ -315,7 +316,7 @@ export function Composer(props: {
         event.preventDefault();
         const generation = pasteGeneration;
         void agentClipboardFilePaths()
-          .then((paths) => ({ paths, text: paths.join(" ") }))
+          .then((paths: string[]) => ({ paths, text: paths.join(" ") }))
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
             if (message !== "clipboard has no files") throw error;
@@ -324,7 +325,7 @@ export function Composer(props: {
               text,
             }));
           })
-          .then(({ paths, text }) => {
+          .then(({ paths, text }: { paths: string[]; text: string }) => {
             if (paths.some((path) => acceptedPathExt(path))) {
               onPathDrop(paths, generation);
               return;

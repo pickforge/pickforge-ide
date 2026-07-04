@@ -45,6 +45,7 @@ import {
   serializeComposer,
   setCaretAtOffset,
 } from "../../lib/composerChips";
+import { removeMarkerAndRenumber } from "../../lib/imageAnchors";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
@@ -178,6 +179,7 @@ export function Composer(props: {
   let root!: HTMLDivElement;
   let field!: HTMLDivElement;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
+  let refocusAfterPrepare = false;
   let pasteGeneration = 0;
   let droppedPasteGeneration: number | null = null;
   let nextAttachmentId = 1;
@@ -288,6 +290,12 @@ export function Composer(props: {
     if (autoClearMs) {
       pasteErrorTimer = setTimeout(() => setPasteError(null), autoClearMs);
     }
+  };
+
+  const clearPasteError = () => {
+    if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+    pasteErrorTimer = undefined;
+    setPasteError(null);
   };
 
   const revokeObjectPreview = (previewUrl: string | null) => {
@@ -451,8 +459,25 @@ export function Composer(props: {
   // Delete a chip in place: the caret stays where the chip stood instead of
   // jumping to the end of the message.
   const removeImageInPlace = (id: number) => {
+    if (preparing()) return;
     const at = chipStartOffset(field, id, attachmentIds());
     removeImage(id, true, at ?? undefined);
+  };
+
+  // Remove an attachment out from under the user (stash failure, stale
+  // generation) without losing their caret: map the current offset through the
+  // same marker-removal renumbering the text goes through.
+  const removeImageKeepingCaret = (id: number) => {
+    const at = document.activeElement === field ? caretOffset(field, attachmentIds()) : null;
+    if (at === null) return removeImage(id, false);
+    const index = attachments().findIndex((attachment) => attachment.id === id);
+    if (index < 0) return false;
+    const caret = removeMarkerAndRenumber(
+      text().slice(0, at),
+      index + 1,
+      attachments().length,
+    ).length;
+    return removeImage(id, true, caret);
   };
 
   const insertPlainText = (chunk: string) => {
@@ -480,7 +505,7 @@ export function Composer(props: {
   const discardStaleImage = (id: number, generation: number) => {
     if (!hasAttachment(id)) return true;
     if (generation === pasteGeneration) return false;
-    removeImage(id, false);
+    removeImageKeepingCaret(id);
     if (droppedPasteGeneration !== generation) {
       droppedPasteGeneration = generation;
       showPasteError("Image discarded because send already started", 4000);
@@ -507,7 +532,7 @@ export function Composer(props: {
     const wasPreparing = preparing();
     let removed = false;
     batch(() => {
-      removed = removeImage(id, false);
+      removed = removeImageKeepingCaret(id);
       if (removed && wasPreparing) setPrepareFailed(true);
     });
     if (!removed || message === "clipboard has no image") return;
@@ -600,6 +625,7 @@ export function Composer(props: {
         showPasteError("Images can't be attached while a turn is running", 4000);
         return;
       }
+      clearPasteError();
       const generation = pasteGeneration;
       const attachment = addPendingImage(null, anchor);
       void agentStashClipboardImage()
@@ -612,6 +638,7 @@ export function Composer(props: {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
+    if (files.length > 0) clearPasteError();
     if (unsupported > 0) {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
     }
@@ -629,11 +656,13 @@ export function Composer(props: {
     // A direct OS drop is its own ingress event; paste fallbacks arrive with
     // the generation and anchor already pinned by onPaste.
     const markerAnchor = anchor ?? pinMarkerAnchor();
+    if (preparing()) return;
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
     const files = paths.filter((path) => acceptedPathExt(path));
+    if (files.length > 0) clearPasteError();
     if (files.length !== paths.length) {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
     }
@@ -709,11 +738,24 @@ export function Composer(props: {
     setPreparing(false);
     setPrepareFailed(false);
     if (decision === "dispatch") dispatchSend();
+    if (refocusAfterPrepare) {
+      refocusAfterPrepare = false;
+      // The field only becomes editable again once its contenteditable
+      // attribute re-renders; focus after that flush.
+      queueMicrotask(() => {
+        field.focus();
+        placeCaret(text().length);
+      });
+    }
   });
 
   const submit = () => {
     if (preparing()) return;
     if (!props.turnActive && hasPendingAttachments(attachments())) {
+      // The message dispatches when the stash resolves; freeze the composer
+      // (non-editable field, ingress guards) so what was submitted is what
+      // sends — edits made meanwhile must not leak into this message.
+      refocusAfterPrepare = document.activeElement === field;
       setPrepareFailed(false);
       setPreparing(true);
       return;
@@ -937,6 +979,7 @@ export function Composer(props: {
                     type="button"
                     class="pf-chat-attachment-remove"
                     aria-label="Remove image"
+                    disabled={preparing()}
                     onClick={() => removeImage(attachment.id)}
                   >
                     ✕
@@ -981,7 +1024,7 @@ export function Composer(props: {
           aria-multiline="true"
           aria-label={placeholder()}
           data-placeholder={placeholder()}
-          contentEditable
+          contentEditable={!preparing()}
           spellcheck={true}
           onInput={onInput}
           onPaste={onPaste}

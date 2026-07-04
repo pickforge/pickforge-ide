@@ -1148,8 +1148,8 @@
   align-items: center;
   gap: var(--pf-space-xs);
   vertical-align: middle;
-  margin: 0 1px;
-  padding: 2px var(--pf-space-xs) 2px 3px;
+  margin: 0 var(--pf-chip-margin-x);
+  padding: var(--pf-chip-pad-y) var(--pf-space-xs) var(--pf-chip-pad-y) var(--pf-chip-pad-left);
   border-radius: var(--pf-radius-sm);
   border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
   background: var(--pf-surface-3);

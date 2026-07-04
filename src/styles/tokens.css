@@ -86,6 +86,11 @@
   --pf-winctl-btn-h: 26px;
   --pf-winctl-gap: 2px;
 
+  /* Composer image chips: sub-grid insets that hug the inline text box. */
+  --pf-chip-margin-x: 1px;
+  --pf-chip-pad-y: 2px;
+  --pf-chip-pad-left: 3px;
+
   /* ---- Spacing: 8px grid ---- */
   --pf-space-xs: 4px;
   --pf-space-sm: 8px;

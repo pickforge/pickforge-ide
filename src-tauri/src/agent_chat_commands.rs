@@ -341,7 +341,13 @@ pub async fn agent_clipboard_file_paths() -> Result<Vec<String>, String> {
         })?;
         Ok(files
             .into_iter()
-            .map(|path| path.to_string_lossy().into_owned())
+            .filter_map(|path| {
+                let path = path
+                    .to_string_lossy()
+                    .trim_end_matches(['\r', '\n'])
+                    .to_string();
+                (!path.is_empty()).then_some(path)
+            })
             .collect())
     })
     .await

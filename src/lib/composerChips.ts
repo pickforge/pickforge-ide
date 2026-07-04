@@ -64,7 +64,13 @@ export function serializeComposer(root: Node, attachmentIds: readonly number[]):
 /** String → DOM. Markers pointing at an existing attachment become chips (built
  *  by `buildChip`); any other text — including a hand-typed `[Image #7]` with no
  *  matching attachment — stays plain text. `\n` → `<br>`. Replaces `root`'s
- *  children in place. */
+ *  children in place.
+ *
+ *  Only the FIRST occurrence of each marker number becomes a chip; duplicates
+ *  (e.g. a pasted literal "[Image #1]" kept verbatim next to the real anchor)
+ *  stay plain text. The string can't distinguish the pasted literal from the
+ *  generated anchor, but this keeps the invariant that matters: one chip per
+ *  attachment id, and serialize(render(text)) === text. */
 export function renderComposer(
   root: HTMLElement,
   text: string,
@@ -82,12 +88,14 @@ export function renderComposer(
     }
   };
   const re = /\[Image #(\d+)\]/g;
+  const chipped = new Set<number>();
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const n = Number(m[1]);
     appendText(text.slice(last, m.index));
-    if (n >= 1 && n <= attachmentIds.length) {
+    if (n >= 1 && n <= attachmentIds.length && !chipped.has(n)) {
+      chipped.add(n);
       frag.appendChild(buildChip(attachmentIds[n - 1], n));
     } else {
       appendText(m[0]);

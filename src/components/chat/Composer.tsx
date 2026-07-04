@@ -482,6 +482,10 @@ export function Composer(props: {
 
   const insertPlainText = (chunk: string) => {
     if (!chunk) return;
+    // A submit with pending images froze the draft; a late async paste
+    // completion (native clipboard reads resolve after Send) must not mutate
+    // what is about to dispatch.
+    if (preparing()) return;
     const value = text();
     const range = document.activeElement === field ? selectionOffsets(field, attachmentIds()) : null;
     const start = range?.start ?? value.length;

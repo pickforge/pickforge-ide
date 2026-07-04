@@ -92,6 +92,12 @@ describe("serialization reflects renumbering via id→index", () => {
     expect(removed).toBe("[Image #1]  [Image #2]");
   });
 
+  it("chips only the first occurrence of a duplicated marker", () => {
+    renderComposer(root, "quote [Image #1] here b [Image #1]", [10], buildChip);
+    expect(chipIdsInOrder(root)).toEqual([10]);
+    expect(serializeComposer(root, [10])).toBe("quote [Image #1] here b [Image #1]");
+  });
+
   it("chip labels follow the model after a re-render from renumbered text", () => {
     renderComposer(root, "[Image #1] [Image #2]", [10, 20], buildChip);
     // Drop id 10: text renumbers to a single [Image #1] pointing at id 20.

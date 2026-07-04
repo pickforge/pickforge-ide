@@ -49,20 +49,21 @@ export function ChatBubble(props: {
 }): JSX.Element {
   let mdEl: HTMLDivElement | undefined;
 
-  const body = () => {
+  const body = createMemo(() => {
     if (props.role === "user" && props.images && props.images.length > 0) {
       return renderMarkdown(embedImageMarkers(props.text, props.images.length));
     }
     return renderMarkdown(props.text);
-  };
+  });
 
   // The sanitized markdown never carries an asset path — only a zero-based
   // index. Hydrate the real src (and button semantics for keyboard users) onto
   // each inline thumbnail after the DOM updates, keeping DOMPurify's default
   // URI policy untouched.
   createEffect(() => {
-    body();
     const images = props.images;
+    if (!images || images.length === 0) return;
+    body();
     queueMicrotask(() => {
       const el = mdEl;
       if (!el || !images) return;

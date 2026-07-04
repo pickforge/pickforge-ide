@@ -88,10 +88,16 @@ export function ChatTimeline(props: {
   let scroller!: HTMLDivElement;
   let content!: HTMLDivElement;
   let nearBottom = true;
+  let pinFrame: number | null = null;
   const THRESHOLD = 96;
 
-  const pin = () => {
-    scroller.scrollTop = scroller.scrollHeight;
+  const pin = (force = false) => {
+    if (pinFrame !== null) return;
+    pinFrame = requestAnimationFrame(() => {
+      pinFrame = null;
+      if (!force && !nearBottom) return;
+      scroller.scrollTop = scroller.scrollHeight;
+    });
   };
 
   const onScroll = () => {
@@ -100,12 +106,15 @@ export function ChatTimeline(props: {
   };
 
   onMount(() => {
-    pin();
+    pin(true);
     const observer = new ResizeObserver(() => {
       if (nearBottom) pin();
     });
     observer.observe(content);
-    onCleanup(() => observer.disconnect());
+    onCleanup(() => {
+      observer.disconnect();
+      if (pinFrame !== null) cancelAnimationFrame(pinFrame);
+    });
   });
 
   return (

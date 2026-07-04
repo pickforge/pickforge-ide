@@ -14,6 +14,14 @@ Local-first. Open source. Built for people who ship. You bring your own agent cr
 
 ## Install
 
+**Quick install** (Linux AppImage, macOS `.app`; no sudo):
+
+```sh
+curl -fsSL https://pickforge.dev/pickforge/install.sh | sh
+```
+
+Pins to the latest [release](https://github.com/pickforge/pickforge/releases). Windows: download the installer from Releases.
+
 Download from [Releases](https://github.com/pickforge/pickforge/releases) — `.AppImage` (Linux), `.dmg` (macOS), `.msi` (Windows).
 
 Or build from source:

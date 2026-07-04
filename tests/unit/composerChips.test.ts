@@ -2,10 +2,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   CHIP_ATTR,
+  adjacentChipId,
   chipIdsInOrder,
   chipStartOffset,
   renderComposer,
   serializeComposer,
+  setCaretAtOffset,
 } from "../../src/lib/composerChips";
 
 // A minimal chip builder mirroring the composer's DOM contract: an atomic
@@ -108,6 +110,36 @@ describe("serializer ignores chip inner content", () => {
     remove.textContent = "✕";
     chip.appendChild(remove);
     expect(serializeComposer(root, [99])).toBe("[Image #1]");
+  });
+});
+
+describe("caret filler after a trailing chip", () => {
+  it("appends a zero-width filler text node that never serializes", () => {
+    renderComposer(root, "hi [Image #1]", [10], buildChip);
+    const last = root.lastChild!;
+    expect(last.nodeType).toBe(3);
+    expect((last as Text).data).toBe("\u200B");
+    expect(serializeComposer(root, [10])).toBe("hi [Image #1]");
+  });
+
+  it("adds no filler when text follows the chip", () => {
+    renderComposer(root, "[Image #1] after", [10], buildChip);
+    expect((root.lastChild as Text).data).toBe(" after");
+  });
+
+  it("setCaretAtOffset lands in the filler text node, not at an element boundary", () => {
+    renderComposer(root, "hi [Image #1]", [10], buildChip);
+    setCaretAtOffset(root, "hi [Image #1]".length, [10]);
+    const range = document.getSelection()!.getRangeAt(0);
+    expect(range.startContainer.nodeType).toBe(3);
+    expect(range.startContainer).toBe(root.lastChild);
+    expect(range.startOffset).toBe(0);
+  });
+
+  it("adjacentChipId sees a chip through the filler", () => {
+    renderComposer(root, "hi [Image #1]", [10], buildChip);
+    setCaretAtOffset(root, "hi [Image #1]".length, [10]);
+    expect(adjacentChipId(root, "before")).toBe(10);
   });
 });
 

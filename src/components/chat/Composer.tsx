@@ -803,8 +803,9 @@ export function Composer(props: {
     }
     let value = serializeComposer(field, modelIds);
     // Restore the :empty placeholder once the editor is logically empty (WebKit
-    // may leave a filler <br>).
-    if (present.length === 0 && field.textContent === "") {
+    // may leave a filler <br>, and deleting a trailing chip can leave its caret
+    // filler behind).
+    if (present.length === 0 && (value === "" || field.textContent === "")) {
       if (field.childNodes.length) field.replaceChildren();
       value = "";
     }

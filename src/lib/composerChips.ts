@@ -13,6 +13,18 @@ export const CHIP_ATTR = "data-chip-attachment-id";
 
 const BLOCK_TAGS = new Set(["DIV", "P"]);
 
+// WebKit paints an element-boundary caret placed right after a trailing
+// non-editable inline element at the start of the line, not after the element.
+// A zero-width-space text node after a trailing chip gives the caret a text
+// position to live in; it is stripped from every serialization so the string
+// model never sees it.
+const CARET_FILLER = "\u200B";
+const FILLER_RE = /\u200B/g;
+
+function isFillerOnly(segment: string): boolean {
+  return segment.replace(FILLER_RE, "") === "";
+}
+
 function markerLength(index: number): number {
   return `[Image #${index}]`.length;
 }
@@ -25,7 +37,7 @@ export function serializeComposer(root: Node, attachmentIds: readonly number[]):
   const walk = (node: Node): void => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === 3) {
-        out += (child as Text).data;
+        out += (child as Text).data.replace(FILLER_RE, "");
         continue;
       }
       if (child.nodeType !== 1) continue;
@@ -83,6 +95,10 @@ export function renderComposer(
     last = m.index + m[0].length;
   }
   appendText(text.slice(last));
+  const tail = frag.lastChild;
+  if (tail && tail.nodeType === 1 && (tail as Element).hasAttribute(CHIP_ATTR)) {
+    frag.appendChild(doc.createTextNode(CARET_FILLER));
+  }
   root.replaceChildren(frag);
 }
 
@@ -160,12 +176,16 @@ function locate(
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       if (child.nodeType === 3) {
-        const len = (child as Text).data.length;
-        if (remaining <= len) {
-          found = { node: child, offset: remaining };
+        const data = (child as Text).data;
+        let at = 0;
+        while (at < data.length && remaining > 0) {
+          if (data[at] !== CARET_FILLER) remaining -= 1;
+          at += 1;
+        }
+        if (remaining <= 0) {
+          found = { node: child, offset: at };
           return true;
         }
-        remaining -= len;
         continue;
       }
       if (child.nodeType !== 1) continue;
@@ -178,7 +198,11 @@ function locate(
         const idx = attachmentIds.indexOf(Number(el.getAttribute(CHIP_ATTR)));
         remaining -= idx >= 0 ? markerLength(idx + 1) : 0;
         if (remaining <= 0) {
-          found = { node, offset: i + 1 };
+          const next = children[i + 1];
+          found =
+            next?.nodeType === 3
+              ? { node: next, offset: 0 }
+              : { node, offset: i + 1 };
           return true;
         }
         continue;
@@ -241,9 +265,9 @@ export function adjacentChipId(
   if (container.nodeType === 3) {
     const text = container as Text;
     if (direction === "before") {
-      return offset === 0 ? chipId(text.previousSibling) : null;
+      return isFillerOnly(text.data.slice(0, offset)) ? chipId(text.previousSibling) : null;
     }
-    return offset >= text.data.length ? chipId(text.nextSibling) : null;
+    return isFillerOnly(text.data.slice(offset)) ? chipId(text.nextSibling) : null;
   }
   const children = container.childNodes;
   return direction === "before"

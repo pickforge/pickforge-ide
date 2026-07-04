@@ -5,10 +5,12 @@ use std::time::Duration;
 
 use crate::process::{run_timeout, CommandOutcome, RunError};
 
+pub mod accessibility;
 pub mod oslog;
 pub mod simctl;
 pub mod xcodebuild;
 
+pub use accessibility::{dump_accessibility, parse_idb_accessibility};
 pub use oslog::{dump_recent, parse_oslog_line, OsLogEvent, OsLogLevel};
 pub use simctl::{
     boot_device, capture_screenshot, install_app, launch_app, list_devices, parse_simctl_devices,
@@ -35,6 +37,8 @@ pub enum IosError {
         code: Option<i32>,
         stderr: String,
     },
+    #[error("{0}")]
+    MissingDependency(String),
     #[error("parse error: {0}")]
     Parse(String),
     #[error(transparent)]

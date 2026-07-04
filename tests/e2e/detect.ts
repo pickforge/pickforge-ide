@@ -4,11 +4,11 @@
 // running Tauri/IPC layer. The device-pixel assertions (screenshot, UIAutomator,
 // logcat) live in the Rust integration tests; this only resolves the target id
 // that feeds the pure run-command builders in src/lib/runTargets.ts.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 export interface DetectedTarget {
-  targetId: "flutter" | "react-native" | "native-android" | "web" | "generic";
+  targetId: "flutter" | "react-native" | "native-android" | "native-ios" | "web" | "generic";
   displayName: string;
 }
 
@@ -46,6 +46,25 @@ function detectNativeAndroid(root: string): DetectedTarget | null {
   return hasSettings && hasBuild ? { targetId: "native-android", displayName: "Native Android" } : null;
 }
 
+function detectNativeIos(root: string): DetectedTarget | null {
+  try {
+    const hasContainer = readdirSync(root, { withFileTypes: true }).some(
+      (entry) => entry.isDirectory() && (entry.name.endsWith(".xcworkspace") || entry.name.endsWith(".xcodeproj")),
+    );
+    if (hasContainer) return { targetId: "native-ios", displayName: "Native iOS" };
+  } catch {
+    return null;
+  }
+
+  try {
+    return readFileSync(join(root, "Package.swift"), "utf8").includes(".iOS")
+      ? { targetId: "native-ios", displayName: "Native iOS" }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function detectWeb(root: string): DetectedTarget | null {
   if (!existsSync(join(root, "package.json"))) return null;
   const webFiles = ["index.html", "vite.config.ts", "vite.config.js", "next.config.js", "next.config.mjs"];
@@ -59,6 +78,7 @@ export function detectTarget(root: string): DetectedTarget {
     detectFlutter(root) ??
     detectReactNative(root) ??
     detectNativeAndroid(root) ??
+    detectNativeIos(root) ??
     detectWeb(root) ?? { targetId: "generic", displayName: "Generic project" }
   );
 }

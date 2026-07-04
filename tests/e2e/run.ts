@@ -93,6 +93,7 @@ function liveCommand(targetId: string, serial: string | null): string {
     needsDevice: profile.needsDevice,
     deviceConvention: profile.deviceConvention,
     inspectorKind: profile.inspectorKind,
+    logSource: profile.logSource,
     source: "detected",
   };
   return withDevice(target, serial);
@@ -271,9 +272,33 @@ function deviceContract(serial: string): void {
   );
 }
 
+// ── native-iOS: run-command contract is pure, so it always runs (the live
+// simulator smokes live in crates/pickforge-core/tests/live_adapters.rs) ────
+function iosContract(): void {
+  console.log("native-ios contract: device-free");
+  assertDetected("native-ios-app", "native-ios");
+
+  const udid = "0000AAAA-1111-2222-3333-4444BBBB5555";
+  expect(
+    liveCommand("native-ios", udid),
+    `xcodebuild build -destination 'id=${udid}'`,
+    "native-ios run command pins -destination id=<udid>",
+  );
+  const profile = runProfile("native-ios");
+  expect(
+    profile.inspectorKind,
+    "none",
+    "native-ios has no element inspector yet (inspectorKind=none)",
+  );
+  expect(profile.logSource, "oslog", "native-ios streams device logs over os_log");
+}
+
 async function main(): Promise<void> {
   // Device-free web smoke ALWAYS runs (it's the harness shakedown).
   await webSmoke();
+
+  // Device-free native-iOS command contract always runs too.
+  iosContract();
 
   const serial = process.env.PICKFORGE_E2E_SERIAL?.trim();
   if (!serial) {

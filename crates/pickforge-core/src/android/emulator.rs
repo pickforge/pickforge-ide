@@ -37,6 +37,7 @@ pub enum DeviceState {
 pub enum DeviceKind {
     Emulator,
     Physical,
+    Simulator,
 }
 
 /// A device row for the UI: a running adb device or an installed-but-stopped AVD.

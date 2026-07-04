@@ -25,6 +25,22 @@ export function insertMarker(
 }
 
 /**
+ * Every `[Image #N]` occurrence in `text` with its number and [start, end)
+ * span, in document order.
+ */
+export function markerSpans(
+  text: string,
+): { n: number; start: number; end: number }[] {
+  const spans: { n: number; start: number; end: number }[] = [];
+  const re = new RegExp(MARKER.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    spans.push({ n: Number(m[1]), start: m.index, end: m.index + m[0].length });
+  }
+  return spans;
+}
+
+/**
  * Drop every literal `[Image #removed]` occurrence and decrement every marker
  * numbered above it, keeping markers in lockstep with the attachment list after
  * an image is removed. Markers below `removed`, and markers beyond

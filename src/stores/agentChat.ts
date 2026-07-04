@@ -115,6 +115,25 @@ const setModelRequestSeqByChat = new Map<string, number>();
 // Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
 const ensureGenerations = new Map<string, number>();
 const autoRenameChecked = new Set<string>();
+const DELTA_FLUSH_INTERVAL_MS = 16;
+
+type AgentDeltaEvent =
+  | Extract<AgentEvent, { kind: "textDelta" }>
+  | Extract<AgentEvent, { kind: "thinkingDelta" }>;
+
+type PendingDelta = {
+  kind: AgentDeltaEvent["kind"];
+  text: string;
+};
+
+type PendingDeltaBuffer = {
+  deltas: PendingDelta[];
+  generation: number;
+  animationFrame: number | null;
+  timeout: ReturnType<typeof setTimeout> | null;
+};
+
+const pendingDeltasByChat = new Map<string, PendingDeltaBuffer>();
 
 // Chats whose active turn the user just interrupted: the backend still emits
 // the terminal turnDone/turnFailed, which must clear the busy glow WITHOUT
@@ -370,6 +389,77 @@ function reduceThinkingFinal(
   ]);
 }
 
+function isDeltaEvent(event: AgentEvent): event is AgentDeltaEvent {
+  return event.kind === "textDelta" || event.kind === "thinkingDelta";
+}
+
+function cancelPendingDeltaFlush(buffer: PendingDeltaBuffer) {
+  if (buffer.animationFrame !== null && typeof cancelAnimationFrame === "function") {
+    cancelAnimationFrame(buffer.animationFrame);
+  }
+  if (buffer.timeout !== null) clearTimeout(buffer.timeout);
+  buffer.animationFrame = null;
+  buffer.timeout = null;
+}
+
+function dropPendingDeltas(chatId: string) {
+  const buffer = pendingDeltasByChat.get(chatId);
+  if (!buffer) return;
+  cancelPendingDeltaFlush(buffer);
+  pendingDeltasByChat.delete(chatId);
+}
+
+function flushPendingDeltas(chatId: string) {
+  const buffer = pendingDeltasByChat.get(chatId);
+  if (!buffer) return;
+  cancelPendingDeltaFlush(buffer);
+  pendingDeltasByChat.delete(chatId);
+  if ((ensureGenerations.get(chatId) ?? 0) !== buffer.generation) return;
+  const chat = chats[chatId];
+  if (!chat || buffer.deltas.length === 0) return;
+  setChats(
+    chatId,
+    buffer.deltas.reduce((next, delta) => {
+      if (delta.kind === "textDelta") {
+        return reduceTextDelta(next, delta.text, () => takeSeq(chatId));
+      }
+      return reduceThinkingDelta(next, delta.text, () => takeSeq(chatId));
+    }, chat),
+  );
+}
+
+function schedulePendingDeltaFlush(chatId: string, buffer: PendingDeltaBuffer) {
+  if (buffer.animationFrame !== null || buffer.timeout !== null) return;
+  const flush = () => {
+    buffer.animationFrame = null;
+    buffer.timeout = null;
+    flushPendingDeltas(chatId);
+  };
+  if (typeof document !== "undefined" && document.hidden) {
+    buffer.timeout = setTimeout(flush, DELTA_FLUSH_INTERVAL_MS);
+    return;
+  }
+  if (typeof requestAnimationFrame === "function") {
+    buffer.animationFrame = requestAnimationFrame(flush);
+    return;
+  }
+  buffer.timeout = setTimeout(flush, DELTA_FLUSH_INTERVAL_MS);
+}
+
+function queuePendingDelta(chatId: string, event: AgentDeltaEvent) {
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  let buffer = pendingDeltasByChat.get(chatId);
+  if (!buffer || buffer.generation !== generation) {
+    if (buffer) cancelPendingDeltaFlush(buffer);
+    buffer = { deltas: [], generation, animationFrame: null, timeout: null };
+    pendingDeltasByChat.set(chatId, buffer);
+  }
+  const last = buffer.deltas[buffer.deltas.length - 1];
+  if (last?.kind === event.kind) last.text += event.text;
+  else buffer.deltas.push({ kind: event.kind, text: event.text });
+  schedulePendingDeltaFlush(chatId, buffer);
+}
+
 function reduceUsageEvent(
   chat: AgentChatState,
   event: Extract<AgentEvent, { kind: "usage" }>,
@@ -576,6 +666,12 @@ function reduceAgentEvent(
 }
 
 function receiveAgentEvent(chatId: string, event: AgentEvent) {
+  if (!chats[chatId]) return;
+  if (isDeltaEvent(event)) {
+    queuePendingDelta(chatId, event);
+    return;
+  }
+  flushPendingDeltas(chatId);
   const chat = chats[chatId];
   if (!chat) return;
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
@@ -907,6 +1003,7 @@ export async function sendAgentMessage(
   let sessionId = chat.sessionId;
   const projectRoot = chat.projectRoot;
   if (!sessionId && !projectRoot) throw new Error("Agent chat is not started");
+  flushPendingDeltas(chatId);
   let optimisticSeq = takeSeq(chatId);
   const imageList = [...images];
   appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList);
@@ -1002,6 +1099,7 @@ export async function steerAgentChat(chatId: string, text: string): Promise<void
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
   const sessionId = chats[chatId]?.sessionId;
   if (!sessionId) throw new Error("Agent chat is not started");
+  flushPendingDeltas(chatId);
   const optimisticSeq = takeSeq(chatId);
   setChats(chatId, {
     error: null,
@@ -1055,6 +1153,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   pendingSetModelByChat.delete(chatId);
   pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
+  dropPendingDeltas(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
   await dispose;
 }

@@ -49,6 +49,10 @@
   gap: var(--pf-space-md);
   padding: var(--pf-space-lg);
 }
+.pf-chat-timeline-inner > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto calc(var(--pf-space-xxxl) * 2);
+}
 
 /* ---- Bubbles ---- */
 .pf-chat-bubble-row {
@@ -831,6 +835,20 @@
   color: var(--pf-text-med);
   white-space: nowrap;
 }
+/* Narrow composer (the pickers wrap onto a second row): stack the meter —
+ * fraction, full-width track, cost — instead of one long strip. The breakpoint
+ * is the measured wrap point of a typical picker set. */
+@container chat-composer (max-width: 768px) {
+  .pf-chat-context {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--pf-space-xs);
+  }
+  .pf-chat-context-track {
+    width: 100%;
+    min-width: 72px;
+  }
+}
 
 /* ---- Composer ---- */
 .pf-chat-composer {
@@ -840,6 +858,7 @@
   flex-direction: column;
   gap: var(--pf-space-sm);
   padding: var(--pf-space-md) var(--pf-space-lg);
+  container: chat-composer / inline-size;
 }
 .pf-chat-composer::after {
   content: "";
@@ -906,13 +925,73 @@
   width: 44px;
   height: 44px;
 }
-.pf-chat-attachment-img {
+.pf-chat-attachment-img,
+.pf-chat-attachment-placeholder {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   border-radius: var(--pf-radius-sm);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-chat-attachment-img {
+  display: block;
+  object-fit: cover;
   cursor: pointer;
+}
+.pf-chat-attachment--pending .pf-chat-attachment-img {
+  cursor: default;
+}
+.pf-chat-attachment-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pf-surface-2);
+  color: var(--pf-text-low);
+}
+.pf-chat-attachment-glyph {
+  position: relative;
+  width: var(--pf-space-xl);
+  height: var(--pf-space-lg);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid currentColor;
+}
+.pf-chat-attachment-glyph::before,
+.pf-chat-attachment-glyph::after {
+  content: "";
+  position: absolute;
+}
+.pf-chat-attachment-glyph::before {
+  top: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  width: var(--pf-space-xs);
+  height: var(--pf-space-xs);
+  border-radius: var(--pf-radius-pill);
+  background: currentColor;
+  opacity: 0.55;
+}
+.pf-chat-attachment-glyph::after {
+  left: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  height: var(--pf-space-sm);
+  border-left: var(--pf-hairline-width) solid currentColor;
+  border-bottom: var(--pf-hairline-width) solid currentColor;
+  opacity: 0.65;
+  transform: skewX(-24deg);
+  transform-origin: bottom left;
+}
+.pf-chat-attachment-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--pf-radius-sm);
+  background: color-mix(in srgb, var(--pf-surface) 58%, transparent);
+  pointer-events: none;
+}
+.pf-chat-attachment-spinner {
+  --pf-spinner-size: var(--pf-space-lg);
+  color: var(--pf-text-hi);
 }
 .pf-chat-attachment-index {
   position: absolute;
@@ -1039,12 +1118,136 @@
   line-height: 1.5;
   transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-chat-textarea::placeholder {
-  color: var(--pf-text-low);
-}
 .pf-chat-textarea:focus {
   outline: none;
   border-color: var(--pf-hairline-strong);
+}
+
+/* Contenteditable editor: same box metrics as the textarea it replaced, one row
+ * tall by default and capped at the old 200px autosize ceiling. */
+.pf-chat-editor {
+  box-sizing: border-box;
+  min-height: calc(
+    1.5 * var(--pf-size-body-lg) + 2 * var(--pf-space-sm) + 2 * var(--pf-hairline-width)
+  );
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.pf-chat-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--pf-text-low);
+  pointer-events: none;
+}
+
+/* Atomic image chip — a small button-like token that deletes as a whole. No
+ * ember (the composition's single ember stays on the send affordance). */
+.pf-chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  vertical-align: middle;
+  margin: 0 var(--pf-chip-margin-x);
+  padding: var(--pf-chip-pad-y) var(--pf-space-xs) var(--pf-chip-pad-y) var(--pf-chip-pad-left);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-3);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  color: var(--pf-text-med);
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+.pf-chat-chip-visual {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--pf-space-lg);
+  height: var(--pf-space-lg);
+  border-radius: var(--pf-radius-sm);
+  overflow: hidden;
+  background: var(--pf-surface-2);
+  color: var(--pf-text-low);
+}
+.pf-chat-chip-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pf-chat-chip-spinner {
+  --pf-spinner-size: var(--pf-space-md);
+  color: var(--pf-text-med);
+}
+/* Mini image glyph: a hairline frame with a sun dot and a horizon slope. */
+.pf-chat-chip-glyph {
+  position: relative;
+  width: var(--pf-chip-glyph-w);
+  height: var(--pf-chip-glyph-h);
+  border-radius: var(--pf-chip-glyph-radius);
+  border: var(--pf-hairline-width) solid currentColor;
+}
+.pf-chat-chip-glyph::before,
+.pf-chat-chip-glyph::after {
+  content: "";
+  position: absolute;
+}
+.pf-chat-chip-glyph::before {
+  top: var(--pf-chip-glyph-dot);
+  right: var(--pf-chip-glyph-dot);
+  width: var(--pf-chip-glyph-dot);
+  height: var(--pf-chip-glyph-dot);
+  border-radius: var(--pf-radius-pill);
+  background: currentColor;
+  opacity: 0.6;
+}
+.pf-chat-chip-glyph::after {
+  left: var(--pf-chip-glyph-inset);
+  right: var(--pf-chip-glyph-inset);
+  bottom: var(--pf-chip-glyph-inset);
+  height: var(--pf-chip-glyph-horizon);
+  border-left: var(--pf-hairline-width) solid currentColor;
+  border-bottom: var(--pf-hairline-width) solid currentColor;
+  opacity: 0.7;
+  transform: skewX(-24deg);
+  transform-origin: bottom left;
+}
+.pf-chat-chip-label {
+  color: var(--pf-text-med);
+}
+.pf-chat-chip--pending .pf-chat-chip-label {
+  opacity: 0.6;
+}
+.pf-chat-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--pf-space-md);
+  height: var(--pf-space-md);
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-chip:hover .pf-chat-chip-remove {
+  color: var(--pf-text-med);
+}
+.pf-chat-chip-remove:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-2);
 }
 
 /* The single ember of this composition: the send / turn affordance. */
@@ -1086,6 +1289,10 @@
   color: var(--pf-text-low);
   box-shadow: none;
   cursor: not-allowed;
+}
+.pf-chat-send-spinner {
+  --pf-spinner-size: var(--pf-space-md);
+  color: currentColor;
 }
 .pf-chat-send--stop {
   background: transparent;

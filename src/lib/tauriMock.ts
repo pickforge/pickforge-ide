@@ -108,6 +108,8 @@ const AGENT_CHAT_HISTORY: AgentTimelineEntry[] = [
     cachedInputTokens: 4096,
     outputTokens: 2310,
     costUsd: 0.0873,
+    contextUsed: 32410,
+    contextWindow: 1_000_000,
   }),
   item(11, { kind: "turnDone", status: "completed" }),
 ];

@@ -69,6 +69,7 @@
   white-space: nowrap;
 }
 .pf-dot {
+  display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: var(--pf-radius-pill);
@@ -86,20 +87,39 @@
   border-right: none;
 }
 .pf-dot--pulsing {
+  position: relative;
+}
+.pf-dot--pulsing::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--pf-space-xs) * -1);
+  border: var(--pf-hairline-width) solid var(--pf-intent, var(--pf-ember));
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.72);
+  transform-origin: center;
   animation: pf-pulse var(--pf-dur-pulse) var(--pf-ease-out) infinite;
+  will-change: opacity, transform;
 }
 @keyframes pf-pulse {
   0% {
-    box-shadow: 0 0 0 0 var(--pf-intent, var(--pf-ember));
-    opacity: 1;
+    opacity: 0.28;
+    transform: scale(0.72);
   }
   70% {
-    box-shadow: 0 0 0 6px transparent;
-    opacity: 0.85;
+    opacity: 0;
+    transform: scale(1.65);
   }
   100% {
-    box-shadow: 0 0 0 0 transparent;
-    opacity: 1;
+    opacity: 0;
+    transform: scale(1.65);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-dot--pulsing::after {
+    animation: none;
+    opacity: 0;
   }
 }
 
@@ -304,6 +324,29 @@
   .pf-sweep-frame.active {
     animation: none;
     background: var(--pf-ember-deep);
+  }
+}
+
+/* ---- Spinner: compact neutral progress ring ---- */
+.pf-spinner {
+  display: inline-block;
+  width: var(--pf-spinner-size, var(--pf-space-lg));
+  height: var(--pf-spinner-size, var(--pf-space-lg));
+  border-radius: var(--pf-radius-pill);
+  border: var(--pf-hairline-width) solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  color: var(--pf-text-med);
+  animation: pf-spinner-turn var(--pf-dur-slow) linear infinite;
+}
+@keyframes pf-spinner-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-spinner {
+    animation: none;
+    opacity: 0.55;
   }
 }
 

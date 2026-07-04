@@ -2,6 +2,7 @@ import {
   type JSX,
   For,
   Show,
+  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -22,11 +23,35 @@ import {
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
-import { insertMarker, removeMarkerAndRenumber } from "../../lib/imageAnchors";
+import {
+  type ComposerAttachment,
+  addAttachmentWithMarker,
+  createPendingAttachment,
+  decidePreparingState,
+  hasPendingAttachments,
+  offsetAfterRemoval,
+  readyAttachmentPaths,
+  removeAttachmentWithMarker,
+  replaceRangeWithText,
+  resolveAttachment,
+} from "../../lib/composerAttachments";
+import {
+  CHIP_ATTR,
+  adjacentChipId,
+  caretOffset,
+  chipIdsInOrder,
+  chipStartOffset,
+  deleteTargetsFillerTail,
+  renderComposer,
+  selectionOffsets,
+  serializeComposer,
+  setCaretAtOffset,
+} from "../../lib/composerChips";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
 import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
+import { Spinner } from "../ui";
 import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
@@ -147,14 +172,118 @@ export function Composer(props: {
   const [dismissed, setDismissed] = createSignal(false);
   const [selected, setSelected] = createSignal(0);
   const [skills, setSkills] = createSignal<AgentSkill[]>([]);
-  const [images, setImages] = createSignal<string[]>([]);
+  const [attachments, setAttachments] = createSignal<ComposerAttachment[]>([]);
   const [pasteError, setPasteError] = createSignal<string | null>(null);
   const [dropHover, setDropHover] = createSignal(false);
+  const [preparing, setPreparing] = createSignal(false);
+  const [prepareFailed, setPrepareFailed] = createSignal(false);
   let root!: HTMLDivElement;
-  let field!: HTMLTextAreaElement;
+  let field!: HTMLDivElement;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
+  let refocusAfterPrepare = false;
   let pasteGeneration = 0;
   let droppedPasteGeneration: number | null = null;
+  let nextAttachmentId = 1;
+  let composing = false;
+
+  const attachmentIds = () => attachments().map((attachment) => attachment.id);
+
+  const buildGlyph = (doc: Document): HTMLElement => {
+    const glyph = doc.createElement("span");
+    glyph.className = "pf-chat-chip-glyph";
+    return glyph;
+  };
+
+  const buildChipVisual = (
+    attachment: ComposerAttachment | undefined,
+    _index: number,
+  ): HTMLElement => {
+    const doc = field.ownerDocument;
+    const wrap = doc.createElement("span");
+    wrap.className = "pf-chat-chip-visual";
+    wrap.setAttribute("aria-hidden", "true");
+    if (attachment?.status === "pending") {
+      const spinner = doc.createElement("span");
+      spinner.className = "pf-spinner pf-chat-chip-spinner";
+      wrap.appendChild(spinner);
+    } else if (attachment?.previewUrl) {
+      const img = doc.createElement("img");
+      img.className = "pf-chat-chip-thumb";
+      img.src = attachment.previewUrl;
+      img.alt = "";
+      img.addEventListener("error", () => wrap.replaceChildren(buildGlyph(doc)));
+      wrap.appendChild(img);
+    } else {
+      wrap.appendChild(buildGlyph(doc));
+    }
+    return wrap;
+  };
+
+  const chipAriaLabel = (index: number, pending: boolean) =>
+    pending
+      ? `Image ${index}, preparing — press Backspace to remove`
+      : `Image ${index} — press Backspace to remove`;
+
+  const buildChip = (id: number, index: number): HTMLElement => {
+    const doc = field.ownerDocument;
+    const attachment = attachments().find((a) => a.id === id);
+    const pending = attachment?.status === "pending";
+    const chip = doc.createElement("span");
+    chip.className = "pf-chat-chip";
+    chip.classList.toggle("pf-chat-chip--pending", pending);
+    chip.setAttribute("contenteditable", "false");
+    chip.setAttribute(CHIP_ATTR, String(id));
+    chip.setAttribute("role", "button");
+    chip.setAttribute("aria-label", chipAriaLabel(index, pending));
+
+    chip.appendChild(buildChipVisual(attachment, index));
+
+    const label = doc.createElement("span");
+    label.className = "pf-chat-chip-label";
+    label.textContent = `Image #${index}`;
+    chip.appendChild(label);
+
+    const remove = doc.createElement("button");
+    remove.type = "button";
+    remove.className = "pf-chat-chip-remove";
+    remove.setAttribute("contenteditable", "false");
+    remove.setAttribute("aria-label", `Remove image ${index}`);
+    remove.tabIndex = -1;
+    remove.textContent = "✕";
+    remove.addEventListener("mousedown", (e) => e.preventDefault());
+    remove.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      removeImageInPlace(id);
+    });
+    chip.appendChild(remove);
+
+    return chip;
+  };
+
+  const renderEditor = () => {
+    renderComposer(field, text(), attachmentIds(), buildChip);
+  };
+
+  // Targeted swap of a single chip's leading visual (pending spinner → thumbnail)
+  // without a full re-render, so a background stash resolving never disturbs the
+  // caret or an in-progress edit.
+  const refreshChip = (id: number) => {
+    const chip = field.querySelector<HTMLElement>(`[${CHIP_ATTR}="${id}"]`);
+    if (!chip) return;
+    const index = attachmentIds().indexOf(id) + 1;
+    const attachment = attachments().find((a) => a.id === id);
+    const pending = attachment?.status === "pending";
+    chip.classList.toggle("pf-chat-chip--pending", pending);
+    chip.setAttribute("aria-label", chipAriaLabel(index, pending));
+    chip.querySelector(".pf-chat-chip-visual")?.replaceWith(buildChipVisual(attachment, index));
+  };
+
+  const placeCaret = (offset: number) => {
+    if (document.activeElement === field) {
+      setCaretAtOffset(field, offset, attachmentIds());
+    }
+  };
 
   const showPasteError = (message: string, autoClearMs?: number) => {
     if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
@@ -164,8 +293,23 @@ export function Composer(props: {
     }
   };
 
+  const clearPasteError = () => {
+    if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+    pasteErrorTimer = undefined;
+    setPasteError(null);
+  };
+
+  const revokeObjectPreview = (previewUrl: string | null) => {
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+  };
+
+  const revokePendingPreview = (attachment: ComposerAttachment | null) => {
+    if (attachment?.status === "pending") revokeObjectPreview(attachment.previewUrl);
+  };
+
   onCleanup(() => {
     if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+    for (const attachment of attachments()) revokePendingPreview(attachment);
   });
 
   createEffect(() => {
@@ -234,7 +378,7 @@ export function Composer(props: {
   const steering = () => props.turnActive && !!props.supportsSteer && !!props.onSteer;
   const canSend = () => {
     if (props.turnActive) return steering() && text().trim().length > 0;
-    return text().trim().length > 0 || images().length > 0;
+    return text().trim().length > 0 || attachments().length > 0;
   };
   const placeholder = () => (steering() ? "Steer the running turn…" : "Message the agent…");
 
@@ -254,7 +398,7 @@ export function Composer(props: {
     }
     return items;
   });
-  const suggestionsOpen = () => !dismissed() && suggestions().length > 0;
+  const suggestionsOpen = () => !preparing() && !dismissed() && suggestions().length > 0;
   const firstLine = (body: string) => body.split("\n")[0];
 
   const suggestionText = (item: Suggestion) =>
@@ -265,61 +409,139 @@ export function Composer(props: {
     item.kind === "template" ? firstLine(item.template.body) : item.skill.description;
 
   const insert = (item: Suggestion) => {
-    if (item.kind === "template") {
-      setText(item.template.body);
-    } else {
-      setText(`${item.skill.trigger}${item.skill.name} `);
-    }
+    const body =
+      item.kind === "template"
+        ? item.template.body
+        : `${item.skill.trigger}${item.skill.name} `;
+    // Staged images survive the draft replacement: their markers re-anchor at
+    // the head so the caret still lands at the end of the inserted body.
+    const markers = attachmentIds()
+      .map((_, i) => `[Image #${i + 1}]`)
+      .join(" ");
+    setText(markers ? `${markers} ${body}` : body);
     setDismissed(true);
     setSelected(0);
     field.focus();
-    autosize();
+    renderEditor();
+    placeCaret(text().length);
   };
 
-  // Every image ingress route (HTML5 item paste, native clipboard fallback,
-  // native file-list fallback, uri-list paste, OS drop) funnels here so the
-  // `[Image #N]` marker is inserted for all of them. Callers must first pass
-  // their generation guard; this only runs on a still-current attachment.
-  // The marker must land where the cursor was when the paste/drop HAPPENED —
-  // stashing is async, and the user may keep typing before it resolves. Each
-  // ingress event pins its own anchor (two overlapping pastes must not steal
-  // each other's spot); consecutive images from one event chain their
-  // insertion points so batch attachments stay in order.
   type MarkerAnchor = { generation: number; at: number | null };
   const pinMarkerAnchor = (): MarkerAnchor => ({
     generation: pasteGeneration,
-    at: document.activeElement === field ? (field.selectionStart ?? null) : null,
+    at: document.activeElement === field ? caretOffset(field, attachmentIds()) : null,
   });
 
-  const attachImage = (path: string, anchor?: MarkerAnchor) => {
-    let index = 0;
-    setImages((cur) => {
-      index = cur.length + 1;
-      return [...cur, path];
-    });
+  const addPendingImage = (previewUrl: string | null, anchor?: MarkerAnchor) => {
+    const attachment = createPendingAttachment(nextAttachmentId++, previewUrl);
     const focused = document.activeElement === field;
     const value = text();
     const pinned = anchor && anchor.generation === pasteGeneration ? anchor.at : null;
     const cursor =
-      pinned ?? (focused ? (field.selectionStart ?? value.length) : value.length);
-    const result = insertMarker(value, index, cursor);
+      pinned ?? (focused ? (caretOffset(field, attachmentIds()) ?? value.length) : value.length);
+    const result = addAttachmentWithMarker(attachments(), value, cursor, attachment);
+    setAttachments(result.attachments);
     if (pinned !== null && anchor) anchor.at = result.cursor;
     setText(result.text);
-    if (focused) {
-      field.selectionStart = result.cursor;
-      field.selectionEnd = result.cursor;
-    }
-    autosize();
-    if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-    setPasteError(null);
+    renderEditor();
+    if (focused) placeCaret(result.cursor);
+    return attachment;
   };
 
-  const removeImage = (index: number) => {
-    const count = images().length;
-    setText((cur) => removeMarkerAndRenumber(cur, index + 1, count));
-    setImages((cur) => cur.filter((_, i) => i !== index));
-    field.focus();
-    autosize();
+  const removeImage = (id: number, focus = true, caretAt?: number) => {
+    const result = removeAttachmentWithMarker(attachments(), text(), id);
+    if (!result.removed) return false;
+    revokePendingPreview(result.removed);
+    setAttachments(result.attachments);
+    setText(result.text);
+    renderEditor();
+    if (focus) {
+      field.focus();
+      placeCaret(caretAt ?? text().length);
+    }
+    return true;
+  };
+
+  // Delete a chip in place: the caret stays where the chip stood instead of
+  // jumping to the end of the message.
+  const removeImageInPlace = (id: number) => {
+    if (preparing()) return;
+    const at = chipStartOffset(field, id, attachmentIds());
+    removeImage(id, true, at ?? undefined);
+  };
+
+  // Remove an attachment out from under the user (stash failure, stale
+  // generation) without losing their caret: map the current offset through the
+  // same marker-removal renumbering the text goes through.
+  const removeImageKeepingCaret = (id: number) => {
+    const at = document.activeElement === field ? caretOffset(field, attachmentIds()) : null;
+    if (at === null) return removeImage(id, false);
+    const caret = offsetAfterRemoval(attachments(), text(), id, at);
+    if (caret === null) return false;
+    return removeImage(id, true, caret);
+  };
+
+  const insertPlainText = (chunk: string) => {
+    if (!chunk) return;
+    // A submit with pending images froze the draft; a late async paste
+    // completion (native clipboard reads resolve after Send) must not mutate
+    // what is about to dispatch.
+    if (preparing()) return;
+    const value = text();
+    const range = document.activeElement === field ? selectionOffsets(field, attachmentIds()) : null;
+    const start = range?.start ?? value.length;
+    const end = range?.end ?? start;
+    // The chip invariant: replacing a range that covers a chip must also drop
+    // its attachment (and renumber the rest), or the orphaned image would still
+    // be sent while no chip shows it.
+    const result = replaceRangeWithText(attachments(), value, start, end, chunk);
+    for (const dropped of result.removed) revokePendingPreview(dropped);
+    batch(() => {
+      setAttachments(result.attachments);
+      setText(result.text);
+    });
+    renderEditor();
+    placeCaret(result.cursor);
+  };
+
+  const hasAttachment = (id: number) =>
+    attachments().some((attachment) => attachment.id === id);
+
+  const discardStaleImage = (id: number, generation: number) => {
+    if (!hasAttachment(id)) return true;
+    if (generation === pasteGeneration) return false;
+    removeImageKeepingCaret(id);
+    if (droppedPasteGeneration !== generation) {
+      droppedPasteGeneration = generation;
+      showPasteError("Image discarded because send already started", 4000);
+    }
+    return true;
+  };
+
+  const resolveImage = (id: number, generation: number, path: string) => {
+    if (discardStaleImage(id, generation)) return;
+    const result = resolveAttachment(attachments(), id, path, convertFileSrc(path));
+    if (!result.previous) return;
+    revokePendingPreview(result.previous);
+    setAttachments(result.attachments);
+    refreshChip(id);
+  };
+
+  const failImage = (id: number, generation: number, error: unknown) => {
+    if (!hasAttachment(id)) return;
+    if (generation !== pasteGeneration) {
+      discardStaleImage(id, generation);
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    const wasPreparing = preparing();
+    let removed = false;
+    batch(() => {
+      removed = removeImageKeepingCaret(id);
+      if (removed && wasPreparing) setPrepareFailed(true);
+    });
+    if (!removed || message === "clipboard has no image") return;
+    showPasteError(message);
   };
 
   const onPaste = (event: ClipboardEvent) => {
@@ -383,11 +605,7 @@ export function Composer(props: {
             // Not an image copy — restore the default paste the intercept ate,
             // unless a send already consumed this composer state.
             if (generation !== pasteGeneration) return;
-            const insert = paths.length > 0 ? paths.join(" ") : text;
-            const start = field.selectionStart ?? field.value.length;
-            const end = field.selectionEnd ?? start;
-            setText(`${field.value.slice(0, start)}${insert}${field.value.slice(end)}`);
-            autosize();
+            insertPlainText(paths.length > 0 ? paths.join(" ") : text);
           })
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
@@ -396,29 +614,30 @@ export function Composer(props: {
           });
         return;
       }
-      if (fileItems > 0 || data.types.length > 0) return;
+      if (fileItems > 0 || data.types.length > 0) {
+        // Non-image content: keep the composer plain-text (the textarea it
+        // replaced never accepted rich markup) by inserting the text flavor
+        // ourselves instead of letting contenteditable smuggle in HTML. A
+        // clipboard with no text flavor at all (HTML-only fragment) pastes
+        // nothing rather than markup the serializer can't represent; a
+        // non-image uri-list still pastes its decoded paths.
+        event.preventDefault();
+        const plain = data.getData("text/plain");
+        if (plain) insertPlainText(plain);
+        else if (uriPaths.length > 0) insertPlainText(uriPaths.join(" "));
+        return;
+      }
       event.preventDefault();
       if (props.turnActive) {
         showPasteError("Images can't be attached while a turn is running", 4000);
         return;
       }
+      clearPasteError();
       const generation = pasteGeneration;
+      const attachment = addPendingImage(null, anchor);
       void agentStashClipboardImage()
-        .then((path) => {
-          if (generation !== pasteGeneration) {
-            if (droppedPasteGeneration !== generation) {
-              droppedPasteGeneration = generation;
-              showPasteError("Image discarded because send already started", 4000);
-            }
-            return;
-          }
-          attachImage(path, anchor);
-        })
-        .catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message === "clipboard has no image") return;
-          showPasteError(message);
-        });
+        .then((path) => resolveImage(attachment.id, generation, path))
+        .catch((error) => failImage(attachment.id, generation, error));
       return;
     }
     event.preventDefault();
@@ -426,26 +645,17 @@ export function Composer(props: {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
+    if (files.length > 0) clearPasteError();
     if (unsupported > 0) {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
     }
     const generation = pasteGeneration;
     for (const { file, ext } of files) {
+      const attachment = addPendingImage(URL.createObjectURL(file), anchor);
       void readBase64(file)
         .then((base64) => agentStashImage(base64, ext))
-        .then((path) => {
-          if (generation !== pasteGeneration) {
-            if (droppedPasteGeneration !== generation) {
-              droppedPasteGeneration = generation;
-              showPasteError("Image discarded because send already started", 4000);
-            }
-            return;
-          }
-          attachImage(path, anchor);
-        })
-        .catch((error) => {
-          showPasteError(error instanceof Error ? error.message : String(error));
-        });
+        .then((path) => resolveImage(attachment.id, generation, path))
+        .catch((error) => failImage(attachment.id, generation, error));
     }
   };
 
@@ -453,11 +663,13 @@ export function Composer(props: {
     // A direct OS drop is its own ingress event; paste fallbacks arrive with
     // the generation and anchor already pinned by onPaste.
     const markerAnchor = anchor ?? pinMarkerAnchor();
+    if (preparing()) return;
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
     const files = paths.filter((path) => acceptedPathExt(path));
+    if (files.length > 0) clearPasteError();
     if (files.length !== paths.length) {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
     }
@@ -465,20 +677,10 @@ export function Composer(props: {
     const generation = atGeneration ?? pasteGeneration;
     if (generation !== pasteGeneration) return;
     for (const path of files) {
+      const attachment = addPendingImage(null, markerAnchor);
       void agentStashImageFromPath(path)
-        .then((stashedPath) => {
-          if (generation !== pasteGeneration) {
-            if (droppedPasteGeneration !== generation) {
-              droppedPasteGeneration = generation;
-              showPasteError("Image discarded because send already started", 4000);
-            }
-            return;
-          }
-          attachImage(stashedPath, markerAnchor);
-        })
-        .catch((error) => {
-          showPasteError(error instanceof Error ? error.message : String(error));
-        });
+        .then((stashedPath) => resolveImage(attachment.id, generation, stashedPath))
+        .catch((error) => failImage(attachment.id, generation, error));
     }
   };
 
@@ -494,45 +696,78 @@ export function Composer(props: {
     onCleanup(unregister);
   });
 
-  const submit = () => {
+  const dispatchSend = () => {
     const savedText = text();
     const value = savedText.trim();
-    const savedImages = [...images()];
+    const savedAttachments = [...attachments()];
+    const savedImages = readyAttachmentPaths(savedAttachments);
     if (!value && savedImages.length === 0) return;
-    const clearImages = !props.turnActive;
+    if (hasPendingAttachments(savedAttachments)) return;
     if (props.turnActive) {
       if (!steering() || !value) return;
       pasteGeneration += 1;
       droppedPasteGeneration = null;
       const result = props.onSteer!(value);
       setText("");
-      field.style.height = "auto";
+      renderEditor();
       void Promise.resolve(result).catch(() => {
-        if (text().trim().length === 0 && images().length === 0) {
+        if (text().trim().length === 0 && attachments().length === 0) {
           setText(savedText);
-          autosize();
-        }
-      });
-      return;
-    } else {
-      pasteGeneration += 1;
-      droppedPasteGeneration = null;
-      const result = props.onSend(value, savedImages.length > 0 ? savedImages : undefined);
-      setText("");
-      if (clearImages) setImages([]);
-      field.style.height = "auto";
-      void Promise.resolve(result).catch(() => {
-        if (text().trim().length === 0 && images().length === 0) {
-          setText(savedText);
-          setImages(savedImages);
-          autosize();
+          renderEditor();
         }
       });
       return;
     }
+
+    pasteGeneration += 1;
+    droppedPasteGeneration = null;
+    const result = props.onSend(value, savedImages.length > 0 ? savedImages : undefined);
     setText("");
-    if (clearImages) setImages([]);
-    field.style.height = "auto";
+    setAttachments([]);
+    renderEditor();
+    void Promise.resolve(result).catch(() => {
+      if (text().trim().length === 0 && attachments().length === 0) {
+        setText(savedText);
+        setAttachments(savedAttachments);
+        renderEditor();
+      }
+    });
+  };
+
+  createEffect(() => {
+    if (!preparing()) return;
+    const decision = decidePreparingState({
+      attachments: attachments(),
+      failed: prepareFailed(),
+      hasContent: text().trim().length > 0,
+    });
+    if (decision === "wait") return;
+    setPreparing(false);
+    setPrepareFailed(false);
+    if (decision === "dispatch") dispatchSend();
+    if (refocusAfterPrepare) {
+      refocusAfterPrepare = false;
+      // The field only becomes editable again once its contenteditable
+      // attribute re-renders; focus after that flush.
+      queueMicrotask(() => {
+        field.focus();
+        placeCaret(text().length);
+      });
+    }
+  });
+
+  const submit = () => {
+    if (preparing()) return;
+    if (!props.turnActive && hasPendingAttachments(attachments())) {
+      // The message dispatches when the stash resolves; freeze the composer
+      // (non-editable field, ingress guards) so what was submitted is what
+      // sends — edits made meanwhile must not leak into this message.
+      refocusAfterPrepare = document.activeElement === field;
+      setPrepareFailed(false);
+      setPreparing(true);
+      return;
+    }
+    dispatchSend();
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -561,15 +796,75 @@ export function Composer(props: {
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    // Whole-chip deletion: one Backspace/Delete adjacent to a chip removes it via
+    // the model (which renumbers the rest), independent of the engine's own
+    // atomic-deletion behavior — so the DOM and the text string never drift.
+    if (event.key === "Backspace" || event.key === "Delete") {
+      const chipId = adjacentChipId(field, event.key === "Backspace" ? "before" : "after");
+      if (chipId !== null) {
+        event.preventDefault();
+        removeImageInPlace(chipId);
+        return;
+      }
+      if (event.key === "Delete" && deleteTargetsFillerTail(field)) {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      insertPlainText("\n");
+      return;
+    }
+    if (event.key === "Enter") {
       event.preventDefault();
       submit();
     }
   };
 
-  const autosize = () => {
-    field.style.height = "auto";
-    field.style.height = `${Math.min(field.scrollHeight, 200)}px`;
+  // DOM → string on user edits. Skipped while an IME composition is active; the
+  // final compositionend re-runs it. The fast path (chips unchanged) just
+  // re-serializes; when the user deletes/reorders chips by editing, the model is
+  // reconciled to the surviving chips and the editor re-rendered to renumber.
+  const onInput = () => {
+    if (composing) return;
+    const modelIds = attachmentIds();
+    const present = chipIdsInOrder(field);
+    const same =
+      present.length === modelIds.length && present.every((id, i) => id === modelIds[i]);
+    if (!same) {
+      const survivors = new Set(present);
+      const byId = new Map(attachments().map((a) => [a.id, a]));
+      for (const attachment of attachments()) {
+        if (!survivors.has(attachment.id)) revokePendingPreview(attachment);
+      }
+      const kept = present
+        .map((id) => byId.get(id))
+        .filter((a): a is ComposerAttachment => a !== undefined);
+      const emptied = kept.length === 0 && field.textContent === "";
+      const value = emptied ? "" : serializeComposer(field, present);
+      const caret = emptied ? 0 : (selectionOffsets(field, present)?.start ?? value.length);
+      batch(() => {
+        setAttachments(kept);
+        setText(value);
+      });
+      renderEditor();
+      placeCaret(caret);
+      setDismissed(false);
+      setSelected(0);
+      return;
+    }
+    let value = serializeComposer(field, modelIds);
+    // Restore the :empty placeholder once the editor is logically empty (WebKit
+    // may leave a filler <br>, and deleting a trailing chip can leave its caret
+    // filler behind).
+    if (present.length === 0 && (value === "" || field.textContent === "")) {
+      if (field.childNodes.length) field.replaceChildren();
+      value = "";
+    }
+    setText(value);
+    setDismissed(false);
+    setSelected(0);
   };
 
   return (
@@ -582,7 +877,7 @@ export function Composer(props: {
         <Dropdown
           class="pf-chat-dd"
           up
-          disabled={props.turnActive}
+          disabled={props.turnActive || preparing()}
           value={props.provider}
           onChange={(value) => props.onProviderChange?.(value as AgentProvider)}
           options={providerDropdownOptions()}
@@ -590,7 +885,7 @@ export function Composer(props: {
         <Dropdown
           class="pf-chat-dd"
           up
-          disabled={props.turnActive || modelsFor(props.provider).length === 0}
+          disabled={props.turnActive || preparing() || modelsFor(props.provider).length === 0}
           value={props.model ?? ""}
           onChange={(value) => props.onModelChange?.(value || null)}
           options={modelDropdownOptions()}
@@ -599,7 +894,7 @@ export function Composer(props: {
           <Dropdown
             class="pf-chat-dd"
             up
-            disabled={props.turnActive}
+            disabled={props.turnActive || preparing()}
             value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
             title={
               props.provider === "claudeCode"
@@ -614,7 +909,7 @@ export function Composer(props: {
           <Dropdown
             class={isDangerMode(props.provider, modeValue()) ? "pf-chat-dd pf-chat-dd--warn" : "pf-chat-dd"}
             up
-            disabled={props.turnActive}
+            disabled={props.turnActive || preparing()}
             value={modeValue()}
             title={
               props.provider === "claudeCode" ? "Permission mode" : "Sandbox & approvals"
@@ -634,42 +929,75 @@ export function Composer(props: {
           </div>
         )}
       </Show>
-      <Show when={images().length > 0}>
+      <Show when={attachments().length > 0}>
         <div class="pf-chat-attachments">
-          <For each={images()}>
-            {(path, i) => (
-              <div class="pf-chat-attachment">
-                <img
-                  class="pf-chat-attachment-img"
-                  src={convertFileSrc(path)}
-                  alt=""
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Preview image ${i() + 1}`}
-                  onClick={() => openLightbox(convertFileSrc(path))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openLightbox(convertFileSrc(path));
-                    }
+          <For each={attachments()}>
+            {(attachment, i) => {
+              const canPreview = () =>
+                attachment.status === "ready" && attachment.previewUrl !== null;
+              const openPreview = () => {
+                if (canPreview() && attachment.previewUrl) openLightbox(attachment.previewUrl);
+              };
+              return (
+                <div
+                  class="pf-chat-attachment"
+                  classList={{
+                    "pf-chat-attachment--pending": attachment.status === "pending",
                   }}
-                  onError={(e) => {
-                    e.currentTarget.style.visibility = "hidden";
-                  }}
-                />
-                <span class="pf-chat-attachment-index" aria-hidden="true">
-                  {i() + 1}
-                </span>
-                <button
-                  type="button"
-                  class="pf-chat-attachment-remove"
-                  aria-label="Remove image"
-                  onClick={() => removeImage(i())}
                 >
-                  ✕
-                </button>
-              </div>
-            )}
+                  <Show
+                    when={attachment.previewUrl}
+                    fallback={
+                      <span class="pf-chat-attachment-placeholder" aria-hidden="true">
+                        <span class="pf-chat-attachment-glyph" />
+                      </span>
+                    }
+                  >
+                    {(src) => (
+                      <img
+                        class="pf-chat-attachment-img"
+                        src={src()}
+                        alt=""
+                        role={canPreview() ? "button" : undefined}
+                        tabIndex={canPreview() ? 0 : undefined}
+                        aria-label={canPreview() ? `Preview image ${i() + 1}` : undefined}
+                        onClick={openPreview}
+                        onKeyDown={(e) => {
+                          if (!canPreview()) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openPreview();
+                          }
+                        }}
+                        onError={(e) => {
+                          e.currentTarget.style.visibility = "hidden";
+                        }}
+                      />
+                    )}
+                  </Show>
+                  <Show when={attachment.status === "pending"}>
+                    <span class="pf-chat-attachment-progress">
+                      <Spinner
+                        class="pf-chat-attachment-spinner"
+                        label={`Preparing image ${i() + 1}`}
+                      />
+                    </span>
+                  </Show>
+                  <span class="pf-chat-attachment-index" aria-hidden="true">
+                    {i() + 1}
+                  </span>
+                  <button
+                    type="button"
+                    class="pf-chat-attachment-remove"
+                    aria-label="Remove image"
+                    disabled={preparing()}
+                    onClick={() => removeImage(attachment.id)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            }}
           </For>
         </div>
       </Show>
@@ -700,20 +1028,25 @@ export function Composer(props: {
             </For>
           </div>
         </Show>
-        <textarea
+        <div
           ref={field}
-          class="pf-chat-textarea"
-          rows={1}
-          placeholder={placeholder()}
-          value={text()}
-          onInput={(e) => {
-            setText(e.currentTarget.value);
-            setDismissed(false);
-            setSelected(0);
-            autosize();
-          }}
+          class="pf-chat-textarea pf-chat-editor"
+          role="textbox"
+          aria-multiline="true"
+          aria-label={placeholder()}
+          data-placeholder={placeholder()}
+          contentEditable={!preparing()}
+          spellcheck={true}
+          onInput={onInput}
           onPaste={onPaste}
           onKeyDown={onKeyDown}
+          onCompositionStart={() => {
+            composing = true;
+          }}
+          onCompositionEnd={() => {
+            composing = false;
+            onInput();
+          }}
         />
         <Show
           when={props.turnActive}
@@ -722,10 +1055,13 @@ export function Composer(props: {
               type="button"
               class="pf-chat-send"
               classList={{ "pf-chat-send--yield": props.emberYielded }}
-              disabled={!canSend()}
+              disabled={preparing() || !canSend()}
+              aria-label={preparing() ? "Preparing images" : "Send"}
               onClick={submit}
             >
-              Send
+              <Show when={preparing()} fallback="Send">
+                <Spinner class="pf-chat-send-spinner" label="Preparing images" />
+              </Show>
             </button>
           }
         >

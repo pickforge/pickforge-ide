@@ -47,7 +47,7 @@ jobs:
       # pixels — defeating "make CI canonical". Removing them forces every
       # baseline to be regenerated fresh on this runner.
       - name: Clear stale baselines
-        run: rm -rf tests/vrt/screens.spec.ts-snapshots
+        run: rm -rf tests/vrt/*-snapshots
 
       # `--update-snapshots` writes a complete set of baseline PNGs from this
       # runner's chromium (all missing after the clear above). The webServer
@@ -60,7 +60,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests/vrt/screens.spec.ts-snapshots
+          git add -A tests/vrt
           if git diff --cached --quiet; then
             echo "Baselines already CI-canonical — nothing to commit."
             exit 0

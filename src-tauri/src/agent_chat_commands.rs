@@ -327,6 +327,22 @@ pub async fn agent_stash_clipboard_image() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// WebKitGTK advertises text/uri-list on paste events but returns an empty
+/// string from getData, so the renderer cannot read copied files itself — it
+/// falls back to this native read and parses the URI list on its side.
+#[tauri::command]
+pub async fn agent_clipboard_text() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        clipboard.get_text().map_err(|e| match e {
+            arboard::Error::ContentNotAvailable => "clipboard has no text".to_string(),
+            _ => e.to_string(),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn agent_stash_image_from_path(path: String) -> Result<String, String> {
     let source = PathBuf::from(path);

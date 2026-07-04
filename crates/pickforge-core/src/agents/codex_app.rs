@@ -284,12 +284,7 @@ impl CodexAppClient {
     ) -> Result<String, CodexAppError> {
         let mut params = Map::new();
         params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
-        let mut input = images
-            .iter()
-            .filter(|path| !path.trim().is_empty())
-            .map(|path| json!({ "type": "localImage", "path": path }))
-            .collect::<Vec<_>>();
-        input.push(json!({ "type": "text", "text": text }));
+        let input = build_turn_input(text, images);
         params.insert("input".to_string(), Value::Array(input));
         if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
             params.insert("model".to_string(), Value::String(model));
@@ -1356,6 +1351,105 @@ fn path_string(path: PathBuf) -> String {
     path.to_string_lossy().to_string()
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ImageMarker {
+    start: usize,
+    end: usize,
+    index: Option<usize>,
+}
+
+fn build_turn_input(text: &str, images: &[String]) -> Vec<Value> {
+    let image_items = images
+        .iter()
+        .map(|path| {
+            (!path.trim().is_empty()).then(|| json!({ "type": "localImage", "path": path }))
+        })
+        .collect::<Vec<_>>();
+    let markers = image_markers(text);
+    let referenced_indexes = markers
+        .iter()
+        .filter_map(|marker| {
+            let index = marker.index?;
+            image_item(&image_items, Some(index)).map(|_| index)
+        })
+        .collect::<HashSet<_>>();
+
+    let mut input = Vec::new();
+    for (index, item) in image_items.iter().enumerate() {
+        if let Some(item) = item {
+            if !referenced_indexes.contains(&index) {
+                input.push(item.clone());
+            }
+        }
+    }
+
+    let mut pending_text = String::new();
+    let mut last_index = 0;
+    for marker in markers {
+        pending_text.push_str(&text[last_index..marker.start]);
+        if let Some(item) = image_item(&image_items, marker.index) {
+            push_text_item(&mut input, &mut pending_text);
+            input.push(item.clone());
+        } else {
+            pending_text.push_str(&text[marker.start..marker.end]);
+        }
+        last_index = marker.end;
+    }
+    pending_text.push_str(&text[last_index..]);
+    push_text_item(&mut input, &mut pending_text);
+
+    input
+}
+
+fn image_item(image_items: &[Option<Value>], index: Option<usize>) -> Option<&Value> {
+    index
+        .and_then(|index| image_items.get(index))
+        .and_then(Option::as_ref)
+}
+
+fn push_text_item(input: &mut Vec<Value>, pending_text: &mut String) {
+    if !pending_text.trim().is_empty() {
+        input.push(json!({ "type": "text", "text": std::mem::take(pending_text) }));
+    } else {
+        pending_text.clear();
+    }
+}
+
+fn image_markers(text: &str) -> Vec<ImageMarker> {
+    const PREFIX: &str = "[Image #";
+
+    let mut markers = Vec::new();
+    let mut search_start = 0;
+    while let Some(relative_start) = text[search_start..].find(PREFIX) {
+        let start = search_start + relative_start;
+        let number_start = start + PREFIX.len();
+        let mut number_end = number_start;
+        for (offset, ch) in text[number_start..].char_indices() {
+            if !ch.is_ascii_digit() {
+                break;
+            }
+            number_end = number_start + offset + ch.len_utf8();
+        }
+        if number_end == number_start {
+            search_start = number_start;
+            continue;
+        }
+        if !text[number_end..].starts_with("]") {
+            search_start = number_start;
+            continue;
+        }
+
+        let index = text[number_start..number_end]
+            .parse::<usize>()
+            .ok()
+            .and_then(|value| value.checked_sub(1));
+        let end = number_end + 1;
+        markers.push(ImageMarker { start, end, index });
+        search_start = end;
+    }
+    markers
+}
+
 fn sandbox_policy_from_mode(mode: &str) -> Option<Value> {
     let policy_type = match mode {
         "read-only" => "readOnly",
@@ -2073,14 +2167,19 @@ done
             .thread_start(script.dir.clone(), None, "workspace-write", "on-request")
             .unwrap();
         assert_eq!(info.thread_id, "thread-1");
+        let images = vec![
+            "/tmp/one.png".to_string(),
+            "/tmp/two.png".to_string(),
+            "/tmp/unused.png".to_string(),
+        ];
         assert_eq!(
             client
                 .turn_start(
                     "thread-1",
-                    "hello",
+                    "compare [Image #2] with [Image #1]",
                     None,
                     None,
-                    &[],
+                    &images,
                     Some("danger-full-access".to_string()),
                     Some("never".to_string())
                 )
@@ -2101,6 +2200,21 @@ done
         assert!(log.contains(r#""method":"turn/start""#));
         assert!(log.contains(r#""approvalPolicy":"never""#));
         assert!(log.contains(r#""sandboxPolicy":{"type":"dangerFullAccess"}"#));
+        let turn_start = log
+            .lines()
+            .find(|line| line.contains(r#""method":"turn/start""#))
+            .expect("turn/start request");
+        let turn_start: Value = serde_json::from_str(turn_start).unwrap();
+        assert_eq!(
+            turn_start["params"]["input"],
+            json!([
+                { "type": "localImage", "path": "/tmp/unused.png" },
+                { "type": "text", "text": "compare " },
+                { "type": "localImage", "path": "/tmp/two.png" },
+                { "type": "text", "text": " with " },
+                { "type": "localImage", "path": "/tmp/one.png" },
+            ])
+        );
 
         drop(client);
         let deadline = Instant::now() + Duration::from_secs(3);

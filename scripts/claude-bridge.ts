@@ -172,6 +172,9 @@ export function createPermissionGate(): PermissionGate {
 }
 
 type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+type ImageBlock = Extract<SDKUserMessage["message"]["content"], unknown[]>[number];
+
+const IMAGE_MARKER_PATTERN = /\[Image #(\d+)\]/g;
 
 function imageMediaType(path: string): ImageMediaType {
   switch (extname(path).toLowerCase()) {
@@ -189,30 +192,68 @@ function imageMediaType(path: string): ImageMediaType {
   }
 }
 
+function loadImageBlock(path: string): ImageBlock | null {
+  if (path.trim().length === 0) return null;
+  try {
+    return {
+      type: "image" as const,
+      source: {
+        type: "base64" as const,
+        media_type: imageMediaType(path),
+        data: readFileSync(path, "base64"),
+      },
+    };
+  } catch (error) {
+    writeStderr(`skipping image ${path}: ${errorMessage(error)}`);
+    return null;
+  }
+}
+
+function appendTextBlock(content: ImageBlock[], pendingText: { value: string }): void {
+  if (pendingText.value.trim().length > 0) {
+    content.push({ type: "text" as const, text: pendingText.value });
+  }
+  pendingText.value = "";
+}
+
 export function createUserTextMessage(
   text: string,
   images: string[] = [],
 ): SDKUserMessage | null {
-  const imageBlocks = images.flatMap((path) => {
-    if (path.trim().length === 0) return [];
-    try {
-      return [
-        {
-          type: "image" as const,
-          source: {
-            type: "base64" as const,
-            media_type: imageMediaType(path),
-            data: readFileSync(path, "base64"),
-          },
-        },
-      ];
-    } catch (error) {
-      writeStderr(`skipping image ${path}: ${errorMessage(error)}`);
-      return [];
+  const imageBlocks = images.map(loadImageBlock);
+  const referencedImageIndexes = new Set<number>();
+  for (const match of text.matchAll(IMAGE_MARKER_PATTERN)) {
+    const imageIndex = Number(match[1]) - 1;
+    if (imageIndex >= 0 && imageBlocks[imageIndex]) {
+      referencedImageIndexes.add(imageIndex);
     }
-  });
-  const content =
-    text.trim().length > 0 ? [...imageBlocks, { type: "text" as const, text }] : imageBlocks;
+  }
+
+  const content: ImageBlock[] = [];
+  for (const [index, block] of imageBlocks.entries()) {
+    if (block && !referencedImageIndexes.has(index)) {
+      content.push(block);
+    }
+  }
+
+  const pendingText = { value: "" };
+  let lastIndex = 0;
+  IMAGE_MARKER_PATTERN.lastIndex = 0;
+  for (const match of text.matchAll(IMAGE_MARKER_PATTERN)) {
+    pendingText.value += text.slice(lastIndex, match.index);
+    const imageIndex = Number(match[1]) - 1;
+    const block = imageIndex >= 0 ? imageBlocks[imageIndex] : null;
+    if (block) {
+      appendTextBlock(content, pendingText);
+      content.push(block);
+    } else {
+      pendingText.value += match[0];
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  pendingText.value += text.slice(lastIndex);
+  appendTextBlock(content, pendingText);
+
   if (content.length === 0) return null;
 
   return {

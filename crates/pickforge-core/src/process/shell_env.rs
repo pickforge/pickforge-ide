@@ -24,6 +24,13 @@ pub fn user_shell_environment() -> &'static HashMap<String, String> {
 }
 
 fn resolve(base: HashMap<String, String>) -> HashMap<String, String> {
+    let mut base = base;
+    // The app forces its own GTK backend for webview frame pacing (see the
+    // tauri main); that preference is app-local and must not leak into shells,
+    // agents, or GTK apps the user launches from here.
+    if base.remove("PICKFORGE_FORCED_GDK_BACKEND").is_some() {
+        base.remove("GDK_BACKEND");
+    }
     if cfg!(windows) || base.get("PICKFORGE_INHERITED_ENV_ONLY").map(String::as_str) == Some("1") {
         return base;
     }
@@ -190,5 +197,25 @@ mod tests {
         // On a real machine the merged env always carries PATH.
         let env = user_shell_environment();
         assert!(env.contains_key("PATH") || env.contains_key("Path"));
+    }
+
+    #[test]
+    fn scrubs_the_app_forced_gdk_backend_from_children() {
+        let mut base = HashMap::new();
+        base.insert("PICKFORGE_FORCED_GDK_BACKEND".to_string(), "1".to_string());
+        base.insert("GDK_BACKEND".to_string(), "x11,wayland".to_string());
+        base.insert("PICKFORGE_INHERITED_ENV_ONLY".to_string(), "1".to_string());
+        let resolved = resolve(base);
+        assert!(!resolved.contains_key("GDK_BACKEND"));
+        assert!(!resolved.contains_key("PICKFORGE_FORCED_GDK_BACKEND"));
+    }
+
+    #[test]
+    fn keeps_a_user_set_gdk_backend_without_the_marker() {
+        let mut base = HashMap::new();
+        base.insert("GDK_BACKEND".to_string(), "wayland".to_string());
+        base.insert("PICKFORGE_INHERITED_ENV_ONLY".to_string(), "1".to_string());
+        let resolved = resolve(base);
+        assert_eq!(resolved.get("GDK_BACKEND").map(String::as_str), Some("wayland"));
     }
 }

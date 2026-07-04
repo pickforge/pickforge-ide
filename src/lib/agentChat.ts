@@ -163,6 +163,10 @@ export function agentClipboardText(): Promise<string> {
   return invoke<string>("agent_clipboard_text");
 }
 
+export function agentClipboardFilePaths(): Promise<string[]> {
+  return invoke<string[]>("agent_clipboard_file_paths");
+}
+
 /** The `model_reasoning_effort` override from ~/.codex/config.toml, if set. */
 export function codexConfigDefaultEffort(): Promise<string | null> {
   return invoke<string | null>("codex_config_default_effort");

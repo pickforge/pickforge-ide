@@ -13,6 +13,7 @@ import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
 import {
   type AgentProvider,
   type AgentSkill,
+  agentClipboardFilePaths,
   agentClipboardText,
   agentSkillsList,
   agentStashClipboardImage,
@@ -307,26 +308,44 @@ export function Composer(props: {
         return;
       }
       // WebKitGTK advertises text/uri-list but getData returns "" — the URIs
-      // are only reachable through a native clipboard read. The generation is
-      // pinned at paste time so a send racing the read can't inherit images.
+      // are only reachable through a native clipboard read. The file list is
+      // read as such first (uri-list clipboards may carry no text flavor);
+      // the generation is pinned at paste time so a send racing the read
+      // can't inherit images.
       if (uriPaths.length === 0 && data.types.includes("text/uri-list")) {
         event.preventDefault();
         const generation = pasteGeneration;
-        void agentClipboardText()
-          .then((text) => {
-            const paths = filePathsFromUriList(text);
+        const readTextFlavor = () =>
+          agentClipboardText().then((text) => ({
+            paths: filePathsFromUriList(text),
+            text,
+          }));
+        void agentClipboardFilePaths()
+          .then((paths: string[]) =>
+            // A non-file uri-list (e.g. a copied link) yields an empty file
+            // list — the text flavor still holds the paste payload.
+            paths.length > 0 ? { paths, text: paths.join(" ") } : readTextFlavor(),
+          )
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== "clipboard has no files") throw error;
+            return readTextFlavor();
+          })
+          .then(({ paths, text }: { paths: string[]; text: string }) => {
             if (paths.some((path) => acceptedPathExt(path))) {
               onPathDrop(paths, generation);
               return;
             }
-            // Not an image copy — restore the default paste the intercept ate.
+            // Not an image copy — restore the default paste the intercept ate,
+            // unless a send already consumed this composer state.
+            if (generation !== pasteGeneration) return;
             const insert = paths.length > 0 ? paths.join(" ") : text;
             const start = field.selectionStart ?? field.value.length;
             const end = field.selectionEnd ?? start;
             setText(`${field.value.slice(0, start)}${insert}${field.value.slice(end)}`);
             autosize();
           })
-          .catch((error) => {
+          .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
             if (message === "clipboard has no text") return;
             showPasteError(message);

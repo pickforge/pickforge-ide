@@ -2,6 +2,10 @@ import { type JSX, Show } from "solid-js";
 import { type AgentChatTotals } from "../../stores/agentChat";
 
 function compact(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `${m >= 10 ? Math.round(m) : Math.round(m * 10) / 10}M`;
+  }
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
   return String(Math.round(n));
 }

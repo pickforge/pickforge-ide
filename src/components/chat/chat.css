@@ -1186,9 +1186,9 @@
 /* Mini image glyph: a hairline frame with a sun dot and a horizon slope. */
 .pf-chat-chip-glyph {
   position: relative;
-  width: 13px;
-  height: 11px;
-  border-radius: 2px;
+  width: var(--pf-chip-glyph-w);
+  height: var(--pf-chip-glyph-h);
+  border-radius: var(--pf-chip-glyph-radius);
   border: var(--pf-hairline-width) solid currentColor;
 }
 .pf-chat-chip-glyph::before,
@@ -1197,19 +1197,19 @@
   position: absolute;
 }
 .pf-chat-chip-glyph::before {
-  top: 2px;
-  right: 2px;
-  width: 2px;
-  height: 2px;
+  top: var(--pf-chip-glyph-dot);
+  right: var(--pf-chip-glyph-dot);
+  width: var(--pf-chip-glyph-dot);
+  height: var(--pf-chip-glyph-dot);
   border-radius: var(--pf-radius-pill);
   background: currentColor;
   opacity: 0.6;
 }
 .pf-chat-chip-glyph::after {
-  left: 1px;
-  right: 1px;
-  bottom: 1px;
-  height: 4px;
+  left: var(--pf-chip-glyph-inset);
+  right: var(--pf-chip-glyph-inset);
+  bottom: var(--pf-chip-glyph-inset);
+  height: var(--pf-chip-glyph-horizon);
   border-left: var(--pf-hairline-width) solid currentColor;
   border-bottom: var(--pf-hairline-width) solid currentColor;
   opacity: 0.7;

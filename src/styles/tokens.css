@@ -91,6 +91,15 @@
   --pf-chip-pad-y: 2px;
   --pf-chip-pad-left: 3px;
 
+  /* Chip fallback glyph: fixed pictogram geometry (hairline frame, sun dot,
+   * horizon slope) drawn in CSS. */
+  --pf-chip-glyph-w: 13px;
+  --pf-chip-glyph-h: 11px;
+  --pf-chip-glyph-radius: 2px;
+  --pf-chip-glyph-dot: 2px;
+  --pf-chip-glyph-inset: 1px;
+  --pf-chip-glyph-horizon: 4px;
+
   /* ---- Spacing: 8px grid ---- */
   --pf-space-xs: 4px;
   --pf-space-sm: 8px;

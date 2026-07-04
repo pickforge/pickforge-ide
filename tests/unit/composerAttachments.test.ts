@@ -137,6 +137,18 @@ describe("replaceRangeWithText", () => {
     expect(result.cursor).toBe(3);
   });
 
+  it("keeps marker syntax inside the inserted chunk verbatim", () => {
+    const attachments = [ready(1, "/a.png"), ready(2, "/b.png")];
+    const text = "a [Image #1] b [Image #2]";
+
+    const result = replaceRangeWithText(attachments, text, 2, 12, "quote [Image #1] here");
+
+    expect(result.text).toBe("a quote [Image #1] here b [Image #1]");
+    expect(result.attachments.map((a) => a.id)).toEqual([2]);
+    expect(result.removed.map((a) => a.id)).toEqual([1]);
+    expect(result.cursor).toBe(23);
+  });
+
   it("treats markers without a matching attachment as plain text", () => {
     const attachments = [ready(1, "/a.png")];
     const text = "x [Image #1] [Image #7] y";

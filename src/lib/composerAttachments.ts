@@ -148,22 +148,23 @@ export function replaceRangeWithText(
         .map((span) => span.n),
     ),
   ].sort((a, b) => b - a);
-  let spliced = text.slice(0, from) + chunk + text.slice(to);
-  // The prefix up to the caret goes through the same renumber passes so the
-  // cursor tracks any width change in markers before it (e.g. #10 → #9).
-  let prefix = text.slice(0, from) + chunk;
+  // Renumber only the pre-existing text around the replacement — the inserted
+  // chunk is user content and must survive verbatim even when it happens to
+  // contain marker syntax like "[Image #1]".
+  let before = text.slice(0, from);
+  let after = text.slice(to);
   let remaining = count;
   for (const n of droppedNs) {
-    spliced = removeMarkerAndRenumber(spliced, n, remaining);
-    prefix = removeMarkerAndRenumber(prefix, n, remaining);
+    before = removeMarkerAndRenumber(before, n, remaining);
+    after = removeMarkerAndRenumber(after, n, remaining);
     remaining -= 1;
   }
   const droppedIds = new Set(droppedNs.map((n) => attachments[n - 1].id));
   return {
     attachments: attachments.filter((attachment) => !droppedIds.has(attachment.id)),
     removed: attachments.filter((attachment) => droppedIds.has(attachment.id)),
-    text: spliced,
-    cursor: prefix.length,
+    text: before + chunk + after,
+    cursor: before.length + chunk.length,
   };
 }
 

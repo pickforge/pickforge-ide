@@ -397,7 +397,7 @@ export function Composer(props: {
     }
     return items;
   });
-  const suggestionsOpen = () => !dismissed() && suggestions().length > 0;
+  const suggestionsOpen = () => !preparing() && !dismissed() && suggestions().length > 0;
   const firstLine = (body: string) => body.split("\n")[0];
 
   const suggestionText = (item: Suggestion) =>
@@ -866,7 +866,7 @@ export function Composer(props: {
         <Dropdown
           class="pf-chat-dd"
           up
-          disabled={props.turnActive}
+          disabled={props.turnActive || preparing()}
           value={props.provider}
           onChange={(value) => props.onProviderChange?.(value as AgentProvider)}
           options={providerDropdownOptions()}
@@ -874,7 +874,7 @@ export function Composer(props: {
         <Dropdown
           class="pf-chat-dd"
           up
-          disabled={props.turnActive || modelsFor(props.provider).length === 0}
+          disabled={props.turnActive || preparing() || modelsFor(props.provider).length === 0}
           value={props.model ?? ""}
           onChange={(value) => props.onModelChange?.(value || null)}
           options={modelDropdownOptions()}
@@ -883,7 +883,7 @@ export function Composer(props: {
           <Dropdown
             class="pf-chat-dd"
             up
-            disabled={props.turnActive}
+            disabled={props.turnActive || preparing()}
             value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
             title={
               props.provider === "claudeCode"
@@ -898,7 +898,7 @@ export function Composer(props: {
           <Dropdown
             class={isDangerMode(props.provider, modeValue()) ? "pf-chat-dd pf-chat-dd--warn" : "pf-chat-dd"}
             up
-            disabled={props.turnActive}
+            disabled={props.turnActive || preparing()}
             value={modeValue()}
             title={
               props.provider === "claudeCode" ? "Permission mode" : "Sandbox & approvals"

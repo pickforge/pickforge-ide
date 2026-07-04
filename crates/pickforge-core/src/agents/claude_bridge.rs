@@ -336,6 +336,18 @@ impl ClaudeBridgeClient {
         }))
     }
 
+    pub fn chat_set_permission_mode(
+        &self,
+        chat_id: &str,
+        mode: &str,
+    ) -> Result<(), ClaudeBridgeError> {
+        self.send_value(json!({
+            "op": "setPermissionMode",
+            "chatId": chat_id,
+            "mode": mode,
+        }))
+    }
+
     pub fn list_sessions(&self, cwd: PathBuf) -> Result<Value, ClaudeBridgeError> {
         self.request(
             |req_id| {
@@ -1300,6 +1312,9 @@ done
         client
             .chat_approve("chat-1", "approval-1", "acceptForSession")
             .unwrap();
+        client
+            .chat_set_permission_mode("chat-1", "plan")
+            .unwrap();
         let sessions = client.list_sessions(script.dir.clone()).unwrap();
         assert_eq!(sessions["sessions"][0]["id"], "session-1");
 
@@ -1307,11 +1322,13 @@ done
             log.contains(r#""op":"start""#)
                 && log.contains(r#""op":"send""#)
                 && log.contains(r#""op":"approve""#)
+                && log.contains(r#""op":"setPermissionMode""#)
                 && log.contains(r#""op":"listSessions""#)
         });
         assert!(log.contains(r#""model":"sonnet""#));
         assert!(log.contains(r#""resumeSessionId":"session-0""#));
         assert!(log.contains(r#""permissionMode":"acceptEdits""#));
+        assert!(log.contains(r#""mode":"plan""#));
         assert!(log.contains(r#""allowedTools":["Bash"]"#));
         assert!(log.contains(r#""images":["/tmp/pickforge-shot.png"]"#));
         assert!(log.contains(r#""decision":"acceptForSession""#));

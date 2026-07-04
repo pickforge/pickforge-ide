@@ -257,6 +257,15 @@ export function IconRestart(props: IconProps): JSX.Element {
   );
 }
 
+// Mode picker: a crest shield — the permission/sandbox posture guarding a turn.
+export function IconShield(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M8 2.4l4.5 1.7v3.4c0 3-2 4.9-4.5 6-2.5-1.1-4.5-3-4.5-6V4.1z" />
+    </Svg>
+  );
+}
+
 // Model picker: a cast ingot — the metal being worked. The inner line is the
 // top facet of the cast.
 export function IconIngot(props: IconProps): JSX.Element {

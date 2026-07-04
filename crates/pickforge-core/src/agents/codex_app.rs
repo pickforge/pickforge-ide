@@ -279,6 +279,8 @@ impl CodexAppClient {
         model: Option<String>,
         effort: Option<String>,
         images: &[String],
+        sandbox: Option<String>,
+        approval_policy: Option<String>,
     ) -> Result<String, CodexAppError> {
         let mut params = Map::new();
         params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
@@ -294,6 +296,17 @@ impl CodexAppClient {
         }
         if let Some(effort) = effort.filter(|value| !value.trim().is_empty()) {
             params.insert("effort".to_string(), Value::String(effort));
+        }
+        if let Some(approval_policy) = approval_policy.filter(|value| !value.trim().is_empty()) {
+            params.insert(
+                "approvalPolicy".to_string(),
+                Value::String(approval_policy),
+            );
+        }
+        if let Some(sandbox_policy) =
+            sandbox.and_then(|value| sandbox_policy_from_mode(value.trim()))
+        {
+            params.insert("sandboxPolicy".to_string(), sandbox_policy);
         }
 
         let result = self.request("turn/start", Value::Object(params), REQUEST_TIMEOUT)?;
@@ -1343,6 +1356,16 @@ fn path_string(path: PathBuf) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn sandbox_policy_from_mode(mode: &str) -> Option<Value> {
+    let policy_type = match mode {
+        "read-only" => "readOnly",
+        "workspace-write" => "workspaceWrite",
+        "danger-full-access" => "dangerFullAccess",
+        _ => return None,
+    };
+    Some(json!({ "type": policy_type }))
+}
+
 fn drain(mut stderr: impl Read) {
     let _ = std::io::copy(&mut stderr, &mut std::io::sink());
 }
@@ -1967,6 +1990,9 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":2,"result":{{"thread":{{"id":"thread-1"}}}}}}'
       printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":3,"result":{{"turn":{{"id":"turn-2"}}}}}}'
+      ;;
   esac
 done
 "#,
@@ -2047,6 +2073,20 @@ done
             .thread_start(script.dir.clone(), None, "workspace-write", "on-request")
             .unwrap();
         assert_eq!(info.thread_id, "thread-1");
+        assert_eq!(
+            client
+                .turn_start(
+                    "thread-1",
+                    "hello",
+                    None,
+                    None,
+                    &[],
+                    Some("danger-full-access".to_string()),
+                    Some("never".to_string())
+                )
+                .unwrap(),
+            "turn-2"
+        );
         wait_for_events(&events, |events| {
             events
                 .iter()
@@ -2058,6 +2098,9 @@ done
         assert!(log.contains(r#""method":"initialize""#));
         assert!(log.contains(r#""method":"initialized""#));
         assert!(log.contains(r#""method":"thread/start""#));
+        assert!(log.contains(r#""method":"turn/start""#));
+        assert!(log.contains(r#""approvalPolicy":"never""#));
+        assert!(log.contains(r#""sandboxPolicy":{"type":"dangerFullAccess"}"#));
 
         drop(client);
         let deadline = Instant::now() + Duration::from_secs(3);

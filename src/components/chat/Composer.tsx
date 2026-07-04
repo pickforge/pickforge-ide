@@ -1,16 +1,29 @@
-import { type JSX, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  type JSX,
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
 import {
   type AgentProvider,
   type AgentSkill,
   agentSkillsList,
+  agentStashClipboardImage,
   agentStashImage,
+  agentStashImageFromPath,
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
+import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
+import { registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
-import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI } from "../icons";
+import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
 import "./chat.css";
 
 const PROVIDERS = AGENTS.filter(
@@ -75,6 +88,15 @@ const ACCEPTED_MIME_EXT: Record<string, string> = {
   "image/gif": "gif",
   "image/webp": "webp",
 };
+const ACCEPTED_PATH_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+
+function acceptedPathExt(path: string): string | null {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return null;
+  const ext = name.slice(dot + 1).toLowerCase();
+  return ACCEPTED_PATH_EXT.has(ext) ? ext : null;
+}
 
 function readBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -104,12 +126,14 @@ export function Composer(props: {
   provider: AgentProvider;
   model: string | null;
   effort?: string | null;
+  mode?: string | null;
   turnActive: boolean;
   onSend: (text: string, images?: string[]) => void | Promise<void>;
   onInterrupt: () => void;
   onProviderChange?: (provider: AgentProvider) => void;
   onModelChange?: (model: string | null) => void;
   onEffortChange?: (effort: string) => void;
+  onModeChange?: (mode: string) => void;
   supportsSteer?: boolean;
   onSteer?: (text: string) => void | Promise<void>;
   emberYielded?: boolean;
@@ -121,6 +145,8 @@ export function Composer(props: {
   const [skills, setSkills] = createSignal<AgentSkill[]>([]);
   const [images, setImages] = createSignal<string[]>([]);
   const [pasteError, setPasteError] = createSignal<string | null>(null);
+  const [dropHover, setDropHover] = createSignal(false);
+  let root!: HTMLDivElement;
   let field!: HTMLTextAreaElement;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
   let pasteGeneration = 0;
@@ -189,6 +215,14 @@ export function Composer(props: {
     return options;
   };
 
+  const modeValue = () => props.mode ?? defaultMode(props.provider);
+  const modeDropdownOptions = (): DropdownOption[] =>
+    modeOptions(props.provider).map((m) => ({
+      value: m.id,
+      label: m.label,
+      icon: () => <IconShield size={13} />,
+    }));
+
   createEffect(() => {
     if (props.provider === "codex") ensureCodexEffortOverride();
   });
@@ -247,9 +281,12 @@ export function Composer(props: {
     const data = event.clipboardData;
     if (!data) return;
     const files: { file: File; ext: string }[] = [];
+    let fileItems = 0;
     let unsupported = 0;
     for (const item of Array.from(data.items)) {
-      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      if (item.kind !== "file") continue;
+      fileItems += 1;
+      if (!item.type.startsWith("image/")) continue;
       const ext = ACCEPTED_MIME_EXT[item.type];
       if (!ext) {
         unsupported += 1;
@@ -258,7 +295,34 @@ export function Composer(props: {
       const file = item.getAsFile();
       if (file) files.push({ file, ext });
     }
-    if (files.length === 0 && unsupported === 0) return;
+    if (files.length === 0 && unsupported === 0) {
+      if (fileItems > 0 || data.types.length > 0) return;
+      event.preventDefault();
+      if (props.turnActive) {
+        showPasteError("Images can't be attached while a turn is running", 4000);
+        return;
+      }
+      const generation = pasteGeneration;
+      void agentStashClipboardImage()
+        .then((path) => {
+          if (generation !== pasteGeneration) {
+            if (droppedPasteGeneration !== generation) {
+              droppedPasteGeneration = generation;
+              showPasteError("Image discarded because send already started", 4000);
+            }
+            return;
+          }
+          setImages((cur) => [...cur, path]);
+          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+          setPasteError(null);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message === "clipboard has no image") return;
+          showPasteError(message);
+        });
+      return;
+    }
     event.preventDefault();
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
@@ -275,7 +339,7 @@ export function Composer(props: {
           if (generation !== pasteGeneration) {
             if (droppedPasteGeneration !== generation) {
               droppedPasteGeneration = generation;
-              showPasteError("Image dropped because send already started", 4000);
+              showPasteError("Image discarded because send already started", 4000);
             }
             return;
           }
@@ -288,6 +352,46 @@ export function Composer(props: {
         });
     }
   };
+
+  const onPathDrop = (paths: string[]) => {
+    if (props.turnActive) {
+      showPasteError("Images can't be attached while a turn is running", 4000);
+      return;
+    }
+    const files = paths.filter((path) => acceptedPathExt(path));
+    if (files.length !== paths.length) {
+      showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
+    }
+    if (files.length === 0) return;
+    const generation = pasteGeneration;
+    for (const path of files) {
+      void agentStashImageFromPath(path)
+        .then((stashedPath) => {
+          if (generation !== pasteGeneration) {
+            if (droppedPasteGeneration !== generation) {
+              droppedPasteGeneration = generation;
+              showPasteError("Image discarded because send already started", 4000);
+            }
+            return;
+          }
+          setImages((cur) => [...cur, stashedPath]);
+          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+          setPasteError(null);
+        })
+        .catch((error) => {
+          showPasteError(error instanceof Error ? error.message : String(error));
+        });
+    }
+  };
+
+  onMount(() => {
+    const unregister = registerPathDropTarget({
+      el: root,
+      onPaths: onPathDrop,
+      setHover: setDropHover,
+    });
+    onCleanup(unregister);
+  });
 
   const submit = () => {
     const savedText = text();
@@ -368,7 +472,11 @@ export function Composer(props: {
   };
 
   return (
-    <div class="pf-chat-composer">
+    <div
+      ref={root}
+      class="pf-chat-composer"
+      classList={{ "pf-chat-composer--drop": dropHover() }}
+    >
       <div class="pf-chat-composer-pickers">
         <Dropdown
           class="pf-chat-dd"
@@ -399,6 +507,19 @@ export function Composer(props: {
             }
             onChange={(value) => props.onEffortChange?.(value)}
             options={effortDropdownOptions()}
+          />
+        </Show>
+        <Show when={modeDropdownOptions().length > 0}>
+          <Dropdown
+            class={isDangerMode(props.provider, modeValue()) ? "pf-chat-dd pf-chat-dd--warn" : "pf-chat-dd"}
+            up
+            disabled={props.turnActive}
+            value={modeValue()}
+            title={
+              props.provider === "claudeCode" ? "Permission mode" : "Sandbox & approvals"
+            }
+            onChange={(value) => props.onModeChange?.(value)}
+            options={modeDropdownOptions()}
           />
         </Show>
         <Show when={props.meter}>

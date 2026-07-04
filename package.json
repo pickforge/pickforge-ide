@@ -28,12 +28,16 @@
     "@yume-chan/scrcpy": "2.3.0",
     "@yume-chan/scrcpy-decoder-webcodecs": "2.5.3",
     "@yume-chan/stream-extra": "2.6.1",
+    "dompurify": "^3.4.11",
+    "marked": "^18.0.5",
     "solid-js": "^1.9.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
     "@tauri-apps/cli": "^2",
+    "@types/jsdom": "^28.0.3",
     "@types/node": "^22.19.21",
+    "jsdom": "^29.1.1",
     "typescript": "^5.6.2",
     "vite": "^6.0.0",
     "vite-plugin-solid": "^2.11.0",

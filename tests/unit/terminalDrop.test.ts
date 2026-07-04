@@ -12,7 +12,12 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
-import { quotePaths, registerDropTarget, shellQuotePath } from "../../src/lib/terminalDrop";
+import {
+  quotePaths,
+  registerDropTarget,
+  registerPathDropTarget,
+  shellQuotePath,
+} from "../../src/lib/terminalDrop";
 
 describe("shellQuotePath", () => {
   it("leaves a plain path unquoted", () => {
@@ -74,6 +79,38 @@ describe("registerDropTarget — drop dispatch", () => {
     fireDrop(["/a/b.png"], { x: 50, y: 50 });
     expect(writes).toEqual(["/a/b.png"]);
     stop();
+  });
+
+  it("still delivers terminal paths as quoted shell text", () => {
+    const writes: string[] = [];
+    const stop = registerDropTarget({
+      el: fakeEl({ left: 0, top: 0, right: 100, bottom: 100 }),
+      write: (t) => (writes.push(t), true),
+      setHover: () => {},
+    });
+    fireDrop(["/a/b.png", "/c d/e.png"], { x: 50, y: 50 });
+    expect(writes).toEqual(["/a/b.png '/c d/e.png'"]);
+    stop();
+  });
+
+  it("routes raw paths to the last registered path target under the cursor", () => {
+    const writes: string[] = [];
+    const received: string[][] = [];
+    const stopTerminal = registerDropTarget({
+      el: fakeEl({ left: 0, top: 0, right: 100, bottom: 100 }),
+      write: (t) => (writes.push(t), true),
+      setHover: () => {},
+    });
+    const stopPath = registerPathDropTarget({
+      el: fakeEl({ left: 0, top: 0, right: 100, bottom: 100 }),
+      onPaths: (paths) => received.push(paths),
+      setHover: () => {},
+    });
+    fireDrop(["/c d/e.png"], { x: 50, y: 50 });
+    expect(writes).toEqual([]);
+    expect(received).toEqual([["/c d/e.png"]]);
+    stopPath();
+    stopTerminal();
   });
 
   it("still delivers when the pane buffers an early drop (write returns true)", () => {

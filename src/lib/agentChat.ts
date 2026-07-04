@@ -151,6 +151,14 @@ export function agentStashImage(dataBase64: string, ext: string): Promise<string
   return invoke<string>("agent_stash_image", { dataBase64, ext });
 }
 
+export function agentStashClipboardImage(): Promise<string> {
+  return invoke<string>("agent_stash_clipboard_image");
+}
+
+export function agentStashImageFromPath(path: string): Promise<string> {
+  return invoke<string>("agent_stash_image_from_path", { path });
+}
+
 /** The `model_reasoning_effort` override from ~/.codex/config.toml, if set. */
 export function codexConfigDefaultEffort(): Promise<string | null> {
   return invoke<string | null>("codex_config_default_effort");
@@ -161,6 +169,18 @@ export function agentChatSetModel(
   model: string | null,
 ): Promise<void> {
   return invoke("agent_chat_set_model", { sessionId, model });
+}
+
+export function agentChatSetMode(
+  sessionId: string,
+  overrides: { sandbox?: string; approvalPolicy?: string; permissionMode?: string },
+): Promise<void> {
+  return invoke("agent_chat_set_mode", {
+    sessionId,
+    sandbox: overrides.sandbox ?? null,
+    approvalPolicy: overrides.approvalPolicy ?? null,
+    permissionMode: overrides.permissionMode ?? null,
+  });
 }
 
 export function agentChatInterrupt(sessionId: string): Promise<void> {

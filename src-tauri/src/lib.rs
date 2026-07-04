@@ -79,6 +79,12 @@ pub fn run() {
                 Arc::clone(&manager_database),
                 resolve_agent_app_root(app),
             ));
+            // The static assetProtocol scope only covers the default
+            // ~/.pickforge; a PICKFORGE_HOME override relocates the stash, so
+            // admit the resolved directory at runtime or its thumbnails 404.
+            let _ = app
+                .asset_protocol_scope()
+                .allow_directory(agent_chat_commands::stash_image_dir(), true);
             Ok(())
         })
         .manage(PtyManager::new())
@@ -145,6 +151,7 @@ pub fn run() {
             agent_chat_commands::agent_chat_start,
             agent_chat_commands::agent_chat_send,
             agent_chat_commands::agent_chat_set_model,
+            agent_chat_commands::agent_chat_set_mode,
             agent_chat_commands::agent_chat_dispose,
             agent_chat_commands::agent_chat_interrupt,
             agent_chat_commands::agent_chat_approve,
@@ -152,6 +159,8 @@ pub fn run() {
             agent_chat_commands::agent_chat_history,
             agent_chat_commands::agent_skills_list,
             agent_chat_commands::agent_stash_image,
+            agent_chat_commands::agent_stash_clipboard_image,
+            agent_chat_commands::agent_stash_image_from_path,
             agent_chat_commands::codex_config_default_effort,
             vm_commands::vm_connect,
             vm_commands::vm_disconnect,

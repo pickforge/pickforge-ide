@@ -55,6 +55,7 @@ export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "canc
 
 export type PendingApproval = {
   scopeKey: string;
+  input: Record<string, unknown>;
   resolve: (result: PermissionResult) => void;
 };
 
@@ -126,6 +127,7 @@ type ApproveCommand = {
 type InterruptCommand = { op: "interrupt"; chatId: string };
 type CloseCommand = { op: "close"; chatId: string };
 type SetModelCommand = { op: "setModel"; chatId: string; model?: string | null };
+type SetPermissionModeCommand = { op: "setPermissionMode"; chatId: string; mode: string };
 type ListSessionsCommand = { op: "listSessions"; reqId: string; cwd: string };
 type SessionMessagesCommand = {
   op: "sessionMessages";
@@ -141,6 +143,7 @@ export type ParentCommand =
   | InterruptCommand
   | CloseCommand
   | SetModelCommand
+  | SetPermissionModeCommand
   | ListSessionsCommand
   | SessionMessagesCommand
   | ShutdownCommand;
@@ -154,6 +157,8 @@ type ChatSession = {
   mutationFailure: { error: unknown } | null;
   /** The model the live query currently runs (null = CLI default). */
   model: string | null;
+  /** The permission mode the live query currently runs. */
+  permissionMode: PermissionMode;
 };
 
 const chats = new Map<string, ChatSession>();
@@ -221,9 +226,12 @@ export function createUserTextMessage(
   };
 }
 
-export function permissionResultForDecision(decision: ApprovalDecision): PermissionResult {
+export function permissionResultForDecision(
+  decision: ApprovalDecision,
+  input: Record<string, unknown>,
+): PermissionResult {
   if (decision === "accept" || decision === "acceptForSession") {
-    return { behavior: "allow" };
+    return { behavior: "allow", updatedInput: input };
   }
   if (decision === "decline") {
     return { behavior: "deny", message: "denied by user" };
@@ -239,7 +247,7 @@ export function resolveApprovalDecision(
   const pending = gate.pendingApprovals.get(requestId);
   if (!pending) return false;
   if (decision === "acceptForSession") gate.alwaysAllow.add(pending.scopeKey);
-  pending.resolve(permissionResultForDecision(decision));
+  pending.resolve(permissionResultForDecision(decision, pending.input));
   return true;
 }
 
@@ -250,7 +258,7 @@ export function createPermissionHandler(
 ): CanUseTool {
   return async (toolName, input, { toolUseID, signal }) => {
     const scopeKey = approvalScopeKey(toolName, input);
-    if (gate.alwaysAllow.has(scopeKey)) return { behavior: "allow" };
+    if (gate.alwaysAllow.has(scopeKey)) return { behavior: "allow", updatedInput: input };
     if (signal.aborted) return { behavior: "deny", message: "cancelled", interrupt: true };
 
     return await new Promise<PermissionResult>((resolveResult) => {
@@ -262,7 +270,7 @@ export function createPermissionHandler(
       };
 
       signal.addEventListener("abort", abort, { once: true });
-      gate.pendingApprovals.set(toolUseID, { scopeKey, resolve: finish });
+      gate.pendingApprovals.set(toolUseID, { scopeKey, input, resolve: finish });
       emit({ ev: "approvalRequest", chatId, requestId: toolUseID, toolName, input });
     });
   };
@@ -370,6 +378,33 @@ function queueModelMutation(
   return queuedMutation;
 }
 
+function queuePermissionModeMutation(
+  chat: ChatSession,
+  mode: PermissionMode,
+  emit: (event: BridgeEvent) => void,
+): Promise<void> {
+  const previousMutation = chat.mutationChain.catch(() => undefined);
+  const nextMutation = previousMutation
+    .then(async () => {
+      await chat.query.setPermissionMode(mode);
+      chat.permissionMode = mode;
+      chat.mutationFailure = null;
+    })
+    .catch((error: unknown) => {
+      chat.mutationFailure = { error };
+      emit({ ev: "fatal", chatId: chat.chatId, error: serializeError(error) });
+      throw error;
+    });
+  let queuedMutation: Promise<void>;
+  queuedMutation = nextMutation.finally(() => {
+    if (chat.mutationChain === queuedMutation && chat.mutationFailure) {
+      chat.mutationChain = Promise.resolve();
+    }
+  });
+  chat.mutationChain = queuedMutation;
+  return queuedMutation;
+}
+
 async function awaitMutationChain(chat: ChatSession): Promise<void> {
   const mutationChain = chat.mutationChain;
   try {
@@ -395,11 +430,16 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
   if (existing) {
     // Re-attach, not a failure: the webview reloaded (or re-ensured) while this
     // bridge kept the session alive. The query is still live — ack so the new
-    // client-side sink takes over instead of failing the whole ensure. A model
-    // change rides along so the re-attached picker stays truthful.
+    // client-side sink takes over instead of failing the whole ensure. Model
+    // and permission-mode changes ride along so the re-attached picker stays
+    // truthful.
     const nextModel = command.model ?? null;
     if (existing.model !== nextModel) {
       void queueModelMutation(existing, nextModel, emit).catch(() => undefined);
+    }
+    const nextPermissionMode = (command.permissionMode || "acceptEdits") as PermissionMode;
+    if (existing.permissionMode !== nextPermissionMode) {
+      void queuePermissionModeMutation(existing, nextPermissionMode, emit).catch(() => undefined);
     }
     emit({ ev: "started", chatId: command.chatId });
     return;
@@ -416,6 +456,7 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
     mutationChain: Promise.resolve(),
     mutationFailure: null,
     model: command.model ?? null,
+    permissionMode: (command.permissionMode || "acceptEdits") as PermissionMode,
   };
   chats.set(command.chatId, chat);
   emit({ ev: "started", chatId: command.chatId });
@@ -506,6 +547,16 @@ async function handleCommand(
       if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
       try {
         await queueModelMutation(chat, command.model ?? null, emit);
+      } catch {
+        return;
+      }
+      return;
+    }
+    case "setPermissionMode": {
+      const chat = chats.get(command.chatId);
+      if (!chat) throw new Error(`unknown chat: ${command.chatId}`);
+      try {
+        await queuePermissionModeMutation(chat, command.mode as PermissionMode, emit);
       } catch {
         return;
       }

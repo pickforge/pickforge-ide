@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -7,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose, Engine as _};
+use image::{codecs::png::PngEncoder, ColorType, ImageEncoder, RgbaImage};
 use pickforge_core::agents::{
     list_agent_skills, AgentChatManager, AgentEvent, AgentProvider, AgentSkill,
     AgentStartOverrides, Engine,
@@ -148,6 +150,23 @@ pub async fn agent_chat_set_model(
 }
 
 #[tauri::command]
+pub async fn agent_chat_set_mode(
+    mgr: State<'_, AgentChatManager>,
+    session_id: String,
+    sandbox: Option<String>,
+    approval_policy: Option<String>,
+    permission_mode: Option<String>,
+) -> Result<(), String> {
+    let mgr = mgr.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        mgr.set_mode(&session_id, sandbox, approval_policy, permission_mode)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn agent_chat_interrupt(
     mgr: State<'_, AgentChatManager>,
     session_id: String,
@@ -269,11 +288,7 @@ pub fn agent_skills_list(provider: String) -> Result<Vec<AgentSkill>, String> {
 
 #[tauri::command]
 pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, String> {
-    let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
-    match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => {}
-        _ => return Err("unsupported image extension".to_string()),
-    }
+    let ext = validate_image_extension(&ext)?;
 
     let encoded = data_base64.trim();
     if decoded_base64_len_upper_bound(encoded) > MAX_STASH_IMAGE_BYTES {
@@ -285,6 +300,99 @@ pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, Str
     if bytes.len() > MAX_STASH_IMAGE_BYTES {
         return Err("image exceeds 10 MB limit".to_string());
     }
+    write_stashed_image(&ext, |file| {
+        file.write_all(&bytes).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
+pub async fn agent_stash_clipboard_image() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        let clipboard_image = clipboard.get_image().map_err(|e| match e {
+            arboard::Error::ContentNotAvailable => "clipboard has no image".to_string(),
+            _ => e.to_string(),
+        })?;
+        let bytes = encode_rgba_png(
+            clipboard_image.width,
+            clipboard_image.height,
+            clipboard_image.bytes,
+            MAX_STASH_IMAGE_BYTES,
+        )?;
+        write_stashed_image("png", |file| {
+            file.write_all(&bytes).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn agent_stash_image_from_path(path: String) -> Result<String, String> {
+    let source = PathBuf::from(path);
+    let ext = validate_image_extension(
+        source
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default(),
+    )?;
+    let metadata = std::fs::metadata(&source).map_err(|e| e.to_string())?;
+    if !metadata.is_file() {
+        return Err("image path is not a file".to_string());
+    }
+    if metadata.len() > MAX_STASH_IMAGE_BYTES as u64 {
+        return Err("image exceeds 10 MB limit".to_string());
+    }
+    let mut source_file = std::fs::File::open(&source).map_err(|e| e.to_string())?;
+    write_stashed_image(&ext, |file| {
+        std::io::copy(&mut source_file, file)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+}
+
+fn encode_rgba_png(
+    width: usize,
+    height: usize,
+    bytes: Cow<'_, [u8]>,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let expected = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "image dimensions are too large".to_string())?;
+    if bytes.len() != expected {
+        return Err(format!(
+            "image RGBA buffer length mismatch: expected {expected} bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let width = u32::try_from(width).map_err(|_| "image width is too large".to_string())?;
+    let height = u32::try_from(height).map_err(|_| "image height is too large".to_string())?;
+    let image = RgbaImage::from_raw(width, height, bytes.into_owned())
+        .ok_or_else(|| "image RGBA buffer length mismatch".to_string())?;
+    let mut encoded = Vec::new();
+    PngEncoder::new(&mut encoded)
+        .write_image(image.as_raw(), width, height, ColorType::Rgba8.into())
+        .map_err(|e| e.to_string())?;
+    if encoded.len() > max_bytes {
+        return Err("image exceeds 10 MB limit".to_string());
+    }
+    Ok(encoded)
+}
+
+fn validate_image_extension(ext: &str) -> Result<String, String> {
+    let ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => Ok(ext),
+        _ => Err("unsupported image extension".to_string()),
+    }
+}
+
+fn write_stashed_image(
+    ext: &str,
+    mut write_image: impl FnMut(&mut std::fs::File) -> Result<(), String>,
+) -> Result<String, String> {
     let dir = stash_image_dir();
     create_stash_image_dir(&dir)?;
     gc_stale_stashed_images(&dir);
@@ -305,7 +413,10 @@ pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, Str
 
         match options.open(&path) {
             Ok(mut file) => {
-                file.write_all(&bytes).map_err(|e| e.to_string())?;
+                if let Err(err) = write_image(&mut file) {
+                    let _ = std::fs::remove_file(&path);
+                    return Err(err);
+                }
                 return path
                     .canonicalize()
                     .map(|path| path.to_string_lossy().into_owned())
@@ -317,7 +428,7 @@ pub fn agent_stash_image(data_base64: String, ext: String) -> Result<String, Str
     }
 }
 
-fn stash_image_dir() -> PathBuf {
+pub(crate) fn stash_image_dir() -> PathBuf {
     pickforge_home(None)
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir())
@@ -424,5 +535,52 @@ mod tests {
         let error = agent_stash_image(encoded, "png".to_string()).unwrap_err();
 
         assert_eq!(error, "image exceeds 10 MB limit");
+    }
+
+    #[test]
+    fn encode_rgba_png_writes_png_magic_bytes() {
+        let png = encode_rgba_png(
+            1,
+            1,
+            Cow::Borrowed(&[255, 0, 0, 255]),
+            MAX_STASH_IMAGE_BYTES,
+        )
+        .unwrap();
+
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn encode_rgba_png_rejects_encoded_output_over_limit() {
+        let error =
+            encode_rgba_png(1, 1, Cow::Borrowed(&[0, 0, 0, 255]), 8).unwrap_err();
+
+        assert_eq!(error, "image exceeds 10 MB limit");
+    }
+
+    #[test]
+    fn agent_stash_image_from_path_rejects_unsupported_extension() {
+        let error = agent_stash_image_from_path("sample.bmp".to_string()).unwrap_err();
+
+        assert_eq!(error, "unsupported image extension");
+    }
+
+    #[test]
+    fn agent_stash_image_from_path_rejects_file_over_10mb() {
+        let dir = std::env::temp_dir().join(format!(
+            "pickforge-agent-chat-test-{}-{}",
+            std::process::id(),
+            IMAGE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("too-big.png");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_STASH_IMAGE_BYTES as u64 + 1).unwrap();
+
+        let error =
+            agent_stash_image_from_path(path.to_string_lossy().into_owned()).unwrap_err();
+
+        assert_eq!(error, "image exceeds 10 MB limit");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

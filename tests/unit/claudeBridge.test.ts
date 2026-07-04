@@ -49,12 +49,14 @@ function fakeQuery(
   overrides: {
     interrupt?: () => Promise<void>;
     setModel?: (model?: string) => Promise<void>;
+    setPermissionMode?: (mode: string) => Promise<void>;
   } = {},
 ) {
   const closed = deferred<void>();
   const queryObject = {
     interrupt: vi.fn(overrides.interrupt ?? (() => Promise.resolve())),
     setModel: vi.fn(overrides.setModel ?? (() => Promise.resolve())),
+    setPermissionMode: vi.fn(overrides.setPermissionMode ?? (() => Promise.resolve())),
     close: vi.fn(() => closed.resolve()),
     async *[Symbol.asyncIterator]() {
       await closed.promise;
@@ -69,6 +71,11 @@ function eventsCollector() {
     events,
     emit: (event: BridgeEvent) => events.push(event),
   };
+}
+
+function expectAllowResult(result: unknown, input: Record<string, unknown>) {
+  expect(result).toEqual({ behavior: "allow", updatedInput: input });
+  expect((result as { updatedInput: Record<string, unknown> }).updatedInput).toBe(input);
 }
 
 beforeEach(() => {
@@ -98,13 +105,19 @@ describe("PushableAsyncQueue", () => {
 
 describe("permissionResultForDecision", () => {
   it("maps approval decisions to SDK permission results", () => {
-    expect(permissionResultForDecision("accept")).toEqual({ behavior: "allow" });
-    expect(permissionResultForDecision("acceptForSession")).toEqual({ behavior: "allow" });
-    expect(permissionResultForDecision("decline")).toEqual({
+    const acceptInput = { command: "bun test" };
+    const sessionInput = { file_path: "/project/src/main.ts" };
+
+    expectAllowResult(permissionResultForDecision("accept", acceptInput), acceptInput);
+    expectAllowResult(
+      permissionResultForDecision("acceptForSession", sessionInput),
+      sessionInput,
+    );
+    expect(permissionResultForDecision("decline", acceptInput)).toEqual({
       behavior: "deny",
       message: "denied by user",
     });
-    expect(permissionResultForDecision("cancel")).toEqual({
+    expect(permissionResultForDecision("cancel", acceptInput)).toEqual({
       behavior: "deny",
       message: "cancelled",
       interrupt: true,
@@ -129,10 +142,11 @@ describe("createPermissionHandler", () => {
     const gate = createPermissionGate();
     const events: BridgeEvent[] = [];
     const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+    const firstInput = { command: "bun test" };
 
     const first = handler(
       "Bash",
-      { command: "bun test" },
+      firstInput,
       {
         toolUseID: "req-1",
         signal: new AbortController().signal,
@@ -145,23 +159,25 @@ describe("createPermissionHandler", () => {
         chatId: "chat-1",
         requestId: "req-1",
         toolName: "Bash",
-        input: { command: "bun test" },
+        input: firstInput,
       },
     ]);
 
     expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
-    await expect(first).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await first, firstInput);
+
+    const secondInput = { command: "bun test" };
 
     const second = await handler(
       "Bash",
-      { command: "bun test" },
+      secondInput,
       {
         toolUseID: "req-2",
         signal: new AbortController().signal,
       },
     );
 
-    expect(second).toEqual({ behavior: "allow" });
+    expectAllowResult(second, secondInput);
     expect(events).toHaveLength(1);
     expect(gate.pendingApprovals.has("req-2")).toBe(false);
   });
@@ -170,14 +186,15 @@ describe("createPermissionHandler", () => {
     const gate = createPermissionGate();
     const events: BridgeEvent[] = [];
     const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+    const input = { command: "bun test" };
 
     const first = handler(
       "Bash",
-      { command: "bun test" },
+      input,
       { toolUseID: "req-1", signal: new AbortController().signal },
     );
     expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
-    await expect(first).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await first, input);
 
     void handler(
       "Bash",
@@ -194,21 +211,24 @@ describe("createPermissionHandler", () => {
     const gate = createPermissionGate();
     const events: BridgeEvent[] = [];
     const handler = createPermissionHandler("chat-1", gate, (event) => events.push(event));
+    const firstInput = { notebook_path: "/notes/a.ipynb" };
 
     const first = handler(
       "NotebookEdit",
-      { notebook_path: "/notes/a.ipynb" },
+      firstInput,
       { toolUseID: "req-1", signal: new AbortController().signal },
     );
     expect(resolveApprovalDecision(gate, "req-1", "acceptForSession")).toBe(true);
-    await expect(first).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await first, firstInput);
+
+    const secondInput = { notebook_path: "/notes/a.ipynb" };
 
     const second = await handler(
       "NotebookEdit",
-      { notebook_path: "/notes/a.ipynb" },
+      secondInput,
       { toolUseID: "req-2", signal: new AbortController().signal },
     );
-    expect(second).toEqual({ behavior: "allow" });
+    expectAllowResult(second, secondInput);
     expect(events).toHaveLength(1);
 
     const third = handler(
@@ -234,7 +254,8 @@ describe("dispatchCommand", () => {
     dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
 
     const options = vi.mocked(query).mock.calls[0]?.[0].options;
-    const permission = options?.canUseTool?.("Bash", { command: "bun test" }, {
+    const input = { command: "bun test" };
+    const permission = options?.canUseTool?.("Bash", input, {
       toolUseID: "approval-1",
       signal: new AbortController().signal,
     });
@@ -247,14 +268,14 @@ describe("dispatchCommand", () => {
       decision: "accept",
     }, emit);
 
-    await expect(permission).resolves.toEqual({ behavior: "allow" });
+    expectAllowResult(await permission, input);
     expect(chatQuery.interrupt).toHaveBeenCalledTimes(1);
     expect(events).toContainEqual({
       ev: "approvalRequest",
       chatId: "chat-1",
       requestId: "approval-1",
       toolName: "Bash",
-      input: { command: "bun test" },
+      input,
     });
 
     interrupt.resolve();
@@ -294,6 +315,45 @@ describe("dispatchCommand", () => {
     expect(chatQuery.setModel).toHaveBeenNthCalledWith(2, "fast");
     expect(activeModel).toBe("fast");
     expect(events).not.toContainEqual(expect.objectContaining({ ev: "fatal" }));
+  });
+
+  it("waits for a pending permission mode mutation before sending", async () => {
+    const modeChange = deferred<void>();
+    const chatQuery = fakeQuery({ setPermissionMode: () => modeChange.promise });
+    vi.mocked(query).mockReturnValue(chatQuery as ReturnType<typeof query>);
+    const { emit } = eventsCollector();
+
+    dispatchCommand({ op: "start", chatId: "chat-1", cwd: "/project" }, emit);
+    const prompt = vi.mocked(query).mock.calls[0]?.[0].prompt as AsyncIterable<unknown>;
+    const iterator = prompt[Symbol.asyncIterator]();
+    let delivered = false;
+    const nextMessage = iterator.next().then((result) => {
+      delivered = true;
+      return result;
+    });
+
+    dispatchCommand({ op: "setPermissionMode", chatId: "chat-1", mode: "plan" }, emit);
+    await flushMicrotasks();
+
+    expect(chatQuery.setPermissionMode).toHaveBeenCalledWith("plan");
+
+    dispatchCommand({ op: "send", chatId: "chat-1", text: "hello" }, emit);
+    await flushMicrotasks();
+
+    expect(delivered).toBe(false);
+
+    modeChange.resolve();
+
+    await expect(nextMessage).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      },
+    });
   });
 
   it("waits for a pending model mutation before sending", async () => {

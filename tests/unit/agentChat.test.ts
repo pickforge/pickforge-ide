@@ -77,6 +77,7 @@ import {
   interruptAgentChat,
   sendAgentMessage,
   setAgentChatEffort,
+  setAgentChatMode,
   setAgentChatModel,
   switchAgentChatProvider,
   type AgentTimelineItem,
@@ -890,6 +891,60 @@ describe("ensureAgentChat", () => {
 
     expect(agentChat(chatId)?.model).toBe("gpt-new");
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(1);
+  });
+});
+
+describe("setAgentChatMode", () => {
+  it("seeds mode overrides into the codex session start", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+
+    await ensureAgentChat(chatId, "/project", "codex", "gpt-5.3-codex-spark", {
+      mode: "read-only",
+    });
+
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    expect(startCall?.[1]).toEqual(
+      expect.objectContaining({
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+      }),
+    );
+  });
+
+  it("pushes a codex mode change to the live session", async () => {
+    const { chatId } = await startChat();
+
+    setAgentChatMode(chatId, "full-access");
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", expect.anything()),
+    );
+
+    expect(agentChat(chatId)?.mode).toBe("full-access");
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", {
+      sessionId: "session-1",
+      sandbox: "danger-full-access",
+      approvalPolicy: "never",
+      permissionMode: null,
+    });
+  });
+
+  it("pushes a claude mode change as a permission mode", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "claudeCode", "claude-model");
+
+    setAgentChatMode(chatId, "plan");
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", expect.anything()),
+    );
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", {
+      sessionId: "session-1",
+      sandbox: null,
+      approvalPolicy: null,
+      permissionMode: "plan",
+    });
   });
 });
 

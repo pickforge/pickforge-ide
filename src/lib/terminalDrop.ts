@@ -52,9 +52,15 @@ export function filePathsFromUriList(text: string): string[] {
     let rest = uri.slice("file://".length);
     const slash = rest.indexOf("/");
     if (slash < 0) continue;
-    if (slash > 0) rest = rest.slice(slash);
+    const host = rest.slice(0, slash);
+    rest = rest.slice(slash);
     try {
       const decoded = decodeURIComponent(rest);
+      if (host && host !== "localhost") {
+        // A real authority is a network share — keep it as a UNC path.
+        paths.push(`//${host}${decoded}`);
+        continue;
+      }
       // Windows URIs decode to /C:/Users/... — drop the URI artifact slash.
       paths.push(/^\/[A-Za-z]:[/\\]/.test(decoded) ? decoded.slice(1) : decoded);
     } catch {

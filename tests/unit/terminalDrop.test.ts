@@ -81,6 +81,12 @@ describe("filePathsFromUriList", () => {
       "C:/Users/dev/pic.png",
     ]);
   });
+
+  it("preserves UNC hosts as network-share paths", () => {
+    expect(filePathsFromUriList("file://server/share/pic.png")).toEqual([
+      "//server/share/pic.png",
+    ]);
+  });
 });
 
 describe("registerDropTarget — drop dispatch", () => {

@@ -161,6 +161,8 @@ pub fn run() {
             agent_chat_commands::agent_stash_image,
             agent_chat_commands::agent_stash_clipboard_image,
             agent_chat_commands::agent_stash_image_from_path,
+            agent_chat_commands::agent_clipboard_text,
+            agent_chat_commands::agent_clipboard_file_paths,
             agent_chat_commands::codex_config_default_effort,
             vm_commands::vm_connect,
             vm_commands::vm_disconnect,

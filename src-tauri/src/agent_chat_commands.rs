@@ -327,6 +327,46 @@ pub async fn agent_stash_clipboard_image() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// WebKitGTK advertises text/uri-list on paste events but returns an empty
+/// string from getData, so the renderer cannot read copied files itself — it
+/// falls back to these native reads. File-list clipboards may carry no
+/// text/plain flavor at all, so the file list is read as such first.
+#[tauri::command]
+pub async fn agent_clipboard_file_paths() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        let files = clipboard.get().file_list().map_err(|e| match e {
+            arboard::Error::ContentNotAvailable => "clipboard has no files".to_string(),
+            _ => e.to_string(),
+        })?;
+        Ok(files
+            .into_iter()
+            .filter_map(|path| {
+                let path = path
+                    .to_string_lossy()
+                    .trim_end_matches(['\r', '\n'])
+                    .to_string();
+                (!path.is_empty()).then_some(path)
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn agent_clipboard_text() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        clipboard.get_text().map_err(|e| match e {
+            arboard::Error::ContentNotAvailable => "clipboard has no text".to_string(),
+            _ => e.to_string(),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub fn agent_stash_image_from_path(path: String) -> Result<String, String> {
     let source = PathBuf::from(path);

@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import {
+  filePathsFromUriList,
   quotePaths,
   registerDropTarget,
   registerPathDropTarget,
@@ -46,6 +47,45 @@ describe("quotePaths", () => {
 
   it("handles a single path", () => {
     expect(quotePaths(["/a/b.png"])).toBe("/a/b.png");
+  });
+});
+
+describe("filePathsFromUriList", () => {
+  it("parses CRLF-separated file URIs (file-manager copy format)", () => {
+    expect(filePathsFromUriList("file:///home/dev/a.png\r\nfile:///tmp/b.jpg\r\n")).toEqual([
+      "/home/dev/a.png",
+      "/tmp/b.jpg",
+    ]);
+  });
+
+  it("decodes percent-escapes and strips a localhost host", () => {
+    expect(filePathsFromUriList("file://localhost/home/dev/my%20pic.png")).toEqual([
+      "/home/dev/my pic.png",
+    ]);
+  });
+
+  it("skips comments, blanks, non-file schemes, and malformed escapes", () => {
+    expect(
+      filePathsFromUriList(
+        "# comment\n\nhttps://example.com/x.png\nfile:///ok.png\nfile:///bad%zz.png",
+      ),
+    ).toEqual(["/ok.png"]);
+  });
+
+  it("returns nothing for plain text", () => {
+    expect(filePathsFromUriList("just some text")).toEqual([]);
+  });
+
+  it("normalizes Windows drive URIs to native paths", () => {
+    expect(filePathsFromUriList("file:///C:/Users/dev/pic.png")).toEqual([
+      "C:/Users/dev/pic.png",
+    ]);
+  });
+
+  it("preserves UNC hosts as network-share paths", () => {
+    expect(filePathsFromUriList("file://server/share/pic.png")).toEqual([
+      "//server/share/pic.png",
+    ]);
   });
 });
 

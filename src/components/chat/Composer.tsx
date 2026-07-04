@@ -13,6 +13,8 @@ import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
 import {
   type AgentProvider,
   type AgentSkill,
+  agentClipboardFilePaths,
+  agentClipboardText,
   agentSkillsList,
   agentStashClipboardImage,
   agentStashImage,
@@ -21,7 +23,7 @@ import {
 } from "../../lib/agentChat";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
-import { registerPathDropTarget } from "../../lib/terminalDrop";
+import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
 import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
 import "./chat.css";
@@ -296,6 +298,60 @@ export function Composer(props: {
       if (file) files.push({ file, ext });
     }
     if (files.length === 0 && unsupported === 0) {
+      // Copying a file in a file manager puts a text/uri-list on the clipboard
+      // (no image data) — route image URIs through the drop path or the paste
+      // lands as a bare file:// string in the textarea.
+      const uriPaths = filePathsFromUriList(data.getData("text/uri-list"));
+      if (uriPaths.some((path) => acceptedPathExt(path))) {
+        event.preventDefault();
+        onPathDrop(uriPaths);
+        return;
+      }
+      // WebKitGTK advertises text/uri-list but getData returns "" — the URIs
+      // are only reachable through a native clipboard read. The file list is
+      // read as such first (uri-list clipboards may carry no text flavor);
+      // the generation is pinned at paste time so a send racing the read
+      // can't inherit images.
+      if (uriPaths.length === 0 && data.types.includes("text/uri-list")) {
+        event.preventDefault();
+        const generation = pasteGeneration;
+        const readTextFlavor = () =>
+          agentClipboardText().then((text) => ({
+            paths: filePathsFromUriList(text),
+            text,
+          }));
+        void agentClipboardFilePaths()
+          .then((paths: string[]) =>
+            // A non-file uri-list (e.g. a copied link) yields an empty file
+            // list — the text flavor still holds the paste payload.
+            paths.length > 0 ? { paths, text: paths.join(" ") } : readTextFlavor(),
+          )
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== "clipboard has no files") throw error;
+            return readTextFlavor();
+          })
+          .then(({ paths, text }: { paths: string[]; text: string }) => {
+            if (paths.some((path) => acceptedPathExt(path))) {
+              onPathDrop(paths, generation);
+              return;
+            }
+            // Not an image copy — restore the default paste the intercept ate,
+            // unless a send already consumed this composer state.
+            if (generation !== pasteGeneration) return;
+            const insert = paths.length > 0 ? paths.join(" ") : text;
+            const start = field.selectionStart ?? field.value.length;
+            const end = field.selectionEnd ?? start;
+            setText(`${field.value.slice(0, start)}${insert}${field.value.slice(end)}`);
+            autosize();
+          })
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message === "clipboard has no text") return;
+            showPasteError(message);
+          });
+        return;
+      }
       if (fileItems > 0 || data.types.length > 0) return;
       event.preventDefault();
       if (props.turnActive) {
@@ -353,7 +409,7 @@ export function Composer(props: {
     }
   };
 
-  const onPathDrop = (paths: string[]) => {
+  const onPathDrop = (paths: string[], atGeneration?: number) => {
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
@@ -363,7 +419,8 @@ export function Composer(props: {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
     }
     if (files.length === 0) return;
-    const generation = pasteGeneration;
+    const generation = atGeneration ?? pasteGeneration;
+    if (generation !== pasteGeneration) return;
     for (const path of files) {
       void agentStashImageFromPath(path)
         .then((stashedPath) => {
@@ -385,8 +442,11 @@ export function Composer(props: {
   };
 
   onMount(() => {
+    // Accept drops over the whole chat surface, not just the composer strip —
+    // people drag onto the conversation, and a target that small reads as
+    // "drag-and-drop doesn't work".
     const unregister = registerPathDropTarget({
-      el: root,
+      el: (root.closest(".pf-chat-view") as HTMLElement | null) ?? root,
       onPaths: onPathDrop,
       setHover: setDropHover,
     });

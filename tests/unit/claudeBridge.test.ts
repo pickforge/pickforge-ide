@@ -73,6 +73,17 @@ function eventsCollector() {
   };
 }
 
+function pngBlock(bytes: string) {
+  return {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: "image/png",
+      data: Buffer.from(bytes).toString("base64"),
+    },
+  };
+}
+
 function expectAllowResult(result: unknown, input: Record<string, unknown>) {
   expect(result).toEqual({ behavior: "allow", updatedInput: input });
   expect((result as { updatedInput: Record<string, unknown> }).updatedInput).toBe(input);
@@ -562,6 +573,97 @@ describe("dispatchCommand", () => {
         },
       });
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("interleaves image markers with text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pickforge-claude-bridge-"));
+    const firstImagePath = join(dir, "first.png");
+    const secondImagePath = join(dir, "second.png");
+    writeFileSync(firstImagePath, Buffer.from("first-image"));
+    writeFileSync(secondImagePath, Buffer.from("second-image"));
+
+    try {
+      expect(
+        createUserTextMessage("compare [Image #1] with [Image #2]", [
+          firstImagePath,
+          secondImagePath,
+        ])?.message.content,
+      ).toEqual([
+        { type: "text", text: "compare " },
+        pngBlock("first-image"),
+        { type: "text", text: " with " },
+        pngBlock("second-image"),
+      ]);
+      expect(
+        createUserTextMessage("[Image #1]   [Image #2]", [
+          firstImagePath,
+          secondImagePath,
+        ])?.message.content,
+      ).toEqual([pngBlock("first-image"), pngBlock("second-image")]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("emits unreferenced images before marker-anchored content", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pickforge-claude-bridge-"));
+    const firstImagePath = join(dir, "first.png");
+    const secondImagePath = join(dir, "second.png");
+    writeFileSync(firstImagePath, Buffer.from("first-image"));
+    writeFileSync(secondImagePath, Buffer.from("second-image"));
+
+    try {
+      expect(
+        createUserTextMessage("look at [Image #2]", [firstImagePath, secondImagePath])?.message
+          .content,
+      ).toEqual([
+        pngBlock("first-image"),
+        { type: "text", text: "look at " },
+        pngBlock("second-image"),
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves out-of-range image markers as literal text", () => {
+    expect(createUserTextMessage("look at [Image #2]", [])?.message.content).toEqual([
+      { type: "text", text: "look at [Image #2]" },
+    ]);
+  });
+
+  it("emits duplicate image marker references each time", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pickforge-claude-bridge-"));
+    const imagePath = join(dir, "shot.png");
+    writeFileSync(imagePath, Buffer.from("image-bytes"));
+
+    try {
+      expect(
+        createUserTextMessage("[Image #1] again [Image #1]", [imagePath])?.message.content,
+      ).toEqual([
+        pngBlock("image-bytes"),
+        { type: "text", text: " again " },
+        pngBlock("image-bytes"),
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves missing referenced image markers as literal text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pickforge-claude-bridge-"));
+    const missingPath = join(dir, "missing.png");
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      expect(createUserTextMessage("look [Image #1] here", [missingPath])?.message.content).toEqual(
+        [{ type: "text", text: "look [Image #1] here" }],
+      );
+      expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining("skipping image"));
+    } finally {
+      stderrWrite.mockRestore();
       rmSync(dir, { recursive: true, force: true });
     }
   });

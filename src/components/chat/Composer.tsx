@@ -22,10 +22,12 @@ import {
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
+import { insertMarker, removeMarkerAndRenumber } from "../../lib/imageAnchors";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
 import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
+import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
 const PROVIDERS = AGENTS.filter(
@@ -274,14 +276,56 @@ export function Composer(props: {
     autosize();
   };
 
-  const removeImage = (path: string) => {
-    setImages((cur) => cur.filter((item) => item !== path));
+  // Every image ingress route (HTML5 item paste, native clipboard fallback,
+  // native file-list fallback, uri-list paste, OS drop) funnels here so the
+  // `[Image #N]` marker is inserted for all of them. Callers must first pass
+  // their generation guard; this only runs on a still-current attachment.
+  // The marker must land where the cursor was when the paste/drop HAPPENED —
+  // stashing is async, and the user may keep typing before it resolves. Each
+  // ingress event pins its own anchor (two overlapping pastes must not steal
+  // each other's spot); consecutive images from one event chain their
+  // insertion points so batch attachments stay in order.
+  type MarkerAnchor = { generation: number; at: number | null };
+  const pinMarkerAnchor = (): MarkerAnchor => ({
+    generation: pasteGeneration,
+    at: document.activeElement === field ? (field.selectionStart ?? null) : null,
+  });
+
+  const attachImage = (path: string, anchor?: MarkerAnchor) => {
+    let index = 0;
+    setImages((cur) => {
+      index = cur.length + 1;
+      return [...cur, path];
+    });
+    const focused = document.activeElement === field;
+    const value = text();
+    const pinned = anchor && anchor.generation === pasteGeneration ? anchor.at : null;
+    const cursor =
+      pinned ?? (focused ? (field.selectionStart ?? value.length) : value.length);
+    const result = insertMarker(value, index, cursor);
+    if (pinned !== null && anchor) anchor.at = result.cursor;
+    setText(result.text);
+    if (focused) {
+      field.selectionStart = result.cursor;
+      field.selectionEnd = result.cursor;
+    }
+    autosize();
+    if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+    setPasteError(null);
+  };
+
+  const removeImage = (index: number) => {
+    const count = images().length;
+    setText((cur) => removeMarkerAndRenumber(cur, index + 1, count));
+    setImages((cur) => cur.filter((_, i) => i !== index));
     field.focus();
+    autosize();
   };
 
   const onPaste = (event: ClipboardEvent) => {
     const data = event.clipboardData;
     if (!data) return;
+    const anchor = pinMarkerAnchor();
     const files: { file: File; ext: string }[] = [];
     let fileItems = 0;
     let unsupported = 0;
@@ -304,7 +348,7 @@ export function Composer(props: {
       const uriPaths = filePathsFromUriList(data.getData("text/uri-list"));
       if (uriPaths.some((path) => acceptedPathExt(path))) {
         event.preventDefault();
-        onPathDrop(uriPaths);
+        onPathDrop(uriPaths, pasteGeneration, anchor);
         return;
       }
       // WebKitGTK advertises text/uri-list but getData returns "" — the URIs
@@ -333,7 +377,7 @@ export function Composer(props: {
           })
           .then(({ paths, text }: { paths: string[]; text: string }) => {
             if (paths.some((path) => acceptedPathExt(path))) {
-              onPathDrop(paths, generation);
+              onPathDrop(paths, generation, anchor);
               return;
             }
             // Not an image copy — restore the default paste the intercept ate,
@@ -368,9 +412,7 @@ export function Composer(props: {
             }
             return;
           }
-          setImages((cur) => [...cur, path]);
-          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-          setPasteError(null);
+          attachImage(path, anchor);
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -399,9 +441,7 @@ export function Composer(props: {
             }
             return;
           }
-          setImages((cur) => [...cur, path]);
-          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-          setPasteError(null);
+          attachImage(path, anchor);
         })
         .catch((error) => {
           showPasteError(error instanceof Error ? error.message : String(error));
@@ -409,7 +449,10 @@ export function Composer(props: {
     }
   };
 
-  const onPathDrop = (paths: string[], atGeneration?: number) => {
+  const onPathDrop = (paths: string[], atGeneration?: number, anchor?: MarkerAnchor) => {
+    // A direct OS drop is its own ingress event; paste fallbacks arrive with
+    // the generation and anchor already pinned by onPaste.
+    const markerAnchor = anchor ?? pinMarkerAnchor();
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
@@ -431,9 +474,7 @@ export function Composer(props: {
             }
             return;
           }
-          setImages((cur) => [...cur, stashedPath]);
-          if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-          setPasteError(null);
+          attachImage(stashedPath, markerAnchor);
         })
         .catch((error) => {
           showPasteError(error instanceof Error ? error.message : String(error));
@@ -596,21 +637,34 @@ export function Composer(props: {
       <Show when={images().length > 0}>
         <div class="pf-chat-attachments">
           <For each={images()}>
-            {(path) => (
+            {(path, i) => (
               <div class="pf-chat-attachment">
                 <img
                   class="pf-chat-attachment-img"
                   src={convertFileSrc(path)}
                   alt=""
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Preview image ${i() + 1}`}
+                  onClick={() => openLightbox(convertFileSrc(path))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openLightbox(convertFileSrc(path));
+                    }
+                  }}
                   onError={(e) => {
                     e.currentTarget.style.visibility = "hidden";
                   }}
                 />
+                <span class="pf-chat-attachment-index" aria-hidden="true">
+                  {i() + 1}
+                </span>
                 <button
                   type="button"
                   class="pf-chat-attachment-remove"
                   aria-label="Remove image"
-                  onClick={() => removeImage(path)}
+                  onClick={() => removeImage(i())}
                 >
                   ✕
                 </button>

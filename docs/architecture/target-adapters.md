@@ -50,7 +50,7 @@ roadmap.
 | Flutter | 100 | `pubspec.yaml` + Flutter deps | selection→source mapping, MCP aliases | — (already the live reference flow) |
 | React Native (Android) | 80 | `react-native` dep + `android/` | Metro/ADB commands, logcat + UIAutomator parsing, selection context, Metro CDP discovery | Fast Refresh trigger, component tree, device smoke |
 | Native Android | 60 | Gradle settings + app plugin | Gradle/ADB commands, UIAutomator parsing, best-effort source hints | device smoke |
-| Native iOS | 55 | `.xcworkspace`/`.xcodeproj`/app `Package.swift` | `xcodebuild`/`simctl` commands, simctl device-list parsing (macOS-gated caps) | accessibility hierarchy (needs macOS + a product decision) |
+| Native iOS | 55 | `.xcworkspace`/`.xcodeproj`/app `Package.swift` | `xcodebuild`/`simctl` commands, simctl device-list + `os_log` parsing | live: simulator boot, `simctl` screenshot, `os_log` stream, `xcodebuild` build/launch (proven on a real simulator); accessibility hierarchy still pending a product decision (XCUITest/idb) |
 | Web | 50 | `package.json` dev/start scripts | dev-server command, CDP discovery, accessibility-tree + source-map parsing, source-candidate search | DOM/console/network capture, screenshots (live CDP session) |
 | Generic | 0 | fallback for any folder | detect only | adapter-mediated terminal/attachments (app-global today) |
 

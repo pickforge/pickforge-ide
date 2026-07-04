@@ -256,6 +256,17 @@ export function EmberDot(props: {
   );
 }
 
+export function Spinner(props: { class?: string; label?: string }): JSX.Element {
+  return (
+    <span
+      class={`pf-spinner ${props.class ?? ""}`}
+      role={props.label ? "status" : undefined}
+      aria-label={props.label}
+      aria-hidden={props.label ? undefined : "true"}
+    />
+  );
+}
+
 /** Branded empty state — bracket-framed glyph + eyebrow + title + hint. Ember-free. */
 export function ForgeEmptyState(props: {
   glyph: JSX.Element;

@@ -910,13 +910,73 @@
   width: 44px;
   height: 44px;
 }
-.pf-chat-attachment-img {
+.pf-chat-attachment-img,
+.pf-chat-attachment-placeholder {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   border-radius: var(--pf-radius-sm);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-chat-attachment-img {
+  display: block;
+  object-fit: cover;
   cursor: pointer;
+}
+.pf-chat-attachment--pending .pf-chat-attachment-img {
+  cursor: default;
+}
+.pf-chat-attachment-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pf-surface-2);
+  color: var(--pf-text-low);
+}
+.pf-chat-attachment-glyph {
+  position: relative;
+  width: var(--pf-space-xl);
+  height: var(--pf-space-lg);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid currentColor;
+}
+.pf-chat-attachment-glyph::before,
+.pf-chat-attachment-glyph::after {
+  content: "";
+  position: absolute;
+}
+.pf-chat-attachment-glyph::before {
+  top: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  width: var(--pf-space-xs);
+  height: var(--pf-space-xs);
+  border-radius: var(--pf-radius-pill);
+  background: currentColor;
+  opacity: 0.55;
+}
+.pf-chat-attachment-glyph::after {
+  left: var(--pf-space-xs);
+  right: var(--pf-space-xs);
+  bottom: var(--pf-space-xs);
+  height: var(--pf-space-sm);
+  border-left: var(--pf-hairline-width) solid currentColor;
+  border-bottom: var(--pf-hairline-width) solid currentColor;
+  opacity: 0.65;
+  transform: skewX(-24deg);
+  transform-origin: bottom left;
+}
+.pf-chat-attachment-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--pf-radius-sm);
+  background: color-mix(in srgb, var(--pf-surface) 58%, transparent);
+  pointer-events: none;
+}
+.pf-chat-attachment-spinner {
+  --pf-spinner-size: var(--pf-space-lg);
+  color: var(--pf-text-hi);
 }
 .pf-chat-attachment-index {
   position: absolute;
@@ -1090,6 +1150,10 @@
   color: var(--pf-text-low);
   box-shadow: none;
   cursor: not-allowed;
+}
+.pf-chat-send-spinner {
+  --pf-spinner-size: var(--pf-space-md);
+  color: currentColor;
 }
 .pf-chat-send--stop {
   background: transparent;

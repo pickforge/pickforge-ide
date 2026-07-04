@@ -327,6 +327,29 @@
   }
 }
 
+/* ---- Spinner: compact neutral progress ring ---- */
+.pf-spinner {
+  display: inline-block;
+  width: var(--pf-spinner-size, var(--pf-space-lg));
+  height: var(--pf-spinner-size, var(--pf-space-lg));
+  border-radius: var(--pf-radius-pill);
+  border: var(--pf-hairline-width) solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  color: var(--pf-text-med);
+  animation: pf-spinner-turn var(--pf-dur-slow) linear infinite;
+}
+@keyframes pf-spinner-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-spinner {
+    animation: none;
+    opacity: 0.55;
+  }
+}
+
 /* ---- ForgeEmptyState: bracket-framed glyph + eyebrow + title + hint ---- */
 .pf-empty {
   display: flex;

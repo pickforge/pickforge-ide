@@ -1,0 +1,105 @@
+import { describe, expect, it } from "vitest";
+import {
+  type ComposerAttachment,
+  addAttachmentWithMarker,
+  createPendingAttachment,
+  decidePreparingState,
+  readyAttachmentPaths,
+  removeAttachmentWithMarker,
+  resolveAttachment,
+} from "../../src/lib/composerAttachments";
+
+const ready = (id: number, path: string): ComposerAttachment => ({
+  id,
+  status: "ready",
+  path,
+  previewUrl: `asset://${id}`,
+});
+
+describe("composer attachments", () => {
+  it("adds markers and renumbers after removing a ready attachment among pending ones", () => {
+    const first = addAttachmentWithMarker([], "look", 4, createPendingAttachment(1, null));
+    const second = addAttachmentWithMarker(first.attachments, first.text, first.cursor, ready(2, "/b.png"));
+    const third = addAttachmentWithMarker(
+      second.attachments,
+      second.text,
+      second.cursor,
+      createPendingAttachment(3, null),
+    );
+
+    expect(third.text).toBe("look [Image #1] [Image #2] [Image #3]");
+
+    const removed = removeAttachmentWithMarker(third.attachments, third.text, 2);
+
+    expect(removed.removedIndex).toBe(2);
+    expect(removed.removed?.status).toBe("ready");
+    expect(removed.attachments.map((attachment) => attachment.id)).toEqual([1, 3]);
+    expect(removed.attachments.map((attachment) => attachment.status)).toEqual([
+      "pending",
+      "pending",
+    ]);
+    expect(removed.text).toBe("look [Image #1]  [Image #2]");
+  });
+
+  it("resolves pending attachments and returns ready paths in attachment order", () => {
+    const attachments = [
+      createPendingAttachment(1, "blob:first"),
+      ready(2, "/already.png"),
+    ];
+    const resolved = resolveAttachment(attachments, 1, "/first.png", "asset://first");
+
+    expect(resolved.previous).toEqual(attachments[0]);
+    expect(resolved.attachments[0]).toMatchObject({
+      id: 1,
+      status: "ready",
+      path: "/first.png",
+      previewUrl: "asset://first",
+    });
+    expect(readyAttachmentPaths(resolved.attachments)).toEqual([
+      "/first.png",
+      "/already.png",
+    ]);
+  });
+});
+
+describe("decidePreparingState", () => {
+  it("waits while any attachment is pending", () => {
+    expect(
+      decidePreparingState({
+        attachments: [createPendingAttachment(1, null), ready(2, "/b.png")],
+        failed: false,
+        hasContent: true,
+      }),
+    ).toBe("wait");
+  });
+
+  it("dispatches once every current attachment is ready", () => {
+    expect(
+      decidePreparingState({
+        attachments: [ready(1, "/a.png"), ready(2, "/b.png")],
+        failed: false,
+        hasContent: false,
+      }),
+    ).toBe("dispatch");
+  });
+
+  it("aborts after a stash failure", () => {
+    expect(
+      decidePreparingState({
+        attachments: [ready(1, "/a.png")],
+        failed: true,
+        hasContent: true,
+      }),
+    ).toBe("abort");
+  });
+
+  it("aborts when there is nothing left to send", () => {
+    expect(
+      decidePreparingState({
+        attachments: [],
+        failed: false,
+        hasContent: false,
+      }),
+    ).toBe("abort");
+  });
+});

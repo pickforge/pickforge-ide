@@ -2,6 +2,7 @@ import {
   type JSX,
   For,
   Show,
+  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -22,11 +23,21 @@ import {
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
-import { insertMarker, removeMarkerAndRenumber } from "../../lib/imageAnchors";
+import {
+  type ComposerAttachment,
+  addAttachmentWithMarker,
+  createPendingAttachment,
+  decidePreparingState,
+  hasPendingAttachments,
+  readyAttachmentPaths,
+  removeAttachmentWithMarker,
+  resolveAttachment,
+} from "../../lib/composerAttachments";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
 import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
+import { Spinner } from "../ui";
 import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
@@ -147,14 +158,17 @@ export function Composer(props: {
   const [dismissed, setDismissed] = createSignal(false);
   const [selected, setSelected] = createSignal(0);
   const [skills, setSkills] = createSignal<AgentSkill[]>([]);
-  const [images, setImages] = createSignal<string[]>([]);
+  const [attachments, setAttachments] = createSignal<ComposerAttachment[]>([]);
   const [pasteError, setPasteError] = createSignal<string | null>(null);
   const [dropHover, setDropHover] = createSignal(false);
+  const [preparing, setPreparing] = createSignal(false);
+  const [prepareFailed, setPrepareFailed] = createSignal(false);
   let root!: HTMLDivElement;
   let field!: HTMLTextAreaElement;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
   let pasteGeneration = 0;
   let droppedPasteGeneration: number | null = null;
+  let nextAttachmentId = 1;
 
   const showPasteError = (message: string, autoClearMs?: number) => {
     if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
@@ -164,8 +178,17 @@ export function Composer(props: {
     }
   };
 
+  const revokeObjectPreview = (previewUrl: string | null) => {
+    if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
+  };
+
+  const revokePendingPreview = (attachment: ComposerAttachment | null) => {
+    if (attachment?.status === "pending") revokeObjectPreview(attachment.previewUrl);
+  };
+
   onCleanup(() => {
     if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
+    for (const attachment of attachments()) revokePendingPreview(attachment);
   });
 
   createEffect(() => {
@@ -234,7 +257,7 @@ export function Composer(props: {
   const steering = () => props.turnActive && !!props.supportsSteer && !!props.onSteer;
   const canSend = () => {
     if (props.turnActive) return steering() && text().trim().length > 0;
-    return text().trim().length > 0 || images().length > 0;
+    return text().trim().length > 0 || attachments().length > 0;
   };
   const placeholder = () => (steering() ? "Steer the running turn…" : "Message the agent…");
 
@@ -276,33 +299,21 @@ export function Composer(props: {
     autosize();
   };
 
-  // Every image ingress route (HTML5 item paste, native clipboard fallback,
-  // native file-list fallback, uri-list paste, OS drop) funnels here so the
-  // `[Image #N]` marker is inserted for all of them. Callers must first pass
-  // their generation guard; this only runs on a still-current attachment.
-  // The marker must land where the cursor was when the paste/drop HAPPENED —
-  // stashing is async, and the user may keep typing before it resolves. Each
-  // ingress event pins its own anchor (two overlapping pastes must not steal
-  // each other's spot); consecutive images from one event chain their
-  // insertion points so batch attachments stay in order.
   type MarkerAnchor = { generation: number; at: number | null };
   const pinMarkerAnchor = (): MarkerAnchor => ({
     generation: pasteGeneration,
     at: document.activeElement === field ? (field.selectionStart ?? null) : null,
   });
 
-  const attachImage = (path: string, anchor?: MarkerAnchor) => {
-    let index = 0;
-    setImages((cur) => {
-      index = cur.length + 1;
-      return [...cur, path];
-    });
+  const addPendingImage = (previewUrl: string | null, anchor?: MarkerAnchor) => {
+    const attachment = createPendingAttachment(nextAttachmentId++, previewUrl);
     const focused = document.activeElement === field;
     const value = text();
     const pinned = anchor && anchor.generation === pasteGeneration ? anchor.at : null;
     const cursor =
       pinned ?? (focused ? (field.selectionStart ?? value.length) : value.length);
-    const result = insertMarker(value, index, cursor);
+    const result = addAttachmentWithMarker(attachments(), value, cursor, attachment);
+    setAttachments(result.attachments);
     if (pinned !== null && anchor) anchor.at = result.cursor;
     setText(result.text);
     if (focused) {
@@ -310,16 +321,57 @@ export function Composer(props: {
       field.selectionEnd = result.cursor;
     }
     autosize();
-    if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
-    setPasteError(null);
+    return attachment;
   };
 
-  const removeImage = (index: number) => {
-    const count = images().length;
-    setText((cur) => removeMarkerAndRenumber(cur, index + 1, count));
-    setImages((cur) => cur.filter((_, i) => i !== index));
-    field.focus();
+  const removeImage = (id: number, focus = true) => {
+    const result = removeAttachmentWithMarker(attachments(), text(), id);
+    if (!result.removed) return false;
+    revokePendingPreview(result.removed);
+    setAttachments(result.attachments);
+    setText(result.text);
+    if (focus) field.focus();
     autosize();
+    return true;
+  };
+
+  const hasAttachment = (id: number) =>
+    attachments().some((attachment) => attachment.id === id);
+
+  const discardStaleImage = (id: number, generation: number) => {
+    if (!hasAttachment(id)) return true;
+    if (generation === pasteGeneration) return false;
+    removeImage(id, false);
+    if (droppedPasteGeneration !== generation) {
+      droppedPasteGeneration = generation;
+      showPasteError("Image discarded because send already started", 4000);
+    }
+    return true;
+  };
+
+  const resolveImage = (id: number, generation: number, path: string) => {
+    if (discardStaleImage(id, generation)) return;
+    const result = resolveAttachment(attachments(), id, path, convertFileSrc(path));
+    if (!result.previous) return;
+    revokePendingPreview(result.previous);
+    setAttachments(result.attachments);
+  };
+
+  const failImage = (id: number, generation: number, error: unknown) => {
+    if (!hasAttachment(id)) return;
+    if (generation !== pasteGeneration) {
+      discardStaleImage(id, generation);
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    const wasPreparing = preparing();
+    let removed = false;
+    batch(() => {
+      removed = removeImage(id, false);
+      if (removed && wasPreparing) setPrepareFailed(true);
+    });
+    if (!removed || message === "clipboard has no image") return;
+    showPasteError(message);
   };
 
   const onPaste = (event: ClipboardEvent) => {
@@ -403,22 +455,10 @@ export function Composer(props: {
         return;
       }
       const generation = pasteGeneration;
+      const attachment = addPendingImage(null, anchor);
       void agentStashClipboardImage()
-        .then((path) => {
-          if (generation !== pasteGeneration) {
-            if (droppedPasteGeneration !== generation) {
-              droppedPasteGeneration = generation;
-              showPasteError("Image discarded because send already started", 4000);
-            }
-            return;
-          }
-          attachImage(path, anchor);
-        })
-        .catch((error) => {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message === "clipboard has no image") return;
-          showPasteError(message);
-        });
+        .then((path) => resolveImage(attachment.id, generation, path))
+        .catch((error) => failImage(attachment.id, generation, error));
       return;
     }
     event.preventDefault();
@@ -431,21 +471,11 @@ export function Composer(props: {
     }
     const generation = pasteGeneration;
     for (const { file, ext } of files) {
+      const attachment = addPendingImage(URL.createObjectURL(file), anchor);
       void readBase64(file)
         .then((base64) => agentStashImage(base64, ext))
-        .then((path) => {
-          if (generation !== pasteGeneration) {
-            if (droppedPasteGeneration !== generation) {
-              droppedPasteGeneration = generation;
-              showPasteError("Image discarded because send already started", 4000);
-            }
-            return;
-          }
-          attachImage(path, anchor);
-        })
-        .catch((error) => {
-          showPasteError(error instanceof Error ? error.message : String(error));
-        });
+        .then((path) => resolveImage(attachment.id, generation, path))
+        .catch((error) => failImage(attachment.id, generation, error));
     }
   };
 
@@ -465,20 +495,10 @@ export function Composer(props: {
     const generation = atGeneration ?? pasteGeneration;
     if (generation !== pasteGeneration) return;
     for (const path of files) {
+      const attachment = addPendingImage(null, markerAnchor);
       void agentStashImageFromPath(path)
-        .then((stashedPath) => {
-          if (generation !== pasteGeneration) {
-            if (droppedPasteGeneration !== generation) {
-              droppedPasteGeneration = generation;
-              showPasteError("Image discarded because send already started", 4000);
-            }
-            return;
-          }
-          attachImage(stashedPath, markerAnchor);
-        })
-        .catch((error) => {
-          showPasteError(error instanceof Error ? error.message : String(error));
-        });
+        .then((stashedPath) => resolveImage(attachment.id, generation, stashedPath))
+        .catch((error) => failImage(attachment.id, generation, error));
     }
   };
 
@@ -494,12 +514,13 @@ export function Composer(props: {
     onCleanup(unregister);
   });
 
-  const submit = () => {
+  const dispatchSend = () => {
     const savedText = text();
     const value = savedText.trim();
-    const savedImages = [...images()];
+    const savedAttachments = [...attachments()];
+    const savedImages = readyAttachmentPaths(savedAttachments);
     if (!value && savedImages.length === 0) return;
-    const clearImages = !props.turnActive;
+    if (hasPendingAttachments(savedAttachments)) return;
     if (props.turnActive) {
       if (!steering() || !value) return;
       pasteGeneration += 1;
@@ -508,31 +529,50 @@ export function Composer(props: {
       setText("");
       field.style.height = "auto";
       void Promise.resolve(result).catch(() => {
-        if (text().trim().length === 0 && images().length === 0) {
+        if (text().trim().length === 0 && attachments().length === 0) {
           setText(savedText);
-          autosize();
-        }
-      });
-      return;
-    } else {
-      pasteGeneration += 1;
-      droppedPasteGeneration = null;
-      const result = props.onSend(value, savedImages.length > 0 ? savedImages : undefined);
-      setText("");
-      if (clearImages) setImages([]);
-      field.style.height = "auto";
-      void Promise.resolve(result).catch(() => {
-        if (text().trim().length === 0 && images().length === 0) {
-          setText(savedText);
-          setImages(savedImages);
           autosize();
         }
       });
       return;
     }
+
+    pasteGeneration += 1;
+    droppedPasteGeneration = null;
+    const result = props.onSend(value, savedImages.length > 0 ? savedImages : undefined);
     setText("");
-    if (clearImages) setImages([]);
+    setAttachments([]);
     field.style.height = "auto";
+    void Promise.resolve(result).catch(() => {
+      if (text().trim().length === 0 && attachments().length === 0) {
+        setText(savedText);
+        setAttachments(savedAttachments);
+        autosize();
+      }
+    });
+  };
+
+  createEffect(() => {
+    if (!preparing()) return;
+    const decision = decidePreparingState({
+      attachments: attachments(),
+      failed: prepareFailed(),
+      hasContent: text().trim().length > 0,
+    });
+    if (decision === "wait") return;
+    setPreparing(false);
+    setPrepareFailed(false);
+    if (decision === "dispatch") dispatchSend();
+  });
+
+  const submit = () => {
+    if (preparing()) return;
+    if (!props.turnActive && hasPendingAttachments(attachments())) {
+      setPrepareFailed(false);
+      setPreparing(true);
+      return;
+    }
+    dispatchSend();
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -567,10 +607,10 @@ export function Composer(props: {
     }
   };
 
-  const autosize = () => {
+  function autosize() {
     field.style.height = "auto";
     field.style.height = `${Math.min(field.scrollHeight, 200)}px`;
-  };
+  }
 
   return (
     <div
@@ -634,42 +674,74 @@ export function Composer(props: {
           </div>
         )}
       </Show>
-      <Show when={images().length > 0}>
+      <Show when={attachments().length > 0}>
         <div class="pf-chat-attachments">
-          <For each={images()}>
-            {(path, i) => (
-              <div class="pf-chat-attachment">
-                <img
-                  class="pf-chat-attachment-img"
-                  src={convertFileSrc(path)}
-                  alt=""
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Preview image ${i() + 1}`}
-                  onClick={() => openLightbox(convertFileSrc(path))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openLightbox(convertFileSrc(path));
-                    }
+          <For each={attachments()}>
+            {(attachment, i) => {
+              const canPreview = () =>
+                attachment.status === "ready" && attachment.previewUrl !== null;
+              const openPreview = () => {
+                if (canPreview() && attachment.previewUrl) openLightbox(attachment.previewUrl);
+              };
+              return (
+                <div
+                  class="pf-chat-attachment"
+                  classList={{
+                    "pf-chat-attachment--pending": attachment.status === "pending",
                   }}
-                  onError={(e) => {
-                    e.currentTarget.style.visibility = "hidden";
-                  }}
-                />
-                <span class="pf-chat-attachment-index" aria-hidden="true">
-                  {i() + 1}
-                </span>
-                <button
-                  type="button"
-                  class="pf-chat-attachment-remove"
-                  aria-label="Remove image"
-                  onClick={() => removeImage(i())}
                 >
-                  ✕
-                </button>
-              </div>
-            )}
+                  <Show
+                    when={attachment.previewUrl}
+                    fallback={
+                      <span class="pf-chat-attachment-placeholder" aria-hidden="true">
+                        <span class="pf-chat-attachment-glyph" />
+                      </span>
+                    }
+                  >
+                    {(src) => (
+                      <img
+                        class="pf-chat-attachment-img"
+                        src={src()}
+                        alt=""
+                        role={canPreview() ? "button" : undefined}
+                        tabIndex={canPreview() ? 0 : undefined}
+                        aria-label={canPreview() ? `Preview image ${i() + 1}` : undefined}
+                        onClick={openPreview}
+                        onKeyDown={(e) => {
+                          if (!canPreview()) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openPreview();
+                          }
+                        }}
+                        onError={(e) => {
+                          e.currentTarget.style.visibility = "hidden";
+                        }}
+                      />
+                    )}
+                  </Show>
+                  <Show when={attachment.status === "pending"}>
+                    <span class="pf-chat-attachment-progress">
+                      <Spinner
+                        class="pf-chat-attachment-spinner"
+                        label={`Preparing image ${i() + 1}`}
+                      />
+                    </span>
+                  </Show>
+                  <span class="pf-chat-attachment-index" aria-hidden="true">
+                    {i() + 1}
+                  </span>
+                  <button
+                    type="button"
+                    class="pf-chat-attachment-remove"
+                    aria-label="Remove image"
+                    onClick={() => removeImage(attachment.id)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            }}
           </For>
         </div>
       </Show>
@@ -722,10 +794,13 @@ export function Composer(props: {
               type="button"
               class="pf-chat-send"
               classList={{ "pf-chat-send--yield": props.emberYielded }}
-              disabled={!canSend()}
+              disabled={preparing() || !canSend()}
+              aria-label={preparing() ? "Preparing images" : "Send"}
               onClick={submit}
             >
-              Send
+              <Show when={preparing()} fallback="Send">
+                <Spinner class="pf-chat-send-spinner" label="Preparing images" />
+              </Show>
             </button>
           }
         >

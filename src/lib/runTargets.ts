@@ -10,9 +10,14 @@ import { findNearestPubspec, targetDetect, type TargetDetection } from "./device
  *  "arg" → append `-d <serial>` (flutter); "rnDevice" → `ANDROID_SERIAL=` +
  *  `--deviceId <serial>` (react-native); "env" → prefix `ANDROID_SERIAL=`
  *  (native-android); "none" → ignore the serial. */
-export type DeviceConvention = "arg" | "rnDevice" | "env" | "none";
+export type DeviceConvention = "arg" | "rnDevice" | "env" | "xcodeDestination" | "none";
 /** Which inspector the right rail should use for a target. */
 export type InspectorKind = "vmService" | "uiAutomator" | "cdp" | "none";
+/** Where a target's device logs surface: the run PTY (Flutter / web / generic),
+ *  Android `adb logcat` (React Native / native-Android), or iOS `os_log`
+ *  (native-iOS). Drives whether the Debug Console shows a Logs tab and which
+ *  stream client feeds it. */
+export type LogSource = "pty" | "logcat" | "oslog";
 
 export interface RunTarget {
   id: string;
@@ -30,6 +35,8 @@ export interface RunTarget {
   deviceConvention: DeviceConvention;
   /** which inspector the right rail should use for this target. */
   inspectorKind: InspectorKind;
+  /** where this target's device logs surface (see LogSource). */
+  logSource: LogSource;
   source: "detected" | "vscode";
 }
 
@@ -44,6 +51,11 @@ export function defaultCommand(t: TargetDetection): string | null {
       return "npx react-native run-android";
     case "native-android":
       return "./gradlew installDebug";
+    case "native-ios":
+      // A plain build the user edits at the prompt. Workspace / multi-scheme
+      // projects need -workspace/-scheme; xcodebuild emits its own guidance error
+      // pointing that out rather than us guessing the wrong scheme here.
+      return "xcodebuild build";
     case "web":
       return "npm run dev";
     default:
@@ -104,28 +116,66 @@ export interface RunProfile {
   needsDevice: boolean;
   deviceConvention: DeviceConvention;
   inspectorKind: InspectorKind;
+  logSource: LogSource;
 }
 export function runProfile(targetId: string): RunProfile {
   switch (targetId) {
     case "flutter":
-      return { needsDevice: true, deviceConvention: "arg", inspectorKind: "vmService" };
+      return { needsDevice: true, deviceConvention: "arg", inspectorKind: "vmService", logSource: "pty" };
     case "react-native":
-      return { needsDevice: true, deviceConvention: "rnDevice", inspectorKind: "uiAutomator" };
+      return { needsDevice: true, deviceConvention: "rnDevice", inspectorKind: "uiAutomator", logSource: "logcat" };
     case "native-android":
-      return { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator" };
+      return { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator", logSource: "logcat" };
+    case "native-ios":
+      return { needsDevice: true, deviceConvention: "xcodeDestination", inspectorKind: "none", logSource: "oslog" };
     case "web":
-      return { needsDevice: false, deviceConvention: "none", inspectorKind: "cdp" };
+      return { needsDevice: false, deviceConvention: "none", inspectorKind: "cdp", logSource: "pty" };
     default:
-      return { needsDevice: false, deviceConvention: "none", inspectorKind: "none" };
+      return { needsDevice: false, deviceConvention: "none", inspectorKind: "none", logSource: "pty" };
   }
+}
+
+/** A target's device-log source (see LogSource). The one place the log routing
+ *  is read off a target, so the Debug Console and any gating share one signal.
+ *  Absent/null targets default to the PTY. */
+export function logSourceOf(t: RunTarget | null | undefined): LogSource {
+  return t?.logSource ?? "pty";
 }
 
 /** Whether a target's device logs live in `adb logcat` rather than the run PTY —
  *  i.e. React Native / native-Android. Flutter streams its logs into the PTY, so
- *  it (and web / unknown) is excluded. Keyed off the inspector kind so a new
- *  Android adapter inherits the Logs view from its one-line profile. */
+ *  it (and web / iOS / unknown) is excluded. Derived from the target's log
+ *  source so a new adapter inherits the Logs view from its one-line profile. */
 export function isLogcatTarget(t: RunTarget | null | undefined): boolean {
-  return t?.inspectorKind === "uiAutomator";
+  return logSourceOf(t) === "logcat";
+}
+
+/** Whether a target's device logs live in iOS `os_log` rather than the run PTY —
+ *  i.e. native-iOS. The oslog sibling of `isLogcatTarget`. */
+export function isOslogTarget(t: RunTarget | null | undefined): boolean {
+  return logSourceOf(t) === "oslog";
+}
+
+/** Whether a device row can serve a target's run/tooling — the ONE place the
+ *  merged (Android + iOS) device list is narrowed per target, so the picker,
+ *  auto-selection and launch all agree. Keyed off the device convention (set by
+ *  the per-adapter profile): xcodebuild destinations are simulator udids only;
+ *  adb-backed targets (RN / native-Android) take emulators/physical only;
+ *  flutter (`-d`) accepts both adb serials and sim udids; no-device targets are
+ *  unconstrained (the list is informational there). */
+export function isCompatibleDevice(
+  t: RunTarget | null | undefined,
+  kind: "emulator" | "physical" | "simulator",
+): boolean {
+  switch (t?.deviceConvention) {
+    case "xcodeDestination":
+      return kind === "simulator";
+    case "rnDevice":
+    case "env":
+      return kind !== "simulator";
+    default:
+      return true;
+  }
 }
 
 /** Apply the chosen device serial to a target's command per its convention.
@@ -145,6 +195,14 @@ export function withDevice(t: RunTarget, serial: string | null): string {
     case "env":
       // native-android: prefix ANDROID_SERIAL so gradle / adb target the device.
       return `ANDROID_SERIAL=${shquote(serial)} ${t.command}`;
+    case "xcodeDestination":
+      // native-ios: append `-destination 'id=<udid>'` so xcodebuild targets the
+      // chosen simulator. xcodebuild options may follow the action verb, so this
+      // stays a valid invocation; skip if the user already pinned a destination.
+      // Token-aware: `-destination-timeout` alone must NOT count as pinned.
+      return /(^|\s)-destination(\s|$)/.test(t.command)
+        ? t.command
+        : `${t.command} -destination ${shquote(`id=${serial}`)}`;
     default:
       return t.command;
   }
@@ -337,6 +395,9 @@ export async function fromLaunchConfig(
     // Only a debug Flutter run can attach the VM service; release/profile runs
     // on a real device but exposes no inspector.
     inspectorKind: flutterRun && flutterDebug ? "vmService" : "none",
+    // launch.json configs are Flutter or generic programs — both stream their
+    // logs into the run PTY, so no separate Logs tab.
+    logSource: "pty",
     source: "vscode",
   };
 }
@@ -372,6 +433,7 @@ export async function discoverRunTargets(root: string): Promise<RunTarget[]> {
         needsDevice: profile.needsDevice,
         deviceConvention: profile.deviceConvention,
         inspectorKind: profile.inspectorKind,
+        logSource: profile.logSource,
         source: "detected",
       });
     }

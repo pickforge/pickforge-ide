@@ -37,8 +37,9 @@ export function OnboardingScreen() {
         <MonoEyebrow text="Welcome" tick />
         <h1 class="pf-onboarding-title">An agent IDE for mobile.</h1>
         <p class="pf-onboarding-sub">
-          Point PickForge at a Flutter, React Native, Android, or web project,
-          then run, inspect, and forge UI to Claude, Codex, and your tools.
+          Point PickForge at a Flutter, React Native, Android, native iOS
+          (experimental), or web project, then run, inspect, and forge UI to
+          Claude, Codex, and your tools.
         </p>
         <div class="pf-onboarding-actions">
           <EmberButton label="Add a project" onClick={pick} />

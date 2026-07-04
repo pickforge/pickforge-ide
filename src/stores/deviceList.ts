@@ -1,9 +1,10 @@
-// Shared, ref-counted poller for the Android device list (running devices +
-// stopped AVDs). Exactly one interval runs regardless of how many views
-// subscribe, so the run launcher and the Inspector read the same live list and
-// a freshly-booted emulator appears within a tick without switching chats.
+// Shared, ref-counted poller for the merged device list: Android (running
+// devices + stopped AVDs) and iOS (booted + shut-down simulators). Exactly one
+// interval runs regardless of how many views subscribe, so the run launcher and
+// the Inspector read the same live list and a freshly-booted emulator/simulator
+// appears within a tick without switching chats.
 import { createSignal, onCleanup, onMount } from "solid-js";
-import { androidDeviceList, type DeviceEntry } from "../lib/device";
+import { androidDeviceList, iosDeviceList, type DeviceEntry } from "../lib/device";
 
 const POLL_MS = 3000;
 
@@ -22,12 +23,24 @@ export function refreshDevices(): Promise<DeviceEntry[]> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
-      const list = await androidDeviceList();
-      const safe = Array.isArray(list) ? list : [];
+      // Query both sources concurrently; a null result means that source threw
+      // (its CLI missing / not in Tauri). One source failing or returning empty
+      // must never drop the other's devices.
+      const [android, ios] = await Promise.all([
+        androidDeviceList().catch(() => null),
+        iosDeviceList().catch(() => null),
+      ]);
+      // Both sources unreachable: keep what we have rather than clobbering the
+      // list to empty (preserves the "not in Tauri / adb missing" behavior).
+      if (android === null && ios === null) return devices();
+      const safe = [
+        ...(Array.isArray(android) ? android : []),
+        ...(Array.isArray(ios) ? ios : []),
+      ];
       setDevices(safe);
       return safe;
     } catch {
-      return devices(); // not in Tauri / adb missing — keep what we have
+      return devices();
     } finally {
       inFlight = null;
     }

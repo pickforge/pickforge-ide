@@ -16,10 +16,14 @@ import {
   setActiveTargetId,
   setRunTargets,
 } from "../../stores/runTargets";
-import { deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
+import { compatibleDevices, deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
 
 export function RunLauncher() {
-  const { devices } = useDeviceList();
+  // Subscribe to the shared poller for this view's lifetime, but show only the
+  // devices compatible with the active target's platform (never a simulator for
+  // an Android run, or vice versa).
+  useDeviceList();
+  const devices = compatibleDevices;
 
   // Reload run targets whenever the active project changes.
   createEffect(() => {

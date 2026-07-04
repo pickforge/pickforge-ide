@@ -9,8 +9,12 @@ import {
   expandVars,
   fromLaunchConfig,
   hasCapability,
+  isCompatibleDevice,
   isDirProgram,
+  isLogcatTarget,
+  isOslogTarget,
   isTestProgram,
+  logSourceOf,
   runProfile,
   shquote,
   stripJsonc,
@@ -27,6 +31,7 @@ const target = (over: Partial<RunTarget>): RunTarget => ({
   needsDevice: true,
   deviceConvention: "arg",
   inspectorKind: "vmService",
+  logSource: "pty",
   source: "detected",
   ...over,
 });
@@ -37,46 +42,91 @@ describe("defaultCommand", () => {
     expect(cmd("flutter")).toBe("flutter --color run");
     expect(cmd("react-native")).toBe("npx react-native run-android");
     expect(cmd("native-android")).toBe("./gradlew installDebug");
+    expect(cmd("native-ios")).toBe("xcodebuild build");
     expect(cmd("web")).toBe("npm run dev");
     expect(cmd("generic")).toBeNull();
   });
 });
 
 describe("runProfile", () => {
-  it("flutter → arg + vmService", () => {
+  it("flutter → arg + vmService + pty logs", () => {
     expect(runProfile("flutter")).toEqual({
       needsDevice: true,
       deviceConvention: "arg",
       inspectorKind: "vmService",
+      logSource: "pty",
     });
   });
-  it("react-native → rnDevice + uiAutomator", () => {
+  it("react-native → rnDevice + uiAutomator + logcat logs", () => {
     expect(runProfile("react-native")).toEqual({
       needsDevice: true,
       deviceConvention: "rnDevice",
       inspectorKind: "uiAutomator",
+      logSource: "logcat",
     });
   });
-  it("native-android → env + uiAutomator", () => {
+  it("native-android → env + uiAutomator + logcat logs", () => {
     expect(runProfile("native-android")).toEqual({
       needsDevice: true,
       deviceConvention: "env",
       inspectorKind: "uiAutomator",
+      logSource: "logcat",
     });
   });
-  it("web → none device + cdp", () => {
+  it("native-ios → xcodeDestination + none inspector + oslog logs", () => {
+    expect(runProfile("native-ios")).toEqual({
+      needsDevice: true,
+      deviceConvention: "xcodeDestination",
+      inspectorKind: "none",
+      logSource: "oslog",
+    });
+  });
+  it("web → none device + cdp + pty logs", () => {
     expect(runProfile("web")).toEqual({
       needsDevice: false,
       deviceConvention: "none",
       inspectorKind: "cdp",
+      logSource: "pty",
     });
   });
-  it("generic / unknown → none + none", () => {
+  it("generic / unknown → none + none + pty logs", () => {
     expect(runProfile("generic")).toEqual({
       needsDevice: false,
       deviceConvention: "none",
       inspectorKind: "none",
+      logSource: "pty",
     });
+  });
+});
+
+describe("logSource derivations", () => {
+  // isLogcatTarget must keep IDENTICAL behavior for every existing target now
+  // that it derives from logSource instead of the inspector kind.
+  it("isLogcatTarget is true only for logcat-source targets", () => {
+    expect(isLogcatTarget(target({ logSource: "logcat" }))).toBe(true);
+    expect(isLogcatTarget(target({ logSource: "pty" }))).toBe(false);
+    expect(isLogcatTarget(target({ logSource: "oslog" }))).toBe(false);
+    expect(isLogcatTarget(null)).toBe(false);
+    expect(isLogcatTarget(undefined)).toBe(false);
+  });
+  it("isOslogTarget is true only for oslog-source (native-iOS) targets", () => {
+    expect(isOslogTarget(target({ logSource: "oslog" }))).toBe(true);
+    expect(isOslogTarget(target({ logSource: "logcat" }))).toBe(false);
+    expect(isOslogTarget(target({ logSource: "pty" }))).toBe(false);
+    expect(isOslogTarget(null)).toBe(false);
+  });
+  it("logSourceOf defaults an absent/null target to the run PTY", () => {
+    expect(logSourceOf(null)).toBe("pty");
+    expect(logSourceOf(undefined)).toBe("pty");
+    expect(logSourceOf(target({ logSource: "logcat" }))).toBe("logcat");
+    expect(logSourceOf(target({ logSource: "oslog" }))).toBe("oslog");
+  });
+  it("derives each adapter's log source from its profile", () => {
+    expect(runProfile("flutter").logSource).toBe("pty");
+    expect(runProfile("react-native").logSource).toBe("logcat");
+    expect(runProfile("native-android").logSource).toBe("logcat");
+    expect(runProfile("native-ios").logSource).toBe("oslog");
+    expect(runProfile("web").logSource).toBe("pty");
   });
 });
 
@@ -141,6 +191,77 @@ describe("withDevice", () => {
     expect(
       withDevice(target({ deviceConvention: "env", command: "./gradlew installDebug" }), "emulator-5556"),
     ).toBe("ANDROID_SERIAL='emulator-5556' ./gradlew installDebug");
+  });
+  it("native-ios appends -destination 'id=<udid>' after the action verb", () => {
+    expect(
+      withDevice(
+        target({ deviceConvention: "xcodeDestination", command: "xcodebuild build" }),
+        "SIM-9F3A-1D7B",
+      ),
+    ).toBe("xcodebuild build -destination 'id=SIM-9F3A-1D7B'");
+  });
+  it("native-ios leaves an already-pinned -destination alone", () => {
+    expect(
+      withDevice(
+        target({
+          deviceConvention: "xcodeDestination",
+          command: "xcodebuild build -destination 'id=OTHER'",
+        }),
+        "SIM-9F3A-1D7B",
+      ),
+    ).toBe("xcodebuild build -destination 'id=OTHER'");
+  });
+  it("native-ios: -destination-timeout is NOT a pinned destination (token-aware)", () => {
+    // A near-miss flag must not be mistaken for `-destination`, or the chosen
+    // udid would be silently dropped.
+    expect(
+      withDevice(
+        target({
+          deviceConvention: "xcodeDestination",
+          command: "xcodebuild build -destination-timeout 30",
+        }),
+        "SIM-9F3A-1D7B",
+      ),
+    ).toBe("xcodebuild build -destination-timeout 30 -destination 'id=SIM-9F3A-1D7B'");
+  });
+  it("native-ios: -destination as the trailing token still counts as pinned", () => {
+    expect(
+      withDevice(
+        target({ deviceConvention: "xcodeDestination", command: "xcodebuild -destination" }),
+        "SIM-9F3A-1D7B",
+      ),
+    ).toBe("xcodebuild -destination");
+  });
+});
+
+describe("isCompatibleDevice", () => {
+  const flutter = target({ deviceConvention: "arg" });
+  const reactNative = target({ deviceConvention: "rnDevice" });
+  const nativeAndroid = target({ deviceConvention: "env" });
+  const nativeIos = target({ deviceConvention: "xcodeDestination" });
+  const web = target({ deviceConvention: "none", needsDevice: false });
+
+  it("native-iOS accepts only simulators", () => {
+    expect(isCompatibleDevice(nativeIos, "simulator")).toBe(true);
+    expect(isCompatibleDevice(nativeIos, "emulator")).toBe(false);
+    expect(isCompatibleDevice(nativeIos, "physical")).toBe(false);
+  });
+  it("adb-backed targets (RN / native-Android) accept emulators/physical, never simulators", () => {
+    for (const t of [reactNative, nativeAndroid]) {
+      expect(isCompatibleDevice(t, "emulator")).toBe(true);
+      expect(isCompatibleDevice(t, "physical")).toBe(true);
+      expect(isCompatibleDevice(t, "simulator")).toBe(false);
+    }
+  });
+  it("flutter accepts every kind (flutter -d takes adb serials and sim udids)", () => {
+    expect(isCompatibleDevice(flutter, "emulator")).toBe(true);
+    expect(isCompatibleDevice(flutter, "physical")).toBe(true);
+    expect(isCompatibleDevice(flutter, "simulator")).toBe(true);
+  });
+  it("no-device / null targets are unconstrained", () => {
+    expect(isCompatibleDevice(web, "simulator")).toBe(true);
+    expect(isCompatibleDevice(null, "emulator")).toBe(true);
+    expect(isCompatibleDevice(undefined, "simulator")).toBe(true);
   });
   it("ignores the serial for none / no-device / null", () => {
     expect(

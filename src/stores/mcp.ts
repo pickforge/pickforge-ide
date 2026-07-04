@@ -7,6 +7,7 @@ import { createEffect, createSignal } from "solid-js";
 import * as mcp from "../lib/mcp";
 import { activeTarget } from "./runTargets";
 import { selectedDevice } from "./runDevice";
+import { deviceList } from "./deviceList";
 import { runConsole } from "./runConsole";
 import { supportTier } from "../lib/runTargets";
 
@@ -73,6 +74,18 @@ function mcpTarget() {
   return runConsole.status() === "running" ? runConsole.target() : activeTarget();
 }
 
+/** The active run device's platform, so the Rust screenshot path picks simctl
+ *  (iOS) vs adb (Android). "ios" when the selected device is a simulator, else
+ *  "android" (the honest default for adb-backed and no-device runs). */
+function activeDevicePlatform(projectRoot: string): "android" | "ios" {
+  const key = selectedDevice(projectRoot);
+  if (!key) return "android";
+  const d = deviceList().find(
+    (d) => d.serial === key || d.avdId === key || d.displayName === key,
+  );
+  return d?.kind === "simulator" ? "ios" : "android";
+}
+
 /** Push the current active-target + context snapshot to the Rust side. */
 export async function publishSnapshot(): Promise<void> {
   const b = binding();
@@ -86,6 +99,7 @@ export async function publishSnapshot(): Promise<void> {
       inspectorKind: t?.inspectorKind ?? "none",
       supportTier: supportTier(t),
       deviceSerial: selectedDevice(b.projectRoot) || null,
+      devicePlatform: activeDevicePlatform(b.projectRoot),
       projectRoot: b.projectRoot,
       contextDir: b.contextDir,
       runsDir: b.runsDir,

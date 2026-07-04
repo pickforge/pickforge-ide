@@ -29,6 +29,7 @@ import {
   createPendingAttachment,
   decidePreparingState,
   hasPendingAttachments,
+  offsetAfterRemoval,
   readyAttachmentPaths,
   removeAttachmentWithMarker,
   replaceRangeWithText,
@@ -45,7 +46,6 @@ import {
   serializeComposer,
   setCaretAtOffset,
 } from "../../lib/composerChips";
-import { removeMarkerAndRenumber } from "../../lib/imageAnchors";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
@@ -470,13 +470,8 @@ export function Composer(props: {
   const removeImageKeepingCaret = (id: number) => {
     const at = document.activeElement === field ? caretOffset(field, attachmentIds()) : null;
     if (at === null) return removeImage(id, false);
-    const index = attachments().findIndex((attachment) => attachment.id === id);
-    if (index < 0) return false;
-    const caret = removeMarkerAndRenumber(
-      text().slice(0, at),
-      index + 1,
-      attachments().length,
-    ).length;
+    const caret = offsetAfterRemoval(attachments(), text(), id, at);
+    if (caret === null) return false;
     return removeImage(id, true, caret);
   };
 
@@ -617,11 +612,13 @@ export function Composer(props: {
         // Non-image content: keep the composer plain-text (the textarea it
         // replaced never accepted rich markup) by inserting the text flavor
         // ourselves instead of letting contenteditable smuggle in HTML. A
-        // clipboard with no text/plain flavor (HTML-only fragment) pastes
-        // nothing rather than markup the serializer can't represent.
+        // clipboard with no text flavor at all (HTML-only fragment) pastes
+        // nothing rather than markup the serializer can't represent; a
+        // non-image uri-list still pastes its decoded paths.
         event.preventDefault();
         const plain = data.getData("text/plain");
         if (plain) insertPlainText(plain);
+        else if (uriPaths.length > 0) insertPlainText(uriPaths.join(" "));
         return;
       }
       event.preventDefault();

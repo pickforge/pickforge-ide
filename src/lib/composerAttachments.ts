@@ -1,4 +1,40 @@
-import { insertMarker, markerSpans, removeMarkerAndRenumber } from "./imageAnchors";
+import { insertMarker, markerSpans } from "./imageAnchors";
+
+type MarkerSpan = { n: number; start: number; end: number };
+
+// Chip-backed spans follow renderComposer's rule: only the FIRST occurrence of
+// each marker number in 1..count anchors the attachment; literal duplicates
+// (a pasted "[Image #1]" next to the real chip) are plain text.
+function chipSpansOf(text: string, count: number): MarkerSpan[] {
+  const seen = new Set<number>();
+  return markerSpans(text).filter((span) => {
+    if (span.n < 1 || span.n > count || seen.has(span.n)) return false;
+    seen.add(span.n);
+    return true;
+  });
+}
+
+// Rebuild `[segStart, segEnd)` of `text` span-wise: dropped chips vanish,
+// surviving chips renumber via `shifted`, everything else — including literal
+// duplicate markers — survives verbatim.
+function renumberSegment(
+  text: string,
+  spans: readonly MarkerSpan[],
+  dropped: ReadonlySet<number>,
+  shifted: (n: number) => number,
+  segStart: number,
+  segEnd: number,
+): string {
+  let out = "";
+  let at = segStart;
+  for (const span of spans) {
+    if (span.start < segStart || span.start >= segEnd) continue;
+    out += text.slice(at, span.start);
+    if (!dropped.has(span.n)) out += `[Image #${shifted(span.n)}]`;
+    at = span.end;
+  }
+  return out + text.slice(at, segEnd);
+}
 
 export type ComposerAttachmentStatus = "pending" | "ready";
 
@@ -72,11 +108,19 @@ export function removeAttachmentWithMarker(
       removedIndex: null,
     };
   }
+  const n = index + 1;
   return {
     attachments: attachments.filter((attachment) => attachment.id !== id),
-    text: removeMarkerAndRenumber(text, index + 1, attachments.length),
+    text: renumberSegment(
+      text,
+      chipSpansOf(text, attachments.length),
+      new Set([n]),
+      (v) => (v > n ? v - 1 : v),
+      0,
+      text.length,
+    ),
     removed: attachments[index],
-    removedIndex: index + 1,
+    removedIndex: n,
   };
 }
 
@@ -136,16 +180,7 @@ export function replaceRangeWithText(
   let from = Math.max(0, Math.min(start, text.length));
   let to = Math.min(Math.max(from, end), text.length);
   const count = attachments.length;
-  // Chip-backed spans follow renderComposer's rule: only the FIRST occurrence
-  // of each marker number is the attachment's anchor; literal duplicates (a
-  // pasted "[Image #1]" next to the real chip) are plain text and splice like
-  // any other characters.
-  const seen = new Set<number>();
-  const chipSpans = markerSpans(text).filter((span) => {
-    if (span.n < 1 || span.n > count || seen.has(span.n)) return false;
-    seen.add(span.n);
-    return true;
-  });
+  const chipSpans = chipSpansOf(text, count);
   for (const span of chipSpans) {
     if (from > span.start && from < span.end) from = span.start;
     if (to > span.start && to < span.end) to = span.end;
@@ -155,22 +190,8 @@ export function replaceRangeWithText(
     .map((span) => span.n);
   const dropped = new Set(droppedNs);
   const shifted = (n: number) => n - droppedNs.filter((d) => d < n).length;
-  // Rebuild the surrounding text span-wise: dropped chips vanish, surviving
-  // chips renumber, and everything else — including literal duplicates and the
-  // inserted chunk — survives verbatim.
-  const rebuild = (segStart: number, segEnd: number): string => {
-    let out = "";
-    let at = segStart;
-    for (const span of chipSpans) {
-      if (span.start < segStart || span.start >= segEnd) continue;
-      out += text.slice(at, span.start);
-      if (!dropped.has(span.n)) out += `[Image #${shifted(span.n)}]`;
-      at = span.end;
-    }
-    return out + text.slice(at, segEnd);
-  };
-  const before = rebuild(0, from);
-  const after = rebuild(to, text.length);
+  const before = renumberSegment(text, chipSpans, dropped, shifted, 0, from);
+  const after = renumberSegment(text, chipSpans, dropped, shifted, to, text.length);
   const droppedIds = new Set(droppedNs.map((n) => attachments[n - 1].id));
   return {
     attachments: attachments.filter((attachment) => !droppedIds.has(attachment.id)),
@@ -178,6 +199,28 @@ export function replaceRangeWithText(
     text: before + chunk + after,
     cursor: before.length + chunk.length,
   };
+}
+
+/** Where a caret at `offset` lands after attachment `id` is removed — the
+ *  prefix is mapped through the same span-wise removal/renumbering as
+ *  `removeAttachmentWithMarker`. `null` when `id` isn't attached. */
+export function offsetAfterRemoval(
+  attachments: readonly ComposerAttachment[],
+  text: string,
+  id: number,
+  offset: number,
+): number | null {
+  const index = attachments.findIndex((attachment) => attachment.id === id);
+  if (index < 0) return null;
+  const n = index + 1;
+  return renumberSegment(
+    text,
+    chipSpansOf(text, attachments.length),
+    new Set([n]),
+    (v) => (v > n ? v - 1 : v),
+    0,
+    Math.max(0, Math.min(offset, text.length)),
+  ).length;
 }
 
 export function hasPendingAttachments(attachments: readonly ComposerAttachment[]): boolean {

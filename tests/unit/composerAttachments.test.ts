@@ -4,6 +4,7 @@ import {
   addAttachmentWithMarker,
   createPendingAttachment,
   decidePreparingState,
+  offsetAfterRemoval,
   readyAttachmentPaths,
   removeAttachmentWithMarker,
   replaceRangeWithText,
@@ -40,6 +41,28 @@ describe("composer attachments", () => {
       "pending",
     ]);
     expect(removed.text).toBe("look [Image #1]  [Image #2]");
+  });
+
+  it("removal deletes only the chip occurrence, keeping literal duplicates", () => {
+    const attachments = [ready(1, "/a.png"), ready(2, "/b.png")];
+    const text = "chip [Image #1] lit [Image #1] then [Image #2]";
+
+    const removed = removeAttachmentWithMarker(attachments, text, 1);
+
+    expect(removed.text).toBe("chip  lit [Image #1] then [Image #1]");
+    expect(removed.attachments.map((a) => a.id)).toEqual([2]);
+  });
+
+  it("offsetAfterRemoval maps a caret across the removed chip and literal duplicates", () => {
+    const attachments = [ready(1, "/a.png")];
+    const text = "chip [Image #1] lit [Image #1] end";
+
+    // Caret at the very end: only the chip occurrence vanishes ahead of it.
+    expect(offsetAfterRemoval(attachments, text, 1, text.length)).toBe(
+      "chip  lit [Image #1] end".length,
+    );
+    // Caret before the chip: unaffected.
+    expect(offsetAfterRemoval(attachments, text, 1, 5)).toBe(5);
   });
 
   it("resolves pending attachments and returns ready paths in attachment order", () => {

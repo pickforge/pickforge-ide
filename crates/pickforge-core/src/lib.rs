@@ -11,6 +11,7 @@ pub mod cdp;
 pub mod db;
 pub mod git;
 pub mod inspector;
+pub mod ios;
 pub mod mcp;
 pub mod process;
 pub mod pty;
@@ -19,9 +20,7 @@ pub mod targets;
 pub mod transcript;
 pub mod vm_service;
 
-pub use cdp::{
-    decode_dom_node, find_node_path, CdpClient, CdpError, CdpTarget, DomNode,
-};
+pub use cdp::{decode_dom_node, find_node_path, CdpClient, CdpError, CdpTarget, DomNode};
 pub use inspector::{decode_widget_tree, CreationLocation, WidgetNode};
 pub use vm_service::{VmError, VmServiceClient};
 
@@ -39,15 +38,15 @@ pub use process::{
     is_binary_on_path, is_on_user_path, run, run_timeout, user_shell_environment, which_in,
     CommandOutcome,
 };
-pub use storage::{
-    pickforge_env_vars, pickforge_home, project_id, ContextStorageLocation, ContextStorageMode,
-    ContextStorageService, ResolvedContextDirectory, StorageError,
-};
 pub use pty::{
     dtach_socket_path, kill_dtach_master, prepare_chat_session, select_backend, session_name,
     sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
     PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, SessionBackend, SessionStatus,
     SpawnOptions,
+};
+pub use storage::{
+    pickforge_env_vars, pickforge_home, project_id, ContextStorageLocation, ContextStorageMode,
+    ContextStorageService, ResolvedContextDirectory, StorageError,
 };
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,

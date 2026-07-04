@@ -149,6 +149,13 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   ],
   android_launch_avd: () => null,
   android_wait_for_device: () => true,
+  ios_device_list: () => [
+    { serial: "SIM-9F3A-1D7B", avdId: null, displayName: "iPhone 17 Pro (iOS 26.5)", state: "running", kind: "simulator" },
+  ],
+  ios_boot_device: () => null,
+  ios_screenshot: () => null,
+  oslog_start: () => null,
+  oslog_stop: () => null,
   find_nearest_pubspec: () => null,
   picks_list: () => SAMPLE_PICKS,
   pick_insert: () => 1,

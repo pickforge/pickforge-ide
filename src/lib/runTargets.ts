@@ -10,9 +10,14 @@ import { findNearestPubspec, targetDetect, type TargetDetection } from "./device
  *  "arg" → append `-d <serial>` (flutter); "rnDevice" → `ANDROID_SERIAL=` +
  *  `--deviceId <serial>` (react-native); "env" → prefix `ANDROID_SERIAL=`
  *  (native-android); "none" → ignore the serial. */
-export type DeviceConvention = "arg" | "rnDevice" | "env" | "none";
+export type DeviceConvention = "arg" | "rnDevice" | "env" | "xcodeDestination" | "none";
 /** Which inspector the right rail should use for a target. */
 export type InspectorKind = "vmService" | "uiAutomator" | "cdp" | "none";
+/** Where a target's device logs surface: the run PTY (Flutter / web / generic),
+ *  Android `adb logcat` (React Native / native-Android), or iOS `os_log`
+ *  (native-iOS). Drives whether the Debug Console shows a Logs tab and which
+ *  stream client feeds it. */
+export type LogSource = "pty" | "logcat" | "oslog";
 
 export interface RunTarget {
   id: string;
@@ -30,6 +35,8 @@ export interface RunTarget {
   deviceConvention: DeviceConvention;
   /** which inspector the right rail should use for this target. */
   inspectorKind: InspectorKind;
+  /** where this target's device logs surface (see LogSource). */
+  logSource: LogSource;
   source: "detected" | "vscode";
 }
 
@@ -44,6 +51,14 @@ export function defaultCommand(t: TargetDetection): string | null {
       return "npx react-native run-android";
     case "native-android":
       return "./gradlew installDebug";
+    case "native-ios":
+      // The device-free base: a plain build (no simulator selected ⇒ nothing to
+      // install onto). Once a simulator udid is chosen, `withDevice` expands this
+      // into the full build→install→launch pipeline (see `iosRunCommand`).
+      // Workspace / multi-scheme projects need -workspace/-scheme; xcodebuild
+      // emits its own guidance error pointing that out rather than us guessing
+      // the wrong scheme here.
+      return "xcodebuild build";
     case "web":
       return "npm run dev";
     default:
@@ -104,28 +119,66 @@ export interface RunProfile {
   needsDevice: boolean;
   deviceConvention: DeviceConvention;
   inspectorKind: InspectorKind;
+  logSource: LogSource;
 }
 export function runProfile(targetId: string): RunProfile {
   switch (targetId) {
     case "flutter":
-      return { needsDevice: true, deviceConvention: "arg", inspectorKind: "vmService" };
+      return { needsDevice: true, deviceConvention: "arg", inspectorKind: "vmService", logSource: "pty" };
     case "react-native":
-      return { needsDevice: true, deviceConvention: "rnDevice", inspectorKind: "uiAutomator" };
+      return { needsDevice: true, deviceConvention: "rnDevice", inspectorKind: "uiAutomator", logSource: "logcat" };
     case "native-android":
-      return { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator" };
+      return { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator", logSource: "logcat" };
+    case "native-ios":
+      return { needsDevice: true, deviceConvention: "xcodeDestination", inspectorKind: "none", logSource: "oslog" };
     case "web":
-      return { needsDevice: false, deviceConvention: "none", inspectorKind: "cdp" };
+      return { needsDevice: false, deviceConvention: "none", inspectorKind: "cdp", logSource: "pty" };
     default:
-      return { needsDevice: false, deviceConvention: "none", inspectorKind: "none" };
+      return { needsDevice: false, deviceConvention: "none", inspectorKind: "none", logSource: "pty" };
   }
+}
+
+/** A target's device-log source (see LogSource). The one place the log routing
+ *  is read off a target, so the Debug Console and any gating share one signal.
+ *  Absent/null targets default to the PTY. */
+export function logSourceOf(t: RunTarget | null | undefined): LogSource {
+  return t?.logSource ?? "pty";
 }
 
 /** Whether a target's device logs live in `adb logcat` rather than the run PTY —
  *  i.e. React Native / native-Android. Flutter streams its logs into the PTY, so
- *  it (and web / unknown) is excluded. Keyed off the inspector kind so a new
- *  Android adapter inherits the Logs view from its one-line profile. */
+ *  it (and web / iOS / unknown) is excluded. Derived from the target's log
+ *  source so a new adapter inherits the Logs view from its one-line profile. */
 export function isLogcatTarget(t: RunTarget | null | undefined): boolean {
-  return t?.inspectorKind === "uiAutomator";
+  return logSourceOf(t) === "logcat";
+}
+
+/** Whether a target's device logs live in iOS `os_log` rather than the run PTY —
+ *  i.e. native-iOS. The oslog sibling of `isLogcatTarget`. */
+export function isOslogTarget(t: RunTarget | null | undefined): boolean {
+  return logSourceOf(t) === "oslog";
+}
+
+/** Whether a device row can serve a target's run/tooling — the ONE place the
+ *  merged (Android + iOS) device list is narrowed per target, so the picker,
+ *  auto-selection and launch all agree. Keyed off the device convention (set by
+ *  the per-adapter profile): xcodebuild destinations are simulator udids only;
+ *  adb-backed targets (RN / native-Android) take emulators/physical only;
+ *  flutter (`-d`) accepts both adb serials and sim udids; no-device targets are
+ *  unconstrained (the list is informational there). */
+export function isCompatibleDevice(
+  t: RunTarget | null | undefined,
+  kind: "emulator" | "physical" | "simulator",
+): boolean {
+  switch (t?.deviceConvention) {
+    case "xcodeDestination":
+      return kind === "simulator";
+    case "rnDevice":
+    case "env":
+      return kind !== "simulator";
+    default:
+      return true;
+  }
 }
 
 /** Apply the chosen device serial to a target's command per its convention.
@@ -145,9 +198,53 @@ export function withDevice(t: RunTarget, serial: string | null): string {
     case "env":
       // native-android: prefix ANDROID_SERIAL so gradle / adb target the device.
       return `ANDROID_SERIAL=${shquote(serial)} ${t.command}`;
+    case "xcodeDestination":
+      // native-ios: a plain `xcodebuild build` only COMPILES — it never installs
+      // or launches, so the app never lands on the sim to inspect. Expand the
+      // build into a self-contained build→install→launch pipeline that builds a
+      // simulator `.app` and pins the chosen udid at install + launch (see
+      // `iosRunCommand`). Skip if the user already pinned a `-destination` (they
+      // have taken manual control of device targeting — e.g. their own
+      // `-scheme`/`-destination`), leaving their edited command untouched.
+      // Token-aware: `-destination-timeout` alone must NOT count as pinned.
+      return /(^|\s)-destination(\s|$)/.test(t.command)
+        ? t.command
+        : iosRunCommand(t.command, serial);
     default:
       return t.command;
   }
+}
+
+/** The native-iOS run pipeline: `xcodebuild` BUILDS the app for the simulator,
+ *  then `simctl` INSTALLS and LAUNCHES it on the chosen simulator — a bare
+ *  `xcodebuild build` only compiles, so without this the app never appears on the
+ *  sim and the screenshot / os_log panels inspect whatever was already on screen.
+ *
+ *  Runs from the project root (the run cwd). The build pins `-sdk iphonesimulator`
+ *  so a simulator `.app` is produced: `-destination 'id=<udid>'` alone does NOT
+ *  work here — without a `-scheme` (which we won't guess from the project name)
+ *  xcodebuild ignores the destination and builds the iphoneOS/device SDK, whose
+ *  app `simctl` cannot install. `SYMROOT` steers the products into a PickForge-
+ *  owned `build/` subdir so the freshly-built `.app` is locatable by glob. The
+ *  bundle id is read from THAT app's Info.plist at runtime (never pre-baked) so
+ *  it always matches what was just built. The udid is interpolated into install
+ *  AND launch — a simulator build is device-agnostic, so the specific device is
+ *  chosen only at install/launch time.
+ *
+ *  `base` is the build invocation (default `xcodebuild build`); xcodebuild accepts
+ *  options after the action verb, so the sdk / SYMROOT flags append cleanly.
+ *  Workspace / multi-scheme projects need `-workspace`/`-scheme`; there
+ *  `xcodebuild build` emits its own clear guidance error for the user to edit. */
+export function iosRunCommand(base: string, udid: string): string {
+  const symroot = "build/pickforge-ios";
+  const app = `${symroot}/Debug-iphonesimulator/*.app`;
+  const id = shquote(udid);
+  return [
+    `${base} -configuration Debug -sdk iphonesimulator SYMROOT=${symroot}`,
+    `APP="$(ls -d ${app} | head -1)"`,
+    `xcrun simctl install ${id} "$APP"`,
+    `xcrun simctl launch ${id} "$(plutil -extract CFBundleIdentifier raw "$APP/Info.plist")"`,
+  ].join(" && ");
 }
 
 /** Convert JSONC (launch.json) to JSON: strip // and /* *​/ comments and
@@ -337,6 +434,9 @@ export async function fromLaunchConfig(
     // Only a debug Flutter run can attach the VM service; release/profile runs
     // on a real device but exposes no inspector.
     inspectorKind: flutterRun && flutterDebug ? "vmService" : "none",
+    // launch.json configs are Flutter or generic programs — both stream their
+    // logs into the run PTY, so no separate Logs tab.
+    logSource: "pty",
     source: "vscode",
   };
 }
@@ -372,6 +472,7 @@ export async function discoverRunTargets(root: string): Promise<RunTarget[]> {
         needsDevice: profile.needsDevice,
         deviceConvention: profile.deviceConvention,
         inspectorKind: profile.inspectorKind,
+        logSource: profile.logSource,
         source: "detected",
       });
     }

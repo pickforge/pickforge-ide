@@ -41,7 +41,7 @@ an agent can always read a clear signal.
 | Tool | Input | Returns |
 | --- | --- | --- |
 | `get_current_selection` | — | The live selected UI element for the active target: the Flutter VM-Service widget (`inspectorKind: vmService`) or the UIAutomator `A11yNode` (`uiAutomator`). `{ available, kind, targetId, selection }`, or `{ available:false, reason }`. Gated on `inspectSelection`. |
-| `capture_screenshot` | — | `{ available, path }` — an absolute PNG path written under the context dir (live `adb` capture for Android). Gated on `captureScreenshot`. |
+| `capture_screenshot` | — | `{ available, path }` — an absolute PNG path written under the context dir (live `adb` capture for an Android device, `simctl` for an iOS simulator — routed by the active target's device platform). Gated on `captureScreenshot`. |
 | `get_run_logs` | `{ limit?: 1..1000 }` | `{ available, lineCount, lines }` — recent run-console / logcat lines, newest last. Gated on `streamLogs`. |
 | `get_project_context` | — | `{ projectRoot, activeTargetId, activeTargetLabel, supportTier, capabilities, storage:{contextDir,runsDir,chatsDir} }`. Always available. |
 
@@ -54,9 +54,10 @@ an `A11yNode`, both under the same envelope.
 The frontend is the source of truth for what is *active*. It publishes a snapshot
 (`mcp_publish_state`) whenever the active target, device, project context, or
 selection changes, and streams run-console lines (`mcp_push_log`) into a bounded
-ring buffer. The socket server reads that snapshot per request and, for Android
-screenshots, resolves a fresh device capture through the core `adb` helper
-(`android::capture_screenshot`). The 11 existing `vm_*` IPC commands are untouched.
+ring buffer. The socket server reads that snapshot per request and, for a device screenshot,
+resolves a fresh capture through the core helper for the active target's platform
+(`android::capture_screenshot` via `adb`, or the `simctl` path for an iOS
+simulator). The 11 existing `vm_*` IPC commands are untouched.
 
 ## Discovery
 

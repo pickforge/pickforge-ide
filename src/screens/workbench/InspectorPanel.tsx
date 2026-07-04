@@ -14,18 +14,21 @@ import { IconRefresh } from "../../components/icons";
 import type { DeviceEntry } from "../../lib/device";
 import { setRunDevice } from "../../stores/runDevice";
 import { useDeviceList } from "../../stores/deviceList";
-import { deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
+import { compatibleDevices, deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
 import { workspace } from "../../stores/workspace";
 import { connectVm, disconnectVm, setVmUrl, vmService } from "../../stores/vmService";
 import { runConsole } from "../../stores/runConsole";
 import { activeTarget } from "../../stores/runTargets";
-import { hasCapability, type InspectorKind, type RunTarget } from "../../lib/runTargets";
+import { hasCapability, isOslogTarget, type InspectorKind, type RunTarget } from "../../lib/runTargets";
 import { WidgetTree } from "./WidgetTree";
 import { A11yTree } from "./A11yTree";
 import { CdpTree } from "./CdpTree";
 
 export function InspectorPanel() {
-  const { devices, refresh } = useDeviceList();
+  // Subscribe to the shared poller, but show only devices compatible with the
+  // active target's platform (see compatibleDevices).
+  const { refresh } = useDeviceList();
+  const devices = compatibleDevices;
 
   // Which inspector the rail shows, branched on the active target's capability:
   // a LIVE run wins (it's what's on the device), else the selected launcher
@@ -178,7 +181,11 @@ export function InspectorPanel() {
           <Match when={inspectorKind() === "none"}>
             <div class="pf-inspector-section">
               <MonoEyebrow text="Inspector" />
-              <div class="pf-rail-empty">No inspector for this target</div>
+              <div class="pf-rail-empty">
+                {isOslogTarget(inspectTarget())
+                  ? "No element inspector for native iOS yet — screenshots and logs still work."
+                  : "No inspector for this target"}
+              </div>
             </div>
           </Match>
         </Switch>

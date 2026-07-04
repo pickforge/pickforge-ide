@@ -44,7 +44,7 @@ const MCP_SOCKET_UNSUPPORTED: &str = "MCP socket server is only supported on uni
 
 /// The published, app-side view of the active target + context. Serialized from
 /// the frontend stores; mirrors `runTargets.ts` / `runConsole` shapes.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishedState {
     /// Active target id (e.g. "flutter", "native-android"); empty when none.
@@ -63,6 +63,8 @@ pub struct PublishedState {
     /// adb serial of the active device, when one is selected.
     #[serde(default)]
     pub device_serial: Option<String>,
+    #[serde(default = "default_device_platform")]
+    pub device_platform: String,
     #[serde(default)]
     pub project_root: Option<String>,
     #[serde(default)]
@@ -76,6 +78,29 @@ pub struct PublishedState {
     /// selected. The frontend refreshes this as the selection changes.
     #[serde(default)]
     pub selection: Option<Value>,
+}
+
+impl Default for PublishedState {
+    fn default() -> Self {
+        Self {
+            target_id: String::new(),
+            target_label: String::new(),
+            capabilities: Vec::new(),
+            inspector_kind: String::new(),
+            support_tier: String::new(),
+            device_serial: None,
+            device_platform: default_device_platform(),
+            project_root: None,
+            context_dir: None,
+            runs_dir: None,
+            chats_dir: None,
+            selection: None,
+        }
+    }
+}
+
+fn default_device_platform() -> String {
+    "android".to_string()
 }
 
 /// One running server instance, owned by exactly one accept task. The
@@ -318,7 +343,10 @@ impl LiveState for SnapshotLiveState<'_> {
             .ok_or_else(|| "no context directory resolved".to_string())?;
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let name = format!("mcp-screenshot-{}.png", now_millis());
-        Ok(android::capture_screenshot(&serial, &dir, &name))
+        Ok(match self.snapshot.device_platform.as_str() {
+            "ios" => crate::ios_commands::capture_ios_screenshot(&serial, &dir, &name),
+            _ => android::capture_screenshot(&serial, &dir, &name),
+        })
     }
 
     fn run_logs(&self, limit: usize) -> Vec<String> {

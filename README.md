@@ -6,7 +6,7 @@
 
 An agent IDE for mobile developers. PickForge is a local desktop app that runs your app, lets you pick the on-screen element you care about, and forges its context — source location (or best-effort hints), ancestor/accessibility chain, screenshots — straight into an AI coding CLI (Claude Code, Codex, OpenCode) in an embedded terminal. The agent makes a surgical edit; you hot-reload or re-run; repeat.
 
-It works across **Flutter, React Native (Android), native Android, and web** — but not all equally. Support is honest and tiered: Flutter is deep (exact element→source mapping), React Native and native Android are useful (run, inspect, logs, best-effort source hints), web is experimental. See [Framework support](#framework-support) for exactly what each tier means.
+It works across **Flutter, React Native (Android), native Android, iOS, and web** — but not all equally. Support is honest and tiered: Flutter is deep (exact element→source mapping), React Native and native Android are useful (run, inspect, logs, best-effort source hints), iOS and web are experimental (run, screenshot, logs — no element inspector yet). See [Framework support](#framework-support) for exactly what each tier means.
 
 PickForge builds the app. PickLab lets agents see, run, and test it. PickArena measures the results.
 
@@ -49,9 +49,9 @@ Then fully relaunch the window (compositors cache the app_id→icon mapping).
 
 ## Quickstart
 
-1. Launch PickForge. On first run it asks you to **Add your first project** — pick the folder of a Flutter, React Native, native-Android, or web project. PickForge detects the framework and shows its [support tier](#framework-support) next to the run button.
+1. Launch PickForge. On first run it asks you to **Add your first project** — pick the folder of a Flutter, React Native, native-Android, iOS, or web project. PickForge detects the framework and shows its [support tier](#framework-support) next to the run button.
 2. Inside the workbench, hit **+ New chat** to spawn a persistent agent CLI session in the embedded terminal pane. Each chat keeps its own scrollback across app restarts.
-3. **Run** the detected target from the workbench (Flutter run, Metro/Gradle, dev server). Pick the device when the target needs one.
+3. **Run** the detected target from the workbench (Flutter run, Metro/Gradle, xcodebuild, dev server). Pick the device when the target needs one — Android emulators and iOS simulators both boot from here.
 4. Open the inspector and **pick** an element: Flutter attaches the Dart VM-service widget inspector; React Native and native Android use the UIAutomator accessibility inspector; web uses CDP/source-map inspection.
 5. Click **Forge it** to dispatch the element's context as a prompt into the active chat.
 
@@ -113,7 +113,7 @@ PickForge declares only the capabilities each framework adapter can actually bac
 | **React Native (Android)** | **Useful** | Metro/Gradle run on a device, UIAutomator accessibility inspector + screenshot, `adb logcat` stream, forge-to-agent with **best-effort** source hints (no exact source mapping). |
 | **Native Android** | **Useful** | Gradle run, UIAutomator accessibility inspector + screenshot, `adb logcat` stream, forge-to-agent with **best-effort** source hints. |
 | **Web** | **Experimental** | Dev-server run; CDP / source-map inspection (partial). |
-| **iOS** | **Deferred** | Detection and command/parse fixtures exist, but iOS needs macOS and a product decision — it is **tracked, not working**. Don't expect a live run or inspector yet. |
+| **iOS** | **Experimental** | `xcodebuild` run on an iOS Simulator, `simctl` screenshot, `os_log` stream — proven live on a real simulator. No element inspector yet (`simctl` exposes no accessibility dump); the XCUITest/idb bridge is tracked in epic #7. Flutter apps on an iOS simulator still get the full **Deep** VM-service inspector. |
 
 Notes:
 
@@ -127,14 +127,14 @@ These are tracked but **not** shipped — don't rely on them yet:
 
 - A **web CDP inspector** that captures DOM/console/network from a live session.
 - An **MCP endpoint** exposing PickForge's run/inspect/forge tools to agents.
-- **iOS** live run + accessibility inspection (needs macOS).
+- An **iOS element inspector** (XCUITest/idb accessibility bridge) — the last native-iOS gap now that run, screenshot, and `os_log` streaming ship.
 
 ## Stack
 
 | Category | Supported |
 | --- | --- |
 | Agents | Claude Code, Codex, OpenCode. More planned. |
-| Devices | Android emulator / device via adb. iOS Simulator and desktop targets are not wired yet. |
+| Devices | Android emulator / device via adb; iOS Simulator via `simctl` (boot, screenshot, launch). Desktop targets are not wired yet. |
 | Terminal | Embedded `xterm` + PTY — no external terminal apps required. Per-chat scrollback persists under the project's resolved context storage (project-local example: `.pickforge/chats/<chatId>/transcript.log`). |
 
 ## Branding

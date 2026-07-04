@@ -41,6 +41,11 @@ without an explicit web-safe entrypoint.
   checks that cannot be completed by headless CI.
 - `docs/qa/native-host-validation.md` is the concrete macOS/iOS Simulator,
   macOS desktop, and Windows desktop runbook for host-gated release evidence.
+- `tests/e2e/README.md` is the opt-in live-device harness. Its iOS tier (gated on
+  `PICKFORGE_E2E_IOS_UDID`, plus `PICKFORGE_E2E_LAUNCH=1` for the build/launch
+  smoke) exercises the native-iOS adapter — `simctl` screenshot, `os_log`, and an
+  `xcodebuild` build of `fixtures/sample_ios_app` — against a real simulator, and
+  skips cleanly with no simulator so CI stays green.
 
 ## Web Demo Harness
 

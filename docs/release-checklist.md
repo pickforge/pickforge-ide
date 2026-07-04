@@ -112,7 +112,10 @@ they do not replace manual dogfood on real desktop hosts.
 
 - Pending native macOS host dogfood before public release. Use
   `docs/qa/native-host-validation.md` for the iOS Simulator and macOS desktop
-  evidence required before ticking the macOS checklist items.
+  evidence required before ticking the macOS checklist items. The native-iOS
+  adapter's run/screenshot/`os_log` paths can be validated automatically via the
+  gated iOS live smokes (`PICKFORGE_E2E_IOS_UDID`, see `tests/e2e/README.md`)
+  alongside the manual pass.
 - Sparkle remains disabled until `docs/architecture/sparkle-updates.md` is
   completed with production EdDSA keys, signed/notarized artifacts, appcast
   smoke evidence, and rollback evidence.

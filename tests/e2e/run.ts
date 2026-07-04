@@ -93,6 +93,7 @@ function liveCommand(targetId: string, serial: string | null): string {
     needsDevice: profile.needsDevice,
     deviceConvention: profile.deviceConvention,
     inspectorKind: profile.inspectorKind,
+    logSource: profile.logSource,
     source: "detected",
   };
   return withDevice(target, serial);
@@ -271,9 +272,41 @@ function deviceContract(serial: string): void {
   );
 }
 
+// ── native-iOS: run-command contract is pure, so it always runs (the live
+// simulator smokes live in crates/pickforge-core/tests/live_adapters.rs) ────
+function iosContract(): void {
+  console.log("native-ios contract: device-free");
+  assertDetected("native-ios-app", "native-ios");
+
+  const udid = "0000AAAA-1111-2222-3333-4444BBBB5555";
+  // A bare `xcodebuild build` only COMPILES — the run command must build a
+  // SIMULATOR app (`-sdk iphonesimulator`; a destination alone builds the device
+  // SDK, which simctl can't install), then `simctl install` + `simctl launch`
+  // the freshly-built app so the RUNNING app is what the screenshot / os_log
+  // panels inspect. The bundle id is read from the built app at runtime.
+  expect(
+    liveCommand("native-ios", udid),
+    `xcodebuild build -configuration Debug -sdk iphonesimulator SYMROOT=build/pickforge-ios && ` +
+      `APP="$(ls -d build/pickforge-ios/Debug-iphonesimulator/*.app | head -1)" && ` +
+      `xcrun simctl install '${udid}' "$APP" && ` +
+      `xcrun simctl launch '${udid}' "$(plutil -extract CFBundleIdentifier raw "$APP/Info.plist")"`,
+    "native-ios run command builds → installs → launches the app on the sim",
+  );
+  const profile = runProfile("native-ios");
+  expect(
+    profile.inspectorKind,
+    "none",
+    "native-ios has no element inspector yet (inspectorKind=none)",
+  );
+  expect(profile.logSource, "oslog", "native-ios streams device logs over os_log");
+}
+
 async function main(): Promise<void> {
   // Device-free web smoke ALWAYS runs (it's the harness shakedown).
   await webSmoke();
+
+  // Device-free native-iOS command contract always runs too.
+  iosContract();
 
   const serial = process.env.PICKFORGE_E2E_SERIAL?.trim();
   if (!serial) {

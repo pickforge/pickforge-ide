@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::ios::find_container;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Capability {
@@ -46,6 +48,7 @@ pub fn detect_target(project_root: &str) -> TargetDetection {
     detect_flutter(root)
         .or_else(|| detect_react_native(root))
         .or_else(|| detect_native_android(root))
+        .or_else(|| detect_native_ios(root))
         .or_else(|| detect_web(root))
         .unwrap_or_else(generic)
 }
@@ -113,8 +116,7 @@ fn detect_react_native(root: &Path) -> Option<TargetDetection> {
 fn detect_native_android(root: &Path) -> Option<TargetDetection> {
     let has_settings =
         root.join("settings.gradle").exists() || root.join("settings.gradle.kts").exists();
-    let has_build =
-        root.join("build.gradle").exists() || root.join("build.gradle.kts").exists();
+    let has_build = root.join("build.gradle").exists() || root.join("build.gradle.kts").exists();
     if !has_settings || !has_build {
         return None;
     }
@@ -133,13 +135,43 @@ fn detect_native_android(root: &Path) -> Option<TargetDetection> {
     })
 }
 
+fn detect_native_ios(root: &Path) -> Option<TargetDetection> {
+    if find_container(root).is_none() && !has_ios_package(root) {
+        return None;
+    }
+    Some(TargetDetection {
+        target_id: "native-ios".into(),
+        display_name: "Native iOS".into(),
+        confidence: Confidence::Likely,
+        priority: 55,
+        capabilities: vec![
+            Capability::Detect,
+            Capability::Launch,
+            Capability::CaptureScreenshot,
+            Capability::StreamLogs,
+        ],
+    })
+}
+
+fn has_ios_package(root: &Path) -> bool {
+    std::fs::read_to_string(root.join("Package.swift"))
+        .map(|content| content.contains(".iOS"))
+        .unwrap_or(false)
+}
+
 fn detect_web(root: &Path) -> Option<TargetDetection> {
     if !root.join("package.json").exists() {
         return None;
     }
-    let has_web = ["index.html", "vite.config.ts", "vite.config.js", "next.config.js", "next.config.mjs"]
-        .iter()
-        .any(|f| root.join(f).exists());
+    let has_web = [
+        "index.html",
+        "vite.config.ts",
+        "vite.config.js",
+        "next.config.js",
+        "next.config.mjs",
+    ]
+    .iter()
+    .any(|f| root.join(f).exists());
     if !has_web {
         return None;
     }
@@ -210,8 +242,11 @@ mod tests {
     #[test]
     fn plain_dart_is_not_flutter() {
         let dir = temp("dart");
-        std::fs::write(dir.join("pubspec.yaml"), "name: x\nenvironment:\n  sdk: '>=3.0.0'\n")
-            .unwrap();
+        std::fs::write(
+            dir.join("pubspec.yaml"),
+            "name: x\nenvironment:\n  sdk: '>=3.0.0'\n",
+        )
+        .unwrap();
         assert_eq!(detect_target(dir.to_str().unwrap()).target_id, "generic");
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -240,7 +275,10 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(dir.join("android")).unwrap();
-        assert_eq!(detect_target(dir.to_str().unwrap()).target_id, "react-native");
+        assert_eq!(
+            detect_target(dir.to_str().unwrap()).target_id,
+            "react-native"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -249,11 +287,100 @@ mod tests {
         let dir = temp("android");
         std::fs::write(dir.join("settings.gradle"), "include ':app'").unwrap();
         std::fs::write(dir.join("build.gradle"), "// root").unwrap();
-        assert_eq!(detect_target(dir.to_str().unwrap()).target_id, "native-android");
+        assert_eq!(
+            detect_target(dir.to_str().unwrap()).target_id,
+            "native-android"
+        );
         std::fs::remove_dir_all(&dir).ok();
 
         let empty = temp("empty");
         assert_eq!(detect_target(empty.to_str().unwrap()).target_id, "generic");
         std::fs::remove_dir_all(&empty).ok();
+    }
+
+    #[test]
+    fn detects_native_ios_from_xcode_project() {
+        let dir = temp("ios");
+        std::fs::create_dir_all(dir.join("Foo.xcodeproj")).unwrap();
+        let d = detect_target(dir.to_str().unwrap());
+        assert_eq!(d.target_id, "native-ios");
+        assert_eq!(d.confidence, Confidence::Likely);
+        assert_eq!(d.priority, 55);
+        assert_eq!(
+            d.capabilities,
+            vec![
+                Capability::Detect,
+                Capability::Launch,
+                Capability::CaptureScreenshot,
+                Capability::StreamLogs,
+            ]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detects_native_ios_from_package_platform() {
+        let dir = temp("ios-package");
+        std::fs::write(
+            dir.join("Package.swift"),
+            r#"// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "App",
+    platforms: [.iOS(.v18)],
+    products: []
+)
+"#,
+        )
+        .unwrap();
+        assert_eq!(detect_target(dir.to_str().unwrap()).target_id, "native-ios");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn package_without_ios_platform_stays_generic() {
+        let dir = temp("swift-package");
+        std::fs::write(
+            dir.join("Package.swift"),
+            r#"// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "Library",
+    platforms: [.macOS(.v15)],
+    products: []
+)
+"#,
+        )
+        .unwrap();
+        assert_eq!(detect_target(dir.to_str().unwrap()).target_id, "generic");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn flutter_wins_over_ios_workspace() {
+        let dir = temp("flutter-ios");
+        std::fs::write(
+            dir.join("pubspec.yaml"),
+            "name: x\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("ios.xcworkspace")).unwrap();
+        assert_eq!(detect_target(dir.to_str().unwrap()).target_id, "flutter");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_android_wins_over_stray_xcode_project() {
+        let dir = temp("android-ios");
+        std::fs::write(dir.join("settings.gradle"), "include ':app'").unwrap();
+        std::fs::write(dir.join("build.gradle"), "// root").unwrap();
+        std::fs::create_dir_all(dir.join("Stray.xcodeproj")).unwrap();
+        assert_eq!(
+            detect_target(dir.to_str().unwrap()).target_id,
+            "native-android"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

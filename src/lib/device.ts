@@ -8,16 +8,17 @@ export interface TargetDetection {
   capabilities: string[];
 }
 
-/** A device row for the UI: a running adb device or an installed-but-stopped
- *  AVD. `serial` is null until a stopped AVD boots; `displayName` is the
- *  friendly name only (the serial is appended in the UI). `offline` = present to
- *  adb but unusable (offline / unauthorized / booting). */
+/** A device row for the UI: a running adb device / booted simulator, or an
+ *  installed-but-stopped AVD / shut-down simulator. For AVDs `serial` is null
+ *  until they boot; simulators carry their udid as `serial` even when stopped.
+ *  `displayName` is the friendly name only (the serial is appended in the UI).
+ *  `offline` = present but unusable (offline / unauthorized / booting). */
 export interface DeviceEntry {
   serial: string | null;
   avdId: string | null;
   displayName: string;
   state: "running" | "offline" | "stopped";
-  kind: "emulator" | "physical";
+  kind: "emulator" | "physical" | "simulator";
 }
 
 /** Coarse role inferred from the Android class name (mirrors the Rust
@@ -71,6 +72,15 @@ export const androidLaunchAvd = (avdId: string) =>
 /** Wait until a serial is online (adb `device` state) or the timeout elapses. */
 export const androidWaitForDevice = (serial: string, timeoutMs: number) =>
   invoke<boolean>("android_wait_for_device", { serial, timeoutMs });
+
+/** Merged iOS simulator list: booted + shut-down simulators, friendly-named. A
+ *  simulator's udid is its `serial` even while shut down (unlike an AVD). */
+export const iosDeviceList = () => invoke<DeviceEntry[]>("ios_device_list");
+
+/** Boot a stopped simulator by udid (returns once `simctl boot` is spawned, not
+ *  once the simulator has finished booting). */
+export const iosBootDevice = (udid: string) =>
+  invoke<void>("ios_boot_device", { udid });
 
 /** The nearest enclosing pubspec.yaml dir at/above `program`, or null. */
 export const findNearestPubspec = (program: string, root: string) =>

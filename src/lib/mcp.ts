@@ -13,6 +13,9 @@ export interface McpPublishedState {
   inspectorKind: string;
   supportTier: string;
   deviceSerial?: string | null;
+  /** The active run device's platform, so screenshot capture picks simctl vs
+   *  adb. Defaults to "android" on the Rust side when omitted. */
+  devicePlatform?: "android" | "ios";
   projectRoot?: string | null;
   contextDir?: string | null;
   runsDir?: string | null;

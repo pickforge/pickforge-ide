@@ -33,7 +33,7 @@ onboarding reposition.
 | React Native (Android) | **Useful** | device run, UIAutomator inspector + screenshot, logcat, forge with best-effort source hints |
 | Native Android | **Useful** | Gradle run, UIAutomator inspector + logcat + forge with best-effort hints |
 | Web | **Experimental** | dev-server run, CDP DOM inspection + partial source maps |
-| iOS | **Deferred** | needs macOS — fixture-only, not claimed |
+| iOS | **Experimental** | live `xcodebuild` run + `simctl` screenshot + `os_log` stream (proven on a real simulator); no element inspector yet — Flutter-on-iOS still gets the Deep VM-service inspector |
 
 ## Live validation
 
@@ -44,10 +44,18 @@ proven on a real Android emulator, and the Flutter smoke runs end-to-end on-devi
 `PICKFORGE_E2E_LAUNCH` so normal `cargo test` and CI never need a device. See
 `tests/e2e/README.md`.
 
+The native-iOS device layer (`simctl` screenshot → PNG, `os_log` → parsed events) is
+likewise proven on a real iOS simulator (Xcode 26.6 / iOS 26.5): Tier A captured a
+2.8 MB screenshot and parsed 4303 `os_log` events, and Tier B built
+`fixtures/sample_ios_app` → installed → launched → screenshot → terminate. Gated on
+`PICKFORGE_E2E_IOS_UDID` (+ `PICKFORGE_E2E_LAUNCH=1` for the build/launch tier).
+
 ## Remaining
 
-**iOS native** — xcodebuild/simctl live launch + simulator inspection. Requires a macOS
-host; tracked in epic #7, intentionally open. Everything else is merged.
+**iOS element inspector** — the native-iOS adapter now ships live `xcodebuild` launch,
+`simctl` screenshot, and `os_log` streaming (validated on-device). The remaining piece is
+element-tree inspection (an XCUITest/idb accessibility bridge), tracked in epic #7.
+Everything else is merged.
 
 ## Process
 

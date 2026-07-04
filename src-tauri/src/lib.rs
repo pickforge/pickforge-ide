@@ -4,6 +4,7 @@ mod db_commands;
 mod device_commands;
 mod fs_commands;
 mod git_commands;
+mod ios_commands;
 mod logcat_commands;
 mod mcp_commands;
 mod mirror_commands;
@@ -93,6 +94,7 @@ pub fn run() {
         .manage(watch_commands::WatchManager::new())
         .manage(mirror_commands::MirrorManager::new())
         .manage(logcat_commands::LogcatManager::new())
+        .manage(ios_commands::OsLogManager::new())
         .manage(approved_roots)
         .manage(Arc::clone(&database))
         .manage(mcp_commands::McpState::new())
@@ -119,6 +121,9 @@ pub fn run() {
             device_commands::android_wait_for_device,
             device_commands::adb_screenshot,
             device_commands::adb_dump_uiautomator,
+            ios_commands::ios_device_list,
+            ios_commands::ios_boot_device,
+            ios_commands::ios_screenshot,
             git_commands::git_status,
             git_commands::git_diff,
             git_commands::git_discover_repos,
@@ -192,6 +197,8 @@ pub fn run() {
             mirror_commands::mirror_stop,
             logcat_commands::logcat_start,
             logcat_commands::logcat_stop,
+            ios_commands::oslog_start,
+            ios_commands::oslog_stop,
             mcp_commands::mcp_start,
             mcp_commands::mcp_stop,
             mcp_commands::mcp_publish_state,

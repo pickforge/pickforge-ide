@@ -41,6 +41,13 @@ Prerequisites:
 - A visible desktop session where Pickforge windows and Simulator windows can be
   interacted with.
 
+The native-iOS adapter's own device paths — simulator boot, `simctl` screenshot,
+`os_log` streaming, and an `xcodebuild` build/launch of `fixtures/sample_ios_app`
+— are also covered by the gated iOS live smokes (`PICKFORGE_E2E_IOS_UDID`, plus
+`PICKFORGE_E2E_LAUNCH=1` for the build/launch tier; see `tests/e2e/README.md`).
+Run those for the native-iOS evidence; the manual pass below covers the
+Flutter-on-iOS VM Service + inspector flow.
+
 Record host details:
 
 ```bash

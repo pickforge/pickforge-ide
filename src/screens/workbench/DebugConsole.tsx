@@ -36,9 +36,9 @@ import {
   type RunStatus,
 } from "../../stores/runConsole";
 import { activeTarget, hasRunTargets } from "../../stores/runTargets";
-import { isLogcatTarget } from "../../lib/runTargets";
+import { logSourceOf } from "../../lib/runTargets";
 import { autoReloadEnabled, toggleAutoReload } from "../../stores/autoReload";
-import { cancelBoot, isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
+import { bootingKind, cancelBoot, isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
 import { ingestRunOutput } from "../../stores/vmService";
 import { pushMcpLogs } from "../../stores/mcp";
@@ -55,6 +55,8 @@ export function DebugConsole() {
   const meta = () => STATUS[status()];
   const can = (c: string) => !!target()?.capabilities.includes(c);
   const isRunning = () => status() === "running";
+  // Boot copy tracks what's actually booting (Android emulator vs iOS simulator).
+  const bootNoun = () => bootingKind();
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
 
   // Tap the run console output for the MCP `get_run_logs` buffer: feed the VM-URL
@@ -73,16 +75,18 @@ export function DebugConsole() {
     if (lines.length > 0) pushMcpLogs(lines);
   };
 
-  // Console | Logs switch — Logs only exists for RN / native-Android targets,
-  // whose device logs live in `adb logcat`, not the run PTY. The running target
-  // wins (it's what's on the device); else the selected launcher target.
+  // Console | Logs switch — Logs exists for any target whose device logs don't
+  // reach the run PTY: RN / native-Android (`adb logcat`) and native-iOS
+  // (`os_log`). The running target wins (it's what's on the device); else the
+  // selected launcher target.
   const [view, setView] = createSignal<"console" | "logs">("console");
-  const logcatCapable = () =>
-    isLogcatTarget(isRunning() ? target() : activeTarget());
+  const logTarget = () => (isRunning() ? target() : activeTarget());
+  const logSource = () => logSourceOf(logTarget()); // "pty" | "logcat" | "oslog"
+  const hasDeviceLogs = () => logSource() !== "pty";
   // Fall back to the console whenever Logs isn't available (e.g. target switched
   // to Flutter), so the body never shows a Logs view for an unsupported target.
   createEffect(() => {
-    if (view() === "logs" && !logcatCapable()) setView("console");
+    if (view() === "logs" && !hasDeviceLogs()) setView("console");
   });
 
   onCleanup(detachConsole);
@@ -110,7 +114,7 @@ export function DebugConsole() {
       </div>
       <header class="pf-dc-head">
         <RunLauncher />
-        <Show when={logcatCapable()}>
+        <Show when={hasDeviceLogs()}>
           <div class="pf-dc-tabs" role="tablist">
             <button
               class="pf-dc-tab"
@@ -136,7 +140,7 @@ export function DebugConsole() {
           <span class="pf-run-booting">booting…</span>
           <button
             class="pf-dc-btn pf-dc-btn--cancel pf-dc-btn--labeled"
-            title="Cancel emulator boot"
+            title={`Cancel ${bootNoun()} boot`}
             onClick={cancelBoot}
           >
             Cancel
@@ -151,7 +155,7 @@ export function DebugConsole() {
         <button
           class="pf-dc-btn pf-dc-btn--run"
           classList={{ "pf-dc-btn--labeled": workbenchPrefs().runButtonLabels }}
-          title={isBooting() ? "Booting emulator…" : isRunning() ? "A run is active — stop it first" : "Run"}
+          title={isBooting() ? `Booting ${bootNoun()}…` : isRunning() ? "A run is active — stop it first" : "Run"}
           disabled={!hasRunTargets() || isRunning() || isBooting()}
           onClick={() => void launchActiveTarget()}
         >
@@ -229,12 +233,16 @@ export function DebugConsole() {
             )}
           </Show>
         </div>
-        {/* Mounted only for logcat-capable targets (RN / native-Android); kept
-            mounted across tab switches so the stream persists, torn down when
-            the target stops being logcat-capable. */}
-        <Show when={logcatCapable()}>
+        {/* Mounted only for device-log targets (RN / native-Android → logcat,
+            native-iOS → oslog); kept mounted across tab switches so the stream
+            persists. Keyed on the source so switching between a logcat and an
+            oslog target remounts the view onto the right stream client, and it
+            tears down when the target stops having device logs. */}
+        <Show when={hasDeviceLogs()}>
           <div class="pf-dc-view" style={{ display: view() === "logs" ? "flex" : "none" }}>
-            <LogcatView />
+            <Show when={logSource()} keyed>
+              {(src) => <LogcatView source={src as "logcat" | "oslog"} />}
+            </Show>
           </div>
         </Show>
       </div>

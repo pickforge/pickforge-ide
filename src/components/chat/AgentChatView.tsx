@@ -33,6 +33,7 @@ import { loadAgentModes, setAgentMode } from "../../lib/agentModes";
 import { loadAgentEngine } from "../../lib/chatDefaults";
 import { ChatTimeline } from "./ChatTimeline";
 import { Composer } from "./Composer";
+import { ImageLightbox } from "./ImageLightbox";
 import { ApprovalPrompt } from "./ApprovalPrompt";
 import { ContextMeter } from "./ContextMeter";
 import "./chat.css";
@@ -150,6 +151,7 @@ export function AgentChatView(props: {
 
   return (
     <div class="pf-chat-view">
+      <ImageLightbox />
       <ChatTimeline items={state()?.timeline ?? []} working={awaitingOutput()} />
       <Show when={showNotice()}>
         <div class="pf-chat-switch-notice" role="status">

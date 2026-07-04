@@ -193,12 +193,49 @@
   gap: var(--pf-space-xs);
   margin-bottom: var(--pf-space-sm);
 }
+/* Attachment thumbnails are buttons that open the lightbox — quiet by default,
+ * a hairline lift on hover (no ember; the composer keeps this composition's). */
+.pf-chat-bubble-img-btn {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--pf-radius-sm);
+}
 .pf-chat-bubble-img {
+  display: block;
   width: 120px;
   height: 120px;
   object-fit: cover;
   border-radius: var(--pf-radius-sm);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-bubble-img-btn:hover .pf-chat-bubble-img,
+.pf-chat-bubble-img-btn:focus-visible .pf-chat-bubble-img {
+  border-color: var(--pf-hairline-strong);
+}
+.pf-chat-bubble-img-btn:focus-visible {
+  outline: none;
+}
+
+/* Inline `[Image #N]` thumbnails woven into the message text — small, clickable,
+ * baseline-aligned so a sentence reads "compare [thumb] with [thumb]". */
+.pf-chat-md img[data-pf-image-index] {
+  display: inline-block;
+  width: auto;
+  height: 1.6em;
+  margin: 0 2px;
+  vertical-align: middle;
+  object-fit: cover;
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-md img[data-pf-image-index]:hover {
+  border-color: var(--pf-hairline-strong);
 }
 
 /* Streaming caret: a quiet in-progress mark, gated by reduced motion. */
@@ -1054,4 +1091,77 @@
   color: var(--pf-text-hi);
   border-color: var(--pf-hairline-strong);
   box-shadow: none;
+}
+
+/* ---- Image lightbox: a full-viewport viewer over a neutral scrim. No ember
+ * (Rule 2 — the scrim and frame stay surface/hairline). One fade + scale-in on
+ * the signature easing; reduced motion holds both still (motion tokens go to
+ * 0ms, so the transforms resolve instantly). ---- */
+.pf-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pf-space-xl);
+  background: color-mix(in srgb, var(--pf-surface) 82%, transparent);
+  animation: pf-lightbox-fade var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+.pf-lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  box-shadow: var(--pf-shadow-overlay);
+  animation: pf-lightbox-rise var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+.pf-lightbox-close {
+  position: absolute;
+  top: var(--pf-space-lg);
+  right: var(--pf-space-lg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-1);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-lightbox-close:hover,
+.pf-lightbox-close:focus-visible {
+  outline: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+@keyframes pf-lightbox-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pf-lightbox-rise {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-lightbox,
+  .pf-lightbox-img {
+    animation: none;
+  }
 }

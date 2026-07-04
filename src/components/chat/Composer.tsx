@@ -612,12 +612,12 @@ export function Composer(props: {
       if (fileItems > 0 || data.types.length > 0) {
         // Non-image content: keep the composer plain-text (the textarea it
         // replaced never accepted rich markup) by inserting the text flavor
-        // ourselves instead of letting contenteditable smuggle in HTML.
+        // ourselves instead of letting contenteditable smuggle in HTML. A
+        // clipboard with no text/plain flavor (HTML-only fragment) pastes
+        // nothing rather than markup the serializer can't represent.
+        event.preventDefault();
         const plain = data.getData("text/plain");
-        if (plain) {
-          event.preventDefault();
-          insertPlainText(plain);
-        }
+        if (plain) insertPlainText(plain);
         return;
       }
       event.preventDefault();

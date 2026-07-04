@@ -39,12 +39,15 @@ use pickforge_core::android::{
     capture_screenshot, dump_uiautomator_xml, list_devices, logcat_event, parse_uiautomator,
     wait_for_online, LogLevel,
 };
+#[cfg(target_os = "macos")]
+use pickforge_core::android::{A11yNode, A11yRole};
 use pickforge_core::detect_target;
 #[cfg(target_os = "macos")]
 use pickforge_core::ios::{
     built_app_path, bundle_id_of_app, capture_screenshot as ios_capture_screenshot,
-    dump_recent as ios_dump_recent, find_container as ios_find_container, install_app, launch_app,
-    list_devices as ios_list_devices, terminate_app, SimDevice, SimState, XcodeContainerKind,
+    dump_accessibility, dump_recent as ios_dump_recent, find_container as ios_find_container,
+    install_app, launch_app, list_devices as ios_list_devices, terminate_app, IosError, SimDevice,
+    SimState, XcodeContainerKind,
 };
 
 // ── Shared gating ───────────────────────────────────────────────────────────
@@ -757,6 +760,56 @@ fn assert_ios_png(bytes: &[u8], tag: &str) {
 }
 
 #[cfg(target_os = "macos")]
+fn assert_ios_a11y_fixture_tree(udid: &str) {
+    let root = match dump_accessibility(udid) {
+        Ok(root) => root,
+        Err(IosError::MissingDependency(_)) => {
+            eprintln!("skipped: ios a11y — idb not found on PATH");
+            return;
+        }
+        Err(e) => panic!("[ios-a11y] dump_accessibility failed: {e}"),
+    };
+
+    let node_count = count_a11y_nodes(&root);
+    assert!(
+        node_count > 0,
+        "[ios-a11y] expected non-empty accessibility tree"
+    );
+
+    let button = find_a11y_node_by_resource_id(&root, "fixture-button")
+        .unwrap_or_else(|| panic!("[ios-a11y] expected fixture-button in accessibility tree"));
+    assert_eq!(
+        button.role,
+        A11yRole::Button,
+        "[ios-a11y] expected fixture-button to have Button role"
+    );
+    assert!(
+        find_a11y_node_by_resource_id(&root, "fixture-counter").is_some(),
+        "[ios-a11y] expected fixture-counter in accessibility tree"
+    );
+
+    eprintln!("[ios-a11y] tree ok: {node_count} nodes, found fixture-button + fixture-counter");
+}
+
+#[cfg(target_os = "macos")]
+fn count_a11y_nodes(node: &A11yNode) -> usize {
+    1 + node.children.iter().map(count_a11y_nodes).sum::<usize>()
+}
+
+#[cfg(target_os = "macos")]
+fn find_a11y_node_by_resource_id<'a>(
+    node: &'a A11yNode,
+    resource_id: &str,
+) -> Option<&'a A11yNode> {
+    if node.resource_id.as_deref() == Some(resource_id) {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_a11y_node_by_resource_id(child, resource_id))
+}
+
+#[cfg(target_os = "macos")]
 fn xcodebuild_available() -> bool {
     spawn_bounded_status("xcodebuild", &["-version"], ADB_CALL_TIMEOUT).unwrap_or(false)
 }
@@ -1022,6 +1075,7 @@ fn ios_tier_b_real_launch_macos() {
     let bytes = ios_capture_screenshot(&udid)
         .unwrap_or_else(|e| panic!("[ios-heavy] capture_screenshot failed: {e}"));
     assert_ios_png(&bytes, "ios-heavy");
+    assert_ios_a11y_fixture_tree(&udid);
 
     terminate_app(&udid, &bundle_id)
         .unwrap_or_else(|e| panic!("[ios-heavy] terminate_app failed: {e}"));

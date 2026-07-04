@@ -916,6 +916,9 @@ describe("setAgentChatMode", () => {
     const { chatId } = await startChat();
 
     setAgentChatMode(chatId, "full-access");
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", expect.anything()),
+    );
 
     expect(agentChat(chatId)?.mode).toBe("full-access");
     expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", {
@@ -932,6 +935,9 @@ describe("setAgentChatMode", () => {
     await ensureAgentChat(chatId, "/project", "claudeCode", "claude-model");
 
     setAgentChatMode(chatId, "plan");
+    await vi.waitFor(() =>
+      expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", expect.anything()),
+    );
 
     expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_set_mode", {
       sessionId: "session-1",

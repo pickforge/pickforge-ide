@@ -779,9 +779,7 @@ export async function ensureAgentChat(
       // (the start captured the old overrides) — reconcile it now.
       const currentMode = chats[chatId]?.mode ?? null;
       if (currentMode !== startMode) {
-        void agentChatSetMode(sessionId, modeOverrides(provider, currentMode)).catch((error) => {
-          if (chats[chatId]) setChats(chatId, { error: errorText(error) });
-        });
+        queueAgentChatSetMode(chatId, sessionId, provider, currentMode);
       }
     } catch (error) {
       if (!stale() && chats[chatId]) setChats(chatId, { error: errorText(error) });
@@ -825,8 +823,34 @@ export function setAgentChatMode(chatId: string, mode: string | null) {
   // A live session pins its mode at start — push the change into the running
   // session (codex applies it next turn, claude via setPermissionMode).
   if (!chat.sessionId) return;
-  void agentChatSetMode(chat.sessionId, modeOverrides(chat.provider, mode)).catch((error) => {
-    if (chats[chatId]) setChats(chatId, { error: errorText(error) });
+  queueAgentChatSetMode(chatId, chat.sessionId, chat.provider, mode);
+}
+
+// Sends read SessionState on the backend, so a send racing ahead of an
+// in-flight set-mode would run the turn under the OLD sandbox/permissions
+// while the picker shows the new one. sendAgentMessage awaits this chain.
+const pendingSetModeByChat = new Map<string, Promise<void>>();
+
+function queueAgentChatSetMode(
+  chatId: string,
+  sessionId: string,
+  provider: AgentProvider,
+  mode: string | null,
+) {
+  const previous = pendingSetModeByChat.get(chatId) ?? Promise.resolve();
+  const promise = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const current = chats[chatId];
+      if (!current || current.sessionId !== sessionId) return;
+      await agentChatSetMode(sessionId, modeOverrides(provider, mode));
+    })
+    .catch((error) => {
+      if (chats[chatId]) setChats(chatId, { error: errorText(error) });
+    });
+  pendingSetModeByChat.set(chatId, promise);
+  void promise.then(() => {
+    if (pendingSetModeByChat.get(chatId) === promise) pendingSetModeByChat.delete(chatId);
   });
 }
 
@@ -919,6 +943,15 @@ export async function sendAgentMessage(
     if (!target) return;
     if (target.chat.provider === "claudeCode") {
       await pendingSetModelByChat.get(chatId)?.promise;
+      if (stale()) return;
+      target = sendTarget();
+      if (!target) return;
+    }
+    // The backend reads the session's mode at send time — let an in-flight
+    // mode change land first or this turn runs under the old sandbox.
+    const pendingMode = pendingSetModeByChat.get(chatId);
+    if (pendingMode) {
+      await pendingMode;
       if (stale()) return;
       target = sendTarget();
       if (!target) return;
@@ -1020,6 +1053,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   nextSeqByChat.delete(chatId);
   ensurePromises.delete(chatId);
   pendingSetModelByChat.delete(chatId);
+  pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
   await dispose;

@@ -157,6 +157,8 @@ type ChatSession = {
   mutationFailure: { error: unknown } | null;
   /** The model the live query currently runs (null = CLI default). */
   model: string | null;
+  /** The permission mode the live query currently runs. */
+  permissionMode: PermissionMode;
 };
 
 const chats = new Map<string, ChatSession>();
@@ -385,6 +387,7 @@ function queuePermissionModeMutation(
   const nextMutation = previousMutation
     .then(async () => {
       await chat.query.setPermissionMode(mode);
+      chat.permissionMode = mode;
       chat.mutationFailure = null;
     })
     .catch((error: unknown) => {
@@ -427,11 +430,16 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
   if (existing) {
     // Re-attach, not a failure: the webview reloaded (or re-ensured) while this
     // bridge kept the session alive. The query is still live — ack so the new
-    // client-side sink takes over instead of failing the whole ensure. A model
-    // change rides along so the re-attached picker stays truthful.
+    // client-side sink takes over instead of failing the whole ensure. Model
+    // and permission-mode changes ride along so the re-attached picker stays
+    // truthful.
     const nextModel = command.model ?? null;
     if (existing.model !== nextModel) {
       void queueModelMutation(existing, nextModel, emit).catch(() => undefined);
+    }
+    const nextPermissionMode = (command.permissionMode || "acceptEdits") as PermissionMode;
+    if (existing.permissionMode !== nextPermissionMode) {
+      void queuePermissionModeMutation(existing, nextPermissionMode, emit).catch(() => undefined);
     }
     emit({ ev: "started", chatId: command.chatId });
     return;
@@ -448,6 +456,7 @@ function startChat(command: StartCommand, emit: (event: BridgeEvent) => void): v
     mutationChain: Promise.resolve(),
     mutationFailure: null,
     model: command.model ?? null,
+    permissionMode: (command.permissionMode || "acceptEdits") as PermissionMode,
   };
   chats.set(command.chatId, chat);
   emit({ ev: "started", chatId: command.chatId });

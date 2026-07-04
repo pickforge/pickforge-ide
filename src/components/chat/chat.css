@@ -1103,12 +1103,136 @@
   line-height: 1.5;
   transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
 }
-.pf-chat-textarea::placeholder {
-  color: var(--pf-text-low);
-}
 .pf-chat-textarea:focus {
   outline: none;
   border-color: var(--pf-hairline-strong);
+}
+
+/* Contenteditable editor: same box metrics as the textarea it replaced, one row
+ * tall by default and capped at the old 200px autosize ceiling. */
+.pf-chat-editor {
+  box-sizing: border-box;
+  min-height: calc(
+    1.5 * var(--pf-size-body-lg) + 2 * var(--pf-space-sm) + 2 * var(--pf-hairline-width)
+  );
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.pf-chat-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--pf-text-low);
+  pointer-events: none;
+}
+
+/* Atomic image chip — a small button-like token that deletes as a whole. No
+ * ember (the composition's single ember stays on the send affordance). */
+.pf-chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  vertical-align: middle;
+  margin: 0 1px;
+  padding: 2px var(--pf-space-xs) 2px 3px;
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  background: var(--pf-surface-3);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  color: var(--pf-text-med);
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+.pf-chat-chip-visual {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--pf-space-lg);
+  height: var(--pf-space-lg);
+  border-radius: var(--pf-radius-sm);
+  overflow: hidden;
+  background: var(--pf-surface-2);
+  color: var(--pf-text-low);
+}
+.pf-chat-chip-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pf-chat-chip-spinner {
+  --pf-spinner-size: var(--pf-space-md);
+  color: var(--pf-text-med);
+}
+/* Mini image glyph: a hairline frame with a sun dot and a horizon slope. */
+.pf-chat-chip-glyph {
+  position: relative;
+  width: 13px;
+  height: 11px;
+  border-radius: 2px;
+  border: var(--pf-hairline-width) solid currentColor;
+}
+.pf-chat-chip-glyph::before,
+.pf-chat-chip-glyph::after {
+  content: "";
+  position: absolute;
+}
+.pf-chat-chip-glyph::before {
+  top: 2px;
+  right: 2px;
+  width: 2px;
+  height: 2px;
+  border-radius: var(--pf-radius-pill);
+  background: currentColor;
+  opacity: 0.6;
+}
+.pf-chat-chip-glyph::after {
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 4px;
+  border-left: var(--pf-hairline-width) solid currentColor;
+  border-bottom: var(--pf-hairline-width) solid currentColor;
+  opacity: 0.7;
+  transform: skewX(-24deg);
+  transform-origin: bottom left;
+}
+.pf-chat-chip-label {
+  color: var(--pf-text-med);
+}
+.pf-chat-chip--pending .pf-chat-chip-label {
+  opacity: 0.6;
+}
+.pf-chat-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--pf-space-md);
+  height: var(--pf-space-md);
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--pf-radius-pill);
+  background: transparent;
+  color: var(--pf-text-low);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-chip:hover .pf-chat-chip-remove {
+  color: var(--pf-text-med);
+}
+.pf-chat-chip-remove:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-2);
 }
 
 /* The single ember of this composition: the send / turn affordance. */

@@ -1,4 +1,4 @@
-import { insertMarker, removeMarkerAndRenumber } from "./imageAnchors";
+import { insertMarker, markerSpans, removeMarkerAndRenumber } from "./imageAnchors";
 
 export type ComposerAttachmentStatus = "pending" | "ready";
 
@@ -106,6 +106,64 @@ export function resolveAttachment(
         : attachment,
     ),
     previous,
+  };
+}
+
+export type RangeReplacement = {
+  attachments: ComposerAttachment[];
+  removed: ComposerAttachment[];
+  text: string;
+  cursor: number;
+};
+
+/**
+ * Replace `[start, end)` of `text` with `chunk`, upholding the chip invariant:
+ * any attachment whose marker is covered by the replaced range is dropped from
+ * the list (returned in `removed` so previews can be revoked) and the surviving
+ * markers are renumbered. Range endpoints that land strictly inside a
+ * chip-backed marker snap outward to the whole marker — chips are atomic.
+ * Literal markers with no matching attachment are plain text and are spliced
+ * like any other characters. `cursor` is the offset just after `chunk` in the
+ * returned text.
+ */
+export function replaceRangeWithText(
+  attachments: readonly ComposerAttachment[],
+  text: string,
+  start: number,
+  end: number,
+  chunk: string,
+): RangeReplacement {
+  let from = Math.max(0, Math.min(start, text.length));
+  let to = Math.min(Math.max(from, end), text.length);
+  const count = attachments.length;
+  const chipSpans = markerSpans(text).filter((span) => span.n >= 1 && span.n <= count);
+  for (const span of chipSpans) {
+    if (from > span.start && from < span.end) from = span.start;
+    if (to > span.start && to < span.end) to = span.end;
+  }
+  const droppedNs = [
+    ...new Set(
+      chipSpans
+        .filter((span) => span.start >= from && span.end <= to)
+        .map((span) => span.n),
+    ),
+  ].sort((a, b) => b - a);
+  let spliced = text.slice(0, from) + chunk + text.slice(to);
+  // The prefix up to the caret goes through the same renumber passes so the
+  // cursor tracks any width change in markers before it (e.g. #10 → #9).
+  let prefix = text.slice(0, from) + chunk;
+  let remaining = count;
+  for (const n of droppedNs) {
+    spliced = removeMarkerAndRenumber(spliced, n, remaining);
+    prefix = removeMarkerAndRenumber(prefix, n, remaining);
+    remaining -= 1;
+  }
+  const droppedIds = new Set(droppedNs.map((n) => attachments[n - 1].id));
+  return {
+    attachments: attachments.filter((attachment) => !droppedIds.has(attachment.id)),
+    removed: attachments.filter((attachment) => droppedIds.has(attachment.id)),
+    text: spliced,
+    cursor: prefix.length,
   };
 }
 

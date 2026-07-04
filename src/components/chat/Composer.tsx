@@ -31,8 +31,20 @@ import {
   hasPendingAttachments,
   readyAttachmentPaths,
   removeAttachmentWithMarker,
+  replaceRangeWithText,
   resolveAttachment,
 } from "../../lib/composerAttachments";
+import {
+  CHIP_ATTR,
+  adjacentChipId,
+  caretOffset,
+  chipIdsInOrder,
+  chipStartOffset,
+  renderComposer,
+  selectionOffsets,
+  serializeComposer,
+  setCaretAtOffset,
+} from "../../lib/composerChips";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
@@ -164,11 +176,111 @@ export function Composer(props: {
   const [preparing, setPreparing] = createSignal(false);
   const [prepareFailed, setPrepareFailed] = createSignal(false);
   let root!: HTMLDivElement;
-  let field!: HTMLTextAreaElement;
+  let field!: HTMLDivElement;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
   let pasteGeneration = 0;
   let droppedPasteGeneration: number | null = null;
   let nextAttachmentId = 1;
+  let composing = false;
+
+  const attachmentIds = () => attachments().map((attachment) => attachment.id);
+
+  const buildGlyph = (doc: Document): HTMLElement => {
+    const glyph = doc.createElement("span");
+    glyph.className = "pf-chat-chip-glyph";
+    return glyph;
+  };
+
+  const buildChipVisual = (
+    attachment: ComposerAttachment | undefined,
+    _index: number,
+  ): HTMLElement => {
+    const doc = field.ownerDocument;
+    const wrap = doc.createElement("span");
+    wrap.className = "pf-chat-chip-visual";
+    wrap.setAttribute("aria-hidden", "true");
+    if (attachment?.status === "pending") {
+      const spinner = doc.createElement("span");
+      spinner.className = "pf-spinner pf-chat-chip-spinner";
+      wrap.appendChild(spinner);
+    } else if (attachment?.previewUrl) {
+      const img = doc.createElement("img");
+      img.className = "pf-chat-chip-thumb";
+      img.src = attachment.previewUrl;
+      img.alt = "";
+      img.addEventListener("error", () => wrap.replaceChildren(buildGlyph(doc)));
+      wrap.appendChild(img);
+    } else {
+      wrap.appendChild(buildGlyph(doc));
+    }
+    return wrap;
+  };
+
+  const chipAriaLabel = (index: number, pending: boolean) =>
+    pending
+      ? `Image ${index}, preparing — press Backspace to remove`
+      : `Image ${index} — press Backspace to remove`;
+
+  const buildChip = (id: number, index: number): HTMLElement => {
+    const doc = field.ownerDocument;
+    const attachment = attachments().find((a) => a.id === id);
+    const pending = attachment?.status === "pending";
+    const chip = doc.createElement("span");
+    chip.className = "pf-chat-chip";
+    chip.classList.toggle("pf-chat-chip--pending", pending);
+    chip.setAttribute("contenteditable", "false");
+    chip.setAttribute(CHIP_ATTR, String(id));
+    chip.setAttribute("role", "button");
+    chip.setAttribute("aria-label", chipAriaLabel(index, pending));
+
+    chip.appendChild(buildChipVisual(attachment, index));
+
+    const label = doc.createElement("span");
+    label.className = "pf-chat-chip-label";
+    label.textContent = `Image #${index}`;
+    chip.appendChild(label);
+
+    const remove = doc.createElement("button");
+    remove.type = "button";
+    remove.className = "pf-chat-chip-remove";
+    remove.setAttribute("contenteditable", "false");
+    remove.setAttribute("aria-label", `Remove image ${index}`);
+    remove.tabIndex = -1;
+    remove.textContent = "✕";
+    remove.addEventListener("mousedown", (e) => e.preventDefault());
+    remove.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      removeImageInPlace(id);
+    });
+    chip.appendChild(remove);
+
+    return chip;
+  };
+
+  const renderEditor = () => {
+    renderComposer(field, text(), attachmentIds(), buildChip);
+  };
+
+  // Targeted swap of a single chip's leading visual (pending spinner → thumbnail)
+  // without a full re-render, so a background stash resolving never disturbs the
+  // caret or an in-progress edit.
+  const refreshChip = (id: number) => {
+    const chip = field.querySelector<HTMLElement>(`[${CHIP_ATTR}="${id}"]`);
+    if (!chip) return;
+    const index = attachmentIds().indexOf(id) + 1;
+    const attachment = attachments().find((a) => a.id === id);
+    const pending = attachment?.status === "pending";
+    chip.classList.toggle("pf-chat-chip--pending", pending);
+    chip.setAttribute("aria-label", chipAriaLabel(index, pending));
+    chip.querySelector(".pf-chat-chip-visual")?.replaceWith(buildChipVisual(attachment, index));
+  };
+
+  const placeCaret = (offset: number) => {
+    if (document.activeElement === field) {
+      setCaretAtOffset(field, offset, attachmentIds());
+    }
+  };
 
   const showPasteError = (message: string, autoClearMs?: number) => {
     if (pasteErrorTimer) clearTimeout(pasteErrorTimer);
@@ -288,21 +400,22 @@ export function Composer(props: {
     item.kind === "template" ? firstLine(item.template.body) : item.skill.description;
 
   const insert = (item: Suggestion) => {
-    if (item.kind === "template") {
-      setText(item.template.body);
-    } else {
-      setText(`${item.skill.trigger}${item.skill.name} `);
-    }
+    const body =
+      item.kind === "template"
+        ? item.template.body
+        : `${item.skill.trigger}${item.skill.name} `;
+    setText(body);
     setDismissed(true);
     setSelected(0);
     field.focus();
-    autosize();
+    renderEditor();
+    placeCaret(text().length);
   };
 
   type MarkerAnchor = { generation: number; at: number | null };
   const pinMarkerAnchor = (): MarkerAnchor => ({
     generation: pasteGeneration,
-    at: document.activeElement === field ? (field.selectionStart ?? null) : null,
+    at: document.activeElement === field ? caretOffset(field, attachmentIds()) : null,
   });
 
   const addPendingImage = (previewUrl: string | null, anchor?: MarkerAnchor) => {
@@ -311,28 +424,54 @@ export function Composer(props: {
     const value = text();
     const pinned = anchor && anchor.generation === pasteGeneration ? anchor.at : null;
     const cursor =
-      pinned ?? (focused ? (field.selectionStart ?? value.length) : value.length);
+      pinned ?? (focused ? (caretOffset(field, attachmentIds()) ?? value.length) : value.length);
     const result = addAttachmentWithMarker(attachments(), value, cursor, attachment);
     setAttachments(result.attachments);
     if (pinned !== null && anchor) anchor.at = result.cursor;
     setText(result.text);
-    if (focused) {
-      field.selectionStart = result.cursor;
-      field.selectionEnd = result.cursor;
-    }
-    autosize();
+    renderEditor();
+    if (focused) placeCaret(result.cursor);
     return attachment;
   };
 
-  const removeImage = (id: number, focus = true) => {
+  const removeImage = (id: number, focus = true, caretAt?: number) => {
     const result = removeAttachmentWithMarker(attachments(), text(), id);
     if (!result.removed) return false;
     revokePendingPreview(result.removed);
     setAttachments(result.attachments);
     setText(result.text);
-    if (focus) field.focus();
-    autosize();
+    renderEditor();
+    if (focus) {
+      field.focus();
+      placeCaret(caretAt ?? text().length);
+    }
     return true;
+  };
+
+  // Delete a chip in place: the caret stays where the chip stood instead of
+  // jumping to the end of the message.
+  const removeImageInPlace = (id: number) => {
+    const at = chipStartOffset(field, id, attachmentIds());
+    removeImage(id, true, at ?? undefined);
+  };
+
+  const insertPlainText = (chunk: string) => {
+    if (!chunk) return;
+    const value = text();
+    const range = document.activeElement === field ? selectionOffsets(field, attachmentIds()) : null;
+    const start = range?.start ?? value.length;
+    const end = range?.end ?? start;
+    // The chip invariant: replacing a range that covers a chip must also drop
+    // its attachment (and renumber the rest), or the orphaned image would still
+    // be sent while no chip shows it.
+    const result = replaceRangeWithText(attachments(), value, start, end, chunk);
+    for (const dropped of result.removed) revokePendingPreview(dropped);
+    batch(() => {
+      setAttachments(result.attachments);
+      setText(result.text);
+    });
+    renderEditor();
+    placeCaret(result.cursor);
   };
 
   const hasAttachment = (id: number) =>
@@ -355,6 +494,7 @@ export function Composer(props: {
     if (!result.previous) return;
     revokePendingPreview(result.previous);
     setAttachments(result.attachments);
+    refreshChip(id);
   };
 
   const failImage = (id: number, generation: number, error: unknown) => {
@@ -435,11 +575,7 @@ export function Composer(props: {
             // Not an image copy — restore the default paste the intercept ate,
             // unless a send already consumed this composer state.
             if (generation !== pasteGeneration) return;
-            const insert = paths.length > 0 ? paths.join(" ") : text;
-            const start = field.selectionStart ?? field.value.length;
-            const end = field.selectionEnd ?? start;
-            setText(`${field.value.slice(0, start)}${insert}${field.value.slice(end)}`);
-            autosize();
+            insertPlainText(paths.length > 0 ? paths.join(" ") : text);
           })
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
@@ -448,7 +584,17 @@ export function Composer(props: {
           });
         return;
       }
-      if (fileItems > 0 || data.types.length > 0) return;
+      if (fileItems > 0 || data.types.length > 0) {
+        // Non-image content: keep the composer plain-text (the textarea it
+        // replaced never accepted rich markup) by inserting the text flavor
+        // ourselves instead of letting contenteditable smuggle in HTML.
+        const plain = data.getData("text/plain");
+        if (plain) {
+          event.preventDefault();
+          insertPlainText(plain);
+        }
+        return;
+      }
       event.preventDefault();
       if (props.turnActive) {
         showPasteError("Images can't be attached while a turn is running", 4000);
@@ -527,11 +673,11 @@ export function Composer(props: {
       droppedPasteGeneration = null;
       const result = props.onSteer!(value);
       setText("");
-      field.style.height = "auto";
+      renderEditor();
       void Promise.resolve(result).catch(() => {
         if (text().trim().length === 0 && attachments().length === 0) {
           setText(savedText);
-          autosize();
+          renderEditor();
         }
       });
       return;
@@ -542,12 +688,12 @@ export function Composer(props: {
     const result = props.onSend(value, savedImages.length > 0 ? savedImages : undefined);
     setText("");
     setAttachments([]);
-    field.style.height = "auto";
+    renderEditor();
     void Promise.resolve(result).catch(() => {
       if (text().trim().length === 0 && attachments().length === 0) {
         setText(savedText);
         setAttachments(savedAttachments);
-        autosize();
+        renderEditor();
       }
     });
   };
@@ -601,16 +747,71 @@ export function Composer(props: {
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    // Whole-chip deletion: one Backspace/Delete adjacent to a chip removes it via
+    // the model (which renumbers the rest), independent of the engine's own
+    // atomic-deletion behavior — so the DOM and the text string never drift.
+    if (event.key === "Backspace" || event.key === "Delete") {
+      const chipId = adjacentChipId(field, event.key === "Backspace" ? "before" : "after");
+      if (chipId !== null) {
+        event.preventDefault();
+        removeImageInPlace(chipId);
+        return;
+      }
+    }
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      insertPlainText("\n");
+      return;
+    }
+    if (event.key === "Enter") {
       event.preventDefault();
       submit();
     }
   };
 
-  function autosize() {
-    field.style.height = "auto";
-    field.style.height = `${Math.min(field.scrollHeight, 200)}px`;
-  }
+  // DOM → string on user edits. Skipped while an IME composition is active; the
+  // final compositionend re-runs it. The fast path (chips unchanged) just
+  // re-serializes; when the user deletes/reorders chips by editing, the model is
+  // reconciled to the surviving chips and the editor re-rendered to renumber.
+  const onInput = () => {
+    if (composing) return;
+    const modelIds = attachmentIds();
+    const present = chipIdsInOrder(field);
+    const same =
+      present.length === modelIds.length && present.every((id, i) => id === modelIds[i]);
+    if (!same) {
+      const survivors = new Set(present);
+      const byId = new Map(attachments().map((a) => [a.id, a]));
+      for (const attachment of attachments()) {
+        if (!survivors.has(attachment.id)) revokePendingPreview(attachment);
+      }
+      const kept = present
+        .map((id) => byId.get(id))
+        .filter((a): a is ComposerAttachment => a !== undefined);
+      const emptied = kept.length === 0 && field.textContent === "";
+      const value = emptied ? "" : serializeComposer(field, present);
+      const caret = emptied ? 0 : (selectionOffsets(field, present)?.start ?? value.length);
+      batch(() => {
+        setAttachments(kept);
+        setText(value);
+      });
+      renderEditor();
+      placeCaret(caret);
+      setDismissed(false);
+      setSelected(0);
+      return;
+    }
+    let value = serializeComposer(field, modelIds);
+    // Restore the :empty placeholder once the editor is logically empty (WebKit
+    // may leave a filler <br>).
+    if (present.length === 0 && field.textContent === "") {
+      if (field.childNodes.length) field.replaceChildren();
+      value = "";
+    }
+    setText(value);
+    setDismissed(false);
+    setSelected(0);
+  };
 
   return (
     <div
@@ -772,20 +973,25 @@ export function Composer(props: {
             </For>
           </div>
         </Show>
-        <textarea
+        <div
           ref={field}
-          class="pf-chat-textarea"
-          rows={1}
-          placeholder={placeholder()}
-          value={text()}
-          onInput={(e) => {
-            setText(e.currentTarget.value);
-            setDismissed(false);
-            setSelected(0);
-            autosize();
-          }}
+          class="pf-chat-textarea pf-chat-editor"
+          role="textbox"
+          aria-multiline="true"
+          aria-label={placeholder()}
+          data-placeholder={placeholder()}
+          contentEditable
+          spellcheck={true}
+          onInput={onInput}
           onPaste={onPaste}
           onKeyDown={onKeyDown}
+          onCompositionStart={() => {
+            composing = true;
+          }}
+          onCompositionEnd={() => {
+            composing = false;
+            onInput();
+          }}
         />
         <Show
           when={props.turnActive}

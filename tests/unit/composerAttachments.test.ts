@@ -6,6 +6,7 @@ import {
   decidePreparingState,
   readyAttachmentPaths,
   removeAttachmentWithMarker,
+  replaceRangeWithText,
   resolveAttachment,
 } from "../../src/lib/composerAttachments";
 
@@ -101,5 +102,60 @@ describe("decidePreparingState", () => {
         hasContent: false,
       }),
     ).toBe("abort");
+  });
+});
+
+describe("replaceRangeWithText", () => {
+  it("drops a chip covered by the replaced range and renumbers the rest", () => {
+    const attachments = [ready(1, "/a.png"), ready(2, "/b.png"), ready(3, "/c.png")];
+    const text = "see [Image #1] mid [Image #2] tail [Image #3]";
+
+    const result = replaceRangeWithText(attachments, text, 15, 30, "and");
+
+    expect(result.text).toBe("see [Image #1] andtail [Image #2]");
+    expect(result.attachments.map((a) => a.id)).toEqual([1, 3]);
+    expect(result.removed.map((a) => a.id)).toEqual([2]);
+    expect(result.cursor).toBe(18);
+  });
+
+  it("snaps endpoints strictly inside a chip-backed marker to the whole chip", () => {
+    const result = replaceRangeWithText([ready(9, "/a.png")], "a [Image #1] b", 5, 8, "");
+
+    expect(result.text).toBe("a  b");
+    expect(result.attachments).toEqual([]);
+    expect(result.removed.map((a) => a.id)).toEqual([9]);
+    expect(result.cursor).toBe(2);
+  });
+
+  it("keeps every attachment on a collapsed insertion (Shift+Enter path)", () => {
+    const attachments = [ready(9, "/a.png")];
+    const result = replaceRangeWithText(attachments, "a [Image #1] b", 2, 2, "\n");
+
+    expect(result.text).toBe("a \n[Image #1] b");
+    expect(result.attachments).toEqual(attachments);
+    expect(result.removed).toEqual([]);
+    expect(result.cursor).toBe(3);
+  });
+
+  it("treats markers without a matching attachment as plain text", () => {
+    const attachments = [ready(1, "/a.png")];
+    const text = "x [Image #1] [Image #7] y";
+
+    const result = replaceRangeWithText(attachments, text, 13, 23, "z");
+
+    expect(result.text).toBe("x [Image #1] z y");
+    expect(result.attachments).toEqual(attachments);
+    expect(result.removed).toEqual([]);
+    expect(result.cursor).toBe(14);
+  });
+
+  it("returns dropped pending attachments so their previews can be revoked", () => {
+    const attachments = [createPendingAttachment(1, "blob:x"), ready(2, "/b.png")];
+    const result = replaceRangeWithText(attachments, "[Image #1] [Image #2]", 0, 10, "");
+
+    expect(result.text).toBe(" [Image #1]");
+    expect(result.attachments.map((a) => a.id)).toEqual([2]);
+    expect(result.removed).toEqual([attachments[0]]);
+    expect(result.cursor).toBe(0);
   });
 });

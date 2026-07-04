@@ -27,14 +27,19 @@ export function insertMarker(
 /**
  * Drop every literal `[Image #removed]` occurrence and decrement every marker
  * numbered above it, keeping markers in lockstep with the attachment list after
- * an image is removed. Markers below `removed` and out-of-range markers are
- * left untouched.
+ * an image is removed. Markers below `removed`, and markers beyond
+ * `imageCount` (literal text that never referenced an attachment), are left
+ * untouched.
  */
-export function removeMarkerAndRenumber(text: string, removed: number): string {
+export function removeMarkerAndRenumber(
+  text: string,
+  removed: number,
+  imageCount: number,
+): string {
   return text.replace(MARKER, (match, digits: string) => {
     const value = Number(digits);
     if (value === removed) return "";
-    if (value > removed) return `[Image #${value - 1}]`;
+    if (value > removed && value <= imageCount) return `[Image #${value - 1}]`;
     return match;
   });
 }

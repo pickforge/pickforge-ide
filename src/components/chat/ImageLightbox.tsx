@@ -34,6 +34,10 @@ function releaseOwnership(id: number): void {
   if (owner() === id) {
     const next = mounted.values().next();
     setOwner(next.done ? null : next.value);
+    // Nobody left to render the overlay — drop the open image too, or the
+    // next mount would resurrect a viewer the user already navigated away
+    // from.
+    if (next.done) setLightboxSrc(null);
   }
 }
 

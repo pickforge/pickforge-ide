@@ -31,22 +31,28 @@ describe("insertMarker", () => {
 
 describe("removeMarkerAndRenumber", () => {
   it("drops the removed marker and renumbers higher ones down", () => {
-    expect(removeMarkerAndRenumber("a [Image #2] b [Image #3]", 2)).toBe(
+    expect(removeMarkerAndRenumber("a [Image #2] b [Image #3]", 2, 3)).toBe(
       "a  b [Image #2]",
     );
   });
 
   it("removes every duplicate of the removed marker", () => {
-    expect(removeMarkerAndRenumber("[Image #1] x [Image #1] y", 1)).toBe(" x  y");
+    expect(removeMarkerAndRenumber("[Image #1] x [Image #1] y", 1, 1)).toBe(" x  y");
   });
 
   it("leaves markers below the removed one untouched", () => {
-    expect(removeMarkerAndRenumber("[Image #1] [Image #2] [Image #3]", 2)).toBe(
+    expect(removeMarkerAndRenumber("[Image #1] [Image #2] [Image #3]", 2, 3)).toBe(
       "[Image #1]  [Image #2]",
     );
   });
 
   it("leaves out-of-range markers untouched", () => {
-    expect(removeMarkerAndRenumber("[Image #5]", 9)).toBe("[Image #5]");
+    expect(removeMarkerAndRenumber("[Image #5]", 9, 9)).toBe("[Image #5]");
+  });
+
+  it("does not renumber literal markers beyond the attachment count", () => {
+    expect(removeMarkerAndRenumber("[Image #1] keep [Image #99]", 1, 2)).toBe(
+      " keep [Image #99]",
+    );
   });
 });

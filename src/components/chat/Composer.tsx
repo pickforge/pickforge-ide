@@ -281,18 +281,17 @@ export function Composer(props: {
   // `[Image #N]` marker is inserted for all of them. Callers must first pass
   // their generation guard; this only runs on a still-current attachment.
   // The marker must land where the cursor was when the paste/drop HAPPENED —
-  // stashing is async, and the user may keep typing before it resolves.
-  // Pinned per ingress event; consecutive images from one event chain their
+  // stashing is async, and the user may keep typing before it resolves. Each
+  // ingress event pins its own anchor (two overlapping pastes must not steal
+  // each other's spot); consecutive images from one event chain their
   // insertion points so batch attachments stay in order.
-  let markerAnchor: { generation: number; at: number | null } | null = null;
-  const pinMarkerAnchor = () => {
-    markerAnchor = {
-      generation: pasteGeneration,
-      at: document.activeElement === field ? (field.selectionStart ?? null) : null,
-    };
-  };
+  type MarkerAnchor = { generation: number; at: number | null };
+  const pinMarkerAnchor = (): MarkerAnchor => ({
+    generation: pasteGeneration,
+    at: document.activeElement === field ? (field.selectionStart ?? null) : null,
+  });
 
-  const attachImage = (path: string) => {
+  const attachImage = (path: string, anchor?: MarkerAnchor) => {
     let index = 0;
     setImages((cur) => {
       index = cur.length + 1;
@@ -300,12 +299,11 @@ export function Composer(props: {
     });
     const focused = document.activeElement === field;
     const value = text();
-    const pinned =
-      markerAnchor && markerAnchor.generation === pasteGeneration ? markerAnchor.at : null;
+    const pinned = anchor && anchor.generation === pasteGeneration ? anchor.at : null;
     const cursor =
       pinned ?? (focused ? (field.selectionStart ?? value.length) : value.length);
     const result = insertMarker(value, index, cursor);
-    if (pinned !== null && markerAnchor) markerAnchor.at = result.cursor;
+    if (pinned !== null && anchor) anchor.at = result.cursor;
     setText(result.text);
     if (focused) {
       field.selectionStart = result.cursor;
@@ -317,7 +315,8 @@ export function Composer(props: {
   };
 
   const removeImage = (index: number) => {
-    setText((cur) => removeMarkerAndRenumber(cur, index + 1));
+    const count = images().length;
+    setText((cur) => removeMarkerAndRenumber(cur, index + 1, count));
     setImages((cur) => cur.filter((_, i) => i !== index));
     field.focus();
     autosize();
@@ -326,7 +325,7 @@ export function Composer(props: {
   const onPaste = (event: ClipboardEvent) => {
     const data = event.clipboardData;
     if (!data) return;
-    pinMarkerAnchor();
+    const anchor = pinMarkerAnchor();
     const files: { file: File; ext: string }[] = [];
     let fileItems = 0;
     let unsupported = 0;
@@ -349,7 +348,7 @@ export function Composer(props: {
       const uriPaths = filePathsFromUriList(data.getData("text/uri-list"));
       if (uriPaths.some((path) => acceptedPathExt(path))) {
         event.preventDefault();
-        onPathDrop(uriPaths);
+        onPathDrop(uriPaths, pasteGeneration, anchor);
         return;
       }
       // WebKitGTK advertises text/uri-list but getData returns "" — the URIs
@@ -378,7 +377,7 @@ export function Composer(props: {
           })
           .then(({ paths, text }: { paths: string[]; text: string }) => {
             if (paths.some((path) => acceptedPathExt(path))) {
-              onPathDrop(paths, generation);
+              onPathDrop(paths, generation, anchor);
               return;
             }
             // Not an image copy — restore the default paste the intercept ate,
@@ -413,7 +412,7 @@ export function Composer(props: {
             }
             return;
           }
-          attachImage(path);
+          attachImage(path, anchor);
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -442,7 +441,7 @@ export function Composer(props: {
             }
             return;
           }
-          attachImage(path);
+          attachImage(path, anchor);
         })
         .catch((error) => {
           showPasteError(error instanceof Error ? error.message : String(error));
@@ -450,10 +449,10 @@ export function Composer(props: {
     }
   };
 
-  const onPathDrop = (paths: string[], atGeneration?: number) => {
+  const onPathDrop = (paths: string[], atGeneration?: number, anchor?: MarkerAnchor) => {
     // A direct OS drop is its own ingress event; paste fallbacks arrive with
-    // the generation (and anchor) already pinned by onPaste.
-    if (atGeneration === undefined) pinMarkerAnchor();
+    // the generation and anchor already pinned by onPaste.
+    const markerAnchor = anchor ?? pinMarkerAnchor();
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
@@ -475,7 +474,7 @@ export function Composer(props: {
             }
             return;
           }
-          attachImage(stashedPath);
+          attachImage(stashedPath, markerAnchor);
         })
         .catch((error) => {
           showPasteError(error instanceof Error ? error.message : String(error));
@@ -645,8 +644,15 @@ export function Composer(props: {
                   src={convertFileSrc(path)}
                   alt=""
                   role="button"
+                  tabIndex={0}
                   aria-label={`Preview image ${i() + 1}`}
                   onClick={() => openLightbox(convertFileSrc(path))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openLightbox(convertFileSrc(path));
+                    }
+                  }}
                   onError={(e) => {
                     e.currentTarget.style.visibility = "hidden";
                   }}

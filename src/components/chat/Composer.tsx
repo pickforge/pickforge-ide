@@ -319,7 +319,9 @@ export function Composer(props: {
               onPathDrop(paths, generation);
               return;
             }
-            // Not an image copy — restore the default paste the intercept ate.
+            // Not an image copy — restore the default paste the intercept ate,
+            // unless a send already consumed this composer state.
+            if (generation !== pasteGeneration) return;
             const insert = paths.length > 0 ? paths.join(" ") : text;
             const start = field.selectionStart ?? field.value.length;
             const end = field.selectionEnd ?? start;

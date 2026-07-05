@@ -11,11 +11,11 @@ const CONTAINMENT_EPSILON: f64 = 0.5;
 struct IdbElement {
     #[serde(default, deserialize_with = "frame_or_default")]
     frame: IdbFrame,
-    #[serde(rename = "AXLabel", default)]
+    #[serde(rename = "AXLabel", default, deserialize_with = "opt_string_lossy")]
     ax_label: Option<String>,
-    #[serde(rename = "AXValue", default)]
+    #[serde(rename = "AXValue", default, deserialize_with = "opt_string_lossy")]
     ax_value: Option<String>,
-    #[serde(rename = "AXUniqueId", default)]
+    #[serde(rename = "AXUniqueId", default, deserialize_with = "opt_string_lossy")]
     ax_unique_id: Option<String>,
     #[serde(rename = "type", default)]
     element_type: Option<String>,
@@ -255,6 +255,26 @@ where
     Ok(Option::<Vec<Value>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+fn opt_string_lossy<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value),
+        Some(Value::Number(value)) => Some(number_to_string(&value)),
+        Some(value) => Some(value.to_string()),
+    })
+}
+
+fn number_to_string(value: &serde_json::Number) -> String {
+    let rendered = value.to_string();
+    rendered
+        .strip_suffix(".0")
+        .unwrap_or(&rendered)
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,6 +349,42 @@ mod tests {
         assert_eq!(counter.role, A11yRole::Text);
         assert_eq!(counter.text.as_deref(), Some("0"));
         assert_eq!(counter.resource_id.as_deref(), Some("fixture-counter"));
+    }
+
+    #[test]
+    fn numeric_unique_id_becomes_resource_id() {
+        let root = parse_idb_accessibility(
+            r#"[
+              {
+                "frame": {"x": 0, "y": 0, "width": 10, "height": 10},
+                "type": "Button",
+                "role": "AXButton",
+                "AXLabel": "Tap",
+                "AXUniqueId": 42
+              }
+            ]"#,
+        )
+        .unwrap();
+
+        assert_eq!(root.resource_id.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn numeric_value_becomes_text_fallback() {
+        let root = parse_idb_accessibility(
+            r#"[
+              {
+                "frame": {"x": 0, "y": 0, "width": 10, "height": 10},
+                "type": "StaticText",
+                "role": "AXStaticText",
+                "AXLabel": null,
+                "AXValue": 42.0
+              }
+            ]"#,
+        )
+        .unwrap();
+
+        assert_eq!(root.text.as_deref(), Some("42"));
     }
 
     #[test]

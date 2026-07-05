@@ -90,12 +90,12 @@ pub async fn ios_screenshot(
 }
 
 #[tauri::command]
-pub async fn ios_dump_accessibility(udid: String) -> Result<Option<A11yNode>, String> {
+pub async fn ios_dump_accessibility(udid: String) -> Result<A11yNode, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        pickforge_core::ios::accessibility::dump_accessibility(&udid).ok()
+        pickforge_core::ios::accessibility::dump_accessibility(&udid).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

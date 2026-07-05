@@ -83,10 +83,10 @@ export const iosBootDevice = (udid: string) =>
   invoke<void>("ios_boot_device", { udid });
 
 /** Dump the booted simulator's current accessibility tree via `idb` (native
- *  iOS). Returns the same `A11yNode` shape as `adbDumpUiautomator`; null when
- *  nothing could be parsed (no foregrounded app / `idb` unavailable). */
+ *  iOS). Returns the same `A11yNode` shape as `adbDumpUiautomator`; rejects
+ *  with the native error string when `idb` or parsing fails. */
 export const iosDumpAccessibility = (udid: string) =>
-  invoke<A11yNode | null>("ios_dump_accessibility", { udid });
+  invoke<A11yNode>("ios_dump_accessibility", { udid });
 
 /** Capture a simulator screenshot into `outputDir/outputName`. Returns the
  *  written PNG path, or null on failure. The iOS sibling of `adbScreenshot`. */

@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - platform: ubuntu-22.04
-            args: ""
+            args: "--bundles appimage"
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
           - platform: windows-latest
@@ -57,6 +57,7 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1"
           # Updater signing — set these repo secrets (see docs/architecture/update-checks.md).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

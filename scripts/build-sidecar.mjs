@@ -8,9 +8,18 @@
 // expects. Run from `beforeBuildCommand` so a packaged app actually ships the
 // adapter (without this, MCP discovery finds nothing in a release build).
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -55,10 +64,52 @@ console.log(`[sidecar] staged ${dest}`);
 // Bun cross-compilation uses bun-specific targets, not Rust triples, so this
 // only fixes the staged suffix for requested Tauri/Cargo targets.
 const bridgeDest = join(destDir, `pickforge-claude-bridge-${triple}${ext}`);
-console.log("[sidecar] bun build --compile scripts/claude-bridge.ts");
-execFileSync(
-  "bun",
-  ["build", "--compile", join(root, "scripts", "claude-bridge.ts"), "--outfile", bridgeDest],
-  { cwd: root, stdio: "inherit" },
-);
+const linuxX64 = triple === "x86_64-unknown-linux-gnu";
+const bridgeOut = linuxX64 ? `${bridgeDest}.bin` : bridgeDest;
+const bridgeArgs = ["build", "--compile"];
+bridgeArgs.push(join(root, "scripts", "claude-bridge.ts"), "--outfile", bridgeOut);
+console.log(`[sidecar] bun ${bridgeArgs.join(" ")}`);
+execFileSync("bun", bridgeArgs, { cwd: root, stdio: "inherit" });
+if (linuxX64) {
+  writeSelfExtractingBridge(bridgeOut, bridgeDest);
+  unlinkSync(bridgeOut);
+}
 console.log(`[sidecar] staged ${bridgeDest}`);
+
+function writeSelfExtractingBridge(payloadPath, destPath) {
+  const payload = readFileSync(payloadPath);
+  const compressed = gzipSync(payload, { level: 9 });
+  const hash = createHash("sha256").update(payload).digest("hex").slice(0, 16);
+
+  let offset = 1;
+  let header = "";
+  while (true) {
+    header = bridgeWrapperHeader(offset, hash);
+    const next = Buffer.byteLength(header) + 1;
+    if (next === offset) break;
+    offset = next;
+  }
+
+  writeFileSync(destPath, Buffer.concat([Buffer.from(header), compressed]));
+  chmodSync(destPath, 0o755);
+}
+
+function bridgeWrapperHeader(offset, hash) {
+  return `#!/bin/sh
+set -eu
+self="$0"
+cache_base="\${XDG_CACHE_HOME:-\${HOME:-/tmp}/.cache}"
+cache_dir="$cache_base/pickforge"
+payload="$cache_dir/pickforge-claude-bridge-${hash}"
+mkdir -p "$cache_dir"
+if [ ! -x "$payload" ]; then
+  tmp="$payload.$$"
+  rm -f "$tmp"
+  tail -c +"${offset}" "$self" | gzip -dc > "$tmp"
+  chmod 755 "$tmp"
+  mv "$tmp" "$payload"
+fi
+exec "$payload" "$@"
+exit 127
+`;
+}

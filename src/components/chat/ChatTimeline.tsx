@@ -87,28 +87,48 @@ export function ChatTimeline(props: {
 }): JSX.Element {
   let scroller!: HTMLDivElement;
   let content!: HTMLDivElement;
-  let nearBottom = true;
+  // Follow the streaming tail, but detach the instant the user scrolls up (any
+  // amount) and re-attach only once they return to the bottom. A distance-only
+  // check let small scroll-ups stay "near bottom" while content kept growing, so
+  // the next resize tick yanked the view back down — hence the "scroll fast to
+  // escape" stickiness. `programmatic` marks our own pin so its scroll event is
+  // not mistaken for the user scrolling.
+  let stick = true;
+  let lastTop = 0;
+  let programmatic = false;
   let pinFrame: number | null = null;
   const THRESHOLD = 96;
+
+  const atBottom = () =>
+    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < THRESHOLD;
 
   const pin = (force = false) => {
     if (pinFrame !== null) return;
     pinFrame = requestAnimationFrame(() => {
       pinFrame = null;
-      if (!force && !nearBottom) return;
-      scroller.scrollTop = scroller.scrollHeight;
+      if (!force && !stick) return;
+      const target = scroller.scrollHeight - scroller.clientHeight;
+      if (target - scroller.scrollTop < 1) return; // already there; no scroll event to expect
+      programmatic = true;
+      scroller.scrollTop = target;
     });
   };
 
   const onScroll = () => {
-    nearBottom =
-      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < THRESHOLD;
+    if (programmatic) {
+      programmatic = false; // our own pin settling; record its resting position
+      lastTop = scroller.scrollTop;
+      return;
+    }
+    if (scroller.scrollTop < lastTop - 1) stick = false; // user scrolled up → detach
+    else if (atBottom()) stick = true; // user returned to the bottom → follow again
+    lastTop = scroller.scrollTop;
   };
 
   onMount(() => {
     pin(true);
     const observer = new ResizeObserver(() => {
-      if (nearBottom) pin();
+      if (stick) pin();
     });
     observer.observe(content);
     onCleanup(() => {

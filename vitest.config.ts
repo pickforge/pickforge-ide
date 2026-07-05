@@ -7,5 +7,17 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/unit/**/*.test.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/lib/tauriMock.ts"],
+      thresholds: {
+        branches: 26,
+        functions: 16,
+        lines: 23,
+        statements: 23,
+      },
+    },
   },
 });

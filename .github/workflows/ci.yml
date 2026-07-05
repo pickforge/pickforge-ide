@@ -27,12 +27,44 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - run: bun install --frozen-lockfile
+
+      - name: unit tests
+        run: bun run test:unit
+
+      - name: frontend coverage
+        run: bun run test:coverage
+
+      - name: summarize frontend coverage
+        run: |
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require("fs");
+          const lcov = fs.readFileSync("coverage/lcov.info", "utf8");
+          let found = 0;
+          let hit = 0;
+          for (const line of lcov.split("\n")) {
+            if (line.startsWith("LF:")) found += Number(line.slice(3));
+            if (line.startsWith("LH:")) hit += Number(line.slice(3));
+          }
+          const pct = found === 0 ? "0.00" : ((hit / found) * 100).toFixed(2);
+          console.log(`## Coverage\n\nFrontend lines: ${pct}% (${hit}/${found})`);
+          NODE
+
+      - name: upload frontend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: |
+            coverage/lcov.info
+            coverage/index.html
+            coverage/
+          retention-days: 7
 
       # Build the frontend FIRST so `dist/` exists (it is gitignored) before the
       # cargo steps compile the Tauri crate's generate_context!(), which embeds
@@ -49,11 +81,42 @@ jobs:
       - name: stage MCP sidecar (externalBin)
         run: bun run sidecar
 
+      - name: device-free e2e smoke
+        env:
+          PICKFORGE_E2E_SERIAL: ""
+          PICKFORGE_E2E_LAUNCH: ""
+        run: bun run e2e
+
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
 
-      - name: cargo test (core)
-        run: cargo test -p pickforge-core --locked
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked --all-targets
+
+      - name: rust coverage
+        run: |
+          mkdir -p target/llvm-cov
+          cargo llvm-cov --workspace --locked --all-targets --fail-under-lines 75 --html --output-dir target/llvm-cov/html
+          cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+          cargo llvm-cov report --text --output-path target/llvm-cov/summary.txt
+
+      - name: summarize Rust coverage
+        run: |
+          {
+            echo
+            echo "### Rust"
+            cat target/llvm-cov/summary.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload Rust coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage
+          path: |
+            target/llvm-cov/lcov.info
+            target/llvm-cov/html/
+            target/llvm-cov/summary.txt
+          retention-days: 7
 
   vrt:
     name: visual regression

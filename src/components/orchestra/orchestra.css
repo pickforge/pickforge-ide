@@ -186,6 +186,70 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
 .pf-orch-task-del:hover {
   color: var(--pf-error);
 }
+.pf-orch-swarm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pf-orch-swarm-count {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-orch-swarm-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+.pf-orch-swarm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+}
+.pf-orch-swarm-top {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-orch-swarm .pf-orch-status {
+  cursor: default;
+}
+.pf-orch-swarm-title,
+.pf-orch-swarm-goal {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-orch-swarm-title {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-med);
+}
+.pf-orch-swarm-goal {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+}
+.pf-orch-swarm-lanes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pf-space-xs);
+}
+.pf-orch-swarm-lane {
+  padding: 1px var(--pf-space-xs);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
 .pf-orch-task-assign {
   display: flex;
   align-items: center;

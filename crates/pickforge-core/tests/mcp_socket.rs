@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use pickforge_core::mcp::{
-    ActiveTarget, InspectorKind, LiveState, ProjectContext, PROTOCOL_VERSION,
+    ActiveTarget, InspectorKind, LiveState, ProjectContext, ALL_TOOL_NAMES, PROTOCOL_VERSION,
 };
 use pickforge_core::targets::Capability;
 use serde_json::{json, Value};
@@ -53,6 +53,22 @@ impl LiveState for TestLive {
     }
     fn run_logs(&self, limit: usize) -> Vec<String> {
         (0..limit.min(3)).map(|i| format!("log {i}")).collect()
+    }
+    fn pickforge_capabilities(&self) -> Value {
+        json!({
+            "available": true,
+            "swarm": { "available": true, "maxAgents": 5 },
+            "pickLab": { "available": false },
+        })
+    }
+    fn request_swarm(&self, _args: &Value) -> Result<Value, String> {
+        Ok(json!({ "accepted": true, "runId": "swarm-test" }))
+    }
+    fn swarm_status(&self, _args: &Value) -> Result<Value, String> {
+        Ok(json!({ "runs": [] }))
+    }
+    fn cancel_swarm(&self, _args: &Value) -> Result<Value, String> {
+        Ok(json!({ "cancelled": true }))
     }
 }
 
@@ -114,7 +130,7 @@ async fn agent_handshake_over_the_socket() {
     assert_eq!(init["result"]["protocolVersion"], json!(PROTOCOL_VERSION));
     assert_eq!(init["result"]["serverInfo"]["name"], json!("pickforge"));
 
-    // 2. tools/list — the four tools, each with an input schema.
+    // 2. tools/list — all tools, each with an input schema.
     let list = round_trip(
         &mut tx,
         &mut reader,
@@ -122,7 +138,7 @@ async fn agent_handshake_over_the_socket() {
     )
     .await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 4);
+    assert_eq!(tools.len(), ALL_TOOL_NAMES.len());
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"get_current_selection"));
     assert!(names.contains(&"capture_screenshot"));

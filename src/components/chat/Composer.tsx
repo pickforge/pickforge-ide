@@ -144,7 +144,7 @@ function readBase64(file: File): Promise<string> {
 }
 
 function modelsFor(provider: AgentProvider) {
-  return AGENTS.find((a) => a.id === provider)?.models ?? [];
+  return AGENTS.find((a) => a.id === provider)?.models.filter((model) => !model.terminalOnly) ?? [];
 }
 
 type Suggestion =

@@ -18,6 +18,8 @@ interface McpBinding {
   contextDir: string;
   runsDir: string;
   chatsDir: string;
+  mcpConfigPath: string;
+  mcpCommand: string;
 }
 
 const [binding, setBinding] = createSignal<McpBinding | null>(null);
@@ -47,6 +49,8 @@ export async function ensureMcpRunning(projectRoot: string | null): Promise<void
       contextDir: r.contextDir,
       runsDir: r.runsDir,
       chatsDir: r.chatsDir,
+      mcpConfigPath: r.mcpConfigPath,
+      mcpCommand: r.mcpCommand,
     });
     void publishSnapshot();
   } catch (e) {
@@ -132,6 +136,10 @@ export function mcpEnv(projectRoot: string | null): Record<string, string> {
   const env = {
     PICKFORGE_PROJECT_ROOT: b.projectRoot,
     PICKFORGE_CONTEXT_DIR: b.contextDir,
+    PICKFORGE_MCP_CONFIG: b.mcpConfigPath,
+    PICKFORGE_MCP_COMMAND: b.mcpCommand,
+    PICKFORGE_AGENT_BRIEF:
+      "Pickforge tools are available through the pickforge MCP server. Use pickforge_start_swarm for Pickforge swarm requests, and do not also start provider-native subagents for the same work.",
   };
   return b.endpoint ? { PICKFORGE_IPC_ENDPOINT: b.endpoint, ...env } : env;
 }

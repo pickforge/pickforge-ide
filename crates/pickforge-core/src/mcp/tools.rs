@@ -8,14 +8,26 @@ use serde_json::{json, Value};
 
 use crate::targets::Capability;
 
-/// The four tool names exposed over MCP. Stable strings — agents key on them.
+/// Stable tool names exposed over MCP.
 pub const GET_CURRENT_SELECTION: &str = "get_current_selection";
 pub const CAPTURE_SCREENSHOT: &str = "capture_screenshot";
 pub const GET_RUN_LOGS: &str = "get_run_logs";
 pub const GET_PROJECT_CONTEXT: &str = "get_project_context";
+pub const PICKFORGE_CAPABILITIES: &str = "pickforge_capabilities";
+pub const PICKFORGE_START_SWARM: &str = "pickforge_start_swarm";
+pub const PICKFORGE_SWARM_STATUS: &str = "pickforge_swarm_status";
+pub const PICKFORGE_CANCEL_SWARM: &str = "pickforge_cancel_swarm";
 
-pub const ALL_TOOL_NAMES: [&str; 4] =
-    [GET_CURRENT_SELECTION, CAPTURE_SCREENSHOT, GET_RUN_LOGS, GET_PROJECT_CONTEXT];
+pub const ALL_TOOL_NAMES: [&str; 8] = [
+    GET_CURRENT_SELECTION,
+    CAPTURE_SCREENSHOT,
+    GET_RUN_LOGS,
+    GET_PROJECT_CONTEXT,
+    PICKFORGE_CAPABILITIES,
+    PICKFORGE_START_SWARM,
+    PICKFORGE_SWARM_STATUS,
+    PICKFORGE_CANCEL_SWARM,
+];
 
 /// Which inspector a target drives. Mirrors the frontend `InspectorKind`
 /// (`src/lib/runTargets.ts`) so `get_current_selection` picks the right adapter.
@@ -113,10 +125,14 @@ pub trait LiveState {
 
     /// Recent run/logcat lines, newest last, capped by the caller.
     fn run_logs(&self, limit: usize) -> Vec<String>;
+
+    fn pickforge_capabilities(&self) -> Value;
+    fn request_swarm(&self, args: &Value) -> Result<Value, String>;
+    fn swarm_status(&self, args: &Value) -> Result<Value, String>;
+    fn cancel_swarm(&self, args: &Value) -> Result<Value, String>;
 }
 
 /// The static `tools/list` descriptors (name + description + input schema).
-/// Schemas are intentionally tiny: only `get_run_logs` takes an argument.
 pub fn tool_descriptors() -> Value {
     let empty = json!({ "type": "object", "properties": {}, "additionalProperties": false });
     json!([
@@ -155,6 +171,63 @@ pub fn tool_descriptors() -> Value {
                             summary, and the storage directories PickForge writes to.",
             "inputSchema": empty,
         },
+        {
+            "name": PICKFORGE_CAPABILITIES,
+            "description": "Pickforge-owned orchestration capabilities available in this launched \
+                            session, including swarm limits and companion tool status.",
+            "inputSchema": empty,
+        },
+        {
+            "name": PICKFORGE_START_SWARM,
+            "description": "Ask Pickforge to dispatch a read-only swarm for this project. Use this \
+                            when the user asks for a Pickforge swarm or multiple Pickforge \
+                            sub-agents; do not also start native subagents for the same request.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "goal": { "type": "string", "description": "The task the swarm should scout or review." },
+                    "count": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Number of worker agents. Default 3, max 5." },
+                    "model": { "type": "string", "description": "Requested model label or id, if the user specified one." },
+                    "providerPreference": {
+                        "type": "string",
+                        "enum": ["auto", "mixed", "claudeCode", "codex"],
+                        "description": "Preferred provider pool. Default mixed."
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["scout", "review"],
+                        "description": "Read-only swarm mode. Default scout."
+                    }
+                },
+                "required": ["goal"],
+                "additionalProperties": false,
+            },
+        },
+        {
+            "name": PICKFORGE_SWARM_STATUS,
+            "description": "Return Pickforge swarm run status. Pass runId for one run, or omit it \
+                            to list recent runs for this session project.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "runId": { "type": "string" }
+                },
+                "additionalProperties": false,
+            },
+        },
+        {
+            "name": PICKFORGE_CANCEL_SWARM,
+            "description": "Mark a Pickforge swarm run cancelled. This prevents pending UI dispatch \
+                            and records cancellation for status checks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "runId": { "type": "string" }
+                },
+                "required": ["runId"],
+                "additionalProperties": false,
+            },
+        },
     ])
 }
 
@@ -170,6 +243,19 @@ pub fn call_tool(state: &dyn LiveState, name: &str, args: &Value) -> Option<Tool
         CAPTURE_SCREENSHOT => capture_screenshot(state),
         GET_RUN_LOGS => get_run_logs(state, args),
         GET_PROJECT_CONTEXT => get_project_context(state),
+        PICKFORGE_CAPABILITIES => ToolOutput::data(state.pickforge_capabilities()),
+        PICKFORGE_START_SWARM => match state.request_swarm(args) {
+            Ok(value) => ToolOutput::data(value),
+            Err(e) => ToolOutput::failure(e),
+        },
+        PICKFORGE_SWARM_STATUS => match state.swarm_status(args) {
+            Ok(value) => ToolOutput::data(value),
+            Err(e) => ToolOutput::failure(e),
+        },
+        PICKFORGE_CANCEL_SWARM => match state.cancel_swarm(args) {
+            Ok(value) => ToolOutput::data(value),
+            Err(e) => ToolOutput::failure(e),
+        },
         _ => return None,
     };
     Some(out)
@@ -304,6 +390,27 @@ mod tests {
         fn run_logs(&self, limit: usize) -> Vec<String> {
             self.logs.iter().rev().take(limit).rev().cloned().collect()
         }
+        fn pickforge_capabilities(&self) -> Value {
+            json!({
+                "available": true,
+                "swarm": {
+                    "available": true,
+                    "maxAgents": 5,
+                    "modes": ["scout", "review"],
+                    "providers": ["claudeCode", "codex", "mixed"],
+                },
+                "pickLab": { "available": false },
+            })
+        }
+        fn request_swarm(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "accepted": true, "runId": "swarm-test" }))
+        }
+        fn swarm_status(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "runs": [] }))
+        }
+        fn cancel_swarm(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "cancelled": true }))
+        }
     }
 
     impl FakeState {
@@ -367,10 +474,10 @@ mod tests {
     }
 
     #[test]
-    fn tool_descriptors_list_all_four_tools() {
+    fn tool_descriptors_list_all_tools() {
         let v = tool_descriptors();
         let arr = v.as_array().unwrap();
-        assert_eq!(arr.len(), 4);
+        assert_eq!(arr.len(), ALL_TOOL_NAMES.len());
         let names: Vec<&str> =
             arr.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for n in ALL_TOOL_NAMES {

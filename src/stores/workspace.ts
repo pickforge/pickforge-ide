@@ -284,9 +284,11 @@ export async function addChat(
   agentId: string,
   root = state.activeRoot,
   kind = "terminal",
-) {
-  if (!root) return;
-  setState("activeRoot", root);
+  options: { activate?: boolean } = {},
+): Promise<string | undefined> {
+  if (!root) return undefined;
+  const activate = options.activate !== false;
+  if (activate) setState("activeRoot", root);
   const now = Date.now();
   const chatId = `chat-${now}`;
   await db.chatUpsert({
@@ -305,7 +307,8 @@ export async function addChat(
     sortOrder: 0,
   });
   await fetchChats(root);
-  setState("activeChatId", chatId);
+  if (activate) setState("activeChatId", chatId);
+  return chatId;
 }
 
 export function selectChat(chatId: string | null) {

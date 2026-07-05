@@ -16,6 +16,7 @@ import {
   type AgentTimelineEntry,
 } from "../lib/agentChat";
 import { modeOverrides } from "../lib/agentModes";
+import { nativeChatModel } from "../lib/agentModels";
 import { deriveAgentChatTitle, isDefaultChatTitle } from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
@@ -806,9 +807,10 @@ export async function ensureAgentChat(
   model: string | null,
   options: EnsureAgentChatOptions = {},
 ): Promise<void> {
+  const safeModel = nativeChatModel(provider, model);
   const created = !chats[chatId];
-  if (created) setChats(chatId, emptyState(provider, model));
-  setChats(chatId, { projectRoot, provider, model });
+  if (created) setChats(chatId, emptyState(provider, safeModel));
+  setChats(chatId, { projectRoot, provider, model: safeModel });
   // Seed the effort only on a fresh entry — a remount must not clobber a
   // per-chat effort tweak with the persisted per-provider default.
   if (created && options.effort !== undefined) {
@@ -835,7 +837,7 @@ export async function ensureAgentChat(
         const previous = chats[chatId];
         const history = await agentChatHistory(chatId);
         if (stale()) return;
-        const loadedModel = chats[chatId]?.model ?? model;
+        const loadedModel = chats[chatId]?.model ?? safeModel;
         const loaded = stateFromHistory(chatId, provider, loadedModel, history);
         setChats(chatId, {
           ...loaded,
@@ -846,7 +848,7 @@ export async function ensureAgentChat(
         });
       }
       if (stale() || chats[chatId].sessionId) return;
-      const startModel = chats[chatId]?.model ?? model;
+      const startModel = chats[chatId]?.model ?? safeModel;
       const startMode = chats[chatId].mode;
       const overrides = modeOverrides(provider, startMode);
       const sessionId = await agentChatStart({
@@ -892,12 +894,13 @@ export async function ensureAgentChat(
 export function setAgentChatModel(chatId: string, model: string | null) {
   const chat = chats[chatId];
   if (!chat) return;
-  setChats(chatId, { model });
+  const safeModel = nativeChatModel(chat.provider, model);
+  setChats(chatId, { model: safeModel });
   // A live claude session pins its model at start — push the change into the
   // running query (SDK setModel) or the picker silently lies until the next
   // session. Codex reads the model per turn, so the store update suffices.
   if (chat.provider === "claudeCode" && chat.sessionId) {
-    queueAgentChatSetModel(chatId, chat.sessionId, model);
+    queueAgentChatSetModel(chatId, chat.sessionId, safeModel);
   }
 }
 
@@ -973,7 +976,7 @@ export async function switchAgentChatProvider(
 
   await disposeAgentChat(chatId);
   await setChatAgent(chatId, provider, "agent");
-  await ensureAgentChat(chatId, projectRoot, provider, model, {
+  await ensureAgentChat(chatId, projectRoot, provider, nativeChatModel(provider, model), {
     engine: loadAgentEngine(),
     effort,
     mode,

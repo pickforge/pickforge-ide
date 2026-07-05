@@ -30,6 +30,48 @@ export interface McpStartResult {
   contextDir: string;
   runsDir: string;
   chatsDir: string;
+  mcpConfigPath: string;
+  mcpCommand: string;
+}
+
+export interface SwarmRequest {
+  runId: string;
+  projectRoot: string;
+  goal: string;
+  count: number;
+  model: string | null;
+  providerPreference: "auto" | "mixed" | "claudeCode" | "codex";
+  mode: "scout" | "review";
+  source: string;
+  createdAt: number;
+}
+
+export interface SwarmLaneSnapshot {
+  id: string;
+  chatId: string | null;
+  provider: string;
+  model: string | null;
+  title: string;
+  status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled";
+  summary: string | null;
+  error: string | null;
+  updatedAt: number;
+}
+
+export interface SwarmRunSnapshot {
+  runId: string;
+  projectRoot: string;
+  goal: string;
+  requestedCount: number;
+  model: string | null;
+  providerPreference: string;
+  mode: "scout" | "review";
+  source: string;
+  status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled";
+  lanes: SwarmLaneSnapshot[];
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** Start the MCP socket server for `projectRoot` (idempotent). Resolves storage,
@@ -57,4 +99,19 @@ export function mcpPushLog(lines: string[]): Promise<void> {
  *  mixes a previous run's lines into the fresh one. */
 export function mcpRunStarted(): Promise<void> {
   return invoke("mcp_run_started");
+}
+
+export function mcpTakeSwarmRequests(): Promise<SwarmRequest[]> {
+  return invoke<SwarmRequest[]>("mcp_take_swarm_requests");
+}
+
+export function mcpUpdateSwarmRun(run: SwarmRunSnapshot): Promise<void> {
+  return invoke("mcp_update_swarm_run", { run });
+}
+
+export function mcpSwarmStatus(
+  projectRoot: string | null,
+  runId: string | null = null,
+): Promise<SwarmRunSnapshot | { runs: SwarmRunSnapshot[] }> {
+  return invoke("mcp_swarm_status", { projectRoot, runId });
 }

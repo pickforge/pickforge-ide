@@ -26,10 +26,12 @@ import {
   loadAgentEfforts,
   loadAgentModels,
   modelOption,
+  nativeChatModel,
   setAgentEffort,
   setAgentModel,
 } from "../../lib/agentModels";
 import { loadAgentModes, setAgentMode } from "../../lib/agentModes";
+import { startSwarm } from "../../stores/swarm";
 import { loadAgentEngine } from "../../lib/chatDefaults";
 import { ChatTimeline } from "./ChatTimeline";
 import { Composer } from "./Composer";
@@ -43,6 +45,48 @@ const REDUCED_MOTION =
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
     : null;
 
+type ParsedSwarmCommand = {
+  goal: string;
+  count: number;
+  model: string | null;
+  providerPreference: "mixed" | "claudeCode" | "codex";
+  mode: "scout" | "review";
+};
+
+function parseSwarmCommand(text: string): ParsedSwarmCommand | null {
+  const trimmed = text.trim();
+  if (!/^\/swarm(\s|$)/i.test(trimmed)) return null;
+  const body = trimmed.replace(/^\/swarm\s*/i, "").trim();
+  const countMatch =
+    body.match(/\bswarm\s+(?:of\s+)?([1-5])\b/i) ??
+    body.match(/\b([1-5])\s*(?:agents?|sub-agents?|workers?)\b/i);
+  const count = Number(countMatch?.[1] ?? 3);
+  const lower = body.toLowerCase();
+  const providerPreference =
+    lower.includes("codex") && !lower.includes("claude")
+      ? "codex"
+      : lower.includes("claude") && !lower.includes("codex")
+        ? "claudeCode"
+        : "mixed";
+  const model =
+    lower.includes("glm-5.2") || lower.includes("ollama")
+      ? "glm-5.2:cloud"
+      : lower.includes("opus") && lower.includes("4.8")
+        ? "opus 4.8"
+        : lower.includes("sonnet") && lower.includes("5")
+          ? "sonnet 5"
+          : lower.includes("gpt-5.5")
+            ? "gpt-5.5"
+            : null;
+  return {
+    goal: body || "Run a Pickforge swarm for this chat.",
+    count,
+    model,
+    providerPreference,
+    mode: lower.includes("review") ? "review" : "scout",
+  };
+}
+
 export function AgentChatView(props: {
   chatId: string;
   projectRoot: string;
@@ -52,7 +96,9 @@ export function AgentChatView(props: {
   const state = () => agentChat(props.chatId);
   const provider = () => state()?.provider ?? props.provider;
   const model = () =>
-    state()?.model ?? props.model ?? loadAgentModels()[props.provider] ?? null;
+    state()?.model ??
+    props.model ??
+    nativeChatModel(props.provider, loadAgentModels()[props.provider] ?? null);
   const effort = () => state()?.effort ?? null;
   const mode = () => state()?.mode ?? loadAgentModes()[provider()] ?? null;
 
@@ -89,7 +135,7 @@ export function AgentChatView(props: {
     AGENTS.find((agent) => agent.id === id)?.label ?? id;
 
   const doSwitch = (next: AgentProvider) => {
-    const nextModel = loadAgentModels()[next] ?? null;
+    const nextModel = nativeChatModel(next, loadAgentModels()[next] ?? null);
     const nextEffort = loadAgentEfforts()[next] ?? null;
     const nextMode = loadAgentModes()[next] ?? null;
     void switchAgentChatProvider(props.chatId, next, nextModel, nextEffort, nextMode).catch(
@@ -127,6 +173,15 @@ export function AgentChatView(props: {
   const onModeChange = (next: string) => {
     setAgentMode(provider(), next);
     setAgentChatMode(props.chatId, next);
+  };
+
+  const onSend = async (text: string, images?: string[]) => {
+    const swarm = parseSwarmCommand(text);
+    if (swarm) {
+      await startSwarm(props.projectRoot, swarm.goal, swarm);
+      return;
+    }
+    await sendAgentMessage(props.chatId, text, images);
   };
 
   // A model/provider change can leave a selected effort the new model does not
@@ -240,7 +295,7 @@ export function AgentChatView(props: {
           turnActive={state()?.turnActive ?? false}
           supportsSteer={provider() === "codex"}
           emberYielded={hasApprovals()}
-          onSend={(text, images) => sendAgentMessage(props.chatId, text, images)}
+          onSend={onSend}
           onSteer={(text) => steerAgentChat(props.chatId, text)}
           onInterrupt={() => void interruptAgentChat(props.chatId)}
           onProviderChange={onProviderChange}

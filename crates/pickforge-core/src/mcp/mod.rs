@@ -18,6 +18,8 @@ pub use protocol::{error_code, Request, RequestId, Response, PROTOCOL_VERSION};
 pub use tools::{
     tool_descriptors, ActiveTarget, InspectorKind, LiveState, ProjectContext, ToolOutput,
     ALL_TOOL_NAMES, CAPTURE_SCREENSHOT, GET_CURRENT_SELECTION, GET_PROJECT_CONTEXT, GET_RUN_LOGS,
+    PICKFORGE_CANCEL_SWARM, PICKFORGE_CAPABILITIES, PICKFORGE_START_SWARM,
+    PICKFORGE_SWARM_STATUS,
 };
 
 use serde_json::{json, Value};
@@ -146,6 +148,22 @@ mod tests {
         fn run_logs(&self, _limit: usize) -> Vec<String> {
             vec!["boot".into(), "ready".into()]
         }
+        fn pickforge_capabilities(&self) -> Value {
+            json!({
+                "available": true,
+                "swarm": { "available": true, "maxAgents": 5 },
+                "pickLab": { "available": false },
+            })
+        }
+        fn request_swarm(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "accepted": true, "runId": "swarm-test" }))
+        }
+        fn swarm_status(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "runs": [] }))
+        }
+        fn cancel_swarm(&self, _args: &Value) -> Result<Value, String> {
+            Ok(json!({ "cancelled": true }))
+        }
     }
 
     fn req(line: &str) -> Option<Value> {
@@ -162,10 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_returns_the_four_tools_with_schemas() {
+    fn tools_list_returns_all_tools_with_schemas() {
         let r = req(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).unwrap();
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), ALL_TOOL_NAMES.len());
         for t in tools {
             assert!(t["name"].is_string());
             assert!(t["inputSchema"]["type"] == json!("object"));

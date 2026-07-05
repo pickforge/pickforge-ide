@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 
 const sdk = vi.hoisted(() => ({
@@ -89,8 +89,21 @@ function expectAllowResult(result: unknown, input: Record<string, unknown>) {
   expect((result as { updatedInput: Record<string, unknown> }).updatedInput).toBe(input);
 }
 
+let fakeClaudeDir: string | null = null;
+
+function installFakeClaudeCli() {
+  const dir = mkdtempSync(join(tmpdir(), "pickforge-claude-cli-"));
+  const name = process.platform === "win32" ? "claude.cmd" : "claude";
+  const executable = join(dir, name);
+  writeFileSync(executable, "");
+  chmodSync(executable, 0o755);
+  vi.stubEnv("PATH", `${dir}${delimiter}${process.env.PATH ?? ""}`);
+  return dir;
+}
+
 beforeEach(() => {
   resetBridgeStateForTests();
+  fakeClaudeDir = installFakeClaudeCli();
   sdk.getSessionMessages.mockReset();
   sdk.listSessions.mockReset();
   sdk.query.mockReset();
@@ -98,6 +111,11 @@ beforeEach(() => {
 
 afterEach(() => {
   resetBridgeStateForTests();
+  vi.unstubAllEnvs();
+  if (fakeClaudeDir) {
+    rmSync(fakeClaudeDir, { recursive: true, force: true });
+    fakeClaudeDir = null;
+  }
 });
 
 describe("PushableAsyncQueue", () => {

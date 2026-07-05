@@ -2592,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "pickforge-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "futures-util",
@@ -2610,14 +2610,14 @@ dependencies = [
 
 [[package]]
 name = "pickforge-mcp"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "pickforge-tauri"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "arboard",
  "base64 0.22.1",

@@ -295,8 +295,8 @@ function iosContract(): void {
   const profile = runProfile("native-ios");
   expect(
     profile.inspectorKind,
-    "none",
-    "native-ios has no element inspector yet (inspectorKind=none)",
+    "iosAccessibility",
+    "native-ios inspects the accessibility tree via idb (inspectorKind=iosAccessibility)",
   );
   expect(profile.logSource, "oslog", "native-ios streams device logs over os_log");
 }

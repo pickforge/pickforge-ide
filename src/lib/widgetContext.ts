@@ -79,39 +79,49 @@ export function a11yBaseName(node: A11yNode): string {
   return `${timestamp()}-${safeType(a11yLeaf(node))}`;
 }
 
-/** Build the context markdown for a selected UIAutomator accessibility node
- *  (React Native / native-Android). Unlike the Flutter capture there is NO source
- *  mapping — UIAutomator reports runtime accessibility info, not file:line — so the
- *  markdown leads with that disclaimer and hands the agent stable handles
- *  (resource-id, text, class) to search by instead. */
+/** Build the context markdown for a selected accessibility node — adb UIAutomator
+ *  (React Native / native-Android) or `idb` (native iOS, via `source:
+ *  "iosAccessibility"`). Unlike the Flutter capture there is NO source mapping —
+ *  the dump reports runtime accessibility info, not file:line — so the markdown
+ *  leads with that disclaimer and hands the agent stable handles to search by
+ *  (resource-id / text / class on Android; identifier / label / role on iOS). */
 export function buildA11yMarkdown(opts: {
   node: A11yNode;
   ancestors: string[];
   children: string[];
   pngPath: string | null;
   instruction: string;
+  /** Which dump backend produced the node — selects the search-handle vocabulary.
+   *  Defaults to adb UIAutomator, so existing Android output is unchanged. */
+  source?: "uiAutomator" | "iosAccessibility";
 }): string {
   const { node, ancestors, children, pngPath, instruction } = opts;
   const b = node.bounds;
   const w = Math.round(b.right - b.left);
   const h = Math.round(b.bottom - b.top);
+  // Source-aware handle vocabulary: adb reports resource-id / text / class; idb
+  // reports accessibility id / label / role. Keeps the capture honest per source.
+  const v =
+    opts.source === "iosAccessibility"
+      ? { dump: "idb accessibility node", tool: "idb", frameworks: "SwiftUI, UIKit", id: "accessibility id", text: "label", cls: "role", idRow: "identifier" }
+      : { dump: "UIAutomator accessibility node", tool: "UIAutomator", frameworks: "React Native, Jetpack Compose, native Views", id: "resource-id", text: "text / content-description", cls: "class name", idRow: "resource-id" };
   const lines: string[] = [`# UI element: ${a11yLeaf(node)}`, ""];
-  lines.push(`> Captured by PickForge Inspector (UIAutomator accessibility node)`, "");
+  lines.push(`> Captured by PickForge Inspector (${v.dump})`, "");
 
   lines.push("## How to locate this in source");
   lines.push(
-    "- This is a **runtime accessibility node**, not a source location. UIAutomator",
+    `- This is a **runtime accessibility node**, not a source location. ${v.tool}`,
     "  has **no exact source mapping** (no file:line) — the framework that rendered it",
-    "  (React Native, Jetpack Compose, native Views) is not recoverable from this dump.",
-    "- Search the codebase by **resource-id**, then **text / content-description**, then",
-    "  **class name**. Treat any single match as a candidate, not a certainty.",
+    `  (${v.frameworks}) is not recoverable from this dump.`,
+    `- Search the codebase by **${v.id}**, then **${v.text}**, then`,
+    `  **${v.cls}**. Treat any single match as a candidate, not a certainty.`,
   );
   lines.push("");
 
   lines.push("## Identity");
   lines.push(`- role: ${node.role}`);
   lines.push(`- class: ${node.className}`);
-  if (node.resourceId) lines.push(`- resource-id: ${node.resourceId}`);
+  if (node.resourceId) lines.push(`- ${v.idRow}: ${node.resourceId}`);
   if (node.text) lines.push(`- text: ${node.text}`);
   if (node.contentDescription) lines.push(`- content-description: ${node.contentDescription}`);
   lines.push(`- bounds: ${b.left},${b.top} → ${b.right},${b.bottom} (${w}×${h})`);

@@ -12,7 +12,7 @@ import { findNearestPubspec, targetDetect, type TargetDetection } from "./device
  *  (native-android); "none" → ignore the serial. */
 export type DeviceConvention = "arg" | "rnDevice" | "env" | "xcodeDestination" | "none";
 /** Which inspector the right rail should use for a target. */
-export type InspectorKind = "vmService" | "uiAutomator" | "cdp" | "none";
+export type InspectorKind = "vmService" | "uiAutomator" | "cdp" | "iosAccessibility" | "none";
 /** Where a target's device logs surface: the run PTY (Flutter / web / generic),
  *  Android `adb logcat` (React Native / native-Android), or iOS `os_log`
  *  (native-iOS). Drives whether the Debug Console shows a Logs tab and which
@@ -130,7 +130,7 @@ export function runProfile(targetId: string): RunProfile {
     case "native-android":
       return { needsDevice: true, deviceConvention: "env", inspectorKind: "uiAutomator", logSource: "logcat" };
     case "native-ios":
-      return { needsDevice: true, deviceConvention: "xcodeDestination", inspectorKind: "none", logSource: "oslog" };
+      return { needsDevice: true, deviceConvention: "xcodeDestination", inspectorKind: "iosAccessibility", logSource: "oslog" };
     case "web":
       return { needsDevice: false, deviceConvention: "none", inspectorKind: "cdp", logSource: "pty" };
     default:
@@ -151,12 +151,6 @@ export function logSourceOf(t: RunTarget | null | undefined): LogSource {
  *  source so a new adapter inherits the Logs view from its one-line profile. */
 export function isLogcatTarget(t: RunTarget | null | undefined): boolean {
   return logSourceOf(t) === "logcat";
-}
-
-/** Whether a target's device logs live in iOS `os_log` rather than the run PTY —
- *  i.e. native-iOS. The oslog sibling of `isLogcatTarget`. */
-export function isOslogTarget(t: RunTarget | null | undefined): boolean {
-  return logSourceOf(t) === "oslog";
 }
 
 /** Whether a device row can serve a target's run/tooling — the ONE place the

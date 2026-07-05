@@ -82,6 +82,17 @@ export const iosDeviceList = () => invoke<DeviceEntry[]>("ios_device_list");
 export const iosBootDevice = (udid: string) =>
   invoke<void>("ios_boot_device", { udid });
 
+/** Dump the booted simulator's current accessibility tree via `idb` (native
+ *  iOS). Returns the same `A11yNode` shape as `adbDumpUiautomator`; rejects
+ *  with the native error string when `idb` or parsing fails. */
+export const iosDumpAccessibility = (udid: string) =>
+  invoke<A11yNode>("ios_dump_accessibility", { udid });
+
+/** Capture a simulator screenshot into `outputDir/outputName`. Returns the
+ *  written PNG path, or null on failure. The iOS sibling of `adbScreenshot`. */
+export const iosScreenshot = (udid: string, outputDir: string, outputName: string) =>
+  invoke<string | null>("ios_screenshot", { udid, outputDir, outputName });
+
 /** The nearest enclosing pubspec.yaml dir at/above `program`, or null. */
 export const findNearestPubspec = (program: string, root: string) =>
   invoke<string | null>("find_nearest_pubspec", { program, root });

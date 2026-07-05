@@ -19,7 +19,7 @@ import { workspace } from "../../stores/workspace";
 import { connectVm, disconnectVm, setVmUrl, vmService } from "../../stores/vmService";
 import { runConsole } from "../../stores/runConsole";
 import { activeTarget } from "../../stores/runTargets";
-import { hasCapability, isOslogTarget, type InspectorKind, type RunTarget } from "../../lib/runTargets";
+import { hasCapability, type InspectorKind, type RunTarget } from "../../lib/runTargets";
 import { WidgetTree } from "./WidgetTree";
 import { A11yTree } from "./A11yTree";
 import { CdpTree } from "./CdpTree";
@@ -58,9 +58,13 @@ export function InspectorPanel() {
 
   // The device-picker empty state, honest per inspection mode: adb-backed targets
   // (Flutter / RN / native-Android, and the legacy no-target case) say "(adb)";
-  // web (cdp) has no adb devices.
-  const noDevicesLabel = () =>
-    inspectorKind() === "cdp" ? "No devices" : "No devices (adb)";
+  // native iOS lists simulators (not adb); web (cdp) has no adb devices.
+  const noDevicesLabel = () => {
+    const k = inspectorKind();
+    if (k === "iosAccessibility") return "No simulators";
+    if (k === "cdp") return "No devices";
+    return "No devices (adb)";
+  };
 
   // VM service connection is shared (the Debug Console auto-connects to a
   // `flutter run`'s VM service; this panel shows/controls the same state).
@@ -175,17 +179,22 @@ export function InspectorPanel() {
               canMapSource={canMapSource()}
             />
           </Match>
+          <Match when={inspectorKind() === "iosAccessibility"}>
+            <A11yTree
+              serial={selectedSerial()}
+              online={deviceOnline()}
+              source="iosAccessibility"
+              canInspect={canInspect()}
+              canMapSource={canMapSource()}
+            />
+          </Match>
           <Match when={inspectorKind() === "cdp"}>
             <CdpTree canInspect={canInspect()} canMapSource={canMapSource()} />
           </Match>
           <Match when={inspectorKind() === "none"}>
             <div class="pf-inspector-section">
               <MonoEyebrow text="Inspector" />
-              <div class="pf-rail-empty">
-                {isOslogTarget(inspectTarget())
-                  ? "No element inspector for native iOS yet — screenshots and logs still work."
-                  : "No inspector for this target"}
-              </div>
+              <div class="pf-rail-empty">No inspector for this target</div>
             </div>
           </Match>
         </Switch>

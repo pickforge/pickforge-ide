@@ -12,7 +12,6 @@ import {
   isCompatibleDevice,
   isDirProgram,
   isLogcatTarget,
-  isOslogTarget,
   isTestProgram,
   logSourceOf,
   runProfile,
@@ -73,11 +72,11 @@ describe("runProfile", () => {
       logSource: "logcat",
     });
   });
-  it("native-ios → xcodeDestination + none inspector + oslog logs", () => {
+  it("native-ios → xcodeDestination + iosAccessibility inspector + oslog logs", () => {
     expect(runProfile("native-ios")).toEqual({
       needsDevice: true,
       deviceConvention: "xcodeDestination",
-      inspectorKind: "none",
+      inspectorKind: "iosAccessibility",
       logSource: "oslog",
     });
   });
@@ -109,12 +108,6 @@ describe("logSource derivations", () => {
     expect(isLogcatTarget(null)).toBe(false);
     expect(isLogcatTarget(undefined)).toBe(false);
   });
-  it("isOslogTarget is true only for oslog-source (native-iOS) targets", () => {
-    expect(isOslogTarget(target({ logSource: "oslog" }))).toBe(true);
-    expect(isOslogTarget(target({ logSource: "logcat" }))).toBe(false);
-    expect(isOslogTarget(target({ logSource: "pty" }))).toBe(false);
-    expect(isOslogTarget(null)).toBe(false);
-  });
   it("logSourceOf defaults an absent/null target to the run PTY", () => {
     expect(logSourceOf(null)).toBe("pty");
     expect(logSourceOf(undefined)).toBe("pty");
@@ -140,6 +133,7 @@ describe("supportTier", () => {
   ];
   const reactNative = ["detect", "launch", "stop", "captureScreenshot", "streamLogs", "inspectSelection"];
   const nativeAndroid = ["detect", "launch", "captureScreenshot", "streamLogs", "inspectSelection"];
+  const nativeIos = ["detect", "launch", "captureScreenshot", "streamLogs", "inspectSelection"];
   const web = ["detect", "captureScreenshot", "inspectSelection", "mapSelectionToSource"];
   const generic = ["detect"];
 
@@ -149,6 +143,9 @@ describe("supportTier", () => {
   it("React Native / native-Android (run + inspect, no source map) → useful", () => {
     expect(supportTier(target({ capabilities: reactNative }))).toBe("useful");
     expect(supportTier(target({ capabilities: nativeAndroid }))).toBe("useful");
+  });
+  it("native-iOS (run + inspect via idb, no source map) → useful", () => {
+    expect(supportTier(target({ capabilities: nativeIos }))).toBe("useful");
   });
   it("Web (inspect, no launch) → experimental — thin runtime", () => {
     expect(supportTier(target({ capabilities: web }))).toBe("experimental");

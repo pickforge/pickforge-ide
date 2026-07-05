@@ -149,6 +149,7 @@ fn detect_native_ios(root: &Path) -> Option<TargetDetection> {
             Capability::Launch,
             Capability::CaptureScreenshot,
             Capability::StreamLogs,
+            Capability::InspectSelection,
         ],
     })
 }
@@ -313,6 +314,7 @@ mod tests {
                 Capability::Launch,
                 Capability::CaptureScreenshot,
                 Capability::StreamLogs,
+                Capability::InspectSelection,
             ]
         );
         std::fs::remove_dir_all(&dir).ok();

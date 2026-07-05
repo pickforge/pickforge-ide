@@ -1,9 +1,10 @@
-// Framework-agnostic accessibility inspector for React Native / native-Android.
-// Dumps the device's UIAutomator tree (the same XML native Views, Compose and RN
-// all emit) for the selected adb serial and renders it as a collapsible tree;
-// selecting a node shows its role / text / resourceId / bounds, and a device
-// screenshot is fetched as a thumbnail. Mirrors WidgetTree's layout/idiom but
-// reads from `adb_*` (not the Flutter VM service), and its "Ask AI" forge ships
+// Framework-agnostic accessibility inspector for React Native / native-Android
+// and native iOS. Dumps the device's accessibility tree — UIAutomator (the same
+// XML native Views, Compose and RN all emit) for adb serials, or `idb` for a
+// booted simulator — and renders it as a collapsible tree; selecting a node
+// shows its role / text / resourceId / bounds, and a device screenshot is
+// fetched as a thumbnail. Mirrors WidgetTree's layout/idiom but reads from
+// `adb_*` / `ios_*` (not the Flutter VM service), and its "Ask AI" forge ships
 // the selected node (screenshot + context markdown) to a new agent terminal pane.
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
 import { IconChevronDown, IconRefresh } from "../../components/icons";
@@ -11,6 +12,8 @@ import { EmberButton, MonoEyebrow } from "../../components/ui";
 import {
   adbDumpUiautomator,
   adbScreenshot,
+  iosDumpAccessibility,
+  iosScreenshot,
   readImageDataUrl,
   type A11yNode,
 } from "../../lib/device";
@@ -55,12 +58,26 @@ function findPath(root: A11yNode, id: string, acc: A11yNode[] = []): A11yNode[] 
 export function A11yTree(props: {
   serial: string | null;
   online: boolean;
+  // Which dump/screenshot backend the `serial` targets: adb UIAutomator
+  // (RN / native-Android) or `idb` on an iOS simulator (native iOS, where
+  // `serial` carries the udid). Both return the same A11yNode shape / PNG path,
+  // so the rest of the component is source-agnostic.
+  source?: "uiAutomator" | "iosAccessibility";
   // Capability gates from the active target (adapters.rs). When inspect is
   // absent the dump/forge is muted (not dead); when source mapping is absent the
   // forge carries a "no exact source" certainty note (mirrors buildA11yMarkdown).
   canInspect?: boolean;
   canMapSource?: boolean;
 }) {
+  const source = () => props.source ?? "uiAutomator";
+  // Search-handle vocabulary for the active source — iOS (idb) nodes carry
+  // identifier / label / role; adb UIAutomator nodes carry resource-id / text /
+  // class. Keeps the node-detail label, the forge disclaimer and the agent prompt
+  // consistent with the capture markdown (buildA11yMarkdown).
+  const handles = () =>
+    source() === "iosAccessibility"
+      ? { id: "identifier", list: "accessibility id, label, role", search: "accessibility id / label / role" }
+      : { id: "resource-id", list: "resource-id, text, class", search: "resource-id / text / class" };
   const canInspect = () => props.canInspect ?? true;
   const canMapSource = () => props.canMapSource ?? false;
   const [tree, setTree] = createSignal<A11yNode | null>(null);
@@ -121,7 +138,10 @@ export function A11yTree(props: {
     setError(null);
     setLoading(true);
     try {
-      const root = await adbDumpUiautomator(serial);
+      const root =
+        source() === "iosAccessibility"
+          ? await iosDumpAccessibility(serial)
+          : await adbDumpUiautomator(serial);
       if (mine !== epoch || serial !== props.serial) return; // superseded
       setTree(root);
       setSelected(null);
@@ -147,7 +167,10 @@ export function A11yTree(props: {
     if (!root) return;
     try {
       const dir = await inspectDir(captureInRepo(root), root);
-      const path = await adbScreenshot(serial, dir, "a11y-screenshot.png");
+      const path =
+        source() === "iosAccessibility"
+          ? await iosScreenshot(serial, dir, "a11y-screenshot.png")
+          : await adbScreenshot(serial, dir, "a11y-screenshot.png");
       const url = path ? await readImageDataUrl(path) : null;
       if (mine === epoch && serial === props.serial) {
         setThumb(url);
@@ -216,9 +239,10 @@ export function A11yTree(props: {
         children,
         pngPath: predictedPng,
         instruction,
+        source: source(),
       });
       const paths = await inspectSave(dir, base, md, png);
-      const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by resource-id / text / class). ${instruction}`;
+      const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by ${handles().search}). ${instruction}`;
       const command = `${commandForItem(item)} ${shquote(ask)}`;
       const paneId = host.openInNewPane(command);
       if (paneId) {
@@ -333,7 +357,7 @@ export function A11yTree(props: {
                   <Show when={!canMapSource()}>
                     <p class="pf-wd-disclaimer" title="No exact source mapping for this target">
                       No exact source mapping — the forge ships runtime handles
-                      (resource-id, text, class) for the agent to search by.
+                      ({handles().list}) for the agent to search by.
                     </p>
                   </Show>
                   <div class="pf-wd-ai-chips">
@@ -407,7 +431,7 @@ export function A11yTree(props: {
               </Show>
               <Show when={node().resourceId}>
                 <div class="pf-wd-prop">
-                  <span class="pf-wd-prop-name">resource-id</span>
+                  <span class="pf-wd-prop-name">{handles().id}</span>
                   <span class="pf-wd-prop-val">{node().resourceId}</span>
                 </div>
               </Show>

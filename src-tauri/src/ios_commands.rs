@@ -8,7 +8,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use pickforge_core::android::{DeviceEntry, DeviceKind, DeviceState};
+use pickforge_core::android::{A11yNode, DeviceEntry, DeviceKind, DeviceState};
 use pickforge_core::ios::{
     oslog::{parse_oslog_line, OsLogEvent},
     simctl::{self, SimDevice, SimState},
@@ -87,6 +87,15 @@ pub async fn ios_screenshot(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ios_dump_accessibility(udid: String) -> Result<A11yNode, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        pickforge_core::ios::accessibility::dump_accessibility(&udid).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

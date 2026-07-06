@@ -21,12 +21,20 @@ import { isSwarmWorkerChat } from "../lib/chatLabels";
 import { deriveAgentChatTitle, isDefaultChatTitle } from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
+import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 
 export type AgentTimelineItem =
-  | { type: "userMessage"; seq: number; text: string; images?: string[]; optimistic?: boolean }
+  | {
+      type: "userMessage";
+      seq: number;
+      text: string;
+      images?: string[];
+      optimistic?: boolean;
+      hidden?: boolean;
+    }
   | { type: "assistantText"; seq: number; text: string; streaming: boolean }
   | { type: "thinking"; seq: number; text: string; streaming: boolean }
   | {
@@ -119,6 +127,10 @@ const ensureGenerations = new Map<string, number>();
 const autoRenameChecked = new Set<string>();
 const DELTA_FLUSH_INTERVAL_MS = 16;
 
+export interface SendAgentMessageOptions {
+  hidden?: boolean;
+}
+
 type AgentDeltaEvent =
   | Extract<AgentEvent, { kind: "textDelta" }>
   | Extract<AgentEvent, { kind: "thinkingDelta" }>;
@@ -208,13 +220,18 @@ function appendOptimisticUserMessage(
   seq: number,
   text: string,
   images: string[] = [],
+  options: SendAgentMessageOptions = {},
 ) {
   const chat = chats[chatId];
   if (!chat) return;
-  const message: AgentTimelineItem =
-    images.length > 0
-      ? { type: "userMessage", seq, text, images: [...images], optimistic: true }
-      : { type: "userMessage", seq, text, optimistic: true };
+  const message: AgentTimelineItem = {
+    type: "userMessage",
+    seq,
+    text,
+    optimistic: true,
+    ...(images.length > 0 ? { images: [...images] } : {}),
+    ...(options.hidden ? { hidden: true } : {}),
+  };
   setChats(chatId, {
     turnActive: true,
     error: null,
@@ -723,7 +740,10 @@ function maybeAutoRenameAfterFirstTurn(chatId: string) {
 
   const chat = chats[chatId];
   if (!chat) return;
-  const userMessages = chat.timeline.filter((item) => item.type === "userMessage");
+  const userMessages = chat.timeline.filter(
+    (item): item is Extract<AgentTimelineItem, { type: "userMessage" }> =>
+      item.type === "userMessage" && !item.hidden,
+  );
   if (userMessages.length !== 1) return;
   const firstAssistant = chat.timeline.find((item) => item.type === "assistantText");
   const title = deriveAgentChatTitle(userMessages[0].text, firstAssistant?.text);
@@ -765,7 +785,12 @@ function stateFromHistory(
         chat = {
           ...withTimeline(chat, [
             ...chat.timeline,
-            { type: "userMessage", seq: entry.seq, text: entry.content },
+            {
+              type: "userMessage",
+              seq: entry.seq,
+              text: entry.content,
+              ...(isInternalSwarmSynthesisPrompt(entry.content) ? { hidden: true } : {}),
+            },
           ]),
           error: null,
         };
@@ -1000,6 +1025,7 @@ export async function sendAgentMessage(
   chatId: string,
   text: string,
   images: string[] = [],
+  options: SendAgentMessageOptions = {},
 ): Promise<void> {
   const generation = ensureGenerations.get(chatId) ?? 0;
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
@@ -1011,7 +1037,7 @@ export async function sendAgentMessage(
   flushPendingDeltas(chatId);
   let optimisticSeq = takeSeq(chatId);
   const imageList = [...images];
-  appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList);
+  appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
   if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
     if (!sessionId) {
@@ -1028,7 +1054,7 @@ export async function sendAgentMessage(
       );
       if (!hasOptimisticMessage) {
         optimisticSeq = takeSeq(chatId);
-        appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList);
+        appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
       } else {
         setChats(chatId, { error: null });
       }

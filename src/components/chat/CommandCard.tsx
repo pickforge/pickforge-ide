@@ -1,4 +1,5 @@
 import { type JSX, Show, createSignal } from "solid-js";
+import { compactInline, singleLine } from "../../lib/chatDisplay";
 import { HairlinePanel, StatusPill, type StatusIntent } from "../ui";
 import "./chat.css";
 
@@ -18,13 +19,19 @@ export function CommandCard(props: {
   outputTail: string | null;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const [commandOpen, setCommandOpen] = createSignal(false);
+  const commandSummary = () => compactInline(props.command, 132);
+  const hasHiddenCommand = () => commandSummary() !== singleLine(props.command);
+
   return (
     <HairlinePanel class="pf-chat-card pf-chat-command">
       <div class="pf-chat-command-head">
         <span class="pf-chat-command-glyph" aria-hidden="true">
           $
         </span>
-        <code class="pf-chat-command-line">{props.command}</code>
+        <code class="pf-chat-command-line" title={props.command}>
+          {commandSummary()}
+        </code>
         <StatusPill
           label={props.status}
           intent={STATUS_INTENT[props.status]}
@@ -34,6 +41,16 @@ export function CommandCard(props: {
       <div class="pf-chat-command-foot">
         <Show when={props.exitCode !== null}>
           <span class="pf-chat-meta">exit {props.exitCode}</span>
+        </Show>
+        <Show when={hasHiddenCommand()}>
+          <button
+            type="button"
+            class="pf-chat-tail-toggle"
+            aria-expanded={commandOpen()}
+            onClick={() => setCommandOpen((v) => !v)}
+          >
+            {commandOpen() ? "Hide command" : "Show command"}
+          </button>
         </Show>
         <Show when={props.outputTail}>
           <button
@@ -46,6 +63,9 @@ export function CommandCard(props: {
           </button>
         </Show>
       </div>
+      <Show when={commandOpen()}>
+        <pre class="pf-chat-tail">{props.command}</pre>
+      </Show>
       <Show when={props.outputTail && open()}>
         <pre class="pf-chat-tail">{props.outputTail}</pre>
       </Show>

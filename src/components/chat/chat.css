@@ -509,8 +509,9 @@
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-mono);
   color: var(--pf-text-hi);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pf-chat-command-foot {
   display: flex;

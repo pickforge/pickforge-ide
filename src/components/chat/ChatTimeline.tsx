@@ -28,6 +28,7 @@ function EmptyGlyph(): JSX.Element {
 function renderItem(item: AgentTimelineItem): JSX.Element {
   switch (item.type) {
     case "userMessage":
+      if (item.hidden) return <></>;
       return <ChatBubble role="user" text={item.text} images={item.images} />;
     case "assistantText":
       return <ChatBubble role="assistant" text={item.text} streaming={item.streaming} />;

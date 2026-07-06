@@ -1,4 +1,5 @@
 import { type JSX, Show } from "solid-js";
+import { compactInline } from "../../lib/chatDisplay";
 import "./chat.css";
 
 export function McpCard(props: {
@@ -15,7 +16,9 @@ export function McpCard(props: {
         {props.tool}
       </code>
       <Show when={props.detail}>
-        <span class="pf-chat-line-detail">{props.detail}</span>
+        <span class="pf-chat-line-detail" title={props.detail ?? undefined}>
+          {compactInline(props.detail ?? "", 120)}
+        </span>
       </Show>
     </div>
   );

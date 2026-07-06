@@ -10,6 +10,7 @@ import {
 } from "../lib/mcp";
 import { loadAgentModels, modelOption } from "../lib/agentModels";
 import { swarmWorkerLabels } from "../lib/chatLabels";
+import { SWARM_SYNTHESIS_PROMPT_PREFIX } from "../lib/swarmSynthesis";
 import { ensureAgentChat, agentChat, sendAgentMessage } from "./agentChat";
 import { addChat, ensureChatsLoaded, findChat, workspace } from "./workspace";
 import { loadAgentEngine } from "../lib/chatDefaults";
@@ -433,7 +434,7 @@ function synthesisPrompt(run: SwarmRunSnapshot): string {
     ].join("\n");
   });
   return [
-    "Pickforge swarm finished for this chat.",
+    SWARM_SYNTHESIS_PROMPT_PREFIX,
     "",
     "Original request:",
     run.goal,
@@ -478,7 +479,7 @@ async function dispatchSynthesis(run: SwarmRunSnapshot) {
       });
     }
     if (agentChat(originChatId)?.turnActive) return;
-    await sendAgentMessage(originChatId, synthesisPrompt(run));
+    await sendAgentMessage(originChatId, synthesisPrompt(run), [], { hidden: true });
     updateRun(run.runId, {
       synthesisStatus: "sent",
       synthesisError: null,

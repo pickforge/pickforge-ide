@@ -10,6 +10,7 @@ import { McpCard } from "./McpCard";
 import { WebSearchCard } from "./WebSearchCard";
 import { PlanCard } from "./PlanCard";
 import { TokenBadge } from "./TokenBadge";
+import { isPlanPinned, togglePlanPinned } from "../../stores/pinnedAgentPlans";
 import "./chat.css";
 
 function EmptyGlyph(): JSX.Element {
@@ -25,7 +26,7 @@ function EmptyGlyph(): JSX.Element {
   );
 }
 
-function renderItem(item: AgentTimelineItem): JSX.Element {
+function renderItem(item: AgentTimelineItem, chatId?: string): JSX.Element {
   switch (item.type) {
     case "userMessage":
       if (item.hidden) return <></>;
@@ -52,7 +53,13 @@ function renderItem(item: AgentTimelineItem): JSX.Element {
     case "webSearch":
       return <WebSearchCard query={item.query} />;
     case "plan":
-      return <PlanCard items={item.items} />;
+      return (
+        <PlanCard
+          items={item.items}
+          pinned={chatId ? isPlanPinned(chatId) : undefined}
+          onTogglePin={chatId ? () => togglePlanPinned(chatId) : undefined}
+        />
+      );
     case "usage":
       return (
         <TokenBadge
@@ -85,6 +92,7 @@ function WorkingRow(): JSX.Element {
 export function ChatTimeline(props: {
   items: AgentTimelineItem[];
   working?: boolean;
+  chatId?: string;
 }): JSX.Element {
   let scroller!: HTMLDivElement;
   let content!: HTMLDivElement;
@@ -171,7 +179,7 @@ export function ChatTimeline(props: {
             />
           }
         >
-          <For each={props.items}>{(item) => renderItem(item)}</For>
+          <For each={props.items}>{(item) => renderItem(item, props.chatId)}</For>
         </Show>
         <Show when={props.working}>
           <WorkingRow />

@@ -120,6 +120,7 @@ export interface AgentChatState {
 const [chats, setChats] = createStore<Record<string, AgentChatState>>({});
 const nextSeqByChat = new Map<string, number>();
 const ensurePromises = new Map<string, Promise<void>>();
+const hydratePromises = new Map<string, Promise<void>>();
 const pendingSetModelByChat = new Map<string, { promise: Promise<void>; sequence: number }>();
 const setModelRequestSeqByChat = new Map<string, number>();
 // Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
@@ -165,6 +166,18 @@ function activityEligible(chatId: string): boolean {
 
 export function agentChat(chatId: string): AgentChatState | undefined {
   return chats[chatId];
+}
+
+export function latestPlanForChat(
+  chatId: string,
+): Extract<AgentTimelineItem, { type: "plan" }> | null {
+  const timeline = chats[chatId]?.timeline;
+  if (!timeline) return null;
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const item = timeline[i];
+    if (item.type === "plan") return item;
+  }
+  return null;
 }
 
 export interface EnsureAgentChatOptions {
@@ -918,6 +931,44 @@ export async function ensureAgentChat(
   return promise;
 }
 
+export async function hydrateAgentChatHistory(
+  chatId: string,
+  projectRoot: string,
+  provider: AgentProvider,
+  model: string | null,
+): Promise<void> {
+  if (!chats[chatId]) setChats(chatId, emptyState(provider, model));
+  if (chats[chatId].historyLoaded) return;
+  const existing = hydratePromises.get(chatId);
+  if (existing) return existing;
+
+  const generation = ensureGenerations.get(chatId) ?? 0;
+  const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
+
+  let promise: Promise<void> | undefined;
+  promise = (async () => {
+    try {
+      const previous = chats[chatId];
+      const history = await agentChatHistory(chatId);
+      if (stale() || chats[chatId].historyLoaded) return;
+      const loadedModel = chats[chatId]?.model ?? model;
+      const loaded = stateFromHistory(chatId, provider, loadedModel, history);
+      setChats(chatId, {
+        ...loaded,
+        projectRoot,
+        effort: previous?.effort ?? loaded.effort,
+        mode: previous?.mode ?? loaded.mode,
+        providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
+      });
+    } finally {
+      if (hydratePromises.get(chatId) === promise) hydratePromises.delete(chatId);
+    }
+  })();
+
+  hydratePromises.set(chatId, promise);
+  return promise;
+}
+
 export function setAgentChatModel(chatId: string, model: string | null) {
   const chat = chats[chatId];
   if (!chat) return;
@@ -1181,6 +1232,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   interruptedByUser.delete(chatId);
   nextSeqByChat.delete(chatId);
   ensurePromises.delete(chatId);
+  hydratePromises.delete(chatId);
   pendingSetModelByChat.delete(chatId);
   pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);

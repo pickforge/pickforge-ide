@@ -181,7 +181,8 @@ pub fn tool_descriptors() -> Value {
             "name": PICKFORGE_START_SWARM,
             "description": "Ask Pickforge to dispatch a read-only swarm for this project. Use this \
                             when the user asks for a Pickforge swarm or multiple Pickforge \
-                            sub-agents; do not also start native subagents for the same request.",
+                            sub-agents; do not also start native subagents or model-orchestration \
+                            skill lanes for the same request.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

@@ -10,6 +10,7 @@ describe("matchTemplates", () => {
   });
 
   it("matches ids and labels case-insensitively with slash prefixes allowed", () => {
+    expect(matchTemplates("/swarm").map((template) => template.id)).toEqual(["swarm"]);
     expect(matchTemplates("/pla").map((template) => template.id)).toEqual(["plan"]);
     expect(matchTemplates("REVIEW").map((template) => template.id)).toEqual([
       "review",

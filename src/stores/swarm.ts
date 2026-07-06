@@ -103,6 +103,27 @@ function aggregateStatus(lanes: SwarmLaneSnapshot[]): SwarmRunSnapshot["status"]
   return "queued";
 }
 
+const SCOUT_FOCI = [
+  ["Code map", "Find relevant files, modules, and ownership boundaries."],
+  ["Implementation path", "Trace the likely change path and existing patterns."],
+  ["Risk pass", "Look for behavioral, security, and integration risks."],
+  ["Test plan", "Identify the narrowest useful validation and missing coverage."],
+  ["UX/API pass", "Check product, API, and workflow clarity."],
+];
+
+const REVIEW_FOCI = [
+  ["Correctness", "Check logic, contracts, edge cases, and regressions."],
+  ["Safety", "Check permissions, data boundaries, concurrency, and failure paths."],
+  ["Tests", "Check coverage, fixtures, and validation blind spots."],
+  ["UX/API", "Check user-facing behavior, wording, and affordances."],
+  ["Integration", "Check cross-module wiring, defaults, and rollout risk."],
+];
+
+function laneFocus(mode: SwarmRequest["mode"], index: number): [string, string] {
+  const list = mode === "review" ? REVIEW_FOCI : SCOUT_FOCI;
+  return list[index % list.length] as [string, string];
+}
+
 function providerForRequestedModel(requested: string | null): AgentProvider | null {
   const text = requested?.trim().toLowerCase() ?? "";
   if (!text || isTerminalOnlyModelRequest(requested)) return null;
@@ -205,12 +226,14 @@ function workerPrompt(
   index: number,
   total: number,
   provider: AgentProvider,
+  focus: [string, string],
 ): string {
   const mode = req.mode === "review" ? "review" : "scout";
   const requestedModel = req.model ? `\nRequested model: ${req.model}` : "";
   return [
     `You are Pickforge swarm worker ${index} of ${total}.`,
     `Mode: read-only ${mode}.`,
+    `Lane focus: ${focus[0]} - ${focus[1]}`,
     "Do not edit files, stage, commit, push, open PRs, or dispatch more sub-agents.",
     "Do not use provider-native subagents for this same request; Pickforge is the orchestrator.",
     `Provider lane: ${providerLabel(provider)}.${requestedModel}`,
@@ -284,7 +307,7 @@ async function dispatchSwarm(req: SwarmRequest) {
       chatId: null,
       provider,
       model: resolvedModels[index].ok ? resolvedModels[index].model : null,
-      title: `Swarm ${index + 1}: ${providerLabel(provider)}`,
+      title: `${laneFocus(req.mode, index)[0]} - ${providerLabel(provider)}`,
       status: "queued",
       summary: null,
       error: null,
@@ -294,6 +317,7 @@ async function dispatchSwarm(req: SwarmRequest) {
 
     for (let i = 0; i < lanes.length; i += 1) {
       const lane = lanes[i];
+      const focus = laneFocus(req.mode, i);
       updateLane(req.runId, lane.id, { status: "starting" });
       const chatId = await addChat(lane.title, lane.provider, req.projectRoot, "agent", {
         activate: false,
@@ -310,7 +334,7 @@ async function dispatchSwarm(req: SwarmRequest) {
       );
       await sendAgentMessage(
         chatId,
-        workerPrompt(req, i + 1, lanes.length, lane.provider as AgentProvider),
+        workerPrompt(req, i + 1, lanes.length, lane.provider as AgentProvider, focus),
       );
       updateLane(req.runId, lane.id, { status: "running" });
     }

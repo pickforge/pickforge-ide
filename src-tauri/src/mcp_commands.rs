@@ -564,7 +564,7 @@ impl LiveState for SnapshotLiveState<'_> {
                 "modes": ["scout", "review"],
                 "providers": ["claudeCode", "codex", "mixed"],
                 "defaultMode": "scout",
-                "nativeSubagentPolicy": "Use Pickforge swarm tools for Pickforge swarms; do not also start provider-native subagents for the same work.",
+                "nativeSubagentPolicy": "Use pickforge_start_swarm for Pickforge swarm requests. Do not also start provider-native subagents or model-orchestration skill lanes for the same work unless the user explicitly asks for that fallback.",
             },
             "ollamaCloud": {
                 "available": is_on_user_path("ollama"),

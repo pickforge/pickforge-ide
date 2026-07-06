@@ -139,7 +139,7 @@ export function mcpEnv(projectRoot: string | null): Record<string, string> {
     PICKFORGE_MCP_CONFIG: b.mcpConfigPath,
     PICKFORGE_MCP_COMMAND: b.mcpCommand,
     PICKFORGE_AGENT_BRIEF:
-      "Pickforge tools are available through the pickforge MCP server. Use pickforge_start_swarm for Pickforge swarm requests, and do not also start provider-native subagents for the same work.",
+      "Pickforge tools are available through the pickforge MCP server. When the user asks to create, spawn, spin up, or run a swarm/sub-agents, call pickforge_start_swarm. Do not use model-orchestration skills or provider-native subagents for the same swarm unless the user explicitly asks for that fallback.",
   };
   return b.endpoint ? { PICKFORGE_IPC_ENDPOINT: b.endpoint, ...env } : env;
 }

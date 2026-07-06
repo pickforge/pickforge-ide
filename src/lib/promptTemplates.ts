@@ -6,6 +6,11 @@ export interface PromptTemplate {
 
 export const PROMPT_TEMPLATES: PromptTemplate[] = [
   {
+    id: "swarm",
+    label: "/swarm",
+    body: "/swarm of 3 agents review {{goal}}",
+  },
+  {
     id: "plan",
     label: "Plan task",
     body: [

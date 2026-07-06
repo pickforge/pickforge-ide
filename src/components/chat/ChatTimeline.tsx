@@ -85,8 +85,6 @@ function WorkingRow(): JSX.Element {
 export function ChatTimeline(props: {
   items: AgentTimelineItem[];
   working?: boolean;
-  after?: JSX.Element;
-  hasAfter?: boolean;
 }): JSX.Element {
   let scroller!: HTMLDivElement;
   let content!: HTMLDivElement;
@@ -144,7 +142,7 @@ export function ChatTimeline(props: {
     <div class="pf-chat-timeline" ref={scroller} onScroll={onScroll}>
       <div class="pf-chat-timeline-inner" ref={content}>
         <Show
-          when={props.items.length > 0 || props.hasAfter}
+          when={props.items.length > 0}
           fallback={
             <ForgeEmptyState
               glyph={<EmptyGlyph />}
@@ -155,7 +153,6 @@ export function ChatTimeline(props: {
           }
         >
           <For each={props.items}>{(item) => renderItem(item)}</For>
-          <Show when={props.hasAfter}>{props.after}</Show>
         </Show>
         <Show when={props.working}>
           <WorkingRow />

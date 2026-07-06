@@ -368,6 +368,13 @@
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-1);
 }
+.pf-chat-swarm-dock {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  padding: 0 var(--pf-space-lg) var(--pf-space-md);
+}
 .pf-chat-swarm-summary {
   display: flex;
   align-items: center;

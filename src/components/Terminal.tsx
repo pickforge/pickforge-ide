@@ -27,6 +27,9 @@ import {
 import { appTheme } from "../stores/theme";
 import "./Terminal.css";
 
+const TERMINAL_FIT_INTERVAL_MS = 80;
+const TERMINAL_WINDOW_RESIZE_FIT_INTERVAL_MS = 120;
+
 /** Imperative handle so the shell can be driven from outside (chips, focus). */
 export interface TerminalHandle {
   /** Type text into the shell without executing it (no trailing newline). */
@@ -124,7 +127,72 @@ export function TerminalPane(props: {
     let pendingInput = ""; // typed before the pty spawn resolves (e.g. open-in-pane)
     let disposed = false;
     let observer: ResizeObserver | undefined;
+    let fitFrame: number | null = null;
+    let fitTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastFitAt = 0;
+    let lastFitWidth = -1;
+    let lastFitHeight = -1;
+    let ptyResizeFrame: number | null = null;
+    let pendingPtyResize: { rows: number; cols: number } | null = null;
+    let lastPtyRows = 0;
+    let lastPtyCols = 0;
     const subs: Array<{ dispose: () => void }> = [];
+
+    const now = () =>
+      typeof performance !== "undefined" ? performance.now() : Date.now();
+
+    const flushPtyResize = () => {
+      ptyResizeFrame = null;
+      if (sessionId === null || !pendingPtyResize) return;
+      const { rows, cols } = pendingPtyResize;
+      pendingPtyResize = null;
+      if (rows === lastPtyRows && cols === lastPtyCols) return;
+      lastPtyRows = rows;
+      lastPtyCols = cols;
+      void ptyResize(sessionId, rows, cols);
+    };
+
+    const queuePtyResize = (rows: number, cols: number) => {
+      pendingPtyResize = { rows, cols };
+      if (ptyResizeFrame !== null) return;
+      ptyResizeFrame = requestAnimationFrame(flushPtyResize);
+    };
+
+    const runFit = () => {
+      fitFrame = null;
+      if (disposed || !container.isConnected) return;
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      if (width <= 0 || height <= 0) return;
+      if (width === lastFitWidth && height === lastFitHeight) return;
+      const dims = fit.proposeDimensions();
+      if (!dims) return;
+      lastFitWidth = width;
+      lastFitHeight = height;
+      if (dims.cols === term.cols && dims.rows === term.rows) return;
+      try {
+        lastFitAt = now();
+        fit.fit();
+      } catch {
+        /* container detached mid-resize — ignore */
+      }
+    };
+
+    const scheduleFit = (immediate = false) => {
+      if (fitFrame !== null || fitTimer !== null) return;
+      const interval =
+        typeof document !== "undefined" &&
+        document.body.classList.contains("pf-window-resizing")
+          ? TERMINAL_WINDOW_RESIZE_FIT_INTERVAL_MS
+          : TERMINAL_FIT_INTERVAL_MS;
+      const delay = immediate ? 0 : Math.max(0, interval - (now() - lastFitAt));
+      const scheduleFrame = () => {
+        fitTimer = null;
+        fitFrame = requestAnimationFrame(runFit);
+      };
+      if (delay > 0) fitTimer = setTimeout(scheduleFrame, delay);
+      else scheduleFrame();
+    };
 
     // A tiny line-editor mirror over real keystrokes, so we can surface each line
     // the user submits (onUserSubmit) without parsing the agent's TUI. Escape
@@ -181,6 +249,9 @@ export function TerminalPane(props: {
     onCleanup(() => {
       disposed = true;
       observer?.disconnect();
+      if (fitFrame !== null) cancelAnimationFrame(fitFrame);
+      if (fitTimer !== null) clearTimeout(fitTimer);
+      if (ptyResizeFrame !== null) cancelAnimationFrame(ptyResizeFrame);
       subs.forEach((s) => s.dispose());
       if (sessionId !== null) teardownPty(sessionId);
       term.dispose();
@@ -231,6 +302,9 @@ export function TerminalPane(props: {
       }
 
       fit.fit();
+      lastFitAt = now();
+      lastFitWidth = container.clientWidth;
+      lastFitHeight = container.clientHeight;
 
       // Channel callbacks can fire after onCleanup but before the spawn promise
       // resolves — guard against writing to a disposed terminal.
@@ -289,6 +363,7 @@ export function TerminalPane(props: {
             return;
           }
           sessionId = id;
+          queuePtyResize(term.rows, term.cols);
           // Flush anything typed (via typeText) before the spawn resolved.
           if (pendingInput) {
             void ptyWrite(id, encoder.encode(pendingInput));
@@ -316,7 +391,7 @@ export function TerminalPane(props: {
           if (props.onUserSubmit) trackUserInput(data);
         }),
         term.onResize(({ rows, cols }) => {
-          if (sessionId !== null) void ptyResize(sessionId, rows, cols);
+          queuePtyResize(rows, cols);
         }),
       );
 
@@ -391,13 +466,10 @@ export function TerminalPane(props: {
       }
 
       observer = new ResizeObserver(() => {
-        try {
-          fit.fit();
-        } catch {
-          /* container detached mid-resize — ignore */
-        }
+        scheduleFit();
       });
       observer.observe(container);
+      scheduleFit(true);
 
       term.focus();
 

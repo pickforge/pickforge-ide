@@ -1,0 +1,8 @@
+{
+  "productName": "PickForge Performance",
+  "version": "0.1.7-performance",
+  "build": {
+    "devUrl": "http://localhost:1422",
+    "beforeDevCommand": "bun run dev:performance"
+  }
+}

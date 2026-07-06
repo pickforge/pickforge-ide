@@ -26,6 +26,8 @@ const NAV: { route: Route; label: string }[] = [
   { route: "settings", label: "Settings" },
 ];
 
+const WINDOW_RESIZING_SETTLE_MS = 180;
+
 export function App() {
   const [, setReady] = createSignal(false);
 
@@ -43,6 +45,32 @@ export function App() {
     };
     window.addEventListener("keydown", onZoom, true);
     onCleanup(() => window.removeEventListener("keydown", onZoom, true));
+
+    let resizeSettleTimer: ReturnType<typeof setTimeout> | undefined;
+    let unlistenResize: (() => void) | undefined;
+    const markWindowResizing = () => {
+      document.body.classList.add("pf-window-resizing");
+      if (resizeSettleTimer) clearTimeout(resizeSettleTimer);
+      resizeSettleTimer = setTimeout(() => {
+        document.body.classList.remove("pf-window-resizing");
+        resizeSettleTimer = undefined;
+      }, WINDOW_RESIZING_SETTLE_MS);
+    };
+    window.addEventListener("resize", markWindowResizing);
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        unlistenResize = await getCurrentWindow().onResized(markWindowResizing);
+      } catch {
+        /* plain browser/VRT fallback uses the DOM resize event */
+      }
+    })();
+    onCleanup(() => {
+      window.removeEventListener("resize", markWindowResizing);
+      unlistenResize?.();
+      if (resizeSettleTimer) clearTimeout(resizeSettleTimer);
+      document.body.classList.remove("pf-window-resizing");
+    });
 
     void loadAppVersion();
     void checkForUpdate(true);

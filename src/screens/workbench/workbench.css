@@ -1437,6 +1437,10 @@ body.pf-resizing .pf-dock-panel {
   );
   opacity: 0.18;
 }
+body.pf-window-resizing .pf-workbench-terminal::before,
+body.pf-window-resizing .pf-workbench-terminal::after {
+  opacity: 0;
+}
 .pf-workbench-terminal > * {
   position: relative;
   z-index: 1;

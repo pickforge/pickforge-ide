@@ -62,6 +62,7 @@ import {
   setLastAgentProvider,
 } from "../../lib/chatDefaults";
 import { type AgentProvider } from "../../lib/agentChat";
+import { isPrimaryChat } from "../../lib/chatLabels";
 import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
 import { removeChatFromOrchestra } from "../../stores/orchestra";
@@ -280,7 +281,7 @@ export function ProjectsPane() {
     const startY = e.clientY;
     const orderIds = () =>
       chatsFor(root)
-        .filter((c) => !isChatArchived(c.chatId))
+        .filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c))
         .map((c) => c.chatId);
     let active = false;
 
@@ -479,7 +480,11 @@ export function ProjectsPane() {
     // or a pending quiet-timer would chime with no visible source.
     clearChatActivity(id);
     if (workspace.activeChatId === id) {
-      const next = root ? chatsFor(root).find((c) => c.chatId !== id && !isChatArchived(c.chatId)) : undefined;
+      const next = root
+        ? chatsFor(root).find(
+            (c) => c.chatId !== id && !isChatArchived(c.chatId) && isPrimaryChat(c),
+          )
+        : undefined;
       selectChat(next?.chatId ?? null);
     }
     closeMenu();
@@ -594,8 +599,10 @@ export function ProjectsPane() {
     createEffect(() => {
       if (chatsExpanded(p.root)) void ensureChatsLoaded(p.root);
     });
-    const visible = () => chatsFor(p.root).filter((c) => !isChatArchived(c.chatId));
-    const archived = () => chatsFor(p.root).filter((c) => isChatArchived(c.chatId));
+    const visible = () =>
+      chatsFor(p.root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c));
+    const archived = () =>
+      chatsFor(p.root).filter((c) => isChatArchived(c.chatId) && isPrimaryChat(c));
     const archOpen = () => showArchived().has(p.root);
     return (
       <Collapse open={chatsExpanded(p.root)}>
@@ -639,7 +646,8 @@ export function ProjectsPane() {
 
   const ProjectRow = (p: { project: Project }) => {
     const root = p.project.projectRoot;
-    const count = () => chatsFor(root).filter((c) => !isChatArchived(c.chatId)).length;
+    const count = () =>
+      chatsFor(root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)).length;
     return (
       <div class="pf-tree-node">
         <div
@@ -682,7 +690,8 @@ export function ProjectsPane() {
   // contained group instead of chats spilling loose beneath the tile grid.
   const ProjectCard = (p: { project: Project }) => {
     const root = p.project.projectRoot;
-    const count = () => chatsFor(root).filter((c) => !isChatArchived(c.chatId)).length;
+    const count = () =>
+      chatsFor(root).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)).length;
     return (
       <div
         class="pf-proj-card"

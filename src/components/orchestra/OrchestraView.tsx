@@ -26,6 +26,7 @@ import {
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
 import { AGENTS, loadAgentModels } from "../../lib/agentModels";
+import { isPrimaryChat } from "../../lib/chatLabels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
 import { loadAskChatTitle, loadLastAgentProvider } from "../../lib/chatDefaults";
 import { PROMPT_TEMPLATES } from "../../lib/promptTemplates";
@@ -73,6 +74,7 @@ import {
   setChatTitle,
   workspace,
 } from "../../stores/workspace";
+import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
 const AGENT_PROVIDERS = AGENTS.filter((a) => a.id === "claudeCode" || a.id === "codex");
@@ -251,7 +253,11 @@ export function OrchestraView(props: {
   const projectChats = () => chatsFor(props.projectRoot);
   const chatsLoaded = () => workspace.chatsByRoot[props.projectRoot] !== undefined;
   const liveProjectChatIds = createMemo(() =>
-    new Set(projectChats().filter((chat) => !isChatArchived(chat.chatId)).map((chat) => chat.chatId)),
+    new Set(
+      projectChats()
+        .filter((chat) => !isChatArchived(chat.chatId) && isPrimaryChat(chat))
+        .map((chat) => chat.chatId),
+    ),
   );
   const liveTree = createMemo(() => pruneLaneTree(rawTree(), liveProjectChatIds()));
   const liveLanes = createMemo(() => collectLaneIds(liveTree()));
@@ -356,6 +362,7 @@ export function OrchestraView(props: {
 
   const tasks = () => taskList(props.projectRoot).items;
   const usage = () => usageSummary(props.projectRoot).items;
+  const projectSwarms = () => swarmRuns().filter((run) => run.projectRoot === props.projectRoot);
   const preset = () => detectLayoutPreset(liveTree());
 
   // Absolute rects + divider seams recomputed whenever the tree changes.
@@ -482,6 +489,7 @@ export function OrchestraView(props: {
     projectChats().filter(
       (chat) =>
         chat.kind === "agent" &&
+        isPrimaryChat(chat) &&
         !isChatArchived(chat.chatId) &&
         !liveLanes().includes(chat.chatId),
     );
@@ -842,6 +850,45 @@ export function OrchestraView(props: {
     </div>
   );
 
+  const SwarmDashboard = () => (
+    <Show when={projectSwarms().length > 0}>
+      <div class="pf-orch-card">
+        <div class="pf-orch-swarm-head">
+          <MonoEyebrow text="Swarms" />
+          <span class="pf-orch-swarm-count">{projectSwarms().length}</span>
+        </div>
+        <div class="pf-orch-swarm-list">
+          <For each={projectSwarms()}>
+            {(run) => (
+              <div class="pf-orch-swarm">
+                <div class="pf-orch-swarm-top">
+                  <span
+                    class="pf-orch-status"
+                    style={{ "--pf-status": run.status === "failed" ? "var(--pf-error)" : "var(--pf-info)" }}
+                  >
+                    <span class="pf-orch-status-dot" />
+                    {run.status}
+                  </span>
+                  <span class="pf-orch-swarm-title">{run.mode} · {run.requestedCount}</span>
+                </div>
+                <div class="pf-orch-swarm-goal">{run.goal}</div>
+                <div class="pf-orch-swarm-lanes">
+                  <For each={run.lanes}>
+                    {(lane) => (
+                      <span class="pf-orch-swarm-lane">
+                        {lane.provider === "codex" ? "CX" : "CC"} · {lane.status}
+                      </span>
+                    )}
+                  </For>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      </div>
+    </Show>
+  );
+
   return (
     <div class="pf-orch" ref={(el) => (orchEl = el)}>
       <div
@@ -889,6 +936,7 @@ export function OrchestraView(props: {
                 </button>
               </div>
             </div>
+            <SwarmDashboard />
             <UsageDashboard />
           </div>
         </Show>

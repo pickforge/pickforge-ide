@@ -2,7 +2,7 @@
 // command is resolved through launchCommand so the model picker still applies)
 // or type a literal command. Persisted in localStorage like agentModels.
 import { createSignal } from "solid-js";
-import { AGENTS, launchCommand } from "../lib/agentModels";
+import { launchBinary, launchCommand } from "../lib/agentModels";
 
 export interface QuickLaunchItem {
   id: string;
@@ -74,8 +74,17 @@ export function resetQuickLaunchItems() {
 }
 
 /** The text to type for an item; agent items resolve the model-pinned command. */
-export function commandForItem(item: QuickLaunchItem): string {
-  if (item.agentId) return launchCommand(item.agentId);
+export function commandForItem(
+  item: QuickLaunchItem,
+  env: Record<string, string> = {},
+): string {
+  if (item.agentId) {
+    return launchCommand(item.agentId, {
+      mcpConfigPath: env.PICKFORGE_MCP_CONFIG,
+      mcpCommand: env.PICKFORGE_MCP_COMMAND,
+      agentBrief: env.PICKFORGE_AGENT_BRIEF,
+    });
+  }
   return item.command ?? "";
 }
 
@@ -88,7 +97,7 @@ export function isAskAiItem(item: QuickLaunchItem): boolean {
 /** The binary whose availability gates a chip (explicit, or the agent's). */
 export function binaryForItem(item: QuickLaunchItem): string | null {
   if (item.binary) return item.binary;
-  if (item.agentId) return AGENTS.find((a) => a.id === item.agentId)?.binary ?? null;
+  if (item.agentId) return launchBinary(item.agentId);
   return null;
 }
 

@@ -19,6 +19,7 @@ import {
   IconIngot,
   IconOpenAI,
   IconPlus,
+  IconRefresh,
 } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
 import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
@@ -51,6 +52,7 @@ import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
+import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -63,6 +65,12 @@ function Section(props: { title: string; children: any }) {
   );
 }
 
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
   const [defaultChatKind, setDefaultChatKindSig] = createSignal<DefaultChatKind>(
@@ -72,12 +80,36 @@ export function SettingsScreen() {
   const [askChatTitle, setAskChatTitleSig] = createSignal(loadAskChatTitle());
   const [archived, setArchived] = createSignal<db.Project[]>([]);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
+  const [pickLab, setPickLab] = createSignal<PickLabStatus | null>(null);
+  const [pickLabLoading, setPickLabLoading] = createSignal(false);
 
   const reloadArchived = async () => {
     const all = await db.projectsList(true);
     setArchived(all.filter((p) => p.archivedAt !== null));
   };
-  onMount(reloadArchived);
+  const reloadPickLab = async () => {
+    setPickLabLoading(true);
+    try {
+      setPickLab(await pickLabStatus());
+    } catch (error) {
+      setPickLab({
+        cliAvailable: false,
+        mcpAvailable: false,
+        cliPath: null,
+        mcpPath: null,
+        version: null,
+        doctor: null,
+        agents: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setPickLabLoading(false);
+    }
+  };
+  onMount(() => {
+    void reloadArchived();
+    void reloadPickLab();
+  });
 
   const changeModel = (agentId: string, model: string) => {
     setAgentModel(agentId, model || null);
@@ -121,6 +153,18 @@ export function SettingsScreen() {
   const conflicts = () => conflictingHotkeys(quickLaunchItems());
   const agentLabel = (id?: string) =>
     AGENTS.find((a) => a.id === id)?.label ?? id ?? "";
+  const pickLabDoctorLabel = () => {
+    const status = pickLab();
+    if (!status?.cliAvailable) return "Not installed";
+    const doctor = recordOf(status.doctor);
+    if (doctor?.ok === true) return "Ready";
+    if (doctor?.ok === false) return "Needs attention";
+    return status.doctor ? "Available" : "Not checked";
+  };
+  const pickLabAgentsLabel = () => {
+    const agents = recordOf(pickLab()?.agents)?.agents;
+    return Array.isArray(agents) ? `${agents.length} registered` : "Not checked";
+  };
 
   // Capture the next shortcut for the item being edited (Esc cancels,
   // Backspace clears). Capture phase so nothing else steals the key.
@@ -223,6 +267,42 @@ export function SettingsScreen() {
                 { value: "v1", label: "v1 (one-shot CLI)" },
               ]}
             />
+          </div>
+        </Section>
+
+        <Section title="PickLab companion">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">CLI</span>
+            <span class="pf-settings-muted">
+              {pickLab()?.cliAvailable ? `picklab ${pickLab()?.version ?? ""}` : "Not found"}
+            </span>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">MCP server</span>
+            <span class="pf-settings-muted">
+              {pickLab()?.mcpAvailable ? "picklab-mcp available" : "Not found"}
+            </span>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Doctor</span>
+            <span class="pf-settings-muted">{pickLabDoctorLabel()}</span>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Agent configs</span>
+            <span class="pf-settings-muted">{pickLabAgentsLabel()}</span>
+          </div>
+          <Show when={pickLab()?.error}>
+            <div class="pf-ql-warn">{pickLab()?.error}</div>
+          </Show>
+          <div class="pf-ql-actions">
+            <button
+              class="pf-ql-add"
+              disabled={pickLabLoading()}
+              onClick={() => void reloadPickLab()}
+            >
+              <IconRefresh size={13} /> {pickLabLoading() ? "Checking..." : "Refresh"}
+            </button>
+            <span class="pf-settings-muted">Managed as an external Pickforge tool</span>
           </div>
         </Section>
 

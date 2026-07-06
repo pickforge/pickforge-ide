@@ -17,19 +17,19 @@
 //! network listener. Opt-in: nothing is served until `mcp_start` is called (on a
 //! run bind), and the socket file is removed on `mcp_stop`.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
-#[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pickforge_core::android;
+use pickforge_core::is_on_user_path;
 use pickforge_core::mcp::{self, ActiveTarget, InspectorKind, LiveState, ProjectContext};
 use pickforge_core::targets::Capability;
 use pickforge_core::ContextStorageService;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 #[cfg(unix)]
@@ -39,6 +39,8 @@ use tokio::net::UnixListener;
 use tokio::sync::{watch, Notify};
 
 const MAX_LOG_LINES: usize = 2000;
+const MAX_SWARM_AGENTS: u8 = 5;
+const MAX_SWARM_RUNS: usize = 24;
 #[cfg(not(unix))]
 const MCP_SOCKET_UNSUPPORTED: &str = "MCP socket server is only supported on unix platforms";
 
@@ -68,6 +70,8 @@ pub struct PublishedState {
     #[serde(default)]
     pub project_root: Option<String>,
     #[serde(default)]
+    pub active_chat_id: Option<String>,
+    #[serde(default)]
     pub context_dir: Option<String>,
     #[serde(default)]
     pub runs_dir: Option<String>,
@@ -91,6 +95,7 @@ impl Default for PublishedState {
             device_serial: None,
             device_platform: default_device_platform(),
             project_root: None,
+            active_chat_id: None,
             context_dir: None,
             runs_dir: None,
             chats_dir: None,
@@ -101,6 +106,66 @@ impl Default for PublishedState {
 
 fn default_device_platform() -> String {
     "android".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmRequest {
+    pub run_id: String,
+    pub project_root: String,
+    pub goal: String,
+    pub count: u8,
+    pub model: Option<String>,
+    pub provider_preference: String,
+    pub mode: String,
+    pub source: String,
+    #[serde(default)]
+    pub origin_chat_id: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmLaneSnapshot {
+    pub id: String,
+    pub chat_id: Option<String>,
+    pub provider: String,
+    pub model: Option<String>,
+    pub title: String,
+    pub status: String,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmRunSnapshot {
+    pub run_id: String,
+    pub project_root: String,
+    pub goal: String,
+    pub requested_count: u8,
+    pub model: Option<String>,
+    pub provider_preference: String,
+    pub mode: String,
+    pub source: String,
+    #[serde(default)]
+    pub origin_chat_id: Option<String>,
+    pub status: String,
+    #[serde(default = "default_swarm_synthesis_status")]
+    pub synthesis_status: String,
+    #[serde(default)]
+    pub synthesis_error: Option<String>,
+    #[serde(default)]
+    pub synthesized_at: Option<i64>,
+    pub lanes: Vec<SwarmLaneSnapshot>,
+    pub error: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+fn default_swarm_synthesis_status() -> String {
+    "idle".to_string()
 }
 
 /// One running server instance, owned by exactly one accept task. The
@@ -157,11 +222,13 @@ pub struct McpState(Arc<McpInner>);
 struct McpInner {
     published: Mutex<PublishedState>,
     logs: Mutex<VecDeque<String>>,
+    swarm_requests: Mutex<VecDeque<SwarmRequest>>,
+    swarm_runs: Mutex<HashMap<String, SwarmRunSnapshot>>,
     /// The server lifecycle (Idle / Starting / Running).
     lifecycle: Mutex<ServerLifecycle>,
     /// Monotonic generation counter; each successful bind gets a fresh id.
-    #[cfg(unix)]
     next_generation: AtomicU64,
+    next_swarm_id: AtomicU64,
 }
 
 impl McpState {
@@ -169,9 +236,11 @@ impl McpState {
         Self(Arc::new(McpInner {
             published: Mutex::new(PublishedState::default()),
             logs: Mutex::new(VecDeque::with_capacity(256)),
+            swarm_requests: Mutex::new(VecDeque::new()),
+            swarm_runs: Mutex::new(HashMap::new()),
             lifecycle: Mutex::new(ServerLifecycle::Idle),
-            #[cfg(unix)]
             next_generation: AtomicU64::new(1),
+            next_swarm_id: AtomicU64::new(1),
         }))
     }
 
@@ -214,6 +283,148 @@ impl McpState {
         let n = limit.min(buf.len());
         buf.iter().skip(buf.len() - n).cloned().collect()
     }
+
+    fn enqueue_swarm_request(
+        &self,
+        project_root: String,
+        origin_chat_id: Option<String>,
+        args: &Value,
+    ) -> Result<Value, String> {
+        let goal = string_arg(args, "goal")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| "missing swarm goal".to_string())?;
+        let count = args
+            .get("count")
+            .and_then(Value::as_u64)
+            .map(|n| n.clamp(1, MAX_SWARM_AGENTS as u64) as u8)
+            .unwrap_or(3);
+        let model = string_arg(args, "model").filter(|s| !s.trim().is_empty());
+        let provider_preference = enum_arg(
+            args,
+            "providerPreference",
+            &["auto", "mixed", "claudeCode", "codex"],
+            "mixed",
+        );
+        let mode = enum_arg(args, "mode", &["scout", "review"], "scout");
+        let created_at = now_millis_i64();
+        let seq = self.0.next_swarm_id.fetch_add(1, Ordering::SeqCst);
+        let run_id = format!("swarm-{created_at}-{seq}");
+        let request = SwarmRequest {
+            run_id: run_id.clone(),
+            project_root: project_root.clone(),
+            goal: goal.trim().to_string(),
+            count,
+            model,
+            provider_preference,
+            mode,
+            source: "mcp".to_string(),
+            origin_chat_id,
+            created_at,
+        };
+        let run = SwarmRunSnapshot {
+            run_id: run_id.clone(),
+            project_root,
+            goal: request.goal.clone(),
+            requested_count: count,
+            model: request.model.clone(),
+            provider_preference: request.provider_preference.clone(),
+            mode: request.mode.clone(),
+            source: request.source.clone(),
+            origin_chat_id: request.origin_chat_id.clone(),
+            status: "queued".to_string(),
+            synthesis_status: "idle".to_string(),
+            synthesis_error: None,
+            synthesized_at: None,
+            lanes: Vec::new(),
+            error: None,
+            created_at,
+            updated_at: created_at,
+        };
+        self.insert_swarm_run(run);
+        self.0.swarm_requests.lock().unwrap().push_back(request);
+        Ok(serde_json::json!({
+            "accepted": true,
+            "runId": run_id,
+            "status": "queued",
+            "maxAgents": MAX_SWARM_AGENTS,
+        }))
+    }
+
+    fn insert_swarm_run(&self, run: SwarmRunSnapshot) {
+        let mut runs = self.0.swarm_runs.lock().unwrap();
+        if runs
+            .get(&run.run_id)
+            .map(|existing| existing.status == "cancelled" && run.status != "cancelled")
+            .unwrap_or(false)
+        {
+            return;
+        }
+        runs.insert(run.run_id.clone(), run);
+        if runs.len() <= MAX_SWARM_RUNS {
+            return;
+        }
+        let mut ids: Vec<(String, i64)> =
+            runs.values().map(|r| (r.run_id.clone(), r.created_at)).collect();
+        ids.sort_by_key(|(_, created_at)| *created_at);
+        for (id, _) in ids.into_iter().take(runs.len() - MAX_SWARM_RUNS) {
+            runs.remove(&id);
+        }
+    }
+
+    fn take_swarm_requests(&self) -> Vec<SwarmRequest> {
+        self.0.swarm_requests.lock().unwrap().drain(..).collect()
+    }
+
+    fn update_swarm_run(&self, run: SwarmRunSnapshot) {
+        self.insert_swarm_run(run);
+    }
+
+    fn swarm_status_value(
+        &self,
+        project_root: Option<&str>,
+        run_id: Option<&str>,
+    ) -> Result<Value, String> {
+        let runs = self.0.swarm_runs.lock().unwrap();
+        if let Some(run_id) = run_id {
+            let run = runs
+                .get(run_id)
+                .ok_or_else(|| format!("unknown swarm run '{run_id}'"))?;
+            if let Some(root) = project_root {
+                if run.project_root != root {
+                    return Err(format!("swarm run '{run_id}' belongs to another project"));
+                }
+            }
+            return serde_json::to_value(run).map_err(|e| e.to_string());
+        }
+        let mut list: Vec<_> = runs
+            .values()
+            .filter(|run| project_root.map(|root| run.project_root == root).unwrap_or(true))
+            .cloned()
+            .collect();
+        list.sort_by_key(|run| run.created_at);
+        list.reverse();
+        serde_json::to_value(serde_json::json!({ "runs": list })).map_err(|e| e.to_string())
+    }
+
+    fn cancel_swarm_run(&self, run_id: &str, project_root: Option<&str>) -> Result<Value, String> {
+        let mut runs = self.0.swarm_runs.lock().unwrap();
+        let run = runs
+            .get_mut(run_id)
+            .ok_or_else(|| format!("unknown swarm run '{run_id}'"))?;
+        if let Some(root) = project_root {
+            if run.project_root != root {
+                return Err(format!("swarm run '{run_id}' belongs to another project"));
+            }
+        }
+        run.status = "cancelled".to_string();
+        run.updated_at = now_millis_i64();
+        self.0
+            .swarm_requests
+            .lock()
+            .unwrap()
+            .retain(|request| request.run_id != run_id);
+        Ok(serde_json::json!({ "cancelled": true, "runId": run_id, "status": run.status }))
+    }
 }
 
 impl Default for McpState {
@@ -237,6 +448,7 @@ impl Default for McpState {
 struct SnapshotLiveState<'a> {
     state: &'a McpState,
     snapshot: PublishedState,
+    pinned_root: Option<String>,
     /// True when the live snapshot still belongs to this connection's project.
     matches_pin: bool,
 }
@@ -248,7 +460,19 @@ impl<'a> SnapshotLiveState<'a> {
     fn for_connection(state: &'a McpState, pinned_root: &Option<String>) -> Self {
         let snapshot = state.snapshot();
         let matches_pin = &snapshot.project_root == pinned_root;
-        Self { state, snapshot, matches_pin }
+        Self {
+            state,
+            snapshot,
+            pinned_root: pinned_root.clone(),
+            matches_pin,
+        }
+    }
+
+    fn pinned_project_root(&self) -> Result<&str, String> {
+        self.pinned_root
+            .as_deref()
+            .filter(|root| !root.trim().is_empty())
+            .ok_or_else(|| "this MCP connection is not pinned to a Pickforge project".to_string())
     }
 }
 
@@ -355,6 +579,61 @@ impl LiveState for SnapshotLiveState<'_> {
         }
         self.state.recent_logs(limit)
     }
+
+    fn pickforge_capabilities(&self) -> Value {
+        let active_project = self.matches_pin && self.snapshot.project_root.is_some();
+        serde_json::json!({
+            "available": true,
+            "projectRoot": if active_project { self.snapshot.project_root.clone() } else { None },
+            "swarm": {
+                "available": active_project,
+                "maxAgents": MAX_SWARM_AGENTS,
+                "modes": ["scout", "review"],
+                "providers": ["claudeCode", "codex", "mixed"],
+                "defaultMode": "scout",
+                "nativeSubagentPolicy": "Use pickforge_start_swarm for Pickforge swarm requests. Do not also start provider-native subagents or model-orchestration skill lanes for the same work unless the user explicitly asks for that fallback.",
+            },
+            "ollamaCloud": {
+                "available": is_on_user_path("ollama"),
+                "models": ["glm-5.2:cloud"],
+                "commands": {
+                    "claudeCode": "ollama launch claude --model glm-5.2:cloud",
+                    "codex": "ollama launch codex --model glm-5.2:cloud",
+                },
+            },
+            "pickLab": {
+                "cliAvailable": is_on_user_path("picklab"),
+                "mcpAvailable": is_on_user_path("picklab-mcp"),
+            },
+        })
+    }
+
+    fn request_swarm(&self, args: &Value) -> Result<Value, String> {
+        if !self.matches_pin {
+            return Err("this MCP connection is not pinned to the active project".to_string());
+        }
+        let project_root = self
+            .snapshot
+            .project_root
+            .clone()
+            .filter(|root| !root.trim().is_empty())
+            .ok_or_else(|| "no active Pickforge project".to_string())?;
+        self.state.enqueue_swarm_request(project_root, self.snapshot.active_chat_id.clone(), args)
+    }
+
+    fn swarm_status(&self, args: &Value) -> Result<Value, String> {
+        let run_id = string_arg(args, "runId");
+        let project_root = self.pinned_project_root()?;
+        self.state.swarm_status_value(Some(project_root), run_id.as_deref())
+    }
+
+    fn cancel_swarm(&self, args: &Value) -> Result<Value, String> {
+        let run_id = string_arg(args, "runId")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| "missing swarm runId".to_string())?;
+        let project_root = self.pinned_project_root()?;
+        self.state.cancel_swarm_run(&run_id, Some(project_root))
+    }
 }
 
 fn now_millis() -> u128 {
@@ -362,6 +641,25 @@ fn now_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
+}
+
+fn now_millis_i64() -> i64 {
+    now_millis().min(i64::MAX as u128) as i64
+}
+
+fn string_arg(args: &Value, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn enum_arg(args: &Value, key: &str, allowed: &[&str], default: &str) -> String {
+    match string_arg(args, key) {
+        Some(value) if allowed.contains(&value.as_str()) => value,
+        _ => default.to_string(),
+    }
 }
 
 /// The base runtime directory for the socket: `$XDG_RUNTIME_DIR` (already a
@@ -467,6 +765,25 @@ pub fn mcp_run_started(state: State<'_, McpState>) {
     state.clear_logs();
 }
 
+#[tauri::command]
+pub fn mcp_take_swarm_requests(state: State<'_, McpState>) -> Vec<SwarmRequest> {
+    state.take_swarm_requests()
+}
+
+#[tauri::command]
+pub fn mcp_update_swarm_run(state: State<'_, McpState>, run: SwarmRunSnapshot) {
+    state.update_swarm_run(run);
+}
+
+#[tauri::command]
+pub fn mcp_swarm_status(
+    state: State<'_, McpState>,
+    project_root: Option<String>,
+    run_id: Option<String>,
+) -> Result<Value, String> {
+    state.swarm_status_value(project_root.as_deref(), run_id.as_deref())
+}
+
 /// What `mcp_start` returns: the live socket endpoint plus the resolved storage
 /// dirs, so the frontend can both inject `PICKFORGE_IPC_ENDPOINT` and publish the
 /// accurate context/runs/chats dirs without re-resolving storage itself.
@@ -477,6 +794,8 @@ pub struct McpStartResult {
     pub context_dir: String,
     pub runs_dir: String,
     pub chats_dir: String,
+    pub mcp_config_path: String,
+    pub mcp_command: String,
 }
 
 /// Start the MCP socket server (idempotent). Resolves `project_root`'s storage
@@ -572,8 +891,9 @@ pub async fn mcp_start(
         }
     };
 
-    // Write the discovery file so adapters launched outside the embedded terminal
-    // (no `PICKFORGE_IPC_ENDPOINT`) can still find the live socket.
+    let mcp_command = resolve_mcp_adapter_command();
+    let mcp_config_path = write_mcp_config(&resolved.context_dir, &mcp_command)?;
+
     let _ = std::fs::write(resolved.ipc_sock_path(), &endpoint);
 
     Ok(McpStartResult {
@@ -581,6 +901,8 @@ pub async fn mcp_start(
         context_dir: resolved.context_dir,
         runs_dir: resolved.runs_dir,
         chats_dir: resolved.chats_dir,
+        mcp_config_path,
+        mcp_command,
     })
 }
 
@@ -599,7 +921,70 @@ pub async fn mcp_start(
         context_dir: resolved.context_dir,
         runs_dir: resolved.runs_dir,
         chats_dir: resolved.chats_dir,
+        mcp_config_path: String::new(),
+        mcp_command: "pickforge-mcp".to_string(),
     })
+}
+
+fn resolve_mcp_adapter_command() -> String {
+    if let Some(path) = std::env::var("PICKFORGE_MCP_COMMAND")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return path;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in sidecar_names() {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return candidate.to_string_lossy().into_owned();
+                }
+            }
+        }
+    }
+    if let Some(path) = pickforge_core::which_in(
+        "pickforge-mcp",
+        pickforge_core::user_shell_environment(),
+    ) {
+        return path.to_string_lossy().into_owned();
+    }
+    "pickforge-mcp".to_string()
+}
+
+fn sidecar_names() -> Vec<String> {
+    let mut names = vec!["pickforge-mcp".to_string()];
+    if cfg!(windows) {
+        names.push("pickforge-mcp.exe".to_string());
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with("pickforge-mcp-") {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+fn write_mcp_config(context_dir: &str, command: &str) -> Result<String, String> {
+    let path = PathBuf::from(context_dir).join("pickforge-mcp.json");
+    let config = serde_json::json!({
+        "mcpServers": {
+            "pickforge": {
+                "command": command,
+                "args": [],
+            }
+        }
+    });
+    let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Bind a fresh server instance: prepare a private runtime dir, bind the socket,
@@ -766,6 +1151,10 @@ mod tests {
         SnapshotLiveState::for_connection(st, &pinned)
     }
 
+    fn accepted_run_id(value: Value) -> String {
+        value["runId"].as_str().unwrap().to_string()
+    }
+
     #[test]
     fn published_state_deserializes_camel_case() {
         let s: PublishedState = serde_json::from_value(json!({
@@ -906,6 +1295,92 @@ mod tests {
         );
         st.push_logs(vec!["run2-boot".into()]);
         assert_eq!(st.recent_logs(10), vec!["run2-boot".to_string()]);
+    }
+
+    #[test]
+    fn cancelling_a_queued_swarm_removes_the_pending_request() {
+        let st = McpState::new();
+        let run_id = accepted_run_id(
+            st.enqueue_swarm_request(
+                "/proj/a".into(),
+                Some("chat-a".into()),
+                &json!({ "goal": "review the app" }),
+            )
+            .unwrap(),
+        );
+
+        let cancelled = st.cancel_swarm_run(&run_id, Some("/proj/a")).unwrap();
+        assert_eq!(cancelled["status"], json!("cancelled"));
+        assert!(st.take_swarm_requests().is_empty());
+
+        let status = st.swarm_status_value(Some("/proj/a"), Some(&run_id)).unwrap();
+        assert_eq!(status["status"], json!("cancelled"));
+        assert_eq!(status["originChatId"], json!("chat-a"));
+
+        let mut stale_update: SwarmRunSnapshot = serde_json::from_value(status).unwrap();
+        stale_update.status = "running".to_string();
+        st.update_swarm_run(stale_update);
+        let status = st.swarm_status_value(Some("/proj/a"), Some(&run_id)).unwrap();
+        assert_eq!(status["status"], json!("cancelled"));
+    }
+
+    #[test]
+    fn mcp_swarm_request_keeps_the_active_chat_origin() {
+        let st = McpState::new();
+        st.set_published(PublishedState {
+            project_root: Some("/proj/a".into()),
+            active_chat_id: Some("chat-origin".into()),
+            ..Default::default()
+        });
+        let live = SnapshotLiveState::for_connection(&st, &Some("/proj/a".to_string()));
+
+        let run_id = accepted_run_id(live.request_swarm(&json!({ "goal": "map it" })).unwrap());
+        let requests = st.take_swarm_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].origin_chat_id.as_deref(), Some("chat-origin"));
+
+        let status = st.swarm_status_value(Some("/proj/a"), Some(&run_id)).unwrap();
+        assert_eq!(status["originChatId"], json!("chat-origin"));
+        assert_eq!(status["synthesisStatus"], json!("idle"));
+    }
+
+    #[test]
+    fn stale_connection_swarm_tools_stay_project_scoped() {
+        let st = McpState::new();
+        let run_a = accepted_run_id(
+            st.enqueue_swarm_request(
+                "/proj/a".into(),
+                Some("chat-a".into()),
+                &json!({ "goal": "review A" }),
+            )
+            .unwrap(),
+        );
+        let run_b = accepted_run_id(
+            st.enqueue_swarm_request(
+                "/proj/b".into(),
+                Some("chat-b".into()),
+                &json!({ "goal": "review B" }),
+            )
+            .unwrap(),
+        );
+
+        st.set_published(PublishedState {
+            project_root: Some("/proj/b".into()),
+            ..Default::default()
+        });
+        let live = SnapshotLiveState::for_connection(&st, &Some("/proj/a".to_string()));
+
+        let status = live.swarm_status(&json!({})).unwrap();
+        let runs = status["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["runId"], json!(run_a));
+
+        let err = live.cancel_swarm(&json!({ "runId": run_b })).unwrap_err();
+        assert!(err.contains("belongs to another project"));
+        assert_eq!(
+            live.cancel_swarm(&json!({ "runId": run_a })).unwrap()["status"],
+            json!("cancelled")
+        );
     }
 
     #[test]

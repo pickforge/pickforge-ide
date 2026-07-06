@@ -8,7 +8,7 @@ import {
   type OrchestraTask,
 } from "../lib/orchestra";
 
-export const MAX_LANES = 4;
+export const MAX_LANES = 5;
 const ALL_USAGE_KEY = "__all__";
 // Guard against pathological persisted trees: a well-formed 4-leaf tree is at
 // most 3 splits deep; give generous headroom before we bail on a corrupt blob.
@@ -166,13 +166,23 @@ function buildGrid(chatIds: string[], genId: () => string): LaneNode | null {
       b: laneLeaf(chatIds[2]),
     };
   }
+  if (n === 4) {
+    return {
+      kind: "split",
+      id: genId(),
+      dir: "col",
+      ratio: 0.5,
+      a: row(chatIds[0], chatIds[1]),
+      b: row(chatIds[2], chatIds[3]),
+    };
+  }
   return {
     kind: "split",
     id: genId(),
     dir: "col",
     ratio: 0.5,
     a: row(chatIds[0], chatIds[1]),
-    b: row(chatIds[2], chatIds[3]),
+    b: buildChain(chatIds.slice(2), "row", genId)!,
   };
 }
 

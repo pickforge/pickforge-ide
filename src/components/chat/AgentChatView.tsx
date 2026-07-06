@@ -26,12 +26,16 @@ import {
   loadAgentEfforts,
   loadAgentModels,
   modelOption,
+  nativeChatModel,
   setAgentEffort,
   setAgentModel,
 } from "../../lib/agentModels";
 import { loadAgentModes, setAgentMode } from "../../lib/agentModes";
+import { startSwarm, swarmRuns } from "../../stores/swarm";
 import { loadAgentEngine } from "../../lib/chatDefaults";
+import { parseSwarmCommand } from "../../lib/swarmCommand";
 import { ChatTimeline } from "./ChatTimeline";
+import { SwarmRunCard } from "./SwarmRunCard";
 import { Composer } from "./Composer";
 import { ImageLightbox } from "./ImageLightbox";
 import { ApprovalPrompt } from "./ApprovalPrompt";
@@ -52,12 +56,19 @@ export function AgentChatView(props: {
   const state = () => agentChat(props.chatId);
   const provider = () => state()?.provider ?? props.provider;
   const model = () =>
-    state()?.model ?? props.model ?? loadAgentModels()[props.provider] ?? null;
+    state()?.model ??
+    props.model ??
+    nativeChatModel(props.provider, loadAgentModels()[props.provider] ?? null);
   const effort = () => state()?.effort ?? null;
   const mode = () => state()?.mode ?? loadAgentModes()[provider()] ?? null;
 
   const approvals = createMemo(() => state()?.approvals ?? []);
   const hasApprovals = () => approvals().length > 0;
+  const visibleSwarms = createMemo(() =>
+    swarmRuns()
+      .filter((run) => run.projectRoot === props.projectRoot && run.originChatId === props.chatId)
+      .slice(0, 3),
+  );
 
   const showNotice = () => state()?.providerSwitched ?? false;
 
@@ -89,7 +100,7 @@ export function AgentChatView(props: {
     AGENTS.find((agent) => agent.id === id)?.label ?? id;
 
   const doSwitch = (next: AgentProvider) => {
-    const nextModel = loadAgentModels()[next] ?? null;
+    const nextModel = nativeChatModel(next, loadAgentModels()[next] ?? null);
     const nextEffort = loadAgentEfforts()[next] ?? null;
     const nextMode = loadAgentModes()[next] ?? null;
     void switchAgentChatProvider(props.chatId, next, nextModel, nextEffort, nextMode).catch(
@@ -129,6 +140,15 @@ export function AgentChatView(props: {
     setAgentChatMode(props.chatId, next);
   };
 
+  const onSend = async (text: string, images?: string[]) => {
+    const swarm = parseSwarmCommand(text);
+    if (swarm) {
+      await startSwarm(props.projectRoot, swarm.goal, { ...swarm, originChatId: props.chatId });
+      return;
+    }
+    await sendAgentMessage(props.chatId, text, images);
+  };
+
   // A model/provider change can leave a selected effort the new model does not
   // accept — drop THIS CHAT back to the default without touching the persisted
   // per-provider preference (inspecting another model must not erase it).
@@ -153,6 +173,11 @@ export function AgentChatView(props: {
     <div class="pf-chat-view">
       <ImageLightbox />
       <ChatTimeline items={state()?.timeline ?? []} working={awaitingOutput()} />
+      <Show when={visibleSwarms().length > 0}>
+        <div class="pf-chat-swarm-dock">
+          <SwarmRunCard runs={visibleSwarms()} />
+        </div>
+      </Show>
       <Show when={showNotice()}>
         <div class="pf-chat-switch-notice" role="status">
           <span class="pf-chat-switch-notice-text">
@@ -240,7 +265,7 @@ export function AgentChatView(props: {
           turnActive={state()?.turnActive ?? false}
           supportsSteer={provider() === "codex"}
           emberYielded={hasApprovals()}
-          onSend={(text, images) => sendAgentMessage(props.chatId, text, images)}
+          onSend={onSend}
           onSteer={(text) => steerAgentChat(props.chatId, text)}
           onInterrupt={() => void interruptAgentChat(props.chatId)}
           onProviderChange={onProviderChange}

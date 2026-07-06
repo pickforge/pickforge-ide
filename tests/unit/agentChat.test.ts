@@ -594,6 +594,37 @@ describe("agentChat history", () => {
     ]);
   });
 
+  it("hides persisted internal swarm synthesis prompts", async () => {
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "message",
+        seq: 1,
+        role: "user",
+        content: "Pickforge swarm finished for this chat.\n\nWorker lane results:",
+        createdAt: 1,
+      },
+      {
+        entryType: "message",
+        seq: 2,
+        role: "assistant",
+        content: "Final synthesis",
+        createdAt: 2,
+      },
+    ];
+
+    const { chatId } = await startChat(history);
+
+    expect(timeline(chatId)).toMatchObject([
+      {
+        type: "userMessage",
+        seq: 1,
+        text: "Pickforge swarm finished for this chat.\n\nWorker lane results:",
+        hidden: true,
+      },
+      { type: "assistantText", seq: 2, text: "Final synthesis" },
+    ]);
+  });
+
   it("skips blank persisted thinking items", async () => {
     const history: AgentTimelineEntry[] = [
       {
@@ -987,6 +1018,24 @@ describe("sendAgentMessage", () => {
     ]);
   });
 
+  it("sends hidden internal messages while marking the optimistic row hidden", async () => {
+    const { chatId } = await startChat([], "gpt-5.3-codex-spark");
+    const text = "Pickforge swarm finished for this chat.\n\nWorker lane results:";
+
+    await sendAgentMessage(chatId, text, [], { hidden: true });
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-1",
+      text,
+      effort: null,
+      model: "gpt-5.3-codex-spark",
+      images: [],
+    });
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text, optimistic: true, hidden: true },
+    ]);
+  });
+
   it("passes updated codex model per turn without restarting", async () => {
     const { chatId } = await startChat([], "gpt-old");
 
@@ -1249,6 +1298,22 @@ describe("agent chat auto-rename", () => {
     const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
 
     await sendAgentMessage(chatId, "fix the login bug");
+    startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
+
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+  });
+
+  it("does not rename from a hidden internal prompt", async () => {
+    const chatId = nextChatId();
+    workspace.chats.set(chatId, workspace.makeChat(chatId, { title: "New chat" }));
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+
+    await sendAgentMessage(chatId, "Pickforge swarm finished for this chat.", [], {
+      hidden: true,
+    });
+    startCall?.[1].onEvent.onmessage({ kind: "textFinal", itemId: null, text: "Done." });
     startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
 
     expect(workspace.setChatTitle).not.toHaveBeenCalled();

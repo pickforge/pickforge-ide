@@ -17,6 +17,7 @@ export interface McpPublishedState {
    *  adb. Defaults to "android" on the Rust side when omitted. */
   devicePlatform?: "android" | "ios";
   projectRoot?: string | null;
+  activeChatId?: string | null;
   contextDir?: string | null;
   runsDir?: string | null;
   chatsDir?: string | null;
@@ -30,6 +31,53 @@ export interface McpStartResult {
   contextDir: string;
   runsDir: string;
   chatsDir: string;
+  mcpConfigPath: string;
+  mcpCommand: string;
+}
+
+export interface SwarmRequest {
+  runId: string;
+  projectRoot: string;
+  goal: string;
+  count: number;
+  model: string | null;
+  providerPreference: "auto" | "mixed" | "claudeCode" | "codex";
+  mode: "scout" | "review";
+  source: string;
+  originChatId: string | null;
+  createdAt: number;
+}
+
+export interface SwarmLaneSnapshot {
+  id: string;
+  chatId: string | null;
+  provider: string;
+  model: string | null;
+  title: string;
+  status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled";
+  summary: string | null;
+  error: string | null;
+  updatedAt: number;
+}
+
+export interface SwarmRunSnapshot {
+  runId: string;
+  projectRoot: string;
+  goal: string;
+  requestedCount: number;
+  model: string | null;
+  providerPreference: string;
+  mode: "scout" | "review";
+  source: string;
+  originChatId: string | null;
+  status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled";
+  synthesisStatus: "idle" | "pending" | "sent" | "failed";
+  synthesisError: string | null;
+  synthesizedAt: number | null;
+  lanes: SwarmLaneSnapshot[];
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** Start the MCP socket server for `projectRoot` (idempotent). Resolves storage,
@@ -57,4 +105,19 @@ export function mcpPushLog(lines: string[]): Promise<void> {
  *  mixes a previous run's lines into the fresh one. */
 export function mcpRunStarted(): Promise<void> {
   return invoke("mcp_run_started");
+}
+
+export function mcpTakeSwarmRequests(): Promise<SwarmRequest[]> {
+  return invoke<SwarmRequest[]>("mcp_take_swarm_requests");
+}
+
+export function mcpUpdateSwarmRun(run: SwarmRunSnapshot): Promise<void> {
+  return invoke("mcp_update_swarm_run", { run });
+}
+
+export function mcpSwarmStatus(
+  projectRoot: string | null,
+  runId: string | null = null,
+): Promise<SwarmRunSnapshot | { runs: SwarmRunSnapshot[] }> {
+  return invoke("mcp_swarm_status", { projectRoot, runId });
 }

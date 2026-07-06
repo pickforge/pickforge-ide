@@ -28,6 +28,7 @@ function EmptyGlyph(): JSX.Element {
 function renderItem(item: AgentTimelineItem): JSX.Element {
   switch (item.type) {
     case "userMessage":
+      if (item.hidden) return <></>;
       return <ChatBubble role="user" text={item.text} images={item.images} />;
     case "assistantText":
       return <ChatBubble role="assistant" text={item.text} streaming={item.streaming} />;
@@ -111,7 +112,26 @@ export function ChatTimeline(props: {
       if (target - scroller.scrollTop < 1) return; // already there; no scroll event to expect
       programmatic = true;
       scroller.scrollTop = target;
+      requestAnimationFrame(() => {
+        if (!programmatic) return;
+        programmatic = false;
+        lastTop = scroller.scrollTop;
+      });
     });
+  };
+
+  const detach = () => {
+    stick = false;
+    programmatic = false;
+    if (pinFrame !== null) {
+      cancelAnimationFrame(pinFrame);
+      pinFrame = null;
+    }
+    lastTop = scroller.scrollTop;
+  };
+
+  const onWheel = (event: WheelEvent) => {
+    if (event.deltaY < 0) detach();
   };
 
   const onScroll = () => {
@@ -138,7 +158,7 @@ export function ChatTimeline(props: {
   });
 
   return (
-    <div class="pf-chat-timeline" ref={scroller} onScroll={onScroll}>
+    <div class="pf-chat-timeline" ref={scroller} onScroll={onScroll} onWheel={onWheel}>
       <div class="pf-chat-timeline-inner" ref={content}>
         <Show
           when={props.items.length > 0}

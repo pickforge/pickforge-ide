@@ -16,15 +16,25 @@ import {
   type AgentTimelineEntry,
 } from "../lib/agentChat";
 import { modeOverrides } from "../lib/agentModes";
+import { nativeChatModel } from "../lib/agentModels";
+import { isSwarmWorkerChat } from "../lib/chatLabels";
 import { deriveAgentChatTitle, isDefaultChatTitle } from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
+import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 
 export type AgentTimelineItem =
-  | { type: "userMessage"; seq: number; text: string; images?: string[]; optimistic?: boolean }
+  | {
+      type: "userMessage";
+      seq: number;
+      text: string;
+      images?: string[];
+      optimistic?: boolean;
+      hidden?: boolean;
+    }
   | { type: "assistantText"; seq: number; text: string; streaming: boolean }
   | { type: "thinking"; seq: number; text: string; streaming: boolean }
   | {
@@ -117,6 +127,10 @@ const ensureGenerations = new Map<string, number>();
 const autoRenameChecked = new Set<string>();
 const DELTA_FLUSH_INTERVAL_MS = 16;
 
+export interface SendAgentMessageOptions {
+  hidden?: boolean;
+}
+
 type AgentDeltaEvent =
   | Extract<AgentEvent, { kind: "textDelta" }>
   | Extract<AgentEvent, { kind: "thinkingDelta" }>;
@@ -145,7 +159,8 @@ const interruptedByUser = new Set<string>();
 // state anywhere, and a deleted chat must never have activity resurrected by a
 // late event.
 function activityEligible(chatId: string): boolean {
-  return findChat(chatId) !== undefined && !isChatArchived(chatId);
+  const chat = findChat(chatId);
+  return !!chat && !isChatArchived(chatId) && !isSwarmWorkerChat(chat);
 }
 
 export function agentChat(chatId: string): AgentChatState | undefined {
@@ -205,13 +220,18 @@ function appendOptimisticUserMessage(
   seq: number,
   text: string,
   images: string[] = [],
+  options: SendAgentMessageOptions = {},
 ) {
   const chat = chats[chatId];
   if (!chat) return;
-  const message: AgentTimelineItem =
-    images.length > 0
-      ? { type: "userMessage", seq, text, images: [...images], optimistic: true }
-      : { type: "userMessage", seq, text, optimistic: true };
+  const message: AgentTimelineItem = {
+    type: "userMessage",
+    seq,
+    text,
+    optimistic: true,
+    ...(images.length > 0 ? { images: [...images] } : {}),
+    ...(options.hidden ? { hidden: true } : {}),
+  };
   setChats(chatId, {
     turnActive: true,
     error: null,
@@ -720,7 +740,10 @@ function maybeAutoRenameAfterFirstTurn(chatId: string) {
 
   const chat = chats[chatId];
   if (!chat) return;
-  const userMessages = chat.timeline.filter((item) => item.type === "userMessage");
+  const userMessages = chat.timeline.filter(
+    (item): item is Extract<AgentTimelineItem, { type: "userMessage" }> =>
+      item.type === "userMessage" && !item.hidden,
+  );
   if (userMessages.length !== 1) return;
   const firstAssistant = chat.timeline.find((item) => item.type === "assistantText");
   const title = deriveAgentChatTitle(userMessages[0].text, firstAssistant?.text);
@@ -762,7 +785,12 @@ function stateFromHistory(
         chat = {
           ...withTimeline(chat, [
             ...chat.timeline,
-            { type: "userMessage", seq: entry.seq, text: entry.content },
+            {
+              type: "userMessage",
+              seq: entry.seq,
+              text: entry.content,
+              ...(isInternalSwarmSynthesisPrompt(entry.content) ? { hidden: true } : {}),
+            },
           ]),
           error: null,
         };
@@ -806,9 +834,10 @@ export async function ensureAgentChat(
   model: string | null,
   options: EnsureAgentChatOptions = {},
 ): Promise<void> {
+  const safeModel = nativeChatModel(provider, model);
   const created = !chats[chatId];
-  if (created) setChats(chatId, emptyState(provider, model));
-  setChats(chatId, { projectRoot, provider, model });
+  if (created) setChats(chatId, emptyState(provider, safeModel));
+  setChats(chatId, { projectRoot, provider, model: safeModel });
   // Seed the effort only on a fresh entry — a remount must not clobber a
   // per-chat effort tweak with the persisted per-provider default.
   if (created && options.effort !== undefined) {
@@ -835,7 +864,7 @@ export async function ensureAgentChat(
         const previous = chats[chatId];
         const history = await agentChatHistory(chatId);
         if (stale()) return;
-        const loadedModel = chats[chatId]?.model ?? model;
+        const loadedModel = chats[chatId]?.model ?? safeModel;
         const loaded = stateFromHistory(chatId, provider, loadedModel, history);
         setChats(chatId, {
           ...loaded,
@@ -846,7 +875,7 @@ export async function ensureAgentChat(
         });
       }
       if (stale() || chats[chatId].sessionId) return;
-      const startModel = chats[chatId]?.model ?? model;
+      const startModel = chats[chatId]?.model ?? safeModel;
       const startMode = chats[chatId].mode;
       const overrides = modeOverrides(provider, startMode);
       const sessionId = await agentChatStart({
@@ -892,12 +921,13 @@ export async function ensureAgentChat(
 export function setAgentChatModel(chatId: string, model: string | null) {
   const chat = chats[chatId];
   if (!chat) return;
-  setChats(chatId, { model });
+  const safeModel = nativeChatModel(chat.provider, model);
+  setChats(chatId, { model: safeModel });
   // A live claude session pins its model at start — push the change into the
   // running query (SDK setModel) or the picker silently lies until the next
   // session. Codex reads the model per turn, so the store update suffices.
   if (chat.provider === "claudeCode" && chat.sessionId) {
-    queueAgentChatSetModel(chatId, chat.sessionId, model);
+    queueAgentChatSetModel(chatId, chat.sessionId, safeModel);
   }
 }
 
@@ -973,7 +1003,7 @@ export async function switchAgentChatProvider(
 
   await disposeAgentChat(chatId);
   await setChatAgent(chatId, provider, "agent");
-  await ensureAgentChat(chatId, projectRoot, provider, model, {
+  await ensureAgentChat(chatId, projectRoot, provider, nativeChatModel(provider, model), {
     engine: loadAgentEngine(),
     effort,
     mode,
@@ -995,6 +1025,7 @@ export async function sendAgentMessage(
   chatId: string,
   text: string,
   images: string[] = [],
+  options: SendAgentMessageOptions = {},
 ): Promise<void> {
   const generation = ensureGenerations.get(chatId) ?? 0;
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
@@ -1006,7 +1037,7 @@ export async function sendAgentMessage(
   flushPendingDeltas(chatId);
   let optimisticSeq = takeSeq(chatId);
   const imageList = [...images];
-  appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList);
+  appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
   if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
     if (!sessionId) {
@@ -1023,7 +1054,7 @@ export async function sendAgentMessage(
       );
       if (!hasOptimisticMessage) {
         optimisticSeq = takeSeq(chatId);
-        appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList);
+        appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
       } else {
         setChats(chatId, { error: null });
       }

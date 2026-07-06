@@ -52,11 +52,6 @@
   gap: var(--pf-space-md);
   padding: var(--pf-space-lg);
 }
-.pf-chat-timeline-inner > * {
-  content-visibility: auto;
-  contain-intrinsic-size: auto calc(var(--pf-space-xxxl) * 2);
-}
-
 /* ---- Bubbles ---- */
 .pf-chat-bubble-row {
   display: flex;

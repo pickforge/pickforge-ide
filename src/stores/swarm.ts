@@ -9,10 +9,9 @@ import {
   type SwarmRunSnapshot,
 } from "../lib/mcp";
 import { loadAgentModels, modelOption } from "../lib/agentModels";
+import { swarmWorkerLabels } from "../lib/chatLabels";
 import { ensureAgentChat, agentChat, sendAgentMessage } from "./agentChat";
-import { addSelectedLane } from "./orchestra";
-import { setOrchestraOpen } from "./orchestraStage";
-import { addChat, ensureChatsLoaded, workspace } from "./workspace";
+import { addChat, ensureChatsLoaded, findChat, workspace } from "./workspace";
 import { loadAgentEngine } from "../lib/chatDefaults";
 
 const POLL_MS = 1200;
@@ -20,6 +19,7 @@ const MAX_GOAL_CHARS = 8000;
 
 const [runs, setRuns] = createSignal<SwarmRunSnapshot[]>([]);
 const dispatching = new Set<string>();
+const synthesizing = new Set<string>();
 let bridgeStarted = false;
 let bridgeDispatchChain: Promise<void> = Promise.resolve();
 let localRunCounter = 0;
@@ -264,7 +264,11 @@ function runFromRequest(req: SwarmRequest): SwarmRunSnapshot {
     providerPreference: req.providerPreference,
     mode: req.mode,
     source: req.source,
+    originChatId: req.originChatId ?? null,
     status: "queued",
+    synthesisStatus: "idle",
+    synthesisError: null,
+    synthesizedAt: null,
     lanes: [],
     error: null,
     createdAt: req.createdAt,
@@ -293,7 +297,6 @@ async function dispatchSwarm(req: SwarmRequest) {
     }
     rememberRun({ ...runFromRequest(req), status: "starting" });
     await ensureChatsLoaded(req.projectRoot);
-    if (workspace.activeRoot === req.projectRoot) setOrchestraOpen(true);
 
     if (req.model && isTerminalOnlyModelRequest(req.model)) {
       throw new Error(terminalOnlyModelError(req.model));
@@ -321,9 +324,13 @@ async function dispatchSwarm(req: SwarmRequest) {
       updateLane(req.runId, lane.id, { status: "starting" });
       const chatId = await addChat(lane.title, lane.provider, req.projectRoot, "agent", {
         activate: false,
+        labelsJson: swarmWorkerLabels({
+          swarmRunId: req.runId,
+          swarmLaneId: lane.id,
+          originChatId: req.originChatId ?? null,
+        }),
       });
       if (!chatId) throw new Error("Could not create swarm chat");
-      addSelectedLane(req.projectRoot, chatId);
       updateLane(req.runId, lane.id, { chatId });
       await ensureAgentChat(
         chatId,
@@ -368,7 +375,9 @@ async function hydrateProjectRuns(projectRoot: string) {
 export async function startSwarm(
   projectRoot: string,
   goal: string,
-  opts: Partial<Pick<SwarmRequest, "count" | "model" | "providerPreference" | "mode">> = {},
+  opts: Partial<
+    Pick<SwarmRequest, "count" | "model" | "providerPreference" | "mode" | "originChatId">
+  > = {},
 ): Promise<string> {
   const createdAt = now();
   localRunCounter += 1;
@@ -382,6 +391,7 @@ export async function startSwarm(
     providerPreference: opts.providerPreference ?? "mixed",
     mode: opts.mode ?? "scout",
     source: "pickforge",
+    originChatId: opts.originChatId ?? null,
     createdAt,
   });
   return runId;
@@ -397,10 +407,98 @@ async function pollSwarmRequests() {
   for (const request of requests) queueBridgeDispatch(request);
 }
 
+function isTerminalLane(lane: SwarmLaneSnapshot): boolean {
+  return lane.status === "completed" || lane.status === "failed" || lane.status === "cancelled";
+}
+
+function shouldSynthesize(run: SwarmRunSnapshot): boolean {
+  return (
+    !!run.originChatId &&
+    run.lanes.length > 0 &&
+    run.status !== "cancelled" &&
+    run.lanes.every(isTerminalLane) &&
+    run.synthesisStatus !== "sent" &&
+    run.synthesisStatus !== "failed"
+  );
+}
+
+function synthesisPrompt(run: SwarmRunSnapshot): string {
+  const lanes = run.lanes.map((lane, index) => {
+    const result = lane.summary ?? lane.error ?? "No result captured.";
+    return [
+      `${index + 1}. ${lane.title}`,
+      `   Status: ${lane.status}`,
+      `   Provider/model: ${providerLabel(lane.provider as AgentProvider)} / ${lane.model ?? "default"}`,
+      `   Result: ${clipped(result, 2200)}`,
+    ].join("\n");
+  });
+  return [
+    "Pickforge swarm finished for this chat.",
+    "",
+    "Original request:",
+    run.goal,
+    "",
+    "Worker lane results:",
+    ...lanes,
+    "",
+    "Synthesize these worker results into the answer I need now.",
+    "Use the evidence and file paths from the lanes, call out disagreement or uncertainty, and give the concrete next action.",
+    "Do not start another swarm or use provider-native subagents for this synthesis.",
+  ].join("\n");
+}
+
+async function dispatchSynthesis(run: SwarmRunSnapshot) {
+  if (!shouldSynthesize(run) || synthesizing.has(run.runId)) return;
+  const originChatId = run.originChatId;
+  if (!originChatId) return;
+  const origin = findChat(originChatId);
+  if (!origin || origin.kind !== "agent") {
+    updateRun(run.runId, {
+      synthesisStatus: "failed",
+      synthesisError: "Origin chat is not an active structured agent chat.",
+    });
+    return;
+  }
+  const current = agentChat(originChatId);
+  if (current?.turnActive) {
+    if (run.synthesisStatus !== "pending") {
+      updateRun(run.runId, { synthesisStatus: "pending", synthesisError: null });
+    }
+    return;
+  }
+  synthesizing.add(run.runId);
+  try {
+    if (run.synthesisStatus !== "pending") {
+      updateRun(run.runId, { synthesisStatus: "pending", synthesisError: null });
+    }
+    const provider = origin.agentId === "codex" ? "codex" : "claudeCode";
+    if (!agentChat(originChatId)) {
+      await ensureAgentChat(originChatId, origin.projectRoot, provider, null, {
+        engine: loadAgentEngine(),
+      });
+    }
+    if (agentChat(originChatId)?.turnActive) return;
+    await sendAgentMessage(originChatId, synthesisPrompt(run));
+    updateRun(run.runId, {
+      synthesisStatus: "sent",
+      synthesisError: null,
+      synthesizedAt: now(),
+    });
+  } catch (error) {
+    updateRun(run.runId, {
+      synthesisStatus: "failed",
+      synthesisError: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    synthesizing.delete(run.runId);
+  }
+}
+
 function trackCompletions() {
   createEffect(() => {
     for (const run of runs()) {
       if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+        void dispatchSynthesis(run);
         continue;
       }
       for (const lane of run.lanes) {
@@ -416,6 +514,7 @@ function trackCompletions() {
           updateLane(run.runId, lane.id, { status: "completed", summary });
         }
       }
+      void dispatchSynthesis(run);
     }
   });
 }

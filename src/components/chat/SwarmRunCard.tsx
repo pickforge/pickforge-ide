@@ -30,6 +30,13 @@ function laneDetail(lane: SwarmLaneSnapshot): string {
   return lane.status;
 }
 
+function synthesisLabel(run: SwarmRunSnapshot): string | null {
+  if (run.synthesisStatus === "pending") return "synthesis pending";
+  if (run.synthesisStatus === "sent") return "synthesis sent";
+  if (run.synthesisStatus === "failed") return "synthesis failed";
+  return null;
+}
+
 function openLane(chatId: string | null) {
   if (!chatId) return;
   setOrchestraOpen(false);
@@ -58,6 +65,9 @@ export function SwarmRunCard(props: { runs: SwarmRunSnapshot[] }): JSX.Element {
           <div class="pf-chat-swarm-goal">{run.goal}</div>
           <div class="pf-chat-swarm-meta">
             {run.requestedCount} lanes / {run.mode} / {run.model || "selected models"}
+            <Show when={synthesisLabel(run)}>
+              {(label) => <> / {label()}</>}
+            </Show>
           </div>
           <div class="pf-chat-swarm-lanes">
             <For each={run.lanes}>
@@ -92,6 +102,9 @@ export function SwarmRunCard(props: { runs: SwarmRunSnapshot[] }): JSX.Element {
             </For>
           </div>
           <Show when={run.error}>
+            {(error) => <div class="pf-chat-swarm-error">{error()}</div>}
+          </Show>
+          <Show when={run.synthesisError}>
             {(error) => <div class="pf-chat-swarm-error">{error()}</div>}
           </Show>
         </section>

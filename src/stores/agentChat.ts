@@ -17,6 +17,7 @@ import {
 } from "../lib/agentChat";
 import { modeOverrides } from "../lib/agentModes";
 import { nativeChatModel } from "../lib/agentModels";
+import { isSwarmWorkerChat } from "../lib/chatLabels";
 import { deriveAgentChatTitle, isDefaultChatTitle } from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
@@ -146,7 +147,8 @@ const interruptedByUser = new Set<string>();
 // state anywhere, and a deleted chat must never have activity resurrected by a
 // late event.
 function activityEligible(chatId: string): boolean {
-  return findChat(chatId) !== undefined && !isChatArchived(chatId);
+  const chat = findChat(chatId);
+  return !!chat && !isChatArchived(chatId) && !isSwarmWorkerChat(chat);
 }
 
 export function agentChat(chatId: string): AgentChatState | undefined {

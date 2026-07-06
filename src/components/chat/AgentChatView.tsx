@@ -125,7 +125,7 @@ export function AgentChatView(props: {
   const hasApprovals = () => approvals().length > 0;
   const visibleSwarms = createMemo(() =>
     swarmRuns()
-      .filter((run) => run.projectRoot === props.projectRoot)
+      .filter((run) => run.projectRoot === props.projectRoot && run.originChatId === props.chatId)
       .slice(0, 3),
   );
 
@@ -202,7 +202,7 @@ export function AgentChatView(props: {
   const onSend = async (text: string, images?: string[]) => {
     const swarm = parseSwarmCommand(text);
     if (swarm) {
-      await startSwarm(props.projectRoot, swarm.goal, swarm);
+      await startSwarm(props.projectRoot, swarm.goal, { ...swarm, originChatId: props.chatId });
       return;
     }
     await sendAgentMessage(props.chatId, text, images);

@@ -17,6 +17,7 @@ export interface McpPublishedState {
    *  adb. Defaults to "android" on the Rust side when omitted. */
   devicePlatform?: "android" | "ios";
   projectRoot?: string | null;
+  activeChatId?: string | null;
   contextDir?: string | null;
   runsDir?: string | null;
   chatsDir?: string | null;
@@ -43,6 +44,7 @@ export interface SwarmRequest {
   providerPreference: "auto" | "mixed" | "claudeCode" | "codex";
   mode: "scout" | "review";
   source: string;
+  originChatId: string | null;
   createdAt: number;
 }
 
@@ -67,7 +69,11 @@ export interface SwarmRunSnapshot {
   providerPreference: string;
   mode: "scout" | "review";
   source: string;
+  originChatId: string | null;
   status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled";
+  synthesisStatus: "idle" | "pending" | "sent" | "failed";
+  synthesisError: string | null;
+  synthesizedAt: number | null;
   lanes: SwarmLaneSnapshot[];
   error: string | null;
   createdAt: number;

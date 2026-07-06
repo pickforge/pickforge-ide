@@ -70,6 +70,8 @@ pub struct PublishedState {
     #[serde(default)]
     pub project_root: Option<String>,
     #[serde(default)]
+    pub active_chat_id: Option<String>,
+    #[serde(default)]
     pub context_dir: Option<String>,
     #[serde(default)]
     pub runs_dir: Option<String>,
@@ -93,6 +95,7 @@ impl Default for PublishedState {
             device_serial: None,
             device_platform: default_device_platform(),
             project_root: None,
+            active_chat_id: None,
             context_dir: None,
             runs_dir: None,
             chats_dir: None,
@@ -116,6 +119,8 @@ pub struct SwarmRequest {
     pub provider_preference: String,
     pub mode: String,
     pub source: String,
+    #[serde(default)]
+    pub origin_chat_id: Option<String>,
     pub created_at: i64,
 }
 
@@ -144,11 +149,23 @@ pub struct SwarmRunSnapshot {
     pub provider_preference: String,
     pub mode: String,
     pub source: String,
+    #[serde(default)]
+    pub origin_chat_id: Option<String>,
     pub status: String,
+    #[serde(default = "default_swarm_synthesis_status")]
+    pub synthesis_status: String,
+    #[serde(default)]
+    pub synthesis_error: Option<String>,
+    #[serde(default)]
+    pub synthesized_at: Option<i64>,
     pub lanes: Vec<SwarmLaneSnapshot>,
     pub error: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_swarm_synthesis_status() -> String {
+    "idle".to_string()
 }
 
 /// One running server instance, owned by exactly one accept task. The
@@ -267,7 +284,12 @@ impl McpState {
         buf.iter().skip(buf.len() - n).cloned().collect()
     }
 
-    fn enqueue_swarm_request(&self, project_root: String, args: &Value) -> Result<Value, String> {
+    fn enqueue_swarm_request(
+        &self,
+        project_root: String,
+        origin_chat_id: Option<String>,
+        args: &Value,
+    ) -> Result<Value, String> {
         let goal = string_arg(args, "goal")
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| "missing swarm goal".to_string())?;
@@ -296,6 +318,7 @@ impl McpState {
             provider_preference,
             mode,
             source: "mcp".to_string(),
+            origin_chat_id,
             created_at,
         };
         let run = SwarmRunSnapshot {
@@ -307,7 +330,11 @@ impl McpState {
             provider_preference: request.provider_preference.clone(),
             mode: request.mode.clone(),
             source: request.source.clone(),
+            origin_chat_id: request.origin_chat_id.clone(),
             status: "queued".to_string(),
+            synthesis_status: "idle".to_string(),
+            synthesis_error: None,
+            synthesized_at: None,
             lanes: Vec::new(),
             error: None,
             created_at,
@@ -591,7 +618,7 @@ impl LiveState for SnapshotLiveState<'_> {
             .clone()
             .filter(|root| !root.trim().is_empty())
             .ok_or_else(|| "no active Pickforge project".to_string())?;
-        self.state.enqueue_swarm_request(project_root, args)
+        self.state.enqueue_swarm_request(project_root, self.snapshot.active_chat_id.clone(), args)
     }
 
     fn swarm_status(&self, args: &Value) -> Result<Value, String> {
@@ -1274,8 +1301,12 @@ mod tests {
     fn cancelling_a_queued_swarm_removes_the_pending_request() {
         let st = McpState::new();
         let run_id = accepted_run_id(
-            st.enqueue_swarm_request("/proj/a".into(), &json!({ "goal": "review the app" }))
-                .unwrap(),
+            st.enqueue_swarm_request(
+                "/proj/a".into(),
+                Some("chat-a".into()),
+                &json!({ "goal": "review the app" }),
+            )
+            .unwrap(),
         );
 
         let cancelled = st.cancel_swarm_run(&run_id, Some("/proj/a")).unwrap();
@@ -1284,6 +1315,7 @@ mod tests {
 
         let status = st.swarm_status_value(Some("/proj/a"), Some(&run_id)).unwrap();
         assert_eq!(status["status"], json!("cancelled"));
+        assert_eq!(status["originChatId"], json!("chat-a"));
 
         let mut stale_update: SwarmRunSnapshot = serde_json::from_value(status).unwrap();
         stale_update.status = "running".to_string();
@@ -1293,15 +1325,43 @@ mod tests {
     }
 
     #[test]
+    fn mcp_swarm_request_keeps_the_active_chat_origin() {
+        let st = McpState::new();
+        st.set_published(PublishedState {
+            project_root: Some("/proj/a".into()),
+            active_chat_id: Some("chat-origin".into()),
+            ..Default::default()
+        });
+        let live = SnapshotLiveState::for_connection(&st, &Some("/proj/a".to_string()));
+
+        let run_id = accepted_run_id(live.request_swarm(&json!({ "goal": "map it" })).unwrap());
+        let requests = st.take_swarm_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].origin_chat_id.as_deref(), Some("chat-origin"));
+
+        let status = st.swarm_status_value(Some("/proj/a"), Some(&run_id)).unwrap();
+        assert_eq!(status["originChatId"], json!("chat-origin"));
+        assert_eq!(status["synthesisStatus"], json!("idle"));
+    }
+
+    #[test]
     fn stale_connection_swarm_tools_stay_project_scoped() {
         let st = McpState::new();
         let run_a = accepted_run_id(
-            st.enqueue_swarm_request("/proj/a".into(), &json!({ "goal": "review A" }))
-                .unwrap(),
+            st.enqueue_swarm_request(
+                "/proj/a".into(),
+                Some("chat-a".into()),
+                &json!({ "goal": "review A" }),
+            )
+            .unwrap(),
         );
         let run_b = accepted_run_id(
-            st.enqueue_swarm_request("/proj/b".into(), &json!({ "goal": "review B" }))
-                .unwrap(),
+            st.enqueue_swarm_request(
+                "/proj/b".into(),
+                Some("chat-b".into()),
+                &json!({ "goal": "review B" }),
+            )
+            .unwrap(),
         );
 
         st.set_published(PublishedState {

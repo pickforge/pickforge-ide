@@ -5,6 +5,7 @@
 import { createSignal } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import * as db from "../lib/db";
+import { isPrimaryChat } from "../lib/chatLabels";
 import { clearChatKillMark, markChatForKill, ptyDestroyChatSession } from "../lib/pty";
 import { isChatArchived } from "./chatArchive";
 import { setChatTmux } from "./chatSessions";
@@ -12,7 +13,7 @@ import { setChatTmux } from "./chatSessions";
 /** First non-archived chat id in a list, or null. The projects tree hides
  *  archived chats, so the active chat must never be one of them. */
 function firstVisibleChat(chats: db.Chat[]): string | null {
-  return chats.find((c) => !isChatArchived(c.chatId))?.chatId ?? null;
+  return chats.find((c) => !isChatArchived(c.chatId) && isPrimaryChat(c))?.chatId ?? null;
 }
 
 interface WorkspaceState {
@@ -284,7 +285,7 @@ export async function addChat(
   agentId: string,
   root = state.activeRoot,
   kind = "terminal",
-  options: { activate?: boolean } = {},
+  options: { activate?: boolean; labelsJson?: string | null } = {},
 ): Promise<string | undefined> {
   if (!root) return undefined;
   const activate = options.activate !== false;
@@ -299,7 +300,7 @@ export async function addChat(
     agentId,
     skillId: null,
     sessionId: null,
-    labelsJson: null,
+    labelsJson: options.labelsJson ?? null,
     status: null,
     taskBriefText: null,
     createdAt: now,

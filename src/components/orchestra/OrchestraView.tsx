@@ -26,6 +26,7 @@ import {
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
 import { AGENTS, loadAgentModels } from "../../lib/agentModels";
+import { isPrimaryChat } from "../../lib/chatLabels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
 import { loadAskChatTitle, loadLastAgentProvider } from "../../lib/chatDefaults";
 import { PROMPT_TEMPLATES } from "../../lib/promptTemplates";
@@ -252,7 +253,11 @@ export function OrchestraView(props: {
   const projectChats = () => chatsFor(props.projectRoot);
   const chatsLoaded = () => workspace.chatsByRoot[props.projectRoot] !== undefined;
   const liveProjectChatIds = createMemo(() =>
-    new Set(projectChats().filter((chat) => !isChatArchived(chat.chatId)).map((chat) => chat.chatId)),
+    new Set(
+      projectChats()
+        .filter((chat) => !isChatArchived(chat.chatId) && isPrimaryChat(chat))
+        .map((chat) => chat.chatId),
+    ),
   );
   const liveTree = createMemo(() => pruneLaneTree(rawTree(), liveProjectChatIds()));
   const liveLanes = createMemo(() => collectLaneIds(liveTree()));
@@ -484,6 +489,7 @@ export function OrchestraView(props: {
     projectChats().filter(
       (chat) =>
         chat.kind === "agent" &&
+        isPrimaryChat(chat) &&
         !isChatArchived(chat.chatId) &&
         !liveLanes().includes(chat.chatId),
     );

@@ -9,6 +9,7 @@ import { activeTarget } from "./runTargets";
 import { selectedDevice } from "./runDevice";
 import { deviceList } from "./deviceList";
 import { runConsole } from "./runConsole";
+import { workspace } from "./workspace";
 import { supportTier } from "../lib/runTargets";
 
 /** The resolved endpoint + storage dirs for the project the server is bound to. */
@@ -95,6 +96,7 @@ export async function publishSnapshot(): Promise<void> {
   const b = binding();
   if (!b) return;
   const t = mcpTarget();
+  const activeChatId = workspace.activeRoot === b.projectRoot ? workspace.activeChatId : null;
   await mcp
     .mcpPublishState({
       targetId: t?.id ?? "",
@@ -105,6 +107,7 @@ export async function publishSnapshot(): Promise<void> {
       deviceSerial: selectedDevice(b.projectRoot) || null,
       devicePlatform: activeDevicePlatform(b.projectRoot),
       projectRoot: b.projectRoot,
+      activeChatId,
       contextDir: b.contextDir,
       runsDir: b.runsDir,
       chatsDir: b.chatsDir,
@@ -123,6 +126,8 @@ createEffect(() => {
   runConsole.status();
   runConsole.target();
   selection();
+  workspace.activeRoot;
+  workspace.activeChatId;
   binding();
   void publishSnapshot();
 });

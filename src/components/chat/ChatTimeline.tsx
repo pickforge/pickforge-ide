@@ -134,6 +134,9 @@ export function ChatTimeline(props: {
   const [heightVersion, setHeightVersion] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
+  // True while App.tsx holds `body.pf-window-resizing` — row widths change every
+  // tick, so we defer height commits (see flushQueuedRowHeights) until settle.
+  const [windowResizing, setWindowResizing] = createSignal(false);
   const [metrics, setMetrics] = createSignal({
     padding: DEFAULT_VIRTUAL_PADDING_PX,
     gap: DEFAULT_VIRTUAL_GAP_PX,
@@ -146,8 +149,11 @@ export function ChatTimeline(props: {
     return buildTimelineLayout(rows(), metrics(), rowHeights);
   });
 
-  const atBottom = () =>
-    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < THRESHOLD;
+  // Reads only cached signals (no scrollHeight/clientHeight) so the scroll
+  // handler never forces a layout flush — that flush per scroll event is the
+  // main scroll-jank cost on WebKitGTK (macOS WKWebView absorbs it).
+  const atBottom = (top: number) =>
+    layout().totalHeight - top - viewportHeight() < THRESHOLD;
 
   const commitScrollTop = (top: number) => {
     pendingScrollTop = top;
@@ -175,7 +181,7 @@ export function ChatTimeline(props: {
     pinFrame = requestAnimationFrame(() => {
       pinFrame = null;
       if (!force && !stick) return;
-      const target = Math.max(0, layout().totalHeight - scroller.clientHeight);
+      const target = Math.max(0, layout().totalHeight - viewportHeight());
       if (Math.abs(target - scroller.scrollTop) < 1) return;
       applyProgrammaticScroll(target);
     });
@@ -229,6 +235,14 @@ export function ChatTimeline(props: {
     if (queuedRowHeights.size === 0) return;
     const updates = Array.from(queuedRowHeights);
     queuedRowHeights.clear();
+    // Each commit recomputes layout O(n) over all rows and re-applies every
+    // visible row's transform. While the user is scrolling or the window is
+    // being resized, defer those commits — WebKitGTK pays them on the main
+    // thread (macOS WKWebView hides it). They flush on scroll-idle / resize-settle.
+    if (userScrolling || windowResizing()) {
+      for (const [key, height] of updates) deferredRowHeights.set(key, height);
+      return;
+    }
     applyRowHeights(updates, true);
   };
 
@@ -259,7 +273,7 @@ export function ChatTimeline(props: {
     programmaticTarget = null;
     markUserScrolling();
     if (top < lastTop - 1) stick = false; // user scrolled up → detach
-    else if (atBottom()) stick = true; // user returned to the bottom → follow again
+    else if (atBottom(top)) stick = true; // user returned to the bottom → follow again
     lastTop = top;
   };
 
@@ -314,14 +328,48 @@ export function ChatTimeline(props: {
     setViewportHeight(scroller.clientHeight);
     commitScrollTop(scroller.scrollTop);
     pin(true);
-    const observer = new ResizeObserver(() => {
-      readMetrics();
-      setViewportHeight(scroller.clientHeight);
-      if (stick) pin();
+
+    // The virtual padding/gap are token-based CSS vars that only change when the
+    // theme flips — not on resize. Re-read on `data-theme` change instead of on
+    // every resize tick; getComputedStyle forces a style-recalc on WebKitGTK.
+    const themeObserver = new MutationObserver(() => readMetrics());
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
     });
-    observer.observe(scroller);
+
+    // App.tsx toggles `body.pf-window-resizing` during a window resize. While
+    // it's active every visible row's ResizeObserver fires each tick (row width
+    // changes with window width), so defer those commits and flush once on settle
+    // rather than recomputing layout + re-applying transforms every tick.
+    const bodyObserver = new MutationObserver(() => {
+      const resizing = document.body.classList.contains("pf-window-resizing");
+      setWindowResizing(resizing);
+      if (!resizing) flushDeferredRowHeights();
+    });
+    bodyObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    setWindowResizing(document.body.classList.contains("pf-window-resizing"));
+
+    // Coalesce the scroller's own resize ticks into one rAF: a single
+    // clientHeight read + pin per frame, no getComputedStyle on the hot path.
+    let resizeFrame: number | null = null;
+    const scrollerObserver = new ResizeObserver(() => {
+      if (resizeFrame !== null) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        setViewportHeight(scroller.clientHeight);
+        if (stick) pin();
+      });
+    });
+    scrollerObserver.observe(scroller);
     onCleanup(() => {
-      observer.disconnect();
+      scrollerObserver.disconnect();
+      themeObserver.disconnect();
+      bodyObserver.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       if (pinFrame !== null) cancelAnimationFrame(pinFrame);
       if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
       if (measureFrame !== null) cancelAnimationFrame(measureFrame);

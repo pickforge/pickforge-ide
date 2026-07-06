@@ -57,7 +57,7 @@
   top: 0;
   left: var(--pf-chat-virtual-padding);
   right: var(--pf-chat-virtual-padding);
-  contain: layout style;
+  contain: layout style paint;
 }
 
 .pf-chat-timeline-empty {

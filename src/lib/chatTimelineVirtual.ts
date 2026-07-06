@@ -19,7 +19,7 @@ export type TimelineVirtualLayout = {
 export const DEFAULT_VIRTUAL_PADDING_PX = 16;
 export const DEFAULT_VIRTUAL_GAP_PX = 12;
 export const MIN_ROW_HEIGHT_PX = 48;
-export const OVERSCAN_PX = 1_200;
+export const OVERSCAN_PX = 1_800;
 
 function estimateTextHeight(text: string, base: number): number {
   const lines = Math.ceil(text.length / 82);

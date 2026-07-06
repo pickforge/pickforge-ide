@@ -3,7 +3,10 @@
 //! GUI apps launched outside a terminal inherit a minimal desktop-session
 //! environment that omits paths added by `~/.bashrc` / `~/.zshrc` / `~/.profile`
 //! (bun, npm-global, cargo, pipx, volta, asdf, mise, …). We spawn the login
-//! shell once, read its `env`, and merge it over the inherited environment.
+//! shell, read its `env`, and merge it over the inherited environment. The
+//! result is cached once resolution succeeds; a transient miss (e.g. a
+//! launch-time timeout) is not cached, so the next call retries rather than
+//! stranding the app on the minimal PATH.
 //!
 //! Ported from `user_shell_environment.dart`.
 
@@ -12,36 +15,83 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 static CACHE: OnceLock<HashMap<String, String>> = OnceLock::new();
+/// Serializes login-shell resolution and carries the running attempt count, so
+/// only one shell spawns at a time and a failed attempt can never cache the
+/// fallback while another thread is still capturing an authoritative env.
+static RESOLVE_LOCK: Mutex<u32> = Mutex::new(0);
 
-/// The resolved, enriched environment. Computed once and cached for the process
-/// lifetime (matches the Dart static singleton).
+/// How many times we re-spawn the login shell before giving up and caching the
+/// un-enriched inherited environment. A packaged GUI app's first resolution can
+/// land during launch-time contention (Gatekeeper scanning a freshly downloaded
+/// bundle, a shell rc doing its periodic update `git fetch`) and overrun the
+/// budget. Caching that miss permanently would pin PATH to the minimal desktop
+/// set — leaving every `claude` / `codex` spawn broken — for the whole session;
+/// retrying on the next call lets a transient miss self-heal.
+const MAX_RESOLVE_ATTEMPTS: u32 = 5;
+
+/// The resolved, enriched login-shell environment (PATH and friends). Cached for
+/// the process lifetime once resolution succeeds; a failed attempt is *not*
+/// cached, so a later call re-attempts instead of inheriting a broken PATH.
 pub fn user_shell_environment() -> &'static HashMap<String, String> {
-    CACHE.get_or_init(|| resolve(std::env::vars().collect()))
+    if let Some(env) = CACHE.get() {
+        return env;
+    }
+    // Serialize resolution: one shell spawn at a time, and no failed attempt can
+    // cache the fallback while another thread is mid-capture of a good env.
+    let mut attempts = RESOLVE_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    // Another thread may have resolved while we waited for the lock.
+    if let Some(env) = CACHE.get() {
+        return env;
+    }
+    let (env, resolved) = resolve(std::env::vars().collect());
+    *attempts += 1;
+    if resolved || *attempts >= MAX_RESOLVE_ATTEMPTS {
+        // Commit permanently. If another thread won the race, keep its value.
+        let _ = CACHE.set(env);
+        return CACHE.get().expect("cache populated above");
+    }
+    // Transient miss with retries left: hand this caller the inherited env
+    // without poisoning the cache so the next call re-attempts resolution.
+    // Bounded by MAX_RESOLVE_ATTEMPTS, so this leaks at most a few small maps.
+    Box::leak(Box::new(env))
 }
 
-fn resolve(base: HashMap<String, String>) -> HashMap<String, String> {
+/// Resolve the environment and report whether the result is *authoritative*.
+/// `false` means the login-shell capture was skipped or failed (no `SHELL`, or a
+/// spawn/timeout miss) and the caller should retry — not that enrichment is
+/// impossible. Windows and the explicit inherited-only flag are authoritative.
+fn resolve(base: HashMap<String, String>) -> (HashMap<String, String>, bool) {
     if cfg!(windows) || base.get("PICKFORGE_INHERITED_ENV_ONLY").map(String::as_str) == Some("1") {
-        return base;
+        return (base, true);
     }
 
     let shell = match base.get("SHELL") {
         Some(s) if !s.is_empty() && Path::new(s).exists() => s.clone(),
-        _ => return base,
+        _ => return (base, false),
     };
 
-    match run_shell_env(&shell, Duration::from_secs(3)) {
+    match run_shell_env(&shell, Duration::from_secs(6)) {
         Some(output) => {
+            let parsed = parse_env(&output);
+            if parsed.is_empty() {
+                // Captured stdout carried no assignments (the shell exited before
+                // it ran `env`, or emitted only noise): not authoritative — the
+                // caller should retry rather than pin the inherited PATH.
+                return (base, false);
+            }
             let mut merged = base;
-            for (key, value) in parse_env(&output) {
+            for (key, value) in parsed {
                 merged.insert(key, value);
             }
-            merged
+            (merged, true)
         }
-        None => base,
+        None => (base, false),
     }
 }
 
@@ -67,16 +117,16 @@ fn run_shell_env(shell: &str, timeout: Duration) -> Option<String> {
     // Bound the stdout read by the budget.
     let output = rx.recv_timeout(timeout).ok();
 
-    // Never block on child exit: if output arrived the shell should exit
-    // promptly (small grace); otherwise kill it now. Either way it ends reaped.
-    let success = match &output {
-        Some(_) => wait_success_within(&mut child, Duration::from_millis(500)),
+    // Reap the child so it never orphans. If output arrived (stdout hit EOF, so
+    // the shell finished writing) give it a brief grace to exit, then kill;
+    // if we timed out waiting for output, kill immediately.
+    match &output {
+        Some(_) => reap_within(&mut child, Duration::from_millis(500)),
         None => {
             let _ = child.kill();
             let _ = child.wait();
-            false
         }
-    };
+    }
 
     // Join the reader only once it has finished (output present). A reader still
     // blocked on a descendant holding stdout open is detached, not joined.
@@ -86,27 +136,29 @@ fn run_shell_env(shell: &str, timeout: Duration) -> Option<String> {
         drop(reader);
     }
 
-    if success {
-        output
-    } else {
-        None
-    }
+    // A captured env is authoritative even if the interactive shell exited
+    // non-zero (a benign rc hook, a compaudit warning) or reaped slowly under
+    // load: we only ever read complete stdout on EOF, and `parse_env` ignores
+    // anything that isn't a `KEY=value` line. Gating on exit status is what
+    // previously discarded a perfectly good PATH.
+    output
 }
 
-/// Wait up to `budget` for the child to exit; returns whether it exited cleanly.
-/// Kills + reaps it if it overruns so we never block.
-fn wait_success_within(child: &mut std::process::Child, budget: Duration) -> bool {
+/// Wait up to `budget` for the child to exit on its own; kill + reap it if it
+/// overruns so we never block or orphan. The exit status is irrelevant here —
+/// the caller already holds the captured output.
+fn reap_within(child: &mut std::process::Child, budget: Duration) {
     let start = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(_)) => return,
             Ok(None) if start.elapsed() < budget => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return false;
+                return;
             }
         }
     }
@@ -190,5 +242,56 @@ mod tests {
         // On a real machine the merged env always carries PATH.
         let env = user_shell_environment();
         assert!(env.contains_key("PATH") || env.contains_key("Path"));
+    }
+
+    #[test]
+    fn inherited_only_flag_is_authoritative_and_skips_the_shell() {
+        // The explicit opt-out returns the inherited env verbatim and is final,
+        // so callers never retry it.
+        let mut base = HashMap::new();
+        base.insert("PICKFORGE_INHERITED_ENV_ONLY".to_string(), "1".to_string());
+        base.insert("PATH".to_string(), "/only/this".to_string());
+        let (env, resolved) = resolve(base);
+        assert!(resolved);
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/only/this"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_shell_is_a_retryable_miss_not_authoritative() {
+        // No usable SHELL: resolution can't enrich yet, so it reports the miss
+        // as non-authoritative and hands back the inherited env for retry.
+        let mut base = HashMap::new();
+        base.insert("PATH".to_string(), "/usr/bin".to_string());
+        let (env, resolved) = resolve(base);
+        assert!(!resolved);
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_shell_output_is_a_retryable_miss_not_authoritative() {
+        use std::os::unix::fs::PermissionsExt;
+        // A shell that exits before emitting any env (here: ignores its args and
+        // exits 0) must not be cached as authoritative — otherwise a launch-time
+        // glitch would pin the minimal inherited PATH for the whole session.
+        let dir = std::env::temp_dir().join(format!(
+            "pf-shellenv-empty-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("silent-shell");
+        std::fs::write(&fake, b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut base = HashMap::new();
+        base.insert("SHELL".to_string(), fake.to_string_lossy().into_owned());
+        base.insert("PATH".to_string(), "/usr/bin".to_string());
+        let (env, resolved) = resolve(base);
+        assert!(!resolved);
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

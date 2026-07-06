@@ -22,12 +22,20 @@ migrated away. See `plans/rust-migration/`.)
 - Frontend/build is bun + Vite; the native side is a Cargo workspace.
 - Standard checks:
   - `bun run build` — `tsc --noEmit && vite build`
+  - `bun run test:unit` — deterministic frontend unit tests
+  - `bun run test:coverage` — frontend coverage ratchet
+  - `bun run e2e` — device-free run-command smoke unless a serial is explicitly set
   - `cargo check` — whole workspace
-  - `cargo test -p pickforge-core` — core unit/integration tests
+  - `cargo test --workspace --locked --all-targets` — Rust workspace tests
+  - `cargo llvm-cov --workspace --locked --all-targets` — Rust coverage ratchet
   - `bun run vrt` — Playwright visual regression tests
 - Develop: `bun install`, then `bun run tauri dev` (builds the Rust shell + serves
   the Vite frontend). Requires a Rust toolchain (`rustup`) and Bun 1.2+.
 - Don't hand-edit generated output under `src-tauri/gen/`.
+- Write tests in the same PR as behavior changes. For bugs, start with a
+  failing regression test when practical. For risky refactors, add
+  characterization tests first.
+- Do not lower coverage thresholds without explicit maintainer approval.
 
 ## Architecture
 

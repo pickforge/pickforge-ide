@@ -1033,12 +1033,21 @@ fn item_completed_events(params: &Value) -> Vec<RoutedEvent> {
 fn usage_event(params: &Value) -> Option<AgentEvent> {
     let token_usage = params.get("tokenUsage")?;
     let total = token_usage.get("total")?;
+    // `total` is the thread's lifetime running sum (used for cost/token totals),
+    // but context-window occupancy is the *last* turn's footprint — the history
+    // resent each turn, not the sum of every turn. Using `total` here would grow
+    // unbounded and blow past the window (e.g. "732k / 258k"). Fall back to
+    // `total` only when the app-server omits `last` (single-turn payloads).
+    let context_used = token_usage
+        .get("last")
+        .and_then(|last| u64_field(last, &["totalTokens"]))
+        .or_else(|| u64_field(total, &["totalTokens"]));
     Some(AgentEvent::Usage {
         input_tokens: u64_field(total, &["inputTokens"]).unwrap_or_default(),
         cached_input_tokens: u64_field(total, &["cachedInputTokens"]).unwrap_or_default(),
         output_tokens: u64_field(total, &["outputTokens"]).unwrap_or_default(),
         cost_usd: None,
-        context_used: u64_field(total, &["totalTokens"]),
+        context_used,
         context_window: u64_field(token_usage, &["modelContextWindow"]),
     })
 }
@@ -1840,7 +1849,7 @@ mod tests {
                     input_tokens: 28363,
                     cached_input_tokens: 18048,
                     output_tokens: 1698,
-                    context_used: Some(30061),
+                    context_used: Some(15077),
                     context_window: Some(121600),
                     ..
                 }

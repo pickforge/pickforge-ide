@@ -3,6 +3,7 @@
 # Node / frontend
 node_modules/
 dist/
+coverage/
 *.log
 
 # Rust / Tauri

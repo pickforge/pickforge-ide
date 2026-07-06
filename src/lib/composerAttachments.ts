@@ -1,17 +1,95 @@
-import { insertMarker, markerSpans } from "./imageAnchors";
+export type ComposerAttachmentKind = "image" | "text";
 
-type MarkerSpan = { n: number; start: number; end: number };
+const MARKER_LABEL: Record<ComposerAttachmentKind, string> = {
+  image: "Image",
+  text: "Text",
+};
+const MARKER = /\[(Image|Text) #(\d+)\]/g;
+const IMAGE_MARKER_IN_TEXT = /\[Image #(\d+)\]/g;
 
-// Chip-backed spans follow renderComposer's rule: only the FIRST occurrence of
-// each marker number in 1..count anchors the attachment; literal duplicates
-// (a pasted "[Image #1]" next to the real chip) are plain text.
-function chipSpansOf(text: string, count: number): MarkerSpan[] {
-  const seen = new Set<number>();
-  return markerSpans(text).filter((span) => {
-    if (span.n < 1 || span.n > count || seen.has(span.n)) return false;
-    seen.add(span.n);
-    return true;
-  });
+type MarkerSpan = {
+  kind: ComposerAttachmentKind;
+  n: number;
+  id: number;
+  start: number;
+  end: number;
+};
+
+type DroppedMarker = Pick<MarkerSpan, "kind" | "n" | "id">;
+
+function kindFromLabel(label: string): ComposerAttachmentKind {
+  return label === "Text" ? "text" : "image";
+}
+
+function markerText(kind: ComposerAttachmentKind, n: number): string {
+  return `[${MARKER_LABEL[kind]} #${n}]`;
+}
+
+function insertMarker(
+  text: string,
+  kind: ComposerAttachmentKind,
+  n: number,
+  cursor: number,
+): { text: string; cursor: number } {
+  const at = Math.max(0, Math.min(cursor, text.length));
+  const before = text.slice(0, at);
+  const after = text.slice(at);
+  const needsSpace = kind === "image" && before.length > 0 && !/\s$/.test(before);
+  const insertion = `${needsSpace ? " " : ""}${markerText(kind, n)}`;
+  return { text: before + insertion + after, cursor: at + insertion.length };
+}
+
+export function escapeImageMarkersInTextAttachment(content: string): string {
+  return content.replace(
+    IMAGE_MARKER_IN_TEXT,
+    (_match, index: string) => `[Image #${index}\u200B]`,
+  );
+}
+
+function attachmentIndex(
+  attachments: readonly ComposerAttachment[],
+  id: number,
+): { kind: ComposerAttachmentKind; index: number } | null {
+  const attachment = attachments.find((a) => a.id === id);
+  if (!attachment) return null;
+  const index = attachments
+    .filter((a) => a.kind === attachment.kind)
+    .findIndex((a) => a.id === id);
+  return index < 0 ? null : { kind: attachment.kind, index: index + 1 };
+}
+
+export function attachmentMarkerText(
+  attachments: readonly ComposerAttachment[],
+  id: number,
+): string | null {
+  const info = attachmentIndex(attachments, id);
+  return info ? markerText(info.kind, info.index) : null;
+}
+
+function chipSpansOf(
+  text: string,
+  attachments: readonly ComposerAttachment[],
+): MarkerSpan[] {
+  const byKind = {
+    image: attachments.filter((attachment) => attachment.kind === "image"),
+    text: attachments.filter((attachment) => attachment.kind === "text"),
+  };
+  const seen = {
+    image: new Set<number>(),
+    text: new Set<number>(),
+  };
+  const spans: MarkerSpan[] = [];
+  const re = new RegExp(MARKER.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const kind = kindFromLabel(m[1]);
+    const n = Number(m[2]);
+    const attachment = byKind[kind][n - 1];
+    if (!attachment || seen[kind].has(n)) continue;
+    seen[kind].add(n);
+    spans.push({ kind, n, id: attachment.id, start: m.index, end: m.index + m[0].length });
+  }
+  return spans;
 }
 
 // Rebuild `[segStart, segEnd)` of `text` span-wise: dropped chips vanish,
@@ -20,17 +98,21 @@ function chipSpansOf(text: string, count: number): MarkerSpan[] {
 function renumberSegment(
   text: string,
   spans: readonly MarkerSpan[],
-  dropped: ReadonlySet<number>,
-  shifted: (n: number) => number,
+  dropped: readonly DroppedMarker[],
   segStart: number,
   segEnd: number,
 ): string {
+  const droppedKeys = new Set(dropped.map((span) => `${span.kind}:${span.n}`));
+  const shifted = (span: MarkerSpan) =>
+    span.n - dropped.filter((d) => d.kind === span.kind && d.n < span.n).length;
   let out = "";
   let at = segStart;
   for (const span of spans) {
     if (span.start < segStart || span.start >= segEnd) continue;
     out += text.slice(at, span.start);
-    if (!dropped.has(span.n)) out += `[Image #${shifted(span.n)}]`;
+    if (!droppedKeys.has(`${span.kind}:${span.n}`)) {
+      out += markerText(span.kind, shifted(span));
+    }
     at = span.end;
   }
   return out + text.slice(at, segEnd);
@@ -38,12 +120,22 @@ function renumberSegment(
 
 export type ComposerAttachmentStatus = "pending" | "ready";
 
-export type ComposerAttachment = {
+export type ImageComposerAttachment = {
   id: number;
+  kind: "image";
   status: ComposerAttachmentStatus;
   path: string | null;
   previewUrl: string | null;
 };
+
+export type TextComposerAttachment = {
+  id: number;
+  kind: "text";
+  status: "ready";
+  content: string;
+};
+
+export type ComposerAttachment = ImageComposerAttachment | TextComposerAttachment;
 
 export type AttachmentMarkerState = {
   attachments: ComposerAttachment[];
@@ -61,7 +153,7 @@ export type AttachmentRemoval = {
 
 export type AttachmentResolution = {
   attachments: ComposerAttachment[];
-  previous: ComposerAttachment | null;
+  previous: ImageComposerAttachment | null;
 };
 
 export type PreparingDecision = "wait" | "dispatch" | "abort";
@@ -69,12 +161,25 @@ export type PreparingDecision = "wait" | "dispatch" | "abort";
 export function createPendingAttachment(
   id: number,
   previewUrl: string | null,
-): ComposerAttachment {
+): ImageComposerAttachment {
   return {
     id,
+    kind: "image",
     status: "pending",
     path: null,
     previewUrl,
+  };
+}
+
+export function createTextAttachment(
+  id: number,
+  content: string,
+): TextComposerAttachment {
+  return {
+    id,
+    kind: "text",
+    status: "ready",
+    content,
   };
 }
 
@@ -84,8 +189,8 @@ export function addAttachmentWithMarker(
   cursor: number,
   attachment: ComposerAttachment,
 ): AttachmentMarkerState {
-  const index = attachments.length + 1;
-  const marker = insertMarker(text, index, cursor);
+  const index = attachments.filter((a) => a.kind === attachment.kind).length + 1;
+  const marker = insertMarker(text, attachment.kind, index, cursor);
   return {
     attachments: [...attachments, attachment],
     text: marker.text,
@@ -108,19 +213,56 @@ export function removeAttachmentWithMarker(
       removedIndex: null,
     };
   }
-  const n = index + 1;
+  const attachment = attachments[index];
+  const info = attachmentIndex(attachments, id);
+  if (!info) {
+    return {
+      attachments: attachments.filter((a) => a.id !== id),
+      text,
+      removed: attachment,
+      removedIndex: null,
+    };
+  }
+  const dropped = [{ kind: info.kind, n: info.index, id }];
   return {
     attachments: attachments.filter((attachment) => attachment.id !== id),
     text: renumberSegment(
       text,
-      chipSpansOf(text, attachments.length),
-      new Set([n]),
-      (v) => (v > n ? v - 1 : v),
+      chipSpansOf(text, attachments),
+      dropped,
       0,
       text.length,
     ),
     removed: attachments[index],
-    removedIndex: n,
+    removedIndex: info.index,
+  };
+}
+
+export function updateTextAttachmentContent(
+  attachments: readonly ComposerAttachment[],
+  text: string,
+  id: number,
+  content: string,
+): AttachmentRemoval {
+  const attachment = attachments.find((item) => item.id === id);
+  if (!attachment || attachment.kind !== "text") {
+    return {
+      attachments: [...attachments],
+      text,
+      removed: null,
+      removedIndex: null,
+    };
+  }
+  if (content.trim().length === 0) {
+    return removeAttachmentWithMarker(attachments, text, id);
+  }
+  return {
+    attachments: attachments.map((item) =>
+      item.id === id && item.kind === "text" ? { ...item, content } : item,
+    ),
+    text,
+    removed: null,
+    removedIndex: null,
   };
 }
 
@@ -138,6 +280,12 @@ export function resolveAttachment(
     };
   }
   const previous = attachments[index];
+  if (previous.kind !== "image") {
+    return {
+      attachments: [...attachments],
+      previous: null,
+    };
+  }
   return {
     attachments: attachments.map((attachment) =>
       attachment.id === id
@@ -179,20 +327,17 @@ export function replaceRangeWithText(
 ): RangeReplacement {
   let from = Math.max(0, Math.min(start, text.length));
   let to = Math.min(Math.max(from, end), text.length);
-  const count = attachments.length;
-  const chipSpans = chipSpansOf(text, count);
+  const chipSpans = chipSpansOf(text, attachments);
   for (const span of chipSpans) {
     if (from > span.start && from < span.end) from = span.start;
     if (to > span.start && to < span.end) to = span.end;
   }
-  const droppedNs = chipSpans
+  const dropped = chipSpans
     .filter((span) => span.start >= from && span.end <= to)
-    .map((span) => span.n);
-  const dropped = new Set(droppedNs);
-  const shifted = (n: number) => n - droppedNs.filter((d) => d < n).length;
-  const before = renumberSegment(text, chipSpans, dropped, shifted, 0, from);
-  const after = renumberSegment(text, chipSpans, dropped, shifted, to, text.length);
-  const droppedIds = new Set(droppedNs.map((n) => attachments[n - 1].id));
+    .map((span) => ({ kind: span.kind, n: span.n, id: span.id }));
+  const before = renumberSegment(text, chipSpans, dropped, 0, from);
+  const after = renumberSegment(text, chipSpans, dropped, to, text.length);
+  const droppedIds = new Set(dropped.map((span) => span.id));
   return {
     attachments: attachments.filter((attachment) => !droppedIds.has(attachment.id)),
     removed: attachments.filter((attachment) => droppedIds.has(attachment.id)),
@@ -212,12 +357,12 @@ export function offsetAfterRemoval(
 ): number | null {
   const index = attachments.findIndex((attachment) => attachment.id === id);
   if (index < 0) return null;
-  const n = index + 1;
+  const info = attachmentIndex(attachments, id);
+  if (!info) return null;
   return renumberSegment(
     text,
-    chipSpansOf(text, attachments.length),
-    new Set([n]),
-    (v) => (v > n ? v - 1 : v),
+    chipSpansOf(text, attachments),
+    [{ kind: info.kind, n: info.index, id }],
     0,
     Math.max(0, Math.min(offset, text.length)),
   ).length;
@@ -229,8 +374,31 @@ export function hasPendingAttachments(attachments: readonly ComposerAttachment[]
 
 export function readyAttachmentPaths(attachments: readonly ComposerAttachment[]): string[] {
   return attachments.flatMap((attachment) =>
-    attachment.status === "ready" && attachment.path ? [attachment.path] : [],
+    attachment.kind === "image" && attachment.status === "ready" && attachment.path
+      ? [attachment.path]
+      : [],
   );
+}
+
+export function expandTextAttachments(
+  attachments: readonly ComposerAttachment[],
+  text: string,
+): string {
+  const spans = chipSpansOf(text, attachments);
+  const hasImages = attachments.some((attachment) => attachment.kind === "image");
+  let out = "";
+  let at = 0;
+  for (const span of spans) {
+    if (span.kind !== "text") continue;
+    const attachment = attachments.find((a) => a.id === span.id);
+    if (attachment?.kind !== "text") continue;
+    out += text.slice(at, span.start);
+    out += hasImages
+      ? escapeImageMarkersInTextAttachment(attachment.content)
+      : attachment.content;
+    at = span.end;
+  }
+  return out + text.slice(at);
 }
 
 export function decidePreparingState(input: {

@@ -26,7 +26,8 @@ import {
   IconSplitTrigger,
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
-import { AGENTS, loadAgentModels } from "../../lib/agentModels";
+import { AGENTS, loadAgentEfforts, loadAgentModels } from "../../lib/agentModels";
+import { loadAgentModes } from "../../lib/agentModes";
 import { isPrimaryChat } from "../../lib/chatLabels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
 import { loadAskChatTitle, loadLastAgentProvider } from "../../lib/chatDefaults";
@@ -396,6 +397,10 @@ export function OrchestraView(props: {
         chat.projectRoot,
         provider,
         loadAgentModels()[provider] ?? null,
+        {
+          effort: loadAgentEfforts()[provider] ?? null,
+          mode: loadAgentModes()[provider] ?? null,
+        },
       ).catch(() => undefined);
     }
   });

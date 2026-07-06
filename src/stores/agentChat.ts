@@ -851,13 +851,16 @@ export async function ensureAgentChat(
   const created = !chats[chatId];
   if (created) setChats(chatId, emptyState(provider, safeModel));
   setChats(chatId, { projectRoot, provider, model: safeModel });
-  // Seed the effort only on a fresh entry — a remount must not clobber a
-  // per-chat effort tweak with the persisted per-provider default.
-  if (created && options.effort !== undefined) {
+  if (
+    options.effort !== undefined &&
+    (created || (!chats[chatId].sessionId && chats[chatId].effort === null))
+  ) {
     setChats(chatId, { effort: options.effort?.trim() || null });
   }
-  // Seed the mode only on a fresh entry — same rationale as effort.
-  if (created && options.mode !== undefined) {
+  if (
+    options.mode !== undefined &&
+    (created || (!chats[chatId].sessionId && chats[chatId].mode === null))
+  ) {
     setChats(chatId, { mode: options.mode || null });
   }
   if (chats[chatId]?.sessionId) return;
@@ -936,8 +939,24 @@ export async function hydrateAgentChatHistory(
   projectRoot: string,
   provider: AgentProvider,
   model: string | null,
+  options: Pick<EnsureAgentChatOptions, "effort" | "mode"> = {},
 ): Promise<void> {
-  if (!chats[chatId]) setChats(chatId, emptyState(provider, model));
+  const safeModel = nativeChatModel(provider, model);
+  const created = !chats[chatId];
+  if (created) setChats(chatId, emptyState(provider, safeModel));
+  setChats(chatId, { projectRoot, provider, model: chats[chatId]?.model ?? safeModel });
+  if (
+    options.effort !== undefined &&
+    (created || (!chats[chatId].sessionId && chats[chatId].effort === null))
+  ) {
+    setChats(chatId, { effort: options.effort?.trim() || null });
+  }
+  if (
+    options.mode !== undefined &&
+    (created || (!chats[chatId].sessionId && chats[chatId].mode === null))
+  ) {
+    setChats(chatId, { mode: options.mode || null });
+  }
   if (chats[chatId].historyLoaded) return;
   const existing = hydratePromises.get(chatId);
   if (existing) return existing;
@@ -951,7 +970,7 @@ export async function hydrateAgentChatHistory(
       const previous = chats[chatId];
       const history = await agentChatHistory(chatId);
       if (stale() || chats[chatId].historyLoaded) return;
-      const loadedModel = chats[chatId]?.model ?? model;
+      const loadedModel = chats[chatId]?.model ?? safeModel;
       const loaded = stateFromHistory(chatId, provider, loadedModel, history);
       setChats(chatId, {
         ...loaded,

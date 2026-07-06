@@ -811,6 +811,28 @@ describe("agentChat history", () => {
 });
 
 describe("hydrateAgentChatHistory", () => {
+  it("seeds project state before the history request resolves", async () => {
+    const chatId = nextChatId();
+    const history = deferred<AgentTimelineEntry[]>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return history.promise;
+      return Promise.resolve(null);
+    });
+
+    const promise = hydrateAgentChatHistory(chatId, "/project", "codex", "gpt-5.5");
+    await Promise.resolve();
+
+    expect(agentChat(chatId)).toMatchObject({
+      sessionId: null,
+      projectRoot: "/project",
+      provider: "codex",
+      model: "gpt-5.5",
+    });
+
+    history.resolve([]);
+    await promise;
+  });
+
   it("loads a persisted plan without starting a backend session", async () => {
     const chatId = nextChatId();
     mockInvoke(
@@ -830,6 +852,27 @@ describe("hydrateAgentChatHistory", () => {
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(
       0,
     );
+  });
+
+  it("keeps saved defaults when a hydrated chat later starts a session", async () => {
+    const chatId = nextChatId();
+    mockInvoke([]);
+
+    await hydrateAgentChatHistory(chatId, "/project", "codex", "gpt-5.5");
+    await ensureAgentChat(chatId, "/project", "codex", "gpt-5.5", {
+      effort: "high",
+      mode: "full-access",
+    });
+
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    expect(startCall?.[1]).toMatchObject({
+      projectRoot: "/project",
+      provider: "codex",
+      model: "gpt-5.5",
+      effort: "high",
+      sandbox: "danger-full-access",
+      approvalPolicy: "never",
+    });
   });
 });
 

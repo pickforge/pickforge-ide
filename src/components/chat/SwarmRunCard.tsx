@@ -1,8 +1,9 @@
-import { For, Show, type JSX } from "solid-js";
+import { For, Show, type JSX, createSignal } from "solid-js";
+import { compactInline } from "../../lib/chatDisplay";
 import type { SwarmLaneSnapshot, SwarmRunSnapshot } from "../../lib/mcp";
 import { setOrchestraOpen } from "../../stores/orchestraStage";
 import { selectChat } from "../../stores/workspace";
-import { IconChevronRight, IconGrid } from "../icons";
+import { IconChevronDown, IconChevronRight, IconGrid } from "../icons";
 import "./chat.css";
 
 function providerName(provider: string): string {
@@ -43,34 +44,48 @@ function openLane(chatId: string | null) {
   selectChat(chatId);
 }
 
-export function SwarmRunCard(props: { runs: SwarmRunSnapshot[] }): JSX.Element {
-  const runs = () => props.runs.slice(0, 3);
+function SwarmRow(props: { run: SwarmRunSnapshot }): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const run = () => props.run;
+  const modelLabel = () => run().model || "selected models";
+  const synth = () => synthesisLabel(run());
+
   return (
-    <For each={runs()}>
-      {(run) => (
-        <section class="pf-chat-swarm-card" aria-label="Pickforge swarm run">
-          <div class="pf-chat-swarm-head">
-            <div class="pf-chat-swarm-title">
-              <IconGrid size={13} />
-              <span>Pickforge swarm</span>
-            </div>
-            <span
-              class="pf-chat-swarm-status"
-              style={{ "--pf-swarm-status": statusTone(run.status) }}
-            >
-              <span class="pf-chat-swarm-dot" />
-              {run.status}
-            </span>
-          </div>
-          <div class="pf-chat-swarm-goal">{run.goal}</div>
-          <div class="pf-chat-swarm-meta">
-            {run.requestedCount} lanes / {run.mode} / {run.model || "selected models"}
-            <Show when={synthesisLabel(run)}>
-              {(label) => <> / {label()}</>}
-            </Show>
-          </div>
+    <section class="pf-chat-swarm-card" aria-label="Pickforge swarm run">
+      <button
+        type="button"
+        class="pf-chat-swarm-summary"
+        aria-expanded={open()}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span class="pf-chat-swarm-summary-chevron" aria-hidden="true">
+          <Show when={open()} fallback={<IconChevronRight size={12} />}>
+            <IconChevronDown size={12} />
+          </Show>
+        </span>
+        <span class="pf-chat-swarm-summary-title">
+          <IconGrid size={13} />
+          <span>swarm</span>
+        </span>
+        <span class="pf-chat-swarm-summary-goal" title={run().goal}>
+          {compactInline(run().goal, 96)}
+        </span>
+        <span class="pf-chat-swarm-summary-meta">
+          {run().requestedCount} / {run().mode} / {modelLabel()}
+          <Show when={synth()}>{(label) => <> / {label()}</>}</Show>
+        </span>
+        <span
+          class="pf-chat-swarm-status"
+          style={{ "--pf-swarm-status": statusTone(run().status) }}
+        >
+          <span class="pf-chat-swarm-dot" />
+          {run().status}
+        </span>
+      </button>
+      <Show when={open()}>
+        <div class="pf-chat-swarm-body">
           <div class="pf-chat-swarm-lanes">
-            <For each={run.lanes}>
+            <For each={run().lanes}>
               {(lane) => (
                 <button
                   type="button"
@@ -101,14 +116,19 @@ export function SwarmRunCard(props: { runs: SwarmRunSnapshot[] }): JSX.Element {
               )}
             </For>
           </div>
-          <Show when={run.error}>
+          <Show when={run().error}>
             {(error) => <div class="pf-chat-swarm-error">{error()}</div>}
           </Show>
-          <Show when={run.synthesisError}>
+          <Show when={run().synthesisError}>
             {(error) => <div class="pf-chat-swarm-error">{error()}</div>}
           </Show>
-        </section>
-      )}
-    </For>
+        </div>
+      </Show>
+    </section>
   );
+}
+
+export function SwarmRunCard(props: { runs: SwarmRunSnapshot[] }): JSX.Element {
+  const runs = () => props.runs.slice(0, 3);
+  return <For each={runs()}>{(run) => <SwarmRow run={run} />}</For>;
 }

@@ -16,6 +16,7 @@ pub mod mcp;
 pub mod operator;
 pub mod process;
 pub mod pty;
+pub mod remote;
 pub mod storage;
 pub mod targets;
 pub mod transcript;
@@ -44,6 +45,13 @@ pub use pty::{
     sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
     PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, SessionBackend, SessionStatus,
     SpawnOptions,
+};
+pub use remote::{
+    decode_remote_frame, encode_remote_frame, ClientTokenRecord, DaemonConfig, DaemonConfigError,
+    DaemonListener, DaemonStatus, IssuedClientToken, PairingCode, RemoteAuthError,
+    RemoteAuthStore, RemoteAuthStoreSnapshot, RemoteCapability, RemoteFrame, RemoteFrameError,
+    RemoteHostDaemon, RemoteRequest, RemoteResponse, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME,
+    REMOTE_PROTOCOL_VERSION,
 };
 pub use storage::{
     load_telemetry_config, pickforge_env_vars, pickforge_home, project_id, save_telemetry_config,

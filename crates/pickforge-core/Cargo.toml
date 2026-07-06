@@ -16,8 +16,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 portable-pty = { workspace = true }
+rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 roxmltree = "0.20"
+sha2 = "0.10"
 tokio = { workspace = true }
 futures-util = { workspace = true }
 tokio-tungstenite = { workspace = true }

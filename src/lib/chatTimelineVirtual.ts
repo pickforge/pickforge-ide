@@ -88,6 +88,17 @@ export function buildTimelineLayout(
   };
 }
 
+function lowerBoundStarts(starts: number[], target: number): number {
+  let lo = 0;
+  let hi = starts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 export function visibleTimelineKeys(
   layout: TimelineVirtualLayout,
   rowHeights: ReadonlyMap<string, number>,
@@ -96,16 +107,33 @@ export function visibleTimelineKeys(
   viewportHeight: number,
   overscan = OVERSCAN_PX,
 ): string[] {
+  const { rows, starts } = layout;
+  if (rows.length === 0) return [];
   const top = Math.max(0, scrollTop - metrics.padding - overscan);
   const bottom = scrollTop + viewportHeight - metrics.padding + overscan;
+  // `starts` is monotonically increasing (cumulative y), so binary-search the
+  // first row whose start >= top, then step back while the previous row extends
+  // into view (a tall row straddling `top`). This makes the per-scroll-frame
+  // recompute O(log n + visible) instead of O(n) over every row — the scroll
+  // handler fires this every frame, so on long chats the linear scan was the
+  // dominant per-frame JS cost on WebKitGTK (where scroll + paint share one
+  // main thread).
+  let i = lowerBoundStarts(starts, top);
+  while (i > 0) {
+    const prev = i - 1;
+    const prevKey = timelineVirtualRowKey(rows[prev]);
+    const prevHeight = rowHeights.get(prevKey) ?? estimateTimelineRowHeight(rows[prev]);
+    if (starts[prev] + prevHeight <= top) break;
+    i = prev;
+  }
   const visible: string[] = [];
-  for (let i = 0; i < layout.rows.length; i++) {
-    const row = layout.rows[i];
+  for (; i < rows.length; i++) {
+    const rowStart = starts[i];
+    if (rowStart > bottom) break;
+    const row = rows[i];
     const key = timelineVirtualRowKey(row);
-    const rowStart = layout.starts[i];
     const rowHeight = rowHeights.get(key) ?? estimateTimelineRowHeight(row);
     if (rowStart + rowHeight < top) continue;
-    if (rowStart > bottom) break;
     visible.push(key);
   }
   return visible;

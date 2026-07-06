@@ -236,4 +236,59 @@ describe("chat timeline virtualization helpers", () => {
       "assistantText:5",
     ]);
   });
+
+  it("includes a tall row straddling the top boundary", () => {
+    // Row 2 is tall (500px) and starts above the scroll top but extends into view.
+    // The binary-search lower bound lands on row 3 (first start >= top); the
+    // step-back must pull row 2 back in so it isn't dropped.
+    const rows = buildTimelineRows(
+      Array.from({ length: 4 }, (_, index): AgentTimelineItem => ({
+        type: "assistantText",
+        seq: index + 1,
+        text: `row ${index + 1}`,
+        streaming: false,
+      })),
+      false,
+    );
+    const heights = new Map([
+      ["assistantText:1", 100],
+      ["assistantText:2", 500],
+      ["assistantText:3", 100],
+      ["assistantText:4", 100],
+    ]);
+    const metrics = { padding: 0, gap: 0 };
+    const layout = buildTimelineLayout(rows, metrics, heights);
+    // starts: [0, 100, 600, 700]; scroll top 150 falls inside row 2.
+    expect(visibleTimelineKeys(layout, heights, metrics, 150, 100, 0)).toEqual([
+      "assistantText:2",
+    ]);
+    // Top exactly on a row boundary must not drop the boundary row.
+    expect(visibleTimelineKeys(layout, heights, metrics, 100, 100, 0)).toEqual([
+      "assistantText:2",
+    ]);
+  });
+
+  it("scans only the visible window of a long chat", () => {
+    // 200 rows of 100px each; a scroll position deep in the middle must return
+    // just the rows inside the viewport + overscan, not the full list.
+    const rows = buildTimelineRows(
+      Array.from({ length: 200 }, (_, index): AgentTimelineItem => ({
+        type: "assistantText",
+        seq: index + 1,
+        text: `row ${index + 1}`,
+        streaming: false,
+      })),
+      false,
+    );
+    const heights = new Map(rows.map((row) => [timelineVirtualRowKey(row), 100]));
+    const metrics = { padding: 0, gap: 0 };
+    const layout = buildTimelineLayout(rows, metrics, heights);
+
+    expect(visibleTimelineKeys(layout, heights, metrics, 5000, 300, 0)).toEqual([
+      "assistantText:51",
+      "assistantText:52",
+      "assistantText:53",
+      "assistantText:54",
+    ]);
+  });
 });

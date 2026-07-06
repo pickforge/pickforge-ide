@@ -103,15 +103,15 @@ pub fn encode_remote_frame(frame: &RemoteFrame) -> Result<String, RemoteFrameErr
 }
 
 pub fn decode_remote_frame(line: &str) -> Result<RemoteFrame, RemoteFrameError> {
+    if line.len() > REMOTE_FRAME_MAX_BYTES {
+        return Err(RemoteFrameError::TooLarge {
+            actual: line.len(),
+            max: REMOTE_FRAME_MAX_BYTES,
+        });
+    }
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return Err(RemoteFrameError::Empty);
-    }
-    if trimmed.len() > REMOTE_FRAME_MAX_BYTES {
-        return Err(RemoteFrameError::TooLarge {
-            actual: trimmed.len(),
-            max: REMOTE_FRAME_MAX_BYTES,
-        });
     }
     let frame: RemoteFrame =
         serde_json::from_str(trimmed).map_err(|err| RemoteFrameError::InvalidJson(err.to_string()))?;
@@ -185,6 +185,19 @@ mod tests {
             decode_remote_frame(&too_large).unwrap_err(),
             RemoteFrameError::TooLarge {
                 actual: REMOTE_FRAME_MAX_BYTES + 1,
+                max: REMOTE_FRAME_MAX_BYTES,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_frames_before_trimming_whitespace() {
+        let encoded = encode_remote_frame(&hello()).unwrap();
+        let too_large = format!("{}{}", " ".repeat(REMOTE_FRAME_MAX_BYTES), encoded);
+        assert_eq!(
+            decode_remote_frame(&too_large).unwrap_err(),
+            RemoteFrameError::TooLarge {
+                actual: too_large.len(),
                 max: REMOTE_FRAME_MAX_BYTES,
             }
         );

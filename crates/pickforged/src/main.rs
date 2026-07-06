@@ -21,7 +21,7 @@ fn run() -> Result<(), String> {
     }
 
     let config = DaemonConfig::from_env(None).map_err(|err| err.to_string())?;
-    let daemon = RemoteHostDaemon::new(config);
+    let daemon = RemoteHostDaemon::new(config).map_err(|err| err.to_string())?;
 
     if args.iter().any(|arg| arg == "--status-json") {
         let status = daemon.status(now_ms());

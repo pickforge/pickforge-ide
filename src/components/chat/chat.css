@@ -747,6 +747,32 @@
   flex-direction: column;
   gap: var(--pf-space-sm);
 }
+.pf-chat-plan-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-plan-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pf-space-xs);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  transition:
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-plan-pin:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-item-fill);
+}
+.pf-chat-plan-pin--active {
+  color: var(--pf-ember);
+}
 .pf-chat-plan-item {
   display: flex;
   align-items: baseline;

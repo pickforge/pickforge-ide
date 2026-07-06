@@ -6,7 +6,8 @@ reset this file.
 
 ## User-facing changes
 
-- None yet.
+- Added pinned agent plans so plan cards can be pinned from chat and resurfaced
+  in the Orchestra ledger for the current project.
 
 ## Internal/release changes
 
@@ -17,6 +18,9 @@ reset this file.
 ### Tested
 
 - Reviewed the release tracking docs.
+- `bun run test:unit -- tests/unit/agentChat.test.ts tests/unit/pinnedAgentPlans.test.ts`
+- `bun run build`
+- `bun run vrt`
 
 ### Not tested yet
 

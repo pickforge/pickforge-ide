@@ -74,7 +74,9 @@ import {
   approveAgentRequest,
   disposeAgentChat,
   ensureAgentChat,
+  hydrateAgentChatHistory,
   interruptAgentChat,
+  latestPlanForChat,
   sendAgentMessage,
   setAgentChatEffort,
   setAgentChatMode,
@@ -559,6 +561,33 @@ describe("agentChat store reducer", () => {
   });
 });
 
+describe("latestPlanForChat", () => {
+  it("returns the latest plan item, reflecting in-place plan updates", async () => {
+    const { chatId, emit } = await startChat();
+
+    expect(latestPlanForChat(chatId)).toBeNull();
+
+    emit({ kind: "planUpdate", items: [{ text: "draft", completed: false }] });
+    emit({ kind: "textFinal", itemId: null, text: "working" });
+    emit({ kind: "planUpdate", items: [{ text: "done", completed: true }] });
+
+    expect(latestPlanForChat(chatId)).toEqual({
+      type: "plan",
+      seq: 1,
+      items: [{ text: "done", completed: true }],
+    });
+  });
+
+  it("returns null for a chat without a plan or an unknown chat", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "textFinal", itemId: null, text: "no plan here" });
+
+    expect(latestPlanForChat(chatId)).toBeNull();
+    expect(latestPlanForChat("missing-chat")).toBeNull();
+  });
+});
+
 describe("agentChat history", () => {
   it("maps message and item entries into timeline items", async () => {
     const history: AgentTimelineEntry[] = [
@@ -778,6 +807,72 @@ describe("agentChat history", () => {
     });
     expect(agentChat(chatId)?.contextUsed).toBe(1_000);
     expect(agentChat(chatId)?.contextWindow).toBe(100_000);
+  });
+});
+
+describe("hydrateAgentChatHistory", () => {
+  it("seeds project state before the history request resolves", async () => {
+    const chatId = nextChatId();
+    const history = deferred<AgentTimelineEntry[]>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return history.promise;
+      return Promise.resolve(null);
+    });
+
+    const promise = hydrateAgentChatHistory(chatId, "/project", "codex", "gpt-5.5");
+    await Promise.resolve();
+
+    expect(agentChat(chatId)).toMatchObject({
+      sessionId: null,
+      projectRoot: "/project",
+      provider: "codex",
+      model: "gpt-5.5",
+    });
+
+    history.resolve([]);
+    await promise;
+  });
+
+  it("loads a persisted plan without starting a backend session", async () => {
+    const chatId = nextChatId();
+    mockInvoke(
+      historyFromEvents([
+        { kind: "planUpdate", items: [{ text: "step", completed: false }] },
+      ]),
+    );
+
+    await hydrateAgentChatHistory(chatId, "/project", "codex", null);
+
+    expect(latestPlanForChat(chatId)).toEqual({
+      type: "plan",
+      seq: 1,
+      items: [{ text: "step", completed: false }],
+    });
+    expect(agentChat(chatId)?.sessionId).toBeNull();
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(
+      0,
+    );
+  });
+
+  it("keeps saved defaults when a hydrated chat later starts a session", async () => {
+    const chatId = nextChatId();
+    mockInvoke([]);
+
+    await hydrateAgentChatHistory(chatId, "/project", "codex", "gpt-5.5");
+    await ensureAgentChat(chatId, "/project", "codex", "gpt-5.5", {
+      effort: "high",
+      mode: "full-access",
+    });
+
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    expect(startCall?.[1]).toMatchObject({
+      projectRoot: "/project",
+      provider: "codex",
+      model: "gpt-5.5",
+      effort: "high",
+      sandbox: "danger-full-access",
+      approvalPolicy: "never",
+    });
   });
 });
 

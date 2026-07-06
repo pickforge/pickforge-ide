@@ -172,7 +172,11 @@ export function AgentChatView(props: {
   return (
     <div class="pf-chat-view">
       <ImageLightbox />
-      <ChatTimeline items={state()?.timeline ?? []} working={awaitingOutput()} />
+      <ChatTimeline
+        items={state()?.timeline ?? []}
+        working={awaitingOutput()}
+        chatId={props.chatId}
+      />
       <Show when={visibleSwarms().length > 0}>
         <div class="pf-chat-swarm-dock">
           <SwarmRunCard runs={visibleSwarms()} />

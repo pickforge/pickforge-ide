@@ -10,6 +10,7 @@ These files are exported from `branding-visual/assets/pickforge/`.
 
 - `pickforge-mark-128.svg`, `pickforge-mark-light.svg`, and `pickforge-mark-mono.svg` are the canonical mark variants.
 - `pickforge-app-icon.svg` plus `pickforge-app-icon-{32,64,128,256,512,1024}.png` are package/app icon exports.
+- `pickforge-app-icon-macos.svg` is the inset macOS source used for the bundled `.icns` Dock icon.
 - `pickforge-favicon.svg`, `pickforge-favicon-{16,32}.png`, and `pickforge-favicon.ico` are browser/favicon exports.
 - `pickforge-wordmark.svg`, `pickforge-lockup-horizontal.svg`, and `pickforge-lockup-stacked.svg` are product lockups.
 - `pickforge-studio-wordmark.png` and `pickforge-studio-wordmark-460x56.svg` are parent studio wordmarks.

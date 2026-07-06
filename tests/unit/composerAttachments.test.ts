@@ -2,17 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   type ComposerAttachment,
   addAttachmentWithMarker,
+  attachmentMarkerText,
+  createTextAttachment,
   createPendingAttachment,
   decidePreparingState,
+  expandTextAttachments,
   offsetAfterRemoval,
   readyAttachmentPaths,
   removeAttachmentWithMarker,
   replaceRangeWithText,
   resolveAttachment,
+  updateTextAttachmentContent,
 } from "../../src/lib/composerAttachments";
 
 const ready = (id: number, path: string): ComposerAttachment => ({
   id,
+  kind: "image",
   status: "ready",
   path,
   previewUrl: `asset://${id}`,
@@ -68,6 +73,7 @@ describe("composer attachments", () => {
   it("resolves pending attachments and returns ready paths in attachment order", () => {
     const attachments = [
       createPendingAttachment(1, "blob:first"),
+      createTextAttachment(9, "long text"),
       ready(2, "/already.png"),
     ];
     const resolved = resolveAttachment(attachments, 1, "/first.png", "asset://first");
@@ -83,6 +89,133 @@ describe("composer attachments", () => {
       "/first.png",
       "/already.png",
     ]);
+  });
+
+  it("leaves missing attachment operations unchanged", () => {
+    const attachments = [ready(1, "/a.png")];
+
+    expect(attachmentMarkerText(attachments, 99)).toBeNull();
+    expect(removeAttachmentWithMarker(attachments, "[Image #1]", 99)).toEqual({
+      attachments,
+      text: "[Image #1]",
+      removed: null,
+      removedIndex: null,
+    });
+    expect(resolveAttachment(attachments, 99, "/missing.png", "asset://missing")).toEqual({
+      attachments,
+      previous: null,
+    });
+  });
+
+  it("does not resolve text attachments as ready image paths", () => {
+    const attachments: ComposerAttachment[] = [
+      createTextAttachment(1, "body"),
+      { ...ready(2, "/missing.png"), path: null },
+    ];
+
+    expect(resolveAttachment(attachments, 1, "/text.png", "asset://text")).toEqual({
+      attachments,
+      previous: null,
+    });
+    expect(readyAttachmentPaths(attachments)).toEqual([]);
+  });
+
+  it("keeps image and text marker numbering separate", () => {
+    const image = addAttachmentWithMarker([], "", 0, ready(1, "/a.png"));
+    const text = addAttachmentWithMarker(
+      image.attachments,
+      image.text,
+      image.cursor,
+      createTextAttachment(2, "pasted body"),
+    );
+    const imageAgain = addAttachmentWithMarker(
+      text.attachments,
+      text.text,
+      text.cursor,
+      ready(3, "/b.png"),
+    );
+
+    expect(imageAgain.text).toBe("[Image #1][Text #1] [Image #2]");
+
+    const removedText = removeAttachmentWithMarker(imageAgain.attachments, imageAgain.text, 2);
+
+    expect(removedText.text).toBe("[Image #1] [Image #2]");
+    expect(readyAttachmentPaths(removedText.attachments)).toEqual(["/a.png", "/b.png"]);
+
+    const removedImage = removeAttachmentWithMarker(imageAgain.attachments, imageAgain.text, 1);
+
+    expect(removedImage.text).toBe("[Text #1] [Image #1]");
+    expect(readyAttachmentPaths(removedImage.attachments)).toEqual(["/b.png"]);
+  });
+
+  it("expands the backed text marker and leaves literal duplicates alone", () => {
+    const attachments = [createTextAttachment(1, "line one\nline two"), ready(2, "/a.png")];
+    const text = "before [Text #1] after [Text #1] plus [Image #1]";
+
+    expect(expandTextAttachments(attachments, text)).toBe(
+      "before line one\nline two after [Text #1] plus [Image #1]",
+    );
+  });
+
+  it("does not insert a separator before text attachment markers", () => {
+    const result = addAttachmentWithMarker(
+      [],
+      "prefix",
+      "prefix".length,
+      createTextAttachment(1, "pasted"),
+    );
+
+    expect(result.text).toBe("prefix[Text #1]");
+    expect(expandTextAttachments(result.attachments, result.text)).toBe("prefixpasted");
+  });
+
+  it("disambiguates literal image markers inside expanded text attachments", () => {
+    const attachments = [
+      createTextAttachment(1, "literal [Image #1] in pasted text"),
+      ready(2, "/a.png"),
+    ];
+
+    expect(expandTextAttachments(attachments, "[Text #1] then [Image #1]")).toBe(
+      "literal [Image #1\u200B] in pasted text then [Image #1]",
+    );
+  });
+
+  it("keeps literal image markers exact when no image attachments can parse them", () => {
+    const attachments = [createTextAttachment(1, "literal [Image #1]")];
+
+    expect(expandTextAttachments(attachments, "[Text #1]")).toBe("literal [Image #1]");
+  });
+
+  it("updates backed text attachment content without changing the marker", () => {
+    const attachments = [createTextAttachment(1, "old body"), ready(2, "/a.png")];
+    const result = updateTextAttachmentContent(
+      attachments,
+      "ask [Text #1] with [Image #1]",
+      1,
+      "new body",
+    );
+
+    expect(result.text).toBe("ask [Text #1] with [Image #1]");
+    expect(result.removed).toBeNull();
+    expect(result.attachments[0]).toMatchObject({ kind: "text", content: "new body" });
+  });
+
+  it("removes a backed text attachment when an update is blank", () => {
+    const attachments = [
+      createTextAttachment(1, "first"),
+      createTextAttachment(2, "second"),
+      ready(3, "/a.png"),
+    ];
+    const result = updateTextAttachmentContent(
+      attachments,
+      "[Text #1] then [Text #2] with [Image #1]",
+      1,
+      "   \n\t",
+    );
+
+    expect(result.text).toBe(" then [Text #1] with [Image #1]");
+    expect(result.removed).toEqual(attachments[0]);
+    expect(result.attachments.map((a) => a.id)).toEqual([2, 3]);
   });
 });
 

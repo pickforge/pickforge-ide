@@ -1,9 +1,14 @@
-@import "./tokens.css";
+@import "@pickforge/brand/tokens.css";
 /* Fonts are embedded as base64 (fonts-data.css) so they load in the WebKitGTK
  * webview, which rejects the plain network @font-face fetch. Regenerate with
  * `npm run fonts:data`. */
 @import "./fonts-data.css";
 @import "@xterm/xterm/css/xterm.css";
+
+:root {
+  --pf-font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --pf-font-mono: "GeistMono", ui-monospace, "SF Mono", Menlo, monospace;
+}
 
 *,
 *::before,

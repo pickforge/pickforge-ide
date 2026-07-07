@@ -3,6 +3,7 @@
   "productName": "PickForge",
   "version": "0.1.8",
   "identifier": "dev.pickforge.app",
+  "mainBinaryName": "pickforge",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",

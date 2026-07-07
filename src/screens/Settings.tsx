@@ -225,9 +225,8 @@ export function SettingsScreen() {
   };
   const activePairingCode = (): PairingCode | null => {
     const now = remoteNow();
-    return remoteHost()
-      ?.pairingCodes
-      .find((code) => !code.usedAtMs && code.expiresAtMs > now) ?? null;
+    const codes = remoteHost()?.pairingCodes ?? [];
+    return [...codes].reverse().find((code) => !code.usedAtMs && code.expiresAtMs > now) ?? null;
   };
   const listenerHost = () =>
     remoteHost()?.listener.kind === "loopback"
@@ -246,6 +245,12 @@ export function SettingsScreen() {
   };
   const serveLabel = () =>
     remoteHost()?.tailscale.serveConfigured ? "Configured" : "Not configured";
+  const canToggleServe = () => {
+    const overview = remoteHost();
+    return Boolean(
+      overview?.tailscale.available && (overview.tailscale.serveConfigured || overview.running),
+    );
+  };
   const sshLabel = () => {
     const status = remoteHost()?.tailscale;
     if (!status?.available) return "Not installed";
@@ -292,15 +297,20 @@ export function SettingsScreen() {
     }
   };
   const toggleServe = async () => {
+    const overview = remoteHost();
+    if (!overview?.tailscale.serveConfigured && !overview?.running) {
+      setRemoteError("Start the remote listener before enabling Tailscale Serve");
+      return;
+    }
     const host = listenerHost();
     const port = listenerPort();
     setRemoteLoading(true);
     setRemoteError(null);
     try {
-      if (remoteHost()?.tailscale.serveConfigured) {
-        await remoteTailscaleServeDisable(remoteHost()?.defaultHttpsPort);
+      if (overview?.tailscale.serveConfigured) {
+        await remoteTailscaleServeDisable(overview.defaultHttpsPort);
       } else {
-        await remoteTailscaleServeEnable(host, port, remoteHost()?.defaultHttpsPort);
+        await remoteTailscaleServeEnable(host, port, overview?.defaultHttpsPort);
       }
       await reloadRemoteHost();
     } catch (error) {
@@ -506,7 +516,7 @@ export function SettingsScreen() {
             <span class="pf-settings-label">Tailscale Serve</span>
             <button
               class="pf-text-btn"
-              disabled={remoteLoading() || !remoteHost()?.tailscale.available}
+              disabled={remoteLoading() || !canToggleServe()}
               onClick={() => void toggleServe()}
             >
               {remoteHost()?.tailscale.serveConfigured ? "Disable" : `Enable · ${serveLabel()}`}

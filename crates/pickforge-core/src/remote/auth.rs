@@ -116,7 +116,7 @@ impl RemoteAuthStore {
             .unwrap_or(0);
         let tmp = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
         write_private_file(&tmp, &raw)?;
-        std::fs::rename(&tmp, path).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+        replace_auth_file(&tmp, path)?;
         set_private_permissions(path)?;
         Ok(())
     }
@@ -396,6 +396,49 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), RemoteAuthError> 
     Ok(())
 }
 
+fn replace_auth_file(tmp: &Path, path: &Path) -> Result<(), RemoteAuthError> {
+    #[cfg(windows)]
+    {
+        replace_auth_file_windows(tmp, path)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(tmp, path).map_err(|err| RemoteAuthError::Io(err.to_string()))
+    }
+}
+
+#[cfg(windows)]
+fn replace_auth_file_windows(tmp: &Path, path: &Path) -> Result<(), RemoteAuthError> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    let tmp = wide(tmp);
+    let path = wide(path);
+    let rc = unsafe {
+        MoveFileExW(
+            tmp.as_ptr(),
+            path.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if rc == 0 {
+        Err(RemoteAuthError::Io(
+            std::io::Error::last_os_error().to_string(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn open_private_file(path: &Path, create_new: bool) -> Result<std::fs::File, RemoteAuthError> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true).write(true).create(true);
@@ -544,6 +587,29 @@ mod tests {
         assert!(loaded
             .authenticate(&issued.client_id, &issued.token, 3_000)
             .is_ok());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn save_to_path_replaces_existing_store() {
+        let path = std::env::temp_dir().join(format!(
+            "pickforge-remote-auth-replace-{}-{}.json",
+            std::process::id(),
+            random_hex(4)
+        ));
+        let mut first = RemoteAuthStore::default();
+        first.issue_pairing_code(1_000, 60_000).unwrap();
+        first.save_to_path(&path).unwrap();
+
+        let mut second = RemoteAuthStore::default();
+        let replacement = second.issue_pairing_code(2_000, 60_000).unwrap();
+        second.save_to_path(&path).unwrap();
+
+        let snapshot = RemoteAuthStore::snapshot_from_path(&path).unwrap();
+        assert_eq!(snapshot.pairing_codes.len(), 1);
+        assert_eq!(snapshot.pairing_codes[0].code, replacement.code);
+
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
         std::fs::remove_file(path).ok();
     }
 

@@ -68,7 +68,7 @@ impl From<ClientTokenRecord> for RemoteClientSummary {
 pub async fn remote_host_status(
     state: State<'_, RemoteHostState>,
 ) -> Result<RemoteHostOverview, String> {
-    overview(&state)
+    overview(&state).await
 }
 
 #[tauri::command]
@@ -89,17 +89,12 @@ pub async fn remote_host_start(
     }
     let home = pickforge_home(None).map_err(|err| err.to_string())?;
     let server = spawn_remote_http_server(DaemonConfig {
-        pickforge_home: home,
+        pickforge_home: home.clone(),
         listener,
     })
     .await
     .map_err(|err| err.to_string())?;
-    state
-        .server
-        .lock()
-        .map_err(|_| "remote host state poisoned".to_string())?
-        .replace(server);
-    overview(&state)
+    state.publish_server_and_overview(home, server).await
 }
 
 #[tauri::command]
@@ -114,7 +109,7 @@ pub async fn remote_host_stop(
     if let Some(server) = server {
         server.shutdown().await.map_err(|err| err.to_string())?;
     }
-    overview(&state)
+    overview(&state).await
 }
 
 #[tauri::command]
@@ -152,22 +147,67 @@ pub fn remote_tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, String
     tailscale_ssh_set(enabled)
 }
 
-fn overview(state: &RemoteHostState) -> Result<RemoteHostOverview, String> {
-    let home = pickforge_home(None).map_err(|err| err.to_string())?;
-    overview_for_home(state, &home, tailscale_status())
+impl RemoteHostState {
+    async fn publish_server_and_overview(
+        &self,
+        home: String,
+        server: RemoteHttpServer,
+    ) -> Result<RemoteHostOverview, String> {
+        self.server
+            .lock()
+            .map_err(|_| "remote host state poisoned".to_string())?
+            .replace(server);
+
+        match overview_for_home(self, home).await {
+            Ok(overview) => Ok(overview),
+            Err(err) => {
+                let server = self
+                    .server
+                    .lock()
+                    .map_err(|_| "remote host state poisoned".to_string())?
+                    .take();
+                if let Some(server) = server {
+                    server.shutdown().await.map_err(|shutdown_err| {
+                        format!("{err}; failed to stop remote listener: {shutdown_err}")
+                    })?;
+                }
+                Err(err)
+            }
+        }
+    }
 }
 
-fn overview_for_home(
+async fn overview(state: &RemoteHostState) -> Result<RemoteHostOverview, String> {
+    let home = pickforge_home(None).map_err(|err| err.to_string())?;
+    overview_for_home(state, home).await
+}
+
+async fn overview_for_home(
     state: &RemoteHostState,
-    home: &str,
-    tailscale: TailscaleStatus,
+    home: String,
 ) -> Result<RemoteHostOverview, String> {
-    let server = state
+    let server = current_server_info(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        overview_from_parts(&home, server, tailscale_status())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+fn current_server_info(state: &RemoteHostState) -> Result<Option<RemoteHttpServerInfo>, String> {
+    Ok(state
         .server
         .lock()
         .map_err(|_| "remote host state poisoned".to_string())?
         .as_ref()
-        .map(RemoteHttpServer::info);
+        .map(RemoteHttpServer::info))
+}
+
+fn overview_from_parts(
+    home: &str,
+    server: Option<RemoteHttpServerInfo>,
+    tailscale: TailscaleStatus,
+) -> Result<RemoteHostOverview, String> {
     let listener = listener_from_server(server.as_ref());
     let path = remote_auth_store_path(&home);
     let snapshot = RemoteAuthStore::snapshot_from_path(&path).map_err(|err| err.to_string())?;
@@ -255,6 +295,14 @@ mod tests {
         dir.to_string_lossy().into_owned()
     }
 
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
     #[test]
     fn pairing_and_revoke_helpers_update_locked_store() {
         let home = temp_home("auth-flow");
@@ -284,8 +332,7 @@ mod tests {
         })
         .unwrap();
 
-        let state = RemoteHostState::new();
-        let overview = overview_for_home(&state, &home, unavailable_tailscale()).unwrap();
+        let overview = overview_from_parts(&home, None, unavailable_tailscale()).unwrap();
         assert!(!overview.running);
         assert_eq!(overview.listener, DaemonListener::Disabled);
         assert_eq!(overview.local_url, None);
@@ -297,6 +344,31 @@ mod tests {
         assert_eq!(overview.clients[0].client_id, issued.client_id);
         assert_eq!(overview.clients[0].client_name, "Overview client");
         assert!(!overview.tailscale.available);
+
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
+        std::fs::remove_file(path).ok();
+    }
+
+    #[tokio::test]
+    async fn publish_server_rolls_back_when_overview_fails() {
+        let home = temp_home("bad-overview");
+        let path = remote_auth_store_path(&home);
+        std::fs::write(&path, b"{bad json").unwrap();
+        let state = RemoteHostState::new();
+        let server = spawn_remote_http_server(DaemonConfig {
+            pickforge_home: home.clone(),
+            listener: listener_from_parts("127.0.0.1".into(), free_port()).unwrap(),
+        })
+        .await
+        .unwrap();
+
+        let err = state
+            .publish_server_and_overview(home, server)
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("json error"));
+        assert!(state.server.lock().unwrap().is_none());
 
         std::fs::remove_file(path.with_extension("json.lock")).ok();
         std::fs::remove_file(path).ok();

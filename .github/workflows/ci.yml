@@ -76,12 +76,12 @@ jobs:
       - name: build (tsc --noEmit && vite build)
         run: bun run build
 
-      # Build + stage the `pickforge-mcp` sidecar at the triple-suffixed path
-      # `bundle.externalBin` points at. `tauri-build` resolves that externalBin
-      # at build-script time (not just at bundle time), so a bare `cargo check`
-      # fails with "resource path ... doesn't exist" without it. The script
+      # Build + stage sidecars at the triple-suffixed paths `bundle.externalBin`
+      # points at. `tauri-build` resolves those externalBin entries at
+      # build-script time (not just at bundle time), so a bare `cargo check`
+      # fails with "resource path ... doesn't exist" without them. The script
       # derives the host triple from `rustc -vV`, so it's correct for this runner.
-      - name: stage MCP sidecar (externalBin)
+      - name: stage sidecars (externalBin)
         run: bun run sidecar
 
       - name: device-free e2e smoke
@@ -120,6 +120,18 @@ jobs:
             target/llvm-cov/html/
             target/llvm-cov/summary.txt
           retention-days: 7
+
+  windows-remote-auth:
+    name: windows remote auth
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: remote auth tests
+        run: cargo test -p pickforge-core --locked remote::auth
 
   vrt:
     name: visual regression

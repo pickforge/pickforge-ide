@@ -36,12 +36,6 @@ function writeFixture(root, assets) {
       writeExecutable(
         path,
         `#!/bin/sh
-set -eu
-if [ "\${1:-}" = "--appimage-extract" ]; then
-  mkdir -p squashfs-root/usr/share/icons/hicolor/512x512/apps
-  printf 'fake png' > squashfs-root/usr/share/icons/hicolor/512x512/apps/pickforge.png
-  exit 0
-fi
 exit 0
 `,
       );
@@ -60,13 +54,21 @@ function writeFakeCurl(fakebin) {
 set -eu
 out=""
 url=""
+auth_header=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o)
       out="$2"
       shift 2
       ;;
-    -H|-K)
+    -H)
+      case "\${2:-}" in
+        *Authorization*) auth_header=1 ;;
+      esac
+      shift 2
+      ;;
+    -K)
+      auth_header=1
       shift 2
       ;;
     -*)
@@ -79,7 +81,14 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$url" in
-  *api.github.com*|*release.test*)
+  *api.github.com*)
+    cat "$PICKFORGE_TEST_FIXTURE/release.json"
+    ;;
+  *release.test*)
+    if [ "$auth_header" -eq 1 ]; then
+      echo "authorization header sent to override URL" >&2
+      exit 65
+    fi
     cat "$PICKFORGE_TEST_FIXTURE/release.json"
     ;;
   *.AppImage|*.deb|*.rpm|*.app.tar.gz)
@@ -187,12 +196,14 @@ test("AppImage fallback installs launcher, icon, wrapper, and disables stale ent
   const appImage = join(home, ".local", "bin", "PickForge.AppImage");
   const command = join(home, ".local", "bin", "pickforge");
   const launcher = join(home, ".local", "share", "applications", "dev.pickforge.app.desktop");
-  const icon = join(home, ".local", "share", "icons", "hicolor", "512x512", "apps", "dev.pickforge.app.png");
+  const icon = join(home, ".local", "share", "icons", "hicolor", "scalable", "apps", "dev.pickforge.app.svg");
 
   assert.equal(existsSync(appImage), true);
   assert.equal(statSync(appImage).mode & 0o111, 0o111);
   assert.equal(existsSync(command), true);
-  assert.match(readFileSync(command, "utf8"), /APPIMAGE_EXTRACT_AND_RUN=1/);
+  const commandBody = readFileSync(command, "utf8");
+  assert.match(commandBody, /APPIMAGE_EXTRACT_AND_RUN=1/);
+  assert.equal(commandBody.includes(`appimage_path='${appImage}'`), true);
   assert.equal(existsSync(launcher), true);
   assert.equal(existsSync(icon), true);
   assert.match(readFileSync(launcher, "utf8"), /StartupWMClass=dev\.pickforge\.app/);
@@ -219,9 +230,9 @@ test("AppImage upgrade replaces old symlink command without overwriting the AppI
   const command = readFileSync(join(bin, "pickforge"), "utf8");
 
   assert.equal(lstatSync(join(bin, "pickforge")).isSymbolicLink(), false);
-  assert.match(appImage, /--appimage-extract/);
   assert.doesNotMatch(appImage, /APPIMAGE_EXTRACT_AND_RUN=1/);
   assert.match(command, /APPIMAGE_EXTRACT_AND_RUN=1/);
+  assert.equal(command.includes(`appimage_path='${join(bin, "PickForge.AppImage")}'`), true);
 });
 
 test("explicit deb install uses a native package when a deb installer and sudo are available", (root) => {
@@ -310,6 +321,16 @@ test("auto stays rootless AppImage even when a deb asset exists", (root) => {
 
   assert.match(output, /installed to .*PickForge\.AppImage/);
   assert.equal(existsSync(join(root, "home", ".local", "bin", "PickForge.AppImage")), true);
+});
+
+test("release API override does not receive the GitHub token", (root) => {
+  const fixture = writeFixture(root, [
+    { name: "PickForge_9.9.9_amd64.AppImage", kind: "appimage" },
+  ]);
+
+  const output = runInstaller(root, fixture, { GITHUB_TOKEN: "ghp_secret" });
+
+  assert.match(output, /PickForge v9\.9\.9 installed/);
 });
 
 test("AppImage install refuses to overwrite an unrelated pickforge command", (root) => {

@@ -12,6 +12,8 @@ reset this file.
   `PICKFORGE_INSTALL_KIND=deb` or `PICKFORGE_INSTALL_KIND=rpm`.
 - AppImage installs now add the launcher icon, refresh desktop search/menu
   caches, and disable known stale PickForge launchers in the user's app menu.
+- Linux curl installs no longer execute the downloaded AppImage during install
+  just to populate the app menu icon.
 
 ## Internal/release changes
 
@@ -20,6 +22,8 @@ reset this file.
 - Native Linux packages now install the `pickforge` command name.
 - Added installer smoke tests for AppImage desktop integration, stale launcher
   cleanup, native `.deb` selection, and zypper `.rpm` installs.
+- Installer smoke tests now run in CI, and GitHub tokens are only sent to
+  official GitHub API URLs.
 
 ## Validation
 
@@ -36,6 +40,8 @@ reset this file.
 - Temp-HOME live AppImage installer smoke against GitHub release `v0.1.8`
 - `desktop-file-validate` on generated AppImage desktop entries
 - `APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1 bun run tauri build --bundles appimage,deb,rpm --no-sign`
+- `sh -n scripts/install.sh`
+- `git diff --check`
 
 ### Not tested yet
 

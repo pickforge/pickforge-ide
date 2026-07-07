@@ -252,4 +252,63 @@ mod tests {
         });
         assert!(serve_status_has_pickforge_route(&pickforge));
     }
+
+    #[test]
+    fn serve_status_detects_nested_path_fields_arrays_and_strings() {
+        assert!(serve_status_has_pickforge_route(&serde_json::json!({
+            "Path": "/pickforge"
+        })));
+        assert!(serve_status_has_pickforge_route(&serde_json::json!([
+            { "path": "/other" },
+            { "path": "/pickforge" }
+        ])));
+        assert!(serve_status_has_pickforge_route(&serde_json::json!(
+            "/pickforge"
+        )));
+    }
+
+    #[test]
+    fn status_json_handles_missing_self_and_empty_fields() {
+        let mut missing_self = TailscaleStatus::unavailable(None);
+        apply_status_json(
+            &mut missing_self,
+            &serde_json::json!({ "BackendState": "NeedsLogin" }),
+        );
+        assert_eq!(missing_self.backend_state.as_deref(), Some("NeedsLogin"));
+        assert_eq!(missing_self.online, None);
+        assert!(missing_self.tailscale_ips.is_empty());
+
+        let mut empty_self = TailscaleStatus::unavailable(None);
+        apply_status_json(
+            &mut empty_self,
+            &serde_json::json!({
+                "Self": {
+                    "HostName": "",
+                    "DNSName": "",
+                    "TailscaleIPs": [],
+                    "Capabilities": []
+                }
+            }),
+        );
+        assert_eq!(empty_self.host_name, None);
+        assert_eq!(empty_self.dns_name, None);
+        assert!(!empty_self.ssh_capable);
+    }
+
+    #[test]
+    fn serve_commands_reject_invalid_inputs_before_running_tailscale() {
+        let listener = DaemonListener::loopback("127.0.0.1", 4747).unwrap();
+        assert_eq!(
+            tailscale_serve_enable(&listener, 0).unwrap_err(),
+            "Tailscale HTTPS port must be non-zero"
+        );
+        assert_eq!(
+            tailscale_serve_enable(&DaemonListener::Disabled, 443).unwrap_err(),
+            "remote listener is disabled"
+        );
+        assert_eq!(
+            tailscale_serve_disable(0).unwrap_err(),
+            "Tailscale HTTPS port must be non-zero"
+        );
+    }
 }

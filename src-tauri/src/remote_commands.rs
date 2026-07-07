@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use pickforge_core::{
@@ -118,20 +119,14 @@ pub async fn remote_host_stop(
 
 #[tauri::command]
 pub fn remote_host_issue_pairing_code(ttl_ms: Option<i64>) -> Result<PairingCode, String> {
-    let home = pickforge_home(None).map_err(|err| err.to_string())?;
-    let path = remote_auth_store_path(&home);
-    RemoteAuthStore::update_path(&path, |store| {
-        store.issue_pairing_code(now_ms(), ttl_ms.unwrap_or(DEFAULT_PAIRING_TTL_MS))
-    })
-    .map_err(|err| err.to_string())
+    let path = auth_path()?;
+    issue_pairing_code_at(&path, ttl_ms.unwrap_or(DEFAULT_PAIRING_TTL_MS))
 }
 
 #[tauri::command]
 pub fn remote_host_revoke_client(client_id: String) -> Result<(), String> {
-    let home = pickforge_home(None).map_err(|err| err.to_string())?;
-    let path = remote_auth_store_path(&home);
-    RemoteAuthStore::update_path(&path, |store| store.revoke_client(&client_id, now_ms()))
-        .map_err(|err| err.to_string())
+    let path = auth_path()?;
+    revoke_client_at(&path, &client_id)
 }
 
 #[tauri::command]
@@ -158,6 +153,15 @@ pub fn remote_tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, String
 }
 
 fn overview(state: &RemoteHostState) -> Result<RemoteHostOverview, String> {
+    let home = pickforge_home(None).map_err(|err| err.to_string())?;
+    overview_for_home(state, &home, tailscale_status())
+}
+
+fn overview_for_home(
+    state: &RemoteHostState,
+    home: &str,
+    tailscale: TailscaleStatus,
+) -> Result<RemoteHostOverview, String> {
     let server = state
         .server
         .lock()
@@ -165,7 +169,6 @@ fn overview(state: &RemoteHostState) -> Result<RemoteHostOverview, String> {
         .as_ref()
         .map(RemoteHttpServer::info);
     let listener = listener_from_server(server.as_ref());
-    let home = pickforge_home(None).map_err(|err| err.to_string())?;
     let path = remote_auth_store_path(&home);
     let snapshot = RemoteAuthStore::snapshot_from_path(&path).map_err(|err| err.to_string())?;
     let local_url = server
@@ -178,11 +181,26 @@ fn overview(state: &RemoteHostState) -> Result<RemoteHostOverview, String> {
         auth_path: path.to_string_lossy().into_owned(),
         pairing_codes: snapshot.pairing_codes,
         clients: snapshot.clients.into_iter().map(Into::into).collect(),
-        tailscale: tailscale_status(),
+        tailscale,
         default_host: DEFAULT_REMOTE_HOST.into(),
         default_port: DEFAULT_REMOTE_PORT,
         default_https_port: DEFAULT_TAILSCALE_HTTPS_PORT,
     })
+}
+
+fn auth_path() -> Result<PathBuf, String> {
+    let home = pickforge_home(None).map_err(|err| err.to_string())?;
+    Ok(remote_auth_store_path(&home))
+}
+
+fn issue_pairing_code_at(path: &Path, ttl_ms: i64) -> Result<PairingCode, String> {
+    RemoteAuthStore::update_path(path, |store| store.issue_pairing_code(now_ms(), ttl_ms))
+        .map_err(|err| err.to_string())
+}
+
+fn revoke_client_at(path: &Path, client_id: &str) -> Result<(), String> {
+    RemoteAuthStore::update_path(path, |store| store.revoke_client(client_id, now_ms()))
+        .map_err(|err| err.to_string())
 }
 
 fn listener_from_server(server: Option<&RemoteHttpServerInfo>) -> DaemonListener {
@@ -199,4 +217,141 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_HOME: AtomicU64 = AtomicU64::new(1);
+
+    fn unavailable_tailscale() -> TailscaleStatus {
+        TailscaleStatus {
+            available: false,
+            binary_path: None,
+            version: None,
+            backend_state: None,
+            online: None,
+            host_name: None,
+            dns_name: None,
+            tailscale_ips: Vec::new(),
+            ssh_capable: false,
+            ssh_enabled: None,
+            serve_configured: false,
+            error: Some("not installed".into()),
+        }
+    }
+
+    fn temp_home(name: &str) -> String {
+        let dir = std::env::temp_dir().join(format!(
+            "pickforge-tauri-remote-{name}-{}-{}-{}",
+            std::process::id(),
+            now_ms(),
+            NEXT_HOME.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn pairing_and_revoke_helpers_update_locked_store() {
+        let home = temp_home("auth-flow");
+        let path = remote_auth_store_path(&home);
+        let code = issue_pairing_code_at(&path, 60_000).unwrap();
+        let issued = RemoteAuthStore::update_path(&path, |store| {
+            store.exchange_pairing_code(&code.code, "Tauri client", now_ms())
+        })
+        .unwrap();
+
+        revoke_client_at(&path, &issued.client_id).unwrap();
+        let snapshot = RemoteAuthStore::snapshot_from_path(&path).unwrap();
+        assert_eq!(snapshot.clients[0].client_name, "Tauri client");
+        assert!(snapshot.clients[0].revoked_at_ms.is_some());
+
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn overview_for_home_redacts_client_secrets() {
+        let home = temp_home("overview");
+        let path = remote_auth_store_path(&home);
+        let code = issue_pairing_code_at(&path, 60_000).unwrap();
+        let issued = RemoteAuthStore::update_path(&path, |store| {
+            store.exchange_pairing_code(&code.code, "Overview client", now_ms())
+        })
+        .unwrap();
+
+        let state = RemoteHostState::new();
+        let overview = overview_for_home(&state, &home, unavailable_tailscale()).unwrap();
+        assert!(!overview.running);
+        assert_eq!(overview.listener, DaemonListener::Disabled);
+        assert_eq!(overview.local_url, None);
+        assert_eq!(overview.auth_path, path.to_string_lossy().as_ref());
+        assert_eq!(overview.default_host, DEFAULT_REMOTE_HOST);
+        assert_eq!(overview.default_port, DEFAULT_REMOTE_PORT);
+        assert_eq!(overview.default_https_port, DEFAULT_TAILSCALE_HTTPS_PORT);
+        assert_eq!(overview.pairing_codes[0].code, code.code);
+        assert_eq!(overview.clients[0].client_id, issued.client_id);
+        assert_eq!(overview.clients[0].client_name, "Overview client");
+        assert!(!overview.tailscale.available);
+
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn listener_from_server_reports_disabled_or_loopback() {
+        assert_eq!(listener_from_server(None), DaemonListener::Disabled);
+
+        let info = RemoteHttpServerInfo {
+            local_addr: "127.0.0.1:4747".parse::<SocketAddr>().unwrap(),
+        };
+        assert_eq!(
+            listener_from_server(Some(&info)),
+            DaemonListener::Loopback {
+                host: "127.0.0.1".into(),
+                port: 4747,
+            }
+        );
+    }
+
+    #[test]
+    fn command_helpers_reject_invalid_input_before_shelling_out() {
+        let home = temp_home("bad-input");
+        let path = remote_auth_store_path(&home);
+        assert!(issue_pairing_code_at(&path, 0)
+            .unwrap_err()
+            .contains("pairing ttl must be positive"));
+        assert!(revoke_client_at(&path, "missing")
+            .unwrap_err()
+            .contains("client was not found"));
+        assert!(remote_tailscale_serve_enable("0.0.0.0".into(), 4747, Some(443)).is_err());
+        assert_eq!(
+            remote_tailscale_serve_disable(Some(0)).unwrap_err(),
+            "Tailscale HTTPS port must be non-zero"
+        );
+
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn client_summary_drops_token_hash_field() {
+        let mut store = RemoteAuthStore::default();
+        let code = store.issue_pairing_code(1_000, 60_000).unwrap();
+        let issued = store
+            .exchange_pairing_code(&code.code, "Summary client", 2_000)
+            .unwrap();
+        let client = store.snapshot().clients.remove(0);
+        let summary = RemoteClientSummary::from(client);
+
+        assert_eq!(summary.client_id, issued.client_id);
+        assert_eq!(summary.client_name, "Summary client");
+        assert_eq!(summary.issued_at_ms, 2_000);
+        assert_eq!(summary.last_seen_at_ms, None);
+        assert_eq!(summary.revoked_at_ms, None);
+    }
 }

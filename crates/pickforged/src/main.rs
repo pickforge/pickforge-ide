@@ -1,10 +1,11 @@
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pickforge_core::{
     parse_listener, remote_auth_store_path, spawn_remote_http_server, tailscale_serve_disable,
     tailscale_serve_enable, tailscale_ssh_set, tailscale_status, DaemonConfig, DaemonListener,
-    RemoteAuthStore, RemoteHostDaemon,
+    DaemonStatus, PairingCode, RemoteAuthStore, RemoteAuthStoreSnapshot, RemoteHostDaemon,
 };
 use serde_json::json;
 
@@ -59,8 +60,7 @@ fn print_help() {
 
 fn print_status() -> Result<(), String> {
     let config = DaemonConfig::from_env(None).map_err(|err| err.to_string())?;
-    let daemon = RemoteHostDaemon::new(config).map_err(|err| err.to_string())?;
-    print_json(&daemon.status(now_ms()))
+    print_json(&status_from_config(config)?)
 }
 
 async fn serve(args: &[String]) -> Result<(), String> {
@@ -83,18 +83,44 @@ async fn serve(args: &[String]) -> Result<(), String> {
 
 fn issue_pairing_code(args: &[String]) -> Result<(), String> {
     let ttl_ms = numeric_arg(args, "--ttl-ms")?.unwrap_or(10 * 60 * 1000);
-    let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
-    let path = remote_auth_store_path(&home);
-    let code =
-        RemoteAuthStore::update_path(&path, |store| store.issue_pairing_code(now_ms(), ttl_ms))
-            .map_err(|err| err.to_string())?;
+    let path = auth_path()?;
+    let code = issue_pairing_code_at(&path, ttl_ms)?;
     print_json(&code)
 }
 
 fn print_clients() -> Result<(), String> {
+    let path = auth_path()?;
+    print_json(&clients_json_from_path(&path)?)
+}
+
+fn revoke_client(args: &[String]) -> Result<(), String> {
+    let client_id = args.first().ok_or("missing client id")?;
+    let path = auth_path()?;
+    revoke_client_at(&path, client_id)?;
+    print_json(&json!({ "clientId": client_id, "revoked": true }))
+}
+
+fn status_from_config(config: DaemonConfig) -> Result<DaemonStatus, String> {
+    let daemon = RemoteHostDaemon::new(config).map_err(|err| err.to_string())?;
+    Ok(daemon.status(now_ms()))
+}
+
+fn auth_path() -> Result<PathBuf, String> {
     let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
-    let path = remote_auth_store_path(&home);
+    Ok(remote_auth_store_path(&home))
+}
+
+fn issue_pairing_code_at(path: &Path, ttl_ms: i64) -> Result<PairingCode, String> {
+    RemoteAuthStore::update_path(path, |store| store.issue_pairing_code(now_ms(), ttl_ms))
+        .map_err(|err| err.to_string())
+}
+
+fn clients_json_from_path(path: &Path) -> Result<serde_json::Value, String> {
     let snapshot = RemoteAuthStore::snapshot_from_path(&path).map_err(|err| err.to_string())?;
+    Ok(clients_json(snapshot))
+}
+
+fn clients_json(snapshot: RemoteAuthStoreSnapshot) -> serde_json::Value {
     let clients: Vec<_> = snapshot
         .clients
         .into_iter()
@@ -108,16 +134,12 @@ fn print_clients() -> Result<(), String> {
             })
         })
         .collect();
-    print_json(&json!({ "clients": clients }))
+    json!({ "clients": clients })
 }
 
-fn revoke_client(args: &[String]) -> Result<(), String> {
-    let client_id = args.first().ok_or("missing client id")?;
-    let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
-    let path = remote_auth_store_path(&home);
-    RemoteAuthStore::update_path(&path, |store| store.revoke_client(client_id, now_ms()))
-        .map_err(|err| err.to_string())?;
-    print_json(&json!({ "clientId": client_id, "revoked": true }))
+fn revoke_client_at(path: &Path, client_id: &str) -> Result<(), String> {
+    RemoteAuthStore::update_path(path, |store| store.revoke_client(client_id, now_ms()))
+        .map_err(|err| err.to_string())
 }
 
 fn tailscale_serve(args: &[String]) -> Result<(), String> {
@@ -176,4 +198,123 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_PATH: AtomicU64 = AtomicU64::new(1);
+
+    fn temp_auth_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pickforged-{name}-{}-{}-{}",
+            std::process::id(),
+            now_ms(),
+            NEXT_PATH.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        remote_auth_store_path(&dir.to_string_lossy())
+    }
+
+    #[test]
+    fn arg_parsers_validate_listener_and_ports() {
+        let args = vec![
+            "--listen".to_string(),
+            "127.0.0.1:4747".to_string(),
+            "--ttl-ms".to_string(),
+            "60000".to_string(),
+            "--https-port".to_string(),
+            "443".to_string(),
+        ];
+
+        assert_eq!(
+            value_arg(&args, "--listen").as_deref(),
+            Some("127.0.0.1:4747")
+        );
+        assert_eq!(numeric_arg(&args, "--ttl-ms").unwrap(), Some(60_000));
+        assert_eq!(port_arg(&args, "--https-port").unwrap(), Some(443));
+        assert!(matches!(
+            listener_arg(&args).unwrap(),
+            Some(DaemonListener::Loopback { port: 4747, .. })
+        ));
+
+        let bad_number = vec!["--ttl-ms".to_string(), "soon".to_string()];
+        assert_eq!(
+            numeric_arg(&bad_number, "--ttl-ms").unwrap_err(),
+            "--ttl-ms must be a number"
+        );
+
+        let bad_port = vec!["--https-port".to_string(), "0".to_string()];
+        assert_eq!(
+            port_arg(&bad_port, "--https-port").unwrap_err(),
+            "--https-port must be 1-65535"
+        );
+
+        let wildcard = vec!["--listen".to_string(), "0.0.0.0:4747".to_string()];
+        assert!(listener_arg(&wildcard).is_err());
+    }
+
+    #[test]
+    fn status_from_config_reports_disabled_and_loopback_listeners() {
+        let disabled = status_from_config(DaemonConfig::disabled("/tmp/pickforge")).unwrap();
+        assert!(!disabled.listener_enabled);
+
+        let loopback = status_from_config(DaemonConfig {
+            pickforge_home: "/tmp/pickforge".into(),
+            listener: DaemonListener::loopback("127.0.0.1", 4747).unwrap(),
+        })
+        .unwrap();
+        assert!(loopback.listener_enabled);
+    }
+
+    #[test]
+    fn auth_helpers_issue_list_and_revoke_clients() {
+        let path = temp_auth_path("auth-flow");
+        let code = issue_pairing_code_at(&path, 60_000).unwrap();
+        let issued = RemoteAuthStore::update_path(&path, |store| {
+            store.exchange_pairing_code(&code.code, "CLI client", now_ms())
+        })
+        .unwrap();
+
+        let clients = clients_json_from_path(&path).unwrap();
+        assert_eq!(clients["clients"][0]["clientId"], issued.client_id);
+        assert_eq!(clients["clients"][0]["clientName"], "CLI client");
+        assert!(clients["clients"][0].get("tokenHash").is_none());
+
+        revoke_client_at(&path, &issued.client_id).unwrap();
+        let snapshot = RemoteAuthStore::snapshot_from_path(&path).unwrap();
+        assert!(snapshot.clients[0].revoked_at_ms.is_some());
+
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn auth_helpers_reject_invalid_input() {
+        let path = temp_auth_path("bad-auth");
+        assert!(issue_pairing_code_at(&path, 0)
+            .unwrap_err()
+            .contains("pairing ttl must be positive"));
+        assert!(revoke_client_at(&path, "missing")
+            .unwrap_err()
+            .contains("client was not found"));
+        assert_eq!(revoke_client(&[]).unwrap_err(), "missing client id");
+
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn tailscale_commands_reject_invalid_args_before_shelling_out() {
+        let wildcard = vec!["--listen".to_string(), "0.0.0.0:4747".to_string()];
+        assert!(tailscale_serve(&wildcard).is_err());
+
+        let bad_port = vec!["--https-port".to_string(), "0".to_string()];
+        assert_eq!(
+            tailscale_serve_off(&bad_port).unwrap_err(),
+            "--https-port must be 1-65535"
+        );
+    }
 }

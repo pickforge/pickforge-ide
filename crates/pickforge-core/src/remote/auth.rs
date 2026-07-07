@@ -299,6 +299,10 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
 struct RemoteAuthPathLock {
     #[cfg(unix)]
     file: std::fs::File,
+    #[cfg(windows)]
+    file: std::fs::File,
+    #[cfg(windows)]
+    overlapped: windows_sys::Win32::System::IO::OVERLAPPED,
 }
 
 fn lock_auth_path(path: &Path) -> Result<RemoteAuthPathLock, RemoteAuthError> {
@@ -319,7 +323,36 @@ fn lock_auth_path(path: &Path) -> Result<RemoteAuthPathLock, RemoteAuthError> {
         }
         Ok(RemoteAuthPathLock { file })
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
+        use windows_sys::Win32::System::IO::OVERLAPPED;
+
+        let lock_path = path.with_extension("json.lock");
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+        }
+        let file = open_private_file(&lock_path, false)?;
+        let mut overlapped = OVERLAPPED::default();
+        let rc = unsafe {
+            LockFileEx(
+                file.as_raw_handle() as _,
+                LOCKFILE_EXCLUSIVE_LOCK,
+                0,
+                u32::MAX,
+                u32::MAX,
+                &mut overlapped,
+            )
+        };
+        if rc == 0 {
+            return Err(RemoteAuthError::Io(
+                std::io::Error::last_os_error().to_string(),
+            ));
+        }
+        Ok(RemoteAuthPathLock { file, overlapped })
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         Ok(RemoteAuthPathLock {})
@@ -332,6 +365,24 @@ impl Drop for RemoteAuthPathLock {
         use std::os::fd::AsRawFd;
 
         let _ = unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+#[cfg(windows)]
+impl Drop for RemoteAuthPathLock {
+    fn drop(&mut self) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+
+        let _ = unsafe {
+            UnlockFileEx(
+                self.file.as_raw_handle() as _,
+                0,
+                u32::MAX,
+                u32::MAX,
+                &mut self.overlapped,
+            )
+        };
     }
 }
 

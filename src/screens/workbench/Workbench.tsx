@@ -26,6 +26,7 @@ import {
   commandForItem,
   hotkeyMatches,
   quickLaunchItems,
+  type QuickLaunchItem,
 } from "../../stores/quickLaunch";
 import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
 import { clearProjectOrchestra, removeChatFromOrchestra, selectedLanes } from "../../stores/orchestra";
@@ -69,12 +70,17 @@ export function WorkbenchScreen() {
   // not a raw split pane that would kill it on close. We also arm that pane so
   // the agent's first message becomes the chat title (see chatAutoName). A
   // non-agent launch opens a fresh split pane so it never disturbs the primary.
-  const launchItem = (item: { agentId?: string }, text: string) => {
+  const launchItem = async (item: QuickLaunchItem) => {
+    const chatId = workspace.activeChatId;
+    if (!chatId) return;
+    const root = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
+    if (item.agentId && root) await ensureMcpRunning(root);
+    const text = commandForItem(item, item.agentId ? mcpEnv(root) : {});
     if (!text) return;
-    const host = getTerminalHost(workspace.activeChatId);
+    const host = getTerminalHost(chatId);
     if (!host) return;
     const paneId = item.agentId ? host.runInPrimary(text) : host.openInNewPane(text);
-    if (paneId && item.agentId) armChatAutoName(workspace.activeChatId, paneId);
+    if (paneId && item.agentId) armChatAutoName(chatId, paneId);
   };
 
   // Open a file per the user's preference: a new editor pane (nvim/custom) or the
@@ -235,7 +241,7 @@ export function WorkbenchScreen() {
           // Match the chip's disabled gate: a missing binary shouldn't fire.
           const bin = binaryForItem(item);
           if (bin && available()[bin] === false) return;
-          launchItem(item, commandForItem(item));
+          void launchItem(item);
           return;
         }
       }

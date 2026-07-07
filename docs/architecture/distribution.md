@@ -40,12 +40,13 @@ build are hardening gates for the next release.
 
 ## Linux
 
-- v0.1.0 ships the AppImage built with `scripts/package_linux_appimage.sh` and
-  validated with `scripts/linux_appimage_smoke.sh --skip-build`.
-- Build a `.deb` package for Debian/Ubuntu users with
-  `scripts/package_linux_deb.sh`.
-- Build Linux release artifacts on Ubuntu 24.04 so `.deb` binaries do not pick
-  up a newer glibc requirement from a rolling local workstation.
+- Linux releases publish AppImage, `.deb`, and `.rpm` artifacts from the Tauri
+  release workflow. The curl installer stays rootless by default with an
+  AppImage wrapper that falls back to `APPIMAGE_EXTRACT_AND_RUN=1` on FUSE3-only
+  hosts. Users can opt into native packages with `PICKFORGE_INSTALL_KIND=deb` or
+  `PICKFORGE_INSTALL_KIND=rpm`.
+- Build Linux release artifacts on an Ubuntu runner so `.deb` binaries do not
+  pick up a newer glibc requirement from a rolling local workstation.
 - Run `scripts/linux_deb_container_install_smoke.sh --skip-build` after
   packaging to install the `.deb` in a clean Ubuntu 24.04 container and verify
   package metadata, installed files, dynamic linkage, and first-run liveness.
@@ -59,7 +60,10 @@ build are hardening gates for the next release.
 - Treat Flathub as the preferred long-term store channel; Snap is secondary and
   only worth adding if users ask for it.
 - Package metadata must include desktop entry, icon, executable name, license,
-  and update/check URL behavior.
+  and update/check URL behavior. The AppImage curl path also writes a user-scope
+  `dev.pickforge.app.desktop`, points it at the FUSE-aware wrapper, extracts the
+  AppImage icon into the hicolor theme, refreshes desktop/icon caches, and
+  disables known stale user launchers.
 - Package signing is a next-release hardening gate; v0.1.0 shipped unsigned by
   decision.
 

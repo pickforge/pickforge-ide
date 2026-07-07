@@ -14,15 +14,15 @@ Local-first. Open source. Built for people who ship. You bring your own agent cr
 
 ## Install
 
-**Quick install** (Linux AppImage, macOS `.app` on Apple Silicon; no sudo):
+**Quick install** (Linux rootless AppImage with FUSE fallback; macOS `.app` on Apple Silicon):
 
 ```sh
 curl -fsSL https://pickforge.dev/pickforge/install.sh | sh
 ```
 
-Pins to the latest [release](https://github.com/pickforge/pickforge/releases). Intel macOS and Windows aren't built yet — download the installer from Releases.
+Pins to the latest [release](https://github.com/pickforge/pickforge/releases). On Linux the curl installer stays rootless by default and falls back automatically on FUSE3-only systems; set `PICKFORGE_INSTALL_KIND=deb` or `PICKFORGE_INSTALL_KIND=rpm` to install a native package when the release publishes one. Intel macOS and Windows aren't built yet — download the installer from Releases.
 
-Download from [Releases](https://github.com/pickforge/pickforge/releases) — `.AppImage` (Linux), `.dmg` (macOS), `.msi` (Windows).
+Download from [Releases](https://github.com/pickforge/pickforge/releases) — `.deb`/`.rpm`/`.AppImage` (Linux), `.dmg` (macOS), `.msi` (Windows).
 
 Or build from source:
 
@@ -31,7 +31,7 @@ git clone https://github.com/pickforge/pickforge
 cd pickforge
 bun install
 bun run tauri dev        # Rust shell + SolidJS UI, hot-reloaded
-# bun run tauri build    # produce a release bundle (.AppImage / .dmg / .msi)
+# bun run tauri build    # produce release bundles (.deb/.rpm/.AppImage / .dmg / .msi)
 ```
 
 Requires a [Rust toolchain](https://rustup.rs) and [Bun](https://bun.sh) 1.2+. PickForge is built

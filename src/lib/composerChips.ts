@@ -1,17 +1,28 @@
 // Contenteditable ↔ string bridge for the chat composer. The composer's text
-// model is still a plain string carrying `[Image #N]` markers (see
-// imageAnchors.ts); these pure functions map that string to/from the editor DOM
-// so each marker renders as an atomic, button-like chip while everything
-// downstream keeps consuming the string.
+// model is still a plain string carrying `[Image #N]` / `[Text #N]` markers;
+// these pure functions map that string to/from the editor DOM so each marker
+// renders as an atomic, button-like chip while everything downstream keeps
+// consuming the string.
 //
 // A chip is any element carrying `data-chip-attachment-id`. Its serialized form
-// is `[Image #N]` where N is the 1-based position of that attachment id in the
-// current attachment list — so removing an attachment renumbers every chip via
-// the id→index mapping alone.
+// is `[Kind #N]` where N is the 1-based position of that attachment id among
+// current attachments of the same kind.
 
 export const CHIP_ATTR = "data-chip-attachment-id";
+export const CHIP_KIND_ATTR = "data-chip-attachment-kind";
+
+export type ComposerChipKind = "image" | "text";
+export type ComposerChipModel = {
+  id: number;
+  kind: ComposerChipKind;
+};
 
 const BLOCK_TAGS = new Set(["DIV", "P"]);
+const MARKER = /\[(Image|Text) #(\d+)\]/g;
+const MARKER_LABEL: Record<ComposerChipKind, string> = {
+  image: "Image",
+  text: "Text",
+};
 
 // WebKit paints an element-boundary caret placed right after a trailing
 // non-editable inline element at the start of the line, not after the element.
@@ -25,14 +36,34 @@ function isFillerOnly(segment: string): boolean {
   return segment.replace(FILLER_RE, "") === "";
 }
 
-function markerLength(index: number): number {
-  return `[Image #${index}]`.length;
+function kindFromLabel(label: string): ComposerChipKind {
+  return label === "Text" ? "text" : "image";
 }
 
-/** DOM → string. Text nodes verbatim; `<br>` and block boundaries → `\n`; a chip
- *  → `[Image #N]` (N = 1-based index of its attachment id). Chips whose id is not
- *  in `attachmentIds` are dropped (the model/DOM re-sync handles that case). */
-export function serializeComposer(root: Node, attachmentIds: readonly number[]): string {
+function markerText(kind: ComposerChipKind, index: number): string {
+  return `[${MARKER_LABEL[kind]} #${index}]`;
+}
+
+function chipIndex(
+  attachmentModels: readonly ComposerChipModel[],
+  id: number,
+): { kind: ComposerChipKind; index: number } | null {
+  const model = attachmentModels.find((attachment) => attachment.id === id);
+  if (!model) return null;
+  const index = attachmentModels
+    .filter((attachment) => attachment.kind === model.kind)
+    .findIndex((attachment) => attachment.id === id);
+  return index < 0 ? null : { kind: model.kind, index: index + 1 };
+}
+
+function markerLength(kind: ComposerChipKind, index: number): number {
+  return markerText(kind, index).length;
+}
+
+export function serializeComposer(
+  root: Node,
+  attachmentModels: readonly ComposerChipModel[],
+): string {
   let out = "";
   const walk = (node: Node): void => {
     for (const child of Array.from(node.childNodes)) {
@@ -43,8 +74,8 @@ export function serializeComposer(root: Node, attachmentIds: readonly number[]):
       if (child.nodeType !== 1) continue;
       const el = child as Element;
       if (el.hasAttribute(CHIP_ATTR)) {
-        const idx = attachmentIds.indexOf(Number(el.getAttribute(CHIP_ATTR)));
-        if (idx >= 0) out += `[Image #${idx + 1}]`;
+        const info = chipIndex(attachmentModels, Number(el.getAttribute(CHIP_ATTR)));
+        if (info) out += markerText(info.kind, info.index);
         continue;
       }
       if (el.tagName === "BR") {
@@ -74,8 +105,8 @@ export function serializeComposer(root: Node, attachmentIds: readonly number[]):
 export function renderComposer(
   root: HTMLElement,
   text: string,
-  attachmentIds: readonly number[],
-  buildChip: (attachmentId: number, index: number) => Node,
+  attachmentModels: readonly ComposerChipModel[],
+  buildChip: (attachmentId: number, kind: ComposerChipKind, index: number) => Node,
 ): void {
   const doc = root.ownerDocument;
   const frag = doc.createDocumentFragment();
@@ -87,16 +118,24 @@ export function renderComposer(
       if (lines[i]) frag.appendChild(doc.createTextNode(lines[i]));
     }
   };
-  const re = /\[Image #(\d+)\]/g;
-  const chipped = new Set<number>();
+  const byKind = {
+    image: attachmentModels.filter((attachment) => attachment.kind === "image"),
+    text: attachmentModels.filter((attachment) => attachment.kind === "text"),
+  };
+  const chipped = {
+    image: new Set<number>(),
+    text: new Set<number>(),
+  };
   let last = 0;
   let m: RegExpExecArray | null;
+  const re = new RegExp(MARKER.source, "g");
   while ((m = re.exec(text)) !== null) {
-    const n = Number(m[1]);
+    const kind = kindFromLabel(m[1]);
+    const n = Number(m[2]);
     appendText(text.slice(last, m.index));
-    if (n >= 1 && n <= attachmentIds.length && !chipped.has(n)) {
-      chipped.add(n);
-      frag.appendChild(buildChip(attachmentIds[n - 1], n));
+    if (n >= 1 && n <= byKind[kind].length && !chipped[kind].has(n)) {
+      chipped[kind].add(n);
+      frag.appendChild(buildChip(byKind[kind][n - 1].id, kind, n));
     } else {
       appendText(m[0]);
     }
@@ -124,14 +163,14 @@ export function chipIdsInOrder(root: HTMLElement): number[] {
 export function chipStartOffset(
   root: HTMLElement,
   id: number,
-  attachmentIds: readonly number[],
+  attachmentModels: readonly ComposerChipModel[],
 ): number | null {
   const chip = root.querySelector(`[${CHIP_ATTR}="${id}"]`);
   if (!chip) return null;
   const pre = root.ownerDocument.createRange();
   pre.selectNodeContents(root);
   pre.setEndBefore(chip);
-  return serializeComposer(pre.cloneContents(), attachmentIds).length;
+  return serializeComposer(pre.cloneContents(), attachmentModels).length;
 }
 
 function activeSelection(root: HTMLElement): Selection | null {
@@ -144,10 +183,10 @@ function activeSelection(root: HTMLElement): Selection | null {
 
 /** String offsets of the current selection's start/end within `root`, measured
  *  in the same units as `serializeComposer` (so a chip counts as its full
- *  `[Image #N]` length). `null` when the selection isn't inside `root`. */
+ *  marker length). `null` when the selection isn't inside `root`. */
 export function selectionOffsets(
   root: HTMLElement,
-  attachmentIds: readonly number[],
+  attachmentModels: readonly ComposerChipModel[],
 ): { start: number; end: number } | null {
   const sel = activeSelection(root);
   if (!sel) return null;
@@ -156,7 +195,7 @@ export function selectionOffsets(
     const pre = root.ownerDocument.createRange();
     pre.selectNodeContents(root);
     pre.setEnd(container, offset);
-    return serializeComposer(pre.cloneContents(), attachmentIds).length;
+    return serializeComposer(pre.cloneContents(), attachmentModels).length;
   };
   return {
     start: measure(range.startContainer, range.startOffset),
@@ -167,15 +206,15 @@ export function selectionOffsets(
 /** String offset of the caret (collapsed selection start). */
 export function caretOffset(
   root: HTMLElement,
-  attachmentIds: readonly number[],
+  attachmentModels: readonly ComposerChipModel[],
 ): number | null {
-  return selectionOffsets(root, attachmentIds)?.start ?? null;
+  return selectionOffsets(root, attachmentModels)?.start ?? null;
 }
 
 function locate(
   root: HTMLElement,
   target: number,
-  attachmentIds: readonly number[],
+  attachmentModels: readonly ComposerChipModel[],
 ): { node: Node; offset: number } {
   let remaining = target;
   let found: { node: Node; offset: number } | null = null;
@@ -203,8 +242,8 @@ function locate(
           found = { node, offset: i };
           return true;
         }
-        const idx = attachmentIds.indexOf(Number(el.getAttribute(CHIP_ATTR)));
-        remaining -= idx >= 0 ? markerLength(idx + 1) : 0;
+        const info = chipIndex(attachmentModels, Number(el.getAttribute(CHIP_ATTR)));
+        remaining -= info ? markerLength(info.kind, info.index) : 0;
         if (remaining <= 0) {
           const next = children[i + 1];
           found =
@@ -240,11 +279,11 @@ function locate(
 export function setCaretAtOffset(
   root: HTMLElement,
   offset: number,
-  attachmentIds: readonly number[],
+  attachmentModels: readonly ComposerChipModel[],
 ): void {
   const sel = root.ownerDocument.getSelection?.();
   if (!sel) return;
-  const { node, offset: at } = locate(root, Math.max(0, offset), attachmentIds);
+  const { node, offset: at } = locate(root, Math.max(0, offset), attachmentModels);
   const range = root.ownerDocument.createRange();
   range.setStart(node, at);
   range.collapse(true);

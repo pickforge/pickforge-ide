@@ -1,7 +1,8 @@
 #!/bin/sh
 # PickForge installer: curl -fsSL https://pickforge.dev/pickforge/install.sh | sh
-# Downloads the latest signed desktop bundle from GitHub Releases into your home
-# directory. Never uses sudo. Linux (AppImage) and macOS (.app) only.
+# Downloads the latest desktop bundle from GitHub Releases. Linux installs a
+# rootless AppImage by default, with a FUSE-free launch fallback. Native .deb
+# and .rpm packages are available through PICKFORGE_INSTALL_KIND.
 set -eu
 
 REPO="pickforge/pickforge"
@@ -13,6 +14,7 @@ APP_ID="dev.pickforge.app"
 
 # Environment overrides:
 #   PICKFORGE_INSTALL_DIR  Linux AppImage target dir. Default: $HOME/.local/bin.
+#   PICKFORGE_INSTALL_KIND Linux install kind: auto, appimage, deb, or rpm.
 #   PICKFORGE_VERSION      Install a specific release tag, such as v0.1.0.
 #   GITHUB_TOKEN           Optional token for GitHub API rate limits.
 
@@ -37,7 +39,16 @@ fetch_stdout() {
   fetch_url=$1
   accept="Accept: application/vnd.github+json"
 
-  if [ -z "${GITHUB_TOKEN:-}" ]; then
+  case "$fetch_url" in
+    https://api.github.com/*)
+      can_send_github_token=1
+      ;;
+    *)
+      can_send_github_token=0
+      ;;
+  esac
+
+  if [ -z "${GITHUB_TOKEN:-}" ] || [ "$can_send_github_token" -ne 1 ]; then
     if [ "$downloader" = "curl" ]; then
       curl -fsSL -H "$accept" "$fetch_url"
     else
@@ -82,8 +93,8 @@ detect_platform() {
 
   case "$os_name" in
     Linux)
-      install_kind="appimage"
-      bundle_label="appimage"
+      install_kind=""
+      bundle_label="Linux bundle"
       ;;
     Darwin)
       install_kind="macapp"
@@ -107,8 +118,84 @@ detect_platform() {
   esac
 }
 
+is_root() {
+  [ "$(id -u 2>/dev/null || printf '1')" = "0" ]
+}
+
+can_request_root() {
+  is_root || command -v sudo >/dev/null 2>&1
+}
+
+run_as_root() {
+  if is_root; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    return 127
+  fi
+}
+
+linux_candidate_kinds() {
+  requested_kind="${PICKFORGE_INSTALL_KIND:-auto}"
+
+  case "$requested_kind" in
+    auto)
+      printf 'appimage\n'
+      ;;
+    appimage|deb|rpm)
+      printf '%s\n' "$requested_kind"
+      ;;
+    *)
+      die "PICKFORGE_INSTALL_KIND must be auto, appimage, deb, or rpm"
+      ;;
+  esac
+}
+
+asset_kind_for_name() {
+  case "$1" in
+    *.AppImage)
+      printf 'appimage\n'
+      ;;
+    *.deb)
+      printf 'deb\n'
+      ;;
+    *.rpm)
+      printf 'rpm\n'
+      ;;
+    *.app.tar.gz)
+      printf 'macapp\n'
+      ;;
+    *)
+      printf 'unknown\n'
+      ;;
+  esac
+}
+
+bundle_label_for_kind() {
+  case "$1" in
+    appimage)
+      printf 'AppImage\n'
+      ;;
+    deb)
+      printf '.deb package\n'
+      ;;
+    rpm)
+      printf '.rpm package\n'
+      ;;
+    macapp)
+      printf 'macOS .app\n'
+      ;;
+    *)
+      printf 'bundle\n'
+      ;;
+  esac
+}
+
 release_api_url() {
-  if [ -n "${PICKFORGE_VERSION:-}" ]; then
+  if [ -n "${PICKFORGE_RELEASE_API_URL:-}" ]; then
+    printf '%s\n' "$PICKFORGE_RELEASE_API_URL"
+  elif [ -n "${PICKFORGE_VERSION:-}" ]; then
     printf 'https://api.github.com/repos/%s/releases/tags/%s\n' "$REPO" "$PICKFORGE_VERSION"
   else
     printf 'https://api.github.com/repos/%s/releases/latest\n' "$REPO"
@@ -142,24 +229,34 @@ resolve_release() {
     die "no release download assets found for $ref_name. If GitHub API rate limits you, set GITHUB_TOKEN. See https://github.com/${REPO}/releases"
   fi
 
-  asset_url=$(printf '%s\n' "$download_urls" | while IFS= read -r candidate_url; do
-    candidate_name=${candidate_url##*/}
+  if [ "$os_name" = "Linux" ]; then
+    candidate_kinds=$(linux_candidate_kinds)
+  else
+    candidate_kinds="macapp"
+  fi
 
-    candidate_matches_kind=0
-    if [ "$install_kind" = "appimage" ] && printf '%s\n' "$candidate_name" | grep -Eq '\.AppImage$'; then
-      candidate_matches_kind=1
-    elif [ "$install_kind" = "macapp" ] && printf '%s\n' "$candidate_name" | grep -Eq '\.app\.tar\.gz$'; then
-      candidate_matches_kind=1
-    fi
+  asset_url=""
+  for wanted_kind in $candidate_kinds; do
+    asset_url=$(printf '%s\n' "$download_urls" | while IFS= read -r candidate_url; do
+      candidate_name=${candidate_url##*/}
+      candidate_kind=$(asset_kind_for_name "$candidate_name")
 
-    if [ "$candidate_matches_kind" -eq 1 ] && printf '%s\n' "$candidate_name" | grep -Eiq "$arch_pattern"; then
-      printf '%s\n' "$candidate_url"
+      if [ "$candidate_kind" = "$wanted_kind" ] &&
+        printf '%s\n' "$candidate_name" | grep -Eiq "$arch_pattern"; then
+        printf '%s\n' "$candidate_url"
+        break
+      fi
+    done)
+
+    if [ -n "$asset_url" ]; then
+      install_kind=$wanted_kind
+      bundle_label=$(bundle_label_for_kind "$wanted_kind")
       break
     fi
-  done)
+  done
 
   if [ -z "$asset_url" ]; then
-    die "no $bundle_label bundle for $cpu_arch in $ref_name. See https://github.com/${REPO}/releases"
+    die "no compatible $bundle_label for $cpu_arch in $ref_name. See https://github.com/${REPO}/releases"
   fi
 }
 
@@ -216,24 +313,217 @@ verify_archive_paths() {
   done < "$archive_listing"
 }
 
+desktop_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/`/\\`/g; s/\$/\\$/g; s/%/%%/g'
+}
+
 write_desktop_launcher() {
-  launcher_appimage=$1
+  launcher_command=$1
   launcher_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   # Basename and StartupWMClass must equal the window's app_id so the desktop
   # environment ties the running window to this entry (and its icon).
   launcher_file="$launcher_dir/$APP_ID.desktop"
 
   mkdir -p "$launcher_dir" 2>/dev/null || return 0
+  launcher_exec=$(desktop_escape "$launcher_command")
   {
     printf '[Desktop Entry]\n'
+    printf 'Type=Application\n'
     printf 'Name=%s\n' "$APP_NAME"
-    printf 'Exec="%s"\n' "$launcher_appimage"
+    printf 'Comment=Shell-first workbench that drives AI coding CLIs and build tools\n'
+    printf 'Exec="%s"\n' "$launcher_exec"
     printf 'Icon=%s\n' "$APP_ID"
     printf 'StartupWMClass=%s\n' "$APP_ID"
     printf 'Terminal=false\n'
-    printf 'Type=Application\n'
-    printf 'Categories=Development;\n'
+    printf 'Categories=Development;IDE;\n'
+    printf 'Keywords=pickforge;ai;agent;developer;flutter;android;\n'
+    printf 'StartupNotify=true\n'
   } > "$launcher_file" 2>/dev/null || return 0
+}
+
+write_appimage_wrapper() {
+  command_path=$1
+  wrapper_appimage_path=$2
+  quoted_appimage_path=$(printf '%s' "$wrapper_appimage_path" | sed "s/'/'\\\\''/g")
+
+  {
+    printf '#!/bin/sh\n'
+    printf '# PickForge AppImage launcher generated by the PickForge installer.\n'
+    printf 'set -eu\n'
+    printf "appimage_path='%s'\n" "$quoted_appimage_path"
+    printf 'if [ ! -x "$appimage_path" ]; then\n'
+    printf '  printf '"'"'PickForge AppImage not found or not executable: %%s\\n'"'"' "$appimage_path" >&2\n'
+    printf '  exit 127\n'
+    printf 'fi\n'
+    printf 'has_fuse2() {\n'
+    printf '  if command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q '"'"'libfuse[.]so[.]2'"'"'; then\n'
+    printf '    return 0\n'
+    printf '  fi\n'
+    printf '  return 1\n'
+    printf '}\n'
+    printf 'if has_fuse2; then\n'
+    printf '  exec "$appimage_path" "$@"\n'
+    printf 'fi\n'
+    printf 'cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/pickforge/appimage-runtime"\n'
+    printf 'mkdir -p "$cache_root" 2>/dev/null || cache_root="${TMPDIR:-/tmp}"\n'
+    printf 'exec env APPIMAGE_EXTRACT_AND_RUN=1 TMPDIR="$cache_root" "$appimage_path" "$@"\n'
+  } > "$command_path"
+  chmod +x "$command_path"
+}
+
+ensure_replaceable_command_path() {
+  command_path=$1
+
+  if [ ! -e "$command_path" ] && [ ! -L "$command_path" ]; then
+    return 0
+  fi
+  if [ -f "$command_path" ] &&
+    grep -q 'PickForge AppImage launcher generated by the PickForge installer' "$command_path" 2>/dev/null; then
+    return 0
+  fi
+  if [ -L "$command_path" ]; then
+    link_target=$(readlink "$command_path" 2>/dev/null || true)
+    if [ "${link_target##*/}" = "$APP_NAME.AppImage" ]; then
+      return 0
+    fi
+  fi
+
+  die "command path already exists and was not created by PickForge: $command_path"
+}
+
+remove_replaceable_command_path() {
+  command_path=$1
+
+  if [ -L "$command_path" ]; then
+    rm -f "$command_path"
+  fi
+}
+
+install_launcher_icon() {
+  icon_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+  icon_path="$icon_dir/$APP_ID.svg"
+
+  mkdir -p "$icon_dir" 2>/dev/null || return 0
+  cat > "$icon_path" <<'SVG' 2>/dev/null || return 0
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="Pickforge mark">
+  <title>Pickforge</title>
+  <rect width="128" height="128" rx="24" fill="#0A0A0B"/>
+  <g stroke="#F2F2F3" stroke-width="3" stroke-linecap="square" fill="none">
+    <path d="M30 48 V32 H46"/>
+    <path d="M30 80 V96 H46"/>
+    <path d="M82 96 H98 V80"/>
+  </g>
+  <circle cx="90" cy="40" r="7" fill="#FF7A1A"/>
+  <g stroke="#F2F2F3" stroke-width="1" stroke-dasharray="2 3" opacity="0.35">
+    <line x1="30" y1="48" x2="30" y2="80"/>
+    <line x1="46" y1="32" x2="82" y2="32"/>
+    <line x1="46" y1="96" x2="82" y2="96"/>
+    <line x1="98" y1="48" x2="98" y2="80"/>
+  </g>
+</svg>
+SVG
+}
+
+disable_stale_launcher() {
+  stale_file=$1
+
+  [ -f "$stale_file" ] || return 0
+  [ "${stale_file##*/}" != "$APP_ID.desktop" ] || return 0
+  grep -Eq '^Name=PickForge$' "$stale_file" 2>/dev/null || return 0
+
+  if ! grep -Eq '^(Icon|StartupWMClass)=(pickforge|pickforge-tauri)$|^Exec=.*(/build/linux/|/target/(debug|release)/pickforge-tauri|pickforge-tauri)' "$stale_file" 2>/dev/null; then
+    return 0
+  fi
+
+  backup="$stale_file.disabled-by-pickforge-installer"
+  backup_index=0
+  while [ -e "$backup" ]; do
+    backup_index=$((backup_index + 1))
+    backup="$stale_file.disabled-by-pickforge-installer.$backup_index"
+  done
+
+  if mv "$stale_file" "$backup" 2>/dev/null; then
+    printf 'Disabled stale launcher: %s -> %s\n' "$stale_file" "$backup"
+  fi
+}
+
+disable_stale_launchers() {
+  launcher_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+
+  disable_stale_launcher "$launcher_dir/pickforge.desktop"
+  disable_stale_launcher "$launcher_dir/pickforge-tauri.desktop"
+  disable_stale_launcher "$launcher_dir/PickForge.desktop"
+}
+
+disable_previous_appimage_launcher() {
+  launcher_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  launcher_file="$launcher_dir/$APP_ID.desktop"
+  install_dir="${PICKFORGE_INSTALL_DIR:-$HOME/.local/bin}"
+  command_path="$install_dir/$BIN_NAME"
+
+  if [ -f "$launcher_file" ] &&
+    grep -Eq '^Name=PickForge$' "$launcher_file" 2>/dev/null &&
+    {
+      grep -Eq 'Exec=.*PickForge[.]AppImage' "$launcher_file" 2>/dev/null ||
+        {
+          grep -F "$HOME/" "$launcher_file" >/dev/null 2>&1 &&
+            grep -Eq '^Exec=.*[/"]pickforge("|[[:space:]]|$)' "$launcher_file" 2>/dev/null
+        }
+    }; then
+    backup="$launcher_file.disabled-by-pickforge-installer"
+    backup_index=0
+    while [ -e "$backup" ]; do
+      backup_index=$((backup_index + 1))
+      backup="$launcher_file.disabled-by-pickforge-installer.$backup_index"
+    done
+    if mv "$launcher_file" "$backup" 2>/dev/null; then
+      printf 'Disabled previous AppImage menu entry: %s -> %s\n' "$launcher_file" "$backup"
+    fi
+  fi
+
+  if [ -f "$command_path" ] &&
+    grep -q 'PickForge AppImage launcher generated by the PickForge installer' "$command_path" 2>/dev/null; then
+    backup="$command_path.disabled-by-pickforge-installer"
+    backup_index=0
+    while [ -e "$backup" ]; do
+      backup_index=$((backup_index + 1))
+      backup="$command_path.disabled-by-pickforge-installer.$backup_index"
+    done
+    if mv "$command_path" "$backup" 2>/dev/null; then
+      printf 'Disabled previous AppImage launcher: %s -> %s\n' "$command_path" "$backup"
+    fi
+  elif [ -L "$command_path" ]; then
+    link_target=$(readlink "$command_path" 2>/dev/null || true)
+    if [ "${link_target##*/}" = "$APP_NAME.AppImage" ]; then
+      backup="$command_path.disabled-by-pickforge-installer"
+      backup_index=0
+      while [ -e "$backup" ]; do
+        backup_index=$((backup_index + 1))
+        backup="$command_path.disabled-by-pickforge-installer.$backup_index"
+      done
+      if mv "$command_path" "$backup" 2>/dev/null; then
+        printf 'Disabled previous AppImage launcher: %s -> %s\n' "$command_path" "$backup"
+      fi
+    fi
+  fi
+}
+
+refresh_desktop_caches() {
+  data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  launcher_dir="$data_home/applications"
+  hicolor_dir="$data_home/icons/hicolor"
+
+  if command -v update-desktop-database >/dev/null 2>&1 && [ -d "$launcher_dir" ]; then
+    update-desktop-database "$launcher_dir" >/dev/null 2>&1 || true
+  fi
+  if command -v gtk-update-icon-cache >/dev/null 2>&1 && [ -d "$hicolor_dir" ]; then
+    gtk-update-icon-cache -f -t "$hicolor_dir" >/dev/null 2>&1 || true
+  fi
+  if command -v kbuildsycoca6 >/dev/null 2>&1; then
+    kbuildsycoca6 >/dev/null 2>&1 || true
+  elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+    kbuildsycoca5 >/dev/null 2>&1 || true
+  fi
 }
 
 path_has_dir() {
@@ -256,10 +546,17 @@ install_appimage() {
 
   path_must_be_in_home "$install_dir"
   mkdir -p "$install_dir"
+  [ ! -d "$appimage_path" ] || die "install destination is a directory: $appimage_path"
+  [ ! -d "$command_path" ] || die "command path is a directory: $command_path"
+  ensure_replaceable_command_path "$command_path"
+  remove_replaceable_command_path "$command_path"
   mv "$asset_path" "$appimage_path"
   chmod +x "$appimage_path"
-  ln -sf "$appimage_path" "$command_path"
-  write_desktop_launcher "$appimage_path" || true
+  write_appimage_wrapper "$command_path" "$appimage_path"
+  install_launcher_icon || true
+  disable_stale_launchers
+  write_desktop_launcher "$command_path" || true
+  refresh_desktop_caches
 
   [ -x "$appimage_path" ] || die "installed AppImage is not executable: $appimage_path"
 
@@ -268,6 +565,54 @@ install_appimage() {
     printf 'Note: %s is not on PATH. Add it to launch with `%s`.\n' "$install_dir" "$BIN_NAME"
   fi
   printf 'Launch with `%s`, `%s`, or from your app menu.\n' "$BIN_NAME" "$appimage_path"
+}
+
+install_deb() {
+  if ! can_request_root; then
+    die "installing the .deb package requires root or sudo. Re-run with PICKFORGE_INSTALL_KIND=appimage for a rootless install."
+  fi
+
+  printf 'Installing %s %s native .deb package. sudo may ask for your password.\n' "$APP_NAME" "$release_tag"
+  if command -v apt-get >/dev/null 2>&1; then
+    run_as_root apt-get install -y "$asset_path"
+  elif command -v apt >/dev/null 2>&1; then
+    run_as_root apt install -y "$asset_path"
+  elif command -v dpkg >/dev/null 2>&1; then
+    run_as_root dpkg -i "$asset_path"
+  else
+    die "no .deb installer found. Re-run with PICKFORGE_INSTALL_KIND=appimage for a rootless install."
+  fi
+
+  disable_stale_launchers
+  disable_previous_appimage_launcher
+  refresh_desktop_caches
+  printf '%s %s installed from %s.\n' "$APP_NAME" "$release_tag" "$asset_name"
+  printf 'Launch with `%s` or from your app menu.\n' "$BIN_NAME"
+}
+
+install_rpm() {
+  if ! can_request_root; then
+    die "installing the .rpm package requires root or sudo. Re-run with PICKFORGE_INSTALL_KIND=appimage for a rootless install."
+  fi
+
+  printf 'Installing %s %s native .rpm package. sudo may ask for your password.\n' "$APP_NAME" "$release_tag"
+  if command -v dnf >/dev/null 2>&1; then
+    run_as_root dnf install -y "$asset_path"
+  elif command -v yum >/dev/null 2>&1; then
+    run_as_root yum localinstall -y "$asset_path"
+  elif command -v zypper >/dev/null 2>&1; then
+    run_as_root zypper --non-interactive --no-gpg-checks install "$asset_path"
+  elif command -v rpm >/dev/null 2>&1; then
+    run_as_root rpm -Uvh "$asset_path"
+  else
+    die "no .rpm installer found. Re-run with PICKFORGE_INSTALL_KIND=appimage for a rootless install."
+  fi
+
+  disable_stale_launchers
+  disable_previous_appimage_launcher
+  refresh_desktop_caches
+  printf '%s %s installed from %s.\n' "$APP_NAME" "$release_tag" "$asset_name"
+  printf 'Launch with `%s` or from your app menu.\n' "$BIN_NAME"
 }
 
 install_macapp() {
@@ -292,11 +637,23 @@ install_macapp() {
 }
 
 install_asset() {
-  if [ "$install_kind" = "appimage" ]; then
-    install_appimage
-  else
-    install_macapp
-  fi
+  case "$install_kind" in
+    appimage)
+      install_appimage
+      ;;
+    deb)
+      install_deb
+      ;;
+    rpm)
+      install_rpm
+      ;;
+    macapp)
+      install_macapp
+      ;;
+    *)
+      die "unsupported install kind: $install_kind"
+      ;;
+  esac
 }
 
 main() {

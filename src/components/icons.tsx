@@ -231,6 +231,15 @@ export function IconSplitTrigger(props: IconProps): JSX.Element {
   );
 }
 
+export function IconPin(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M6.4 9.6l-3.4 3.4" />
+      <path d="M10.6 3.2l2.2 2.2-1.7 1a3 3 0 0 0-1 .7l-1.9 1.9-2.2-2.2 1.9-1.9a3 3 0 0 0 .7-1z" />
+    </Svg>
+  );
+}
+
 export function IconPlay(props: IconProps): JSX.Element {
   return (
     <Svg {...props}>

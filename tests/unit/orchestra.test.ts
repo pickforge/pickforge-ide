@@ -129,7 +129,7 @@ describe("orchestra task store", () => {
 });
 
 describe("orchestra lane tree", () => {
-  it("migrates legacy v1 lanes, sanitizing duplicates/non-strings and capping at four", () => {
+  it("migrates legacy v1 lanes, sanitizing duplicates/non-strings and capping at five", () => {
     const root = nextRoot();
     localStorage.setItem(
       v1LanesKey(root),
@@ -142,14 +142,15 @@ describe("orchestra lane tree", () => {
     expect(testEnv.storage.has(v1LanesKey(root))).toBe(false);
 
     addSelectedLane(root, "chat-4");
-    addSelectedLane(root, "chat-5"); // over the cap → no-op
-    expect(selectedLanes(root)).toEqual(["chat-1", "chat-2", "chat-3", "chat-4"]);
+    addSelectedLane(root, "chat-5");
+    addSelectedLane(root, "chat-6"); // over the cap -> no-op
+    expect(selectedLanes(root)).toEqual(["chat-1", "chat-2", "chat-3", "chat-4", "chat-5"]);
 
     // Appends land on the RIGHT: the whole prior tree is the split's left child.
     const persisted = JSON.parse(testEnv.storage.get(v2Key(root))!) as LaneSplit;
     expect(persisted.kind).toBe("split");
-    expect(persisted.b).toEqual({ kind: "leaf", chatId: "chat-4" });
-    expect(selectedLanes(root)).toEqual(["chat-1", "chat-2", "chat-3", "chat-4"]);
+    expect(persisted.b).toEqual({ kind: "leaf", chatId: "chat-5" });
+    expect(selectedLanes(root)).toEqual(["chat-1", "chat-2", "chat-3", "chat-4", "chat-5"]);
   });
 
   it("does not resurrect deleted lanes after migration", () => {
@@ -172,8 +173,8 @@ describe("orchestra lane tree", () => {
 
   it("builds a columns tree from a list and detects the preset", () => {
     const root = nextRoot();
-    setSelectedLanes(root, ["a", "b", "c", "d", "e"]); // 5 → capped to 4
-    expect(selectedLanes(root)).toEqual(["a", "b", "c", "d"]);
+    setSelectedLanes(root, ["a", "b", "c", "d", "e", "f"]); // 6 -> capped to 5
+    expect(selectedLanes(root)).toEqual(["a", "b", "c", "d", "e"]);
     expect(detectLayoutPreset(laneTree(root))).toBe("columns");
     expect(asSplit(laneTree(root)).dir).toBe("row");
   });
@@ -197,9 +198,9 @@ describe("orchestra lane tree", () => {
 
   it("respects the cap and rejects duplicates on directional insert", () => {
     const root = nextRoot();
-    setSelectedLanes(root, ["a", "b", "c", "d"]);
-    addLaneAt(root, "a", "right", "e"); // at cap → no-op
-    expect(selectedLanes(root)).toEqual(["a", "b", "c", "d"]);
+    setSelectedLanes(root, ["a", "b", "c", "d", "e"]);
+    addLaneAt(root, "a", "right", "f"); // at cap -> no-op
+    expect(selectedLanes(root)).toEqual(["a", "b", "c", "d", "e"]);
 
     const root2 = nextRoot();
     setSelectedLanes(root2, ["a", "b"]);
@@ -330,7 +331,7 @@ describe("orchestra lane tree sanitizer (v2 load)", () => {
     expect(laneTree(root)).toEqual({ kind: "leaf", chatId: "a" });
   });
 
-  it("caps a persisted tree at four leaves, collapsing emptied splits", () => {
+  it("caps a persisted tree at five leaves, collapsing emptied splits", () => {
     const root = nextRoot();
     const chain = split(
       "row",
@@ -339,7 +340,7 @@ describe("orchestra lane tree sanitizer (v2 load)", () => {
       split("row", 0.5, leaf("b"), split("row", 0.5, leaf("c"), split("row", 0.5, leaf("d"), split("row", 0.5, leaf("e"), leaf("f"))))),
     );
     localStorage.setItem(v2Key(root), JSON.stringify(chain));
-    expect(selectedLanes(root)).toEqual(["a", "b", "c", "d"]);
+    expect(selectedLanes(root)).toEqual(["a", "b", "c", "d", "e"]);
   });
 
   it("bounds pathologically deep trees instead of recursing forever", () => {

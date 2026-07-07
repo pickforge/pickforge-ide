@@ -5,6 +5,11 @@
 export interface AgentModelOption {
   id: string;
   label: string;
+  terminalOnly?: boolean;
+  launch?: {
+    binary: string;
+    argsBeforeModel: string[];
+  };
   /** Effort levels the model accepts; absent/empty = no effort control. */
   efforts?: string[];
   /** Effort applied when none is selected (the model's own default). */
@@ -17,6 +22,12 @@ export interface AgentProfile {
   binary: string;
   defaultModel: string | null;
   models: AgentModelOption[];
+}
+
+export interface AgentLaunchContext {
+  mcpConfigPath?: string | null;
+  mcpCommand?: string | null;
+  agentBrief?: string | null;
 }
 
 const CLAUDE_EFFORTS = ["low", "medium", "high", "max"];
@@ -55,6 +66,12 @@ export const AGENTS: AgentProfile[] = [
         efforts: CLAUDE_EFFORTS_XHIGH,
         defaultEffort: "high",
       },
+      {
+        id: "glm-5.2:cloud",
+        label: "GLM-5.2 Cloud (Ollama)",
+        terminalOnly: true,
+        launch: { binary: "ollama", argsBeforeModel: ["launch", "claude", "--model"] },
+      },
     ],
   },
   {
@@ -77,6 +94,12 @@ export const AGENTS: AgentProfile[] = [
       },
       { id: "gpt-5.4", label: "GPT-5.4", efforts: CODEX_EFFORTS, defaultEffort: "medium" },
       { id: "gpt-5.5", label: "GPT-5.5", efforts: CODEX_EFFORTS, defaultEffort: "medium" },
+      {
+        id: "glm-5.2:cloud",
+        label: "GLM-5.2 Cloud (Ollama)",
+        terminalOnly: true,
+        launch: { binary: "ollama", argsBeforeModel: ["launch", "codex", "--model"] },
+      },
     ],
   },
   { id: "opencode", label: "OpenCode", binary: "opencode", defaultModel: null, models: [] },
@@ -103,6 +126,10 @@ export function setAgentModel(agentId: string, model: string | null) {
   const current = loadAgentModels();
   current[agentId] = model;
   localStorage.setItem(STORE_KEY, JSON.stringify(current));
+}
+
+function selectedModelOption(agentId: string): AgentModelOption | undefined {
+  return modelOption(agentId, loadAgentModels()[agentId]);
 }
 
 /** The catalog entry for a model (falls back to the agent's default model). */
@@ -135,10 +162,45 @@ export function setAgentEffort(agentId: string, effort: string) {
   localStorage.setItem(EFFORT_STORE_KEY, JSON.stringify(current));
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 /** The shell command to launch an agent, pinned to its selected model. */
-export function launchCommand(agentId: string): string {
+export function launchCommand(agentId: string, context: AgentLaunchContext = {}): string {
   const agent = AGENTS.find((a) => a.id === agentId);
   if (!agent) return "";
   const model = loadAgentModels()[agentId];
+  const option = selectedModelOption(agentId);
+  if (model && option?.launch) {
+    return `${option.launch.binary} ${option.launch.argsBeforeModel.join(" ")} ${model} `;
+  }
+  const modelArg = model ? `--model ${model} ` : "";
+  if (agent.id === "claudeCode") {
+    const mcpArg = context.mcpConfigPath
+      ? `--mcp-config ${shellQuote(context.mcpConfigPath)} `
+      : "";
+    const briefArg = context.agentBrief
+      ? `--append-system-prompt ${shellQuote(context.agentBrief)} `
+      : "";
+    return `${agent.binary} ${mcpArg}${briefArg}${modelArg}`;
+  }
+  if (agent.id === "codex") {
+    const mcpArgs = context.mcpCommand
+      ? `-c ${shellQuote(`mcp_servers.pickforge.command=${JSON.stringify(context.mcpCommand)}`)} -c 'mcp_servers.pickforge.args=[]' `
+      : "";
+    return `${agent.binary} ${mcpArgs}${modelArg}`;
+  }
   return model ? `${agent.binary} --model ${model} ` : `${agent.binary} `;
+}
+
+export function launchBinary(agentId: string): string | null {
+  const option = selectedModelOption(agentId);
+  if (option?.launch) return option.launch.binary;
+  return AGENTS.find((a) => a.id === agentId)?.binary ?? null;
+}
+
+export function nativeChatModel(agentId: string, modelId: string | null): string | null {
+  const option = modelOption(agentId, modelId);
+  return option?.terminalOnly ? null : modelId;
 }

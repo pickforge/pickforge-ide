@@ -13,6 +13,7 @@ import { hostPlatform } from "./lib/platform";
 import { IconChevronRight, IconTerminal } from "./components/icons";
 import { layout, toggleDock } from "./stores/workbenchLayout";
 import { runConsole, toggleConsole } from "./stores/runConsole";
+import { startSwarmBridge } from "./stores/swarm";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
 import { SettingsScreen } from "./screens/Settings";
@@ -100,6 +101,7 @@ export function App() {
 
     void loadAppVersion();
     void checkForUpdate(true);
+    startSwarmBridge();
 
     // Dev + release share one DB (~/.pickforge/pickforge.db); re-read it whenever
     // this window regains focus so the other instance's chat/project edits don't

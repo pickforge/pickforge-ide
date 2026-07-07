@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - platform: ubuntu-22.04
-            args: "--bundles appimage"
+            args: "--bundles appimage,deb,rpm"
           - platform: macos-latest
             args: "--target aarch64-apple-darwin"
           - platform: windows-latest
@@ -41,6 +41,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             patchelf \
+            rpm \
             wget
 
       - uses: dtolnay/rust-toolchain@stable

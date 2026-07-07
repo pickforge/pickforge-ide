@@ -9,6 +9,7 @@ import { activeTarget } from "./runTargets";
 import { selectedDevice } from "./runDevice";
 import { deviceList } from "./deviceList";
 import { runConsole } from "./runConsole";
+import { workspace } from "./workspace";
 import { supportTier } from "../lib/runTargets";
 
 /** The resolved endpoint + storage dirs for the project the server is bound to. */
@@ -18,6 +19,8 @@ interface McpBinding {
   contextDir: string;
   runsDir: string;
   chatsDir: string;
+  mcpConfigPath: string;
+  mcpCommand: string;
 }
 
 const [binding, setBinding] = createSignal<McpBinding | null>(null);
@@ -47,6 +50,8 @@ export async function ensureMcpRunning(projectRoot: string | null): Promise<void
       contextDir: r.contextDir,
       runsDir: r.runsDir,
       chatsDir: r.chatsDir,
+      mcpConfigPath: r.mcpConfigPath,
+      mcpCommand: r.mcpCommand,
     });
     void publishSnapshot();
   } catch (e) {
@@ -91,6 +96,7 @@ export async function publishSnapshot(): Promise<void> {
   const b = binding();
   if (!b) return;
   const t = mcpTarget();
+  const activeChatId = workspace.activeRoot === b.projectRoot ? workspace.activeChatId : null;
   await mcp
     .mcpPublishState({
       targetId: t?.id ?? "",
@@ -101,6 +107,7 @@ export async function publishSnapshot(): Promise<void> {
       deviceSerial: selectedDevice(b.projectRoot) || null,
       devicePlatform: activeDevicePlatform(b.projectRoot),
       projectRoot: b.projectRoot,
+      activeChatId,
       contextDir: b.contextDir,
       runsDir: b.runsDir,
       chatsDir: b.chatsDir,
@@ -119,6 +126,8 @@ createEffect(() => {
   runConsole.status();
   runConsole.target();
   selection();
+  workspace.activeRoot;
+  workspace.activeChatId;
   binding();
   void publishSnapshot();
 });
@@ -132,6 +141,10 @@ export function mcpEnv(projectRoot: string | null): Record<string, string> {
   const env = {
     PICKFORGE_PROJECT_ROOT: b.projectRoot,
     PICKFORGE_CONTEXT_DIR: b.contextDir,
+    PICKFORGE_MCP_CONFIG: b.mcpConfigPath,
+    PICKFORGE_MCP_COMMAND: b.mcpCommand,
+    PICKFORGE_AGENT_BRIEF:
+      "Pickforge tools are available through the pickforge MCP server. When the user asks to create, spawn, spin up, or run a swarm/sub-agents, call pickforge_start_swarm, poll pickforge_swarm_status for that run, and synthesize the completed lane results back to the user. Do not use model-orchestration skills or provider-native subagents for the same swarm unless the user explicitly asks for that fallback.",
   };
   return b.endpoint ? { PICKFORGE_IPC_ENDPOINT: b.endpoint, ...env } : env;
 }

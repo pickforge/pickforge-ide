@@ -8,6 +8,7 @@ mod ios_commands;
 mod logcat_commands;
 mod mcp_commands;
 mod mirror_commands;
+mod picklab_commands;
 mod process_commands;
 mod pty_commands;
 mod vm_commands;
@@ -107,6 +108,7 @@ pub fn run() {
             pty_commands::pty_spawn_chat,
             pty_commands::pty_destroy_chat_session,
             process_commands::detect_binaries,
+            picklab_commands::picklab_status,
             fs_commands::list_dir,
             fs_commands::read_text_file,
             fs_commands::read_image_data_url,
@@ -205,6 +207,9 @@ pub fn run() {
             mcp_commands::mcp_publish_state,
             mcp_commands::mcp_push_log,
             mcp_commands::mcp_run_started,
+            mcp_commands::mcp_take_swarm_requests,
+            mcp_commands::mcp_update_swarm_run,
+            mcp_commands::mcp_swarm_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running pickforge");

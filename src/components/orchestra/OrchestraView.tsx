@@ -19,13 +19,16 @@ import {
   IconClose,
   IconGrid,
   IconMore,
+  IconPin,
   IconPlus,
   IconRefresh,
   IconSplit,
   IconSplitTrigger,
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
-import { AGENTS, loadAgentModels } from "../../lib/agentModels";
+import { AGENTS, loadAgentEfforts, loadAgentModels } from "../../lib/agentModels";
+import { loadAgentModes } from "../../lib/agentModes";
+import { isPrimaryChat } from "../../lib/chatLabels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
 import { loadAskChatTitle, loadLastAgentProvider } from "../../lib/chatDefaults";
 import { PROMPT_TEMPLATES } from "../../lib/promptTemplates";
@@ -37,7 +40,13 @@ import {
   type OrchestraTaskStatus,
 } from "../../lib/orchestra";
 import { estimateCostUsd } from "../../lib/agentPricing";
-import { agentChat, sendAgentMessage } from "../../stores/agentChat";
+import {
+  agentChat,
+  hydrateAgentChatHistory,
+  latestPlanForChat,
+  sendAgentMessage,
+} from "../../stores/agentChat";
+import { pinnedPlanIds, setPlanPinned } from "../../stores/pinnedAgentPlans";
 import { chatAttention, chatBusy } from "../../stores/chatActivity";
 import { isChatArchived } from "../../stores/chatArchive";
 import {
@@ -73,6 +82,7 @@ import {
   setChatTitle,
   workspace,
 } from "../../stores/workspace";
+import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
 const AGENT_PROVIDERS = AGENTS.filter((a) => a.id === "claudeCode" || a.id === "codex");
@@ -207,6 +217,14 @@ interface LaneNotice {
   error: boolean;
 }
 
+type PinnedPlan = {
+  chatId: string;
+  title: string;
+  projectRoot: string;
+  provider: AgentProvider;
+  items: { text: string; completed: boolean }[];
+};
+
 const LEDGER_MIN_WIDTH = 220;
 const LEDGER_DEFAULT_WIDTH = 288;
 const LEDGER_WIDTH_KEY = "pickforge.orchestraLedgerWidth";
@@ -251,8 +269,31 @@ export function OrchestraView(props: {
   const projectChats = () => chatsFor(props.projectRoot);
   const chatsLoaded = () => workspace.chatsByRoot[props.projectRoot] !== undefined;
   const liveProjectChatIds = createMemo(() =>
-    new Set(projectChats().filter((chat) => !isChatArchived(chat.chatId)).map((chat) => chat.chatId)),
+    new Set(
+      projectChats()
+        .filter((chat) => !isChatArchived(chat.chatId) && isPrimaryChat(chat))
+        .map((chat) => chat.chatId),
+    ),
   );
+  const pinnedPlans = createMemo<PinnedPlan[]>(() => {
+    const live = liveProjectChatIds();
+    const plans: PinnedPlan[] = [];
+    for (const chatId of pinnedPlanIds()) {
+      if (!live.has(chatId)) continue;
+      const chat = findChat(chatId);
+      if (!chat || chat.kind !== "agent") continue;
+      const plan = latestPlanForChat(chatId);
+      if (!plan) continue;
+      plans.push({
+        chatId,
+        title: chat.title,
+        projectRoot: chat.projectRoot,
+        provider: providerOf(chatId),
+        items: plan.items,
+      });
+    }
+    return plans;
+  });
   const liveTree = createMemo(() => pruneLaneTree(rawTree(), liveProjectChatIds()));
   const liveLanes = createMemo(() => collectLaneIds(liveTree()));
   const activeSplitMenu = createMemo(() => {
@@ -342,6 +383,28 @@ export function OrchestraView(props: {
     pruneDeadLanes();
   });
 
+  createEffect(() => {
+    if (!chatsLoaded()) return;
+    const live = liveProjectChatIds();
+    for (const chatId of pinnedPlanIds()) {
+      if (!live.has(chatId)) continue;
+      if (agentChat(chatId)?.historyLoaded) continue;
+      const chat = findChat(chatId);
+      if (!chat || chat.kind !== "agent") continue;
+      const provider = providerOf(chatId);
+      void hydrateAgentChatHistory(
+        chatId,
+        chat.projectRoot,
+        provider,
+        loadAgentModels()[provider] ?? null,
+        {
+          effort: loadAgentEfforts()[provider] ?? null,
+          mode: loadAgentModes()[provider] ?? null,
+        },
+      ).catch(() => undefined);
+    }
+  });
+
   const setNotice = (chatId: string, text: string, error: boolean) =>
     setNotices((all) => ({ ...all, [chatId]: { text, error } }));
   const clearNotice = (chatId: string) =>
@@ -356,6 +419,7 @@ export function OrchestraView(props: {
 
   const tasks = () => taskList(props.projectRoot).items;
   const usage = () => usageSummary(props.projectRoot).items;
+  const projectSwarms = () => swarmRuns().filter((run) => run.projectRoot === props.projectRoot);
   const preset = () => detectLayoutPreset(liveTree());
 
   // Absolute rects + divider seams recomputed whenever the tree changes.
@@ -482,6 +546,7 @@ export function OrchestraView(props: {
     projectChats().filter(
       (chat) =>
         chat.kind === "agent" &&
+        isPrimaryChat(chat) &&
         !isChatArchived(chat.chatId) &&
         !liveLanes().includes(chat.chatId),
     );
@@ -842,6 +907,45 @@ export function OrchestraView(props: {
     </div>
   );
 
+  const SwarmDashboard = () => (
+    <Show when={projectSwarms().length > 0}>
+      <div class="pf-orch-card">
+        <div class="pf-orch-swarm-head">
+          <MonoEyebrow text="Swarms" />
+          <span class="pf-orch-swarm-count">{projectSwarms().length}</span>
+        </div>
+        <div class="pf-orch-swarm-list">
+          <For each={projectSwarms()}>
+            {(run) => (
+              <div class="pf-orch-swarm">
+                <div class="pf-orch-swarm-top">
+                  <span
+                    class="pf-orch-status"
+                    style={{ "--pf-status": run.status === "failed" ? "var(--pf-error)" : "var(--pf-info)" }}
+                  >
+                    <span class="pf-orch-status-dot" />
+                    {run.status}
+                  </span>
+                  <span class="pf-orch-swarm-title">{run.mode} · {run.requestedCount}</span>
+                </div>
+                <div class="pf-orch-swarm-goal">{run.goal}</div>
+                <div class="pf-orch-swarm-lanes">
+                  <For each={run.lanes}>
+                    {(lane) => (
+                      <span class="pf-orch-swarm-lane">
+                        {lane.provider === "codex" ? "CX" : "CC"} · {lane.status}
+                      </span>
+                    )}
+                  </For>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      </div>
+    </Show>
+  );
+
   return (
     <div class="pf-orch" ref={(el) => (orchEl = el)}>
       <div
@@ -862,6 +966,46 @@ export function OrchestraView(props: {
         </div>
         <Show when={ledgerOpen()}>
           <div class="pf-orch-ledger-body">
+            <Show when={pinnedPlans().length > 0}>
+              <div class="pf-orch-pins">
+                <For each={pinnedPlans()}>
+                  {(pin) => (
+                    <div class="pf-orch-pin">
+                      <div class="pf-orch-pin-head">
+                        <span class="pf-orch-pin-mark">
+                          {PROVIDER_MARK[pin.provider] ?? "AI"}
+                        </span>
+                        <span class="pf-orch-pin-title">{pin.title}</span>
+                        <button
+                          class="pf-orch-icon"
+                          title="Unpin plan"
+                          aria-label={`Unpin plan: ${pin.title}`}
+                          onClick={() => setPlanPinned(pin.chatId, false)}
+                        >
+                          <IconPin size={13} />
+                        </button>
+                      </div>
+                      <div class="pf-orch-pin-root">{pin.projectRoot}</div>
+                      <ul class="pf-orch-pin-list">
+                        <For each={pin.items}>
+                          {(item) => (
+                            <li
+                              class="pf-orch-pin-item"
+                              classList={{ "pf-orch-pin-item--done": item.completed }}
+                            >
+                              <span class="pf-orch-pin-step" aria-hidden="true">
+                                {item.completed ? "[x]" : "[ ]"}
+                              </span>
+                              <span class="pf-orch-pin-text">{item.text}</span>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
             <div class="pf-orch-card">
               <div class="pf-orch-tasks">
                 <For
@@ -889,6 +1033,7 @@ export function OrchestraView(props: {
                 </button>
               </div>
             </div>
+            <SwarmDashboard />
             <UsageDashboard />
           </div>
         </Show>

@@ -9,6 +9,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
 import {
@@ -25,18 +26,27 @@ import {
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import {
   type ComposerAttachment,
+  type TextComposerAttachment,
   addAttachmentWithMarker,
+  attachmentMarkerText,
   createPendingAttachment,
+  createTextAttachment,
   decidePreparingState,
+  escapeImageMarkersInTextAttachment,
+  expandTextAttachments,
   hasPendingAttachments,
   offsetAfterRemoval,
   readyAttachmentPaths,
   removeAttachmentWithMarker,
   replaceRangeWithText,
   resolveAttachment,
+  updateTextAttachmentContent,
 } from "../../lib/composerAttachments";
 import {
   CHIP_ATTR,
+  CHIP_KIND_ATTR,
+  type ComposerChipKind,
+  type ComposerChipModel,
   adjacentChipId,
   caretOffset,
   chipIdsInOrder,
@@ -50,7 +60,14 @@ import {
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
-import { IconClaude, IconForgeFlame, IconIngot, IconOpenAI, IconShield } from "../icons";
+import {
+  IconClaude,
+  IconClose,
+  IconForgeFlame,
+  IconIngot,
+  IconOpenAI,
+  IconShield,
+} from "../icons";
 import { Spinner } from "../ui";
 import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
@@ -118,6 +135,7 @@ const ACCEPTED_MIME_EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 const ACCEPTED_PATH_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+const LONG_TEXT_ATTACHMENT_CHARS = 2000;
 
 function acceptedPathExt(path: string): string | null {
   const name = path.split(/[\\/]/).pop() ?? path;
@@ -144,7 +162,7 @@ function readBase64(file: File): Promise<string> {
 }
 
 function modelsFor(provider: AgentProvider) {
-  return AGENTS.find((a) => a.id === provider)?.models ?? [];
+  return AGENTS.find((a) => a.id === provider)?.models.filter((model) => !model.terminalOnly) ?? [];
 }
 
 type Suggestion =
@@ -174,11 +192,16 @@ export function Composer(props: {
   const [skills, setSkills] = createSignal<AgentSkill[]>([]);
   const [attachments, setAttachments] = createSignal<ComposerAttachment[]>([]);
   const [pasteError, setPasteError] = createSignal<string | null>(null);
+  const [textPreviewId, setTextPreviewId] = createSignal<number | null>(null);
+  const [textPreviewDraft, setTextPreviewDraft] = createSignal("");
+  const [textPreviewEditing, setTextPreviewEditing] = createSignal(false);
   const [dropHover, setDropHover] = createSignal(false);
   const [preparing, setPreparing] = createSignal(false);
   const [prepareFailed, setPrepareFailed] = createSignal(false);
   let root!: HTMLDivElement;
   let field!: HTMLDivElement;
+  let textPreviewArea: HTMLTextAreaElement | undefined;
+  let textPreviewRestoreFocus: HTMLElement | null = null;
   let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined;
   let refocusAfterPrepare = false;
   let pasteGeneration = 0;
@@ -186,11 +209,75 @@ export function Composer(props: {
   let nextAttachmentId = 1;
   let composing = false;
 
-  const attachmentIds = () => attachments().map((attachment) => attachment.id);
+  const attachmentModels = (): ComposerChipModel[] =>
+    attachments().map((attachment) => ({ id: attachment.id, kind: attachment.kind }));
 
-  const buildGlyph = (doc: Document): HTMLElement => {
+  const attachmentNumber = (attachment: ComposerAttachment) =>
+    attachments()
+      .filter((a) => a.kind === attachment.kind)
+      .findIndex((a) => a.id === attachment.id) + 1;
+
+  const textPreviewAttachment = createMemo<TextComposerAttachment | null>(() => {
+    const id = textPreviewId();
+    return (
+      (attachments().find(
+        (a) => a.id === id && a.kind === "text",
+      ) as TextComposerAttachment | undefined) ?? null
+    );
+  });
+
+  const textStats = (content: string) => {
+    let lines = content.length === 0 ? 0 : 1;
+    for (let i = 0; i < content.length; i += 1) {
+      const code = content.charCodeAt(i);
+      if (code === 10) {
+        lines += 1;
+      } else if (code === 13) {
+        lines += 1;
+        if (content.charCodeAt(i + 1) === 10) i += 1;
+      }
+    }
+    return { chars: content.length, lines };
+  };
+
+  const textSummary = (content: string) => {
+    const compact = content.replace(/\s+/g, " ").trim();
+    return compact.length > 80 ? `${compact.slice(0, 80)}…` : compact || "Empty text";
+  };
+
+  const openTextPreview = (id: number) => {
+    const attachment = attachments().find((a) => a.id === id && a.kind === "text");
+    if (!attachment || attachment.kind !== "text") return;
+    textPreviewRestoreFocus = (document.activeElement as HTMLElement | null) ?? null;
+    setTextPreviewId(id);
+    setTextPreviewDraft(attachment.content);
+    setTextPreviewEditing(false);
+    queueMicrotask(() => textPreviewArea?.focus());
+  };
+
+  const closeTextPreview = () => {
+    setTextPreviewId(null);
+    setTextPreviewDraft("");
+    setTextPreviewEditing(false);
+    const restore = textPreviewRestoreFocus;
+    textPreviewRestoreFocus = null;
+    queueMicrotask(() => restore?.focus?.());
+  };
+
+  createEffect(() => {
+    if (textPreviewId() !== null && !textPreviewAttachment()) closeTextPreview();
+  });
+
+  const buildImageGlyph = (doc: Document): HTMLElement => {
     const glyph = doc.createElement("span");
     glyph.className = "pf-chat-chip-glyph";
+    return glyph;
+  };
+
+  const buildTextGlyph = (doc: Document): HTMLElement => {
+    const glyph = doc.createElement("span");
+    glyph.className = "pf-chat-chip-text-glyph";
+    for (let i = 0; i < 3; i++) glyph.appendChild(doc.createElement("span"));
     return glyph;
   };
 
@@ -202,7 +289,9 @@ export function Composer(props: {
     const wrap = doc.createElement("span");
     wrap.className = "pf-chat-chip-visual";
     wrap.setAttribute("aria-hidden", "true");
-    if (attachment?.status === "pending") {
+    if (attachment?.kind === "text") {
+      wrap.appendChild(buildTextGlyph(doc));
+    } else if (attachment?.status === "pending") {
       const spinner = doc.createElement("span");
       spinner.className = "pf-spinner pf-chat-chip-spinner";
       wrap.appendChild(spinner);
@@ -211,50 +300,71 @@ export function Composer(props: {
       img.className = "pf-chat-chip-thumb";
       img.src = attachment.previewUrl;
       img.alt = "";
-      img.addEventListener("error", () => wrap.replaceChildren(buildGlyph(doc)));
+      img.addEventListener("error", () => wrap.replaceChildren(buildImageGlyph(doc)));
       wrap.appendChild(img);
     } else {
-      wrap.appendChild(buildGlyph(doc));
+      wrap.appendChild(buildImageGlyph(doc));
     }
     return wrap;
   };
 
-  const chipAriaLabel = (index: number, pending: boolean) =>
-    pending
-      ? `Image ${index}, preparing — press Backspace to remove`
-      : `Image ${index} — press Backspace to remove`;
+  const chipAriaLabel = (kind: ComposerChipKind, index: number, pending: boolean) => {
+    const label = kind === "text" ? "Text" : "Image";
+    return pending
+      ? `${label} ${index}, preparing — press Backspace to remove`
+      : `${label} ${index} — press Backspace to remove`;
+  };
 
-  const buildChip = (id: number, index: number): HTMLElement => {
+  const buildChip = (id: number, kind: ComposerChipKind, index: number): HTMLElement => {
     const doc = field.ownerDocument;
     const attachment = attachments().find((a) => a.id === id);
-    const pending = attachment?.status === "pending";
+    const pending = attachment?.kind === "image" && attachment.status === "pending";
     const chip = doc.createElement("span");
     chip.className = "pf-chat-chip";
+    chip.classList.toggle("pf-chat-chip--text", kind === "text");
     chip.classList.toggle("pf-chat-chip--pending", pending);
     chip.setAttribute("contenteditable", "false");
     chip.setAttribute(CHIP_ATTR, String(id));
+    chip.setAttribute(CHIP_KIND_ATTR, kind);
     chip.setAttribute("role", "button");
-    chip.setAttribute("aria-label", chipAriaLabel(index, pending));
+    chip.setAttribute("aria-label", chipAriaLabel(kind, index, pending));
+    if (kind === "text") {
+      chip.tabIndex = 0;
+      chip.addEventListener("click", (e) => {
+        e.preventDefault();
+        openTextPreview(id);
+      });
+      chip.addEventListener("keydown", (e) => {
+        if (e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          removeAttachmentInPlace(id);
+          return;
+        }
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        openTextPreview(id);
+      });
+    }
 
     chip.appendChild(buildChipVisual(attachment, index));
 
     const label = doc.createElement("span");
     label.className = "pf-chat-chip-label";
-    label.textContent = `Image #${index}`;
+    label.textContent = `${kind === "text" ? "Text" : "Image"} #${index}`;
     chip.appendChild(label);
 
     const remove = doc.createElement("button");
     remove.type = "button";
     remove.className = "pf-chat-chip-remove";
     remove.setAttribute("contenteditable", "false");
-    remove.setAttribute("aria-label", `Remove image ${index}`);
+    remove.setAttribute("aria-label", `Remove ${kind} ${index}`);
     remove.tabIndex = -1;
     remove.textContent = "✕";
     remove.addEventListener("mousedown", (e) => e.preventDefault());
     remove.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      removeImageInPlace(id);
+      removeAttachmentInPlace(id);
     });
     chip.appendChild(remove);
 
@@ -262,7 +372,7 @@ export function Composer(props: {
   };
 
   const renderEditor = () => {
-    renderComposer(field, text(), attachmentIds(), buildChip);
+    renderComposer(field, text(), attachmentModels(), buildChip);
   };
 
   // Targeted swap of a single chip's leading visual (pending spinner → thumbnail)
@@ -271,17 +381,18 @@ export function Composer(props: {
   const refreshChip = (id: number) => {
     const chip = field.querySelector<HTMLElement>(`[${CHIP_ATTR}="${id}"]`);
     if (!chip) return;
-    const index = attachmentIds().indexOf(id) + 1;
     const attachment = attachments().find((a) => a.id === id);
-    const pending = attachment?.status === "pending";
+    if (!attachment) return;
+    const index = attachmentNumber(attachment);
+    const pending = attachment.kind === "image" && attachment.status === "pending";
     chip.classList.toggle("pf-chat-chip--pending", pending);
-    chip.setAttribute("aria-label", chipAriaLabel(index, pending));
+    chip.setAttribute("aria-label", chipAriaLabel(attachment.kind, index, pending));
     chip.querySelector(".pf-chat-chip-visual")?.replaceWith(buildChipVisual(attachment, index));
   };
 
   const placeCaret = (offset: number) => {
     if (document.activeElement === field) {
-      setCaretAtOffset(field, offset, attachmentIds());
+      setCaretAtOffset(field, offset, attachmentModels());
     }
   };
 
@@ -304,7 +415,9 @@ export function Composer(props: {
   };
 
   const revokePendingPreview = (attachment: ComposerAttachment | null) => {
-    if (attachment?.status === "pending") revokeObjectPreview(attachment.previewUrl);
+    if (attachment?.kind === "image" && attachment.status === "pending") {
+      revokeObjectPreview(attachment.previewUrl);
+    }
   };
 
   onCleanup(() => {
@@ -413,10 +526,12 @@ export function Composer(props: {
       item.kind === "template"
         ? item.template.body
         : `${item.skill.trigger}${item.skill.name} `;
-    // Staged images survive the draft replacement: their markers re-anchor at
-    // the head so the caret still lands at the end of the inserted body.
-    const markers = attachmentIds()
-      .map((_, i) => `[Image #${i + 1}]`)
+    // Staged attachments survive the draft replacement: their markers re-anchor
+    // at the head so the caret still lands at the end of the inserted body.
+    const currentAttachments = attachments();
+    const markers = currentAttachments
+      .map((attachment) => attachmentMarkerText(currentAttachments, attachment.id))
+      .filter((marker): marker is string => marker !== null)
       .join(" ");
     setText(markers ? `${markers} ${body}` : body);
     setDismissed(true);
@@ -426,11 +541,29 @@ export function Composer(props: {
     placeCaret(text().length);
   };
 
-  type MarkerAnchor = { generation: number; at: number | null };
-  const pinMarkerAnchor = (): MarkerAnchor => ({
-    generation: pasteGeneration,
-    at: document.activeElement === field ? caretOffset(field, attachmentIds()) : null,
-  });
+  type MarkerAnchor = { generation: number; at: number | null; end: number | null };
+  const pinMarkerAnchor = (): MarkerAnchor => {
+    const range =
+      document.activeElement === field ? selectionOffsets(field, attachmentModels()) : null;
+    return {
+      generation: pasteGeneration,
+      at: range?.start ?? null,
+      end: range?.end ?? range?.start ?? null,
+    };
+  };
+
+  const insertionRange = (value: string, anchor?: MarkerAnchor) => {
+    if (anchor && anchor.generation === pasteGeneration && anchor.at !== null) {
+      const start = Math.max(0, Math.min(anchor.at, value.length));
+      const end = Math.max(0, Math.min(anchor.end ?? anchor.at, value.length));
+      return { start: Math.min(start, end), end: Math.max(start, end), anchored: true };
+    }
+    const range =
+      document.activeElement === field ? selectionOffsets(field, attachmentModels()) : null;
+    const start = range?.start ?? value.length;
+    const end = range?.end ?? start;
+    return { start, end, anchored: false };
+  };
 
   const addPendingImage = (previewUrl: string | null, anchor?: MarkerAnchor) => {
     const attachment = createPendingAttachment(nextAttachmentId++, previewUrl);
@@ -438,17 +571,20 @@ export function Composer(props: {
     const value = text();
     const pinned = anchor && anchor.generation === pasteGeneration ? anchor.at : null;
     const cursor =
-      pinned ?? (focused ? (caretOffset(field, attachmentIds()) ?? value.length) : value.length);
+      pinned ?? (focused ? (caretOffset(field, attachmentModels()) ?? value.length) : value.length);
     const result = addAttachmentWithMarker(attachments(), value, cursor, attachment);
     setAttachments(result.attachments);
-    if (pinned !== null && anchor) anchor.at = result.cursor;
+    if (pinned !== null && anchor) {
+      anchor.at = result.cursor;
+      anchor.end = result.cursor;
+    }
     setText(result.text);
     renderEditor();
     if (focused) placeCaret(result.cursor);
     return attachment;
   };
 
-  const removeImage = (id: number, focus = true, caretAt?: number) => {
+  const removeAttachment = (id: number, focus = true, caretAt?: number) => {
     const result = removeAttachmentWithMarker(attachments(), text(), id);
     if (!result.removed) return false;
     revokePendingPreview(result.removed);
@@ -464,43 +600,140 @@ export function Composer(props: {
 
   // Delete a chip in place: the caret stays where the chip stood instead of
   // jumping to the end of the message.
-  const removeImageInPlace = (id: number) => {
+  const removeAttachmentInPlace = (id: number) => {
     if (preparing()) return;
-    const at = chipStartOffset(field, id, attachmentIds());
-    removeImage(id, true, at ?? undefined);
+    const at = chipStartOffset(field, id, attachmentModels());
+    removeAttachment(id, true, at ?? undefined);
   };
 
   // Remove an attachment out from under the user (stash failure, stale
   // generation) without losing their caret: map the current offset through the
   // same marker-removal renumbering the text goes through.
-  const removeImageKeepingCaret = (id: number) => {
-    const at = document.activeElement === field ? caretOffset(field, attachmentIds()) : null;
-    if (at === null) return removeImage(id, false);
+  const removeAttachmentKeepingCaret = (id: number) => {
+    const at = document.activeElement === field ? caretOffset(field, attachmentModels()) : null;
+    if (at === null) return removeAttachment(id, false);
     const caret = offsetAfterRemoval(attachments(), text(), id, at);
     if (caret === null) return false;
-    return removeImage(id, true, caret);
+    return removeAttachment(id, true, caret);
   };
 
-  const insertPlainText = (chunk: string) => {
+  const insertPlainText = (chunk: string, anchor?: MarkerAnchor) => {
     if (!chunk) return;
     // A submit with pending images froze the draft; a late async paste
     // completion (native clipboard reads resolve after Send) must not mutate
     // what is about to dispatch.
     if (preparing()) return;
     const value = text();
-    const range = document.activeElement === field ? selectionOffsets(field, attachmentIds()) : null;
-    const start = range?.start ?? value.length;
-    const end = range?.end ?? start;
+    const range = insertionRange(value, anchor);
     // The chip invariant: replacing a range that covers a chip must also drop
     // its attachment (and renumber the rest), or the orphaned image would still
     // be sent while no chip shows it.
-    const result = replaceRangeWithText(attachments(), value, start, end, chunk);
+    const result = replaceRangeWithText(attachments(), value, range.start, range.end, chunk);
     for (const dropped of result.removed) revokePendingPreview(dropped);
+    if (range.anchored && anchor) {
+      anchor.at = result.cursor;
+      anchor.end = result.cursor;
+    }
     batch(() => {
       setAttachments(result.attachments);
       setText(result.text);
     });
     renderEditor();
+    placeCaret(result.cursor);
+  };
+
+  const addTextAttachment = (content: string, anchor?: MarkerAnchor) => {
+    if (content.trim().length === 0 || preparing()) return;
+    const attachment = createTextAttachment(nextAttachmentId++, content);
+    const value = text();
+    const range = insertionRange(value, anchor);
+    const replaced = replaceRangeWithText(attachments(), value, range.start, range.end, "");
+    for (const dropped of replaced.removed) revokePendingPreview(dropped);
+    const result = addAttachmentWithMarker(
+      replaced.attachments,
+      replaced.text,
+      replaced.cursor,
+      attachment,
+    );
+    batch(() => {
+      setAttachments(result.attachments);
+      setText(result.text);
+    });
+    if (range.anchored && anchor) {
+      anchor.at = result.cursor;
+      anchor.end = result.cursor;
+    }
+    renderEditor();
+    placeCaret(result.cursor);
+    clearPasteError();
+  };
+
+  const insertPastedText = (chunk: string, anchor?: MarkerAnchor) => {
+    if (chunk.length >= LONG_TEXT_ATTACHMENT_CHARS) {
+      addTextAttachment(chunk, anchor);
+      return;
+    }
+    insertPlainText(chunk, anchor);
+  };
+
+  const updateTextPreview = () => {
+    const attachment = textPreviewAttachment();
+    if (!attachment) return;
+    const content = textPreviewDraft();
+    const result = updateTextAttachmentContent(attachments(), text(), attachment.id, content);
+    setAttachments(result.attachments);
+    if (result.removed) {
+      setText(result.text);
+      renderEditor();
+      textPreviewRestoreFocus = field;
+      closeTextPreview();
+      return;
+    }
+    setTextPreviewEditing(false);
+  };
+
+  const selectTextPreview = () => {
+    textPreviewArea?.focus();
+    textPreviewArea?.select();
+  };
+
+  const copyTextPreview = () => {
+    const content = textPreviewDraft();
+    if (!navigator.clipboard?.writeText) {
+      selectTextPreview();
+      showPasteError("Clipboard copy is unavailable", 4000);
+      return;
+    }
+    void navigator.clipboard.writeText(content).catch(() => {
+      showPasteError("Couldn't copy text", 4000);
+    });
+  };
+
+  const pasteTextPreview = () => {
+    const attachment = textPreviewAttachment();
+    if (!attachment) return;
+    const marker = attachmentMarkerText(attachments(), attachment.id);
+    const at = chipStartOffset(field, attachment.id, attachmentModels());
+    if (marker === null || at === null) return;
+    const draft = textPreviewDraft();
+    const chunk = attachments().some((item) => item.kind === "image")
+      ? escapeImageMarkersInTextAttachment(draft)
+      : draft;
+    const result = replaceRangeWithText(
+      attachments(),
+      text(),
+      at,
+      at + marker.length,
+      chunk,
+    );
+    for (const dropped of result.removed) revokePendingPreview(dropped);
+    batch(() => {
+      setAttachments(result.attachments);
+      setText(result.text);
+    });
+    closeTextPreview();
+    renderEditor();
+    field.focus();
     placeCaret(result.cursor);
   };
 
@@ -510,7 +743,7 @@ export function Composer(props: {
   const discardStaleImage = (id: number, generation: number) => {
     if (!hasAttachment(id)) return true;
     if (generation === pasteGeneration) return false;
-    removeImageKeepingCaret(id);
+    removeAttachmentKeepingCaret(id);
     if (droppedPasteGeneration !== generation) {
       droppedPasteGeneration = generation;
       showPasteError("Image discarded because send already started", 4000);
@@ -537,11 +770,46 @@ export function Composer(props: {
     const wasPreparing = preparing();
     let removed = false;
     batch(() => {
-      removed = removeImageKeepingCaret(id);
+      removed = removeAttachmentKeepingCaret(id);
       if (removed && wasPreparing) setPrepareFailed(true);
     });
     if (!removed || message === "clipboard has no image") return;
     showPasteError(message);
+  };
+
+  const attachNativeClipboardImage = (generation: number, anchor: MarkerAnchor) => {
+    if (generation !== pasteGeneration || preparing()) return;
+    if (props.turnActive) {
+      showPasteError("Images can't be attached while a turn is running", 4000);
+      return;
+    }
+    clearPasteError();
+    const attachment = addPendingImage(null, anchor);
+    void agentStashClipboardImage()
+      .then((path) => resolveImage(attachment.id, generation, path))
+      .catch((error) => failImage(attachment.id, generation, error));
+  };
+
+  const pasteNativeClipboard = (anchor: MarkerAnchor) => {
+    const generation = pasteGeneration;
+    void agentClipboardText()
+      .then((plain) => {
+        if (generation !== pasteGeneration) return;
+        const value = typeof plain === "string" ? plain : "";
+        if (value.length > 0) {
+          insertPastedText(value, anchor);
+          return;
+        }
+        attachNativeClipboardImage(generation, anchor);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message !== "clipboard has no text") {
+          showPasteError(message);
+          return;
+        }
+        attachNativeClipboardImage(generation, anchor);
+      });
   };
 
   const onPaste = (event: ClipboardEvent) => {
@@ -605,7 +873,7 @@ export function Composer(props: {
             // Not an image copy — restore the default paste the intercept ate,
             // unless a send already consumed this composer state.
             if (generation !== pasteGeneration) return;
-            insertPlainText(paths.length > 0 ? paths.join(" ") : text);
+            insertPastedText(paths.length > 0 ? paths.join(" ") : text, anchor);
           })
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
@@ -623,21 +891,12 @@ export function Composer(props: {
         // non-image uri-list still pastes its decoded paths.
         event.preventDefault();
         const plain = data.getData("text/plain");
-        if (plain) insertPlainText(plain);
-        else if (uriPaths.length > 0) insertPlainText(uriPaths.join(" "));
+        if (plain) insertPastedText(plain);
+        else if (uriPaths.length > 0) insertPastedText(uriPaths.join(" "));
         return;
       }
       event.preventDefault();
-      if (props.turnActive) {
-        showPasteError("Images can't be attached while a turn is running", 4000);
-        return;
-      }
-      clearPasteError();
-      const generation = pasteGeneration;
-      const attachment = addPendingImage(null, anchor);
-      void agentStashClipboardImage()
-        .then((path) => resolveImage(attachment.id, generation, path))
-        .catch((error) => failImage(attachment.id, generation, error));
+      pasteNativeClipboard(anchor);
       return;
     }
     event.preventDefault();
@@ -698,8 +957,8 @@ export function Composer(props: {
 
   const dispatchSend = () => {
     const savedText = text();
-    const value = savedText.trim();
     const savedAttachments = [...attachments()];
+    const value = expandTextAttachments(savedAttachments, savedText).trim();
     const savedImages = readyAttachmentPaths(savedAttachments);
     if (!value && savedImages.length === 0) return;
     if (hasPendingAttachments(savedAttachments)) return;
@@ -709,10 +968,12 @@ export function Composer(props: {
       droppedPasteGeneration = null;
       const result = props.onSteer!(value);
       setText("");
+      setAttachments([]);
       renderEditor();
       void Promise.resolve(result).catch(() => {
         if (text().trim().length === 0 && attachments().length === 0) {
           setText(savedText);
+          setAttachments(savedAttachments);
           renderEditor();
         }
       });
@@ -771,6 +1032,7 @@ export function Composer(props: {
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
     if (event.isComposing) return;
     if (suggestionsOpen()) {
       const list = suggestions();
@@ -803,7 +1065,7 @@ export function Composer(props: {
       const chipId = adjacentChipId(field, event.key === "Backspace" ? "before" : "after");
       if (chipId !== null) {
         event.preventDefault();
-        removeImageInPlace(chipId);
+        removeAttachmentInPlace(chipId);
         return;
       }
       if (event.key === "Delete" && deleteTargetsFillerTail(field)) {
@@ -828,10 +1090,10 @@ export function Composer(props: {
   // reconciled to the surviving chips and the editor re-rendered to renumber.
   const onInput = () => {
     if (composing) return;
-    const modelIds = attachmentIds();
+    const modelIds = attachmentModels();
     const present = chipIdsInOrder(field);
     const same =
-      present.length === modelIds.length && present.every((id, i) => id === modelIds[i]);
+      present.length === modelIds.length && present.every((id, i) => id === modelIds[i].id);
     if (!same) {
       const survivors = new Set(present);
       const byId = new Map(attachments().map((a) => [a.id, a]));
@@ -841,9 +1103,10 @@ export function Composer(props: {
       const kept = present
         .map((id) => byId.get(id))
         .filter((a): a is ComposerAttachment => a !== undefined);
+      const keptModels = kept.map((a) => ({ id: a.id, kind: a.kind }));
       const emptied = kept.length === 0 && field.textContent === "";
-      const value = emptied ? "" : serializeComposer(field, present);
-      const caret = emptied ? 0 : (selectionOffsets(field, present)?.start ?? value.length);
+      const value = emptied ? "" : serializeComposer(field, keptModels);
+      const caret = emptied ? 0 : (selectionOffsets(field, keptModels)?.start ?? value.length);
       batch(() => {
         setAttachments(kept);
         setText(value);
@@ -932,66 +1195,93 @@ export function Composer(props: {
       <Show when={attachments().length > 0}>
         <div class="pf-chat-attachments">
           <For each={attachments()}>
-            {(attachment, i) => {
+            {(attachment) => {
+              const number = () => attachmentNumber(attachment);
               const canPreview = () =>
-                attachment.status === "ready" && attachment.previewUrl !== null;
+                attachment.kind === "image" &&
+                attachment.status === "ready" &&
+                attachment.previewUrl !== null;
               const openPreview = () => {
-                if (canPreview() && attachment.previewUrl) openLightbox(attachment.previewUrl);
+                if (attachment.kind === "image" && canPreview() && attachment.previewUrl) {
+                  openLightbox(attachment.previewUrl);
+                }
               };
               return (
                 <div
                   class="pf-chat-attachment"
                   classList={{
-                    "pf-chat-attachment--pending": attachment.status === "pending",
+                    "pf-chat-attachment--pending":
+                      attachment.kind === "image" && attachment.status === "pending",
+                    "pf-chat-attachment--text": attachment.kind === "text",
                   }}
                 >
-                  <Show
-                    when={attachment.previewUrl}
-                    fallback={
-                      <span class="pf-chat-attachment-placeholder" aria-hidden="true">
-                        <span class="pf-chat-attachment-glyph" />
+                  {attachment.kind === "text" ? (
+                    <button
+                      type="button"
+                      class="pf-chat-attachment-text"
+                      aria-label={`Preview text ${number()}`}
+                      onClick={() => openTextPreview(attachment.id)}
+                    >
+                      <span class="pf-chat-attachment-text-label">Text #{number()}</span>
+                      <span class="pf-chat-attachment-text-meta">
+                        {textStats(attachment.content).chars} chars ·{" "}
+                        {textStats(attachment.content).lines} lines
                       </span>
-                    }
-                  >
-                    {(src) => (
-                      <img
-                        class="pf-chat-attachment-img"
-                        src={src()}
-                        alt=""
-                        role={canPreview() ? "button" : undefined}
-                        tabIndex={canPreview() ? 0 : undefined}
-                        aria-label={canPreview() ? `Preview image ${i() + 1}` : undefined}
-                        onClick={openPreview}
-                        onKeyDown={(e) => {
-                          if (!canPreview()) return;
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            openPreview();
-                          }
-                        }}
-                        onError={(e) => {
-                          e.currentTarget.style.visibility = "hidden";
-                        }}
-                      />
-                    )}
-                  </Show>
-                  <Show when={attachment.status === "pending"}>
-                    <span class="pf-chat-attachment-progress">
-                      <Spinner
-                        class="pf-chat-attachment-spinner"
-                        label={`Preparing image ${i() + 1}`}
-                      />
-                    </span>
-                  </Show>
+                      <span class="pf-chat-attachment-text-snippet">
+                        {textSummary(attachment.content)}
+                      </span>
+                    </button>
+                  ) : (
+                    <>
+                      <Show
+                        when={attachment.previewUrl}
+                        fallback={
+                          <span class="pf-chat-attachment-placeholder" aria-hidden="true">
+                            <span class="pf-chat-attachment-glyph" />
+                          </span>
+                        }
+                      >
+                        {(src) => (
+                          <img
+                            class="pf-chat-attachment-img"
+                            src={src()}
+                            alt=""
+                            role={canPreview() ? "button" : undefined}
+                            tabIndex={canPreview() ? 0 : undefined}
+                            aria-label={canPreview() ? `Preview image ${number()}` : undefined}
+                            onClick={openPreview}
+                            onKeyDown={(e) => {
+                              if (!canPreview()) return;
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                openPreview();
+                              }
+                            }}
+                            onError={(e) => {
+                              e.currentTarget.style.visibility = "hidden";
+                            }}
+                          />
+                        )}
+                      </Show>
+                      <Show when={attachment.status === "pending"}>
+                        <span class="pf-chat-attachment-progress">
+                          <Spinner
+                            class="pf-chat-attachment-spinner"
+                            label={`Preparing image ${number()}`}
+                          />
+                        </span>
+                      </Show>
+                    </>
+                  )}
                   <span class="pf-chat-attachment-index" aria-hidden="true">
-                    {i() + 1}
+                    {attachment.kind === "text" ? `T${number()}` : number()}
                   </span>
                   <button
                     type="button"
                     class="pf-chat-attachment-remove"
-                    aria-label="Remove image"
+                    aria-label={`Remove ${attachment.kind}`}
                     disabled={preparing()}
-                    onClick={() => removeImage(attachment.id)}
+                    onClick={() => removeAttachment(attachment.id)}
                   >
                     ✕
                   </button>
@@ -1075,6 +1365,83 @@ export function Composer(props: {
           </button>
         </Show>
       </div>
+      <Show when={textPreviewAttachment()}>
+        {(attachment) => (
+          <Portal>
+            <div
+              class="pf-text-preview"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Text preview"
+              onClick={closeTextPreview}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") closeTextPreview();
+              }}
+            >
+              <div class="pf-text-preview-panel" onClick={(e) => e.stopPropagation()}>
+                <div class="pf-text-preview-head">
+                  <div>
+                    <div class="pf-text-preview-title">
+                      Text #{attachmentNumber(attachment())}
+                    </div>
+                    <div class="pf-text-preview-meta">
+                      {textStats(textPreviewDraft()).chars} chars ·{" "}
+                      {textStats(textPreviewDraft()).lines} lines
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="pf-text-preview-close"
+                    aria-label="Close text preview"
+                    onClick={closeTextPreview}
+                  >
+                    <IconClose size={18} />
+                  </button>
+                </div>
+                <textarea
+                  ref={textPreviewArea}
+                  class="pf-text-preview-area"
+                  value={textPreviewDraft()}
+                  readOnly={!textPreviewEditing()}
+                  spellcheck={true}
+                  onInput={(e) => setTextPreviewDraft(e.currentTarget.value)}
+                />
+                <div class="pf-text-preview-actions">
+                  <button type="button" onClick={selectTextPreview}>
+                    Select
+                  </button>
+                  <button type="button" onClick={copyTextPreview}>
+                    Copy
+                  </button>
+                  <button type="button" disabled={preparing()} onClick={pasteTextPreview}>
+                    Paste
+                  </button>
+                  <Show
+                    when={textPreviewEditing()}
+                    fallback={
+                      <button
+                        type="button"
+                        disabled={preparing()}
+                        onClick={() => {
+                          setTextPreviewDraft(attachment().content);
+                          setTextPreviewEditing(true);
+                          queueMicrotask(() => textPreviewArea?.focus());
+                        }}
+                      >
+                        Edit
+                      </button>
+                    }
+                  >
+                    <button type="button" disabled={preparing()} onClick={updateTextPreview}>
+                      Update
+                    </button>
+                  </Show>
+                </div>
+              </div>
+            </div>
+          </Portal>
+        )}
+      </Show>
     </div>
   );
 }

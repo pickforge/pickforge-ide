@@ -17,8 +17,6 @@
  * and tags stay non-selectable. */
 .pf-chat-md,
 .pf-chat-thinking-body,
-.pf-chat-command-line,
-.pf-chat-command-glyph,
 .pf-chat-meta,
 .pf-chat-tail,
 .pf-chat-diff,
@@ -30,6 +28,11 @@
 .pf-chat-tokens,
 .pf-chat-context-frac,
 .pf-chat-context-cost,
+.pf-chat-swarm-summary-goal,
+.pf-chat-swarm-summary-meta,
+.pf-chat-swarm-lane-title,
+.pf-chat-swarm-lane-meta,
+.pf-chat-swarm-lane-detail,
 .pf-approval-line,
 .pf-approval-quiet {
   user-select: text;
@@ -372,40 +375,169 @@
   color: var(--pf-text-low);
 }
 
-/* ---- Cards (command / files / plan) ---- */
-.pf-chat-card {
-  padding: var(--pf-space-md);
+/* ---- Pickforge swarm run card ---- */
+.pf-chat-swarm-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
   background: var(--pf-surface-1);
 }
-.pf-chat-command {
+.pf-chat-swarm-dock {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  padding: 0 var(--pf-space-lg) var(--pf-space-md);
+}
+.pf-chat-swarm-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  width: 100%;
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--pf-radius-md);
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-swarm-summary:hover,
+.pf-chat-swarm-summary:focus-visible {
+  outline: none;
+  background: var(--pf-surface-2);
+}
+.pf-chat-swarm-summary-chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--pf-text-low);
+}
+.pf-chat-swarm-summary-title {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-med);
+}
+.pf-chat-swarm-summary-title svg {
+  flex: none;
+  color: var(--pf-text-low);
+}
+.pf-chat-swarm-summary-goal {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-chat-swarm-summary-meta {
+  flex: 0 1 32ch;
+  min-width: 0;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-chat-swarm-status,
+.pf-chat-swarm-lane-status {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--pf-text-med);
+}
+.pf-chat-swarm-dot {
+  width: var(--pf-space-xs);
+  height: var(--pf-space-xs);
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-swarm-status);
+}
+.pf-chat-swarm-body {
   display: flex;
   flex-direction: column;
   gap: var(--pf-space-sm);
+  padding: 0 var(--pf-space-md) var(--pf-space-md);
 }
-.pf-chat-command-head {
+.pf-chat-swarm-lanes {
   display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-chat-swarm-lane {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--pf-space-sm);
+  width: 100%;
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface);
+  text-align: left;
+  cursor: pointer;
 }
-.pf-chat-command-glyph {
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-mono);
-  color: var(--pf-text-low);
-  flex: none;
+.pf-chat-swarm-lane:disabled {
+  cursor: default;
+  opacity: 0.86;
 }
-.pf-chat-command-line {
-  flex: 1 1 auto;
+.pf-chat-swarm-lane:not(:disabled):hover {
+  background: var(--pf-surface-2);
+}
+.pf-chat-swarm-lane-main {
+  display: grid;
   min-width: 0;
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-mono);
-  color: var(--pf-text-hi);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  gap: var(--pf-hairline-width);
 }
-.pf-chat-command-foot {
+.pf-chat-swarm-lane-title,
+.pf-chat-swarm-lane-meta,
+.pf-chat-swarm-lane-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-chat-swarm-lane-title {
+  font-size: var(--pf-size-body-md);
+  color: var(--pf-text-hi);
+}
+.pf-chat-swarm-lane-meta,
+.pf-chat-swarm-lane-detail {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+}
+.pf-chat-swarm-open {
   display: flex;
   align-items: center;
-  gap: var(--pf-space-md);
+  color: var(--pf-text-low);
+}
+.pf-chat-swarm-error {
+  padding: var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid color-mix(in srgb, var(--pf-error) 38%, transparent);
+  background: color-mix(in srgb, var(--pf-error) 10%, transparent);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-error);
+}
+
+/* ---- Cards (files / plan) ---- */
+.pf-chat-card {
+  padding: var(--pf-space-md);
+  background: var(--pf-surface-1);
 }
 .pf-chat-meta {
   font-family: var(--pf-font-mono);
@@ -530,15 +662,52 @@
   color: var(--pf-text-low);
 }
 
-/* ---- Compact single-line cards (tool / mcp / web) ---- */
+/* ---- Compact collapsible rows (command / tool / mcp / web) ---- */
 .pf-chat-line {
   display: flex;
-  align-items: baseline;
-  gap: var(--pf-space-sm);
-  padding: var(--pf-space-xs) var(--pf-space-sm);
+  flex-direction: column;
+  gap: var(--pf-space-xs);
   border-radius: var(--pf-radius-sm);
   background: var(--pf-item-fill);
   min-width: 0;
+}
+.pf-chat-line-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  min-width: 0;
+  border-radius: var(--pf-radius-sm);
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-line-toggle[disabled] {
+  cursor: default;
+}
+.pf-chat-line-toggle:not([disabled]) {
+  cursor: pointer;
+}
+.pf-chat-line-toggle:not([disabled]):hover,
+.pf-chat-line-toggle:not([disabled]):focus-visible {
+  outline: none;
+  background: var(--pf-surface-2);
+}
+.pf-chat-line-chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pf-space-md);
+  color: var(--pf-text-low);
+}
+.pf-chat-line-chevron-spacer {
+  display: inline-block;
+  width: var(--pf-space-md);
+  height: var(--pf-space-md);
 }
 .pf-chat-line-tag {
   flex: none;
@@ -549,16 +718,27 @@
   color: var(--pf-text-low);
 }
 .pf-chat-line-name {
+  flex: none;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-mono);
   color: var(--pf-text-med);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 32ch;
+}
+.pf-chat-line-name--command {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  color: var(--pf-text-hi);
 }
 .pf-chat-line-sep {
   color: var(--pf-text-low);
-  padding: 0 2px;
+  padding: 0 calc(var(--pf-space-xs) / 2);
 }
 .pf-chat-line-detail {
+  flex: 1 1 auto;
   min-width: 0;
   font-family: var(--pf-font-sans);
   font-size: var(--pf-size-body-sm);
@@ -567,12 +747,51 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pf-chat-line-trail {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  margin-left: auto;
+}
+.pf-chat-line-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  padding: 0 var(--pf-space-sm) var(--pf-space-sm);
+}
 
 /* ---- Plan ---- */
 .pf-chat-plan {
   display: flex;
   flex-direction: column;
   gap: var(--pf-space-sm);
+}
+.pf-chat-plan-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+}
+.pf-chat-plan-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pf-space-xs);
+  border: none;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-text-low);
+  cursor: pointer;
+  transition:
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-plan-pin:hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-item-fill);
+}
+.pf-chat-plan-pin--active {
+  color: var(--pf-ember);
 }
 .pf-chat-plan-item {
   display: flex;
@@ -929,7 +1148,7 @@
   overflow-wrap: anywhere;
 }
 
-/* Pasted-image thumbnails staged above the input. */
+/* Pasted attachments staged above the input. */
 .pf-chat-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -939,6 +1158,9 @@
   position: relative;
   width: 44px;
   height: 44px;
+}
+.pf-chat-attachment--text {
+  width: calc(var(--pf-space-xxxl) * 3);
 }
 .pf-chat-attachment-img,
 .pf-chat-attachment-placeholder {
@@ -1052,6 +1274,56 @@
   color: var(--pf-text-hi);
   border-color: var(--pf-text-med);
 }
+.pf-chat-attachment-text {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: calc(var(--pf-space-xs) / 2);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-chat-attachment-text:hover,
+.pf-chat-attachment-text:focus-visible {
+  outline: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+.pf-chat-attachment-text-label,
+.pf-chat-attachment-text-meta,
+.pf-chat-attachment-text-snippet {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-chat-attachment-text-label {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  color: var(--pf-text-hi);
+}
+.pf-chat-attachment-text-meta {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  line-height: 1;
+  color: var(--pf-text-low);
+}
+.pf-chat-attachment-text-snippet {
+  font-size: var(--pf-size-label-sm);
+  line-height: 1;
+  color: var(--pf-text-low);
+}
 
 /* Slash-template popover: a quiet list above the input. No ember (Rule 2 — the
  * send affordance keeps the composition's single ember). */
@@ -1156,7 +1428,7 @@
   pointer-events: none;
 }
 
-/* Atomic image chip — a small button-like token that deletes as a whole. No
+/* Atomic attachment chip — a small button-like token that deletes as a whole. No
  * ember (the composition's single ember stays on the send affordance). */
 .pf-chat-chip {
   display: inline-flex;
@@ -1175,6 +1447,15 @@
   white-space: nowrap;
   user-select: none;
   cursor: default;
+}
+.pf-chat-chip--text {
+  cursor: pointer;
+}
+.pf-chat-chip--text:hover,
+.pf-chat-chip--text:focus-visible {
+  outline: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
 }
 .pf-chat-chip-visual {
   display: inline-flex;
@@ -1230,6 +1511,30 @@
   opacity: 0.7;
   transform: skewX(-24deg);
   transform-origin: bottom left;
+}
+.pf-chat-chip-text-glyph {
+  display: flex;
+  width: var(--pf-chip-glyph-w);
+  height: var(--pf-chip-glyph-h);
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(var(--pf-space-xs) / 2);
+}
+.pf-chat-chip-text-glyph span {
+  display: block;
+  width: 100%;
+  height: var(--pf-hairline-width);
+  border-radius: var(--pf-radius-pill);
+  background: currentColor;
+  opacity: 0.7;
+}
+.pf-chat-chip-text-glyph span:nth-child(2) {
+  width: 75%;
+  opacity: 0.55;
+}
+.pf-chat-chip-text-glyph span:nth-child(3) {
+  width: 88%;
+  opacity: 0.4;
 }
 .pf-chat-chip-label {
   color: var(--pf-text-med);
@@ -1335,6 +1640,126 @@
   box-shadow: none;
 }
 
+.pf-text-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pf-space-xl);
+  background: color-mix(in srgb, var(--pf-surface) 82%, transparent);
+  animation: pf-lightbox-fade var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+.pf-text-preview-panel {
+  display: flex;
+  width: min(calc(var(--pf-space-xxxl) * 15), calc(100vw - 2 * var(--pf-space-xl)));
+  max-height: min(calc(var(--pf-space-xxxl) * 14), calc(100vh - 2 * var(--pf-space-xl)));
+  flex-direction: column;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-lg);
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+  box-shadow: var(--pf-shadow-overlay);
+  animation: pf-lightbox-rise var(--pf-dur-standard) var(--pf-ease-forge) both;
+}
+.pf-text-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pf-space-md);
+}
+.pf-text-preview-title {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-lg);
+  color: var(--pf-text-hi);
+}
+.pf-text-preview-meta {
+  margin-top: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+.pf-text-preview-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pf-space-xxl);
+  height: var(--pf-space-xxl);
+  padding: 0;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-text-preview-close:hover,
+.pf-text-preview-close:focus-visible {
+  outline: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
+.pf-text-preview-area {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(var(--pf-space-xxxl) * 7);
+  max-height: calc(var(--pf-space-xxxl) * 9);
+  resize: vertical;
+  padding: var(--pf-space-md);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-body-sm);
+  line-height: 1.5;
+}
+.pf-text-preview-area:focus {
+  outline: none;
+  border-color: var(--pf-hairline-strong);
+}
+.pf-text-preview-area[readonly] {
+  cursor: text;
+}
+.pf-text-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--pf-space-sm);
+}
+.pf-text-preview-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--pf-space-xxl);
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-med);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-sm);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-text-preview-actions button:hover:not(:disabled),
+.pf-text-preview-actions button:focus-visible {
+  outline: none;
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+  background: var(--pf-surface-3);
+}
+.pf-text-preview-actions button:disabled {
+  color: var(--pf-text-low);
+  cursor: default;
+  opacity: 0.6;
+}
+
 /* ---- Image lightbox: a full-viewport viewer over a neutral scrim. No ember
  * (Rule 2 — the scrim and frame stay surface/hairline). One fade + scale-in on
  * the signature easing; reduced motion holds both still (motion tokens go to
@@ -1403,7 +1828,9 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .pf-lightbox,
-  .pf-lightbox-img {
+  .pf-lightbox-img,
+  .pf-text-preview,
+  .pf-text-preview-panel {
     animation: none;
   }
 }

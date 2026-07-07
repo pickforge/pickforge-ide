@@ -30,6 +30,7 @@ import { McpCard } from "./McpCard";
 import { WebSearchCard } from "./WebSearchCard";
 import { PlanCard } from "./PlanCard";
 import { TokenBadge } from "./TokenBadge";
+import { isPlanPinned, togglePlanPinned } from "../../stores/pinnedAgentPlans";
 import "./chat.css";
 
 function EmptyGlyph(): JSX.Element {
@@ -45,9 +46,10 @@ function EmptyGlyph(): JSX.Element {
   );
 }
 
-function renderItem(item: AgentTimelineItem): JSX.Element {
+function renderItem(item: AgentTimelineItem, chatId?: string): JSX.Element {
   switch (item.type) {
     case "userMessage":
+      if (item.hidden) return <></>;
       return <ChatBubble role="user" text={item.text} images={item.images} />;
     case "assistantText":
       return <ChatBubble role="assistant" text={item.text} streaming={item.streaming} />;
@@ -71,7 +73,13 @@ function renderItem(item: AgentTimelineItem): JSX.Element {
     case "webSearch":
       return <WebSearchCard query={item.query} />;
     case "plan":
-      return <PlanCard items={item.items} />;
+      return (
+        <PlanCard
+          items={item.items}
+          pinned={chatId ? isPlanPinned(chatId) : undefined}
+          onTogglePin={chatId ? () => togglePlanPinned(chatId) : undefined}
+        />
+      );
     case "usage":
       return (
         <TokenBadge
@@ -109,6 +117,7 @@ function WorkingRow(): JSX.Element {
 export function ChatTimeline(props: {
   items: AgentTimelineItem[];
   working?: boolean;
+  chatId?: string;
 }): JSX.Element {
   let scroller!: HTMLDivElement;
   // Follow the streaming tail, but detach the instant the user scrolls up (any
@@ -405,6 +414,7 @@ export function ChatTimeline(props: {
                     row={row()}
                     style={rowStyle(key)}
                     onHeight={queueRowHeight}
+                    chatId={props.chatId}
                   />
                 )}
               </Show>
@@ -421,6 +431,7 @@ function MeasuredTimelineRow(props: {
   row: TimelineVirtualRow;
   style: JSX.CSSProperties;
   onHeight: (key: string, height: number) => void;
+  chatId?: string;
 }): JSX.Element {
   let rowEl!: HTMLDivElement;
   let frame: number | null = null;
@@ -452,7 +463,7 @@ function MeasuredTimelineRow(props: {
 
   return (
     <div class="pf-chat-virtual-row" ref={rowEl} style={props.style}>
-      {props.row.kind === "item" ? renderItem(props.row.item) : <WorkingRow />}
+      {props.row.kind === "item" ? renderItem(props.row.item, props.chatId) : <WorkingRow />}
     </div>
   );
 }

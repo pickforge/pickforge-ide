@@ -168,7 +168,7 @@ describe("chat timeline virtualization helpers", () => {
     expect(estimates.every((height) => height >= 40)).toBe(true);
   });
 
-  it("uses taller estimates for image messages and caps large file batches", () => {
+  it("uses taller estimates for image messages and scales file batches", () => {
     const textOnly = estimateTimelineRowHeight({
       kind: "item",
       item: { type: "userMessage", seq: 1, text: "hello" },
@@ -192,7 +192,9 @@ describe("chat timeline virtualization helpers", () => {
     });
 
     expect(withImage).toBeGreaterThan(textOnly);
-    expect(largeFileBatch).toBe(520);
+    // Scales with file count (no cap) so a big batch isn't undercounted for
+    // visibility culling: 76 + 30 * 32.
+    expect(largeFileBatch).toBe(76 + 30 * 32);
   });
 
   it("builds measured layouts with padding and gaps", () => {

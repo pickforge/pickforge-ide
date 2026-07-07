@@ -106,6 +106,8 @@ export function StatusPill(props: {
       class="pf-pill"
       classList={{ "pf-pill--dot": props.compact }}
       title={props.compact ? props.label : undefined}
+      role={props.compact ? "img" : undefined}
+      aria-label={props.compact ? props.label : undefined}
     >
       <span
         class={`pf-dot ${props.pulsing ? "pf-dot--pulsing" : ""}`}

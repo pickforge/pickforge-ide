@@ -60,7 +60,10 @@ export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
     case "command":
       return item.outputTail ? 116 : 96;
     case "fileChange":
-      return Math.min(520, 76 + item.changes.length * 32);
+      // No cap: like estimateTextHeight, this feeds visibility culling for
+      // unmeasured rows, so undercounting a many-file batch could drop its lower
+      // files from the visible set until it mounts.
+      return 76 + item.changes.length * 32;
     case "toolUse":
       return estimateTextHeight(item.detail ?? item.name, 72);
     case "mcpToolCall":

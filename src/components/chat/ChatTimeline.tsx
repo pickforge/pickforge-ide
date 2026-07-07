@@ -208,6 +208,25 @@ export function ChatTimeline(props: {
   const atBottom = (top: number) =>
     layout().totalHeight - top - viewportHeight() < THRESHOLD;
 
+  // The row spanning `top` and how far `top` sits into it, in the current layout.
+  // Used to keep a detached reader anchored across a height invalidation.
+  const anchorRowAt = (top: number): { key: string; offset: number } | null => {
+    const current = layout();
+    const { rows: layoutRows, starts } = current;
+    if (layoutRows.length === 0) return null;
+    const target = top - metrics().padding;
+    let lo = 0;
+    let hi = starts.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (starts[mid] <= target) lo = mid + 1;
+      else hi = mid;
+    }
+    const index = Math.max(0, lo - 1);
+    const key = timelineVirtualRowKey(layoutRows[index]);
+    return { key, offset: top - (starts[index] + metrics().padding) };
+  };
+
   const commitScrollTop = (top: number) => {
     pendingScrollTop = top;
     setScrollTop(top);
@@ -330,6 +349,14 @@ export function ChatTimeline(props: {
     lastTop = top;
   };
 
+  // A wheel-up gesture should detach the streaming follow even when it can't move
+  // scrollTop (the content already fits the viewport, or a sub-pixel touchpad
+  // delta) — otherwise onScroll never fires and the next streamed token re-pins
+  // the view against the user's intent.
+  const onWheel = (event: WheelEvent) => {
+    if (event.deltaY < 0 && stick) stick = false;
+  };
+
   const readMetrics = () => {
     const next = {
       padding: parseCssPx(scroller, "--pf-chat-virtual-padding", DEFAULT_VIRTUAL_PADDING_PX),
@@ -422,10 +449,26 @@ export function ChatTimeline(props: {
         if (width !== lastContentWidth && width > 0) {
           lastContentWidth = width;
           if (rowHeights.size > 0) {
+            // A detached reader is anchored to whatever they scrolled to; clearing
+            // heights shifts every row's start, so capture the first visible row
+            // and the offset into it, then restore that offset after the layout
+            // recomputes so the view doesn't jump. (When stuck, pin() re-anchors
+            // to the bottom anyway, so skip the extra work.)
+            const currentTop = scroller.scrollTop;
+            const anchor = stick ? null : anchorRowAt(currentTop);
             rowHeights.clear();
             queuedRowHeights.clear();
             deferredRowHeights.clear();
             setHeightVersion((version) => version + 1);
+            if (anchor) {
+              const nextLayout = layout();
+              const index = nextLayout.keyToIndex.get(anchor.key);
+              if (index !== undefined) {
+                applyProgrammaticScroll(
+                  Math.max(0, nextLayout.starts[index] + metrics().padding - anchor.offset),
+                );
+              }
+            }
           }
         }
         if (stick) pin();
@@ -445,7 +488,7 @@ export function ChatTimeline(props: {
   });
 
   return (
-    <div class="pf-chat-timeline" ref={scroller} onScroll={onScroll}>
+    <div class="pf-chat-timeline" ref={scroller} onScroll={onScroll} onWheel={onWheel}>
       <Show
         when={rows().length > 0}
         fallback={

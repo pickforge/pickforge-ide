@@ -15,7 +15,8 @@ pub use auth::{
     RemoteAuthStore, RemoteAuthStoreSnapshot,
 };
 pub use daemon::{
-    parse_listener, DaemonConfig, DaemonConfigError, DaemonListener, DaemonStatus, RemoteHostDaemon,
+    parse_listener, DaemonConfig, DaemonConfigEnvError, DaemonConfigError, DaemonListener,
+    DaemonStatus, RemoteHostDaemon,
 };
 pub use protocol::{
     decode_remote_frame, encode_remote_frame, RemoteCapability, RemoteFrame, RemoteFrameError,

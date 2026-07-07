@@ -50,10 +50,10 @@ pub use remote::{
     decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener,
     remote_auth_store_path, spawn_remote_http_server, tailscale_serve_disable,
     tailscale_serve_enable, tailscale_ssh_set, tailscale_status, ClientTokenRecord, DaemonConfig,
-    DaemonConfigError, DaemonListener, DaemonStatus, IssuedClientToken, PairingCode,
-    RemoteAuthError, RemoteAuthStore, RemoteAuthStoreSnapshot, RemoteCapability, RemoteFrame,
-    RemoteFrameError, RemoteHostDaemon, RemoteHttpServer, RemoteHttpServerInfo, RemoteRequest,
-    RemoteResponse, RemoteServerError, TailscaleStatus, REMOTE_FRAME_MAX_BYTES,
+    DaemonConfigEnvError, DaemonConfigError, DaemonListener, DaemonStatus, IssuedClientToken,
+    PairingCode, RemoteAuthError, RemoteAuthStore, RemoteAuthStoreSnapshot, RemoteCapability,
+    RemoteFrame, RemoteFrameError, RemoteHostDaemon, RemoteHttpServer, RemoteHttpServerInfo,
+    RemoteRequest, RemoteResponse, RemoteServerError, TailscaleStatus, REMOTE_FRAME_MAX_BYTES,
     REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
 };
 pub use storage::{

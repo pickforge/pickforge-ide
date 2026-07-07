@@ -17,6 +17,14 @@ pub enum DaemonConfigError {
     InvalidListener(String),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum DaemonConfigEnvError {
+    #[error(transparent)]
+    Home(#[from] PickforgeHomeError),
+    #[error(transparent)]
+    Config(#[from] DaemonConfigError),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DaemonListener {
@@ -96,9 +104,9 @@ impl DaemonConfig {
         self.listener.validate()
     }
 
-    pub fn from_env(env: Option<&HashMap<String, String>>) -> Result<Self, PickforgeHomeError> {
+    pub fn from_env(env: Option<&HashMap<String, String>>) -> Result<Self, DaemonConfigEnvError> {
         let home = pickforge_home(env)?;
-        let listener = listener_from_env(env).unwrap_or(DaemonListener::Disabled);
+        let listener = listener_from_env(env)?;
         Ok(Self {
             pickforge_home: home,
             listener,
@@ -294,6 +302,24 @@ mod tests {
             config.listener.bind_target().unwrap(),
             Some("localhost:4747".into())
         );
+    }
+
+    #[test]
+    fn env_config_propagates_invalid_listener_values() {
+        let mut env = HashMap::new();
+        env.insert("HOME".into(), "/home/dev".into());
+        env.insert("PICKFORGE_REMOTE_PORT".into(), "bad".into());
+        assert!(matches!(
+            DaemonConfig::from_env(Some(&env)).unwrap_err(),
+            DaemonConfigEnvError::Config(DaemonConfigError::InvalidListener(_))
+        ));
+
+        env.insert("PICKFORGE_REMOTE_PORT".into(), "4747".into());
+        env.insert("PICKFORGE_REMOTE_HOST".into(), "0.0.0.0".into());
+        assert!(matches!(
+            DaemonConfig::from_env(Some(&env)).unwrap_err(),
+            DaemonConfigEnvError::Config(DaemonConfigError::NonLoopbackBind(_))
+        ));
     }
 
     #[test]

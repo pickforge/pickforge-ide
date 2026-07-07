@@ -36,6 +36,13 @@ function writeFixture(root, assets) {
       writeExecutable(
         path,
         `#!/bin/sh
+if [ -n "\${PICKFORGE_TEST_APPIMAGE_LOG:-}" ]; then
+  {
+    printf 'extract=%s\\n' "\${APPIMAGE_EXTRACT_AND_RUN:-0}"
+    printf 'tmpdir=%s\\n' "\${TMPDIR:-}"
+    printf 'args=%s\\n' "$*"
+  } >> "$PICKFORGE_TEST_APPIMAGE_LOG"
+fi
 exit 0
 `,
       );
@@ -203,6 +210,10 @@ test("AppImage fallback installs launcher, icon, wrapper, and disables stale ent
   assert.equal(existsSync(command), true);
   const commandBody = readFileSync(command, "utf8");
   assert.match(commandBody, /APPIMAGE_EXTRACT_AND_RUN=1/);
+  assert.match(commandBody, /\[ -c "\$fuse_device" \]/);
+  assert.match(commandBody, /\[ -r "\$fuse_device" \]/);
+  assert.match(commandBody, /\[ -w "\$fuse_device" \]/);
+  assert.match(commandBody, /is_known_fuse_restricted_host/);
   assert.equal(commandBody.includes(`appimage_path='${appImage}'`), true);
   assert.equal(existsSync(launcher), true);
   assert.equal(existsSync(icon), true);
@@ -213,6 +224,75 @@ test("AppImage fallback installs launcher, icon, wrapper, and disables stale ent
   assert.equal(existsSync(join(home, ".local", "share", "applications", "pickforge-tauri.desktop")), false);
   assert.match(output, /Disabled stale launcher:/);
   assert.match(output, /Launch with `pickforge`/);
+});
+
+test("AppImage wrapper uses direct exec only on unrestricted FUSE-capable hosts", (root) => {
+  const fixture = writeFixture(root, [
+    { name: "PickForge_9.9.9_amd64.AppImage", kind: "appimage" },
+  ]);
+
+  runInstaller(root, fixture, { PICKFORGE_INSTALL_KIND: "appimage" });
+
+  const home = join(root, "home");
+  const fakebin = join(root, "fakebin");
+  const command = join(home, ".local", "bin", "pickforge");
+  const testCommand = join(root, "pickforge-wrapper");
+  const procVersion = join(root, "proc-version");
+  const procCgroup = join(root, "proc-1-cgroup");
+  const log = join(root, "appimage.log");
+  writeFileSync(procVersion, "Linux version test-host\n");
+  writeFileSync(procCgroup, "0::/init.scope\n");
+  writeExecutable(
+    testCommand,
+    readFileSync(command, "utf8")
+      .replace('fuse_device="/dev/fuse"', 'fuse_device="/dev/null"')
+      .replaceAll("/proc/version", procVersion)
+      .replaceAll("/.dockerenv", join(root, "dockerenv"))
+      .replaceAll("/run/.containerenv", join(root, "containerenv"))
+      .replaceAll("/proc/1/cgroup", procCgroup),
+  );
+  writeExecutable(
+    join(fakebin, "ldconfig"),
+    `#!/bin/sh
+printf '%s\\n' 'libfuse.so.2 (libc6,x86-64) => /usr/lib/libfuse.so.2'
+`,
+  );
+
+  const env = {
+    ...process.env,
+    HOME: home,
+    XDG_CACHE_HOME: join(home, ".cache"),
+    PATH: `${fakebin}:${process.env.PATH}`,
+    PICKFORGE_TEST_APPIMAGE_LOG: log,
+    WSL_DISTRO_NAME: "",
+    WSL_INTEROP: "",
+    container: "",
+  };
+
+  const directResult = spawnSync(testCommand, ["--direct"], {
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const wslResult = spawnSync(testCommand, ["--wsl"], {
+    env: { ...env, WSL_DISTRO_NAME: "Ubuntu" },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const containerResult = spawnSync(testCommand, ["--container"], {
+    env: { ...env, container: "docker" },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  assert.equal(directResult.status, 0, directResult.stderr);
+  assert.equal(wslResult.status, 0, wslResult.stderr);
+  assert.equal(containerResult.status, 0, containerResult.stderr);
+  const logBody = readFileSync(log, "utf8");
+  assert.match(logBody, /extract=0\n[\s\S]*args=--direct/);
+  assert.match(logBody, /args=--wsl/);
+  assert.match(logBody, /args=--container/);
+  assert.equal((logBody.match(/extract=1/g) ?? []).length, 2);
 });
 
 test("AppImage upgrade replaces old symlink command without overwriting the AppImage", (root) => {

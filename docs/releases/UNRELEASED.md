@@ -6,8 +6,8 @@ reset this file.
 
 ## User-facing changes
 
-- Linux curl installs now use a rootless AppImage wrapper that falls back on
-  FUSE3-only systems instead of failing with missing FUSE2.
+- Linux curl installs now use a rootless AppImage wrapper that falls back when
+  FUSE is missing, inaccessible, or likely restricted by WSL/container hosts.
 - Linux curl installs can opt into native `.deb`/`.rpm` release packages with
   `PICKFORGE_INSTALL_KIND=deb` or `PICKFORGE_INSTALL_KIND=rpm`.
 - AppImage installs now add the launcher icon, refresh desktop search/menu

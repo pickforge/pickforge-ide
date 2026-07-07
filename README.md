@@ -20,7 +20,7 @@ Local-first. Open source. Built for people who ship. You bring your own agent cr
 curl -fsSL https://pickforge.dev/pickforge/install.sh | sh
 ```
 
-Pins to the latest [release](https://github.com/pickforge/pickforge/releases). On Linux the curl installer stays rootless by default and falls back automatically on FUSE3-only systems; set `PICKFORGE_INSTALL_KIND=deb` or `PICKFORGE_INSTALL_KIND=rpm` to install a native package when the release publishes one. Intel macOS and Windows aren't built yet — download the installer from Releases.
+Pins to the latest [release](https://github.com/pickforge/pickforge/releases). On Linux the curl installer stays rootless by default and falls back automatically when FUSE cannot be used; set `PICKFORGE_INSTALL_KIND=deb` or `PICKFORGE_INSTALL_KIND=rpm` to install a native package when the release publishes one. Intel macOS and Windows aren't built yet — download the installer from Releases.
 
 Download from [Releases](https://github.com/pickforge/pickforge/releases) — `.deb`/`.rpm`/`.AppImage` (Linux), `.dmg` (macOS), `.msi` (Windows).
 

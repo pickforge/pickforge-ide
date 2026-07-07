@@ -42,8 +42,9 @@ build are hardening gates for the next release.
 
 - Linux releases publish AppImage, `.deb`, and `.rpm` artifacts from the Tauri
   release workflow. The curl installer stays rootless by default with an
-  AppImage wrapper that falls back to `APPIMAGE_EXTRACT_AND_RUN=1` on FUSE3-only
-  hosts. Users can opt into native packages with `PICKFORGE_INSTALL_KIND=deb` or
+  AppImage wrapper that falls back to `APPIMAGE_EXTRACT_AND_RUN=1` when FUSE is
+  missing, inaccessible, or likely restricted by WSL/container hosts. Users can
+  opt into native packages with `PICKFORGE_INSTALL_KIND=deb` or
   `PICKFORGE_INSTALL_KIND=rpm`.
 - Build Linux release artifacts on an Ubuntu runner so `.deb` binaries do not
   pick up a newer glibc requirement from a rolling local workstation.

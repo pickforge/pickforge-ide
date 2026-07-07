@@ -6,23 +6,41 @@ reset this file.
 
 ## User-facing changes
 
-- None yet.
+- Linux curl installs now use a rootless AppImage wrapper that falls back on
+  FUSE3-only systems instead of failing with missing FUSE2.
+- Linux curl installs can opt into native `.deb`/`.rpm` release packages with
+  `PICKFORGE_INSTALL_KIND=deb` or `PICKFORGE_INSTALL_KIND=rpm`.
+- AppImage installs now add the launcher icon, refresh desktop search/menu
+  caches, and disable known stale PickForge launchers in the user's app menu.
 
 ## Internal/release changes
 
-- None yet.
+- Linux release CI now asks Tauri to publish AppImage, `.deb`, and `.rpm`
+  artifacts.
+- Native Linux packages now install the `pickforge` command name.
+- Added installer smoke tests for AppImage desktop integration, stale launcher
+  cleanup, native `.deb` selection, and zypper `.rpm` installs.
 
 ## Validation
 
 ### Tested
 
-- None yet.
+- `bun run test:installer`
+- `bun run e2e`
+- `bun run test:unit`
+- `bun run test:coverage`
+- `bun run build`
+- `bun run sidecar`
+- `cargo check`
+- `cargo test --workspace --locked --all-targets`
+- Temp-HOME live AppImage installer smoke against GitHub release `v0.1.8`
+- `desktop-file-validate` on generated AppImage desktop entries
+- `APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1 bun run tauri build --bundles appimage,deb,rpm --no-sign`
 
 ### Not tested yet
 
-- App build.
-- Installer or updater flow.
-- Platform smoke checks.
+- Signed updater artifacts locally; signing still requires release secrets.
+- Visible desktop app launch from the menu after install.
 
 ### Release blockers
 

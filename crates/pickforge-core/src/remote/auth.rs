@@ -2,6 +2,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const PAIRING_ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -75,6 +76,22 @@ pub struct RemoteAuthStore {
 }
 
 impl RemoteAuthStore {
+    pub fn snapshot_from_path(path: &Path) -> Result<RemoteAuthStoreSnapshot, RemoteAuthError> {
+        let _guard = lock_auth_path(path)?;
+        Self::load_from_path(path).map(|store| store.snapshot())
+    }
+
+    pub fn update_path<T>(
+        path: &Path,
+        update: impl FnOnce(&mut RemoteAuthStore) -> Result<T, RemoteAuthError>,
+    ) -> Result<T, RemoteAuthError> {
+        let _guard = lock_auth_path(path)?;
+        let mut store = Self::load_from_path(path)?;
+        let value = update(&mut store)?;
+        store.save_to_path(path)?;
+        Ok(value)
+    }
+
     pub fn load_from_path(path: &Path) -> Result<Self, RemoteAuthError> {
         match std::fs::read_to_string(path) {
             Ok(raw) => {
@@ -98,8 +115,7 @@ impl RemoteAuthStore {
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
         let tmp = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
-        std::fs::write(&tmp, raw).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
-        set_private_permissions(&tmp)?;
+        write_private_file(&tmp, &raw)?;
         std::fs::rename(&tmp, path).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
         set_private_permissions(path)?;
         Ok(())
@@ -280,6 +296,74 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
     diff == 0
 }
 
+struct RemoteAuthPathLock {
+    #[cfg(unix)]
+    file: std::fs::File,
+}
+
+fn lock_auth_path(path: &Path) -> Result<RemoteAuthPathLock, RemoteAuthError> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+
+        let lock_path = path.with_extension("json.lock");
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+        }
+        let file = open_private_file(&lock_path, false)?;
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if rc != 0 {
+            return Err(RemoteAuthError::Io(
+                std::io::Error::last_os_error().to_string(),
+            ));
+        }
+        Ok(RemoteAuthPathLock { file })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(RemoteAuthPathLock {})
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RemoteAuthPathLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+
+        let _ = unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), RemoteAuthError> {
+    let mut file = open_private_file(path, true)?;
+    file.write_all(bytes)
+        .map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+    file.sync_all()
+        .map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+    set_private_permissions(path)?;
+    Ok(())
+}
+
+fn open_private_file(path: &Path, create_new: bool) -> Result<std::fs::File, RemoteAuthError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    if create_new {
+        options.create_new(true).truncate(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+    let file = options
+        .open(path)
+        .map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+    set_private_permissions(path)?;
+    Ok(file)
+}
+
 fn set_private_permissions(path: &Path) -> Result<(), RemoteAuthError> {
     #[cfg(unix)]
     {
@@ -409,6 +493,40 @@ mod tests {
         assert!(loaded
             .authenticate(&issued.client_id, &issued.token, 3_000)
             .is_ok());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn store_writes_temp_and_final_files_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "pickforge-remote-auth-private-{}-{}.json",
+            std::process::id(),
+            random_hex(4)
+        ));
+        let mut store = RemoteAuthStore::default();
+        store.issue_pairing_code(1_000, 60_000).unwrap();
+        store.save_to_path(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn update_path_serializes_load_mutate_save() {
+        let path = std::env::temp_dir().join(format!(
+            "pickforge-remote-auth-update-{}-{}.json",
+            std::process::id(),
+            random_hex(4)
+        ));
+        let code =
+            RemoteAuthStore::update_path(&path, |store| store.issue_pairing_code(1_000, 60_000))
+                .unwrap();
+        let snapshot = RemoteAuthStore::snapshot_from_path(&path).unwrap();
+        assert_eq!(snapshot.pairing_codes[0].code, code.code);
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
         std::fs::remove_file(path).ok();
     }
 

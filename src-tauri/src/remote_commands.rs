@@ -120,23 +120,18 @@ pub async fn remote_host_stop(
 pub fn remote_host_issue_pairing_code(ttl_ms: Option<i64>) -> Result<PairingCode, String> {
     let home = pickforge_home(None).map_err(|err| err.to_string())?;
     let path = remote_auth_store_path(&home);
-    let mut store = RemoteAuthStore::load_from_path(&path).map_err(|err| err.to_string())?;
-    let code = store
-        .issue_pairing_code(now_ms(), ttl_ms.unwrap_or(DEFAULT_PAIRING_TTL_MS))
-        .map_err(|err| err.to_string())?;
-    store.save_to_path(&path).map_err(|err| err.to_string())?;
-    Ok(code)
+    RemoteAuthStore::update_path(&path, |store| {
+        store.issue_pairing_code(now_ms(), ttl_ms.unwrap_or(DEFAULT_PAIRING_TTL_MS))
+    })
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
 pub fn remote_host_revoke_client(client_id: String) -> Result<(), String> {
     let home = pickforge_home(None).map_err(|err| err.to_string())?;
     let path = remote_auth_store_path(&home);
-    let mut store = RemoteAuthStore::load_from_path(&path).map_err(|err| err.to_string())?;
-    store
-        .revoke_client(&client_id, now_ms())
-        .map_err(|err| err.to_string())?;
-    store.save_to_path(&path).map_err(|err| err.to_string())
+    RemoteAuthStore::update_path(&path, |store| store.revoke_client(&client_id, now_ms()))
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -172,9 +167,7 @@ fn overview(state: &RemoteHostState) -> Result<RemoteHostOverview, String> {
     let listener = listener_from_server(server.as_ref());
     let home = pickforge_home(None).map_err(|err| err.to_string())?;
     let path = remote_auth_store_path(&home);
-    let snapshot = RemoteAuthStore::load_from_path(&path)
-        .map_err(|err| err.to_string())?
-        .snapshot();
+    let snapshot = RemoteAuthStore::snapshot_from_path(&path).map_err(|err| err.to_string())?;
     let local_url = server
         .as_ref()
         .map(|info| format!("http://{}", info.local_addr));

@@ -101,6 +101,7 @@ export function SettingsScreen() {
   const [remotePort, setRemotePort] = createSignal("4747");
   const [remoteLoading, setRemoteLoading] = createSignal(false);
   const [remoteError, setRemoteError] = createSignal<string | null>(null);
+  const [remoteNow, setRemoteNow] = createSignal(Date.now());
 
   const reloadArchived = async () => {
     const all = await db.projectsList(true);
@@ -153,6 +154,8 @@ export function SettingsScreen() {
     void reloadTelemetry();
     void reloadRemoteHost();
   });
+  const pairingExpiryTimer = window.setInterval(() => setRemoteNow(Date.now()), 1_000);
+  onCleanup(() => window.clearInterval(pairingExpiryTimer));
 
   const changeModel = (agentId: string, model: string) => {
     setAgentModel(agentId, model || null);
@@ -221,7 +224,7 @@ export function SettingsScreen() {
     return Array.isArray(agents) ? `${agents.length} registered` : "Not checked";
   };
   const activePairingCode = (): PairingCode | null => {
-    const now = Date.now();
+    const now = remoteNow();
     return remoteHost()
       ?.pairingCodes
       .find((code) => !code.usedAtMs && code.expiresAtMs > now) ?? null;
@@ -280,6 +283,7 @@ export function SettingsScreen() {
     setRemoteLoading(true);
     setRemoteError(null);
     try {
+      setRemoteNow(Date.now());
       await remoteHostIssuePairingCode();
       await reloadRemoteHost();
     } catch (error) {

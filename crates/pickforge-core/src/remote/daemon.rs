@@ -42,7 +42,7 @@ impl DaemonListener {
         self.validate()?;
         match self {
             DaemonListener::Disabled => Ok(None),
-            DaemonListener::Loopback { host, port } => Ok(Some(format!("{host}:{port}"))),
+            DaemonListener::Loopback { host, port } => Ok(Some(format_host_port(host, *port))),
         }
     }
 }
@@ -154,6 +154,14 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "::1" | "localhost")
 }
 
+fn format_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 fn listener_from_env(
     env: Option<&HashMap<String, String>>,
 ) -> Result<DaemonListener, DaemonConfigError> {
@@ -241,6 +249,10 @@ mod tests {
                 .unwrap()
                 .bind_target(),
             Ok(Some("127.0.0.1:4747".into()))
+        );
+        assert_eq!(
+            DaemonListener::loopback("::1", 4747).unwrap().bind_target(),
+            Ok(Some("[::1]:4747".into()))
         );
         assert_eq!(
             DaemonListener::Loopback {

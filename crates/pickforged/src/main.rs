@@ -85,19 +85,16 @@ fn issue_pairing_code(args: &[String]) -> Result<(), String> {
     let ttl_ms = numeric_arg(args, "--ttl-ms")?.unwrap_or(10 * 60 * 1000);
     let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
     let path = remote_auth_store_path(&home);
-    let mut store = RemoteAuthStore::load_from_path(&path).map_err(|err| err.to_string())?;
-    let code = store
-        .issue_pairing_code(now_ms(), ttl_ms)
-        .map_err(|err| err.to_string())?;
-    store.save_to_path(&path).map_err(|err| err.to_string())?;
+    let code =
+        RemoteAuthStore::update_path(&path, |store| store.issue_pairing_code(now_ms(), ttl_ms))
+            .map_err(|err| err.to_string())?;
     print_json(&code)
 }
 
 fn print_clients() -> Result<(), String> {
     let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
     let path = remote_auth_store_path(&home);
-    let store = RemoteAuthStore::load_from_path(&path).map_err(|err| err.to_string())?;
-    let snapshot = store.snapshot();
+    let snapshot = RemoteAuthStore::snapshot_from_path(&path).map_err(|err| err.to_string())?;
     let clients: Vec<_> = snapshot
         .clients
         .into_iter()
@@ -118,11 +115,8 @@ fn revoke_client(args: &[String]) -> Result<(), String> {
     let client_id = args.first().ok_or("missing client id")?;
     let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
     let path = remote_auth_store_path(&home);
-    let mut store = RemoteAuthStore::load_from_path(&path).map_err(|err| err.to_string())?;
-    store
-        .revoke_client(client_id, now_ms())
+    RemoteAuthStore::update_path(&path, |store| store.revoke_client(client_id, now_ms()))
         .map_err(|err| err.to_string())?;
-    store.save_to_path(&path).map_err(|err| err.to_string())?;
     print_json(&json!({ "clientId": client_id, "revoked": true }))
 }
 

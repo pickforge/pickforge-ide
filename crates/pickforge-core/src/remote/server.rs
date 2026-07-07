@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -14,6 +14,7 @@ use super::protocol::{
     RemoteFrame, RemoteRequest, RemoteResponse, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME,
     REMOTE_PROTOCOL_VERSION,
 };
+use super::tailscale::TAILSCALE_SERVE_PATH;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteServerError {
@@ -60,7 +61,6 @@ impl RemoteHttpServer {
 struct ServerState {
     daemon: RemoteHostDaemon,
     auth_path: PathBuf,
-    auth_lock: Mutex<()>,
 }
 
 pub async fn spawn_remote_http_server(
@@ -74,11 +74,7 @@ pub async fn spawn_remote_http_server(
     let listener = TcpListener::bind(&bind_target).await?;
     let local_addr = listener.local_addr()?;
     let auth_path = remote_auth_store_path(&daemon.config().pickforge_home);
-    let state = Arc::new(ServerState {
-        daemon,
-        auth_path,
-        auth_lock: Mutex::new(()),
-    });
+    let state = Arc::new(ServerState { daemon, auth_path });
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let join = tokio::spawn(run_accept_loop(listener, state, shutdown_rx));
     Ok(RemoteHttpServer {
@@ -124,7 +120,8 @@ async fn handle_connection(
         }
     };
 
-    match (request.method.as_str(), request.path.as_str()) {
+    let path = local_remote_path(&request.path);
+    match (request.method.as_str(), path) {
         ("GET", "/status") => {
             let body = serde_json::to_vec(&state.daemon.status(now_ms()))
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
@@ -193,14 +190,16 @@ fn dispatch_request(
             pairing_code,
             client_name,
         } => {
-            let _guard = lock_auth(state, Some(&id))?;
-            let mut auth = RemoteAuthStore::load_from_path(&state.auth_path)
-                .map_err(|err| error_frame(Some(id.clone()), "authStoreError", err.to_string()))?;
-            let issued = auth
-                .exchange_pairing_code(&pairing_code, &client_name, now)
-                .map_err(|err| error_frame(Some(id.clone()), "pairingRejected", err.to_string()))?;
-            auth.save_to_path(&state.auth_path)
-                .map_err(|err| error_frame(Some(id.clone()), "authStoreError", err.to_string()))?;
+            let issued = RemoteAuthStore::update_path(&state.auth_path, |auth| {
+                auth.exchange_pairing_code(&pairing_code, &client_name, now)
+            })
+            .map_err(|err| {
+                error_frame(
+                    Some(id.clone()),
+                    auth_error_code(&err, "pairingRejected"),
+                    err.to_string(),
+                )
+            })?;
             Ok(RemoteFrame::Response {
                 id,
                 protocol: REMOTE_PROTOCOL_NAME.into(),
@@ -212,14 +211,16 @@ fn dispatch_request(
             })
         }
         RemoteRequest::Authenticate { client_id, token } => {
-            let _guard = lock_auth(state, Some(&id))?;
-            let mut auth = RemoteAuthStore::load_from_path(&state.auth_path)
-                .map_err(|err| error_frame(Some(id.clone()), "authStoreError", err.to_string()))?;
-            let client = auth
-                .authenticate(&client_id, &token, now)
-                .map_err(|err| error_frame(Some(id.clone()), "authRejected", err.to_string()))?;
-            auth.save_to_path(&state.auth_path)
-                .map_err(|err| error_frame(Some(id.clone()), "authStoreError", err.to_string()))?;
+            let client = RemoteAuthStore::update_path(&state.auth_path, |auth| {
+                auth.authenticate(&client_id, &token, now)
+            })
+            .map_err(|err| {
+                error_frame(
+                    Some(id.clone()),
+                    auth_error_code(&err, "authRejected"),
+                    err.to_string(),
+                )
+            })?;
             Ok(RemoteFrame::Response {
                 id,
                 protocol: REMOTE_PROTOCOL_NAME.into(),
@@ -251,15 +252,17 @@ fn dispatch_request(
                     "remote clients can only revoke themselves",
                 ));
             }
-            let _guard = lock_auth(state, Some(&id))?;
-            let mut auth = RemoteAuthStore::load_from_path(&state.auth_path)
-                .map_err(|err| error_frame(Some(id.clone()), "authStoreError", err.to_string()))?;
-            auth.authenticate(&request_client_id, &token, now)
-                .map_err(|err| error_frame(Some(id.clone()), "authRejected", err.to_string()))?;
-            auth.revoke_client(&target, now)
-                .map_err(|err| error_frame(Some(id.clone()), "revokeRejected", err.to_string()))?;
-            auth.save_to_path(&state.auth_path)
-                .map_err(|err| error_frame(Some(id.clone()), "authStoreError", err.to_string()))?;
+            RemoteAuthStore::update_path(&state.auth_path, |auth| {
+                auth.authenticate(&request_client_id, &token, now)?;
+                auth.revoke_client(&target, now)
+            })
+            .map_err(|err| {
+                error_frame(
+                    Some(id.clone()),
+                    auth_error_code(&err, "revokeRejected"),
+                    err.to_string(),
+                )
+            })?;
             Ok(RemoteFrame::Response {
                 id,
                 protocol: REMOTE_PROTOCOL_NAME.into(),
@@ -270,17 +273,27 @@ fn dispatch_request(
     }
 }
 
-fn lock_auth<'a>(
-    state: &'a ServerState,
-    id: Option<&str>,
-) -> Result<std::sync::MutexGuard<'a, ()>, RemoteFrame> {
-    state.auth_lock.lock().map_err(|_| {
-        error_frame(
-            id.map(str::to_string),
-            "authStoreError",
-            "auth store poisoned",
-        )
-    })
+fn auth_error_code(err: &super::auth::RemoteAuthError, default_code: &'static str) -> &'static str {
+    match err {
+        super::auth::RemoteAuthError::Io(_) | super::auth::RemoteAuthError::Json(_) => {
+            "authStoreError"
+        }
+        _ => default_code,
+    }
+}
+
+fn local_remote_path(path: &str) -> &str {
+    if let Some(rest) = path.strip_prefix(TAILSCALE_SERVE_PATH) {
+        if rest.is_empty() {
+            "/"
+        } else if rest.starts_with('/') {
+            rest
+        } else {
+            path
+        }
+    } else {
+        path
+    }
 }
 
 struct HttpRequest {
@@ -436,9 +449,13 @@ mod tests {
     }
 
     async fn post(addr: SocketAddr, frame: &RemoteFrame) -> RemoteFrame {
+        post_path(addr, "/remote", frame).await
+    }
+
+    async fn post_path(addr: SocketAddr, path: &str, frame: &RemoteFrame) -> RemoteFrame {
         let raw = serde_json::to_string(frame).unwrap();
         let request = format!(
-            "POST /remote HTTP/1.1\r\nhost: {addr}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            "POST {path} HTTP/1.1\r\nhost: {addr}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
             raw.len(),
             raw
         );
@@ -480,6 +497,37 @@ mod tests {
             ),
             other => panic!("unexpected response: {other:?}"),
         }
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn remote_server_accepts_tailscale_mount_prefix() {
+        let config = DaemonConfig {
+            pickforge_home: home(),
+            listener: DaemonListener::loopback("127.0.0.1", free_port()).unwrap(),
+        };
+        let server = spawn_remote_http_server(config).await.unwrap();
+        let addr = server.info().local_addr;
+        let response = post_path(
+            addr,
+            "/pickforge/remote",
+            &RemoteFrame::Request {
+                id: "r1".into(),
+                protocol: REMOTE_PROTOCOL_NAME.into(),
+                version: REMOTE_PROTOCOL_VERSION,
+                client_id: None,
+                token: None,
+                body: RemoteRequest::HostInfo,
+            },
+        )
+        .await;
+        assert!(matches!(
+            response,
+            RemoteFrame::Response {
+                body: RemoteResponse::HostInfo { .. },
+                ..
+            }
+        ));
         server.shutdown().await.unwrap();
     }
 

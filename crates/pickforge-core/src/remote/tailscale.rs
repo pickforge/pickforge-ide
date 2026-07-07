@@ -8,7 +8,7 @@ use crate::process::{run_timeout, which_in, RunError};
 use super::daemon::{DaemonConfigError, DaemonListener};
 
 const TAILSCALE_TIMEOUT: Duration = Duration::from_secs(10);
-const TAILSCALE_SERVE_PATH: &str = "/pickforge";
+pub const TAILSCALE_SERVE_PATH: &str = "/pickforge";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +61,7 @@ pub fn tailscale_status() -> TailscaleStatus {
         Err(err) => status.error = Some(err),
     }
     if let Ok(json) = run_json(&["serve", "status", "--json"]) {
-        status.serve_configured = !json.as_object().map(|map| map.is_empty()).unwrap_or(true);
+        status.serve_configured = serve_status_has_pickforge_route(&json);
     }
     if let Ok(json) = run_json(&["debug", "prefs"]) {
         status.ssh_enabled = json.get("RunSSH").and_then(Value::as_bool);
@@ -135,6 +135,21 @@ fn first_non_empty_line(raw: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_string)
+}
+
+fn serve_status_has_pickforge_route(json: &Value) -> bool {
+    match json {
+        Value::Object(map) => map.iter().any(|(key, value)| {
+            key == TAILSCALE_SERVE_PATH
+                || key.ends_with(TAILSCALE_SERVE_PATH)
+                || (key.eq_ignore_ascii_case("path")
+                    && value.as_str() == Some(TAILSCALE_SERVE_PATH))
+                || serve_status_has_pickforge_route(value)
+        }),
+        Value::Array(values) => values.iter().any(serve_status_has_pickforge_route),
+        Value::String(value) => value == TAILSCALE_SERVE_PATH,
+        _ => false,
+    }
 }
 
 fn apply_status_json(status: &mut TailscaleStatus, json: &Value) {
@@ -211,5 +226,30 @@ mod tests {
     fn listener_parts_stay_loopback_only() {
         assert!(listener_from_parts("127.0.0.1".into(), 4747).is_ok());
         assert!(listener_from_parts("0.0.0.0".into(), 4747).is_err());
+    }
+
+    #[test]
+    fn serve_status_detects_only_pickforge_route() {
+        let unrelated = serde_json::json!({
+            "Web": {
+                "example.test": {
+                    "Handlers": {
+                        "/other": { "Proxy": "http://127.0.0.1:8080" }
+                    }
+                }
+            }
+        });
+        assert!(!serve_status_has_pickforge_route(&unrelated));
+
+        let pickforge = serde_json::json!({
+            "Web": {
+                "example.test": {
+                    "Handlers": {
+                        "/pickforge": { "Proxy": "http://127.0.0.1:4747" }
+                    }
+                }
+            }
+        });
+        assert!(serve_status_has_pickforge_route(&pickforge));
     }
 }

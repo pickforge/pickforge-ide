@@ -296,6 +296,23 @@ export function SettingsScreen() {
       setRemoteLoading(false);
     }
   };
+  const copyPairing = async () => {
+    const code = activePairingCode()?.code;
+    if (!code) {
+      await issuePairing();
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      setRemoteError("Clipboard copy is unavailable");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(code);
+      setRemoteError(null);
+    } catch {
+      setRemoteError("Could not copy pairing code");
+    }
+  };
   const toggleServe = async () => {
     const overview = remoteHost();
     if (!overview?.tailscale.serveConfigured && !overview?.running) {
@@ -496,13 +513,25 @@ export function SettingsScreen() {
           </div>
           <div class="pf-settings-row">
             <span class="pf-settings-label">Pairing code</span>
-            <button
-              class="pf-text-btn pf-remote-code"
-              disabled={remoteLoading()}
-              onClick={() => void issuePairing()}
-            >
-              {activePairingCode()?.code ?? "Issue code"}
-            </button>
+            <div class="pf-remote-code-actions">
+              <button
+                class="pf-text-btn pf-remote-code"
+                disabled={remoteLoading()}
+                title={activePairingCode() ? "Copy pairing code" : "Issue pairing code"}
+                onClick={() => void copyPairing()}
+              >
+                {activePairingCode()?.code ?? "Issue code"}
+              </button>
+              <button
+                class="pf-ql-add pf-remote-code-refresh"
+                disabled={remoteLoading() || !activePairingCode()}
+                title="Refresh pairing code"
+                aria-label="Refresh pairing code"
+                onClick={() => void issuePairing()}
+              >
+                <IconRefresh size={13} />
+              </button>
+            </div>
           </div>
           <div class="pf-settings-row">
             <span class="pf-settings-label">Paired clients</span>

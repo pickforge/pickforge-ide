@@ -13,6 +13,8 @@ pub enum DaemonConfigError {
     NonLoopbackBind(String),
     #[error("remote daemon port must be non-zero")]
     InvalidPort,
+    #[error("remote daemon listener is invalid: {0}")]
+    InvalidListener(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -95,7 +97,12 @@ impl DaemonConfig {
     }
 
     pub fn from_env(env: Option<&HashMap<String, String>>) -> Result<Self, PickforgeHomeError> {
-        Ok(Self::disabled(pickforge_home(env)?))
+        let home = pickforge_home(env)?;
+        let listener = listener_from_env(env).unwrap_or(DaemonListener::Disabled);
+        Ok(Self {
+            pickforge_home: home,
+            listener,
+        })
     }
 }
 
@@ -137,14 +144,7 @@ impl RemoteHostDaemon {
             pickforge_home: self.config.pickforge_home.clone(),
             listener: self.config.listener.clone(),
             listener_enabled: self.bind_target().is_some(),
-            capabilities: vec![
-                RemoteCapability::HostInfo,
-                RemoteCapability::WorkspaceRead,
-                RemoteCapability::TerminalSessions,
-                RemoteCapability::AgentChat,
-                RemoteCapability::DeviceInspection,
-                RemoteCapability::RunLogs,
-            ],
+            capabilities: vec![RemoteCapability::HostInfo],
             checked_at_ms,
         }
     }
@@ -152,6 +152,61 @@ impl RemoteHostDaemon {
 
 fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "::1" | "localhost")
+}
+
+fn listener_from_env(
+    env: Option<&HashMap<String, String>>,
+) -> Result<DaemonListener, DaemonConfigError> {
+    let get = |key: &str| -> Option<String> {
+        match env {
+            Some(map) => map.get(key).cloned(),
+            None => std::env::var(key).ok(),
+        }
+    };
+    let trimmed = |value: Option<String>| -> Option<String> {
+        value
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    if let Some(raw) = trimmed(get("PICKFORGE_REMOTE_LISTENER")) {
+        if raw.eq_ignore_ascii_case("disabled") || raw.eq_ignore_ascii_case("off") {
+            return Ok(DaemonListener::Disabled);
+        }
+        return parse_listener(&raw);
+    }
+
+    let Some(port_raw) = trimmed(get("PICKFORGE_REMOTE_PORT")) else {
+        return Ok(DaemonListener::Disabled);
+    };
+    let port = parse_port(&port_raw)?;
+    let host = trimmed(get("PICKFORGE_REMOTE_HOST")).unwrap_or_else(|| "127.0.0.1".into());
+    DaemonListener::loopback(host, port)
+}
+
+pub fn parse_listener(raw: &str) -> Result<DaemonListener, DaemonConfigError> {
+    let raw = raw.trim();
+    if raw.eq_ignore_ascii_case("disabled") || raw.eq_ignore_ascii_case("off") {
+        return Ok(DaemonListener::Disabled);
+    }
+    let (host, port) = raw
+        .rsplit_once(':')
+        .ok_or_else(|| DaemonConfigError::InvalidListener(raw.into()))?;
+    let host = host.trim().trim_matches(['[', ']']);
+    let port = parse_port(port.trim())?;
+    DaemonListener::loopback(host, port)
+}
+
+fn parse_port(raw: &str) -> Result<u16, DaemonConfigError> {
+    raw.parse::<u16>()
+        .map_err(|_| DaemonConfigError::InvalidListener(raw.into()))
+        .and_then(|port| {
+            if port == 0 {
+                Err(DaemonConfigError::InvalidPort)
+            } else {
+                Ok(port)
+            }
+        })
 }
 
 #[cfg(test)]
@@ -182,7 +237,9 @@ mod tests {
     #[test]
     fn loopback_listener_accepts_only_loopback_hosts_with_ports() {
         assert_eq!(
-            DaemonListener::loopback("127.0.0.1", 4747).unwrap().bind_target(),
+            DaemonListener::loopback("127.0.0.1", 4747)
+                .unwrap()
+                .bind_target(),
             Ok(Some("127.0.0.1:4747".into()))
         );
         assert_eq!(
@@ -211,6 +268,40 @@ mod tests {
         assert_eq!(
             DaemonListener::loopback("localhost", 0),
             Err(DaemonConfigError::InvalidPort)
+        );
+    }
+
+    #[test]
+    fn env_config_enables_loopback_listener() {
+        let mut env = HashMap::new();
+        env.insert("HOME".into(), "/home/dev".into());
+        env.insert("PICKFORGE_REMOTE_HOST".into(), "localhost".into());
+        env.insert("PICKFORGE_REMOTE_PORT".into(), "4747".into());
+        let config = DaemonConfig::from_env(Some(&env)).unwrap();
+        assert_eq!(
+            config.listener.bind_target().unwrap(),
+            Some("localhost:4747".into())
+        );
+    }
+
+    #[test]
+    fn listener_string_rejects_non_loopback() {
+        assert_eq!(
+            parse_listener("0.0.0.0:4747"),
+            Err(DaemonConfigError::NonLoopbackBind("0.0.0.0".into()))
+        );
+        assert_eq!(
+            parse_listener("127.0.0.1:0"),
+            Err(DaemonConfigError::InvalidPort)
+        );
+    }
+
+    #[test]
+    fn status_advertises_only_implemented_remote_capabilities() {
+        let daemon = RemoteHostDaemon::new(DaemonConfig::disabled("/home/dev/.pickforge")).unwrap();
+        assert_eq!(
+            daemon.status(42).capabilities,
+            vec![RemoteCapability::HostInfo]
         );
     }
 }

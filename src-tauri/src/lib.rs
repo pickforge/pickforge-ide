@@ -11,6 +11,7 @@ mod mirror_commands;
 mod picklab_commands;
 mod process_commands;
 mod pty_commands;
+mod remote_commands;
 mod telemetry_commands;
 mod vm_commands;
 mod watch_commands;
@@ -176,6 +177,7 @@ pub fn run() {
         .manage(mirror_commands::MirrorManager::new())
         .manage(logcat_commands::LogcatManager::new())
         .manage(ios_commands::OsLogManager::new())
+        .manage(remote_commands::RemoteHostState::new())
         .manage(approved_roots)
         .manage(Arc::clone(&database))
         .manage(mcp_commands::McpState::new())
@@ -188,6 +190,14 @@ pub fn run() {
             pty_commands::pty_spawn_chat,
             pty_commands::pty_destroy_chat_session,
             process_commands::detect_binaries,
+            remote_commands::remote_host_status,
+            remote_commands::remote_host_start,
+            remote_commands::remote_host_stop,
+            remote_commands::remote_host_issue_pairing_code,
+            remote_commands::remote_host_revoke_client,
+            remote_commands::remote_tailscale_serve_enable,
+            remote_commands::remote_tailscale_serve_disable,
+            remote_commands::remote_tailscale_ssh_set,
             picklab_commands::picklab_status,
             fs_commands::list_dir,
             fs_commands::read_text_file,

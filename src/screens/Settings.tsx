@@ -54,6 +54,17 @@ import { appTheme, applyTheme } from "../stores/theme";
 import { flagStates, setFlagOverride, type FlagKey } from "../stores/flags";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
+import {
+  remoteHostIssuePairingCode,
+  remoteHostStart,
+  remoteHostStatus,
+  remoteHostStop,
+  remoteTailscaleServeDisable,
+  remoteTailscaleServeEnable,
+  remoteTailscaleSshSet,
+  type PairingCode,
+  type RemoteHostOverview,
+} from "../lib/remoteHost";
 import { telemetryGet, telemetrySet } from "../lib/telemetry";
 import * as db from "../lib/db";
 import "./screens.css";
@@ -86,6 +97,10 @@ export function SettingsScreen() {
   const [pickLabLoading, setPickLabLoading] = createSignal(false);
   const [crashReports, setCrashReports] = createSignal(true);
   const [crashReportsError, setCrashReportsError] = createSignal<string | null>(null);
+  const [remoteHost, setRemoteHost] = createSignal<RemoteHostOverview | null>(null);
+  const [remotePort, setRemotePort] = createSignal("4747");
+  const [remoteLoading, setRemoteLoading] = createSignal(false);
+  const [remoteError, setRemoteError] = createSignal<string | null>(null);
 
   const reloadArchived = async () => {
     const all = await db.projectsList(true);
@@ -119,10 +134,24 @@ export function SettingsScreen() {
       setCrashReportsError(error instanceof Error ? error.message : String(error));
     }
   };
+  const reloadRemoteHost = async () => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const next = await remoteHostStatus();
+      setRemoteHost(next);
+      setRemotePort(String(next.listener.kind === "loopback" ? next.listener.port : next.defaultPort));
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRemoteLoading(false);
+    }
+  };
   onMount(() => {
     void reloadArchived();
     void reloadPickLab();
     void reloadTelemetry();
+    void reloadRemoteHost();
   });
 
   const changeModel = (agentId: string, model: string) => {
@@ -190,6 +219,101 @@ export function SettingsScreen() {
   const pickLabAgentsLabel = () => {
     const agents = recordOf(pickLab()?.agents)?.agents;
     return Array.isArray(agents) ? `${agents.length} registered` : "Not checked";
+  };
+  const activePairingCode = (): PairingCode | null => {
+    const now = Date.now();
+    return remoteHost()
+      ?.pairingCodes
+      .find((code) => !code.usedAtMs && code.expiresAtMs > now) ?? null;
+  };
+  const listenerHost = () =>
+    remoteHost()?.listener.kind === "loopback"
+      ? (remoteHost()!.listener as { kind: "loopback"; host: string; port: number }).host
+      : remoteHost()?.defaultHost ?? "127.0.0.1";
+  const listenerPort = () =>
+    remoteHost()?.listener.kind === "loopback"
+      ? (remoteHost()!.listener as { kind: "loopback"; host: string; port: number }).port
+      : Number(remotePort()) || remoteHost()?.defaultPort || 4747;
+  const tailscaleLabel = () => {
+    const status = remoteHost()?.tailscale;
+    if (!status?.available) return "Not installed";
+    if (status.error) return "Needs attention";
+    if (status.online === true) return status.dnsName ?? status.hostName ?? "Online";
+    return status.backendState ?? "Not running";
+  };
+  const serveLabel = () =>
+    remoteHost()?.tailscale.serveConfigured ? "Configured" : "Not configured";
+  const sshLabel = () => {
+    const status = remoteHost()?.tailscale;
+    if (!status?.available) return "Not installed";
+    if (status.sshEnabled === true) return "Enabled";
+    if (status.sshEnabled === false) return "Disabled";
+    return status.sshCapable ? "Available" : "Unavailable";
+  };
+  const startRemote = async () => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const port = Number(remotePort());
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        throw new Error("Port must be 1-65535");
+      }
+      setRemoteHost(await remoteHostStart(remoteHost()?.defaultHost ?? "127.0.0.1", port));
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRemoteLoading(false);
+    }
+  };
+  const stopRemote = async () => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      setRemoteHost(await remoteHostStop());
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRemoteLoading(false);
+    }
+  };
+  const issuePairing = async () => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      await remoteHostIssuePairingCode();
+      await reloadRemoteHost();
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteLoading(false);
+    }
+  };
+  const toggleServe = async () => {
+    const host = listenerHost();
+    const port = listenerPort();
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      if (remoteHost()?.tailscale.serveConfigured) {
+        await remoteTailscaleServeDisable(remoteHost()?.defaultHttpsPort);
+      } else {
+        await remoteTailscaleServeEnable(host, port, remoteHost()?.defaultHttpsPort);
+      }
+      await reloadRemoteHost();
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteLoading(false);
+    }
+  };
+  const toggleSsh = async () => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      await remoteTailscaleSshSet(remoteHost()?.tailscale.sshEnabled !== true);
+      await reloadRemoteHost();
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteLoading(false);
+    }
   };
 
   // Capture the next shortcut for the item being edited (Esc cancels,
@@ -329,6 +453,83 @@ export function SettingsScreen() {
               <IconRefresh size={13} /> {pickLabLoading() ? "Checking..." : "Refresh"}
             </button>
             <span class="pf-settings-muted">Managed as an external Pickforge tool</span>
+          </div>
+        </Section>
+
+        <Section title="Remote host">
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Listener
+              <Show when={remoteHost()?.localUrl}>
+                <span class="pf-settings-hint-inline">{remoteHost()?.localUrl}</span>
+              </Show>
+            </span>
+            <div class="pf-remote-controls">
+              <input
+                class="pf-input pf-remote-port"
+                value={remotePort()}
+                disabled={remoteHost()?.running || remoteLoading()}
+                onInput={(e) => setRemotePort(e.currentTarget.value)}
+              />
+              <button
+                class="pf-ql-add"
+                disabled={remoteLoading()}
+                onClick={() => void (remoteHost()?.running ? stopRemote() : startRemote())}
+              >
+                {remoteHost()?.running ? "Stop" : "Start"}
+              </button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Pairing code</span>
+            <button
+              class="pf-text-btn pf-remote-code"
+              disabled={remoteLoading()}
+              onClick={() => void issuePairing()}
+            >
+              {activePairingCode()?.code ?? "Issue code"}
+            </button>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Paired clients</span>
+            <span class="pf-settings-muted">{remoteHost()?.clients.length ?? 0}</span>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Tailscale</span>
+            <span class="pf-settings-muted">{tailscaleLabel()}</span>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Tailscale Serve</span>
+            <button
+              class="pf-text-btn"
+              disabled={remoteLoading() || !remoteHost()?.tailscale.available}
+              onClick={() => void toggleServe()}
+            >
+              {remoteHost()?.tailscale.serveConfigured ? "Disable" : `Enable · ${serveLabel()}`}
+            </button>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Tailscale SSH</span>
+            <button
+              class="pf-text-btn"
+              disabled={remoteLoading() || !remoteHost()?.tailscale.available}
+              onClick={() => void toggleSsh()}
+            >
+              {remoteHost()?.tailscale.sshEnabled ? "Disable" : `Enable · ${sshLabel()}`}
+            </button>
+          </div>
+          <Show when={remoteError() ?? remoteHost()?.tailscale.error}>
+            <div class="pf-ql-warn">{remoteError() ?? remoteHost()?.tailscale.error}</div>
+          </Show>
+          <div class="pf-ql-actions">
+            <button
+              class="pf-ql-add"
+              disabled={remoteLoading()}
+              onClick={() => void reloadRemoteHost()}
+            >
+              <IconRefresh size={13} /> {remoteLoading() ? "Checking..." : "Refresh"}
+            </button>
+            <span class="pf-settings-muted">{remoteHost()?.authPath ?? ""}</span>
           </div>
         </Section>
 

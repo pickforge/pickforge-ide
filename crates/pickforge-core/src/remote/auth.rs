@@ -2,6 +2,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
 const PAIRING_ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const TOKEN_BYTES: usize = 32;
@@ -26,6 +27,10 @@ pub enum RemoteAuthError {
     InvalidToken,
     #[error("client token has been revoked")]
     ClientRevoked,
+    #[error("remote auth store io error: {0}")]
+    Io(String),
+    #[error("remote auth store json error: {0}")]
+    Json(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +75,36 @@ pub struct RemoteAuthStore {
 }
 
 impl RemoteAuthStore {
+    pub fn load_from_path(path: &Path) -> Result<Self, RemoteAuthError> {
+        match std::fs::read_to_string(path) {
+            Ok(raw) => {
+                let snapshot = serde_json::from_str::<RemoteAuthStoreSnapshot>(&raw)
+                    .map_err(|err| RemoteAuthError::Json(err.to_string()))?;
+                Ok(Self::from_snapshot(snapshot))
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(err) => Err(RemoteAuthError::Io(err.to_string())),
+        }
+    }
+
+    pub fn save_to_path(&self, path: &Path) -> Result<(), RemoteAuthError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+        }
+        let raw = serde_json::to_vec_pretty(&self.snapshot)
+            .map_err(|err| RemoteAuthError::Json(err.to_string()))?;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let tmp = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+        std::fs::write(&tmp, raw).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+        set_private_permissions(&tmp)?;
+        std::fs::rename(&tmp, path).map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+        set_private_permissions(path)?;
+        Ok(())
+    }
+
     pub fn from_snapshot(snapshot: RemoteAuthStoreSnapshot) -> Self {
         Self { snapshot }
     }
@@ -157,7 +192,7 @@ impl RemoteAuthStore {
         if client.revoked_at_ms.is_some() {
             return Err(RemoteAuthError::ClientRevoked);
         }
-        if client.token_hash != token_hash(token) {
+        if !constant_time_eq(&client.token_hash, &token_hash(token)) {
             return Err(RemoteAuthError::InvalidToken);
         }
         client.last_seen_at_ms = Some(now_ms);
@@ -176,6 +211,10 @@ impl RemoteAuthStore {
         }
         Ok(())
     }
+}
+
+pub fn remote_auth_store_path(pickforge_home: &str) -> PathBuf {
+    Path::new(pickforge_home).join("remote-auth.json")
 }
 
 fn clean_client_name(client_name: &str) -> Result<String, RemoteAuthError> {
@@ -226,6 +265,32 @@ fn token_hash(token: &str) -> String {
     hasher.update(TOKEN_HASH_DOMAIN);
     hasher.update(token.as_bytes());
     hex_lower(&hasher.finalize())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let len = left.len().max(right.len());
+    let mut diff = left.len() ^ right.len();
+    for i in 0..len {
+        let a = left.get(i).copied().unwrap_or(0);
+        let b = right.get(i).copied().unwrap_or(0);
+        diff |= (a ^ b) as usize;
+    }
+    diff == 0
+}
+
+fn set_private_permissions(path: &Path) -> Result<(), RemoteAuthError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(path, permissions)
+            .map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+    }
+    let _ = path;
+    Ok(())
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -321,5 +386,36 @@ mod tests {
             store.authenticate(&issued.client_id, "pfh_bad", 3_000),
             Err(RemoteAuthError::InvalidToken)
         );
+    }
+
+    #[test]
+    fn store_persists_hashes_without_plain_tokens() {
+        let path = std::env::temp_dir().join(format!(
+            "pickforge-remote-auth-{}-{}.json",
+            std::process::id(),
+            random_hex(4)
+        ));
+        let mut store = RemoteAuthStore::default();
+        let code = store.issue_pairing_code(1_000, 60_000).unwrap();
+        let issued = store
+            .exchange_pairing_code(&code.code, "client", 2_000)
+            .unwrap();
+
+        store.save_to_path(&path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains(&issued.token));
+
+        let mut loaded = RemoteAuthStore::load_from_path(&path).unwrap();
+        assert!(loaded
+            .authenticate(&issued.client_id, &issued.token, 3_000)
+            .is_ok());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn constant_time_compare_checks_full_length() {
+        assert!(constant_time_eq("abc", "abc"));
+        assert!(!constant_time_eq("abc", "abd"));
+        assert!(!constant_time_eq("abc", "abc0"));
     }
 }

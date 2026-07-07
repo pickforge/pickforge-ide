@@ -28,7 +28,11 @@ pub enum RemoteCapability {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum RemoteFrame {
     Hello {
         protocol: String,
@@ -59,7 +63,11 @@ pub enum RemoteFrame {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "method", rename_all = "camelCase")]
+#[serde(
+    tag = "method",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum RemoteRequest {
     HostInfo,
     Authenticate {
@@ -76,7 +84,11 @@ pub enum RemoteRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum RemoteResponse {
     HostInfo {
         app_version: String,
@@ -96,8 +108,8 @@ pub enum RemoteResponse {
 
 pub fn encode_remote_frame(frame: &RemoteFrame) -> Result<String, RemoteFrameError> {
     validate_frame(frame)?;
-    let mut out =
-        serde_json::to_string(frame).map_err(|err| RemoteFrameError::InvalidJson(err.to_string()))?;
+    let mut out = serde_json::to_string(frame)
+        .map_err(|err| RemoteFrameError::InvalidJson(err.to_string()))?;
     out.push('\n');
     Ok(out)
 }
@@ -113,8 +125,8 @@ pub fn decode_remote_frame(line: &str) -> Result<RemoteFrame, RemoteFrameError> 
     if trimmed.is_empty() {
         return Err(RemoteFrameError::Empty);
     }
-    let frame: RemoteFrame =
-        serde_json::from_str(trimmed).map_err(|err| RemoteFrameError::InvalidJson(err.to_string()))?;
+    let frame: RemoteFrame = serde_json::from_str(trimmed)
+        .map_err(|err| RemoteFrameError::InvalidJson(err.to_string()))?;
     validate_frame(&frame)?;
     Ok(frame)
 }

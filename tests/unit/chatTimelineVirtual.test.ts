@@ -77,6 +77,22 @@ describe("chat timeline virtualization helpers", () => {
     );
   });
 
+  it("counts explicit newlines in the estimate", () => {
+    // Many short lines (a list/log) have more visual rows than a plain char
+    // count implies; the estimate must not undercount them for culling.
+    const manyShortLines: TimelineVirtualRow = {
+      kind: "item",
+      item: { type: "assistantText", seq: 1, text: "a\n".repeat(40), streaming: false },
+    };
+    const sameCharsOneLine: TimelineVirtualRow = {
+      kind: "item",
+      item: { type: "assistantText", seq: 2, text: "a".repeat(80), streaming: false },
+    };
+    expect(estimateTimelineRowHeight(manyShortLines)).toBeGreaterThan(
+      estimateTimelineRowHeight(sameCharsOneLine),
+    );
+  });
+
   it("does not cap the estimate for very long text", () => {
     // The estimate feeds visibility culling for unmeasured rows; undercounting a
     // tall row can drop its lower portion from the visible set. A row far taller

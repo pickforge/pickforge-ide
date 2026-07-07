@@ -465,7 +465,7 @@ export function ChatTimeline(props: {
               const index = nextLayout.keyToIndex.get(anchor.key);
               if (index !== undefined) {
                 applyProgrammaticScroll(
-                  Math.max(0, nextLayout.starts[index] + metrics().padding - anchor.offset),
+                  Math.max(0, nextLayout.starts[index] + metrics().padding + anchor.offset),
                 );
               }
             }

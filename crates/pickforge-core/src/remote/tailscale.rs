@@ -7,7 +7,8 @@ use crate::process::{run_timeout, which_in, RunError};
 
 use super::daemon::{DaemonConfigError, DaemonListener};
 
-const TAILSCALE_TIMEOUT: Duration = Duration::from_secs(10);
+const TAILSCALE_STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+const TAILSCALE_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TAILSCALE_SERVE_PATH: &str = "/pickforge";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,7 +82,7 @@ pub fn tailscale_serve_enable(
     };
     let target = format!("http://{target}");
     let https = format!("--https={https_port}");
-    run_tailscale(&[
+    run_tailscale_mutation(&[
         "serve",
         "--bg",
         &https,
@@ -97,13 +98,13 @@ pub fn tailscale_serve_disable(https_port: u16) -> Result<TailscaleStatus, Strin
         return Err("Tailscale HTTPS port must be non-zero".into());
     }
     let https = format!("--https={https_port}");
-    run_tailscale(&["serve", &https, "--set-path", TAILSCALE_SERVE_PATH, "off"])?;
+    run_tailscale_mutation(&["serve", &https, "--set-path", TAILSCALE_SERVE_PATH, "off"])?;
     Ok(tailscale_status())
 }
 
 pub fn tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, String> {
     let flag = if enabled { "--ssh=true" } else { "--ssh=false" };
-    run_tailscale(&["set", flag])?;
+    run_tailscale_mutation(&["set", flag])?;
     Ok(tailscale_status())
 }
 
@@ -118,8 +119,15 @@ fn run_json(args: &[&str]) -> Result<Value, String> {
 }
 
 fn run_tailscale(args: &[&str]) -> Result<String, String> {
-    let outcome =
-        run_timeout("tailscale", args, None, None, TAILSCALE_TIMEOUT).map_err(format_run_error)?;
+    run_tailscale_with_timeout(args, TAILSCALE_STATUS_TIMEOUT)
+}
+
+fn run_tailscale_mutation(args: &[&str]) -> Result<String, String> {
+    run_tailscale_with_timeout(args, TAILSCALE_MUTATION_TIMEOUT)
+}
+
+fn run_tailscale_with_timeout(args: &[&str], timeout: Duration) -> Result<String, String> {
+    let outcome = run_timeout("tailscale", args, None, None, timeout).map_err(format_run_error)?;
     if !outcome.success() {
         return Err(String::from_utf8_lossy(&outcome.stderr).trim().to_string());
     }

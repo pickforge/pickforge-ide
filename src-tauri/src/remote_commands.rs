@@ -125,27 +125,28 @@ pub fn remote_host_revoke_client(client_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn remote_tailscale_serve_enable(
+pub async fn remote_tailscale_serve_enable(
     state: State<'_, RemoteHostState>,
     host: String,
     port: u16,
     https_port: Option<u16>,
 ) -> Result<TailscaleStatus, String> {
     let listener = tailscale_serve_listener(&state, &host, port)?;
-    tailscale_serve_enable(
-        &listener,
-        https_port.unwrap_or(DEFAULT_TAILSCALE_HTTPS_PORT),
-    )
+    let https_port = https_port.unwrap_or(DEFAULT_TAILSCALE_HTTPS_PORT);
+    run_tailscale_action(move || tailscale_serve_enable(&listener, https_port)).await
 }
 
 #[tauri::command]
-pub fn remote_tailscale_serve_disable(https_port: Option<u16>) -> Result<TailscaleStatus, String> {
-    tailscale_serve_disable(https_port.unwrap_or(DEFAULT_TAILSCALE_HTTPS_PORT))
+pub async fn remote_tailscale_serve_disable(
+    https_port: Option<u16>,
+) -> Result<TailscaleStatus, String> {
+    let https_port = https_port.unwrap_or(DEFAULT_TAILSCALE_HTTPS_PORT);
+    run_tailscale_action(move || tailscale_serve_disable(https_port)).await
 }
 
 #[tauri::command]
-pub fn remote_tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, String> {
-    tailscale_ssh_set(enabled)
+pub async fn remote_tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, String> {
+    run_tailscale_action(move || tailscale_ssh_set(enabled)).await
 }
 
 impl RemoteHostState {
@@ -340,6 +341,14 @@ fn tailscale_serve_listener_from_info(
 
 fn normalize_listener_host(host: &str) -> &str {
     host.trim().trim_matches(['[', ']'])
+}
+
+async fn run_tailscale_action(
+    action: impl FnOnce() -> Result<TailscaleStatus, String> + Send + 'static,
+) -> Result<TailscaleStatus, String> {
+    tauri::async_runtime::spawn_blocking(action)
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 fn now_ms() -> i64 {
@@ -540,8 +549,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn command_helpers_reject_invalid_input_before_shelling_out() {
+    #[tokio::test]
+    async fn command_helpers_reject_invalid_input_before_shelling_out() {
         let home = temp_home("bad-input");
         let path = remote_auth_store_path(&home);
         assert!(issue_pairing_code_at(&path, 0)
@@ -551,7 +560,7 @@ mod tests {
             .unwrap_err()
             .contains("client was not found"));
         assert_eq!(
-            remote_tailscale_serve_disable(Some(0)).unwrap_err(),
+            remote_tailscale_serve_disable(Some(0)).await.unwrap_err(),
             "Tailscale HTTPS port must be non-zero"
         );
 

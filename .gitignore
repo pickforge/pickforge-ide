@@ -30,6 +30,7 @@ playwright-report/
 .superpowers/
 .codex/
 .claude/
+.codegraph/
 .worktrees/
 
 # Runtime state

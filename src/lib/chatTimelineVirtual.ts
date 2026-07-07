@@ -34,7 +34,12 @@ export function buildTimelineRows(
   items: AgentTimelineItem[],
   working?: boolean,
 ): TimelineVirtualRow[] {
-  const rows: TimelineVirtualRow[] = items.map((item) => ({ kind: "item", item }));
+  // Hidden user messages (e.g. swarm synthesis prompts) render nothing, so they
+  // must not occupy a virtual row — otherwise the layout reserves estimated
+  // height for an empty row, leaving a blank gap and skewing scroll math.
+  const rows: TimelineVirtualRow[] = items
+    .filter((item) => !(item.type === "userMessage" && item.hidden))
+    .map((item) => ({ kind: "item", item }));
   if (working) rows.push({ kind: "working" });
   return rows;
 }
@@ -68,6 +73,32 @@ export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
   }
 }
 
+/** True while a row's content can still grow without a mounted observer to
+ *  remeasure it — a streaming assistant/thinking row scrolled out of the virtual
+ *  window. Its cached height would otherwise stay stuck at the last measured
+ *  value while text keeps arriving. */
+function isStreamingRow(row: TimelineVirtualRow): boolean {
+  return (
+    row.kind === "item" &&
+    (row.item.type === "assistantText" || row.item.type === "thinking") &&
+    row.item.streaming === true
+  );
+}
+
+/** Resolve a row's layout height. For a streaming row, the cached measurement
+ *  can lag the still-growing content while it's unmounted, so track the larger
+ *  of the cache and the live estimate; otherwise trust the measurement. */
+function rowHeight(
+  row: TimelineVirtualRow,
+  key: string,
+  rowHeights: ReadonlyMap<string, number>,
+): number {
+  const cached = rowHeights.get(key);
+  const estimate = estimateTimelineRowHeight(row);
+  if (cached === undefined) return estimate;
+  return isStreamingRow(row) ? Math.max(cached, estimate) : cached;
+}
+
 export function buildTimelineLayout(
   rows: TimelineVirtualRow[],
   metrics: TimelineVirtualMetrics,
@@ -81,7 +112,7 @@ export function buildTimelineLayout(
     const key = timelineVirtualRowKey(row);
     starts[i] = y;
     keyToIndex.set(key, i);
-    y += rowHeights.get(key) ?? estimateTimelineRowHeight(row);
+    y += rowHeight(row, key, rowHeights);
     if (i < rows.length - 1) y += metrics.gap;
   }
   return {
@@ -126,7 +157,9 @@ export function visibleTimelineKeys(
   while (i > 0) {
     const prev = i - 1;
     const prevKey = timelineVirtualRowKey(rows[prev]);
-    const prevHeight = rowHeights.get(prevKey) ?? estimateTimelineRowHeight(rows[prev]);
+    // Same height resolution as buildTimelineLayout so culling agrees with the
+    // `starts` it was computed from (streaming rows included).
+    const prevHeight = rowHeight(rows[prev], prevKey, rowHeights);
     if (starts[prev] + prevHeight <= top) break;
     i = prev;
   }
@@ -136,8 +169,8 @@ export function visibleTimelineKeys(
     if (rowStart > bottom) break;
     const row = rows[i];
     const key = timelineVirtualRowKey(row);
-    const rowHeight = rowHeights.get(key) ?? estimateTimelineRowHeight(row);
-    if (rowStart + rowHeight < top) continue;
+    const height = rowHeight(row, key, rowHeights);
+    if (rowStart + height < top) continue;
     visible.push(key);
   }
   return visible;

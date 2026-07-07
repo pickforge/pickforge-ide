@@ -42,6 +42,21 @@ describe("chat timeline virtualization helpers", () => {
     ]);
   });
 
+  it("omits hidden user messages from the rows", () => {
+    // Hidden prompts (e.g. swarm synthesis) render nothing, so they must not
+    // occupy a virtual row and reserve blank height.
+    const items: AgentTimelineItem[] = [
+      { type: "userMessage", seq: 1, text: "visible" },
+      { type: "userMessage", seq: 2, text: "internal", hidden: true },
+      { type: "assistantText", seq: 3, text: "reply", streaming: false },
+    ];
+
+    expect(buildTimelineRows(items, false).map(timelineVirtualRowKey)).toEqual([
+      "userMessage:1",
+      "assistantText:3",
+    ]);
+  });
+
   it("estimates larger rows for long markdown than short markdown", () => {
     const shortRow: TimelineVirtualRow = {
       kind: "item",

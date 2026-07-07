@@ -161,6 +161,12 @@
 .pf-titlebar-right .pf-pill {
   pointer-events: none;
 }
+/* …except the dot-only pill: with its label hidden, the native `title` tooltip
+ * is the only way to read the shell/project state, so it must receive hover.
+ * The rest of the bar still drags. */
+.pf-titlebar-right .pf-pill--dot {
+  pointer-events: auto;
+}
 /* Narrowing window: the brand sheds chrome in stages so it's already small
  * BEFORE its grid track shrinks enough to crowd the centered nav — first the
  * version tag, then the wordmark, leaving just the mark glyph. The mark, update

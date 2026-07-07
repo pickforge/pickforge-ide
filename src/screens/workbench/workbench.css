@@ -8,6 +8,13 @@
   display: flex;
   flex: 1 1 0;
   min-height: 0;
+  /* When the window is narrower than left dock + center floor (220px) + right
+   * dock, scroll the pane row horizontally so the right dock stays reachable
+   * instead of bleeding off-screen (see .pf-workbench-center min-width note).
+   * Panes own their vertical scroll, so keep the vertical axis clipped rather
+   * than letting overflow-x force overflow-y to auto. */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .pf-workbench-center {
   display: flex;
@@ -1244,35 +1251,21 @@ body.pf-resizing .pf-dock-panel {
   flex: none;
 }
 
-/* ---- center: launch + terminal ---- */
-/* The header row: quick-launch (or its reveal) on the left, the Orchestra
-   toggle pinned to the right so it stays reachable when quick launch is
-   collapsed. */
+/* ---- center: header + terminal ---- */
+/* The header row: the Orchestra toggle pinned to the right. */
 .pf-launch-bar {
   display: flex;
   align-items: center;
   flex: none;
   border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
 }
-.pf-launch {
-  display: flex;
-  align-items: center;
-  gap: var(--pf-space-lg);
-  padding: var(--pf-space-sm) var(--pf-space-lg);
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.pf-chips {
-  display: flex;
-  align-items: center;
-  gap: var(--pf-space-sm);
-  flex-wrap: wrap;
-}
-/* Orchestration toggle — a quiet mono pill in the launch row. No ember: the
+/* Orchestration toggle — a quiet mono pill in the header row. No ember: the
    focused terminal owns the workbench ember. */
 .pf-orch-tab {
   margin-left: auto;
   margin-right: var(--pf-space-lg);
+  margin-top: var(--pf-space-sm);
+  margin-bottom: var(--pf-space-sm);
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-xs);
@@ -1302,47 +1295,6 @@ body.pf-resizing .pf-dock-panel {
 .pf-orch-tab:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-.pf-launch-hide {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--pf-text-low);
-  cursor: pointer;
-  border-radius: var(--pf-radius-sm);
-  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
-    background var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-launch-hide:hover {
-  color: var(--pf-text-hi);
-  background: var(--pf-item-fill);
-}
-.pf-launch-reveal {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pf-space-xs);
-  align-self: flex-start;
-  margin: var(--pf-space-xs) var(--pf-space-lg);
-  padding: 2px var(--pf-space-md);
-  flex: none;
-  border: var(--pf-hairline-width) solid var(--pf-hairline);
-  border-radius: var(--pf-radius-pill);
-  background: var(--pf-surface-1);
-  color: var(--pf-text-low);
-  cursor: pointer;
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-eyebrow);
-  letter-spacing: var(--pf-tracking-eyebrow);
-  text-transform: uppercase;
-}
-.pf-launch-reveal:hover {
-  color: var(--pf-text-hi);
-  border-color: var(--pf-hairline-strong);
 }
 
 /* ---- run control bar ---- */

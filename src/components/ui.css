@@ -86,6 +86,12 @@
   border: var(--pf-bracket-width) solid var(--pf-intent, var(--pf-ember));
   border-right: none;
 }
+/* Dot-only variant: drops the label so the pill collapses to just its bracket
+ * indicator (used in the tight titlebar). Square padding keeps it centered. */
+.pf-pill--dot {
+  padding: 3px;
+  gap: 0;
+}
 .pf-dot--pulsing {
   position: relative;
 }

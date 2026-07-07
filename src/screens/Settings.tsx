@@ -21,7 +21,7 @@ import {
   IconPlus,
 } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
-import { setQuickLaunchVisible, setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
+import { setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
 import {
   setWindowControlsSide,
   windowControlsSide,
@@ -331,23 +331,6 @@ export function SettingsScreen() {
               <span class="pf-zoom-val">{Math.round(currentZoom() * 100)}%</span>
               <button class="pf-zoom-btn" title="Zoom in" onClick={zoomIn}>+</button>
               <button class="pf-text-btn" onClick={zoomReset}>Reset</button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Quick launch bar</span>
-            <div class="pf-seg">
-              <button
-                classList={{ active: workbenchPrefs().quickLaunchVisible }}
-                onClick={() => setQuickLaunchVisible(true)}
-              >
-                Shown
-              </button>
-              <button
-                classList={{ active: !workbenchPrefs().quickLaunchVisible }}
-                onClick={() => setQuickLaunchVisible(false)}
-              >
-                Hidden
-              </button>
             </div>
           </div>
           <div class="pf-settings-row">

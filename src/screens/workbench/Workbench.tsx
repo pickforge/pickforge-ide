@@ -16,10 +16,9 @@ import { AgentChatView } from "../../components/chat/AgentChatView";
 import { OrchestraView } from "../../components/orchestra/OrchestraView";
 import { disposeAgentChat } from "../../stores/agentChat";
 import { loadAgentModels } from "../../lib/agentModels";
-import { Chip, ForgeEmptyState, MonoEyebrow, PaneReveal } from "../../components/ui";
-import { IconChevronDown, IconClose, IconGrid, IconTerminal } from "../../components/icons";
+import { ForgeEmptyState, PaneReveal } from "../../components/ui";
+import { IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
-import { setQuickLaunchVisible, workbenchPrefs } from "../../stores/workbenchPrefs";
 import { editorCommand } from "../../stores/fileOpenSettings";
 import { openPathSystem } from "../../lib/opener";
 import {
@@ -281,46 +280,7 @@ export function WorkbenchScreen() {
       <DockPanel dock="left" render={renderPane} />
 
       <main class="pf-workbench-center pf-reveal">
-        <div class="pf-launch-bar" data-tour="quicklaunch">
-          <Show
-            when={workbenchPrefs().quickLaunchVisible}
-            fallback={
-              <button
-                class="pf-launch-reveal"
-                title="Show quick launch"
-                onClick={() => setQuickLaunchVisible(true)}
-              >
-                <IconChevronDown size={12} /> Quick launch
-              </button>
-            }
-          >
-            <div class="pf-launch">
-              <MonoEyebrow text="Quick launch" tick />
-              <div class="pf-chips">
-                <For each={quickLaunchItems()}>
-                  {(item, i) => {
-                    const bin = binaryForItem(item);
-                    return (
-                      <Chip
-                        label={item.label}
-                        hint={item.hotkey ?? undefined}
-                        ember={i() === 0}
-                        disabled={bin ? available()[bin] === false : false}
-                        onClick={() => launchItem(item, commandForItem(item))}
-                      />
-                    );
-                  }}
-                </For>
-              </div>
-              <button
-                class="pf-launch-hide"
-                title="Hide quick launch"
-                onClick={() => setQuickLaunchVisible(false)}
-              >
-                <IconClose size={13} />
-              </button>
-            </div>
-          </Show>
+        <div class="pf-launch-bar">
           <button
             class="pf-orch-tab"
             data-tour="orchestra"

@@ -62,6 +62,17 @@ describe("chat timeline virtualization helpers", () => {
     );
   });
 
+  it("does not cap the estimate for very long text", () => {
+    // The estimate feeds visibility culling for unmeasured rows; undercounting a
+    // tall row can drop its lower portion from the visible set. A row far taller
+    // than the old 1,800px clamp must estimate proportionally larger.
+    const huge: TimelineVirtualRow = {
+      kind: "item",
+      item: { type: "assistantText", seq: 1, text: "x".repeat(20_000), streaming: false },
+    };
+    expect(estimateTimelineRowHeight(huge)).toBeGreaterThan(1_800);
+  });
+
   it("accounts for command output tails", () => {
     const base: TimelineVirtualRow = {
       kind: "item",

@@ -18,8 +18,12 @@ export function CommandCard(props: {
   status: CommandStatus;
   exitCode: number | null;
   outputTail: string | null;
+  open?: boolean;
+  onToggle?: () => void;
 }): JSX.Element {
-  const [open, setOpen] = createSignal(false);
+  const [localOpen, setLocalOpen] = createSignal(false);
+  const open = () => props.open ?? localOpen();
+  const toggle = () => (props.onToggle ? props.onToggle() : setLocalOpen((v) => !v));
   const commandSummary = () => compactInline(props.command, 132);
   const hasHiddenCommand = () => hasHiddenDetail(props.command, 132);
   const hasOutput = () => Boolean(props.outputTail);
@@ -33,7 +37,7 @@ export function CommandCard(props: {
         aria-expanded={open()}
         aria-label={open() ? "Hide command details" : "Show command details"}
         disabled={!canExpand()}
-        onClick={() => canExpand() && setOpen((v) => !v)}
+        onClick={() => canExpand() && toggle()}
       >
         <span class="pf-chat-line-chevron" aria-hidden="true">
           <Show when={canExpand()} fallback={<span class="pf-chat-line-chevron-spacer" />}>

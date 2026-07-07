@@ -46,7 +46,22 @@ function EmptyGlyph(): JSX.Element {
   );
 }
 
-function renderItem(item: AgentTimelineItem, chatId?: string): JSX.Element {
+/** Persists a row's expansion toggle by key so it survives virtualization
+ *  remounts. `key` scopes each toggle (the row key, plus a sub-key for the
+ *  file-change list's per-file diffs). */
+export interface RowExpansion {
+  get: (key: string) => boolean;
+  toggle: (key: string) => void;
+}
+
+function renderItem(
+  item: AgentTimelineItem,
+  rowKey: string,
+  chatId?: string,
+  expansion?: RowExpansion,
+): JSX.Element {
+  // Inline `open={...}` / `onToggle={...}` (not a spread) so SolidJS keeps `open`
+  // reactive — the child re-reads it when `expansion.get` bumps the version.
   switch (item.type) {
     case "userMessage":
       if (item.hidden) return <></>;
@@ -54,7 +69,14 @@ function renderItem(item: AgentTimelineItem, chatId?: string): JSX.Element {
     case "assistantText":
       return <ChatBubble role="assistant" text={item.text} streaming={item.streaming} />;
     case "thinking":
-      return <ThinkingBubble text={item.text} streaming={item.streaming} />;
+      return (
+        <ThinkingBubble
+          text={item.text}
+          streaming={item.streaming}
+          open={expansion ? expansion.get(rowKey) : undefined}
+          onToggle={expansion ? () => expansion.toggle(rowKey) : undefined}
+        />
+      );
     case "command":
       return (
         <CommandCard
@@ -62,10 +84,12 @@ function renderItem(item: AgentTimelineItem, chatId?: string): JSX.Element {
           status={item.status}
           exitCode={item.exitCode}
           outputTail={item.outputTail}
+          open={expansion ? expansion.get(rowKey) : undefined}
+          onToggle={expansion ? () => expansion.toggle(rowKey) : undefined}
         />
       );
     case "fileChange":
-      return <FileChangeCard changes={item.changes} />;
+      return <FileChangeCard changes={item.changes} expansion={expansion} rowKey={rowKey} />;
     case "toolUse":
       return <ToolUseCard name={item.name} detail={item.detail} />;
     case "mcpToolCall":
@@ -135,12 +159,32 @@ export function ChatTimeline(props: {
   let pendingScrollTop = 0;
   let scrollIdleTimer: ReturnType<typeof setTimeout> | null = null;
   let userScrolling = false;
+  // Row heights are width-dependent (text wraps), so a horizontal resize makes
+  // every cached height stale. Track the scroller's content width and drop the
+  // cache when it changes so rows remeasure at the new width.
+  let lastContentWidth = 0;
   const THRESHOLD = 96;
   const SCROLL_IDLE_MS = 120;
   const rowHeights = new Map<string, number>();
   const queuedRowHeights = new Map<string, number>();
   const deferredRowHeights = new Map<string, number>();
   const [heightVersion, setHeightVersion] = createSignal(0);
+  // Virtualization disposes rows that leave the overscan, so any expansion state
+  // held inside a row (thinking / command output / file diff) would reset when
+  // it scrolls back. Persist it here, keyed by a stable row/sub-row key, so the
+  // toggle survives remount. The version signal makes reads reactive.
+  const expandedKeys = new Map<string, boolean>();
+  const [expandedVersion, setExpandedVersion] = createSignal(0);
+  const expansion = {
+    get: (key: string) => {
+      expandedVersion();
+      return expandedKeys.get(key) ?? false;
+    },
+    toggle: (key: string) => {
+      expandedKeys.set(key, !(expandedKeys.get(key) ?? false));
+      setExpandedVersion((version) => version + 1);
+    },
+  };
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   // True while App.tsx holds `body.pf-window-resizing` — row widths change every
@@ -364,12 +408,26 @@ export function ChatTimeline(props: {
 
     // Coalesce the scroller's own resize ticks into one rAF: a single
     // clientHeight read + pin per frame, no getComputedStyle on the hot path.
+    lastContentWidth = scroller.clientWidth;
     let resizeFrame: number | null = null;
     const scrollerObserver = new ResizeObserver(() => {
       if (resizeFrame !== null) return;
       resizeFrame = requestAnimationFrame(() => {
         resizeFrame = null;
         setViewportHeight(scroller.clientHeight);
+        // Width changed → cached row heights (measured at the old width) are
+        // stale for any wrapped text. Drop them so rows remeasure; the layout
+        // falls back to estimates until each row is re-observed.
+        const width = scroller.clientWidth;
+        if (width !== lastContentWidth && width > 0) {
+          lastContentWidth = width;
+          if (rowHeights.size > 0) {
+            rowHeights.clear();
+            queuedRowHeights.clear();
+            deferredRowHeights.clear();
+            setHeightVersion((version) => version + 1);
+          }
+        }
         if (stick) pin();
       });
     });
@@ -415,6 +473,7 @@ export function ChatTimeline(props: {
                     style={rowStyle(key)}
                     onHeight={queueRowHeight}
                     chatId={props.chatId}
+                    expansion={expansion}
                   />
                 )}
               </Show>
@@ -432,6 +491,7 @@ function MeasuredTimelineRow(props: {
   style: JSX.CSSProperties;
   onHeight: (key: string, height: number) => void;
   chatId?: string;
+  expansion?: RowExpansion;
 }): JSX.Element {
   let rowEl!: HTMLDivElement;
   let frame: number | null = null;
@@ -463,7 +523,9 @@ function MeasuredTimelineRow(props: {
 
   return (
     <div class="pf-chat-virtual-row" ref={rowEl} style={props.style}>
-      {props.row.kind === "item" ? renderItem(props.row.item, props.chatId) : <WorkingRow />}
+      {props.row.kind === "item"
+        ? renderItem(props.row.item, props.rowKey, props.chatId, props.expansion)
+        : <WorkingRow />}
     </div>
   );
 }

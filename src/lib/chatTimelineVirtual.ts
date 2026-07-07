@@ -22,8 +22,12 @@ export const MIN_ROW_HEIGHT_PX = 48;
 export const OVERSCAN_PX = 1_800;
 
 function estimateTextHeight(text: string, base: number): number {
+  // No upper clamp: this estimate feeds visibility culling for unmeasured rows,
+  // and undercounting a tall row can drop its lower portion from the visible set
+  // until it mounts. Overcounting only mounts a harmless extra offscreen row that
+  // self-corrects once measured, so bias toward not undercounting.
   const lines = Math.ceil(text.length / 82);
-  return Math.max(base, Math.min(1_800, base + lines * 23));
+  return Math.max(base, base + lines * 23);
 }
 
 export function buildTimelineRows(

@@ -5,6 +5,8 @@ import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { hostPlatform } from "../lib/platform";
 import "./WindowControls.css";
 
+const MAXIMIZED_CHECK_DELAY_MS = 120;
+
 async function appWindow() {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   return getCurrentWindow();
@@ -19,27 +21,54 @@ export function WindowControls() {
 
   onMount(() => {
     let unlisten: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
+    let checking = false;
     void (async () => {
       try {
         const win = await appWindow();
-        setMaximized(await win.isMaximized());
-        unlisten = await win.onResized(async () => {
+        const readMaximized = async () => {
+          if (disposed || checking) return;
+          checking = true;
           try {
             setMaximized(await win.isMaximized());
           } catch {
             /* window closing */
+          } finally {
+            checking = false;
           }
-        });
+        };
+        const scheduleRead = () => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => {
+            timer = undefined;
+            void readMaximized();
+          }, MAXIMIZED_CHECK_DELAY_MS);
+        };
+
+        await readMaximized();
+        const off = await win.onResized(scheduleRead);
+        if (disposed) off();
+        else unlisten = off;
       } catch {
         /* not in Tauri */
       }
     })();
-    onCleanup(() => unlisten?.());
+    onCleanup(() => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      unlisten?.();
+    });
   });
 
   const minimize = () => void appWindow().then((w) => w.minimize()).catch(() => {});
   const toggleMax = () =>
-    void appWindow().then((w) => w.toggleMaximize()).catch(() => {});
+    void appWindow()
+      .then(async (w) => {
+        await w.toggleMaximize();
+        setMaximized(await w.isMaximized());
+      })
+      .catch(() => {});
   const close = () => void appWindow().then((w) => w.close()).catch(() => {});
 
   const Minimize = () => (

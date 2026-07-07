@@ -31,6 +31,12 @@ migrated away. See `plans/rust-migration/`.)
   - `bun run vrt` — Playwright visual regression tests
 - Develop: `bun install`, then `bun run tauri dev` (builds the Rust shell + serves
   the Vite frontend). Requires a Rust toolchain (`rustup`) and Bun 1.2+.
+- When handing a worktree build to someone for manual testing, make the running
+  app visibly identifiable. Prefer a small Tauri flavor config and script that
+  keep the normal dev path unchanged while using a different dev-server port and
+  a semver prerelease suffix tied to the work, for example
+  `v0.1.7-performance`. The app's title bar/version badge should make it obvious
+  which branch or fix is under test when multiple PickForge windows are open.
 - Don't hand-edit generated output under `src-tauri/gen/`.
 - Write tests in the same PR as behavior changes. For bugs, start with a
   failing regression test when practical. For risky refactors, add

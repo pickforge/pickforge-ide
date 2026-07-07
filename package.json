@@ -6,11 +6,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:performance": "PICKFORGE_DEV_PORT=1422 vite",
     "build": "tsc --noEmit && vite build",
     "sidecar": "node scripts/build-sidecar.mjs",
     "build:tauri": "node scripts/build-sidecar.mjs && tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:dev:performance": "tauri dev --config src-tauri/tauri.performance.conf.json",
     "vrt": "playwright test",
     "e2e": "bun run tests/e2e/run.ts",
     "test:installer": "node tests/install-script.test.mjs",

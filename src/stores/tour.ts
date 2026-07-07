@@ -34,11 +34,6 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Open Orchestra to run several agent lanes across one project and hand work off between them.",
   },
   {
-    target: "quicklaunch",
-    title: "Quick launch",
-    body: "One-tap chips fire your pinned agent commands into the focused pane. Add or rebind them in Settings.",
-  },
-  {
     target: "settings",
     title: "Make it yours",
     body: "Set your default chat kind, agent engine and models in Settings. You can replay this tour there anytime.",

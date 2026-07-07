@@ -10,6 +10,9 @@
    * --pf-sweep-angle, so changing which pane is focused never restarts it. */
   animation: pf-sweep var(--pf-dur-breath) linear infinite;
 }
+body.pf-window-resizing .pf-term-host {
+  animation-play-state: paused;
+}
 
 /* The cell spans its fractional rect; the visible frame is inset so neighbours
  * show a clean gutter. The cell itself is click-through so the divider that
@@ -86,6 +89,13 @@
 }
 .pf-pane-frame--focused::before {
   opacity: 1;
+}
+body.pf-window-resizing .pf-pane-frame {
+  transition: none;
+}
+body.pf-window-resizing .pf-pane-frame::before {
+  opacity: 0;
+  transition: none;
 }
 .pf-pane-inner {
   position: relative;

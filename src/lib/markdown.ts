@@ -32,8 +32,10 @@ const ALLOWED_TAGS = [
   "img",
 ];
 const ALLOWED_ATTR = ["href", "src", "alt", "title", "data-pf-image-index"];
+const MARKDOWN_CACHE_LIMIT = 256;
 
 let purifier: ReturnType<typeof createDOMPurify> | undefined;
+const markdownCache = new Map<string, string>();
 
 function sanitize(html: string): string {
   if (typeof window === "undefined") return "";
@@ -41,9 +43,27 @@ function sanitize(html: string): string {
   return purifier.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR });
 }
 
-export function renderMarkdown(text: string): string {
+export function renderMarkdown(text: string, options: { cache?: boolean } = {}): string {
+  const cache = options.cache ?? true;
+  if (!cache) {
+    const html = marked.parse(text, { async: false, breaks: true, gfm: true });
+    return sanitize(html);
+  }
+
+  const cached = markdownCache.get(text);
+  if (cached !== undefined) {
+    markdownCache.delete(text);
+    markdownCache.set(text, cached);
+    return cached;
+  }
   const html = marked.parse(text, { async: false, breaks: true, gfm: true });
-  return sanitize(html);
+  const sanitized = sanitize(html);
+  markdownCache.set(text, sanitized);
+  if (markdownCache.size > MARKDOWN_CACHE_LIMIT) {
+    const oldest = markdownCache.keys().next().value;
+    if (oldest !== undefined) markdownCache.delete(oldest);
+  }
+  return sanitized;
 }
 
 // Replace `[Image #N]` markers (N is 1-based into a message's attachments) with a

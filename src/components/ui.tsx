@@ -98,15 +98,22 @@ export function StatusPill(props: {
   label: string;
   intent?: StatusIntent;
   pulsing?: boolean;
+  compact?: boolean;
 }): JSX.Element {
   const intent = () => props.intent ?? "neutral";
   return (
-    <span class="pf-pill">
+    <span
+      class="pf-pill"
+      classList={{ "pf-pill--dot": props.compact }}
+      title={props.compact ? props.label : undefined}
+      role={props.compact ? "img" : undefined}
+      aria-label={props.compact ? props.label : undefined}
+    >
       <span
         class={`pf-dot ${props.pulsing ? "pf-dot--pulsing" : ""}`}
         style={{ "--pf-intent": INTENT_VAR[intent()] }}
       />
-      {props.label}
+      {props.compact ? null : props.label}
     </span>
   );
 }

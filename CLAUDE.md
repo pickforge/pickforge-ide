@@ -10,6 +10,9 @@ everything there applies to you.
   (`tsc --noEmit && vite build`), `cargo check`, `cargo test -p pickforge-core`,
   `bun run vrt` (Playwright). Don't hand-edit generated output under
   `src-tauri/gen/`.
+- **Manual worktree testing:** If you launch a test build from a worktree, make
+  it visibly distinct from normal PickForge: use a separate dev-server port and
+  a version/flavor suffix tied to the work, e.g. `v0.1.7-performance`.
 - **Architecture:** Rust core in `crates/pickforge-core/` (pty, process,
   transcript, storage, targets, inspector, db), Tauri binary in `src-tauri/`
   (`*_commands.rs` adapt the core to IPC; `capabilities/default.json` scopes it),

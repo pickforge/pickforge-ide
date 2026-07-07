@@ -9,6 +9,7 @@ import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WindowControls } from "./components/WindowControls";
 import { ResizeHandles } from "./components/ResizeHandles";
 import { resolvedControlsSide } from "./stores/windowControls";
+import { hostPlatform } from "./lib/platform";
 import { IconChevronRight, IconTerminal } from "./components/icons";
 import { layout, toggleDock } from "./stores/workbenchLayout";
 import { runConsole, toggleConsole } from "./stores/runConsole";
@@ -27,8 +28,35 @@ const NAV: { route: Route; label: string }[] = [
   { route: "settings", label: "Settings" },
 ];
 
+const WINDOW_RESIZING_SETTLE_MS = 180;
+
 export function App() {
   const [, setReady] = createSignal(false);
+  // macOS convention: window controls sit top-left, so the brand moves to the
+  // top-right to balance the bar (matches the platform's own app chrome).
+  const brandOnRight = () => hostPlatform() === "macos";
+
+  const Brand = () => (
+    <div class="pf-brand" data-tauri-drag-region>
+      <span class="pf-mark" />
+      <span class="pf-wordmark">PickForge</span>
+      <MonoEyebrow text={`v${appVersion()}`} />
+      <Show when={import.meta.env.DEV}>
+        <span class="pf-dev-badge" title="Development build — running via tauri dev">
+          Dev
+        </span>
+      </Show>
+      <Show when={updateAvailable()}>
+        <button
+          class="pf-update-badge"
+          title={`Update available: v${updateAvailable()!.version}`}
+          onClick={() => navigate("settings")}
+        >
+          <span class="pf-update-dot" /> Update
+        </button>
+      </Show>
+    </div>
+  );
 
   onMount(() => {
     initTheme();
@@ -44,6 +72,32 @@ export function App() {
     };
     window.addEventListener("keydown", onZoom, true);
     onCleanup(() => window.removeEventListener("keydown", onZoom, true));
+
+    let resizeSettleTimer: ReturnType<typeof setTimeout> | undefined;
+    let unlistenResize: (() => void) | undefined;
+    const markWindowResizing = () => {
+      document.body.classList.add("pf-window-resizing");
+      if (resizeSettleTimer) clearTimeout(resizeSettleTimer);
+      resizeSettleTimer = setTimeout(() => {
+        document.body.classList.remove("pf-window-resizing");
+        resizeSettleTimer = undefined;
+      }, WINDOW_RESIZING_SETTLE_MS);
+    };
+    window.addEventListener("resize", markWindowResizing);
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        unlistenResize = await getCurrentWindow().onResized(markWindowResizing);
+      } catch {
+        /* plain browser/VRT fallback uses the DOM resize event */
+      }
+    })();
+    onCleanup(() => {
+      window.removeEventListener("resize", markWindowResizing);
+      unlistenResize?.();
+      if (resizeSettleTimer) clearTimeout(resizeSettleTimer);
+      document.body.classList.remove("pf-window-resizing");
+    });
 
     void loadAppVersion();
     void checkForUpdate(true);
@@ -85,32 +139,19 @@ export function App() {
           attribute. Double-clicking the drag region toggles maximize natively. */}
       <header
         class="pf-titlebar"
-        classList={{ "pf-titlebar--controls-left": resolvedControlsSide() === "left" }}
+        classList={{
+          "pf-titlebar--controls-left": resolvedControlsSide() === "left",
+          "pf-titlebar--brand-right": brandOnRight(),
+        }}
         data-tauri-drag-region
       >
         <div class="pf-titlebar-left" data-tauri-drag-region>
           <Show when={resolvedControlsSide() === "left"}>
             <WindowControls />
           </Show>
-          <div class="pf-brand" data-tauri-drag-region>
-            <span class="pf-mark" />
-            <span class="pf-wordmark">PickForge</span>
-            <MonoEyebrow text={`v${appVersion()}`} />
-            <Show when={import.meta.env.DEV}>
-              <span class="pf-dev-badge" title="Development build — running via tauri dev">
-                Dev
-              </span>
-            </Show>
-            <Show when={updateAvailable()}>
-              <button
-                class="pf-update-badge"
-                title={`Update available: v${updateAvailable()!.version}`}
-                onClick={() => navigate("settings")}
-              >
-                <span class="pf-update-dot" /> Update
-              </button>
-            </Show>
-          </div>
+          <Show when={!brandOnRight()}>
+            <Brand />
+          </Show>
         </div>
         <nav class="pf-nav" data-tauri-drag-region>
           <For each={NAV}>
@@ -128,9 +169,13 @@ export function App() {
         </nav>
         <div class="pf-titlebar-right" data-tauri-drag-region>
           <StatusPill
+            compact
             label={workspace.activeRoot ? "shell · live" : "no project"}
             intent={workspace.activeRoot ? "connected" : "neutral"}
           />
+          <Show when={brandOnRight()}>
+            <Brand />
+          </Show>
           <Show when={resolvedControlsSide() === "right"}>
             <WindowControls />
           </Show>

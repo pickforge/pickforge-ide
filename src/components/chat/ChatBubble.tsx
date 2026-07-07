@@ -1,4 +1,4 @@
-import { type JSX, For, Show, createEffect, createMemo } from "solid-js";
+import { type JSX, For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   embedImageMarkers,
@@ -7,6 +7,8 @@ import {
 } from "../../lib/markdown";
 import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
+
+const STREAM_MARKDOWN_INTERVAL_MS = 80;
 
 // A plain <a href> click would navigate the whole webview away from the app.
 // No URL-safe opener exists (open_path canonicalizes against approved roots and
@@ -41,6 +43,19 @@ function openThumbTarget(target: HTMLElement | null, images?: string[]): void {
   }
 }
 
+export function renderChatMarkdown(
+  role: "user" | "assistant",
+  text: string,
+  images: string[] | undefined,
+  streaming = false,
+): string {
+  const source =
+    role === "user" && images && images.length > 0
+      ? embedImageMarkers(text, images.length)
+      : text;
+  return renderMarkdown(source, { cache: !streaming });
+}
+
 export function ChatBubble(props: {
   role: "user" | "assistant";
   text: string;
@@ -48,12 +63,49 @@ export function ChatBubble(props: {
   images?: string[];
 }): JSX.Element {
   let mdEl: HTMLDivElement | undefined;
+  let renderTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastRenderAt = 0;
+  let pendingRenderText = props.text;
+  const [renderText, setRenderText] = createSignal(props.text);
+
+  const now = () =>
+    typeof performance !== "undefined" ? performance.now() : Date.now();
+
+  const flushRenderText = () => {
+    renderTimer = undefined;
+    lastRenderAt = now();
+    setRenderText(pendingRenderText);
+  };
+
+  createEffect(() => {
+    pendingRenderText = props.text;
+    if (!props.streaming) {
+      if (renderTimer) {
+        clearTimeout(renderTimer);
+        renderTimer = undefined;
+      }
+      flushRenderText();
+      return;
+    }
+
+    const delay = Math.max(0, STREAM_MARKDOWN_INTERVAL_MS - (now() - lastRenderAt));
+    if (delay === 0) {
+      if (renderTimer) {
+        clearTimeout(renderTimer);
+        renderTimer = undefined;
+      }
+      flushRenderText();
+      return;
+    }
+    if (!renderTimer) renderTimer = setTimeout(flushRenderText, delay);
+  });
+
+  onCleanup(() => {
+    if (renderTimer) clearTimeout(renderTimer);
+  });
 
   const body = createMemo(() => {
-    if (props.role === "user" && props.images && props.images.length > 0) {
-      return renderMarkdown(embedImageMarkers(props.text, props.images.length));
-    }
-    return renderMarkdown(props.text);
+    return renderChatMarkdown(props.role, renderText(), props.images, props.streaming);
   });
 
   // The sanitized markdown never carries an asset path — only a zero-based
@@ -73,6 +125,8 @@ export function ChatBubble(props: {
           const idx = Number(img.dataset.pfImageIndex);
           if (Number.isInteger(idx) && idx >= 0 && idx < images.length) {
             img.src = convertFileSrc(images[idx]);
+            img.loading = "lazy";
+            img.decoding = "async";
             img.tabIndex = 0;
             img.setAttribute("role", "button");
             img.setAttribute("aria-label", "View image");
@@ -119,6 +173,8 @@ export function ChatBubble(props: {
                     class="pf-chat-bubble-img"
                     src={convertFileSrc(path)}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     onError={(e) => {
                       e.currentTarget.style.display = "none";
                     }}

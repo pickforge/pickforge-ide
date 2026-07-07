@@ -5,15 +5,19 @@ import "./chat.css";
 export function ThinkingBubble(props: {
   text: string;
   streaming?: boolean;
+  open?: boolean;
+  onToggle?: () => void;
 }): JSX.Element {
-  const [open, setOpen] = createSignal(false);
+  const [localOpen, setLocalOpen] = createSignal(false);
+  const open = () => props.open ?? localOpen();
+  const toggle = () => (props.onToggle ? props.onToggle() : setLocalOpen((v) => !v));
   return (
     <div class="pf-chat-thinking">
       <button
         type="button"
         class="pf-chat-thinking-toggle"
         aria-expanded={open()}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
       >
         <MonoEyebrow text="Thinking" />
         <Show when={props.streaming}>

@@ -30,7 +30,10 @@
  * Three-column grid keeps the nav optically centered regardless of side widths. */
 .pf-titlebar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  /* minmax(0, …) lets the side tracks shrink below their content's min-width so
+   * the brand/status never force the centered nav out of position; the brand
+   * yields progressively (version, then wordmark) via the breakpoints below. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   height: var(--pf-titlebar-h);
   padding: 0 var(--pf-space-sm) 0 var(--pf-space-lg);
@@ -43,6 +46,11 @@
 .pf-titlebar--controls-left {
   padding: 0 var(--pf-space-lg) 0 var(--pf-space-sm);
 }
+/* macOS also parks the brand on the RIGHT (controls own the left), so give the
+ * left edge a little breathing room past the traffic-light controls. */
+.pf-titlebar--brand-right {
+  padding: 0 var(--pf-space-lg) 0 var(--pf-space-md);
+}
 .pf-titlebar-left {
   display: inline-flex;
   align-items: center;
@@ -54,12 +62,21 @@
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-md);
+  min-width: 0;
+  overflow: hidden;
+}
+/* Update badge and mark must never be the thing that gets clipped — the brand
+ * yields its text first (rules below), not its actionable/identity glyphs. */
+.pf-brand .pf-mark,
+.pf-update-badge {
+  flex: none;
 }
 .pf-titlebar-right {
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-md);
   justify-self: end;
+  min-width: 0;
 }
 /* The core brand glyph: a hairline selection frame with its top-right corner
  * replaced by a glowing ember dot. */
@@ -87,6 +104,9 @@
   font-size: var(--pf-size-title-lg);
   letter-spacing: -0.02em;
   color: var(--pf-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pf-update-badge {
   display: inline-flex;
@@ -141,21 +161,25 @@
 .pf-titlebar-right .pf-pill {
   pointer-events: none;
 }
-
-/* ---- Quick-launch strip ---- */
-.pf-launch {
-  display: flex;
-  align-items: center;
-  gap: var(--pf-space-lg);
-  padding: var(--pf-space-sm) var(--pf-space-lg);
-  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
-  flex: none;
+/* …except the dot-only pill: with its label hidden, the native `title` tooltip
+ * is the only way to read the shell/project state, so it must receive hover.
+ * The rest of the bar still drags. */
+.pf-titlebar-right .pf-pill--dot {
+  pointer-events: auto;
 }
-.pf-chips {
-  display: flex;
-  align-items: center;
-  gap: var(--pf-space-sm);
-  flex-wrap: wrap;
+/* Narrowing window: the brand sheds chrome in stages so it's already small
+ * BEFORE its grid track shrinks enough to crowd the centered nav — first the
+ * version tag, then the wordmark, leaving just the mark glyph. The mark, update
+ * badge, and nav stay reachable throughout. */
+@media (max-width: 900px) {
+  .pf-brand .pf-eyebrow-row {
+    display: none;
+  }
+}
+@media (max-width: 780px) {
+  .pf-titlebar .pf-wordmark {
+    display: none;
+  }
 }
 
 /* ---- Main / terminal frame ---- */
@@ -217,8 +241,19 @@
   align-items: center;
   gap: var(--pf-space-xs);
   justify-self: center;
+  /* The center grid track is `auto`, so a wide nav could push into the side
+   * columns and overlap the brand/status. Cap it to its track and let the row
+   * scroll horizontally instead of colliding. */
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pf-nav::-webkit-scrollbar {
+  display: none;
 }
 .pf-nav-btn {
+  flex: none;
   border: none;
   background: transparent;
   color: var(--pf-text-med);

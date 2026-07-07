@@ -33,6 +33,28 @@ describe("renderMarkdown", () => {
     const html = renderMarkdown("[click](javascript:alert(1))");
     expect(html).not.toContain("javascript:");
   });
+
+  it("can skip the shared render cache for streaming prefixes", () => {
+    const first = renderMarkdown("stream **one**", { cache: false });
+    const second = renderMarkdown("stream **one**", { cache: false });
+
+    expect(first).toBe(second);
+    expect(second).toContain("<strong>one</strong>");
+  });
+
+  it("reuses cached final markdown renders", () => {
+    const first = renderMarkdown("cached **final**");
+    const second = renderMarkdown("cached **final**");
+
+    expect(first).toBe(second);
+    expect(second).toContain("<strong>final</strong>");
+  });
+
+  it("evicts old cached markdown entries", () => {
+    for (let i = 0; i < 260; i += 1) {
+      expect(renderMarkdown(`cached entry ${i}`)).toContain(`cached entry ${i}`);
+    }
+  });
 });
 
 describe("embedImageMarkers", () => {

@@ -5,11 +5,10 @@ import { createSignal } from "solid-js";
 const KEY = "pickforge.workbenchPrefs";
 
 interface Prefs {
-  quickLaunchVisible: boolean;
   /** show text labels next to the Run/Reload/Restart/Stop icons */
   runButtonLabels: boolean;
 }
-const DEFAULTS: Prefs = { quickLaunchVisible: true, runButtonLabels: false };
+const DEFAULTS: Prefs = { runButtonLabels: false };
 
 function load(): Prefs {
   try {
@@ -17,7 +16,6 @@ function load(): Prefs {
     if (!raw) return { ...DEFAULTS };
     const p = JSON.parse(raw);
     return {
-      quickLaunchVisible: p.quickLaunchVisible !== false,
       runButtonLabels: p.runButtonLabels === true,
     };
   } catch {
@@ -33,12 +31,6 @@ function persist(next: Prefs) {
   localStorage.setItem(KEY, JSON.stringify(next));
 }
 
-export function setQuickLaunchVisible(visible: boolean) {
-  persist({ ...prefs(), quickLaunchVisible: visible });
-}
-export function toggleQuickLaunch() {
-  setQuickLaunchVisible(!prefs().quickLaunchVisible);
-}
 export function setRunButtonLabels(show: boolean) {
   persist({ ...prefs(), runButtonLabels: show });
 }

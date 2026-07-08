@@ -29,7 +29,7 @@ reset this file.
   official GitHub API URLs.
 - Release CI now repairs the uploaded AppImage after the build: strips
   bundled `libwayland-*`, repacks, re-signs, and patches `latest.json`.
-- App chrome CSS now comes from `@pickforge/brand` 0.2.0.
+- App chrome CSS now comes from `@pickforge/brand` 0.2.1.
 
 ## Validation
 

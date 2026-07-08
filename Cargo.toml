@@ -8,7 +8,7 @@ members = ["crates/pickforge-core", "crates/pickforge-mcp", "src-tauri"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.8"
+version = "0.1.9"
 license = "MIT"
 authors = ["PickForge"]
 

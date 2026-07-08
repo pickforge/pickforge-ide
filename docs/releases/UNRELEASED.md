@@ -6,58 +6,23 @@ reset this file.
 
 ## User-facing changes
 
-- Release builds now send anonymous crash and error reports by default, with a
-  Settings → Crash reports opt-out that applies after restart.
-- Linux curl installs now use a rootless AppImage wrapper that falls back when
-  FUSE is missing, inaccessible, or likely restricted by WSL/container hosts.
-- Linux curl installs can opt into native `.deb`/`.rpm` release packages with
-  `PICKFORGE_INSTALL_KIND=deb` or `PICKFORGE_INSTALL_KIND=rpm`.
-- AppImage installs now add the launcher icon, refresh desktop search/menu
-  caches, and disable known stale PickForge launchers in the user's app menu.
-- Linux curl installs no longer execute the downloaded AppImage during install
-  just to populate the app menu icon.
-- Fixed the white/blank window on distros with recent Mesa/Wayland (Arch,
-  CachyOS, Fedora): the AppImage no longer bundles the build host's
-  libwayland, which crashed WebKit's EGL setup (#122).
+- None yet.
 
 ## Internal/release changes
 
-- Added Sentry native crash reporting, global telemetry consent storage, and
-  release CI uploads for native debug files and frontend sourcemaps.
-- Linux release CI now asks Tauri to publish AppImage, `.deb`, and `.rpm`
-  artifacts.
-- Native Linux packages now install the `pickforge` command name.
-- Added installer smoke tests for AppImage desktop integration, stale launcher
-  cleanup, native `.deb` selection, and zypper `.rpm` installs.
-- Installer smoke tests now run in CI, and GitHub tokens are only sent to
-  official GitHub API URLs.
-- Release CI now repairs the uploaded AppImage after the build: strips
-  bundled `libwayland-*`, repacks, re-signs, and patches `latest.json`.
-- App chrome CSS now comes from `@pickforge/brand` 0.2.1.
+- None yet.
 
 ## Validation
 
 ### Tested
 
-- `bun run test:installer`
-- `bun run e2e`
-- `bun run test:unit`
-- `bun run test:coverage`
-- `bun run build`
-- `bun run sidecar`
-- `cargo check --workspace --all-targets`
-- `cargo test -p pickforge-core --locked`
-- `cargo test --workspace --locked --all-targets`
-- Temp-HOME live AppImage installer smoke against GitHub release `v0.1.8`
-- `desktop-file-validate` on generated AppImage desktop entries
-- `APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1 bun run tauri build --bundles appimage,deb,rpm --no-sign`
-- `sh -n scripts/install.sh`
-- `git diff --check`
+- None yet.
 
 ### Not tested yet
 
-- Signed updater artifacts locally; signing still requires release secrets.
-- Visible desktop app launch from the menu after install.
+- App build.
+- Installer or updater flow.
+- Platform smoke checks.
 
 ### Release blockers
 

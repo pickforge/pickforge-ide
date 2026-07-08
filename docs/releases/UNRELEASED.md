@@ -6,6 +6,8 @@ reset this file.
 
 ## User-facing changes
 
+- Release builds now send anonymous crash and error reports by default, with a
+  Settings → Crash reports opt-out that applies after restart.
 - Linux curl installs now use a rootless AppImage wrapper that falls back when
   FUSE is missing, inaccessible, or likely restricted by WSL/container hosts.
 - Linux curl installs can opt into native `.deb`/`.rpm` release packages with
@@ -20,6 +22,8 @@ reset this file.
 
 ## Internal/release changes
 
+- Added Sentry native crash reporting, global telemetry consent storage, and
+  release CI uploads for native debug files and frontend sourcemaps.
 - Linux release CI now asks Tauri to publish AppImage, `.deb`, and `.rpm`
   artifacts.
 - Native Linux packages now install the `pickforge` command name.
@@ -41,7 +45,8 @@ reset this file.
 - `bun run test:coverage`
 - `bun run build`
 - `bun run sidecar`
-- `cargo check`
+- `cargo check --workspace --all-targets`
+- `cargo test -p pickforge-core --locked`
 - `cargo test --workspace --locked --all-targets`
 - Temp-HOME live AppImage installer smoke against GitHub release `v0.1.8`
 - `desktop-file-validate` on generated AppImage desktop entries

@@ -5,6 +5,7 @@
 mod home;
 mod project_id;
 mod service;
+mod telemetry;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,6 +13,7 @@ use std::path::Path;
 pub use home::{pickforge_home, PickforgeHomeError};
 pub use project_id::project_id;
 pub use service::{ContextStorageService, StorageError};
+pub use telemetry::{load_telemetry_config, save_telemetry_config, TelemetryConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextStorageMode {

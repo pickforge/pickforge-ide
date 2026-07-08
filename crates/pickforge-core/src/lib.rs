@@ -45,8 +45,9 @@ pub use pty::{
     SpawnOptions,
 };
 pub use storage::{
-    pickforge_env_vars, pickforge_home, project_id, ContextStorageLocation, ContextStorageMode,
-    ContextStorageService, ResolvedContextDirectory, StorageError,
+    load_telemetry_config, pickforge_env_vars, pickforge_home, project_id, save_telemetry_config,
+    ContextStorageLocation, ContextStorageMode, ContextStorageService, ResolvedContextDirectory,
+    StorageError, TelemetryConfig,
 };
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,

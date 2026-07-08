@@ -53,6 +53,7 @@ import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
+import { telemetryGet, telemetrySet } from "../lib/telemetry";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -82,6 +83,8 @@ export function SettingsScreen() {
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
   const [pickLab, setPickLab] = createSignal<PickLabStatus | null>(null);
   const [pickLabLoading, setPickLabLoading] = createSignal(false);
+  const [crashReports, setCrashReports] = createSignal(true);
+  const [crashReportsError, setCrashReportsError] = createSignal<string | null>(null);
 
   const reloadArchived = async () => {
     const all = await db.projectsList(true);
@@ -106,9 +109,19 @@ export function SettingsScreen() {
       setPickLabLoading(false);
     }
   };
+  const reloadTelemetry = async () => {
+    try {
+      const config = await telemetryGet();
+      setCrashReports(config.crash_reports);
+      setCrashReportsError(null);
+    } catch (error) {
+      setCrashReportsError(error instanceof Error ? error.message : String(error));
+    }
+  };
   onMount(() => {
     void reloadArchived();
     void reloadPickLab();
+    void reloadTelemetry();
   });
 
   const changeModel = (agentId: string, model: string) => {
@@ -131,6 +144,18 @@ export function SettingsScreen() {
   const changeAskChatTitle = (on: boolean) => {
     setAskChatTitle(on);
     setAskChatTitleSig(on);
+  };
+
+  const changeCrashReports = async (on: boolean) => {
+    const previous = crashReports();
+    setCrashReports(on);
+    setCrashReportsError(null);
+    try {
+      await telemetrySet(on);
+    } catch (error) {
+      setCrashReports(previous);
+      setCrashReportsError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const restore = async (root: string) => {
@@ -468,6 +493,19 @@ export function SettingsScreen() {
               <button classList={{ active: !recoverChatSessions() }} onClick={() => setRecoverChatSessions(false)}>Off</button>
             </div>
           </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Crash reports
+              <span class="pf-settings-hint-inline">send anonymous crash reports to help fix problems (applies after restart)</span>
+            </span>
+            <div class="pf-seg">
+              <button classList={{ active: crashReports() }} onClick={() => void changeCrashReports(true)}>On</button>
+              <button classList={{ active: !crashReports() }} onClick={() => void changeCrashReports(false)}>Off</button>
+            </div>
+          </div>
+          <Show when={crashReportsError()}>
+            <div class="pf-ql-warn">{crashReportsError()}</div>
+          </Show>
           <div class="pf-settings-row">
             <span class="pf-settings-label">Panel layout</span>
             <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>

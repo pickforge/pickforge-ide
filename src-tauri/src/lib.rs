@@ -76,6 +76,17 @@ fn strip_debug_image_paths(event: &mut sentry::protocol::Event<'_>) {
     }
 }
 
+fn scrub_event(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::Event<'static> {
+    event.server_name = None;
+    event.breadcrumbs = Default::default();
+    strip_debug_image_paths(&mut event);
+    event
+}
+
+fn sentry_enabled(consent: bool, debug_override: Option<&str>) -> bool {
+    consent && (!cfg!(debug_assertions) || debug_override == Some("1"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
@@ -88,19 +99,13 @@ pub fn run() {
             .expect("version in tauri.conf.json")
     );
     let consent = load_telemetry_config().crash_reports;
-    let enabled = consent
-        && (!cfg!(debug_assertions)
-            || std::env::var("PICKFORGE_SENTRY_DEBUG").ok().as_deref() == Some("1"));
+    let debug_override = std::env::var("PICKFORGE_SENTRY_DEBUG").ok();
+    let enabled = sentry_enabled(consent, debug_override.as_deref());
     let client = sentry::init((
         if enabled { SENTRY_DSN } else { "" },
         sentry::ClientOptions {
             release: Some(release.into()),
-            before_send: Some(Arc::new(|mut event| {
-                event.server_name = None;
-                event.breadcrumbs = Default::default();
-                strip_debug_image_paths(&mut event);
-                Some(event)
-            })),
+            before_send: Some(Arc::new(|event| Some(scrub_event(event)))),
             ..Default::default()
         },
     ));
@@ -290,4 +295,92 @@ pub fn run() {
         ])
         .run(context)
         .expect("error while running pickforge");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use super::*;
+
+    #[test]
+    fn scrub_event_clears_server_name_and_breadcrumbs() {
+        let event = sentry::protocol::Event {
+            server_name: Some("workstation".into()),
+            breadcrumbs: vec![sentry::protocol::Breadcrumb {
+                message: Some("terminal text".into()),
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+
+        let event = scrub_event(event);
+
+        assert!(event.server_name.is_none());
+        assert!(event.breadcrumbs.is_empty());
+    }
+
+    #[test]
+    fn scrub_event_strips_debug_image_paths_and_preserves_ids() {
+        let symbolic_id: sentry::types::DebugId =
+            "494f3aea-88fa-4296-9644-fa8ef5d139b6-1234".parse().unwrap();
+        let wasm_id: sentry::types::Uuid = "8c954262-f905-4992-8a61-f60825f4553b".parse().unwrap();
+        let event = sentry::protocol::Event {
+            debug_meta: Cow::Owned(sentry::protocol::DebugMeta {
+                images: vec![
+                    sentry::protocol::SymbolicDebugImage {
+                        name: "/home/alice/AppDir/pickforge".into(),
+                        arch: None,
+                        image_addr: 0.into(),
+                        image_size: 4096,
+                        image_vmaddr: 0.into(),
+                        id: symbolic_id,
+                        code_id: None,
+                        debug_file: Some("C:\\Users\\alice\\pickforge.debug".into()),
+                    }
+                    .into(),
+                    sentry::protocol::WasmDebugImage {
+                        name: "module".into(),
+                        debug_id: wasm_id,
+                        debug_file: Some("/home/alice/module.debug.wasm".into()),
+                        code_id: None,
+                        code_file: "/home/alice/module.wasm".into(),
+                    }
+                    .into(),
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let event = scrub_event(event);
+
+        match &event.debug_meta.images[0] {
+            sentry::protocol::DebugImage::Symbolic(image) => {
+                assert_eq!(image.name, "pickforge");
+                assert_eq!(image.debug_file.as_deref(), Some("pickforge.debug"));
+                assert_eq!(image.id, symbolic_id);
+            }
+            image => panic!("expected symbolic image, got {image:?}"),
+        }
+
+        match &event.debug_meta.images[1] {
+            sentry::protocol::DebugImage::Wasm(image) => {
+                assert_eq!(image.code_file, "module.wasm");
+                assert_eq!(image.debug_file.as_deref(), Some("module.debug.wasm"));
+                assert_eq!(image.debug_id, wasm_id);
+            }
+            image => panic!("expected wasm image, got {image:?}"),
+        }
+    }
+
+    #[test]
+    fn sentry_enabled_requires_consent_and_debug_override() {
+        assert!(!sentry_enabled(false, None));
+        assert!(!sentry_enabled(false, Some("1")));
+        assert_eq!(sentry_enabled(true, None), !cfg!(debug_assertions));
+        assert_eq!(sentry_enabled(true, Some("0")), !cfg!(debug_assertions));
+        assert!(sentry_enabled(true, Some("1")));
+    }
 }

@@ -1,4 +1,5 @@
 @import "@pickforge/brand/tokens.css";
+@import "@pickforge/brand/chrome.css";
 /* Fonts are embedded as base64 (fonts-data.css) so they load in the WebKitGTK
  * webview, which rejects the plain network @font-face fetch. Regenerate with
  * `npm run fonts:data`. */
@@ -63,17 +64,6 @@ textarea {
   font-size: var(--pf-size-mono);
   font-variant-numeric: tabular-nums;
   color: var(--pf-text-med);
-}
-
-/* Uppercase, wide-tracked section label (MonoEyebrow). */
-.pf-eyebrow {
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-eyebrow);
-  font-weight: var(--pf-weight-medium);
-  letter-spacing: var(--pf-tracking-eyebrow);
-  text-transform: uppercase;
-  color: var(--pf-text-low);
-  margin: 0;
 }
 
 :focus-visible {

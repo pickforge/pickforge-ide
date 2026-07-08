@@ -120,6 +120,7 @@ const MOCK_USAGE_SUMMARY = [
   { provider: "claudeCode", model: "claude-haiku-4-5", chats: 2, turns: 14, inputTokens: 48210, cachedInputTokens: 21050, outputTokens: 9640, costUsd: 0.31 },
   { provider: "codex", model: "gpt-5.3-codex-spark", chats: 1, turns: null, inputTokens: 22400, cachedInputTokens: 8000, outputTokens: 4120, costUsd: 0 },
 ];
+let MOCK_TELEMETRY = { crash_reports: true };
 
 const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   orchestra_task_upsert: (a) => {
@@ -140,6 +141,11 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   projects_list: () => SAMPLE_PROJECTS,
   chats_list: (a) => chatsForProject(a.projectRoot),
   settings_get: () => null,
+  telemetry_get: () => MOCK_TELEMETRY,
+  telemetry_set: (a) => {
+    MOCK_TELEMETRY = { crash_reports: a.crashReports !== false };
+    return null;
+  },
   detect_binaries: (a) => (a.names as string[]).map(() => true),
   target_detect: () => ({ targetId: "flutter", displayName: "Flutter", confidence: "exact", priority: 100, capabilities: ["detect", "launch", "hotReload", "captureScreenshot", "streamLogs", "inspectSelection"] }),
   adb_list_devices: () => [{ serial: "emulator-5554", state: "device", model: "Pixel_10" }],

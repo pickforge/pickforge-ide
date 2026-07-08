@@ -73,6 +73,23 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
+      - name: Upload debug symbols to Sentry
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: pickforge
+          SENTRY_PROJECT: pickforge
+        run: |
+          if [[ -z "${SENTRY_AUTH_TOKEN:-}" ]]; then
+            echo "SENTRY_AUTH_TOKEN not set; skipping"
+            exit 0
+          fi
+          version="$(node -e "console.log(require('./src-tauri/tauri.conf.json').version)")"
+          release="pickforge@$version"
+          npx --yes @sentry/cli@2 debug-files upload --include-sources target
+          npx --yes @sentry/cli@2 sourcemaps upload --release "$release" dist
+
   # linuxdeploy bundles the Ubuntu build host's libwayland into the AppImage,
   # which breaks EGL display creation on hosts with newer Mesa/Wayland (white
   # window, "EGL_BAD_PARAMETER"). libwayland must come from the host. The

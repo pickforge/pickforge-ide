@@ -36,6 +36,6 @@ export default defineConfig({
   build: {
     target: "es2021",
     minify: "esbuild",
-    sourcemap: false,
+    sourcemap: true,
   },
 });

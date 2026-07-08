@@ -10,7 +10,11 @@ It works across **Flutter, React Native (Android), native Android, iOS, and web*
 
 PickForge builds the app. PickLab lets agents see, run, and test it. PickArena measures the results.
 
-Local-first. Open source. Built for people who ship. You bring your own agent credentials, and your source stays on your machine — the only things that leave are a startup update check against GitHub Releases (version metadata) and the context you explicitly forge into a third-party agent CLI, which then runs under your own credentials.
+Local-first. Open source. Built for people who ship. You bring your own agent credentials, and your source stays on your machine — the only things that leave are a startup update check against GitHub Releases (version metadata), anonymous crash reports unless you turn them off, and the context you explicitly forge into a third-party agent CLI, which then runs under your own credentials.
+
+## Crash reports
+
+Release builds send anonymous crash and error reports by default so we can fix real failures. Reports can include crash stack traces, error messages, OS details, app version, and loaded system libraries; hostnames and breadcrumbs are stripped. PickForge never intentionally adds file contents, terminal data, prompts, screenshots, or forged context, but native crash dumps include a process-memory snapshot that may contain fragments of data in memory at crash time, including terminal or prompt text. Error messages can occasionally reference file paths. Turn this off in **Settings → Crash reports**; the change applies after restart. Dev builds keep crash reporting disabled unless `PICKFORGE_SENTRY_DEBUG=1` is set.
 
 ## Install
 

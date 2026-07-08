@@ -11,6 +11,7 @@ mod mirror_commands;
 mod picklab_commands;
 mod process_commands;
 mod pty_commands;
+mod telemetry_commands;
 mod vm_commands;
 mod watch_commands;
 
@@ -18,9 +19,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use pickforge_core::{
-    agents::AgentChatManager, pickforge_home, CdpClient, Database, PtyManager, VmServiceClient,
+    agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
+    PtyManager, VmServiceClient,
 };
 use tauri::{path::BaseDirectory, Manager};
+
+const SENTRY_DSN: &str =
+    "https://14e43b283ec20c3174df7b690d812d1c@o4511699702317056.ingest.us.sentry.io/4511699813728261";
 
 fn open_database() -> Arc<Database> {
     let path = pickforge_home(None)
@@ -46,6 +51,43 @@ fn resolve_agent_app_root(app: &tauri::App) -> PathBuf {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    let release = format!(
+        "pickforge@{}",
+        context
+            .config()
+            .version
+            .clone()
+            .expect("version in tauri.conf.json")
+    );
+    let consent = load_telemetry_config().crash_reports;
+    let enabled = consent
+        && (!cfg!(debug_assertions)
+            || std::env::var("PICKFORGE_SENTRY_DEBUG").ok().as_deref() == Some("1"));
+    let client = sentry::init((
+        if enabled { SENTRY_DSN } else { "" },
+        sentry::ClientOptions {
+            release: Some(release.into()),
+            before_send: Some(Arc::new(|mut event| {
+                event.server_name = None;
+                event.breadcrumbs = Default::default();
+                Some(event)
+            })),
+            ..Default::default()
+        },
+    ));
+    let _minidump_guard = if enabled {
+        match tauri_plugin_sentry::minidump::init(&client) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                eprintln!("failed to initialize sentry minidump handler: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Linux/Wayland: force the window's app_id to the bundle identifier. GTK derives
     // xdg_toplevel.set_app_id from g_get_prgname(), which defaults to the binary name
     // ("pickforge-tauri") — `enableGTKAppId` does NOT override it under WebKitGTK. This
@@ -59,6 +101,11 @@ pub fn run() {
     }
 
     let builder = tauri::Builder::default()
+        .plugin(if enabled {
+            tauri_plugin_sentry::init(&client)
+        } else {
+            tauri_plugin_sentry::init_with_no_injection(&client)
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init());
 
@@ -149,6 +196,8 @@ pub fn run() {
             db_commands::agent_usage_summary,
             db_commands::settings_get,
             db_commands::settings_upsert,
+            telemetry_commands::telemetry_get,
+            telemetry_commands::telemetry_set,
             db_commands::picks_list,
             db_commands::pick_insert,
             db_commands::runs_list,
@@ -211,6 +260,6 @@ pub fn run() {
             mcp_commands::mcp_update_swarm_run,
             mcp_commands::mcp_swarm_status,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running pickforge");
 }

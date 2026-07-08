@@ -14,6 +14,9 @@ reset this file.
   caches, and disable known stale PickForge launchers in the user's app menu.
 - Linux curl installs no longer execute the downloaded AppImage during install
   just to populate the app menu icon.
+- Fixed the white/blank window on distros with recent Mesa/Wayland (Arch,
+  CachyOS, Fedora): the AppImage no longer bundles the build host's
+  libwayland, which crashed WebKit's EGL setup (#122).
 
 ## Internal/release changes
 
@@ -24,6 +27,8 @@ reset this file.
   cleanup, native `.deb` selection, and zypper `.rpm` installs.
 - Installer smoke tests now run in CI, and GitHub tokens are only sent to
   official GitHub API URLs.
+- Release CI now repairs the uploaded AppImage after the build: strips
+  bundled `libwayland-*`, repacks, re-signs, and patches `latest.json`.
 
 ## Validation
 

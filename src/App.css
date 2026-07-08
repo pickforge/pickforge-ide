@@ -5,113 +5,11 @@
   background: var(--pf-surface);
 }
 
-/* Resize affordance for the frameless window (decorations are off, so the
- * compositor no longer draws resize borders or cursors). Thin transparent zones
- * pinned to each edge/corner restore the resize cursor and start a native
- * resize-drag on press. Corners sit above edges so diagonal resize wins where
- * they overlap. */
-.pf-resize {
-  position: fixed;
-  z-index: 1000;
-}
-.pf-resize--n { top: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
-.pf-resize--s { bottom: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
-.pf-resize--w { top: 0; bottom: 0; left: 0; width: 4px; cursor: ew-resize; }
-.pf-resize--e { top: 0; bottom: 0; right: 0; width: 4px; cursor: ew-resize; }
-.pf-resize--nw { top: 0; left: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 1001; }
-.pf-resize--ne { top: 0; right: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 1001; }
-.pf-resize--sw { bottom: 0; left: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 1001; }
-.pf-resize--se { bottom: 0; right: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 1001; }
-
-/* ---- Title bar (custom window chrome) ----
- * One draggable row that replaces the native titlebar AND the old app header:
- * brand (left) · nav (center) · status + window controls (right). The whole bar
- * carries data-tauri-drag-region; interactive children opt out by omitting it.
- * Three-column grid keeps the nav optically centered regardless of side widths. */
-.pf-titlebar {
-  display: grid;
-  /* minmax(0, …) lets the side tracks shrink below their content's min-width so
-   * the brand/status never force the centered nav out of position; the brand
-   * yields progressively (version, then wordmark) via the breakpoints below. */
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  height: var(--pf-titlebar-h);
-  padding: 0 var(--pf-space-sm) 0 var(--pf-space-lg);
-  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
-  flex: none;
-  user-select: none;
-}
-/* macOS: controls sit on the LEFT; pad the brand so it clears them and tighten
- * the right padding since nothing lives in the far-right slot there. */
-.pf-titlebar--controls-left {
-  padding: 0 var(--pf-space-lg) 0 var(--pf-space-sm);
-}
-/* macOS also parks the brand on the RIGHT (controls own the left), so give the
- * left edge a little breathing room past the traffic-light controls. */
-.pf-titlebar--brand-right {
-  padding: 0 var(--pf-space-lg) 0 var(--pf-space-md);
-}
-.pf-titlebar-left {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pf-space-md);
-  justify-self: start;
-  min-width: 0;
-}
-.pf-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pf-space-md);
-  min-width: 0;
-  overflow: hidden;
-}
-/* Update badge and mark must never be the thing that gets clipped — the brand
- * yields its text first (rules below), not its actionable/identity glyphs. */
-.pf-brand .pf-mark,
-.pf-update-badge {
-  flex: none;
-}
-.pf-titlebar-right {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pf-space-md);
-  justify-self: end;
-  min-width: 0;
-}
-/* The core brand glyph: a hairline selection frame with its top-right corner
- * replaced by a glowing ember dot. */
-.pf-mark {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  border: var(--pf-bracket-width) solid var(--pf-text-med);
-  border-radius: 4px;
-}
-.pf-mark::after {
-  content: "";
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--pf-radius-pill);
-  background: var(--pf-ember);
-  box-shadow: 0 0 9px 0 var(--pf-ember-glow), 0 0 0 2px var(--pf-surface);
-}
-.pf-wordmark {
-  font-family: var(--pf-font-sans);
-  font-weight: var(--pf-weight-bold);
-  font-size: var(--pf-size-title-lg);
-  letter-spacing: -0.02em;
-  color: var(--pf-text-hi);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .pf-update-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--pf-space-xs);
+  flex: none;
   border: var(--pf-hairline-width) solid var(--pf-ember);
   border-radius: var(--pf-radius-pill);
   background: color-mix(in srgb, var(--pf-ember) 12%, transparent);
@@ -149,23 +47,8 @@
   padding: 2px var(--pf-space-sm);
   user-select: none;
 }
-/* With decorations off, Tauri only starts a drag from the exact element that
- * carries data-tauri-drag-region — not its descendants. The non-interactive
- * title-bar labels therefore swallow clicks that should move the window. Let
- * them fall through to the draggable parent. Real controls (.pf-update-badge,
- * .pf-nav-btn, the window controls) keep their pointer events. */
-.pf-titlebar .pf-mark,
-.pf-titlebar .pf-wordmark,
-.pf-brand .pf-eyebrow-row,
-.pf-titlebar .pf-dev-badge,
-.pf-titlebar-right .pf-pill {
+.pf-titlebar .pf-dev-badge {
   pointer-events: none;
-}
-/* …except the dot-only pill: with its label hidden, the native `title` tooltip
- * is the only way to read the shell/project state, so it must receive hover.
- * The rest of the bar still drags. */
-.pf-titlebar-right .pf-pill--dot {
-  pointer-events: auto;
 }
 /* Narrowing window: the brand sheds chrome in stages so it's already small
  * BEFORE its grid track shrinks enough to crowd the centered nav — first the
@@ -289,32 +172,6 @@
 }
 
 /* ---- bottom status bar ---- */
-.pf-statusbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--pf-space-md);
-  height: 24px;
-  padding: 0 var(--pf-space-md);
-  flex: none;
-  border-top: var(--pf-hairline-width) solid var(--pf-hairline);
-  background: var(--pf-surface-1);
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-eyebrow);
-  letter-spacing: 0.04em;
-  color: var(--pf-text-low);
-}
-.pf-statusbar-left {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pf-space-sm);
-  min-width: 0;
-}
-.pf-statusbar-item {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* Quick show/hide toggles for the side docks (arrow points the move direction). */
 .pf-statusbar-dock {
   display: inline-flex;
@@ -333,12 +190,6 @@
 }
 .pf-statusbar-dock.active {
   color: var(--pf-text-med);
-}
-.pf-statusbar-right {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--pf-space-sm);
-  flex: none;
 }
 .pf-statusbar-zoom {
   border: none;

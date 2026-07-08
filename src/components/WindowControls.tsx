@@ -3,7 +3,6 @@
 // snapshots are unaffected. Every Tauri call is dynamically imported and guarded.
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { hostPlatform } from "../lib/platform";
-import "./WindowControls.css";
 
 const MAXIMIZED_CHECK_DELAY_MS = 120;
 

@@ -27,4 +27,5 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = false
+debug = "line-tables-only"
 panic = "abort"

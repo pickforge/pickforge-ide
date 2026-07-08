@@ -15,10 +15,16 @@ issue for security reports.
 ## Scope
 
 PickForge runs locally and keeps your source on your machine — it never uploads
-your code on its own. Two deliberate exceptions are worth naming:
+your code on its own. Three deliberate exceptions are worth naming:
 
 - On startup it checks GitHub Releases for an update (version metadata only — no
   source leaves your machine).
+- Release builds send anonymous crash and error reports by default. Reports can
+  include crash stack traces, error messages, OS details, app version, loaded
+  system libraries, and native crash dumps. PickForge strips hostnames and
+  breadcrumbs, and never intentionally adds file contents or terminal data, but
+  crash dumps can contain fragments of process memory at crash time. You can
+  turn this off in Settings → Crash reports.
 - When you explicitly forge context to an agent, it launches a third-party CLI
   (Claude Code, Codex, OpenCode, …) with the widget context and screenshots you
   selected; that agent then talks to its own provider under your credentials.

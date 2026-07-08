@@ -71,6 +71,14 @@ Pick an element, forge its context to the agent, let it edit, hot-reload (Flutte
   <img src="assets/branding/pickforge-workbench-mock.svg" alt="PICKFORGE · WORKBENCH — emulator with picked widget, widget context, agent terminal, and the pick-forge-edit-reload loop" width="900">
 </p>
 
+## Screenshots
+
+Real capture of the workbench in the studio chrome (frameless bracket titlebar, unified status bar) — the same chrome now shared by every Pickforge Studio app via `@pickforge/brand`.
+
+<p align="center">
+  <img src="assets/screenshots/pickforge-workbench.png" alt="PickForge workbench — bracket titlebar, source control, inspector, agent terminal" width="900">
+</p>
+
 ## Where it writes your context
 
 By default PickForge keeps each project's chats, runs, screenshots, and context

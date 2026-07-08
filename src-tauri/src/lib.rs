@@ -49,6 +49,33 @@ fn resolve_agent_app_root(app: &tauri::App) -> PathBuf {
     }
 }
 
+fn file_name_only(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn strip_debug_image_paths(event: &mut sentry::protocol::Event<'_>) {
+    for image in &mut event.debug_meta.to_mut().images {
+        match image {
+            sentry::protocol::DebugImage::Symbolic(image) => {
+                image.name = file_name_only(&image.name);
+                if let Some(debug_file) = &mut image.debug_file {
+                    *debug_file = file_name_only(debug_file);
+                }
+            }
+            sentry::protocol::DebugImage::Wasm(image) => {
+                image.code_file = file_name_only(&image.code_file);
+                if let Some(debug_file) = &mut image.debug_file {
+                    *debug_file = file_name_only(debug_file);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
@@ -71,6 +98,7 @@ pub fn run() {
             before_send: Some(Arc::new(|mut event| {
                 event.server_name = None;
                 event.breadcrumbs = Default::default();
+                strip_debug_image_paths(&mut event);
                 Some(event)
             })),
             ..Default::default()

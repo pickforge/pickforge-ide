@@ -43,7 +43,9 @@ fn telemetry_path() -> Result<PathBuf> {
 
 fn load_telemetry_config_at(path: &Path) -> TelemetryConfig {
     match fs::read_to_string(path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or(TelemetryConfig {
+            crash_reports: false,
+        }),
         Err(error) if error.kind() == ErrorKind::NotFound => TelemetryConfig::default(),
         Err(_) => TelemetryConfig {
             crash_reports: false,
@@ -150,11 +152,16 @@ mod tests {
     }
 
     #[test]
-    fn malformed_json_defaults() {
+    fn malformed_json_disables_crash_reports() {
         let path = temp_file("malformed");
         fs::write(&path, b"{").unwrap();
 
-        assert_eq!(load_telemetry_config_at(&path), TelemetryConfig::default());
+        assert_eq!(
+            load_telemetry_config_at(&path),
+            TelemetryConfig {
+                crash_reports: false,
+            }
+        );
 
         fs::remove_dir_all(path.parent().unwrap()).ok();
     }

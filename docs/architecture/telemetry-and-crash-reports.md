@@ -8,8 +8,7 @@ Sentry disabled unless `PICKFORGE_SENTRY_DEBUG=1` is set for local verification.
 
 - Settings → Crash reports writes `~/.pickforge/telemetry.json`.
 - Missing config defaults to `{"crash_reports": true}`.
-- Malformed JSON defaults to `{"crash_reports": true}`.
-- Other read failures disable crash reports for that run.
+- Malformed JSON and other read failures disable crash reports for that run.
 - Turning the setting off applies after restart.
 
 ## Crash Provider

@@ -39,3 +39,6 @@ Quick-launch chips type agent commands pinned to fast models by default
 (Claude → Haiku 4.5, Codex → GPT-5.3 Codex Spark) via
 `src/lib/agentModels.ts` and the Settings → "Agent models" picker. Prefer these
 (and GPT-5.4 Mini) for testing/dogfooding to keep runs cheap.
+## Pickforge workspace policy
+
+Read `../AGENTS.md` (or `/home/dev/Projects/Pickforge/AGENTS.md`) before substantial work. Use the `plan-issue` workflow so GitHub Issues stay the phone-visible source of truth for plan/progress, PR links, and deferred follow-ups.

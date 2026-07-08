@@ -72,3 +72,84 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+  # linuxdeploy bundles the Ubuntu build host's libwayland into the AppImage,
+  # which breaks EGL display creation on hosts with newer Mesa/Wayland (white
+  # window, "EGL_BAD_PARAMETER"). libwayland must come from the host. The
+  # tauri-action step above builds, signs, and uploads in one shot, so repair
+  # the uploaded artifact afterwards: strip the libs, repack, re-sign, and
+  # patch latest.json. See tauri-apps/tauri#11988.
+  fix-linux-appimage:
+    name: Strip bundled libwayland from AppImage
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Repair AppImage on the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "No release found for $RELEASE_TAG; nothing to repair"
+            exit 0
+          fi
+          mkdir release-assets
+          gh release download "$RELEASE_TAG" --dir release-assets \
+            --pattern '*.AppImage' --pattern '*.AppImage.sig' --pattern latest.json
+          shopt -s nullglob
+          appimages=(release-assets/*.AppImage)
+          if [[ ${#appimages[@]} -ne 1 ]]; then
+            echo "Expected exactly one AppImage on the release, found ${#appimages[@]}" >&2
+            exit 1
+          fi
+          appimage="${appimages[0]}"
+          chmod +x "$appimage"
+          workdir="$(mktemp -d)"
+          offset="$("$appimage" --appimage-offset)"
+          tail -c +"$((offset + 1))" "$appimage" >"$workdir/payload.squashfs"
+          unsquashfs -q -d "$workdir/AppDir" "$workdir/payload.squashfs"
+          libs=("$workdir"/AppDir/usr/lib/libwayland-*.so*)
+          if [[ ${#libs[@]} -eq 0 ]]; then
+            echo "$appimage: no bundled libwayland, nothing to repair"
+            exit 0
+          fi
+          printf "%s: removing %s\n" "$appimage" "${libs[*]##*/}"
+          rm -- "${libs[@]}"
+          comp="$(unsquashfs -s "$workdir/payload.squashfs" | awk '/^Compression/ {print $2}')"
+          head -c "$offset" "$appimage" >"$workdir/runtime"
+          mksquashfs "$workdir/AppDir" "$workdir/repacked.squashfs" \
+            -quiet -root-owned -noappend -comp "${comp:-zstd}" -b 131072
+          if unsquashfs -l "$workdir/repacked.squashfs" | grep -q libwayland-; then
+            echo "$appimage: libwayland still present after repack" >&2
+            exit 1
+          fi
+          cat "$workdir/runtime" "$workdir/repacked.squashfs" >"$appimage"
+          chmod +x "$appimage"
+          if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            rm -f "$appimage.sig"
+            bun run tauri signer sign "$appimage"
+            test -s "$appimage.sig"
+            if [[ -f release-assets/latest.json ]]; then
+              jq --arg sig "$(cat "$appimage.sig")" --arg name "$(basename "$appimage")" \
+                '.platforms |= with_entries(
+                   if (.value.url | endswith("/" + $name))
+                   then .value.signature = $sig
+                   else . end)' \
+                release-assets/latest.json >"$workdir/latest.json"
+              mv "$workdir/latest.json" release-assets/latest.json
+            fi
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber

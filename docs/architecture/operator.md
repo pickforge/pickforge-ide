@@ -21,7 +21,7 @@ contract to v2 for device/run execution.
 
 There are two JSON shapes at the routing boundary:
 
-- A router proposal is `{ action, confidence }` only. This is the wire message
+- A router proposal is `{ action, confidence, projectRef? }` only. This is the wire message
   any router may produce: deterministic local routing, BYO routing, or hosted
   routing. Its concrete type lands in M1/M2.5.
 - A composed intent is the full `OperatorIntent` envelope. The local composer
@@ -32,6 +32,48 @@ stored intents: audit rows, local preview state, and later remote-host
 re-validation per #144. Router output must never be fed to those parsers
 directly. `confidence` is advisory for display and preview only; policy must
 never use it to bypass approval, because a router could set it to `1.0`.
+
+M2.5 adds `projectRef` to router proposals as an optional opaque natural-language
+project hint. The local composer copies it into the envelope and local dispatch
+resolves it exactly like chat references inside actions; routers still cannot
+set `id`, `provenance`, approval, cost, or any execution policy field.
+
+## Routing Ladder
+
+Typed commands first go through the deterministic parser. When that parser says
+`needsRouter`, a configured BYO router may propose one strict action locally via
+Claude Code, Codex, or Ollama. Hosted routing (#133) is the later fallback for
+eligible Pro users. If each step is unconfigured, unclear, invalid, or errors,
+the dock returns the honest "didn't understand" state and nothing is dispatched.
+
+## BYO Router Setup
+
+BYO routing is dark behind the `operator` flag. Settings -> Operator router lets
+the user choose Off, Claude Code, Codex, or Ollama and enter the model id for
+that backend; Ollama defaults to `qwen2.5:3b` as a small local placeholder
+recommendation, not a guarantee that the model is installed. Claude Code uses
+`claude -p ... --output-format json --safe-mode --strict-mcp-config --tools ""
+--permission-mode plan --no-session-persistence --model <model>` from a fresh
+empty temp directory. Codex uses `codex exec --json --skip-git-repo-check --cd
+<empty-dir> --sandbox read-only -c approval_policy="never" --ephemeral
+--ignore-rules --ignore-user-config -m <model>` against that same isolated
+directory. Ollama posts to fixed loopback `127.0.0.1:11434/api/generate`.
+Expected latency depends on the backend and model: local small Ollama models
+should be seconds-scale, CLI backends include process startup and provider
+latency.
+
+Manual parity checks are available outside CI:
+
+```sh
+PICKFORGE_ROUTER_CLAUDE_MODEL=claude-haiku-4-5 \
+PICKFORGE_ROUTER_CODEX_MODEL=gpt-5.5 \
+PICKFORGE_ROUTER_OLLAMA_MODEL=qwen2.5:3b \
+node scripts/router-parity.mjs
+```
+
+Set only the backends you want to test. The harness runs one command per action
+family, prints each backend's proposal JSON, and summarizes whether proposed
+action names match.
 
 ## Autonomy Modes
 
@@ -67,6 +109,10 @@ Cross-cutting rules:
 | Absolute paths, device serials, hostnames | Never leave through routing payloads. | Never leave through routing payloads. | Never leave through routing payloads. This is enforced by local policy/redaction at the routing layer, not by the intent schema. |
 | Audio | Never leaves. Voice is transcribed locally by `whisper.cpp` in the free path. | Never leaves. Voice is transcribed locally by `whisper.cpp` in the free path. | Never leaves by default. Pro Realtime voice in M6 is the explicit, flagged exception. |
 | Intent JSON, approvals, run outcomes | Local audit store only. | Local audit store only. | Local audit store only. Server-side hosted mode records billing metadata per routed command: action name, token counts, and cost, never payload fields. The command text the router saw is processed for routing and is not retained in the ledger. |
+
+PickForge never attaches collected identifiers such as paths, serials, or
+hostnames to routing requests; the user's own typed command text is sent
+verbatim to the provider they configured.
 
 Local-only mode must remain fully functional. With hosted routing disabled, typed
 commands and local dictation still work through the deterministic parser.

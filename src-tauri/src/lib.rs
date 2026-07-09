@@ -8,6 +8,7 @@ mod ios_commands;
 mod logcat_commands;
 mod mcp_commands;
 mod mirror_commands;
+mod operator_commands;
 mod picklab_commands;
 mod process_commands;
 mod pty_commands;
@@ -264,6 +265,7 @@ pub fn run() {
             db_commands::operator_audit_insert,
             db_commands::operator_audit_update,
             db_commands::operator_audit_list,
+            operator_commands::operator_route_raw,
             db_commands::settings_get,
             db_commands::settings_upsert,
             telemetry_commands::telemetry_get,

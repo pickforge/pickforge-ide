@@ -18,6 +18,7 @@ import {
   submitOperatorCommand,
   type DockView,
 } from "../../stores/operatorDock";
+import { previewPayloadLines } from "./previewPayload";
 import "./OperatorDock.css";
 
 const PLACEHOLDER = "operator command — try: open project <name>";
@@ -38,6 +39,11 @@ function statusLabel(status: string): string {
     default:
       return status;
   }
+}
+
+function confidenceLabel(value?: number): string | null {
+  if (value === undefined || value >= 1) return null;
+  return `${Math.round(value * 100)}% confidence`;
 }
 
 export function OperatorDock() {
@@ -109,9 +115,18 @@ export function OperatorDock() {
                 <div class="pf-op-note">
                   <span class="pf-op-note-key">router</span>
                   <span class="pf-op-note-body">
-                    needs the router model — BYO routing is not wired yet (#141).
+                    needs a router model. Configure Operator router in Settings.
                     <span class="pf-op-note-reason"> {nr().reason}</span>
                   </span>
+                </div>
+              )}
+            </Match>
+
+            <Match when={asView("validationError")}>
+              {(err) => (
+                <div class="pf-op-note pf-op-note--error">
+                  <span class="pf-op-note-key">parser</span>
+                  <span class="pf-op-note-body">{err().reason}</span>
                 </div>
               )}
             </Match>
@@ -119,7 +134,24 @@ export function OperatorDock() {
             <Match when={asView("preview")}>
               {(p) => (
                 <div class="pf-op-preview">
-                  <div class="pf-op-preview-summary">{p().summary}</div>
+                  <div class="pf-op-preview-summary">
+                    {p().summary}
+                    <Show when={confidenceLabel(p().confidence)}>
+                      {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
+                    </Show>
+                  </div>
+                  {(() => {
+                    const lines = previewPayloadLines(p().intent);
+                    return (
+                      <Show when={lines.length > 0}>
+                        <div class="pf-op-preview-payload">
+                          <For each={lines}>
+                            {(line) => <div class="pf-op-preview-payload-line">{line}</div>}
+                          </For>
+                        </div>
+                      </Show>
+                    );
+                  })()}
                   <div class="pf-op-actions">
                     <EmberButton
                       label="Confirm"

@@ -254,17 +254,20 @@ describe("parseCommand", () => {
       kind: "needsRouter",
       reason: "ambiguous between project/chat",
     });
-    expect(parseCommand("start scout swarm of 6 map the repo")).toEqual({
-      kind: "needsRouter",
-      reason: "swarm count must be 1-5",
-    });
-    expect(parseCommand("swarm review 0x check tests")).toEqual({
-      kind: "needsRouter",
-      reason: "swarm count must be 1-5",
-    });
     expect(parseCommand("make it better")).toEqual({
       kind: "needsRouter",
       reason: "no deterministic match",
+    });
+  });
+
+  it("surfaces hard validation errors without routing", () => {
+    expect(parseCommand("start scout swarm of 6 map the repo")).toEqual({
+      kind: "validationError",
+      reason: "swarm count must be 1-5",
+    });
+    expect(parseCommand("swarm review 0x check tests")).toEqual({
+      kind: "validationError",
+      reason: "swarm count must be 1-5",
     });
   });
 

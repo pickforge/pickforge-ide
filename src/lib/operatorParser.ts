@@ -7,11 +7,13 @@ import {
 export type ParseResult =
   | { kind: "intent"; intent: OperatorIntent }
   | { kind: "needsRouter"; reason: string }
+  | { kind: "validationError"; reason: string }
   | { kind: "empty" };
 
 type RuleResult =
   | { action: OperatorAction; projectRef: string | null }
-  | { needsRouter: string };
+  | { needsRouter: string }
+  | { validationError: string };
 
 type CommandRule = {
   match(input: string): RuleResult | null;
@@ -52,7 +54,7 @@ function compose(action: OperatorAction, projectRef: string | null): ParseResult
     action,
   }));
 
-  if (!parsed.ok) return { kind: "needsRouter", reason: parsed.error };
+  if (!parsed.ok) return { kind: "validationError", reason: parsed.error };
   return { kind: "intent", intent: parsed.intent };
 }
 
@@ -127,7 +129,7 @@ const rules: CommandRule[] = [
       const goal = nonEmpty(match?.[3]);
       if ((mode !== "scout" && mode !== "review") || !goal) return null;
       const count = parseCount(match?.[2]);
-      if (count === "invalid") return { needsRouter: "swarm count must be 1-5" };
+      if (count === "invalid") return { validationError: "swarm count must be 1-5" };
       return {
         action: { action: "startSwarm", mode, count, goal, provider: "mixed" },
         projectRef: null,
@@ -141,7 +143,7 @@ const rules: CommandRule[] = [
       const goal = nonEmpty(match?.[3]);
       if ((mode !== "scout" && mode !== "review") || !goal) return null;
       const count = parseCount(match?.[2]);
-      if (count === "invalid") return { needsRouter: "swarm count must be 1-5" };
+      if (count === "invalid") return { validationError: "swarm count must be 1-5" };
       return {
         action: { action: "startSwarm", mode, count, goal, provider: "mixed" },
         projectRef: null,
@@ -246,6 +248,9 @@ export function parseCommand(input: string): ParseResult {
     if (!result) continue;
     if ("needsRouter" in result) {
       return { kind: "needsRouter", reason: result.needsRouter };
+    }
+    if ("validationError" in result) {
+      return { kind: "validationError", reason: result.validationError };
     }
     return compose(result.action, result.projectRef);
   }

@@ -14,6 +14,7 @@ reset this file.
 
 ## Internal/release changes
 
+- Release CI now caches Rust builds (`Swatinem/rust-cache`), and ci.yml no longer compiles the test suite twice.
 - Migrated release CI to the shared `@pickforge/tauri-release` tooling and draft-only `latest.json` finalization.
 - Added the `pickforged` daemon foundation with hashed-token pairing auth.
 - Landed the per-project remote host backend for bindings, SSH probing, and remote detection; UI follows.

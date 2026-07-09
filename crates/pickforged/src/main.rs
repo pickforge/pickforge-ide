@@ -3,9 +3,9 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use pickforge_core::{
-    parse_listener, remote_auth_store_path, spawn_remote_http_server, tailscale_serve_disable,
-    tailscale_serve_enable, tailscale_ssh_set, tailscale_status, DaemonConfig, DaemonListener,
-    DaemonStatus, PairingCode, RemoteAuthStore, RemoteAuthStoreSnapshot, RemoteHostDaemon,
+    parse_listener, remote_auth_store_path, spawn_remote_http_server, tailscale_ssh_set,
+    tailscale_status, DaemonConfig, DaemonListener, DaemonStatus, PairingCode, RemoteAuthStore,
+    RemoteAuthStoreSnapshot, RemoteHostDaemon,
 };
 use serde_json::json;
 
@@ -34,8 +34,6 @@ async fn run() -> Result<(), String> {
         "clients" => print_clients(),
         "revoke" => revoke_client(&args[1..]),
         "tailscale-status" => print_json(&tailscale_status()),
-        "tailscale-serve" => tailscale_serve(&args[1..]),
-        "tailscale-serve-off" => tailscale_serve_off(&args[1..]),
         "tailscale-ssh-on" => print_json(&tailscale_ssh_set(true)?),
         "tailscale-ssh-off" => print_json(&tailscale_ssh_set(false)?),
         other => Err(format!("unknown command '{other}'")),
@@ -51,8 +49,6 @@ fn print_help() {
   clients
   revoke <client-id>
   tailscale-status
-  tailscale-serve --listen 127.0.0.1:4747 [--https-port 443]
-  tailscale-serve-off [--https-port 443]
   tailscale-ssh-on
   tailscale-ssh-off"
     );
@@ -142,17 +138,6 @@ fn revoke_client_at(path: &Path, client_id: &str) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-fn tailscale_serve(args: &[String]) -> Result<(), String> {
-    let listener = listener_arg(args)?.ok_or("missing --listen <loopback-host:port>")?;
-    let https_port = port_arg(args, "--https-port")?.unwrap_or(443);
-    print_json(&tailscale_serve_enable(&listener, https_port)?)
-}
-
-fn tailscale_serve_off(args: &[String]) -> Result<(), String> {
-    let https_port = port_arg(args, "--https-port")?.unwrap_or(443);
-    print_json(&tailscale_serve_disable(https_port)?)
-}
-
 fn listener_arg(args: &[String]) -> Result<Option<DaemonListener>, String> {
     match value_arg(args, "--listen") {
         Some(raw) => parse_listener(&raw)
@@ -169,16 +154,6 @@ fn numeric_arg(args: &[String], name: &str) -> Result<Option<i64>, String> {
     raw.parse::<i64>()
         .map(Some)
         .map_err(|_| format!("{name} must be a number"))
-}
-
-fn port_arg(args: &[String], name: &str) -> Result<Option<u16>, String> {
-    let Some(raw) = numeric_arg(args, name)? else {
-        return Ok(None);
-    };
-    if !(1..=u16::MAX as i64).contains(&raw) {
-        return Err(format!("{name} must be 1-65535"));
-    }
-    Ok(Some(raw as u16))
 }
 
 fn value_arg(args: &[String], name: &str) -> Option<String> {
@@ -225,8 +200,6 @@ mod tests {
             "127.0.0.1:4747".to_string(),
             "--ttl-ms".to_string(),
             "60000".to_string(),
-            "--https-port".to_string(),
-            "443".to_string(),
         ];
 
         assert_eq!(
@@ -234,7 +207,6 @@ mod tests {
             Some("127.0.0.1:4747")
         );
         assert_eq!(numeric_arg(&args, "--ttl-ms").unwrap(), Some(60_000));
-        assert_eq!(port_arg(&args, "--https-port").unwrap(), Some(443));
         assert!(matches!(
             listener_arg(&args).unwrap(),
             Some(DaemonListener::Loopback { port: 4747, .. })
@@ -244,12 +216,6 @@ mod tests {
         assert_eq!(
             numeric_arg(&bad_number, "--ttl-ms").unwrap_err(),
             "--ttl-ms must be a number"
-        );
-
-        let bad_port = vec!["--https-port".to_string(), "0".to_string()];
-        assert_eq!(
-            port_arg(&bad_port, "--https-port").unwrap_err(),
-            "--https-port must be 1-65535"
         );
 
         let wildcard = vec!["--listen".to_string(), "0.0.0.0:4747".to_string()];
@@ -306,15 +272,4 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
-    #[test]
-    fn tailscale_commands_reject_invalid_args_before_shelling_out() {
-        let wildcard = vec!["--listen".to_string(), "0.0.0.0:4747".to_string()];
-        assert!(tailscale_serve(&wildcard).is_err());
-
-        let bad_port = vec!["--https-port".to_string(), "0".to_string()];
-        assert_eq!(
-            tailscale_serve_off(&bad_port).unwrap_err(),
-            "--https-port must be 1-65535"
-        );
-    }
 }

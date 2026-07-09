@@ -16,7 +16,6 @@ use super::protocol::{
     RemoteFrame, RemoteRequest, RemoteResponse, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME,
     REMOTE_PROTOCOL_VERSION,
 };
-use super::tailscale::TAILSCALE_SERVE_PATH;
 
 const REMOTE_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const REMOTE_HTTP_MAX_CONNECTIONS: usize = 64;
@@ -153,8 +152,7 @@ async fn handle_connection(
         }
     };
 
-    let path = local_remote_path(&request.path);
-    match (request.method.as_str(), path) {
+    match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/status") => {
             let body = serde_json::to_vec(&public_status(&state.daemon, now_ms()))
                 .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
@@ -323,20 +321,6 @@ fn auth_error_code(err: &super::auth::RemoteAuthError, default_code: &'static st
             "authStoreError"
         }
         _ => default_code,
-    }
-}
-
-fn local_remote_path(path: &str) -> &str {
-    if let Some(rest) = path.strip_prefix(TAILSCALE_SERVE_PATH) {
-        if rest.is_empty() {
-            "/"
-        } else if rest.starts_with('/') {
-            rest
-        } else {
-            path
-        }
-    } else {
-        path
     }
 }
 
@@ -572,18 +556,6 @@ mod tests {
     }
 
     #[test]
-    fn local_remote_path_strips_only_pickforge_mount() {
-        assert_eq!(local_remote_path("/pickforge"), "/");
-        assert_eq!(local_remote_path("/pickforge/status"), "/status");
-        assert_eq!(local_remote_path("/pickforge/remote"), "/remote");
-        assert_eq!(
-            local_remote_path("/pickforgex/remote"),
-            "/pickforgex/remote"
-        );
-        assert_eq!(local_remote_path("/remote"), "/remote");
-    }
-
-    #[test]
     fn dispatch_rejects_invalid_or_non_request_frames() {
         let state = server_state(home());
         let invalid =
@@ -756,7 +728,7 @@ mod tests {
 
         let status = raw_response(
             addr,
-            &format!("GET /pickforge/status HTTP/1.1\r\nhost: {addr}\r\n\r\n"),
+            &format!("GET /status HTTP/1.1\r\nhost: {addr}\r\n\r\n"),
         )
         .await;
         assert_eq!(response_status(&status), 200);
@@ -767,7 +739,7 @@ mod tests {
 
         let missing = raw_response(
             addr,
-            &format!("GET /pickforge/missing HTTP/1.1\r\nhost: {addr}\r\n\r\n"),
+            &format!("GET /missing HTTP/1.1\r\nhost: {addr}\r\n\r\n"),
         )
         .await;
         assert_eq!(response_status(&missing), 404);
@@ -775,37 +747,6 @@ mod tests {
         let bad = raw_response(addr, "BAD\r\n\r\n").await;
         assert_eq!(response_status(&bad), 400);
 
-        server.shutdown().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn remote_server_accepts_tailscale_mount_prefix() {
-        let config = DaemonConfig {
-            pickforge_home: home(),
-            listener: DaemonListener::loopback("127.0.0.1", free_port()).unwrap(),
-        };
-        let server = spawn_remote_http_server(config).await.unwrap();
-        let addr = server.info().local_addr;
-        let response = post_path(
-            addr,
-            "/pickforge/remote",
-            &RemoteFrame::Request {
-                id: "r1".into(),
-                protocol: REMOTE_PROTOCOL_NAME.into(),
-                version: REMOTE_PROTOCOL_VERSION,
-                client_id: None,
-                token: None,
-                body: RemoteRequest::HostInfo,
-            },
-        )
-        .await;
-        assert!(matches!(
-            response,
-            RemoteFrame::Response {
-                body: RemoteResponse::HostInfo { .. },
-                ..
-            }
-        ));
         server.shutdown().await.unwrap();
     }
 

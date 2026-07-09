@@ -30,7 +30,6 @@ export interface TailscaleStatus {
   tailscaleIps: string[];
   sshCapable: boolean;
   sshEnabled: boolean | null;
-  serveConfigured: boolean;
   error: string | null;
 }
 
@@ -44,7 +43,6 @@ export interface RemoteHostOverview {
   tailscale: TailscaleStatus;
   defaultHost: string;
   defaultPort: number;
-  defaultHttpsPort: number;
 }
 
 export const remoteHostStatus = () =>
@@ -61,22 +59,6 @@ export const remoteHostIssuePairingCode = (ttlMs?: number) =>
 
 export const remoteHostRevokeClient = (clientId: string) =>
   invoke<void>("remote_host_revoke_client", { clientId });
-
-export const remoteTailscaleServeEnable = (
-  host: string,
-  port: number,
-  httpsPort?: number,
-) =>
-  invoke<TailscaleStatus>("remote_tailscale_serve_enable", {
-    host,
-    port,
-    httpsPort: httpsPort ?? null,
-  });
-
-export const remoteTailscaleServeDisable = (httpsPort?: number) =>
-  invoke<TailscaleStatus>("remote_tailscale_serve_disable", {
-    httpsPort: httpsPort ?? null,
-  });
 
 export const remoteTailscaleSshSet = (enabled: boolean) =>
   invoke<TailscaleStatus>("remote_tailscale_ssh_set", { enabled });

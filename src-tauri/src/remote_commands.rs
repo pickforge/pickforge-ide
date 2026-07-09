@@ -3,9 +3,8 @@ use std::sync::Mutex;
 
 use pickforge_core::{
     listener_from_parts, pickforge_home, remote_auth_store_path, spawn_remote_http_server,
-    tailscale_serve_disable, tailscale_serve_enable, tailscale_ssh_set, tailscale_status,
-    ClientTokenRecord, DaemonConfig, DaemonListener, PairingCode, RemoteAuthStore,
-    RemoteHttpServer, RemoteHttpServerInfo, TailscaleStatus,
+    tailscale_ssh_set, tailscale_status, ClientTokenRecord, DaemonConfig, DaemonListener,
+    PairingCode, RemoteAuthStore, RemoteHttpServer, RemoteHttpServerInfo, TailscaleStatus,
 };
 use serde::Serialize;
 use tauri::State;
@@ -13,7 +12,6 @@ use tauri::State;
 const DEFAULT_REMOTE_HOST: &str = "127.0.0.1";
 const DEFAULT_REMOTE_PORT: u16 = 4747;
 const DEFAULT_PAIRING_TTL_MS: i64 = 10 * 60 * 1000;
-const DEFAULT_TAILSCALE_HTTPS_PORT: u16 = 443;
 
 pub struct RemoteHostState {
     server: Mutex<RemoteHostSlot>,
@@ -45,7 +43,6 @@ pub struct RemoteHostOverview {
     pub tailscale: TailscaleStatus,
     pub default_host: String,
     pub default_port: u16,
-    pub default_https_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,26 +119,6 @@ pub fn remote_host_issue_pairing_code(ttl_ms: Option<i64>) -> Result<PairingCode
 pub fn remote_host_revoke_client(client_id: String) -> Result<(), String> {
     let path = auth_path()?;
     revoke_client_at(&path, &client_id)
-}
-
-#[tauri::command]
-pub async fn remote_tailscale_serve_enable(
-    state: State<'_, RemoteHostState>,
-    host: String,
-    port: u16,
-    https_port: Option<u16>,
-) -> Result<TailscaleStatus, String> {
-    let listener = tailscale_serve_listener(&state, &host, port)?;
-    let https_port = https_port.unwrap_or(DEFAULT_TAILSCALE_HTTPS_PORT);
-    run_tailscale_action(move || tailscale_serve_enable(&listener, https_port)).await
-}
-
-#[tauri::command]
-pub async fn remote_tailscale_serve_disable(
-    https_port: Option<u16>,
-) -> Result<TailscaleStatus, String> {
-    let https_port = https_port.unwrap_or(DEFAULT_TAILSCALE_HTTPS_PORT);
-    run_tailscale_action(move || tailscale_serve_disable(https_port)).await
 }
 
 #[tauri::command]
@@ -287,7 +264,6 @@ fn overview_from_parts(
         tailscale,
         default_host: DEFAULT_REMOTE_HOST.into(),
         default_port: DEFAULT_REMOTE_PORT,
-        default_https_port: DEFAULT_TAILSCALE_HTTPS_PORT,
     })
 }
 
@@ -315,34 +291,6 @@ fn listener_from_server(server: Option<&RemoteHttpServerInfo>) -> DaemonListener
         .unwrap_or(DaemonListener::Disabled)
 }
 
-fn tailscale_serve_listener(
-    state: &RemoteHostState,
-    requested_host: &str,
-    requested_port: u16,
-) -> Result<DaemonListener, String> {
-    let server = current_server_info(state)?.ok_or("remote host listener is not running")?;
-    tailscale_serve_listener_from_info(&server, requested_host, requested_port)
-}
-
-fn tailscale_serve_listener_from_info(
-    server: &RemoteHttpServerInfo,
-    requested_host: &str,
-    requested_port: u16,
-) -> Result<DaemonListener, String> {
-    let actual_host = server.local_addr.ip().to_string();
-    let actual_port = server.local_addr.port();
-    if normalize_listener_host(requested_host) != actual_host || requested_port != actual_port {
-        return Err(format!(
-            "Tailscale Serve target must match the running listener at {actual_host}:{actual_port}"
-        ));
-    }
-    DaemonListener::loopback(actual_host, actual_port).map_err(|err| err.to_string())
-}
-
-fn normalize_listener_host(host: &str) -> &str {
-    host.trim().trim_matches(['[', ']'])
-}
-
 async fn run_tailscale_action(
     action: impl FnOnce() -> Result<TailscaleStatus, String> + Send + 'static,
 ) -> Result<TailscaleStatus, String> {
@@ -361,7 +309,6 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_HOME: AtomicU64 = AtomicU64::new(1);
@@ -378,7 +325,6 @@ mod tests {
             tailscale_ips: Vec::new(),
             ssh_capable: false,
             ssh_enabled: None,
-            serve_configured: false,
             error: Some("not installed".into()),
         }
     }
@@ -438,7 +384,6 @@ mod tests {
         assert_eq!(overview.auth_path, path.to_string_lossy().as_ref());
         assert_eq!(overview.default_host, DEFAULT_REMOTE_HOST);
         assert_eq!(overview.default_port, DEFAULT_REMOTE_PORT);
-        assert_eq!(overview.default_https_port, DEFAULT_TAILSCALE_HTTPS_PORT);
         assert_eq!(overview.pairing_codes[0].code, code.code);
         assert_eq!(overview.clients[0].client_id, issued.client_id);
         assert_eq!(overview.clients[0].client_name, "Overview client");
@@ -515,40 +460,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tailscale_serve_listener_requires_the_running_listener() {
-        let state = RemoteHostState::new();
-        assert_eq!(
-            tailscale_serve_listener(&state, "127.0.0.1", 4747).unwrap_err(),
-            "remote host listener is not running"
-        );
-
-        let info = RemoteHttpServerInfo {
-            local_addr: "127.0.0.1:4747".parse::<SocketAddr>().unwrap(),
-        };
-        assert_eq!(
-            tailscale_serve_listener_from_info(&info, "127.0.0.1", 4747).unwrap(),
-            DaemonListener::Loopback {
-                host: "127.0.0.1".into(),
-                port: 4747,
-            }
-        );
-        assert!(tailscale_serve_listener_from_info(&info, "127.0.0.1", 4748)
-            .unwrap_err()
-            .contains("must match the running listener"));
-
-        let ipv6 = RemoteHttpServerInfo {
-            local_addr: "[::1]:4747".parse::<SocketAddr>().unwrap(),
-        };
-        assert_eq!(
-            tailscale_serve_listener_from_info(&ipv6, "[::1]", 4747).unwrap(),
-            DaemonListener::Loopback {
-                host: "::1".into(),
-                port: 4747,
-            }
-        );
-    }
-
     #[tokio::test]
     async fn command_helpers_reject_invalid_input_before_shelling_out() {
         let home = temp_home("bad-input");
@@ -559,10 +470,6 @@ mod tests {
         assert!(revoke_client_at(&path, "missing")
             .unwrap_err()
             .contains("client was not found"));
-        assert_eq!(
-            remote_tailscale_serve_disable(Some(0)).await.unwrap_err(),
-            "Tailscale HTTPS port must be non-zero"
-        );
 
         std::fs::remove_file(path.with_extension("json.lock")).ok();
         std::fs::remove_file(path).ok();

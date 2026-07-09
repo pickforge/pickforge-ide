@@ -3176,7 +3176,7 @@ dependencies = [
  "futures-util",
  "libc",
  "portable-pty",
- "rand",
+ "rand 0.8.6",
  "roxmltree",
  "rusqlite",
  "serde",
@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "pickforged"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "pickforge-core",
  "serde",

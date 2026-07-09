@@ -59,8 +59,6 @@ import {
   remoteHostStart,
   remoteHostStatus,
   remoteHostStop,
-  remoteTailscaleServeDisable,
-  remoteTailscaleServeEnable,
   remoteTailscaleSshSet,
   type PairingCode,
   type RemoteHostOverview,
@@ -228,28 +226,12 @@ export function SettingsScreen() {
     const codes = remoteHost()?.pairingCodes ?? [];
     return [...codes].reverse().find((code) => !code.usedAtMs && code.expiresAtMs > now) ?? null;
   };
-  const listenerHost = () =>
-    remoteHost()?.listener.kind === "loopback"
-      ? (remoteHost()!.listener as { kind: "loopback"; host: string; port: number }).host
-      : remoteHost()?.defaultHost ?? "127.0.0.1";
-  const listenerPort = () =>
-    remoteHost()?.listener.kind === "loopback"
-      ? (remoteHost()!.listener as { kind: "loopback"; host: string; port: number }).port
-      : Number(remotePort()) || remoteHost()?.defaultPort || 4747;
   const tailscaleLabel = () => {
     const status = remoteHost()?.tailscale;
     if (!status?.available) return "Not installed";
     if (status.error) return "Needs attention";
     if (status.online === true) return status.dnsName ?? status.hostName ?? "Online";
     return status.backendState ?? "Not running";
-  };
-  const serveLabel = () =>
-    remoteHost()?.tailscale.serveConfigured ? "Configured" : "Not configured";
-  const canToggleServe = () => {
-    const overview = remoteHost();
-    return Boolean(
-      overview?.tailscale.available && (overview.tailscale.serveConfigured || overview.running),
-    );
   };
   const sshLabel = () => {
     const status = remoteHost()?.tailscale;
@@ -311,28 +293,6 @@ export function SettingsScreen() {
       setRemoteError(null);
     } catch {
       setRemoteError("Could not copy pairing code");
-    }
-  };
-  const toggleServe = async () => {
-    const overview = remoteHost();
-    if (!overview?.tailscale.serveConfigured && !overview?.running) {
-      setRemoteError("Start the remote listener before enabling Tailscale Serve");
-      return;
-    }
-    const host = listenerHost();
-    const port = listenerPort();
-    setRemoteLoading(true);
-    setRemoteError(null);
-    try {
-      if (overview?.tailscale.serveConfigured) {
-        await remoteTailscaleServeDisable(overview.defaultHttpsPort);
-      } else {
-        await remoteTailscaleServeEnable(host, port, overview?.defaultHttpsPort);
-      }
-      await reloadRemoteHost();
-    } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : String(error));
-      setRemoteLoading(false);
     }
   };
   const toggleSsh = async () => {
@@ -540,16 +500,6 @@ export function SettingsScreen() {
           <div class="pf-settings-row">
             <span class="pf-settings-label">Tailscale</span>
             <span class="pf-settings-muted">{tailscaleLabel()}</span>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Tailscale Serve</span>
-            <button
-              class="pf-text-btn"
-              disabled={remoteLoading() || !canToggleServe()}
-              onClick={() => void toggleServe()}
-            >
-              {remoteHost()?.tailscale.serveConfigured ? "Disable" : `Enable · ${serveLabel()}`}
-            </button>
           </div>
           <div class="pf-settings-row">
             <span class="pf-settings-label">Tailscale SSH</span>

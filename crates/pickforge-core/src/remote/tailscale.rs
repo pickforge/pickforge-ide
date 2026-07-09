@@ -9,7 +9,6 @@ use super::daemon::{DaemonConfigError, DaemonListener};
 
 const TAILSCALE_STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 const TAILSCALE_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
-pub const TAILSCALE_SERVE_PATH: &str = "/pickforge";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +23,6 @@ pub struct TailscaleStatus {
     pub tailscale_ips: Vec<String>,
     pub ssh_capable: bool,
     pub ssh_enabled: Option<bool>,
-    pub serve_configured: bool,
     pub error: Option<String>,
 }
 
@@ -41,7 +39,6 @@ impl TailscaleStatus {
             tailscale_ips: Vec::new(),
             ssh_capable: false,
             ssh_enabled: None,
-            serve_configured: false,
             error,
         }
     }
@@ -61,45 +58,10 @@ pub fn tailscale_status() -> TailscaleStatus {
         Ok(json) => apply_status_json(&mut status, &json),
         Err(err) => status.error = Some(err),
     }
-    if let Ok(json) = run_json(&["serve", "status", "--json"]) {
-        status.serve_configured = serve_status_has_pickforge_route(&json);
-    }
     if let Ok(json) = run_json(&["debug", "prefs"]) {
         status.ssh_enabled = json.get("RunSSH").and_then(Value::as_bool);
     }
     status
-}
-
-pub fn tailscale_serve_enable(
-    listener: &DaemonListener,
-    https_port: u16,
-) -> Result<TailscaleStatus, String> {
-    if https_port == 0 {
-        return Err("Tailscale HTTPS port must be non-zero".into());
-    }
-    let Some(target) = listener.bind_target().map_err(|err| err.to_string())? else {
-        return Err("remote listener is disabled".into());
-    };
-    let target = format!("http://{target}");
-    let https = format!("--https={https_port}");
-    run_tailscale_mutation(&[
-        "serve",
-        "--bg",
-        &https,
-        "--set-path",
-        TAILSCALE_SERVE_PATH,
-        &target,
-    ])?;
-    Ok(tailscale_status())
-}
-
-pub fn tailscale_serve_disable(https_port: u16) -> Result<TailscaleStatus, String> {
-    if https_port == 0 {
-        return Err("Tailscale HTTPS port must be non-zero".into());
-    }
-    let https = format!("--https={https_port}");
-    run_tailscale_mutation(&["serve", &https, "--set-path", TAILSCALE_SERVE_PATH, "off"])?;
-    Ok(tailscale_status())
 }
 
 pub fn tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, String> {
@@ -143,21 +105,6 @@ fn first_non_empty_line(raw: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_string)
-}
-
-fn serve_status_has_pickforge_route(json: &Value) -> bool {
-    match json {
-        Value::Object(map) => map.iter().any(|(key, value)| {
-            key == TAILSCALE_SERVE_PATH
-                || key.ends_with(TAILSCALE_SERVE_PATH)
-                || (key.eq_ignore_ascii_case("path")
-                    && value.as_str() == Some(TAILSCALE_SERVE_PATH))
-                || serve_status_has_pickforge_route(value)
-        }),
-        Value::Array(values) => values.iter().any(serve_status_has_pickforge_route),
-        Value::String(value) => value == TAILSCALE_SERVE_PATH,
-        _ => false,
-    }
 }
 
 fn apply_status_json(status: &mut TailscaleStatus, json: &Value) {
@@ -237,45 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn serve_status_detects_only_pickforge_route() {
-        let unrelated = serde_json::json!({
-            "Web": {
-                "example.test": {
-                    "Handlers": {
-                        "/other": { "Proxy": "http://127.0.0.1:8080" }
-                    }
-                }
-            }
-        });
-        assert!(!serve_status_has_pickforge_route(&unrelated));
-
-        let pickforge = serde_json::json!({
-            "Web": {
-                "example.test": {
-                    "Handlers": {
-                        "/pickforge": { "Proxy": "http://127.0.0.1:4747" }
-                    }
-                }
-            }
-        });
-        assert!(serve_status_has_pickforge_route(&pickforge));
-    }
-
-    #[test]
-    fn serve_status_detects_nested_path_fields_arrays_and_strings() {
-        assert!(serve_status_has_pickforge_route(&serde_json::json!({
-            "Path": "/pickforge"
-        })));
-        assert!(serve_status_has_pickforge_route(&serde_json::json!([
-            { "path": "/other" },
-            { "path": "/pickforge" }
-        ])));
-        assert!(serve_status_has_pickforge_route(&serde_json::json!(
-            "/pickforge"
-        )));
-    }
-
-    #[test]
     fn status_json_handles_missing_self_and_empty_fields() {
         let mut missing_self = TailscaleStatus::unavailable(None);
         apply_status_json(
@@ -303,20 +211,4 @@ mod tests {
         assert!(!empty_self.ssh_capable);
     }
 
-    #[test]
-    fn serve_commands_reject_invalid_inputs_before_running_tailscale() {
-        let listener = DaemonListener::loopback("127.0.0.1", 4747).unwrap();
-        assert_eq!(
-            tailscale_serve_enable(&listener, 0).unwrap_err(),
-            "Tailscale HTTPS port must be non-zero"
-        );
-        assert_eq!(
-            tailscale_serve_enable(&DaemonListener::Disabled, 443).unwrap_err(),
-            "remote listener is disabled"
-        );
-        assert_eq!(
-            tailscale_serve_disable(0).unwrap_err(),
-            "Tailscale HTTPS port must be non-zero"
-        );
-    }
 }

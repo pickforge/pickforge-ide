@@ -195,8 +195,6 @@ pub fn run() {
             remote_commands::remote_host_stop,
             remote_commands::remote_host_issue_pairing_code,
             remote_commands::remote_host_revoke_client,
-            remote_commands::remote_tailscale_serve_enable,
-            remote_commands::remote_tailscale_serve_disable,
             remote_commands::remote_tailscale_ssh_set,
             picklab_commands::picklab_status,
             fs_commands::list_dir,

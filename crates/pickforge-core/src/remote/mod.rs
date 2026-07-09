@@ -27,6 +27,5 @@ pub use server::{
     spawn_remote_http_server, RemoteHttpServer, RemoteHttpServerInfo, RemoteServerError,
 };
 pub use tailscale::{
-    listener_from_parts, tailscale_serve_disable, tailscale_serve_enable, tailscale_ssh_set,
-    tailscale_status, TailscaleStatus,
+    listener_from_parts, tailscale_ssh_set, tailscale_status, TailscaleStatus,
 };

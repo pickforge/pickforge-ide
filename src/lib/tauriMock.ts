@@ -145,12 +145,10 @@ function remoteOverview() {
       tailscaleIps: ["100.64.0.10"],
       sshCapable: true,
       sshEnabled: false,
-      serveConfigured: false,
       error: null,
     },
     defaultHost: "127.0.0.1",
     defaultPort: 4747,
-    defaultHttpsPort: 443,
   };
 }
 
@@ -199,8 +197,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     return code;
   },
   remote_host_revoke_client: () => null,
-  remote_tailscale_serve_enable: () => remoteOverview().tailscale,
-  remote_tailscale_serve_disable: () => remoteOverview().tailscale,
   remote_tailscale_ssh_set: () => remoteOverview().tailscale,
   target_detect: () => ({ targetId: "flutter", displayName: "Flutter", confidence: "exact", priority: 100, capabilities: ["detect", "launch", "hotReload", "captureScreenshot", "streamLogs", "inspectSelection"] }),
   adb_list_devices: () => [{ serial: "emulator-5554", state: "device", model: "Pixel_10" }],

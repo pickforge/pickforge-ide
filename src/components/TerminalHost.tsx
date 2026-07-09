@@ -13,6 +13,7 @@ import {
   remotePtyFor,
   type CapturedRemotePtys,
 } from "../lib/remoteContext";
+import type { RemotePty } from "../lib/pty";
 import "./TerminalHost.css";
 
 type Dir = "left" | "right" | "up" | "down";
@@ -21,6 +22,7 @@ interface Leaf {
   kind: "leaf";
   id: string;
   callsign: string;
+  remote?: RemotePty | null;
 }
 interface Split {
   kind: "split";
@@ -49,9 +51,9 @@ interface Divider {
 const CALLSIGNS = ["Mae", "Gus", "Ivy", "Bo", "Cal", "Rex", "Nim", "Ada", "Jun", "Lux"];
 let paneCounter = 0;
 let splitCounter = 0;
-function newLeaf(): Leaf {
+function newLeaf(remote?: RemotePty | null): Leaf {
   const n = paneCounter++;
-  return { kind: "leaf", id: `pane-${n}`, callsign: CALLSIGNS[n % CALLSIGNS.length] };
+  return { kind: "leaf", id: `pane-${n}`, callsign: CALLSIGNS[n % CALLSIGNS.length], remote };
 }
 function newSplitId(): string {
   return `split-${splitCounter++}`;
@@ -159,7 +161,7 @@ export interface TerminalHostHandle {
   typeToFocused: (text: string) => string | null;
   /** Split the focused pane and run `command` in the new pane; returns the new
    *  pane's id (e.g. to arm auto-naming on it). */
-  openInNewPane: (command: string) => string;
+  openInNewPane: (command: string, remote?: RemotePty | null) => string;
   /** Run `command` (with a trailing newline) in this host's PRIMARY,
    *  session-backed pane — the one wired to the chat's recoverable dtach/tmux
    *  session — and focus it. Returns the primary pane's id, or null if it isn't
@@ -167,6 +169,7 @@ export interface TerminalHostHandle {
   *  the recoverable session (surviving close/restart), not a raw split pane. */
   runInPrimary: (command: string) => string | null;
   primaryIsRemote: () => boolean;
+  primaryRemotePty: () => RemotePty | null;
 }
 
 export function TerminalHost(props: {
@@ -236,11 +239,12 @@ export function TerminalHost(props: {
     handles.get(id)?.focus();
   };
 
-  const primaryIsRemote = () => {
+  const primaryRemotePty = () => {
     const remote = paneRemote()[primaryId()];
-    if (remote !== undefined) return remote !== null;
-    return remotePtyFor(props.session?.projectRoot ?? props.cwd) !== null;
+    if (remote !== undefined) return remote;
+    return remotePtyFor(props.session?.projectRoot ?? props.cwd);
   };
+  const primaryIsRemote = () => primaryRemotePty() !== null;
 
   const doSplit = (leafId: string, dir: Dir) => {
     const fresh = newLeaf();
@@ -267,8 +271,8 @@ export function TerminalHost(props: {
     focus(id);
     h.typeText(cmd + "\r");
   };
-  const openInNewPane = (command: string): string => {
-    const fresh = newLeaf();
+  const openInNewPane = (command: string, remote?: RemotePty | null): string => {
+    const fresh = newLeaf(remote);
     pendingCmd.set(fresh.id, command);
     setRoot((r) => splitTree(r, focusedId(), "down", fresh));
     setFocusedId(fresh.id);
@@ -461,6 +465,7 @@ export function TerminalHost(props: {
     },
     openInNewPane,
     primaryIsRemote,
+    primaryRemotePty,
     runInPrimary: (command) => {
       // The primary pane is the only session-backed one; run the agent there so
       // it lives inside the recoverable dtach/tmux session. If its handle isn't
@@ -577,6 +582,7 @@ export function TerminalHost(props: {
                   <TerminalPane
                     cwd={props.cwd}
                     projectRoot={props.session?.projectRoot ?? props.cwd}
+                    remote={leaf.remote}
                     env={props.env}
                     onSpawn={(remote) =>
                       setPaneRemote((panes) => captureRemotePtyForPane(panes, leaf.id, remote))

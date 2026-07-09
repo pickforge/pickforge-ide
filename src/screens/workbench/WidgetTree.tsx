@@ -8,8 +8,9 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { IconChevronDown, IconChevronRight, IconRefresh } from "../../components/icons";
 import { EmberButton, MonoEyebrow } from "../../components/ui";
 import { openPathSystem } from "../../lib/opener";
+import { remotePathFor } from "../../lib/remoteContext";
 import { editorCommand } from "../../stores/fileOpenSettings";
-import { workspace } from "../../stores/workspace";
+import { findChat, workspace } from "../../stores/workspace";
 import { getTerminalHost } from "../../stores/terminalHosts";
 import { captureInRepo, setCaptureInRepo } from "../../stores/inspectStorage";
 import { armChatAutoName } from "../../lib/chatAutoName";
@@ -137,13 +138,21 @@ export function WidgetTree() {
   const openLocation = (n: WidgetNode) => {
     if (!n.creationLocation) return;
     const path = fileFromUri(n.creationLocation.file);
-    const cmd = editorCommand(path);
-    const host = getTerminalHost(workspace.activeChatId);
-    if (cmd === null || !host) {
+    const chatId = workspace.activeChatId;
+    const host = getTerminalHost(chatId);
+    if (!chatId || !host) {
       void openPathSystem(path).catch(() => {});
       return;
     }
-    host.openInNewPane(cmd);
+    const remote = host.primaryRemotePty();
+    const projectRoot = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
+    const remotePath = remote ? remotePathFor(path, projectRoot, remote.remoteRoot) : null;
+    const cmd = editorCommand(remotePath ?? path);
+    if (cmd === null) {
+      void openPathSystem(path).catch(() => {});
+      return;
+    }
+    host.openInNewPane(cmd, remotePath ? remote : null);
   };
 
   // Fetch properties + thumbnail when the selection changes.

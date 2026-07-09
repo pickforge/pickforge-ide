@@ -19,6 +19,7 @@ import { loadAgentModels } from "../../lib/agentModels";
 import { ForgeEmptyState, PaneReveal } from "../../components/ui";
 import { IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
+import { remotePathFor } from "../../lib/remoteContext";
 import { editorCommand } from "../../stores/fileOpenSettings";
 import { openPathSystem } from "../../lib/opener";
 import {
@@ -91,17 +92,27 @@ export function WorkbenchScreen() {
   // Open a file per the user's preference: a new editor pane (nvim/custom) or the
   // OS default editor.
   const openFileInActive = (path: string) => {
-    const cmd = editorCommand(path);
-    const host = getTerminalHost(workspace.activeChatId);
+    const chatId = workspace.activeChatId;
+    const host = getTerminalHost(chatId);
     // Editor-pane modes need a live terminal host; with none open, fall back to
     // the OS opener so the file still opens.
-    if (cmd === null || !host) {
+    if (!chatId || !host) {
       void openPathSystem(path).catch((e) =>
         console.error("[pickforge] open_path failed", e),
       );
       return;
     }
-    host.openInNewPane(cmd);
+    const remote = host.primaryRemotePty();
+    const projectRoot = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
+    const remotePath = remote ? remotePathFor(path, projectRoot, remote.remoteRoot) : null;
+    const cmd = editorCommand(remotePath ?? path);
+    if (cmd === null) {
+      void openPathSystem(path).catch((e) =>
+        console.error("[pickforge] open_path failed", e),
+      );
+      return;
+    }
+    host.openInNewPane(cmd, remotePath ? remote : null);
   };
 
   // Track which chats have a mount in flight so a re-run of this effect (e.g. a
@@ -249,9 +260,10 @@ export function WorkbenchScreen() {
         if (hotkeyMatches(e, item.hotkey)) {
           e.preventDefault();
           e.stopPropagation();
-          // Match the chip's disabled gate: a missing binary shouldn't fire.
+          // Remote-side binary detection lands in PR 3; let the remote shell report it.
           const bin = binaryForItem(item);
-          if (bin && available()[bin] === false) return;
+          const remote = getTerminalHost(workspace.activeChatId)?.primaryIsRemote() ?? false;
+          if (!remote && bin && available()[bin] === false) return;
           void launchItem(item);
           return;
         }

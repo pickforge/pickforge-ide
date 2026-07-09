@@ -23,6 +23,7 @@ vi.mock("../../src/stores/workspace", () => ({
 
 import {
   captureRemotePtyForPane,
+  remotePathFor,
   remotePtyFor,
 } from "../../src/lib/remoteContext";
 
@@ -96,5 +97,17 @@ describe("remotePtyFor", () => {
       host: "linux-box",
       remoteRoot: "/srv/app",
     });
+  });
+
+  it("maps an in-project local path into the remote root", () => {
+    expect(remotePathFor("/home/dev/app/lib/main.dart", "/home/dev/app", "/srv/app/")).toBe(
+      "/srv/app/lib/main.dart",
+    );
+  });
+
+  it("refuses to map a path outside or ambiguously below the project root", () => {
+    expect(remotePathFor("/home/dev/other/main.dart", "/home/dev/app", "/srv/app")).toBeNull();
+    expect(remotePathFor("/home/dev/app-copy/main.dart", "/home/dev/app", "/srv/app")).toBeNull();
+    expect(remotePathFor("/home/dev/app/../secret.txt", "/home/dev/app", "/srv/app")).toBeNull();
   });
 });

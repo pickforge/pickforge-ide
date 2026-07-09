@@ -22,3 +22,28 @@ export function captureRemotePtyForPane(
 ): CapturedRemotePtys {
   return { ...panes, [paneId]: remote };
 }
+
+function normalizedLocalPath(path: string): string | null {
+  if (!path || path.includes("\0")) return null;
+  const normalized = path.replaceAll("\\", "/");
+  if (!normalized.startsWith("/") && !/^[A-Za-z]:\//.test(normalized)) return null;
+  if (normalized.split("/").some((part) => part === "." || part === "..")) return null;
+  return normalized.replace(/\/+$/, "") || "/";
+}
+
+export function remotePathFor(
+  localPath: string,
+  projectRoot: string | null | undefined,
+  remoteRoot: string,
+): string | null {
+  const path = normalizedLocalPath(localPath);
+  const root = projectRoot ? normalizedLocalPath(projectRoot) : null;
+  if (!path || !root || !remoteRoot.startsWith("/") || remoteRoot.includes("\0")) return null;
+
+  const suffix =
+    path === root ? "" : root === "/" ? path.slice(1) : path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+  if (suffix === null) return null;
+
+  const remoteBase = remoteRoot.replace(/\/+$/, "") || "/";
+  return suffix ? `${remoteBase === "/" ? "" : remoteBase}/${suffix}` : remoteBase;
+}

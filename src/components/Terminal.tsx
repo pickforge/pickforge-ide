@@ -44,6 +44,7 @@ export interface TerminalHandle {
 export function TerminalPane(props: {
   cwd?: string;
   projectRoot?: string;
+  remote?: RemotePty | null;
   /** When set, the pty runs this command once instead of an interactive shell
    *  (the Debug Console's view-only run output). */
   runCommand?: string;
@@ -294,7 +295,11 @@ export function TerminalPane(props: {
       if (disposed) return;
 
       const projectRoot = props.chat?.projectRoot ?? props.projectRoot ?? props.cwd;
-      const remote = props.runCommand ? null : remotePtyFor(projectRoot);
+      const remote = props.runCommand
+        ? null
+        : props.remote === undefined
+          ? remotePtyFor(projectRoot)
+          : props.remote;
       props.onSpawn?.(remote);
 
       term.open(container);

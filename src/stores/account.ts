@@ -39,7 +39,7 @@ const [status, setStatus] = createSignal<AccountStatus>("signedOut");
 const [error, setError] = createSignal<string | null>(null);
 
 export const accountSession = session;
-export const accountEntitlements = entitlements;
+export const accountEntitlements = () => activeEntitlements(entitlements());
 export const accountStatus = status;
 export const accountError = error;
 
@@ -60,7 +60,8 @@ function networkLikeError(value: unknown): boolean {
   if (value instanceof TypeError) return true;
   const message = errorMessage(value).toLowerCase();
   return (
-    message.includes("fetch") ||
+    message.includes("failed to fetch") ||
+    message.includes("fetch failed") ||
     message.includes("network") ||
     message.includes("offline") ||
     message.includes("load failed") ||
@@ -217,29 +218,40 @@ function setAccountError(value: unknown) {
 
 async function refreshFromAuth(options: RefreshOptions = {}) {
   if (!accountsEnabled()) return;
+  let nextSession: AccountSession | null = null;
   try {
     const auth = getProAuthClient();
     const authSession = options.refreshSession ? await auth.refreshSession() : await auth.getSession();
     if (!options.refreshSession && status() === "signingIn") return;
-    const nextSession = sessionFromAuth(authSession);
+    nextSession = sessionFromAuth(authSession);
     if (!nextSession) {
       setSignedOut({ clearCache: false });
       return;
     }
+  } catch (value) {
+    if (options.silent && !options.refreshSession && status() === "signingIn") return;
+    if (options.silent && (session() !== null || networkLikeError(value))) return;
+    setAccountError(value);
+    return;
+  }
+  if (!nextSession) return;
 
-    const cachedEntitlements = session()?.userId === nextSession.userId ? entitlements() : [];
-    setSession(nextSession);
-    setEntitlements(activeEntitlements(cachedEntitlements));
-    setStatus("signedIn");
-    setError(null);
-    persistCache(nextSession, cachedEntitlements);
+  const cachedEntitlements = session()?.userId === nextSession.userId ? entitlements() : [];
+  setSession(nextSession);
+  setEntitlements(activeEntitlements(cachedEntitlements));
+  setStatus("signedIn");
+  setError(null);
+  persistCache(nextSession, cachedEntitlements);
 
+  try {
+    const auth = getProAuthClient();
     const nextEntitlements = await auth.getEntitlements({ forceRefresh: options.forceRefresh });
     if (!options.refreshSession && status() === "signingIn") return;
     setSignedIn(nextSession, nextEntitlements);
   } catch (value) {
-    if (options.silent && !options.refreshSession && status() === "signingIn") return;
-    if (options.silent && (session() !== null || networkLikeError(value))) return;
+    if (options.silent && networkLikeError(value)) return;
+    setEntitlements([]);
+    persistCache(nextSession, []);
     setAccountError(value);
   }
 }
@@ -315,12 +327,14 @@ export async function signOut() {
   if (!accountsEnabled()) return;
   clearSignInTimer();
   setError(null);
+  let signOutError: unknown = null;
   try {
     await getProAuthClient().signOut();
-    setSignedOut({ clearCache: true });
   } catch (value) {
-    setAccountError(value);
+    signOutError = value;
   }
+  setSignedOut({ clearCache: true });
+  if (signOutError !== null) setError(errorMessage(signOutError));
 }
 
 export function setAccountRedirectError(message: string) {
@@ -347,5 +361,5 @@ export function installAccountStoreBootstrap(): () => void {
 }
 
 export function hasProEntitlement(): boolean {
-  return entitlements().some((item) => item.key === "pro");
+  return accountEntitlements().some((item) => item.key === "pro");
 }

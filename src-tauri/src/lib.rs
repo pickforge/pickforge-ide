@@ -137,7 +137,13 @@ pub fn run() {
     let builder = tauri::Builder::default();
 
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|_, _, _| {}));
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
 
     let builder = builder
         .plugin(tauri_plugin_deep_link::init())

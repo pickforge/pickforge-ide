@@ -8,6 +8,7 @@ reset this file.
 
 - Added Remote Host settings for starting the local daemon listener, issuing
   pairing codes, and toggling Tailscale SSH.
+- Launching PickForge again now focuses the running window.
 
 ## Internal/release changes
 

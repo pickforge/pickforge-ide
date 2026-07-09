@@ -133,6 +133,94 @@ describe("account store", () => {
     });
   });
 
+  it("keeps cached entitlements silently when entitlement refresh is offline", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+    testEnv.client.getSession.mockResolvedValue(authSession("cached@pickforge.dev"));
+    testEnv.client.getEntitlements.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountSession()).not.toBeNull();
+    expect(account.accountError()).toBeNull();
+    expect(account.accountEntitlements().map((item) => item.key)).toEqual(["pro"]);
+    expect(JSON.parse(testEnv.mem.get(CACHE_KEY)!).entitlements.map((item: { key: string }) => item.key)).toEqual([
+      "pro",
+    ]);
+  });
+
+  it("clears cached entitlements and surfaces authoritative entitlement refresh errors", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+    testEnv.client.getSession.mockResolvedValue(authSession("cached@pickforge.dev"));
+    testEnv.client.getEntitlements.mockRejectedValue(new Error("401 entitlement fetch denied"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountSession()).not.toBeNull();
+    expect(account.accountStatus()).toBe("error");
+    expect(account.accountError()).toBe("401 entitlement fetch denied");
+    expect(account.accountEntitlements()).toEqual([]);
+    expect(account.hasProEntitlement()).toBe(false);
+    expect(JSON.parse(testEnv.mem.get(CACHE_KEY)!)).toMatchObject({
+      session: { userId: "user-1" },
+      entitlements: [],
+    });
+  });
+
+  it("filters expired entitlements at read time", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      testEnv.client.getSession.mockResolvedValue(authSession());
+      testEnv.client.getEntitlements.mockResolvedValue([
+        {
+          key: "pro",
+          value: true,
+          expiresAt: "2026-01-01T00:00:01.000Z",
+          grantedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ]);
+
+      const { flags, account } = await loadStores();
+      flags.setFlagOverride("accounts", true);
+
+      await account.initAccountStore();
+      expect(account.hasProEntitlement()).toBe(true);
+
+      vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+
+      expect(account.accountEntitlements()).toEqual([]);
+      expect(account.hasProEntitlement()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not construct the auth client when the flag is disabled", async () => {
     const { account } = await loadStores();
 
@@ -185,6 +273,34 @@ describe("account store", () => {
 
     await account.signOut();
 
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+  });
+
+  it("clears local state and cache when remote sign out fails", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+    testEnv.client.getSession.mockRejectedValue(new TypeError("Failed to fetch"));
+    testEnv.client.signOut.mockRejectedValue(new Error("network unavailable"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+    await account.signOut();
+
+    expect(account.accountStatus()).toBe("signedOut");
+    expect(account.accountSession()).toBeNull();
+    expect(account.accountEntitlements()).toEqual([]);
+    expect(account.accountError()).toBe("network unavailable");
     expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
   });
 

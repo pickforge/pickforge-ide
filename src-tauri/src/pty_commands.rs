@@ -17,18 +17,21 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use pickforge_core::{
     dtach_socket_path, kill_dtach_master, prepare_chat_session, run_timeout, select_backend,
     session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
-    PreparedSession, PtyEvent, PtyManager, RemotePty, SessionBackend, SpawnOptions,
+    Database, PreparedSession, PtyEvent, PtyManager, RemotePty, SessionBackend,
+    SpawnOptions,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tauri::State;
 
 use crate::fs_commands::{approved_canonical, ApprovedRoots};
+use crate::remote_commands::ensure_remote_ssh_host_allowed;
 
 /// Side-commands (tmux has-session / set-titles / kill-session) must never hang
 /// the IPC call; bound them tightly.
@@ -71,6 +74,54 @@ impl From<RemotePtyInput> for RemotePty {
             remote_root: value.remote_root,
         }
     }
+}
+
+fn authorize_remote_pty_binding(
+    project_root: Option<&str>,
+    remote: &RemotePty,
+    binding: Option<(Option<&str>, Option<&str>)>,
+    authorize_host: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let project_root = project_root
+        .filter(|root| !root.is_empty())
+        .ok_or_else(|| "remote terminal requires a project root".to_string())?;
+    let matches_binding = matches!(
+        binding,
+        Some((Some(host), Some(remote_root)))
+            if host == remote.host && remote_root == remote.remote_root
+    );
+    if !matches_binding {
+        return Err(format!(
+            "remote terminal is not authorized for project {project_root}"
+        ));
+    }
+    authorize_host(&remote.host)
+        .map_err(|err| format!("remote terminal authorization failed: {err}"))
+}
+
+fn authorize_remote_pty(
+    db: &Database,
+    project_root: Option<&str>,
+    remote: Option<&RemotePty>,
+) -> Result<(), String> {
+    authorize_remote_pty_with(db, project_root, remote, ensure_remote_ssh_host_allowed)
+}
+
+fn authorize_remote_pty_with(
+    db: &Database,
+    project_root: Option<&str>,
+    remote: Option<&RemotePty>,
+    authorize_host: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let Some(remote) = remote else {
+        return Ok(());
+    };
+    let projects = db.list_projects(false).map_err(|err| err.to_string())?;
+    let binding = project_root
+        .filter(|root| !root.is_empty())
+        .and_then(|root| projects.iter().find(|project| project.project_root == root))
+        .map(|project| (project.remote_host.as_deref(), project.remote_root.as_deref()));
+    authorize_remote_pty_binding(project_root, remote, binding, authorize_host)
 }
 
 fn spawn_options(
@@ -118,7 +169,9 @@ fn chat_spawn_options(
 pub fn pty_spawn(
     manager: State<'_, PtyManager>,
     roots: State<'_, ApprovedRoots>,
+    db: State<'_, Arc<Database>>,
     cwd: Option<String>,
+    project_root: Option<String>,
     command: Option<String>,
     rows: u16,
     cols: u16,
@@ -131,7 +184,9 @@ pub fn pty_spawn(
     on_output: Channel<Response>,
     on_exit: Channel<Option<i32>>,
 ) -> Result<u32, String> {
-    let opts = spawn_options(cwd, command, rows, cols, env, remote.map(Into::into), &roots)?;
+    let remote = remote.map(Into::into);
+    authorize_remote_pty(&db, project_root.as_deref(), remote.as_ref())?;
+    let opts = spawn_options(cwd, command, rows, cols, env, remote, &roots)?;
     manager
         .spawn(opts, move |event: PtyEvent| match event {
             PtyEvent::Output(bytes) => {
@@ -256,6 +311,7 @@ fn tmux_enable_titles() {
 pub fn pty_spawn_chat(
     manager: State<'_, PtyManager>,
     roots: State<'_, ApprovedRoots>,
+    db: State<'_, Arc<Database>>,
     chat_id: String,
     project_root: String,
     cwd: Option<String>,
@@ -270,6 +326,7 @@ pub fn pty_spawn_chat(
     on_exit: Channel<Option<i32>>,
 ) -> Result<ChatSpawnResult, String> {
     let remote = remote.map(Into::into);
+    authorize_remote_pty(&db, Some(&project_root), remote.as_ref())?;
     let remote_chat = remote.is_some();
     // Hash the CANONICAL project root (canonicalize via the same gate, falling
     // back to the raw string if it isn't an approved root — naming only needs
@@ -392,6 +449,7 @@ pub fn pty_destroy_chat_session(session_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod spawn_cwd_tests {
     use super::*;
+    use pickforge_core::Project;
     use std::path::Path;
 
     /// A throwaway approved project root on a fresh registry, returned
@@ -490,6 +548,109 @@ mod spawn_cwd_tests {
 
         assert_eq!(opts.cwd, None);
         assert_eq!(opts.remote, Some(remote));
+    }
+
+    #[test]
+    fn remote_spawn_rejects_missing_or_mismatched_project_bindings() {
+        let remote = RemotePty {
+            host: "mac-mini".to_string(),
+            remote_root: "/Users/dev/app".to_string(),
+        };
+
+        let missing_root = authorize_remote_pty_binding(
+            None,
+            &remote,
+            Some((Some("mac-mini"), Some("/Users/dev/app"))),
+            |_| panic!("host verification must not run without a project root"),
+        )
+        .unwrap_err();
+        assert!(missing_root.contains("requires a project root"));
+
+        let unbound = authorize_remote_pty_binding(Some("/app"), &remote, None, |_| {
+            panic!("host verification must not run for an unbound project")
+        })
+        .unwrap_err();
+        assert!(unbound.contains("not authorized for project /app"));
+
+        let mismatched = authorize_remote_pty_binding(
+            Some("/app"),
+            &remote,
+            Some((Some("linux-box"), Some("/srv/app"))),
+            |_| panic!("host verification must not run for a mismatched binding"),
+        )
+        .unwrap_err();
+        assert!(mismatched.contains("not authorized for project /app"));
+    }
+
+    #[test]
+    fn remote_spawn_rejects_a_host_that_fails_tailnet_authorization() {
+        let remote = RemotePty {
+            host: "mac-mini".to_string(),
+            remote_root: "/Users/dev/app".to_string(),
+        };
+        let err = authorize_remote_pty_binding(
+            Some("/app"),
+            &remote,
+            Some((Some("mac-mini"), Some("/Users/dev/app"))),
+            |_| Err("remote host is not an online tailnet peer: host is offline".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("remote terminal authorization failed"));
+        assert!(err.contains("not an online tailnet peer"));
+    }
+
+    #[test]
+    fn remote_spawn_authorizes_an_exact_binding_before_spawning() {
+        let remote = RemotePty {
+            host: "mac-mini".to_string(),
+            remote_root: "/Users/dev/app".to_string(),
+        };
+        let mut authorized_host = None;
+
+        authorize_remote_pty_binding(
+            Some("/app"),
+            &remote,
+            Some((Some("mac-mini"), Some("/Users/dev/app"))),
+            |host| {
+                authorized_host = Some(host.to_string());
+                Ok(())
+            },
+        )
+        .expect("an exact remote binding with an online host must be allowed");
+
+        assert_eq!(authorized_host.as_deref(), Some("mac-mini"));
+    }
+
+    #[test]
+    fn remote_spawn_reads_the_binding_from_the_projects_table() {
+        let db = Database::open_in_memory().unwrap();
+        db.upsert_project(&Project {
+            project_root: "/app".to_string(),
+            display_name: "App".to_string(),
+            created_at: 0,
+            last_opened_at: 0,
+            sort_order: 0,
+            archived_at: None,
+            remote_host: Some("mac-mini".to_string()),
+            remote_root: Some("/Users/dev/app".to_string()),
+        })
+        .unwrap();
+        let remote = RemotePty {
+            host: "mac-mini".to_string(),
+            remote_root: "/Users/dev/app".to_string(),
+        };
+
+        authorize_remote_pty_with(&db, Some("/app"), Some(&remote), |_| Ok(()))
+            .expect("the stored binding must authorize the matching remote pty");
+
+        let mismatch = RemotePty {
+            host: "mac-mini".to_string(),
+            remote_root: "/Users/dev/other".to_string(),
+        };
+        let err = authorize_remote_pty_with(&db, Some("/app"), Some(&mismatch), |_| Ok(()))
+            .unwrap_err();
+        assert!(err.contains("not authorized for project /app"));
     }
 
     #[test]

@@ -15,6 +15,7 @@ import {
   ptyWrite,
   toBytes,
   type PtyBytes,
+  type RemotePty,
 } from "../lib/pty";
 import { remotePtyFor } from "../lib/remoteContext";
 import {
@@ -42,11 +43,13 @@ export interface TerminalHandle {
 
 export function TerminalPane(props: {
   cwd?: string;
+  projectRoot?: string;
   /** When set, the pty runs this command once instead of an interactive shell
    *  (the Debug Console's view-only run output). */
   runCommand?: string;
   /** Extra `PICKFORGE_*` env for the spawned shell (MCP endpoint discovery). */
   env?: Record<string, string> | null;
+  onSpawn?: (remote: RemotePty | null) => void;
   onReady?: (handle: TerminalHandle) => void;
   onExit?: (code: number | null) => void;
   /** Fires with each non-empty line the user types and submits (Enter).
@@ -100,9 +103,6 @@ export function TerminalPane(props: {
   const [dropHover, setDropHover] = createSignal(false);
 
   onMount(() => {
-    const remote = props.runCommand
-      ? null
-      : remotePtyFor(props.chat?.projectRoot ?? props.cwd);
     const term = new Terminal({
       fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: TERMINAL_FONT_SIZE,
@@ -293,6 +293,10 @@ export function TerminalPane(props: {
       await ensureTerminalFontLoaded();
       if (disposed) return;
 
+      const projectRoot = props.chat?.projectRoot ?? props.projectRoot ?? props.cwd;
+      const remote = props.runCommand ? null : remotePtyFor(projectRoot);
+      props.onSpawn?.(remote);
+
       term.open(container);
 
       // WebGL is the proven heavy-output renderer; under WebKitGTK it can fail
@@ -322,7 +326,7 @@ export function TerminalPane(props: {
         if (disposed) return;
         if (remote && code === 255) {
           term.write(
-            `\r\n\x1b[31mssh:${remote.host} is unreachable. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
+            `\r\n\x1b[31mssh:${remote.host} exited 255: transport failure or remote exit 255. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
           );
           return;
         }
@@ -357,6 +361,7 @@ export function TerminalPane(props: {
           })
         : ptySpawn({
             cwd: props.cwd ?? null,
+            projectRoot,
             command: props.runCommand ?? null,
             env: props.env ?? null,
             remote,

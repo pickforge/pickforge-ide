@@ -12,6 +12,7 @@ export interface RemotePty {
 
 export interface SpawnOptions {
   cwd?: string | null;
+  projectRoot?: string | null;
   /** When set, run this command once (`$SHELL -c <command>`) instead of an
    *  interactive shell — the pty exits when the command does. */
   command?: string | null;
@@ -36,6 +37,7 @@ export async function ptySpawn(opts: SpawnOptions): Promise<number> {
 
   return invoke<number>("pty_spawn", {
     cwd: opts.cwd ?? null,
+    projectRoot: opts.projectRoot ?? null,
     command: opts.command ?? null,
     env: opts.env ?? null,
     remote: opts.remote ?? null,

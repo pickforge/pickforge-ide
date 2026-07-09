@@ -77,11 +77,13 @@ export function WorkbenchScreen() {
     const chatId = workspace.activeChatId;
     if (!chatId) return;
     const root = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
-    if (item.agentId && root) await ensureMcpRunning(root);
-    const text = commandForItem(item, item.agentId ? mcpEnv(root) : {});
-    if (!text) return;
     const host = getTerminalHost(chatId);
     if (!host) return;
+    const remote = host.primaryIsRemote();
+    if (item.agentId && root && !remote) await ensureMcpRunning(root);
+    // Remote agent MCP wiring lands in PR 3; remote shells must not receive local paths.
+    const text = commandForItem(item, item.agentId && !remote ? mcpEnv(root) : {});
+    if (!text) return;
     const paneId = item.agentId ? host.runInPrimary(text) : host.openInNewPane(text);
     if (paneId && item.agentId) armChatAutoName(chatId, paneId);
   };

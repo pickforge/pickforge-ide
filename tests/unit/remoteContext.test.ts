@@ -21,7 +21,10 @@ vi.mock("../../src/stores/workspace", () => ({
   },
 }));
 
-import { remotePtyFor } from "../../src/lib/remoteContext";
+import {
+  captureRemotePtyForPane,
+  remotePtyFor,
+} from "../../src/lib/remoteContext";
 
 describe("remotePtyFor", () => {
   beforeEach(() => {
@@ -63,6 +66,35 @@ describe("remotePtyFor", () => {
     expect(remotePtyFor("/app")).toEqual({
       host: "mac-mini",
       remoteRoot: "/Users/dev/app",
+    });
+  });
+
+  it("keeps a pane's remote context after its project binding changes", () => {
+    state.enabled = true;
+    state.projects = [
+      {
+        projectRoot: "/app",
+        remoteHost: "mac-mini",
+        remoteRoot: "/Users/dev/app",
+      },
+    ];
+    const panes = captureRemotePtyForPane({}, "pane-1", remotePtyFor("/app"));
+
+    state.projects = [
+      {
+        projectRoot: "/app",
+        remoteHost: "linux-box",
+        remoteRoot: "/srv/app",
+      },
+    ];
+
+    expect(panes["pane-1"]).toEqual({
+      host: "mac-mini",
+      remoteRoot: "/Users/dev/app",
+    });
+    expect(remotePtyFor("/app")).toEqual({
+      host: "linux-box",
+      remoteRoot: "/srv/app",
     });
   });
 });

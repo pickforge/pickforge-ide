@@ -361,7 +361,7 @@ fn listener_from_server(server: Option<&RemoteHttpServerInfo>) -> DaemonListener
         .unwrap_or(DaemonListener::Disabled)
 }
 
-fn ensure_remote_ssh_host_allowed(host: &str) -> Result<(), String> {
+pub(crate) fn ensure_remote_ssh_host_allowed(host: &str) -> Result<(), String> {
     authorize_remote_ssh_host(host, |host| {
         probe_tailnet_peer(host, REMOTE_STEP_TIMEOUT)
     })

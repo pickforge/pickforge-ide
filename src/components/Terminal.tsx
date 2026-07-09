@@ -16,6 +16,7 @@ import {
   toBytes,
   type PtyBytes,
 } from "../lib/pty";
+import { remotePtyFor } from "../lib/remoteContext";
 import {
   buildConsoleTheme,
   buildTerminalTheme,
@@ -99,6 +100,9 @@ export function TerminalPane(props: {
   const [dropHover, setDropHover] = createSignal(false);
 
   onMount(() => {
+    const remote = props.runCommand
+      ? null
+      : remotePtyFor(props.chat?.projectRoot ?? props.cwd);
     const term = new Terminal({
       fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: TERMINAL_FONT_SIZE,
@@ -315,7 +319,14 @@ export function TerminalPane(props: {
         if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
       };
       const onExit = (code: number | null) => {
-        if (!disposed) props.onExit?.(code);
+        if (disposed) return;
+        if (remote && code === 255) {
+          term.write(
+            `\r\n\x1b[31mssh:${remote.host} is unreachable. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
+          );
+          return;
+        }
+        props.onExit?.(code);
       };
 
       // A chat pane spawns a SESSION-BACKED shell (dtach/tmux, attach-or-create)
@@ -327,6 +338,7 @@ export function TerminalPane(props: {
             projectRoot: props.chat.projectRoot,
             cwd: props.cwd ?? null,
             env: props.env ?? null,
+            remote,
             backend: props.chat.backend,
             sessionId: props.chat.sessionId ?? null,
             rows: term.rows,
@@ -347,6 +359,7 @@ export function TerminalPane(props: {
             cwd: props.cwd ?? null,
             command: props.runCommand ?? null,
             env: props.env ?? null,
+            remote,
             rows: term.rows,
             cols: term.cols,
             onOutput,

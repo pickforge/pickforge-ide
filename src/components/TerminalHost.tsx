@@ -8,6 +8,7 @@ import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { TerminalPane, type TerminalHandle } from "./Terminal";
 import { AskAiMenu } from "./AskAiMenu";
 import { IconClose, IconGrip, IconSplit, IconSplitTrigger } from "./icons";
+import { remotePtyFor } from "../lib/remoteContext";
 import "./TerminalHost.css";
 
 type Dir = "left" | "right" | "up" | "down";
@@ -507,6 +508,9 @@ export function TerminalHost(props: {
                     <span class="pf-pane-callsign">{leaf.callsign}</span>
                     <Show when={baseName(props.cwd)}>
                       <span class="pf-pane-cwd">{baseName(props.cwd)}</span>
+                    </Show>
+                    <Show when={remotePtyFor(props.session?.projectRoot ?? props.cwd)}>
+                      {(remote) => <span class="pf-pane-cwd">ssh:{remote().host}</span>}
                     </Show>
                   </div>
                   <div class="pf-pane-ctls">

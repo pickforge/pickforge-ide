@@ -22,9 +22,9 @@ use std::time::Duration;
 use pickforge_core::{
     dtach_socket_path, kill_dtach_master, prepare_chat_session, run_timeout, select_backend,
     session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
-    PtyEvent, PtyManager, SessionBackend, SpawnOptions,
+    PreparedSession, PtyEvent, PtyManager, RemotePty, SessionBackend, SpawnOptions,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tauri::State;
 
@@ -57,6 +57,63 @@ fn resolve_spawn_cwd(cwd: Option<String>, roots: &ApprovedRoots) -> Result<Optio
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePtyInput {
+    host: String,
+    remote_root: String,
+}
+
+impl From<RemotePtyInput> for RemotePty {
+    fn from(value: RemotePtyInput) -> Self {
+        Self {
+            host: value.host,
+            remote_root: value.remote_root,
+        }
+    }
+}
+
+fn spawn_options(
+    cwd: Option<String>,
+    command: Option<String>,
+    rows: u16,
+    cols: u16,
+    env: Option<HashMap<String, String>>,
+    remote: Option<RemotePty>,
+    roots: &ApprovedRoots,
+) -> Result<SpawnOptions, String> {
+    let cwd = if remote.is_some() {
+        None
+    } else {
+        resolve_spawn_cwd(cwd, roots)?
+    };
+    Ok(SpawnOptions {
+        cwd,
+        command,
+        rows,
+        cols,
+        extra_env: env.unwrap_or_default(),
+        remote,
+        ..Default::default()
+    })
+}
+
+fn chat_spawn_options(
+    cwd: Option<String>,
+    rows: u16,
+    cols: u16,
+    env: Option<HashMap<String, String>>,
+    remote: Option<RemotePty>,
+    prepared: &PreparedSession,
+    roots: &ApprovedRoots,
+) -> Result<SpawnOptions, String> {
+    let remote_chat = remote.is_some();
+    let mut opts = spawn_options(cwd, None, rows, cols, env, remote, roots)?;
+    opts.program_override = (!remote_chat).then(|| prepared.program_override.clone()).flatten();
+    opts.detach_on_drop = !remote_chat && prepared.backend != SessionBackend::Raw;
+    Ok(opts)
+}
+
 #[tauri::command]
 pub fn pty_spawn(
     manager: State<'_, PtyManager>,
@@ -70,18 +127,11 @@ pub fn pty_spawn(
     // local MCP endpoint. Optional: an interactive shell with no run context
     // passes nothing.
     env: Option<HashMap<String, String>>,
+    remote: Option<RemotePtyInput>,
     on_output: Channel<Response>,
     on_exit: Channel<Option<i32>>,
 ) -> Result<u32, String> {
-    let cwd = resolve_spawn_cwd(cwd, &roots)?;
-    let opts = SpawnOptions {
-        cwd,
-        command,
-        rows,
-        cols,
-        extra_env: env.unwrap_or_default(),
-        ..Default::default()
-    };
+    let opts = spawn_options(cwd, command, rows, cols, env, remote.map(Into::into), &roots)?;
     manager
         .spawn(opts, move |event: PtyEvent| match event {
             PtyEvent::Output(bytes) => {
@@ -213,13 +263,14 @@ pub fn pty_spawn_chat(
     backend: String,
     // The session id already stored on this chat (preserved on a raw fallback).
     session_id: Option<String>,
+    remote: Option<RemotePtyInput>,
     rows: u16,
     cols: u16,
     on_output: Channel<Response>,
     on_exit: Channel<Option<i32>>,
 ) -> Result<ChatSpawnResult, String> {
-    // Gate the spawn cwd exactly like the raw shell path.
-    let cwd = resolve_spawn_cwd(cwd, &roots)?;
+    let remote = remote.map(Into::into);
+    let remote_chat = remote.is_some();
     // Hash the CANONICAL project root (canonicalize via the same gate, falling
     // back to the raw string if it isn't an approved root — naming only needs
     // stability, not approval), so `~/app`, `app/`, symlinks don't fork sessions.
@@ -228,8 +279,14 @@ pub fn pty_spawn_chat(
         .unwrap_or(project_root);
 
     let requested = SessionBackend::from_tag(&backend);
-    let selected = select_backend(requested);
-    let degraded = selected == SessionBackend::Raw && requested != SessionBackend::Raw;
+    // Chat recovery stays local-only: remote shells use a raw SSH PTY.
+    let selected = if remote_chat {
+        SessionBackend::Raw
+    } else {
+        select_backend(requested)
+    };
+    let degraded =
+        !remote_chat && selected == SessionBackend::Raw && requested != SessionBackend::Raw;
 
     let base = runtime_base();
 
@@ -257,16 +314,7 @@ pub fn pty_spawn_chat(
         },
     );
 
-    let opts = SpawnOptions {
-        cwd,
-        rows,
-        cols,
-        extra_env: env.unwrap_or_default(),
-        command: None, // a chat shell is NEVER the one-shot path
-        program_override: prepared.program_override.clone(),
-        detach_on_drop: prepared.backend != SessionBackend::Raw,
-        remote: None,
-    };
+    let opts = chat_spawn_options(cwd, rows, cols, env, remote, &prepared, &roots)?;
 
     let pty_id = manager
         .spawn(opts, move |event: PtyEvent| match event {
@@ -421,5 +469,55 @@ mod spawn_cwd_tests {
             resolve_spawn_cwd(Some(missing.to_string_lossy().into_owned()), &roots).is_err(),
             "a non-resolving cwd must be rejected",
         );
+    }
+
+    #[test]
+    fn remote_spawn_threads_the_remote_and_skips_the_local_cwd_gate() {
+        let remote = RemotePty {
+            host: "mac-mini".to_string(),
+            remote_root: "/Users/dev/app".to_string(),
+        };
+        let opts = spawn_options(
+            Some("/not/an/approved/local/path".to_string()),
+            None,
+            24,
+            80,
+            None,
+            Some(remote.clone()),
+            &ApprovedRoots::default(),
+        )
+        .expect("a remote spawn must not validate its local cwd");
+
+        assert_eq!(opts.cwd, None);
+        assert_eq!(opts.remote, Some(remote));
+    }
+
+    #[test]
+    fn remote_chat_spawn_drops_the_local_recovery_override() {
+        let prepared = PreparedSession {
+            backend: SessionBackend::Dtach,
+            session_id: Some("dtach:pf-existing".to_string()),
+            program_override: Some(("dtach".to_string(), vec!["-a".to_string()])),
+            status: pickforge_core::SessionStatus::Created,
+            dtach_socket: None,
+        };
+        let opts = chat_spawn_options(
+            Some("/not/an/approved/local/path".to_string()),
+            24,
+            80,
+            None,
+            Some(RemotePty {
+                host: "mac-mini".to_string(),
+                remote_root: "/Users/dev/app".to_string(),
+            }),
+            &prepared,
+            &ApprovedRoots::default(),
+        )
+        .expect("a remote chat must not validate its local cwd");
+
+        assert_eq!(opts.cwd, None);
+        assert!(opts.program_override.is_none());
+        assert!(!opts.detach_on_drop);
+        assert!(opts.remote.is_some());
     }
 }

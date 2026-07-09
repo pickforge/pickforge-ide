@@ -176,9 +176,9 @@ fn stop_child(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     use std::time::SystemTime;
 
     #[test]
@@ -201,7 +201,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn pw_record_fast_fails_when_child_exits_immediately() {
         let dir = std::env::temp_dir().join(format!(

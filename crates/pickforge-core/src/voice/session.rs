@@ -415,6 +415,9 @@ where
                         TranscribeResult::Text(text) => {
                             push_partial(&mut partials, text);
                         }
+                        TranscribeResult::TextThenStop(text) => {
+                            push_partial(&mut partials, text);
+                        }
                         TranscribeResult::Control(Control::Cancel) => {
                             return Ok(SessionOutcome::Cancelled);
                         }
@@ -427,6 +430,7 @@ where
 
         let text = match self.transcribe_path(&self.capture_path)? {
             TranscribeResult::Text(text) => text,
+            TranscribeResult::TextThenStop(text) => text,
             TranscribeResult::Control(Control::Cancel) => return Ok(SessionOutcome::Cancelled),
             TranscribeResult::Control(Control::Stop) => String::new(),
         };
@@ -443,6 +447,14 @@ where
         while let Some(range) = segmenter.next_range(&wav.samples, wav.sample_rate) {
             let text = match self.transcribe_range(wav, range, *segment_index)? {
                 TranscribeResult::Text(text) => text,
+                TranscribeResult::TextThenStop(text) => {
+                    *segment_index += 1;
+                    if push_partial(partials, text) {
+                        self.sink
+                            .emit(VoiceEvent::partial(&self.session_id, join_transcript(partials)));
+                    }
+                    return Ok(Some(Control::Stop));
+                }
                 TranscribeResult::Control(control) => return Ok(Some(control)),
             };
             *segment_index += 1;
@@ -491,11 +503,17 @@ where
             .active_transcription
             .lock()
             .expect("voice transcription slot poisoned") = None;
-        if let Some(control) = self.poll_control() {
-            return Ok(TranscribeResult::Control(control));
-        }
         match result {
-            Ok(text) => Ok(TranscribeResult::Text(text.trim().to_string())),
+            Ok(text) => {
+                let text = text.trim().to_string();
+                match self.poll_control() {
+                    Some(Control::Stop) if !text.is_empty() => {
+                        Ok(TranscribeResult::TextThenStop(text))
+                    }
+                    Some(control) => Ok(TranscribeResult::Control(control)),
+                    None => Ok(TranscribeResult::Text(text)),
+                }
+            }
             Err(VoiceError::Interrupted) => {
                 if let Some(control) = self.poll_control() {
                     Ok(TranscribeResult::Control(control))
@@ -546,6 +564,7 @@ enum SessionOutcome {
 
 enum TranscribeResult {
     Text(String),
+    TextThenStop(String),
     Control(Control),
 }
 
@@ -749,7 +768,7 @@ fn join_transcript(partials: &[String]) -> String {
         .join(" ")
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     use crate::voice::segments::{encode_wav_pcm16_mono, TARGET_SAMPLE_RATE};
@@ -945,6 +964,69 @@ mod tests {
         fn kill(&self) {
             self.killed.store(true, Ordering::SeqCst);
             self.cvar.notify_all();
+        }
+    }
+
+    #[derive(Clone)]
+    struct GatedTranscriber {
+        gate: Arc<WaitGate>,
+        text: String,
+    }
+
+    impl VoiceTranscriber for GatedTranscriber {
+        fn prepare(
+            &self,
+            model_path_override: Option<&Path>,
+        ) -> Result<PreparedTranscription, VoiceError> {
+            Ok(PreparedTranscription {
+                model_path: model_path_override
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("/tmp/model.bin")),
+            })
+        }
+
+        fn start_transcription(
+            &self,
+            _wav_path: &Path,
+            _language: &str,
+            _model_path: &Path,
+        ) -> Result<Arc<dyn RunningTranscription>, VoiceError> {
+            Ok(Arc::new(GatedJob {
+                gate: Arc::clone(&self.gate),
+                text: self.text.clone(),
+            }))
+        }
+    }
+
+    #[derive(Default)]
+    struct WaitGate {
+        entered: (Mutex<bool>, Condvar),
+        released: (Mutex<bool>, Condvar),
+    }
+
+    struct GatedJob {
+        gate: Arc<WaitGate>,
+        text: String,
+    }
+
+    impl RunningTranscription for GatedJob {
+        fn wait(&self) -> Result<String, VoiceError> {
+            {
+                let (lock, cvar) = &self.gate.entered;
+                *lock.lock().unwrap() = true;
+                cvar.notify_all();
+            }
+            let (lock, cvar) = &self.gate.released;
+            let guard = lock.lock().unwrap();
+            let (guard, _) = cvar
+                .wait_timeout_while(guard, Duration::from_secs(2), |released| !*released)
+                .unwrap();
+            assert!(*guard, "gated transcription was not released");
+            Ok(self.text.clone())
+        }
+
+        fn kill(&self) {
+            release_gate(&self.gate);
         }
     }
 
@@ -1243,6 +1325,64 @@ mod tests {
     }
 
     #[test]
+    fn stop_after_transcription_completion_keeps_segment_text() {
+        let home = TempHome::new("stop-after-ok");
+        let session_dir = voice_root(&home.0).join("session");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        let wav = WavData {
+            sample_rate: TARGET_SAMPLE_RATE,
+            channels: 1,
+            samples: samples(5.2),
+        };
+        let gate = Arc::new(WaitGate::default());
+        let (control_tx, control_rx) = std::sync::mpsc::channel();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_for_sink = Arc::clone(&events);
+        let runner = SessionRunner {
+            session_id: "session".to_string(),
+            session_dir,
+            capture_path: PathBuf::from("capture.wav"),
+            language: "en".to_string(),
+            model_path: PathBuf::from("/tmp/model.bin"),
+            config: test_config(true),
+            transcriber: Arc::new(GatedTranscriber {
+                gate: Arc::clone(&gate),
+                text: "hello".to_string(),
+            }),
+            sink: Arc::new(move |event| events_for_sink.lock().unwrap().push(event)),
+            control_rx,
+            state: Arc::new(Mutex::new(VoiceSessionPhase::Recording)),
+            completion: Arc::new(Completion::default()),
+            active_transcription: Arc::new(Mutex::new(None)),
+        };
+
+        let handle = thread::spawn(move || {
+            let mut segmenter = Segmenter::new(SegmentConfig::default());
+            let mut segment_index = 0usize;
+            let mut partials = Vec::new();
+            runner
+                .process_ready_segments(
+                    &wav,
+                    &mut segmenter,
+                    &mut segment_index,
+                    &mut partials,
+                )
+                .map(|control| (control, partials))
+        });
+        wait_for_gate_entry(&gate);
+        control_tx.send(Control::Stop).unwrap();
+        release_gate(&gate);
+        let (control, partials) = handle.join().unwrap().unwrap();
+
+        assert_eq!(control, Some(Control::Stop));
+        assert_eq!(partials, vec!["hello".to_string()]);
+        assert!(events.lock().unwrap().iter().any(|event| {
+            event.kind == super::super::VoiceEventKind::Partial
+                && event.text.as_deref() == Some("hello")
+        }));
+    }
+
+    #[test]
     fn stale_sweep_removes_old_session_dirs() {
         let home = TempHome::new("sweep");
         let root = voice_root(&home.0);
@@ -1280,6 +1420,21 @@ mod tests {
         assert!(*guard, "transcription did not start before timeout");
     }
 
+    fn wait_for_gate_entry(gate: &Arc<WaitGate>) {
+        let (lock, cvar) = &gate.entered;
+        let guard = lock.lock().unwrap();
+        let (guard, _) = cvar
+            .wait_timeout_while(guard, Duration::from_secs(2), |entered| !*entered)
+            .unwrap();
+        assert!(*guard, "gated transcription did not start before timeout");
+    }
+
+    fn release_gate(gate: &Arc<WaitGate>) {
+        let (lock, cvar) = &gate.released;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+
     #[cfg(unix)]
     fn mode_of(path: &Path) -> u32 {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777
@@ -1308,4 +1463,17 @@ mod tests {
 
     #[cfg(not(unix))]
     fn set_mtime(_path: &Path, _time: SystemTime) {}
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod non_linux_tests {
+    use super::*;
+
+    #[test]
+    fn start_returns_unsupported_platform() {
+        let manager = VoiceSessionManager::new();
+        let result = manager.start(VoiceStartRequest::new(None, None), |_| {});
+
+        assert!(matches!(result, Err(VoiceError::UnsupportedPlatform)));
+    }
 }

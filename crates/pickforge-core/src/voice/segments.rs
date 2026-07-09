@@ -169,7 +169,8 @@ pub fn parse_wav_pcm16(bytes: &[u8]) -> Result<WavData, String> {
         ]) as usize;
         let start = offset + 8;
         let declared_end = start.saturating_add(declared_len);
-        let end = if declared_len == 0 || declared_end > bytes.len() {
+        let open_ended = declared_len == 0 || declared_end > bytes.len();
+        let end = if open_ended {
             bytes.len()
         } else {
             declared_end
@@ -194,6 +195,9 @@ pub fn parse_wav_pcm16(bytes: &[u8]) -> Result<WavData, String> {
             }
             b"data" => {
                 data = Some(&bytes[start..end]);
+                if open_ended {
+                    break;
+                }
             }
             _ => {}
         }
@@ -345,6 +349,41 @@ mod tests {
         assert_eq!(wav.sample_rate, TARGET_SAMPLE_RATE);
         assert_eq!(wav.channels, TARGET_CHANNELS);
         assert_eq!(wav.samples, samples);
+    }
+
+    #[test]
+    fn zero_length_data_chunk_extends_to_eof_without_scanning_pcm_as_chunks() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&TARGET_CHANNELS.to_le_bytes());
+        bytes.extend_from_slice(&TARGET_SAMPLE_RATE.to_le_bytes());
+        let byte_rate =
+            TARGET_SAMPLE_RATE * TARGET_CHANNELS as u32 * TARGET_BITS_PER_SAMPLE as u32 / 8;
+        bytes.extend_from_slice(&byte_rate.to_le_bytes());
+        let block_align = TARGET_CHANNELS * TARGET_BITS_PER_SAMPLE / 8;
+        bytes.extend_from_slice(&block_align.to_le_bytes());
+        bytes.extend_from_slice(&TARGET_BITS_PER_SAMPLE.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&3u16.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&48_000u32.to_le_bytes());
+        bytes.extend_from_slice(&192_000u32.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&32u16.to_le_bytes());
+
+        let wav = parse_wav_pcm16(&bytes).unwrap();
+
+        assert_eq!(wav.sample_rate, TARGET_SAMPLE_RATE);
+        assert_eq!(wav.channels, TARGET_CHANNELS);
+        assert_eq!(wav.samples.len(), 12);
     }
 
     #[test]

@@ -502,6 +502,7 @@ describe("dispatchIntent", () => {
     }));
 
     expect(result.status).toBe("needsConfirmation");
+    expect(result).toMatchObject({ auditId: expect.any(String) });
     expect(deps.operatorAuditInsert).toHaveBeenCalledWith(expect.objectContaining({
       status: "started",
       riskTier: 1,
@@ -1162,11 +1163,13 @@ describe("dispatchIntent", () => {
   });
 
   it("captures a screenshot from the selected running device", async () => {
-    deps.targets.push(runTarget("detected", "React Native", {
+    const target = runTarget("detected", "React Native", {
       deviceConvention: "rnDevice",
       inspectorKind: "uiAutomator",
       logSource: "logcat",
-    }));
+    });
+    deps.targets.push(target);
+    setActiveRun(target);
     deps.devices.push(device("Pixel 8", {
       serial: "emulator-5554",
       avdId: "Pixel_8",
@@ -1220,12 +1223,14 @@ describe("dispatchIntent", () => {
   });
 
   it("does not fall back to a device screenshot for a no-device target", async () => {
-    deps.targets.push(runTarget("web", "Web", {
+    const target = runTarget("web", "Web", {
       capabilities: ["detect", "captureScreenshot"],
       needsDevice: false,
       deviceConvention: "none",
       inspectorKind: "cdp",
-    }));
+    });
+    deps.targets.push(target);
+    setActiveRun(target);
     deps.devices.push(device("Pixel 8", {
       serial: "emulator-5554",
       avdId: "Pixel_8",
@@ -1242,9 +1247,16 @@ describe("dispatchIntent", () => {
   });
 
   it("captures a VM screenshot when a selected Flutter widget is available", async () => {
-    deps.targets.push(runTarget("detected", "Flutter"));
+    const target = runTarget("detected", "Flutter");
+    deps.targets.push(target);
+    setActiveRun(target);
     deps.vmFindIsolate.mockResolvedValue("isolates/1");
-    deps.vmSelectedWidget.mockResolvedValue({ id: "widget-1", className: "Text", children: [], creationLocation: null });
+    deps.vmSelectedWidget.mockResolvedValue({
+      id: "widget-1",
+      className: "Text",
+      children: [],
+      creationLocation: null,
+    });
     deps.vmScreenshot.mockResolvedValue("png-b64");
     const { dispatchIntent } = await loadStore();
 
@@ -1264,13 +1276,27 @@ describe("dispatchIntent", () => {
     expect(deps.adbScreenshot).not.toHaveBeenCalled();
   });
 
-  it("returns noop for screenshot when there is no active device or VM selection", async () => {
+  it("does not call any screenshot capture seam when there is no active run", async () => {
     deps.targets.push(runTarget("detected", "Flutter"));
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    deps.vmSelectedWidget.mockResolvedValue({
+      id: "widget-1",
+      className: "Text",
+      children: [],
+      creationLocation: null,
+    });
+    deps.vmScreenshot.mockResolvedValue("png-b64");
     const { dispatchIntent } = await loadStore();
 
     const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
 
-    expect(result).toEqual({ status: "noop", summary: "no active device/session" });
+    expect(result).toEqual({ status: "noop", summary: "no device-backed run/target" });
+    expect(deps.vmFindIsolate).not.toHaveBeenCalled();
+    expect(deps.vmSelectedWidget).not.toHaveBeenCalled();
+    expect(deps.vmScreenshot).not.toHaveBeenCalled();
+    expect(deps.inspectDir).not.toHaveBeenCalled();
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.iosScreenshot).not.toHaveBeenCalled();
     expect(auditUpdateStatus()).toBe("noop");
   });
 

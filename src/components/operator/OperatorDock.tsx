@@ -59,7 +59,7 @@ export function OperatorDock() {
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      if (operatorView().kind === "preview") cancelOperatorPreview();
+      if (operatorView().kind === "preview") void cancelOperatorPreview();
       else closeOperatorDock();
       return;
     }
@@ -162,7 +162,7 @@ export function OperatorDock() {
                       type="button"
                       class="pf-op-cancel"
                       disabled={operatorBusy()}
-                      onClick={() => cancelOperatorPreview()}
+                      onClick={() => void cancelOperatorPreview()}
                     >
                       Cancel
                     </button>

@@ -6,7 +6,7 @@ import { parseCommand } from "../lib/operatorParser";
 import { routeCommand } from "../lib/operatorRouter";
 import { dispatchIntent, type DispatchResult } from "./operator";
 import { flagEnabled } from "./flags";
-import { operatorAuditList, type OperatorAuditRow } from "../lib/db";
+import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
 import type { OperatorIntent } from "../lib/operatorIntent";
 import { onRouteChange } from "../router";
 
@@ -20,6 +20,7 @@ export type DockView =
     summary: string;
     inputText: string;
     confidence?: number;
+    auditId: string;
   }
   | { kind: "result"; result: DispatchResult };
 
@@ -163,9 +164,18 @@ export async function confirmOperatorPreview(): Promise<void> {
   }
 }
 
-export function cancelOperatorPreview() {
+export async function cancelOperatorPreview(): Promise<void> {
   if (busy()) return;
-  if (view().kind === "preview") setView({ kind: "idle" });
+  const current = view();
+  if (current.kind !== "preview") return;
+  setView({ kind: "idle" });
+  try {
+    await operatorAuditUpdate(current.auditId, "denied", "cancelled by user");
+  } catch (error) {
+    console.warn("[pickforge] operator audit update failed", error);
+  } finally {
+    await refreshRecent();
+  }
 }
 
 function applyResult(result: DispatchResult) {
@@ -188,6 +198,7 @@ async function submitIntent(
       summary: result.summary,
       inputText: text,
       confidence,
+      auditId: result.auditId,
     });
   } else {
     applyResult(result);

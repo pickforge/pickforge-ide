@@ -9,6 +9,7 @@ const deps = vi.hoisted(() => ({
   dispatchIntent: vi.fn(),
   flagEnabled: vi.fn(),
   operatorAuditList: vi.fn(),
+  operatorAuditUpdate: vi.fn(),
 }));
 
 vi.mock("../../src/lib/operatorParser", () => ({
@@ -25,6 +26,7 @@ vi.mock("../../src/stores/flags", () => ({
 }));
 vi.mock("../../src/lib/db", () => ({
   operatorAuditList: deps.operatorAuditList,
+  operatorAuditUpdate: deps.operatorAuditUpdate,
 }));
 vi.mock("../../src/router", () => {
   let current = "workbench";
@@ -65,6 +67,7 @@ beforeEach(() => {
   deps.dispatchIntent.mockReset();
   deps.flagEnabled.mockReset().mockReturnValue(true);
   deps.operatorAuditList.mockReset().mockResolvedValue([]);
+  deps.operatorAuditUpdate.mockReset().mockResolvedValue(undefined);
 });
 
 describe("operatorDock store", () => {
@@ -256,7 +259,11 @@ describe("operatorDock store", () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
     deps.dispatchIntent
-      .mockResolvedValueOnce({ status: "needsConfirmation", summary: "Send prompt to active chat" } as DispatchResult)
+      .mockResolvedValueOnce({
+        status: "needsConfirmation",
+        summary: "Send prompt to active chat",
+        auditId: "audit-1",
+      } as DispatchResult)
       .mockResolvedValueOnce({ status: "done", summary: "Sent prompt to Chat" } as DispatchResult);
     const s = await loadStore();
 
@@ -284,26 +291,50 @@ describe("operatorDock store", () => {
     expect(s.operatorInput()).toBe("");
   });
 
-  it("cancels a preview back to idle without dispatching again", async () => {
+  it("marks a cancelled preview audit as denied and refreshes recent activity", async () => {
     const startSwarm = intent({ action: "startSwarm", mode: "scout", count: 3, goal: "g", provider: "mixed" });
+    const awaitingRow = {
+      id: "audit-1",
+      createdAt: 1,
+      projectRoot: "/repo/app",
+      inputText: "start scout swarm g",
+      intentJson: "{}",
+      riskTier: 1,
+      status: "needs_confirmation" as const,
+      result: "Start scout swarm with 3 lanes",
+    };
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: startSwarm });
-    deps.dispatchIntent.mockResolvedValue({ status: "needsConfirmation", summary: "Start scout swarm with 3 lanes" } as DispatchResult);
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Start scout swarm with 3 lanes",
+      auditId: "audit-1",
+    } as DispatchResult);
+    deps.operatorAuditList
+      .mockResolvedValueOnce([awaitingRow])
+      .mockResolvedValueOnce([{ ...awaitingRow, status: "denied" as const, result: "cancelled by user" }]);
     const s = await loadStore();
 
     s.setOperatorInput("start scout swarm g");
     await s.submitOperatorCommand();
     expect(s.operatorView().kind).toBe("preview");
 
-    s.cancelOperatorPreview();
+    await s.cancelOperatorPreview();
 
     expect(s.operatorView()).toEqual({ kind: "idle" });
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith("audit-1", "denied", "cancelled by user");
+    expect(s.operatorRecent().some((row) => row.status === "needs_confirmation")).toBe(false);
+    expect(s.operatorRecent()[0]).toMatchObject({ id: "audit-1", status: "denied" });
   });
 
   it("clears a pending preview when the input text is edited", async () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
-    deps.dispatchIntent.mockResolvedValue({ status: "needsConfirmation", summary: "Send prompt to active chat" } as DispatchResult);
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+      auditId: "audit-1",
+    } as DispatchResult);
     const s = await loadStore();
 
     s.setOperatorInput("send hi");
@@ -374,7 +405,11 @@ describe("operatorDock store", () => {
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
     let resolveDispatch!: (r: DispatchResult) => void;
     deps.dispatchIntent
-      .mockResolvedValueOnce({ status: "needsConfirmation", summary: "Send prompt to active chat" } as DispatchResult)
+      .mockResolvedValueOnce({
+        status: "needsConfirmation",
+        summary: "Send prompt to active chat",
+        auditId: "audit-1",
+      } as DispatchResult)
       .mockReturnValueOnce(
         new Promise<DispatchResult>((resolve) => {
           resolveDispatch = resolve;
@@ -387,7 +422,7 @@ describe("operatorDock store", () => {
     const confirming = s.confirmOperatorPreview();
     expect(s.operatorBusy()).toBe(true);
 
-    s.cancelOperatorPreview();
+    void s.cancelOperatorPreview();
     expect(s.operatorView().kind).toBe("preview");
 
     resolveDispatch({ status: "done", summary: "Sent prompt to Chat" });
@@ -473,7 +508,7 @@ describe("operatorDock store", () => {
     const pending = s.submitOperatorCommand();
 
     s.closeOperatorDock();
-    resolveDispatch({ status: "needsConfirmation", summary: "Send prompt to active chat" });
+    resolveDispatch({ status: "needsConfirmation", summary: "Send prompt to active chat", auditId: "audit-1" });
     await pending;
 
     expect(s.operatorView()).toEqual({ kind: "idle" });

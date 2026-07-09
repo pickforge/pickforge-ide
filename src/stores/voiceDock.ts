@@ -102,7 +102,10 @@ export async function startDictation(): Promise<void> {
     setPhase("recording");
     try {
       const id = await startVoice(onVoiceEvent(mine), { modelPathOverride: model });
-      if (mine !== epoch) {
+      // Superseded (reset/restart) or already settled (an error event beat the
+      // resolve): never adopt the dead session's id — cancel it instead so a
+      // later stop can't act on it.
+      if (mine !== epoch || finalized) {
         void cancelVoice(id).catch(() => {});
         return;
       }

@@ -293,6 +293,42 @@ describe("voiceDock store", () => {
     expect(deps.cancelVoice).toHaveBeenCalledOnce();
   });
 
+  it("never adopts a session whose error event beat the startVoice resolve", async () => {
+    let resolveStart!: (id: string) => void;
+    let sink!: (event: VoiceEvent) => void;
+    deps.startVoice.mockImplementation((onEvent: (event: VoiceEvent) => void) => {
+      sink = onEvent;
+      return new Promise<string>((resolve) => {
+        resolveStart = resolve;
+      });
+    });
+    const s = await loadStore();
+
+    const pending = s.startDictation();
+    await flushAsync();
+    sink(errorEvent("recorder exited", "sess-dead"));
+    expect(s.voiceDockPhase()).toBe("error");
+
+    resolveStart("sess-dead");
+    await pending;
+    await flushAsync();
+
+    expect(deps.cancelVoice).toHaveBeenCalledExactlyOnceWith("sess-dead");
+
+    // The dead id must not be stoppable.
+    await s.stopDictation();
+    expect(deps.stopVoice).not.toHaveBeenCalled();
+
+    // A subsequent start is clean.
+    captureSink("sess-2");
+    deps.stopVoice.mockResolvedValue("second take");
+    await s.startDictation();
+    expect(s.voiceDockPhase()).toBe("recording");
+    await s.stopDictation();
+    expect(deps.stopVoice).toHaveBeenCalledWith("sess-2");
+    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("second take");
+  });
+
   it("surfaces a rejected stop() as an error", async () => {
     captureSink();
     deps.stopVoice.mockRejectedValue(new Error("pipeline failed"));

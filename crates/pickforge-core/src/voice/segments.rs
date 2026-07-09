@@ -1,7 +1,14 @@
+//! WAV segment math for voice dictation.
+//!
+//! Segment ranges keep both an overlap-inclusive `start_sample` and the
+//! non-overlap `content_start_sample`. The session writer uses
+//! `for_transcription()` before invoking STT, so boundary overlap can guide
+//! slicing decisions without duplicating leading words in appended transcripts.
+
 use std::path::Path;
 use std::time::Duration;
 
-use super::VoiceError;
+use super::{write_private_file, VoiceError};
 
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 pub const TARGET_CHANNELS: u16 = 1;
@@ -40,6 +47,15 @@ pub struct SegmentRange {
     pub start_sample: usize,
     pub end_sample: usize,
     pub content_start_sample: usize,
+}
+
+impl SegmentRange {
+    pub fn for_transcription(self) -> Self {
+        Self {
+            start_sample: self.content_start_sample.max(self.start_sample),
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -124,13 +140,10 @@ pub fn write_segment_wav(
     range: SegmentRange,
     path: &Path,
 ) -> Result<(), VoiceError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let end = range.end_sample.min(wav.samples.len());
     let start = range.start_sample.min(end);
     let bytes = encode_wav_pcm16_mono(&wav.samples[start..end], wav.sample_rate);
-    std::fs::write(path, bytes)?;
+    write_private_file(path, &bytes)?;
     Ok(())
 }
 
@@ -379,5 +392,23 @@ mod tests {
         assert_eq!(tail.content_start_sample, first.end_sample);
         assert!(tail.start_sample < tail.content_start_sample);
         assert_eq!(tail.end_sample, samples.len());
+    }
+
+    #[test]
+    fn transcription_range_trims_leading_overlap() {
+        let range = SegmentRange {
+            start_sample: 56_000,
+            content_start_sample: 80_000,
+            end_sample: 120_000,
+        };
+
+        assert_eq!(
+            range.for_transcription(),
+            SegmentRange {
+                start_sample: 80_000,
+                content_start_sample: 80_000,
+                end_sample: 120_000,
+            }
+        );
     }
 }

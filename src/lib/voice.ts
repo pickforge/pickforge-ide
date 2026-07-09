@@ -49,6 +49,8 @@ export function cancelVoice(sessionId: string): Promise<void> {
   return invoke("voice_cancel", { sessionId });
 }
 
-export function voiceStatus(): Promise<VoiceStatus> {
-  return invoke<VoiceStatus>("voice_status");
+export function voiceStatus(modelPathOverride?: string | null): Promise<VoiceStatus> {
+  return invoke<VoiceStatus>("voice_status", {
+    modelPathOverride: modelPathOverride ?? null,
+  });
 }

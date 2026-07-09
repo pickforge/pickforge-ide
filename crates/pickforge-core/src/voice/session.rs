@@ -10,9 +10,12 @@ use super::recorder::{ActiveRecording, PwRecordBackend, RecorderBackend};
 use super::segments::{
     read_wav_file, rms_level, write_segment_wav, SegmentConfig, Segmenter, WavData,
 };
-use super::stt::{PreparedTranscription, VoiceTranscriber, WhisperCliTranscriber};
+use super::stt::{
+    PreparedTranscription, RunningTranscription, VoiceTranscriber, WhisperCliTranscriber,
+};
 use super::{
-    keep_audio_from_env, DEFAULT_LANGUAGE, VoiceError, VoiceEvent, VoiceSink,
+    create_private_dir_all, keep_audio_from_env, DEFAULT_LANGUAGE, VoiceError, VoiceEvent,
+    VoiceSink,
 };
 
 const STALE_SESSION_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -74,7 +77,6 @@ impl Default for VoiceRuntimeConfig {
     }
 }
 
-#[derive(Clone)]
 pub struct VoiceSessionManager<R = PwRecordBackend, T = WhisperCliTranscriber> {
     home: Option<PathBuf>,
     home_error: Option<String>,
@@ -93,7 +95,7 @@ impl VoiceSessionManager<PwRecordBackend, WhisperCliTranscriber> {
         let manager = Self {
             home,
             home_error,
-            recorder: Arc::new(PwRecordBackend),
+            recorder: Arc::new(PwRecordBackend::default()),
             transcriber: Arc::new(WhisperCliTranscriber),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             config: VoiceRuntimeConfig::from_env(),
@@ -157,7 +159,7 @@ where
             let session_id = self.next_session_id();
             let session_dir = voice_root(&home).join(&session_id);
             let capture_path = session_dir.join("capture.wav");
-            std::fs::create_dir_all(&session_dir)?;
+            create_private_dir_all(&session_dir)?;
 
             let recording = match self.recorder.start(&capture_path) {
                 Ok(recording) => recording,
@@ -171,11 +173,13 @@ where
             let completion = Arc::new(Completion::default());
             let (control_tx, control_rx) = std::sync::mpsc::channel();
             let join = Arc::new(Mutex::new(None));
+            let active_transcription = Arc::new(Mutex::new(None));
             let handle = SessionHandle {
                 control_tx,
                 completion: Arc::clone(&completion),
                 state: Arc::clone(&state),
                 join: Arc::clone(&join),
+                active_transcription: Arc::clone(&active_transcription),
             };
             let runner = SessionRunner {
                 session_id: session_id.clone(),
@@ -189,6 +193,7 @@ where
                 control_rx,
                 state,
                 completion,
+                active_transcription,
             };
 
             let thread = match thread::Builder::new()
@@ -219,10 +224,20 @@ where
             .cloned()
             .ok_or_else(|| VoiceError::SessionNotFound(session_id.to_string()))?;
         let _ = handle.control_tx.send(Control::Stop);
-        let completion = handle
-            .completion
-            .wait(timeout)
-            .ok_or_else(|| VoiceError::Timeout(session_id.to_string()))?;
+        let completion = match handle.completion.wait(timeout) {
+            Some(completion) => completion,
+            None => {
+                let _ = handle.control_tx.send(Control::Cancel);
+                kill_active_transcription(&handle);
+                let _ = handle.completion.wait(Duration::from_secs(2));
+                self.sessions
+                    .lock()
+                    .expect("voice registry poisoned")
+                    .remove(session_id);
+                join_runner(&handle);
+                return Err(VoiceError::Timeout(session_id.to_string()));
+            }
+        };
         self.sessions
             .lock()
             .expect("voice registry poisoned")
@@ -240,6 +255,7 @@ where
             .cloned()
             .ok_or_else(|| VoiceError::SessionNotFound(session_id.to_string()))?;
         let _ = handle.control_tx.send(Control::Cancel);
+        kill_active_transcription(&handle);
         let completion = handle
             .completion
             .wait(Duration::from_secs(5))
@@ -272,6 +288,10 @@ where
         sweep_stale_voice_dirs(&home, STALE_SESSION_AGE, SystemTime::now()).map_err(VoiceError::Io)
     }
 
+    pub fn shutdown(&self) {
+        shutdown_sessions(&self.sessions, Duration::from_secs(5));
+    }
+
     fn home_dir(&self) -> Result<PathBuf, VoiceError> {
         self.home
             .clone()
@@ -295,6 +315,12 @@ where
     }
 }
 
+impl<R, T> Drop for VoiceSessionManager<R, T> {
+    fn drop(&mut self) {
+        shutdown_sessions(&self.sessions, Duration::from_secs(5));
+    }
+}
+
 struct SessionRunner<T, S>
 where
     T: VoiceTranscriber,
@@ -311,6 +337,7 @@ where
     control_rx: std::sync::mpsc::Receiver<Control>,
     state: Arc<Mutex<VoiceSessionPhase>>,
     completion: Arc<Completion>,
+    active_transcription: ActiveTranscriptionSlot,
 }
 
 impl<T, S> SessionRunner<T, S>
@@ -354,45 +381,55 @@ where
         let mut segment_index = 0usize;
 
         let exit = loop {
-            match self.control_rx.try_recv() {
-                Ok(Control::Stop) => break Control::Stop,
-                Ok(Control::Cancel) => break Control::Cancel,
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => break Control::Cancel,
+            if let Some(control) = self.poll_control() {
+                break control;
             }
 
             if let Some(wav) = read_capture_for_poll(&self.capture_path) {
                 self.sink
                     .emit(VoiceEvent::level(&self.session_id, recent_level(&wav)));
-                self.process_ready_segments(
+                if let Some(control) = self.process_ready_segments(
                     &wav,
                     &mut segmenter,
                     &mut segment_index,
                     &mut partials,
-                )?;
+                )? {
+                    break control;
+                }
             }
 
             thread::sleep(self.config.poll_interval);
         };
 
         if matches!(exit, Control::Cancel) {
+            let _ = _recording.stop();
             return Ok(SessionOutcome::Cancelled);
         }
 
+        _recording.stop()?;
         set_state(&self.state, VoiceSessionPhase::Finalizing);
         if !partials.is_empty() {
             if let Some(wav) = read_capture_for_poll(&self.capture_path) {
                 if let Some(range) = segmenter.remaining_range(wav.samples.len(), wav.sample_rate) {
-                    let text = self.transcribe_range(&wav, range, segment_index)?;
-                    push_partial(&mut partials, text);
+                    match self.transcribe_range(&wav, range, segment_index)? {
+                        TranscribeResult::Text(text) => {
+                            push_partial(&mut partials, text);
+                        }
+                        TranscribeResult::Control(Control::Cancel) => {
+                            return Ok(SessionOutcome::Cancelled);
+                        }
+                        TranscribeResult::Control(Control::Stop) => {}
+                    }
                 }
             }
             return Ok(SessionOutcome::Done(join_transcript(&partials)));
         }
 
-        let text = self
-            .transcriber
-            .transcribe(&self.capture_path, &self.language, &self.model_path)?;
+        let text = match self.transcribe_path(&self.capture_path)? {
+            TranscribeResult::Text(text) => text,
+            TranscribeResult::Control(Control::Cancel) => return Ok(SessionOutcome::Cancelled),
+            TranscribeResult::Control(Control::Stop) => String::new(),
+        };
         Ok(SessionOutcome::Done(text.trim().to_string()))
     }
 
@@ -402,16 +439,19 @@ where
         segmenter: &mut Segmenter,
         segment_index: &mut usize,
         partials: &mut Vec<String>,
-    ) -> Result<(), VoiceError> {
+    ) -> Result<Option<Control>, VoiceError> {
         while let Some(range) = segmenter.next_range(&wav.samples, wav.sample_rate) {
-            let text = self.transcribe_range(wav, range, *segment_index)?;
+            let text = match self.transcribe_range(wav, range, *segment_index)? {
+                TranscribeResult::Text(text) => text,
+                TranscribeResult::Control(control) => return Ok(Some(control)),
+            };
             *segment_index += 1;
             if push_partial(partials, text) {
                 self.sink
                     .emit(VoiceEvent::partial(&self.session_id, join_transcript(partials)));
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn transcribe_range(
@@ -419,14 +459,65 @@ where
         wav: &WavData,
         range: super::segments::SegmentRange,
         segment_index: usize,
-    ) -> Result<String, VoiceError> {
+    ) -> Result<TranscribeResult, VoiceError> {
         let segment_path = self
             .session_dir
             .join(format!("segment-{segment_index:04}.wav"));
-        write_segment_wav(wav, range, &segment_path)?;
-        self.transcriber
-            .transcribe(&segment_path, &self.language, &self.model_path)
-            .map(|text| text.trim().to_string())
+        write_segment_wav(wav, range.for_transcription(), &segment_path)?;
+        self.transcribe_path(&segment_path)
+    }
+
+    fn transcribe_path(&self, wav_path: &Path) -> Result<TranscribeResult, VoiceError> {
+        if let Some(control) = self.poll_control() {
+            return Ok(TranscribeResult::Control(control));
+        }
+        let job = self
+            .transcriber
+            .start_transcription(wav_path, &self.language, &self.model_path)?;
+        *self
+            .active_transcription
+            .lock()
+            .expect("voice transcription slot poisoned") = Some(Arc::clone(&job));
+        if let Some(control) = self.poll_control() {
+            job.kill();
+            *self
+                .active_transcription
+                .lock()
+                .expect("voice transcription slot poisoned") = None;
+            return Ok(TranscribeResult::Control(control));
+        }
+        let result = job.wait();
+        *self
+            .active_transcription
+            .lock()
+            .expect("voice transcription slot poisoned") = None;
+        if let Some(control) = self.poll_control() {
+            return Ok(TranscribeResult::Control(control));
+        }
+        match result {
+            Ok(text) => Ok(TranscribeResult::Text(text.trim().to_string())),
+            Err(VoiceError::Interrupted) => {
+                if let Some(control) = self.poll_control() {
+                    Ok(TranscribeResult::Control(control))
+                } else {
+                    Err(VoiceError::Interrupted)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn poll_control(&self) -> Option<Control> {
+        let mut control = None;
+        loop {
+            match self.control_rx.try_recv() {
+                Ok(Control::Cancel) => control = Some(Control::Cancel),
+                Ok(Control::Stop) if control.is_none() => control = Some(Control::Stop),
+                Ok(Control::Stop) => {}
+                Err(std::sync::mpsc::TryRecvError::Empty) => return control,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Some(Control::Cancel),
+            }
+        }
     }
 }
 
@@ -436,7 +527,10 @@ struct SessionHandle {
     completion: Arc<Completion>,
     state: Arc<Mutex<VoiceSessionPhase>>,
     join: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+    active_transcription: ActiveTranscriptionSlot,
 }
+
+type ActiveTranscriptionSlot = Arc<Mutex<Option<Arc<dyn RunningTranscription>>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Control {
@@ -448,6 +542,11 @@ enum Control {
 enum SessionOutcome {
     Done(String),
     Cancelled,
+}
+
+enum TranscribeResult {
+    Text(String),
+    Control(Control),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -581,6 +680,36 @@ fn join_runner(handle: &SessionHandle) {
     }
 }
 
+fn kill_active_transcription(handle: &SessionHandle) {
+    if let Some(job) = handle
+        .active_transcription
+        .lock()
+        .expect("voice transcription slot poisoned")
+        .clone()
+    {
+        job.kill();
+    }
+}
+
+fn shutdown_sessions(
+    sessions: &Mutex<HashMap<String, SessionHandle>>,
+    timeout_per_session: Duration,
+) -> usize {
+    let handles = {
+        let mut sessions = sessions.lock().expect("voice registry poisoned");
+        sessions.drain().map(|(_, handle)| handle).collect::<Vec<_>>()
+    };
+    for handle in &handles {
+        let _ = handle.control_tx.send(Control::Cancel);
+        kill_active_transcription(handle);
+    }
+    for handle in &handles {
+        let _ = handle.completion.wait(timeout_per_session);
+        join_runner(handle);
+    }
+    handles.len()
+}
+
 fn random_session_id() -> String {
     let mut bytes = [0u8; 8];
     rand::thread_rng().fill_bytes(&mut bytes);
@@ -624,8 +753,12 @@ fn join_transcript(partials: &[String]) -> String {
 mod tests {
     use super::*;
     use crate::voice::segments::{encode_wav_pcm16_mono, TARGET_SAMPLE_RATE};
+    use crate::voice::stt::RunningTranscription;
     use std::collections::VecDeque;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Condvar;
 
     #[derive(Clone)]
     struct MockRecorder {
@@ -638,9 +771,9 @@ mod tests {
             if let Some(parent) = capture_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(
+            crate::voice::write_private_file(
                 capture_path,
-                encode_wav_pcm16_mono(&self.samples, TARGET_SAMPLE_RATE),
+                &encode_wav_pcm16_mono(&self.samples, TARGET_SAMPLE_RATE),
             )?;
             Ok(Box::new(MockActiveRecording {
                 stopped: Arc::clone(&self.stopped),
@@ -663,6 +796,8 @@ mod tests {
     struct MockTranscriber {
         outputs: Arc<Mutex<VecDeque<String>>>,
         calls: Arc<Mutex<Vec<PathBuf>>>,
+        stopped_probe: Option<Arc<AtomicBool>>,
+        observed_stopped: Arc<AtomicBool>,
     }
 
     impl MockTranscriber {
@@ -672,6 +807,19 @@ mod tests {
                     outputs.iter().map(|value| value.to_string()).collect(),
                 )),
                 calls: Arc::new(Mutex::new(Vec::new())),
+                stopped_probe: None,
+                observed_stopped: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn with_stop_probe(outputs: &[&str], stopped: Arc<AtomicBool>) -> Self {
+            Self {
+                outputs: Arc::new(Mutex::new(
+                    outputs.iter().map(|value| value.to_string()).collect(),
+                )),
+                calls: Arc::new(Mutex::new(Vec::new())),
+                stopped_probe: Some(stopped),
+                observed_stopped: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -688,22 +836,115 @@ mod tests {
             })
         }
 
-        fn transcribe(
+        fn start_transcription(
             &self,
             wav_path: &Path,
             _language: &str,
             _model_path: &Path,
-        ) -> Result<String, VoiceError> {
+        ) -> Result<Arc<dyn RunningTranscription>, VoiceError> {
             self.calls
                 .lock()
                 .unwrap()
                 .push(wav_path.to_path_buf());
-            Ok(self
+            if self
+                .stopped_probe
+                .as_ref()
+                .map(|probe| probe.load(Ordering::SeqCst))
+                .unwrap_or(false)
+            {
+                self.observed_stopped.store(true, Ordering::SeqCst);
+            }
+            let text = self
                 .outputs
                 .lock()
                 .unwrap()
                 .pop_front()
-                .unwrap_or_else(|| "tail".to_string()))
+                .unwrap_or_else(|| "tail".to_string());
+            Ok(Arc::new(MockJob {
+                text: Mutex::new(Some(text)),
+                killed: AtomicBool::new(false),
+            }))
+        }
+    }
+
+    struct MockJob {
+        text: Mutex<Option<String>>,
+        killed: AtomicBool,
+    }
+
+    impl RunningTranscription for MockJob {
+        fn wait(&self) -> Result<String, VoiceError> {
+            if self.killed.load(Ordering::SeqCst) {
+                return Err(VoiceError::Interrupted);
+            }
+            Ok(self
+                .text
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or_default())
+        }
+
+        fn kill(&self) {
+            self.killed.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Clone)]
+    struct BlockingTranscriber {
+        started: Arc<(Mutex<bool>, Condvar)>,
+        killed: Arc<AtomicBool>,
+    }
+
+    impl VoiceTranscriber for BlockingTranscriber {
+        fn prepare(
+            &self,
+            model_path_override: Option<&Path>,
+        ) -> Result<PreparedTranscription, VoiceError> {
+            Ok(PreparedTranscription {
+                model_path: model_path_override
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("/tmp/model.bin")),
+            })
+        }
+
+        fn start_transcription(
+            &self,
+            _wav_path: &Path,
+            _language: &str,
+            _model_path: &Path,
+        ) -> Result<Arc<dyn RunningTranscription>, VoiceError> {
+            {
+                let (lock, cvar) = &*self.started;
+                *lock.lock().unwrap() = true;
+                cvar.notify_all();
+            }
+            Ok(Arc::new(BlockingJob {
+                killed: Arc::clone(&self.killed),
+                cvar: Arc::new(Condvar::new()),
+                lock: Arc::new(Mutex::new(false)),
+            }))
+        }
+    }
+
+    struct BlockingJob {
+        killed: Arc<AtomicBool>,
+        cvar: Arc<Condvar>,
+        lock: Arc<Mutex<bool>>,
+    }
+
+    impl RunningTranscription for BlockingJob {
+        fn wait(&self) -> Result<String, VoiceError> {
+            let mut guard = self.lock.lock().unwrap();
+            while !self.killed.load(Ordering::SeqCst) {
+                guard = self.cvar.wait(guard).unwrap();
+            }
+            Err(VoiceError::Interrupted)
+        }
+
+        fn kill(&self) {
+            self.killed.store(true, Ordering::SeqCst);
+            self.cvar.notify_all();
         }
     }
 
@@ -786,12 +1027,13 @@ mod tests {
     fn stop_falls_back_to_full_file_when_no_segments_complete() {
         let home = TempHome::new("fallback");
         let stopped = Arc::new(AtomicBool::new(false));
-        let transcriber = MockTranscriber::new(&["full file"]);
+        let transcriber =
+            MockTranscriber::with_stop_probe(&["full file"], Arc::clone(&stopped));
         let manager = VoiceSessionManager::with_config(
             home.0.clone(),
             MockRecorder {
                 samples: samples(1.0),
-                stopped,
+                stopped: Arc::clone(&stopped),
             },
             transcriber.clone(),
             test_config(false),
@@ -806,6 +1048,8 @@ mod tests {
         let transcript = manager.stop(&session_id, Duration::from_secs(2)).unwrap();
 
         assert_eq!(transcript, "full file");
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(transcriber.observed_stopped.load(Ordering::SeqCst));
         let calls = transcriber.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
         assert!(calls[0].ends_with("capture.wav"));
@@ -865,6 +1109,139 @@ mod tests {
         assert!(dir.exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn session_audio_paths_are_private_when_preserved() {
+        let home = TempHome::new("permissions");
+        let stopped = Arc::new(AtomicBool::new(false));
+        let manager = VoiceSessionManager::with_config(
+            home.0.clone(),
+            MockRecorder {
+                samples: samples(5.2),
+                stopped,
+            },
+            MockTranscriber::new(&["hello"]),
+            test_config(true),
+        );
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_for_sink = Arc::clone(&events);
+        let session_id = manager
+            .start(
+                VoiceStartRequest::new(None, Some(PathBuf::from("/tmp/model.bin"))),
+                move |event| events_for_sink.lock().unwrap().push(event),
+            )
+            .unwrap();
+        let dir = voice_root(&home.0).join(&session_id);
+        wait_until(Duration::from_secs(2), || {
+            events.lock().unwrap().iter().any(|event| {
+                event.kind == super::super::VoiceEventKind::Partial
+                    && event.text.as_deref() == Some("hello")
+            })
+        });
+
+        let _ = manager.stop(&session_id, Duration::from_secs(2)).unwrap();
+
+        assert_eq!(mode_of(&dir), 0o700);
+        assert_eq!(mode_of(&dir.join("capture.wav")), 0o600);
+        assert_eq!(mode_of(&dir.join("segment-0000.wav")), 0o600);
+    }
+
+    #[test]
+    fn shutdown_cancels_active_session_and_removes_temp_dir() {
+        let home = TempHome::new("shutdown");
+        let stopped = Arc::new(AtomicBool::new(false));
+        let manager = VoiceSessionManager::with_config(
+            home.0.clone(),
+            MockRecorder {
+                samples: samples(1.0),
+                stopped: Arc::clone(&stopped),
+            },
+            MockTranscriber::new(&["unused"]),
+            test_config(true),
+        );
+        let session_id = manager
+            .start(
+                VoiceStartRequest::new(None, Some(PathBuf::from("/tmp/model.bin"))),
+                |_| {},
+            )
+            .unwrap();
+        let dir = voice_root(&home.0).join(&session_id);
+        assert!(dir.exists());
+
+        manager.shutdown();
+
+        assert!(stopped.load(Ordering::SeqCst));
+        assert_eq!(manager.active_session_count(), 0);
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn cancel_kills_active_transcription() {
+        let home = TempHome::new("cancel-transcription");
+        let stopped = Arc::new(AtomicBool::new(false));
+        let started = Arc::new((Mutex::new(false), Condvar::new()));
+        let killed = Arc::new(AtomicBool::new(false));
+        let manager = VoiceSessionManager::with_config(
+            home.0.clone(),
+            MockRecorder {
+                samples: samples(5.2),
+                stopped,
+            },
+            BlockingTranscriber {
+                started: Arc::clone(&started),
+                killed: Arc::clone(&killed),
+            },
+            test_config(false),
+        );
+        let session_id = manager
+            .start(
+                VoiceStartRequest::new(None, Some(PathBuf::from("/tmp/model.bin"))),
+                |_| {},
+            )
+            .unwrap();
+        wait_for_blocking_transcription(&started);
+
+        let begun = Instant::now();
+        manager.cancel(&session_id).unwrap();
+
+        assert!(begun.elapsed() < Duration::from_secs(1));
+        assert!(killed.load(Ordering::SeqCst));
+        assert_eq!(manager.active_session_count(), 0);
+    }
+
+    #[test]
+    fn stop_timeout_kills_active_transcription() {
+        let home = TempHome::new("stop-timeout");
+        let stopped = Arc::new(AtomicBool::new(false));
+        let started = Arc::new((Mutex::new(false), Condvar::new()));
+        let killed = Arc::new(AtomicBool::new(false));
+        let manager = VoiceSessionManager::with_config(
+            home.0.clone(),
+            MockRecorder {
+                samples: samples(5.2),
+                stopped,
+            },
+            BlockingTranscriber {
+                started: Arc::clone(&started),
+                killed: Arc::clone(&killed),
+            },
+            test_config(false),
+        );
+        let session_id = manager
+            .start(
+                VoiceStartRequest::new(None, Some(PathBuf::from("/tmp/model.bin"))),
+                |_| {},
+            )
+            .unwrap();
+        wait_for_blocking_transcription(&started);
+
+        let result = manager.stop(&session_id, Duration::from_millis(100));
+
+        assert!(matches!(result, Err(VoiceError::Timeout(_))));
+        assert!(killed.load(Ordering::SeqCst));
+        assert_eq!(manager.active_session_count(), 0);
+    }
+
     #[test]
     fn stale_sweep_removes_old_session_dirs() {
         let home = TempHome::new("sweep");
@@ -892,6 +1269,20 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert!(condition(), "condition was not met before timeout");
+    }
+
+    fn wait_for_blocking_transcription(started: &Arc<(Mutex<bool>, Condvar)>) {
+        let (lock, cvar) = &**started;
+        let guard = lock.lock().unwrap();
+        let (guard, _) = cvar
+            .wait_timeout_while(guard, Duration::from_secs(2), |started| !*started)
+            .unwrap();
+        assert!(*guard, "transcription did not start before timeout");
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
     }
 
     #[cfg(unix)]

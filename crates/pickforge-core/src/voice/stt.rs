@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::thread;
 use std::time::Duration;
 
-use super::{default_model_path, LocalCommandSpec, VoiceError};
-
-const WHISPER_TIMEOUT: Duration = Duration::from_secs(90);
+use super::{default_model_path, tighten_private_file, LocalCommandSpec, VoiceError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedTranscription {
@@ -16,12 +18,17 @@ pub trait VoiceTranscriber: Send + Sync + 'static {
         model_path_override: Option<&Path>,
     ) -> Result<PreparedTranscription, VoiceError>;
 
-    fn transcribe(
+    fn start_transcription(
         &self,
         wav_path: &Path,
         language: &str,
         model_path: &Path,
-    ) -> Result<String, VoiceError>;
+    ) -> Result<std::sync::Arc<dyn RunningTranscription>, VoiceError>;
+}
+
+pub trait RunningTranscription: Send + Sync + 'static {
+    fn wait(&self) -> Result<String, VoiceError>;
+    fn kill(&self);
 }
 
 #[derive(Debug, Clone, Default)]
@@ -40,13 +47,14 @@ impl VoiceTranscriber for WhisperCliTranscriber {
         })
     }
 
-    fn transcribe(
+    fn start_transcription(
         &self,
         wav_path: &Path,
         language: &str,
         model_path: &Path,
-    ) -> Result<String, VoiceError> {
-        transcribe_with_whisper(model_path, wav_path, language)
+    ) -> Result<std::sync::Arc<dyn RunningTranscription>, VoiceError> {
+        start_whisper_job(model_path, wav_path, language)
+            .map(|job| std::sync::Arc::new(job) as std::sync::Arc<dyn RunningTranscription>)
     }
 }
 
@@ -96,38 +104,110 @@ pub fn parse_whisper_txt(contents: &str) -> String {
         .join(" ")
 }
 
-fn transcribe_with_whisper(
+fn start_whisper_job(
     model_path: &Path,
     wav_path: &Path,
     language: &str,
-) -> Result<String, VoiceError> {
+) -> Result<WhisperCliJob, VoiceError> {
     let spec = whisper_argv(model_path, wav_path, language);
-    let refs = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-    let outcome = crate::process::run_timeout(&spec.program, &refs, None, None, WHISPER_TIMEOUT)
-        .map_err(|error| match error {
-            crate::process::RunError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
-                VoiceError::MissingWhisperCli
-            }
-            crate::process::RunError::Io(io) => VoiceError::Io(io),
-            crate::process::RunError::Timeout(duration) => {
-                VoiceError::Pipeline(format!("whisper-cli timed out after {duration:?}"))
-            }
-        })?;
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command.env_clear();
+    for (key, value) in crate::process::user_shell_environment() {
+        command.env(key, value);
+    }
 
-    if !outcome.success() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+        unsafe {
+            command.pre_exec(|| {
+                libc::umask(0o177);
+                Ok(())
+            });
+        }
+    }
+
+    let child = command.spawn().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            VoiceError::MissingWhisperCli
+        } else {
+            VoiceError::Io(error)
+        }
+    })?;
+    Ok(WhisperCliJob {
+        pid: child.id(),
+        child: Mutex::new(Some(child)),
+        txt_path: whisper_txt_output_path(wav_path),
+        killed: AtomicBool::new(false),
+    })
+}
+
+struct WhisperCliJob {
+    pid: u32,
+    child: Mutex<Option<Child>>,
+    txt_path: PathBuf,
+    killed: AtomicBool,
+}
+
+impl RunningTranscription for WhisperCliJob {
+    fn wait(&self) -> Result<String, VoiceError> {
+        let child = self
+            .child
+            .lock()
+            .expect("whisper child poisoned")
+            .take();
+        let Some(child) = child else {
+            return Err(VoiceError::Interrupted);
+        };
+        let outcome = child.wait_with_output()?;
+        if self.killed.load(Ordering::SeqCst) {
+            return Err(VoiceError::Interrupted);
+        }
+        parse_whisper_outcome(outcome, &self.txt_path)
+    }
+
+    fn kill(&self) {
+        self.killed.store(true, Ordering::SeqCst);
+        kill_process_group(self.pid);
+    }
+}
+
+fn parse_whisper_outcome(outcome: Output, txt_path: &Path) -> Result<String, VoiceError> {
+    if !outcome.status.success() {
         let stderr = String::from_utf8_lossy(&outcome.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&outcome.stdout).trim().to_string();
         let detail = if !stderr.is_empty() { stderr } else { stdout };
         return Err(VoiceError::Pipeline(if detail.is_empty() {
-            format!("whisper-cli exited with {:?}", outcome.code)
+            format!("whisper-cli exited with {:?}", outcome.status.code())
         } else {
             detail
         }));
     }
 
-    let txt_path = whisper_txt_output_path(wav_path);
-    let contents = std::fs::read_to_string(&txt_path)?;
+    tighten_private_file(txt_path)?;
+    let contents = std::fs::read_to_string(txt_path)?;
     Ok(parse_whisper_txt(&contents))
+}
+
+fn kill_process_group(pid: u32) {
+    #[cfg(unix)]
+    {
+        unsafe {
+            libc::killpg(pid as libc::pid_t, libc::SIGTERM);
+        }
+        thread::sleep(Duration::from_millis(300));
+        unsafe {
+            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 fn normalized_language(language: &str) -> String {

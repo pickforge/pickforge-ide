@@ -25,7 +25,7 @@ use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
     PtyManager, VmServiceClient, VoiceSessionManager,
 };
-use tauri::{path::BaseDirectory, Manager};
+use tauri::{path::BaseDirectory, Manager, RunEvent, WindowEvent};
 #[cfg(target_os = "linux")]
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -192,7 +192,7 @@ pub fn run() {
             Ok(())
         })
         .manage(PtyManager::new())
-        .manage(VoiceSessionManager::new())
+        .manage(Arc::new(VoiceSessionManager::new()))
         .manage(VmServiceClient::new())
         .manage(CdpClient::new())
         .manage(watch_commands::WatchManager::new())
@@ -338,8 +338,21 @@ pub fn run() {
             mcp_commands::mcp_update_swarm_run,
             mcp_commands::mcp_swarm_status,
         ])
-        .run(context)
-        .expect("error while running pickforge");
+        .build(context)
+        .expect("error while building pickforge")
+        .run(|app, event| {
+            if matches!(
+                event,
+                RunEvent::ExitRequested { .. }
+                    | RunEvent::Exit
+                    | RunEvent::WindowEvent {
+                        event: WindowEvent::Destroyed,
+                        ..
+                    }
+            ) {
+                app.state::<Arc<VoiceSessionManager>>().shutdown();
+            }
+        });
 }
 
 #[cfg(test)]

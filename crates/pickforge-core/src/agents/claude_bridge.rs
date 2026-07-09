@@ -1164,7 +1164,6 @@ done
         )
     }
 
-    #[cfg(unix)]
     fn event_sink() -> (
         Arc<Mutex<Vec<AgentEvent>>>,
         Arc<dyn Fn(AgentEvent) + Send + Sync>,

@@ -10,13 +10,15 @@ reset this file.
 
 ## Internal/release changes
 
-- None yet.
+- Migrated release CI to the shared `@pickforge/tauri-release` tooling and draft-only `latest.json` finalization.
 
 ## Validation
 
 ### Tested
 
-- None yet.
+- Workflow YAML parse check:
+  `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
+- `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.
 
 ### Not tested yet
 

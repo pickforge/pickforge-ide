@@ -69,6 +69,20 @@ import { removeChatFromOrchestra } from "../../stores/orchestra";
 import { isChatStaged } from "../../stores/orchestraStage";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
 import { pickProjectDir } from "../../lib/opener";
+import { flagEnabled } from "../../stores/flags";
+import { setProjectRemoteLocal } from "../../stores/workspace";
+import { createRemoteAttach } from "../../lib/remoteAttach";
+import type { ProbeState } from "../../lib/remoteHost";
+import {
+  healthOf,
+  healthStatus,
+  healthSummary,
+  probeText,
+  recordHealth,
+  refreshHost,
+  relTime,
+  useRemoteHealth,
+} from "../../stores/remoteHealth";
 
 const PROJECT_MIME = "application/x-pf-project";
 
@@ -86,7 +100,7 @@ async function pickProject() {
   if (dir) await addProject(dir, basename(dir));
 }
 
-type MenuKind = "project" | "group" | "chat" | "newchat" | "confirm";
+type MenuKind = "project" | "group" | "chat" | "newchat" | "confirm" | "remote";
 interface MenuState { kind: MenuKind; id: string; x: number; y: number; align: "start" | "end" }
 
 interface PendingConfirm {
@@ -97,6 +111,11 @@ interface PendingConfirm {
 }
 
 export function ProjectsPane() {
+  // Owns the shared remote-health poller for its lifetime (no-op until a project
+  // is bound to a host and the remoteProjects flag is on).
+  useRemoteHealth();
+  const remoteOn = () => flagEnabled("remoteProjects");
+
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [renaming, setRenaming] = createSignal<string | null>(null);
   const [dropGroup, setDropGroup] = createSignal<string | null>(null); // group id or "__ungrouped"
@@ -366,6 +385,9 @@ export function ProjectsPane() {
         <button class="pf-menu-item" onClick={() => { selectProject(p.root); closeMenu(); }}>Open</button>
         <button class="pf-menu-item pf-menu-item--accent" onClick={() => setMenu((m) => (m ? { ...m, kind: "newchat" } : m))}>New chat…</button>
         <button class="pf-menu-item" onClick={() => { setRenaming(p.root); closeMenu(); }}>Rename</button>
+        <Show when={remoteOn()}>
+          <button class="pf-menu-item" onClick={() => setMenu((m) => (m ? { ...m, kind: "remote" } : m))}>Remote host…</button>
+        </Show>
         <div class="pf-menu-sep" />
         <div class="pf-menu-label">Move to</div>
         <button class="pf-menu-item" onClick={() => moveTo(p.root, null)}>Ungrouped</button>
@@ -464,6 +486,152 @@ export function ProjectsPane() {
           )}
         </For>
       </>
+    );
+  };
+
+  const ProbeRow = (p: { label: string; probe: ProbeState }) => (
+    <div
+      class="pf-remote-probe"
+      classList={{
+        "pf-remote-probe--ok": p.probe.state === "ok",
+        "pf-remote-probe--failed": p.probe.state === "failed",
+        "pf-remote-probe--skipped": p.probe.state === "skipped",
+      }}
+    >
+      <span class="pf-remote-probe-key">{p.label}</span>
+      <span class="pf-remote-probe-val">{probeText(p.probe)}</span>
+    </div>
+  );
+
+  // Per-project remote host: attach (verified via projectRemoteSet), detach, and
+  // a test connection rendering the three probe results as quiet mono rows. R1
+  // adds no execution routing — a bound-but-unreachable host only surfaces a
+  // note here + the sidebar badge; the project still opens locally.
+  const RemotePanel = (p: { root: string }) => {
+    const project = () => workspace.projects.find((x) => x.projectRoot === p.root);
+    const bound = () => !!project()?.remoteHost;
+    const [host, setHost] = createSignal(project()?.remoteHost ?? "");
+    const [remoteRoot, setRemoteRoot] = createSignal(project()?.remoteRoot ?? "");
+    const ctrl = createRemoteAttach(() => p.root);
+
+    const busy = () => ctrl.attach().kind === "busy";
+    const testing = () => ctrl.test().kind === "running";
+    const attachError = () => {
+      const a = ctrl.attach();
+      return a.kind === "error" ? a.message : null;
+    };
+    const testError = () => {
+      const t = ctrl.test();
+      return t.kind === "error" ? t.message : null;
+    };
+    const testResult = () => {
+      const t = ctrl.test();
+      return t.kind === "done" ? t : null;
+    };
+    const unreachable = () => {
+      const h = project()?.remoteHost;
+      return !!h && healthStatus(h) === "warning";
+    };
+
+    const onAttach = async () => {
+      const h = host().trim();
+      const r = remoteRoot().trim();
+      if (await ctrl.doAttach(h, r)) {
+        setProjectRemoteLocal(p.root, h, r);
+        void refreshHost(h);
+      }
+    };
+    const onDetach = async () => {
+      if (await ctrl.doDetach()) setProjectRemoteLocal(p.root, null, null);
+    };
+    const onTest = async () => {
+      // The result carries the host pinned at probe start, so an input edit
+      // mid-probe can never cache one host's health under another.
+      const res = await ctrl.runTest(host());
+      if (res) recordHealth(res.host, res.health);
+    };
+
+    return (
+      <div class="pf-remote-panel">
+        <div class="pf-menu-label">Remote host</div>
+        <input
+          class="pf-menu-input pf-remote-input"
+          placeholder="tailnet name or 100.x.y.z"
+          spellcheck={false}
+          value={host()}
+          ref={(el) => setTimeout(() => el.focus())}
+          onInput={(e) => { setHost(e.currentTarget.value); ctrl.clearAttachError(); }}
+        />
+        <input
+          class="pf-menu-input pf-remote-input"
+          placeholder="remote project root"
+          spellcheck={false}
+          value={remoteRoot()}
+          onInput={(e) => { setRemoteRoot(e.currentTarget.value); ctrl.clearAttachError(); }}
+        />
+        <Show when={attachError()}>
+          {(msg) => <div class="pf-remote-error">{msg()}</div>}
+        </Show>
+        <div class="pf-remote-actions">
+          <Show
+            when={bound()}
+            fallback={
+              <button class="pf-menu-item pf-menu-item--accent" disabled={busy()} onClick={onAttach}>
+                {busy() ? "Verifying…" : "Attach"}
+              </button>
+            }
+          >
+            <button class="pf-menu-item pf-menu-item--danger" disabled={busy()} onClick={onDetach}>
+              {busy() ? "Detaching…" : "Detach"}
+            </button>
+          </Show>
+          <button class="pf-menu-item" disabled={testing()} onClick={onTest}>
+            {testing() ? "Testing…" : "Test connection"}
+          </button>
+        </div>
+        <Show when={unreachable()}>
+          <div class="pf-remote-note">Host unreachable — this project still opens locally.</div>
+        </Show>
+        <Show when={testError()}>
+          {(msg) => <div class="pf-remote-error">{msg()}</div>}
+        </Show>
+        <Show when={testResult()}>
+          {(t) => (
+            <div class="pf-remote-probes">
+              <div class="pf-remote-probes-host">{t().host}</div>
+              <ProbeRow label="tailnet" probe={t().health.tailnet} />
+              <ProbeRow label="ssh" probe={t().health.ssh} />
+              <ProbeRow label="daemon" probe={t().health.daemon} />
+            </div>
+          )}
+        </Show>
+      </div>
+    );
+  };
+
+  // Sidebar health indicator for a bound project: quiet dot + host in the machine
+  // voice. Status colors only (never the ember accent); tooltip carries the probe
+  // summary + checked-at time.
+  const RemoteBadge = (p: { host: string }) => {
+    const status = () => healthStatus(p.host);
+    const title = () => {
+      const h = healthOf(p.host);
+      return h
+        ? `${p.host} · ${healthSummary(h)} · checked ${relTime(h.checkedAtMs)}`
+        : `${p.host} · not yet checked`;
+    };
+    return (
+      <span
+        class="pf-remote-badge"
+        classList={{
+          "pf-remote-badge--ok": status() === "ok",
+          "pf-remote-badge--warn": status() === "warning",
+        }}
+        title={title()}
+      >
+        <span class="pf-remote-badge-dot" />
+        <span class="pf-remote-badge-host">{p.host}</span>
+      </span>
     );
   };
 
@@ -670,6 +838,9 @@ export function ProjectsPane() {
           <Show when={renaming() === root} fallback={<span class="pf-rail-row-label">{p.project.displayName}</span>}>
             <RenameField value={p.project.displayName} commit={(v) => void renameProject(root, v)} />
           </Show>
+          <Show when={remoteOn() && p.project.remoteHost}>
+            {(host) => <RemoteBadge host={host()} />}
+          </Show>
           <button class="pf-rail-row-action" data-tour="new-chat" title="New chat" onClick={(e) => newChatFromButton(root, e)}>
             <IconPlus size={14} />
           </button>
@@ -726,6 +897,9 @@ export function ProjectsPane() {
             </Show>
             <Show when={count() > 0}>
               <span class="pf-proj-card-count">{count()} chat{count() === 1 ? "" : "s"}</span>
+            </Show>
+            <Show when={remoteOn() && p.project.remoteHost}>
+              {(host) => <RemoteBadge host={host()} />}
             </Show>
           </div>
         </div>
@@ -846,6 +1020,7 @@ export function ProjectsPane() {
               <Match when={m().kind === "group"}><GroupMenu id={m().id} /></Match>
               <Match when={m().kind === "chat"}><ChatMenu id={m().id} /></Match>
               <Match when={m().kind === "newchat"}><NewChatMenu root={m().id} /></Match>
+              <Match when={m().kind === "remote"}><RemotePanel root={m().id} /></Match>
               <Match when={m().kind === "confirm"}><ConfirmMenu /></Match>
             </Switch>
           </FloatingMenu>

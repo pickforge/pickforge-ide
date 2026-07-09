@@ -1021,6 +1021,115 @@ body.pf-resizing .pf-dock-panel {
   color: var(--pf-error);
 }
 
+/* ---- per-project remote host panel (in a floating menu) ---- */
+.pf-remote-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--pf-space-xxl) * 7);
+}
+.pf-remote-input {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+}
+.pf-remote-actions {
+  display: flex;
+  gap: var(--pf-space-xs);
+  padding: var(--pf-space-xs);
+}
+.pf-remote-actions .pf-menu-item {
+  flex: 1;
+  text-align: center;
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-remote-actions .pf-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pf-remote-error {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-error);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  white-space: normal;
+}
+.pf-remote-note {
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-low);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+}
+.pf-remote-probes {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--pf-space-xs) / 2);
+  padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
+}
+.pf-remote-probes-host {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-remote-probe {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-med);
+}
+.pf-remote-probe-key {
+  color: var(--pf-text-low);
+  text-transform: uppercase;
+  letter-spacing: var(--pf-tracking-eyebrow);
+}
+.pf-remote-probe-val {
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pf-remote-probe--ok .pf-remote-probe-val {
+  color: var(--pf-connected);
+}
+.pf-remote-probe--failed .pf-remote-probe-val {
+  color: var(--pf-error);
+}
+.pf-remote-probe--skipped .pf-remote-probe-val {
+  color: var(--pf-text-low);
+}
+
+/* ---- sidebar remote health badge (status colors, never ember) ---- */
+.pf-remote-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  flex: none;
+  max-width: calc(var(--pf-space-xxxl) * 2);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+}
+.pf-remote-badge-host {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-remote-badge-dot {
+  width: calc(var(--pf-space-md) / 2);
+  height: calc(var(--pf-space-md) / 2);
+  border-radius: var(--pf-radius-pill);
+  background: var(--pf-text-low);
+  flex: none;
+}
+.pf-remote-badge--ok .pf-remote-badge-dot {
+  background: var(--pf-connected);
+}
+.pf-remote-badge--warn .pf-remote-badge-dot {
+  background: var(--pf-warning);
+}
+
 /* Portaled menu: fixed to the viewport, above every pane (#14). JS sets
  * left/top; right:auto cancels the anchored .pf-menu default. */
 .pf-floating-menu {

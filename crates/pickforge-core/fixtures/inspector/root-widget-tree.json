@@ -32,8 +32,8 @@
     },
     {
       "valueId": "inspector-4",
-      "type": "TextButton",
-      "runtimeType": "DiagnosticsNode",
+      "type": "DiagnosticsNode",
+      "runtimeType": "TextButton",
       "description": "Create account",
       "creationLocation": {
         "file": "/Users/example/app/lib/login.dart",

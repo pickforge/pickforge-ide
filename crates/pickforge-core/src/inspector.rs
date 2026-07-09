@@ -63,7 +63,7 @@ pub fn decode_semantic_widget_tree(raw: &Value) -> SemanticWidgetNode {
         .and_then(Value::as_array)
         .map(|arr| arr.iter().map(decode_semantic_widget_tree).collect())
         .unwrap_or_default();
-    let class_name = first_string(raw, &["widgetRuntimeType", "type", "runtimeType"])
+    let class_name = first_string(raw, &["widgetRuntimeType", "runtimeType"])
         .or_else(|| raw.get("description").and_then(Value::as_str))
         .unwrap_or("<unknown>")
         .to_string();
@@ -144,6 +144,7 @@ mod tests {
         assert_eq!(node.children[1].class_name, "LoginButton");
         assert_eq!(node.children[1].label.as_deref(), Some("Continue"));
         assert_eq!(node.children[2].class_name, "TextButton");
+        assert_ne!(node.children[2].class_name, "DiagnosticsNode");
         assert_eq!(node.children[2].label.as_deref(), Some("Create account"));
         assert_eq!(node.children[3].class_name, "SummaryOnlyWidget");
         assert!(node.children[3].label.is_none());

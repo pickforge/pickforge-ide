@@ -6,7 +6,8 @@ export const WIDGET_MATCH_MAX_NODES = 800;
 export const WIDGET_MATCH_MAX_BYTES = 16 * 1024;
 export const WIDGET_MATCH_PROMPT_MARGIN_BYTES = 256;
 export const WIDGET_MATCH_LABEL_MAX_LENGTH = 60;
-// Routed serialization caps global nodes (800), nesting levels (12), and children per node (16).
+// Phase 1 selects breadth-first within global node/byte caps, a 12-level depth cap, and 16-child cap.
+// Phase 2 renders that selected set in preorder, preserving document indentation without starving siblings.
 export const WIDGET_MATCH_MAX_DEPTH = 12;
 export const WIDGET_MATCH_MAX_CHILDREN = 16;
 
@@ -57,29 +58,19 @@ export const widgetMatchResponseSchema = z.union([
 
 type WidgetMatchResponse = z.infer<typeof widgetMatchResponseSchema>;
 
-type PendingWidgetEntry =
-  | { kind: "node"; node: SemanticWidgetNode; depth: number }
-  | { kind: "marker"; text: string };
+type SelectedWidgetEntry = {
+  node: SemanticWidgetNode;
+  depth: number;
+  markerReservation: number;
+};
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-function truncateUtf8(value: string, maxBytes: number): string {
-  if (byteLength(value) <= maxBytes) return value;
-  const ellipsis = "…";
-  if (byteLength(ellipsis) > maxBytes) return "";
-  let output = "";
-  for (const character of value) {
-    if (byteLength(`${output}${character}${ellipsis}`) > maxBytes) break;
-    output += character;
-  }
-  return `${output}${ellipsis}`;
-}
-
-function serializeLabel(label: string | null): string | null {
-  if (!label) return null;
-  const normalized = label
+function sanitizeRoutedText(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value
     .replace(/\s+/gu, " ")
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
     .replace(WINDOWS_PATH, "…")
@@ -97,120 +88,133 @@ function serializeLabel(label: string | null): string | null {
 }
 
 function widgetLinePrefix(index: number, node: SemanticWidgetNode, depth: number): string {
-  return `${"  ".repeat(depth)}${index} ${node.className}`;
+  return `${"  ".repeat(depth)}${index} ${sanitizeRoutedText(node.className) ?? "<redacted>"}`;
 }
 
 function widgetLine(index: number, node: SemanticWidgetNode, depth: number): string {
-  const label = serializeLabel(node.label);
+  const label = sanitizeRoutedText(node.label);
   return `${widgetLinePrefix(index, node, depth)}${label ? ` — ${label}` : ""}`;
-}
-
-function appendTruncationMarker(lines: string[], bytes: number, maxBytes: number): number {
-  const separator = lines.length > 0 ? "\n" : "";
-  if (bytes + byteLength(separator) + byteLength(TREE_TRUNCATION_MARKER) > maxBytes) {
-    return bytes;
-  }
-  lines.push(TREE_TRUNCATION_MARKER);
-  return bytes + byteLength(separator) + byteLength(TREE_TRUNCATION_MARKER);
 }
 
 function limitMarker(depth: number, text: string): string {
   return `${"  ".repeat(depth)}${text}`;
 }
 
+function lineCost(line: string): number {
+  return byteLength(line) + 1;
+}
+
+function nodeCost(node: SemanticWidgetNode, depth: number): number {
+  return lineCost(widgetLine(WIDGET_MATCH_MAX_NODES, node, depth));
+}
+
+function markerCost(depth: number, omittedChildren: number): number {
+  return lineCost(limitMarker(depth, `… +${omittedChildren} more`));
+}
+
+function selectWidgetNodes(root: SemanticWidgetNode, maxBytes: number): {
+  selected: Set<SemanticWidgetNode>;
+  truncated: boolean;
+} {
+  const selected = new Set<SemanticWidgetNode>();
+  const queue: SelectedWidgetEntry[] = [];
+  let bytes = 0;
+  let truncated = false;
+
+  const select = (node: SemanticWidgetNode, depth: number): boolean => {
+    const reservation = node.children.length > 0
+      ? markerCost(depth + 1, node.children.length)
+      : 0;
+    const cost = nodeCost(node, depth) + reservation;
+    if (selected.size >= WIDGET_MATCH_MAX_NODES || bytes + cost > maxBytes) return false;
+    selected.add(node);
+    bytes += cost;
+    queue.push({ node, depth, markerReservation: reservation });
+    return true;
+  };
+
+  if (!select(root, 0)) return { selected, truncated: true };
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const visibleChildren = current.depth < WIDGET_MATCH_MAX_DEPTH
+      ? current.node.children.slice(0, WIDGET_MATCH_MAX_CHILDREN)
+      : [];
+    let selectedChildren = 0;
+
+    for (const child of visibleChildren) {
+      if (!select(child, current.depth + 1)) break;
+      selectedChildren += 1;
+    }
+
+    const omittedChildren = current.node.children.length - selectedChildren;
+    if (omittedChildren === 0) {
+      bytes -= current.markerReservation;
+      continue;
+    }
+
+    truncated = true;
+    bytes -= current.markerReservation - markerCost(current.depth + 1, omittedChildren);
+    if (selectedChildren < visibleChildren.length) break;
+  }
+
+  return { selected, truncated };
+}
+
 export function serializeWidgetTree(
   root: SemanticWidgetNode,
   maxBytes = WIDGET_MATCH_MAX_BYTES,
 ): SerializedWidgetTree {
-  const stack: PendingWidgetEntry[] = [{ kind: "node", node: root, depth: 0 }];
+  const selection = selectWidgetNodes(root, maxBytes);
   const nodes: IndexedWidgetNode[] = [];
   const lines: string[] = [];
   let bytes = 0;
-  let truncated = false;
-  const markerReserve = byteLength(`\n${TREE_TRUNCATION_MARKER}`);
+  let truncated = selection.truncated;
 
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (current.kind === "marker") {
-      const separator = lines.length > 0 ? "\n" : "";
-      if (bytes + byteLength(separator) + byteLength(current.text) > maxBytes) {
-        truncated = true;
-        bytes = appendTruncationMarker(lines, bytes, maxBytes);
-        break;
-      }
-      lines.push(current.text);
-      bytes += byteLength(separator) + byteLength(current.text);
-      continue;
-    }
-    if (nodes.length >= WIDGET_MATCH_MAX_NODES) {
-      truncated = true;
-      bytes = appendTruncationMarker(lines, bytes, maxBytes);
-      break;
-    }
-    const index = nodes.length + 1;
+  const append = (line: string): boolean => {
     const separator = lines.length > 0 ? "\n" : "";
-    const needsMarker = stack.length > 0 || current.node.children.length > 0;
-    const remaining = maxBytes - bytes - byteLength(separator) - (needsMarker ? markerReserve : 0);
-    if (remaining <= 0) {
-      truncated = true;
-      bytes = appendTruncationMarker(lines, bytes, maxBytes);
-      break;
-    }
-    if (byteLength(widgetLinePrefix(index, current.node, current.depth)) > remaining) {
-      truncated = true;
-      bytes = appendTruncationMarker(lines, bytes, maxBytes);
-      break;
-    }
-    const fullLine = widgetLine(index, current.node, current.depth);
-    const line = truncateUtf8(fullLine, remaining);
-    if (!line) {
-      truncated = true;
-      bytes = appendTruncationMarker(lines, bytes, maxBytes);
-      break;
-    }
-    if (line !== fullLine) {
-      truncated = true;
-      lines.push(line);
-      bytes += byteLength(separator) + byteLength(line);
-      nodes.push({
-        index,
-        valueId: current.node.id,
-        className: current.node.className,
-        label: current.node.label,
-      });
-      bytes = appendTruncationMarker(lines, bytes, maxBytes);
-      break;
-    }
-
+    const cost = byteLength(separator) + byteLength(line);
+    if (bytes + cost > maxBytes) return false;
     lines.push(line);
-    bytes += byteLength(separator) + byteLength(line);
+    bytes += cost;
+    return true;
+  };
+
+  const appendFallbackMarker = (): void => {
+    if (append(TREE_TRUNCATION_MARKER)) return;
+  };
+
+  const render = (node: SemanticWidgetNode, depth: number): boolean => {
+    const index = nodes.length + 1;
+    if (!append(widgetLine(index, node, depth))) {
+      truncated = true;
+      appendFallbackMarker();
+      return false;
+    }
     nodes.push({
       index,
-      valueId: current.node.id,
-      className: current.node.className,
-      label: current.node.label,
+      valueId: node.id,
+      className: node.className,
+      label: node.label,
     });
-    const nextDepth = current.depth + 1;
-    if (current.node.children.length > 0 && current.depth >= WIDGET_MATCH_MAX_DEPTH) {
-      truncated = true;
-      stack.push({ kind: "marker", text: limitMarker(nextDepth, "… depth truncated") });
-      continue;
-    }
-    const visibleChildren = current.node.children.slice(0, WIDGET_MATCH_MAX_CHILDREN);
-    const omittedChildren = current.node.children.length - visibleChildren.length;
-    if (omittedChildren > 0) {
-      truncated = true;
-      stack.push({
-        kind: "marker",
-        text: limitMarker(nextDepth, `… +${omittedChildren} more`),
-      });
-    }
-    for (const child of [...visibleChildren].reverse()) {
-      stack.push({ kind: "node", node: child, depth: nextDepth });
-    }
-  }
 
-  if (stack.length > 0) truncated = true;
+    for (let childIndex = 0; childIndex < node.children.length; childIndex += 1) {
+      const child = node.children[childIndex];
+      if (!selection.selected.has(child)) {
+        truncated = true;
+        if (!append(limitMarker(depth + 1, `… +${node.children.length - childIndex} more`))) {
+          appendFallbackMarker();
+          return false;
+        }
+        return true;
+      }
+      if (!render(child, depth + 1)) return false;
+    }
+    return true;
+  };
+
+  if (selection.selected.has(root)) render(root, 0);
+  else appendFallbackMarker();
   return { text: lines.join("\n"), nodes, truncated };
 }
 
@@ -224,7 +228,7 @@ export function buildWidgetMatchPrompt(
   return [
     "Select the one Flutter widget that best matches the user's description.",
     "The tree is sanitized: indices, class names, labels, and indentation only.",
-    `Tree limits: ${WIDGET_MATCH_MAX_NODES} nodes, ${WIDGET_MATCH_MAX_DEPTH} levels, and ${WIDGET_MATCH_MAX_CHILDREN} children per node; omissions are marked.`,
+    `Tree limits: ${WIDGET_MATCH_MAX_NODES} nodes and ${WIDGET_MATCH_MAX_BYTES / 1024} KiB, ${WIDGET_MATCH_MAX_DEPTH} levels, and ${WIDGET_MATCH_MAX_CHILDREN} children per node; selection is breadth-first and rendering is preorder.`,
     truncation,
     "Return only one JSON object with exactly one shape:",
     '{"match":{"index":number}}',

@@ -81,7 +81,6 @@ describe("widget tree serialization", () => {
     const serialized = serializeWidgetTree(root);
 
     expect(serialized.nodes).toHaveLength(WIDGET_MATCH_MAX_NODES);
-    expect(serialized.nodes.at(-1)?.valueId).toBe(`id-${WIDGET_MATCH_MAX_NODES - 2}`);
     expect(serialized.truncated).toBe(true);
     expect(new TextEncoder().encode(serialized.text).length).toBeLessThanOrEqual(WIDGET_MATCH_MAX_BYTES);
 
@@ -100,7 +99,7 @@ describe("widget tree serialization", () => {
     expect(new TextEncoder().encode(byteLimited.text).length).toBeLessThanOrEqual(
       96,
     );
-    expect(byteLimited.text).toContain("… subtree truncated");
+    expect(byteLimited.text).toContain("… +20 more");
   });
 
   it("normalizes labels into one bounded prompt line", async () => {
@@ -119,11 +118,11 @@ describe("widget tree serialization", () => {
     expect(label).toMatch(/…$/);
   });
 
-  it("marks the subtree when a depth-first walk reaches its byte budget", async () => {
+  it("marks omitted children when breadth-first selection reaches its byte budget", async () => {
     const { serializeWidgetTree } = await loadMatcher();
     const serialized = serializeWidgetTree(tree(), 48);
 
-    expect(serialized.text).toContain("… subtree truncated");
+    expect(serialized.text).toContain("… +2 more");
     expect(serialized.truncated).toBe(true);
     expect(serialized.nodes.map((node) => node.valueId)).toEqual(["root-id"]);
   });
@@ -175,7 +174,32 @@ describe("widget tree serialization", () => {
 
     expect(serialized.nodes.map((node) => node.valueId)).toContain("sibling-a");
     expect(serialized.nodes.map((node) => node.valueId)).toContain("sibling-b");
-    expect(serialized.text).toContain("… depth truncated");
+    expect(serialized.text).toContain("… +1 more");
+  });
+
+  it("selects a later top-level sibling before a huge first subtree", async () => {
+    const { serializeWidgetTree } = await loadMatcher();
+    let nextId = 0;
+    const hugeSubtree = (depth: number): SemanticWidgetNode => ({
+      id: `huge-${nextId++}`,
+      className: "Branch",
+      label: null,
+      children: depth > 0
+        ? Array.from({ length: 16 }, () => hugeSubtree(depth - 1))
+        : [],
+    });
+    const serialized = serializeWidgetTree({
+      id: "root",
+      className: "Root",
+      label: null,
+      children: [
+        hugeSubtree(3),
+        { id: "wanted-sibling", className: "LoginButton", label: "Sign in", children: [] },
+      ],
+    });
+
+    expect(serialized.nodes.map((node) => node.valueId)).toContain("wanted-sibling");
+    expect(serialized.text).toContain("LoginButton — Sign in");
   });
 
   it("redacts label paths, hosts, tailnet IPs, and serials without dropping the node", async () => {
@@ -198,6 +222,21 @@ describe("widget tree serialization", () => {
     for (const value of label.split(" ")) expect(serialized.text).not.toContain(value);
     expect(serialized.text).toContain("Text — …");
     expect(serialized.nodes).toMatchObject([{ valueId: "sensitive-label" }]);
+  });
+
+  it("redacts a description-derived class before routing", async () => {
+    const { serializeWidgetTree } = await loadMatcher();
+    const className = "/Users/dev/app/widgets/PrivateButton";
+    const serialized = serializeWidgetTree({
+      id: "description-derived-class",
+      className,
+      label: null,
+      children: [],
+    });
+
+    expect(serialized.text).not.toContain(className);
+    expect(serialized.text).toBe("1 …");
+    expect(serialized.nodes).toMatchObject([{ valueId: "description-derived-class", className }]);
   });
 });
 
@@ -280,6 +319,6 @@ describe("matchWidget", () => {
       WIDGET_MATCH_MAX_BYTES - WIDGET_MATCH_PROMPT_MARGIN_BYTES,
     );
     expect(prompt).toContain("The tree was truncated.");
-    expect(prompt).toContain("… subtree truncated");
+    expect(prompt).toContain("… +");
   });
 });

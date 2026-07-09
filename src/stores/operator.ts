@@ -390,6 +390,17 @@ async function chatToOpen(intent: OperatorIntent, chatRef: string | null): Promi
   };
 }
 
+function normalizeNativeModel(provider: AgentProvider, model: string | null): Resolution<string | null> {
+  const normalized = nativeChatModel(provider, model);
+  if (model && normalized === null) {
+    return {
+      ok: false,
+      message: `Model "${model}" is not available for native ${provider} chats`,
+    };
+  }
+  return { ok: true, value: normalized };
+}
+
 async function sendToChat(chat: Chat, prompt: string): Promise<DispatchResult> {
   const target = agentTarget(chat);
   if (!target.ok) return { status: "failed", message: target.message };
@@ -401,9 +412,10 @@ async function sendToChat(chat: Chat, prompt: string): Promise<DispatchResult> {
       model = state.model;
     } else {
       const latestSession = await db.agentSessionLatestForChat(chat.chatId);
-      model = latestSession
+      const selectedModel = latestSession
         ? nativeChatModel(provider, latestSession.model)
         : nativeChatModel(provider, loadAgentModels()[provider] ?? null);
+      model = selectedModel;
     }
     await ensureAgentChat(
       chat.chatId,
@@ -487,9 +499,14 @@ async function runIntent(intent: OperatorIntent, inputText?: string): Promise<Di
       return { status: "done", summary: `Opened project ${project.value.displayName}` };
     }
     case "openChat": {
-      let chat = await chatToOpen(intent, action.chat);
-      const fallbackRef = intent.projectRef ? openChatFallbackRef(inputText) : null;
-      if (!chat.ok && fallbackRef && fallbackRef !== action.chat) {
+      const fallbackRef = openChatFallbackRef(inputText);
+      let chat: Resolution<Chat> | null = null;
+      if (fallbackRef && fallbackRef !== action.chat) {
+        const fallback = await chatToOpen({ ...intent, projectRef: null }, fallbackRef);
+        if (fallback.ok) chat = fallback;
+      }
+      chat ??= await chatToOpen(intent, action.chat);
+      if (!chat.ok && intent.projectRef && fallbackRef && fallbackRef !== action.chat) {
         const fallback = await chatToOpen({ ...intent, projectRef: null }, fallbackRef);
         if (fallback.ok) chat = fallback;
       }
@@ -501,13 +518,20 @@ async function runIntent(intent: OperatorIntent, inputText?: string): Promise<Di
       const project = await projectFor(intent);
       if (!project.ok) return { status: "failed", message: project.message };
       const provider = agentProviderFromIntent(action.provider);
+      const model = normalizeNativeModel(
+        provider,
+        action.model
+          ? action.model
+          : nativeChatModel(provider, loadAgentModels()[provider] ?? null),
+      );
+      if (!model.ok) return { status: "failed", message: model.message };
       const chatId = await addChat("Operator chat", provider, project.value.projectRoot, "agent");
       if (!chatId) return { status: "failed", message: "Could not create operator chat" };
       await ensureAgentChat(
         chatId,
         project.value.projectRoot,
         provider,
-        action.model ?? nativeChatModel(provider, loadAgentModels()[provider] ?? null),
+        model.value,
         {
           engine: loadAgentEngine(),
           effort: loadAgentEfforts()[provider] ?? null,

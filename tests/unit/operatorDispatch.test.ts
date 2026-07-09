@@ -321,6 +321,26 @@ describe("dispatchIntent", () => {
     );
   });
 
+  it("fails before creating a chat when an explicit model is not native-chat compatible", async () => {
+    deps.nativeChatModel.mockImplementation((_provider: string, model: string | null) =>
+      model === "glm-5.2:cloud" ? null : model,
+    );
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "createChat", provider: "codex", model: "glm-5.2:cloud" }, "App"),
+      { confirmed: true },
+    );
+
+    expect(result).toEqual({
+      status: "failed",
+      message: 'Model "glm-5.2:cloud" is not available for native codex chats',
+    });
+    expect(deps.addChat).not.toHaveBeenCalled();
+    expect(deps.ensureAgentChat).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
   it("falls back to compact action JSON when audit input text is absent", async () => {
     const { dispatchIntent } = await loadStore();
 
@@ -398,6 +418,22 @@ describe("dispatchIntent", () => {
     expect(result.status).toBe("done");
     expect(deps.ensureChatsLoaded).toHaveBeenCalledWith("/repo/app");
     expect(deps.selectChat).toHaveBeenCalledWith("chat-review");
+  });
+
+  it("awaits chat loading before reading the project chat bucket", async () => {
+    deps.workspace.chatsByRoot["/repo/app"] = [];
+    deps.ensureChatsLoaded.mockImplementationOnce(async (root: string) => {
+      await Promise.resolve();
+      deps.workspace.chatsByRoot[root] = [
+        chat("chat-loaded", root, "Loaded Chat"),
+      ];
+    });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openChat", chat: "Loaded Chat" }));
+
+    expect(result).toEqual({ status: "done", summary: "Opened chat Loaded Chat" });
+    expect(deps.selectChat).toHaveBeenCalledWith("chat-loaded");
   });
 
   it("resolves named chat references by exact chat id before title matching", async () => {
@@ -748,13 +784,24 @@ describe("dispatchIntent", () => {
     expect(auditUpdateStatus()).toBe("failed");
   });
 
-  it("falls back to the full open-chat title when an in qualifier candidate fails", async () => {
+  it("prefers the full active-project title before treating in as a qualifier", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/flow", "flow"),
+    ];
     deps.workspace.chatsByRoot["/repo/app"] = [
       chat("chat-sign-in", "/repo/app", "Sign in flow"),
+    ];
+    deps.workspace.chatsByRoot["/repo/flow"] = [
+      chat("chat-sign", "/repo/flow", "Sign"),
     ];
     const parsed = parseCommand("open chat Sign in flow");
     expect(parsed.kind).toBe("intent");
     if (parsed.kind !== "intent") throw new Error("expected intent");
+    expect(parsed.intent).toMatchObject({
+      projectRef: "flow",
+      action: { action: "openChat", chat: "Sign" },
+    });
     const { dispatchIntent } = await loadStore();
 
     const result = await dispatchIntent(parsed.intent, {

@@ -1,1 +1,1 @@
-{"v":1,"id":"intent-select-widget","provenance":"voice","confidence":0.79,"projectRef":"Games List","action":{"action":"selectWidget","description":"the login button"}}
+{"v":2,"id":"intent-select-widget","provenance":"voice","confidence":0.79,"projectRef":"Games List","action":{"action":"selectWidget","description":"the login button"}}

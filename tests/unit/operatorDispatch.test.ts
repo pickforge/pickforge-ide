@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OperatorAction, OperatorIntent } from "../../src/lib/operatorIntent";
+import { parseOperatorIntent, type OperatorAction, type OperatorIntent } from "../../src/lib/operatorIntent";
 import { parseCommand } from "../../src/lib/operatorParser";
 
 const deps = vi.hoisted(() => {
@@ -26,6 +26,25 @@ const deps = vi.hoisted(() => {
     lastActivityAt: number;
     sortOrder: number;
   };
+  type DeviceEntry = {
+    serial: string | null;
+    avdId: string | null;
+    displayName: string;
+    state: "running" | "offline" | "stopped";
+    kind: "emulator" | "physical" | "simulator";
+  };
+  type RunTarget = {
+    id: string;
+    label: string;
+    command: string;
+    cwd?: string;
+    capabilities: string[];
+    needsDevice: boolean;
+    deviceConvention: "arg" | "rnDevice" | "env" | "xcodeDestination" | "none";
+    inspectorKind: "vmService" | "uiAutomator" | "cdp" | "iosAccessibility" | "none";
+    logSource: "pty" | "logcat" | "oslog";
+    source: "detected" | "vscode";
+  };
   const workspace = {
     projects: [] as Project[],
     activeRoot: null as string | null,
@@ -43,12 +62,32 @@ const deps = vi.hoisted(() => {
     projectRoot: string;
     status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled";
   }> = [];
+  const devices: DeviceEntry[] = [];
+  const targets: RunTarget[] = [];
+  const runConsoleState = {
+    status: "idle" as "idle" | "running" | "stopped",
+    target: null as RunTarget | null,
+    current: null as { key: number; command: string; cwd: string | null } | null,
+  };
+  const runLaunchState = {
+    booting: false,
+    error: null as string | null,
+  };
+  let activeTargetId = "";
+  const activeTarget = () => targets.find((target) => target.id === activeTargetId) ?? targets[0] ?? null;
+  const deviceKey = (device: DeviceEntry) => device.serial ?? device.avdId ?? device.displayName;
+  const deviceLabel = (device: DeviceEntry) =>
+    device.state === "running" && device.serial ? `${device.displayName} · ${device.serial}` : device.displayName;
   return {
     workspace,
     agentStates,
     latestSessions,
     archivedChats,
     runs,
+    devices,
+    targets,
+    runConsoleState,
+    runLaunchState,
     flagEnabled: vi.fn(),
     loadAgentModels: vi.fn(),
     loadAgentEfforts: vi.fn(),
@@ -83,6 +122,50 @@ const deps = vi.hoisted(() => {
     steerAgentChat: vi.fn(),
     startSwarm: vi.fn(),
     swarmRuns: vi.fn(() => runs),
+    refreshDevices: vi.fn(async () => devices),
+    androidLaunchAvd: vi.fn(),
+    iosBootDevice: vi.fn(),
+    adbScreenshot: vi.fn(),
+    iosScreenshot: vi.fn(),
+    setRunDevice: vi.fn(),
+    launchActiveTarget: vi.fn(),
+    isBooting: vi.fn(() => runLaunchState.booting),
+    launchError: vi.fn(() => runLaunchState.error),
+    resolveSelectedDevice: vi.fn(() => {
+      const target = activeTarget();
+      const list = devices.filter((device) => {
+        if (target?.deviceConvention === "xcodeDestination") return device.kind === "simulator";
+        if (target?.deviceConvention === "rnDevice" || target?.deviceConvention === "env") {
+          return device.kind !== "simulator";
+        }
+        return true;
+      });
+      return list.find((device) => device.state === "running") ??
+        list.find((device) => device.state === "stopped") ??
+        null;
+    }),
+    deviceKey: vi.fn(deviceKey),
+    deviceLabel: vi.fn(deviceLabel),
+    reloadRun: vi.fn(),
+    restartRun: vi.fn(),
+    stopRun: vi.fn(),
+    runConsole: {
+      status: vi.fn(() => runConsoleState.status),
+      target: vi.fn(() => runConsoleState.target),
+      current: vi.fn(() => runConsoleState.current),
+    },
+    runTargets: vi.fn(() => targets),
+    activeTarget: vi.fn(activeTarget),
+    setActiveTargetId: vi.fn((id: string) => {
+      activeTargetId = id;
+    }),
+    captureInRepo: vi.fn(() => false),
+    inspectDir: vi.fn(),
+    inspectSave: vi.fn(),
+    vmFindIsolate: vi.fn(),
+    vmSelectedWidget: vi.fn(),
+    vmScreenshot: vi.fn(),
+    vmShowSelectMode: vi.fn(),
     reset() {
       workspace.projects = [];
       workspace.activeRoot = null;
@@ -92,6 +175,14 @@ const deps = vi.hoisted(() => {
       latestSessions.clear();
       archivedChats.clear();
       runs.splice(0);
+      devices.splice(0);
+      targets.splice(0);
+      runConsoleState.status = "idle";
+      runConsoleState.target = null;
+      runConsoleState.current = null;
+      runLaunchState.booting = false;
+      runLaunchState.error = null;
+      activeTargetId = "";
       this.flagEnabled.mockReset().mockReturnValue(true);
       this.loadAgentModels.mockReset().mockReturnValue({
         claudeCode: "claude-opus-4-8",
@@ -127,6 +218,46 @@ const deps = vi.hoisted(() => {
       this.steerAgentChat.mockReset().mockResolvedValue(undefined);
       this.startSwarm.mockReset().mockResolvedValue("swarm-1");
       this.swarmRuns.mockClear();
+      this.refreshDevices.mockReset().mockResolvedValue(devices);
+      this.androidLaunchAvd.mockReset().mockResolvedValue(undefined);
+      this.iosBootDevice.mockReset().mockResolvedValue(undefined);
+      this.adbScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
+      this.iosScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
+      this.setRunDevice.mockReset().mockResolvedValue(undefined);
+      this.launchActiveTarget.mockReset().mockImplementation(async () => {
+        const target = activeTarget();
+        runConsoleState.status = "running";
+        runConsoleState.target = target;
+        runConsoleState.current = {
+          key: 1,
+          command: target?.command ?? "",
+          cwd: workspace.activeRoot,
+        };
+      });
+      this.isBooting.mockClear();
+      this.launchError.mockClear();
+      this.resolveSelectedDevice.mockClear();
+      this.deviceKey.mockClear();
+      this.deviceLabel.mockClear();
+      this.reloadRun.mockReset().mockReturnValue(undefined);
+      this.restartRun.mockReset().mockReturnValue(undefined);
+      this.stopRun.mockReset().mockReturnValue(undefined);
+      this.runConsole.status.mockClear();
+      this.runConsole.target.mockClear();
+      this.runConsole.current.mockClear();
+      this.runTargets.mockClear();
+      this.activeTarget.mockClear();
+      this.setActiveTargetId.mockClear();
+      this.captureInRepo.mockClear();
+      this.inspectDir.mockReset().mockResolvedValue("/repo/app/.pickforge");
+      this.inspectSave.mockReset().mockResolvedValue({
+        mdPath: "/repo/app/.pickforge/operator-screenshot/context.md",
+        pngPath: "/repo/app/.pickforge/operator-screenshot/screenshot.png",
+      });
+      this.vmFindIsolate.mockReset().mockRejectedValue(new Error("no isolate"));
+      this.vmSelectedWidget.mockReset().mockResolvedValue(null);
+      this.vmScreenshot.mockReset().mockResolvedValue(null);
+      this.vmShowSelectMode.mockReset().mockResolvedValue(undefined);
     },
   };
 });
@@ -183,6 +314,56 @@ vi.mock("../../src/stores/swarm", () => ({
   swarmRuns: deps.swarmRuns,
 }));
 
+vi.mock("../../src/stores/deviceList", () => ({
+  refreshDevices: deps.refreshDevices,
+}));
+
+vi.mock("../../src/lib/device", () => ({
+  androidLaunchAvd: deps.androidLaunchAvd,
+  adbScreenshot: deps.adbScreenshot,
+  iosBootDevice: deps.iosBootDevice,
+  iosScreenshot: deps.iosScreenshot,
+}));
+
+vi.mock("../../src/stores/runDevice", () => ({
+  setRunDevice: deps.setRunDevice,
+}));
+
+vi.mock("../../src/stores/runLaunch", () => ({
+  deviceKey: deps.deviceKey,
+  deviceLabel: deps.deviceLabel,
+  isBooting: deps.isBooting,
+  launchActiveTarget: deps.launchActiveTarget,
+  launchError: deps.launchError,
+  resolveSelectedDevice: deps.resolveSelectedDevice,
+}));
+
+vi.mock("../../src/stores/runConsole", () => ({
+  reloadRun: deps.reloadRun,
+  restartRun: deps.restartRun,
+  runConsole: deps.runConsole,
+  stopRun: deps.stopRun,
+}));
+
+vi.mock("../../src/stores/runTargets", () => ({
+  activeTarget: deps.activeTarget,
+  runTargets: deps.runTargets,
+  setActiveTargetId: deps.setActiveTargetId,
+}));
+
+vi.mock("../../src/stores/inspectStorage", () => ({
+  captureInRepo: deps.captureInRepo,
+}));
+
+vi.mock("../../src/lib/vm", () => ({
+  inspectDir: deps.inspectDir,
+  inspectSave: deps.inspectSave,
+  vmFindIsolate: deps.vmFindIsolate,
+  vmScreenshot: deps.vmScreenshot,
+  vmSelectedWidget: deps.vmSelectedWidget,
+  vmShowSelectMode: deps.vmShowSelectMode,
+}));
+
 function project(projectRoot: string, displayName: string) {
   return {
     projectRoot,
@@ -212,9 +393,57 @@ function chat(chatId: string, projectRoot: string, title: string, kind = "agent"
   };
 }
 
+function runTarget(id: string, label: string, overrides: Partial<ReturnType<typeof baseRunTarget>> = {}) {
+  return { ...baseRunTarget(id, label), ...overrides };
+}
+
+function baseRunTarget(id: string, label: string) {
+  return {
+    id,
+    label,
+    command: "flutter run",
+    capabilities: ["launch", "hotReload", "hotRestart", "stop"],
+    needsDevice: true,
+    deviceConvention: "arg" as const,
+    inspectorKind: "vmService" as const,
+    logSource: "pty" as const,
+    source: "detected" as const,
+  };
+}
+
+function device(
+  displayName: string,
+  overrides: Partial<{
+    serial: string | null;
+    avdId: string | null;
+    state: "running" | "offline" | "stopped";
+    kind: "emulator" | "physical" | "simulator";
+  }> = {},
+) {
+  return {
+    serial: null,
+    avdId: displayName,
+    displayName,
+    state: "stopped" as const,
+    kind: "emulator" as const,
+    ...overrides,
+  };
+}
+
+function setActiveRun(target = runTarget("detected", "Flutter"), cwd = "/repo/app") {
+  deps.runConsoleState.status = "running";
+  deps.runConsoleState.target = target;
+  deps.runConsoleState.current = {
+    key: 1,
+    command: target.command,
+    cwd,
+  };
+  return target;
+}
+
 function intent(action: OperatorAction, projectRef: string | null = null): OperatorIntent {
   return {
-    v: 1,
+    v: 2,
     id: `intent-${action.action}`,
     provenance: "typed",
     confidence: 1,
@@ -579,16 +808,491 @@ describe("dispatchIntent", () => {
     expect(deps.selectChat).not.toHaveBeenCalled();
   });
 
-  it("returns unsupported for M1.5 actions and audits as failed", async () => {
+  it("launches the default run target through the run launcher", async () => {
+    deps.targets.push(runTarget("detected", "Flutter"));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchRun", target: null }));
+
+    expect(result).toEqual({ status: "done", summary: "Launched run target Flutter" });
+    expect(deps.launchActiveTarget).toHaveBeenCalledTimes(1);
+    expect(deps.setActiveTargetId).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("resolves a named run target case-insensitively before launching", async () => {
+    deps.targets.push(
+      runTarget("detected", "Flutter"),
+      runTarget("vscode-1", "Web Debug", { needsDevice: false, deviceConvention: "none" }),
+    );
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchRun", target: "web debug" }));
+
+    expect(result).toEqual({ status: "done", summary: "Launched run target Web Debug" });
+    expect(deps.setActiveTargetId).toHaveBeenCalledWith("vscode-1");
+    expect(deps.launchActiveTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails launchRun when the run launcher soft-aborts with an exposed error", async () => {
+    deps.targets.push(runTarget("detected", "Flutter"));
+    deps.launchActiveTarget.mockImplementation(async () => {
+      deps.runLaunchState.error = "Pixel 8 is offline or unauthorized";
+    });
     const { dispatchIntent } = await loadStore();
 
     const result = await dispatchIntent(intent({ action: "launchRun", target: null }));
 
     expect(result).toEqual({
-      status: "unsupported",
-      message: "launchRun is planned for #140",
+      status: "failed",
+      message: "Pixel 8 is offline or unauthorized",
     });
     expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("fails launchRun when another boot is already in progress", async () => {
+    deps.targets.push(
+      runTarget("detected", "Flutter"),
+      runTarget("vscode-1", "Web Debug", { needsDevice: false, deviceConvention: "none" }),
+    );
+    deps.runLaunchState.booting = true;
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchRun", target: "web debug" }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Run launch is already in progress",
+    });
+    expect(deps.setActiveTargetId).not.toHaveBeenCalled();
+    expect(deps.launchActiveTarget).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("fails ambiguous run target resolution and lists candidates", async () => {
+    deps.targets.push(
+      runTarget("flutter-app", "App Debug"),
+      runTarget("web-app", "App Web"),
+    );
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchRun", target: "app" }));
+
+    expect(result.status).toBe("failed");
+    expect("message" in result ? result.message : "").toContain("App Debug");
+    expect("message" in result ? result.message : "").toContain("App Web");
+    expect(deps.launchActiveTarget).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("launches a stopped emulator by resolved name and selects it for the project", async () => {
+    deps.devices.push(device("Pixel 8 API 35", { avdId: "Pixel_8_API_35" }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "pixel 8" }));
+
+    expect(result).toEqual({ status: "done", summary: "Launched emulator Pixel 8 API 35" });
+    expect(deps.refreshDevices).toHaveBeenCalledTimes(1);
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/repo/app", "Pixel_8_API_35");
+    expect(deps.androidLaunchAvd).toHaveBeenCalledWith("Pixel_8_API_35");
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("launches a stopped simulator by resolved name and selects it for the project", async () => {
+    deps.devices.push(device("iPhone 15", {
+      serial: "SIM-123",
+      avdId: null,
+      kind: "simulator",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "iphone" }));
+
+    expect(result).toEqual({ status: "done", summary: "Launched simulator iPhone 15" });
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/repo/app", "SIM-123");
+    expect(deps.iosBootDevice).toHaveBeenCalledWith("SIM-123");
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("selects a connected physical device by explicit ref", async () => {
+    deps.devices.push(device("Pixel 9", {
+      serial: "R58M12345",
+      avdId: null,
+      state: "running",
+      kind: "physical",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "pixel" }));
+
+    expect(result).toEqual({ status: "done", summary: "Selected device Pixel 9 · R58M12345" });
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/repo/app", "R58M12345");
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("does not default launchEmulator to a physical device", async () => {
+    deps.devices.push(device("Pixel 9", {
+      serial: "R58M12345",
+      avdId: null,
+      state: "running",
+      kind: "physical",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: null }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "No virtual device available. Candidates: none",
+    });
+    expect(deps.setRunDevice).not.toHaveBeenCalled();
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("does not default launchEmulator to a virtual device incompatible with the active target", async () => {
+    deps.targets.push(runTarget("ios", "iOS", {
+      deviceConvention: "xcodeDestination",
+      inspectorKind: "iosAccessibility",
+      logSource: "oslog",
+    }));
+    deps.devices.push(device("Pixel 8", { avdId: "Pixel_8" }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: null }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "No virtual device available. Candidates: none",
+    });
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("resolves launchEmulator names only within target-compatible devices", async () => {
+    deps.targets.push(runTarget("ios", "iOS", {
+      deviceConvention: "xcodeDestination",
+      inspectorKind: "iosAccessibility",
+      logSource: "oslog",
+    }));
+    deps.devices.push(
+      device("Pixel 8", { avdId: "Pixel_8" }),
+      device("iPhone 15", {
+        serial: "SIM-123",
+        avdId: null,
+        kind: "simulator",
+      }),
+    );
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "pixel" }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Device \"pixel\" was not found. Candidates: iPhone 15",
+    });
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("fails ambiguous device resolution and lists candidates", async () => {
+    deps.devices.push(
+      device("Pixel 8", { avdId: "Pixel_8" }),
+      device("Pixel 8 Pro", { avdId: "Pixel_8_Pro" }),
+    );
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "pixel" }));
+
+    expect(result.status).toBe("failed");
+    expect("message" in result ? result.message : "").toContain("Pixel 8");
+    expect("message" in result ? result.message : "").toContain("Pixel 8 Pro");
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("wires reload, hot restart, and stop to the active run console", async () => {
+    setActiveRun();
+    const { dispatchIntent } = await loadStore();
+
+    await expect(dispatchIntent(intent({ action: "reloadRun" }))).resolves.toEqual({
+      status: "done",
+      summary: "Reloaded active run",
+    });
+    await expect(dispatchIntent(intent({ action: "hotRestart" }))).resolves.toEqual({
+      status: "done",
+      summary: "Hot restarted active run",
+    });
+    await expect(dispatchIntent(intent({ action: "stopRun" }))).resolves.toEqual({
+      status: "done",
+      summary: "Stopped active run",
+    });
+
+    expect(deps.reloadRun).toHaveBeenCalledTimes(1);
+    expect(deps.restartRun).toHaveBeenCalledTimes(1);
+    expect(deps.stopRun).toHaveBeenCalledTimes(1);
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("fails reload and hot restart when the active target lacks those capabilities", async () => {
+    setActiveRun(runTarget("detected", "Release Flutter", { capabilities: ["launch", "stop"] }));
+    const { dispatchIntent } = await loadStore();
+
+    await expect(dispatchIntent(intent({ action: "reloadRun" }))).resolves.toEqual({
+      status: "failed",
+      message: "Active run target does not support hot reload",
+    });
+    await expect(dispatchIntent(intent({ action: "hotRestart" }))).resolves.toEqual({
+      status: "failed",
+      message: "Active run target does not support hot restart",
+    });
+
+    expect(deps.reloadRun).not.toHaveBeenCalled();
+    expect(deps.restartRun).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("fails run control when projectRef points at a different active project than the run cwd", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.workspace.activeRoot = "/repo/other";
+    setActiveRun(runTarget("detected", "Flutter"), "/repo/app");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "reloadRun" }, "Other"));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Active run is not in project Other",
+    });
+    expect(deps.reloadRun).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("returns noop for run controls when there is no active run", async () => {
+    const { dispatchIntent } = await loadStore();
+
+    await expect(dispatchIntent(intent({ action: "reloadRun" }))).resolves.toEqual({
+      status: "noop",
+      summary: "no active run",
+    });
+    await expect(dispatchIntent(intent({ action: "hotRestart" }))).resolves.toEqual({
+      status: "noop",
+      summary: "no active run",
+    });
+    await expect(dispatchIntent(intent({ action: "stopRun" }))).resolves.toEqual({
+      status: "noop",
+      summary: "no active run",
+    });
+
+    expect(deps.reloadRun).not.toHaveBeenCalled();
+    expect(deps.restartRun).not.toHaveBeenCalled();
+    expect(deps.stopRun).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("enters Flutter select mode through the VM service seam", async () => {
+    setActiveRun();
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "enterSelectMode" }));
+
+    expect(result).toEqual({ status: "done", summary: "Entered select mode" });
+    expect(deps.vmShowSelectMode).toHaveBeenCalledWith("isolates/1", true);
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("returns noop for select mode when there is no VM session", async () => {
+    setActiveRun();
+    deps.vmFindIsolate.mockRejectedValue(new Error("no VM"));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "enterSelectMode" }));
+
+    expect(result).toEqual({ status: "noop", summary: "no active device/session" });
+    expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("fails select mode when the active run is not a Flutter VM-service target", async () => {
+    setActiveRun(runTarget("detected", "React Native", {
+      capabilities: ["launch", "stop", "inspectSelection"],
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+      logSource: "logcat",
+    }));
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "enterSelectMode" }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Active run is not a Flutter VM-service target",
+    });
+    expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("fails select mode when projectRef is not the active project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "enterSelectMode" }, "Other"));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Project Other is not active",
+    });
+    expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("captures a screenshot from the selected running device", async () => {
+    deps.targets.push(runTarget("detected", "React Native", {
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+      logSource: "logcat",
+    }));
+    deps.devices.push(device("Pixel 8", {
+      serial: "emulator-5554",
+      avdId: "Pixel_8",
+      state: "running",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({
+      status: "done",
+      summary: "Captured screenshot /repo/app/.pickforge/operator-screenshot.png",
+    });
+    expect(deps.inspectDir).toHaveBeenCalledWith(false, "/repo/app");
+    expect(deps.adbScreenshot).toHaveBeenCalledWith(
+      "emulator-5554",
+      "/repo/app/.pickforge",
+      "operator-screenshot.png",
+    );
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("fails screenshot when the active run belongs to a different project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.workspace.activeRoot = "/repo/other";
+    setActiveRun(runTarget("detected", "React Native", {
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+      logSource: "logcat",
+    }), "/repo/app");
+    deps.devices.push(device("Pixel 8", {
+      serial: "emulator-5554",
+      avdId: "Pixel_8",
+      state: "running",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }, "Other"));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Active run is not in project Other",
+    });
+    expect(deps.inspectDir).not.toHaveBeenCalled();
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.iosScreenshot).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("does not fall back to a device screenshot for a no-device target", async () => {
+    deps.targets.push(runTarget("web", "Web", {
+      capabilities: ["detect", "captureScreenshot"],
+      needsDevice: false,
+      deviceConvention: "none",
+      inspectorKind: "cdp",
+    }));
+    deps.devices.push(device("Pixel 8", {
+      serial: "emulator-5554",
+      avdId: "Pixel_8",
+      state: "running",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({ status: "noop", summary: "no device-backed run/target" });
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.iosScreenshot).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("captures a VM screenshot when a selected Flutter widget is available", async () => {
+    deps.targets.push(runTarget("detected", "Flutter"));
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    deps.vmSelectedWidget.mockResolvedValue({ id: "widget-1", className: "Text", children: [], creationLocation: null });
+    deps.vmScreenshot.mockResolvedValue("png-b64");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({
+      status: "done",
+      summary: "Captured screenshot /repo/app/.pickforge/operator-screenshot/screenshot.png",
+    });
+    expect(deps.vmScreenshot).toHaveBeenCalledWith("isolates/1", "widget-1", 1024, 2048);
+    expect(deps.inspectSave).toHaveBeenCalledWith(
+      "/repo/app/.pickforge",
+      "operator-screenshot",
+      "Operator screenshot",
+      "png-b64",
+    );
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+  });
+
+  it("returns noop for screenshot when there is no active device or VM selection", async () => {
+    deps.targets.push(runTarget("detected", "Flutter"));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({ status: "noop", summary: "no active device/session" });
+    expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("dispatches a parsed v1 envelope after upgrading it to v2", async () => {
+    setActiveRun();
+    const parsed = parseOperatorIntent(JSON.stringify({
+      v: 1,
+      id: "intent-v1-reload",
+      provenance: "typed",
+      confidence: 1,
+      projectRef: null,
+      action: { action: "reloadRun" },
+    }));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(parsed.intent);
+
+    expect(parsed.intent.v).toBe(2);
+    expect(result).toEqual({ status: "done", summary: "Reloaded active run" });
+    expect(deps.reloadRun).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the stored agent model when sending to an existing cold chat", async () => {

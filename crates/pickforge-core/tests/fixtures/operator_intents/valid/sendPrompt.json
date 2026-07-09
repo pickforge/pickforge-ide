@@ -1,1 +1,1 @@
-{"v":1,"id":"intent-send-prompt","provenance":"typed","confidence":0.94,"projectRef":"Games List","action":{"action":"sendPrompt","prompt":"Fix the failing login button test.","chat":"M0 implementation"}}
+{"v":2,"id":"intent-send-prompt","provenance":"typed","confidence":0.94,"projectRef":"Games List","action":{"action":"sendPrompt","prompt":"Fix the failing login button test.","chat":"M0 implementation"}}

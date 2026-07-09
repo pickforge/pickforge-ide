@@ -31,6 +31,8 @@ playwright-report/
 .codex/
 .claude/*
 !.claude/skills/
+.claude/skills/*
+!.claude/skills/run
 .codegraph/
 .worktrees/
 

@@ -14,6 +14,7 @@ mod process_commands;
 mod pty_commands;
 mod remote_commands;
 mod telemetry_commands;
+mod voice_commands;
 mod vm_commands;
 mod watch_commands;
 
@@ -22,7 +23,7 @@ use std::sync::Arc;
 
 use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
-    PtyManager, VmServiceClient,
+    PtyManager, VmServiceClient, VoiceSessionManager,
 };
 use tauri::{path::BaseDirectory, Manager};
 #[cfg(target_os = "linux")]
@@ -191,6 +192,7 @@ pub fn run() {
             Ok(())
         })
         .manage(PtyManager::new())
+        .manage(VoiceSessionManager::new())
         .manage(VmServiceClient::new())
         .manage(CdpClient::new())
         .manage(watch_commands::WatchManager::new())
@@ -266,6 +268,10 @@ pub fn run() {
             db_commands::operator_audit_update,
             db_commands::operator_audit_list,
             operator_commands::operator_route_raw,
+            voice_commands::voice_start,
+            voice_commands::voice_stop,
+            voice_commands::voice_cancel,
+            voice_commands::voice_status,
             db_commands::settings_get,
             db_commands::settings_upsert,
             telemetry_commands::telemetry_get,

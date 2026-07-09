@@ -38,6 +38,10 @@ function load(): QuickLaunchItem[] {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return clone(DEFAULT_QUICK_LAUNCH);
     const parsed = JSON.parse(raw);
+    // The version marker means persist() wrote this blob, so an empty items
+    // array is an explicit "no chips" state (e.g. synced from another machine)
+    // and must survive reloads instead of falling back to the defaults.
+    if (parsed?.version === 1 && Array.isArray(parsed.items)) return parsed.items;
     if (Array.isArray(parsed?.items) && parsed.items.length) return parsed.items;
     return clone(DEFAULT_QUICK_LAUNCH);
   } catch {

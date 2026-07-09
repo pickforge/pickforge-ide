@@ -199,10 +199,16 @@ export function applyKeybindings(payload: Json): void {
   setQuickLaunchItems(items);
 }
 
-// ---- remoteBindings: per-project remote host, keyed by project basename ----
+// ---- remoteBindings: per-project remote host, matched by project basename ----
 // The project root is an absolute local path and must never enter the payload,
-// so bindings are keyed by basename. remoteRoot is an absolute POSIX path on the
-// remote host, which the sanitizer allows only under the `remoteRoot` field.
+// so bindings carry the basename instead. remoteRoot is an absolute POSIX path
+// on the remote host, which the sanitizer allows only under the `remoteRoot`
+// field. v2 stores bindings as an ARRAY of { project, remoteHost, remoteRoot }:
+// the sanitizer scans map KEYS with its denied-key pattern, so a project named
+// e.g. "api-key-notes" as a key would block the whole group — as a value it is
+// scanned by the value rules and plain names pass.
+
+const REMOTE_BINDINGS_VERSION = 2;
 
 export interface RemoteBindingProject {
   projectRoot: string;
@@ -227,25 +233,62 @@ export function projectBasename(projectRoot: string): string {
 }
 
 export function collectRemoteBindings(projects: RemoteBindingProject[]): Json {
-  const bindings: Record<string, { remoteHost: string; remoteRoot: string }> = {};
+  const bindings = new Map<string, { remoteHost: string; remoteRoot: string }>();
   // Collisions (same basename, different parents) resolve last-write-wins; the
   // binding is machine-local anyway and only adopted where a slot is unbound.
   for (const project of projects) {
     if (!project.remoteHost || !project.remoteRoot) continue;
     const key = projectBasename(project.projectRoot);
     if (!key) continue;
-    bindings[key] = { remoteHost: project.remoteHost, remoteRoot: project.remoteRoot };
+    bindings.set(key, { remoteHost: project.remoteHost, remoteRoot: project.remoteRoot });
   }
-  return { v: PAYLOAD_VERSION, bindings };
+  return {
+    v: REMOTE_BINDINGS_VERSION,
+    bindings: [...bindings.entries()].map(([project, binding]) => ({ project, ...binding })),
+  };
+}
+
+/** Bindings by basename from a v2 (array) or legacy v1 (record) payload. */
+function readRemoteBindings(
+  payload: Json,
+): Map<string, { remoteHost: string; remoteRoot: string }> | null {
+  const root = record(payload);
+  if (!root) return null;
+  const bindings = new Map<string, { remoteHost: string; remoteRoot: string }>();
+
+  if (root.v === REMOTE_BINDINGS_VERSION && Array.isArray(root.bindings)) {
+    for (const value of root.bindings) {
+      const entry = record(value);
+      const project = str(entry?.project);
+      const remoteHost = str(entry?.remoteHost);
+      const remoteRoot = str(entry?.remoteRoot);
+      if (!project || !remoteHost || !remoteRoot) continue;
+      bindings.set(project, { remoteHost, remoteRoot });
+    }
+    return bindings;
+  }
+
+  if (root.v === 1) {
+    const legacy = record(root.bindings);
+    if (!legacy) return null;
+    for (const [project, value] of Object.entries(legacy)) {
+      const entry = record(value);
+      const remoteHost = str(entry?.remoteHost);
+      const remoteRoot = str(entry?.remoteRoot);
+      if (!remoteHost || !remoteRoot) continue;
+      bindings.set(project, { remoteHost, remoteRoot });
+    }
+    return bindings;
+  }
+
+  return null;
 }
 
 export async function applyRemoteBindings(
   payload: Json,
   ctx: RemoteBindingApplyContext,
 ): Promise<void> {
-  const root = versioned(payload);
-  if (!root) return;
-  const bindings = record(root.bindings);
+  const bindings = readRemoteBindings(payload);
   if (!bindings) return;
 
   for (const project of ctx.projects) {
@@ -253,10 +296,8 @@ export async function applyRemoteBindings(
     // locally — never clobber it with the server's value. Only fill slots that
     // are currently unbound here.
     if (project.remoteHost) continue;
-    const binding = record(bindings[projectBasename(project.projectRoot)]);
-    const remoteHost = str(binding?.remoteHost);
-    const remoteRoot = str(binding?.remoteRoot);
-    if (!remoteHost || !remoteRoot) continue;
-    await ctx.setBinding(project.projectRoot, remoteHost, remoteRoot);
+    const binding = bindings.get(projectBasename(project.projectRoot));
+    if (!binding) continue;
+    await ctx.setBinding(project.projectRoot, binding.remoteHost, binding.remoteRoot);
   }
 }

@@ -82,6 +82,14 @@ function onlyAppSettings(store: Awaited<ReturnType<typeof loadStore>>["store"]) 
 
 const flushTasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("settingsSync serializers", () => {
   it("round-trips appSettings", async () => {
     const s = await loadSerializers();
@@ -145,7 +153,7 @@ describe("settingsSync serializers", () => {
     expect(s.collectKeybindings()).toEqual(payload);
   });
 
-  it("keys remoteBindings by basename with no absolute local project paths", async () => {
+  it("carries remoteBindings by basename with no absolute local project paths", async () => {
     const s = await loadSerializers();
     const payload = s.collectRemoteBindings([
       { projectRoot: "/home/dev/Projects/Pickforge", remoteHost: "forge", remoteRoot: "/srv/pickforge" },
@@ -153,12 +161,44 @@ describe("settingsSync serializers", () => {
       { projectRoot: "/home/dev/local-only", remoteHost: null, remoteRoot: null },
     ]);
 
-    const bindings = (payload as Record<string, any>).bindings;
-    expect(Object.keys(bindings).sort()).toEqual(["Pickforge", "api"]);
-    expect(bindings.Pickforge).toEqual({ remoteHost: "forge", remoteRoot: "/srv/pickforge" });
+    expect((payload as Record<string, any>).v).toBe(2);
+    expect((payload as Record<string, any>).bindings).toEqual([
+      { project: "Pickforge", remoteHost: "forge", remoteRoot: "/srv/pickforge" },
+      { project: "api", remoteHost: "box", remoteRoot: "/opt/api" },
+    ]);
 
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain("/home/dev");
+  });
+
+  it("syncs a project whose basename looks like a secret key", async () => {
+    const s = await loadSerializers();
+    // Basenames are payload VALUES (v2 array), never map keys — the sanitizer's
+    // denied-key pattern would reject "api-key-notes" as a key.
+    const payload = s.collectRemoteBindings([
+      { projectRoot: "/home/dev/api-key-notes", remoteHost: "forge", remoteRoot: "/srv/notes" },
+    ]);
+    expect(() => sanitizeSyncPayload("remoteBindings", payload)).not.toThrow();
+
+    const calls: Array<[string, string, string]> = [];
+    await s.applyRemoteBindings(payload, {
+      projects: [{ projectRoot: "/other/api-key-notes", remoteHost: null, remoteRoot: null }],
+      setBinding: (root, host, remoteRoot) => void calls.push([root, host, remoteRoot]),
+    });
+    expect(calls).toEqual([["/other/api-key-notes", "forge", "/srv/notes"]]);
+  });
+
+  it("still applies legacy v1 remoteBindings payloads", async () => {
+    const s = await loadSerializers();
+    const calls: Array<[string, string, string]> = [];
+    await s.applyRemoteBindings(
+      { v: 1, bindings: { Pickforge: { remoteHost: "forge", remoteRoot: "/srv/pf" } } } as any,
+      {
+        projects: [{ projectRoot: "/home/dev/Projects/Pickforge", remoteHost: null, remoteRoot: null }],
+        setBinding: (root, host, remoteRoot) => void calls.push([root, host, remoteRoot]),
+      },
+    );
+    expect(calls).toEqual([["/home/dev/Projects/Pickforge", "forge", "/srv/pf"]]);
   });
 
   it("passes the real sanitizeSyncPayload for every collected group", async () => {
@@ -206,13 +246,25 @@ describe("settingsSync serializers", () => {
     expect(ql.quickLaunchItems().length).toBeGreaterThan(0);
     s.applyKeybindings({ v: 1, items: [] } as any);
     expect(ql.quickLaunchItems()).toEqual([]);
+
+    // The deletion survives a reload — the versioned persisted blob marks the
+    // empty list as explicit, not missing.
+    vi.resetModules();
+    const reloaded = await import("../../src/stores/quickLaunch");
+    expect(reloaded.quickLaunchItems()).toEqual([]);
   });
 
   it("applies remote bindings only to locally-unbound projects", async () => {
     const s = await loadSerializers();
     const calls: Array<[string, string, string]> = [];
     await s.applyRemoteBindings(
-      { v: 1, bindings: { Pickforge: { remoteHost: "forge", remoteRoot: "/srv/pf" }, api: { remoteHost: "box", remoteRoot: "/opt/api" } } } as any,
+      {
+        v: 2,
+        bindings: [
+          { project: "Pickforge", remoteHost: "forge", remoteRoot: "/srv/pf" },
+          { project: "api", remoteHost: "box", remoteRoot: "/opt/api" },
+        ],
+      } as any,
       {
         projects: [
           { projectRoot: "/home/dev/Projects/Pickforge", remoteHost: null, remoteRoot: null },
@@ -409,5 +461,69 @@ describe("settingsSync engine", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stops the remaining groups when the user opts out mid-run", async () => {
+    const { flags, store } = await loadStore();
+    flags.setFlagOverride("settingsSync", true);
+    env.session.current = { userId: USER_ID };
+    store.setSettingsSyncGroup("keybindings", false);
+    store.setSettingsSyncGroup("remoteBindings", false);
+    env.engine.pullGroup.mockImplementation(async ({ group }: { group: string }) => {
+      if (group === "appSettings") store.setSettingsSyncOptIn(false);
+      return null;
+    });
+
+    store.setSettingsSyncOptIn(true);
+    await store.sync();
+
+    // appSettings was already in flight; operatorConfig must not run.
+    expect(env.engine.pullGroup.mock.calls.map((c) => c[0].group)).toEqual(["appSettings"]);
+  });
+
+  it("skips a group toggled off mid-run", async () => {
+    const { flags, store } = await loadStore();
+    flags.setFlagOverride("settingsSync", true);
+    env.session.current = { userId: USER_ID };
+    store.setSettingsSyncGroup("keybindings", false);
+    store.setSettingsSyncGroup("remoteBindings", false);
+    env.engine.pullGroup.mockImplementation(async ({ group }: { group: string }) => {
+      if (group === "appSettings") store.setSettingsSyncGroup("operatorConfig", false);
+      return null;
+    });
+
+    store.setSettingsSyncOptIn(true);
+    await store.sync();
+
+    expect(env.engine.pullGroup.mock.calls.map((c) => c[0].group)).toEqual(["appSettings"]);
+    // The rest of the run stayed alive — the group was skipped, not the sync.
+    expect(store.lastSyncedRelative()).toBe("just now");
+  });
+
+  it("coalesces a group toggled on during a run into one follow-up run", async () => {
+    const { flags, store } = await loadStore();
+    flags.setFlagOverride("settingsSync", true);
+    env.session.current = { userId: USER_ID };
+    onlyAppSettings(store);
+
+    const gate = deferred<null>();
+    env.engine.pullGroup.mockImplementation(({ group }: { group: string }) =>
+      group === "appSettings" ? gate.promise : Promise.resolve(null),
+    );
+
+    store.setSettingsSyncOptIn(true);
+    await flushTasks();
+    expect(env.engine.pullGroup.mock.calls.map((c) => c[0].group)).toEqual(["appSettings"]);
+
+    // Toggled on while the appSettings run is blocked — must not be dropped.
+    store.setSettingsSyncGroup("operatorConfig", true);
+    gate.resolve(null);
+
+    await vi.waitFor(() => {
+      expect(env.engine.pullGroup.mock.calls.map((c) => c[0].group)).toEqual([
+        "appSettings",
+        "operatorConfig",
+      ]);
+    });
   });
 });

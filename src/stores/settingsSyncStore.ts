@@ -286,18 +286,48 @@ async function syncGroup(ctx: SyncContext, group: SyncFieldGroup): Promise<void>
 }
 
 let inFlight: Promise<void> | null = null;
+let inFlightGroups: Set<SyncFieldGroup> | null = null;
+let pendingGroups: Set<SyncFieldGroup> | null = null;
 
 /** Sync the given groups (default: all enabled). No-op when disabled/signed out.
- *  Concurrent callers share the in-flight run. */
+ *  A request landing while a run is in flight is coalesced into ONE follow-up
+ *  run after the current one, so groups the current run does not cover are
+ *  never silently dropped; already-covered groups just share the run. */
 export function sync(groups?: SyncFieldGroup[]): Promise<void> {
   const ctx = context();
   const targets = groups ?? enabledGroups();
-  if (!ctx || targets.length === 0) return Promise.resolve();
-  if (inFlight) return inFlight;
-  inFlight = runSync(ctx, targets).finally(() => {
-    inFlight = null;
-  });
+  if (!ctx || targets.length === 0) return inFlight ?? Promise.resolve();
+  if (inFlight) {
+    for (const group of targets) {
+      if (!inFlightGroups?.has(group)) (pendingGroups ??= new Set()).add(group);
+    }
+    return inFlight;
+  }
+  inFlightGroups = new Set(targets);
+  inFlight = (async () => {
+    try {
+      await runSync(ctx, targets);
+    } finally {
+      inFlight = null;
+      inFlightGroups = null;
+    }
+    if (pendingGroups) {
+      const next = [...pendingGroups];
+      pendingGroups = null;
+      await sync(next);
+    }
+  })();
   return inFlight;
+}
+
+/** True while the run's preconditions still hold — the user can opt out (or
+ *  sign out) mid-run, and the captured group list must not keep syncing. */
+function runStillAllowed(ctx: SyncContext): boolean {
+  return (
+    settingsSyncEnabled() &&
+    accountSession()?.userId === ctx.userId &&
+    settingsSyncState().optedIn
+  );
 }
 
 async function runSync(ctx: SyncContext, groups: SyncFieldGroup[]): Promise<void> {
@@ -313,6 +343,10 @@ async function runSync(ctx: SyncContext, groups: SyncFieldGroup[]): Promise<void
       return;
     }
     for (const group of groups) {
+      // Re-check before every group: a mid-run opt-out stops the rest, and a
+      // group toggled off mid-run is skipped.
+      if (!runStillAllowed(ctx)) return;
+      if (!settingsSyncState().groups[group]) continue;
       try {
         await syncGroup(ctx, group);
         succeeded += 1;

@@ -22,7 +22,7 @@ pub use daemon::{
     DaemonStatus, RemoteHostDaemon,
 };
 pub use detect::{remote_detect_binaries, remote_nearest_pubspec, RemoteDetectError};
-pub use health::{probe_host, ProbeState, RemoteHostHealth};
+pub use health::{probe_host, probe_tailnet_peer, ProbeState, RemoteHostHealth};
 pub use protocol::{
     decode_remote_frame, encode_remote_frame, RemoteCapability, RemoteFrame, RemoteFrameError,
     RemoteRequest, RemoteResponse, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME,

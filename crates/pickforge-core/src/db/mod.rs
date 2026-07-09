@@ -598,8 +598,8 @@ impl Database {
                last_opened_at = excluded.last_opened_at, \
                sort_order = excluded.sort_order, \
                archived_at = excluded.archived_at, \
-               remote_host = excluded.remote_host, \
-               remote_root = excluded.remote_root",
+               remote_host = COALESCE(excluded.remote_host, projects.remote_host), \
+               remote_root = COALESCE(excluded.remote_root, projects.remote_root)",
             params![
                 p.project_root,
                 p.display_name,
@@ -1751,6 +1751,22 @@ mod tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].remote_host.as_deref(), Some("mac-mini"));
         assert_eq!(projects[0].remote_root.as_deref(), Some("/Users/dev/app"));
+
+        db.upsert_project(&Project {
+            project_root: "/p".into(),
+            display_name: "Renamed".into(),
+            created_at: 3,
+            last_opened_at: 4,
+            sort_order: 1,
+            archived_at: None,
+            remote_host: None,
+            remote_root: None,
+        })
+        .unwrap();
+        let project = db.list_projects(false).unwrap().remove(0);
+        assert_eq!(project.display_name, "Renamed");
+        assert_eq!(project.remote_host.as_deref(), Some("mac-mini"));
+        assert_eq!(project.remote_root.as_deref(), Some("/Users/dev/app"));
 
         db.projects_clear_remote("/p").unwrap();
         let project = db.list_projects(false).unwrap().remove(0);

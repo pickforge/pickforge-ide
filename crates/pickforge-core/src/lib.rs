@@ -48,7 +48,7 @@ pub use pty::{
 };
 pub use remote::{
     decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener, probe_host,
-    remote_auth_store_path, remote_detect_binaries, remote_nearest_pubspec,
+    probe_tailnet_peer, remote_auth_store_path, remote_detect_binaries, remote_nearest_pubspec,
     spawn_remote_http_server, ssh_run, tailscale_ssh_set, tailscale_status, ClientTokenRecord,
     DaemonConfig, DaemonConfigEnvError, DaemonConfigError, DaemonListener, DaemonStatus,
     IssuedClientToken, PairingCode, ProbeState, RemoteAuthError, RemoteAuthStore,

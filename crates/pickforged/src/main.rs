@@ -1,11 +1,13 @@
+use std::io::{Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pickforge_core::{
     parse_listener, remote_auth_store_path, spawn_remote_http_server, tailscale_ssh_set,
     tailscale_status, DaemonConfig, DaemonListener, DaemonStatus, PairingCode, RemoteAuthStore,
-    RemoteAuthStoreSnapshot, RemoteHostDaemon,
+    RemoteAuthStoreSnapshot, RemoteHostDaemon, REMOTE_PROTOCOL_NAME,
 };
 use serde_json::json;
 
@@ -56,7 +58,10 @@ fn print_help() {
 
 fn print_status() -> Result<(), String> {
     let config = DaemonConfig::from_env(None).map_err(|err| err.to_string())?;
-    print_json(&status_from_config(config)?)
+    let mut status = serde_json::to_value(status_from_config(config.clone())?)
+        .map_err(|err| err.to_string())?;
+    status["listenerRunning"] = json!(listener_running(&config));
+    print_json(&status)
 }
 
 async fn serve(args: &[String]) -> Result<(), String> {
@@ -99,6 +104,61 @@ fn revoke_client(args: &[String]) -> Result<(), String> {
 fn status_from_config(config: DaemonConfig) -> Result<DaemonStatus, String> {
     let daemon = RemoteHostDaemon::new(config).map_err(|err| err.to_string())?;
     Ok(daemon.status(now_ms()))
+}
+
+fn listener_running(config: &DaemonConfig) -> bool {
+    let Ok(daemon) = RemoteHostDaemon::new(config.clone()) else {
+        return false;
+    };
+    let Some(target) = daemon.bind_target() else {
+        return false;
+    };
+    status_endpoint_reports_daemon(&target)
+}
+
+fn status_endpoint_reports_daemon(target: &str) -> bool {
+    let Ok(addrs) = target.to_socket_addrs() else {
+        return false;
+    };
+    for addr in addrs {
+        let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
+            continue;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+        let request = format!("GET /status HTTP/1.1\r\nhost: {target}\r\nconnection: close\r\n\r\n");
+        if stream.write_all(request.as_bytes()).is_err() {
+            continue;
+        }
+        let mut response = String::new();
+        if stream.read_to_string(&mut response).is_err() {
+            continue;
+        }
+        if status_response_is_daemon(&response) {
+            return true;
+        }
+    }
+    false
+}
+
+fn status_response_is_daemon(response: &str) -> bool {
+    let Some((head, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    let Some(status_line) = head.lines().next() else {
+        return false;
+    };
+    if !status_line.contains(" 200 ") {
+        return false;
+    }
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    json.get("protocol").and_then(serde_json::Value::as_str) == Some(REMOTE_PROTOCOL_NAME)
+        && json
+            .get("listenerEnabled")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
 }
 
 fn auth_path() -> Result<PathBuf, String> {
@@ -233,6 +293,33 @@ mod tests {
         })
         .unwrap();
         assert!(loopback.listener_enabled);
+    }
+
+    #[test]
+    fn status_response_requires_pickforged_enabled_listener() {
+        let ok = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{}",
+            json!({
+                "protocol": REMOTE_PROTOCOL_NAME,
+                "listenerEnabled": true,
+            })
+        );
+        assert!(status_response_is_daemon(&ok));
+
+        let disabled = format!(
+            "HTTP/1.1 200 OK\r\n\r\n{}",
+            json!({
+                "protocol": REMOTE_PROTOCOL_NAME,
+                "listenerEnabled": false,
+            })
+        );
+        assert!(!status_response_is_daemon(&disabled));
+
+        let wrong_protocol =
+            "HTTP/1.1 200 OK\r\n\r\n{\"protocol\":\"other\",\"listenerEnabled\":true}";
+        assert!(!status_response_is_daemon(wrong_protocol));
+        assert!(!status_response_is_daemon(&ok.replacen("200 OK", "503 Service Unavailable", 1)));
+        assert!(!status_response_is_daemon("HTTP/1.1 200 OK\r\n\r\nnot-json"));
     }
 
     #[test]

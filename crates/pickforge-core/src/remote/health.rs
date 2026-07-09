@@ -27,10 +27,7 @@ pub enum ProbeState {
 
 pub fn probe_host(host: &str, timeout_per_step: Duration) -> RemoteHostHealth {
     let checked_at_ms = now_ms();
-    let tailnet = match tailscale_status_json(timeout_per_step) {
-        Ok(json) => tailnet_state_from_status(host, &json),
-        Err(err) => ProbeState::Failed(format!("tailscale status failed: {err}")),
-    };
+    let tailnet = probe_tailnet_peer(host, timeout_per_step);
     if !matches!(tailnet, ProbeState::Ok) {
         return RemoteHostHealth {
             checked_at_ms,
@@ -67,7 +64,7 @@ pub fn probe_host(host: &str, timeout_per_step: Duration) -> RemoteHostHealth {
     }
 
     let daemon = match ssh_run(&target, &["pickforged", "status"], timeout_per_step) {
-        Ok(outcome) if outcome.success() => ProbeState::Ok,
+        Ok(outcome) if outcome.success() => daemon_state_from_status_output(&outcome.stdout),
         Ok(_) | Err(_) => ProbeState::Failed("pickforged not reachable".into()),
     };
     RemoteHostHealth {
@@ -75,6 +72,32 @@ pub fn probe_host(host: &str, timeout_per_step: Duration) -> RemoteHostHealth {
         tailnet,
         ssh,
         daemon,
+    }
+}
+
+pub fn probe_tailnet_peer(host: &str, timeout: Duration) -> ProbeState {
+    match tailscale_status_json(timeout) {
+        Ok(json) => tailnet_state_from_status(host, &json),
+        Err(err) => ProbeState::Failed(format!("tailscale status failed: {err}")),
+    }
+}
+
+fn daemon_state_from_status_output(stdout: &[u8]) -> ProbeState {
+    let Ok(json) = serde_json::from_slice::<Value>(stdout) else {
+        return ProbeState::Failed("daemon not listening".into());
+    };
+    let enabled = json
+        .get("listenerEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let running = json
+        .get("listenerRunning")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if enabled && running {
+        ProbeState::Ok
+    } else {
+        ProbeState::Failed("daemon not listening".into())
     }
 }
 
@@ -202,5 +225,26 @@ mod tests {
             tailnet_state_from_status("missing", &json),
             ProbeState::Failed("host not found in tailnet".into())
         );
+    }
+
+    #[test]
+    fn daemon_status_output_requires_enabled_and_running_listener() {
+        assert_eq!(
+            daemon_state_from_status_output(
+                br#"{"listenerEnabled":true,"listenerRunning":true}"#
+            ),
+            ProbeState::Ok
+        );
+        for raw in [
+            br#"{"listenerEnabled":true,"listenerRunning":false}"#.as_slice(),
+            br#"{"listenerEnabled":false,"listenerRunning":true}"#.as_slice(),
+            br#"{"listenerEnabled":true}"#.as_slice(),
+            b"not json".as_slice(),
+        ] {
+            assert_eq!(
+                daemon_state_from_status_output(raw),
+                ProbeState::Failed("daemon not listening".into())
+            );
+        }
     }
 }

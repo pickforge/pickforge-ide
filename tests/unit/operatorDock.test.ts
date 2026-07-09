@@ -67,6 +67,10 @@ async function flushAsync() {
   await Promise.resolve();
 }
 
+function auditUpdatesFor(id: string) {
+  return deps.operatorAuditUpdate.mock.calls.filter(([rowId]) => rowId === id);
+}
+
 beforeEach(() => {
   deps.parseCommand.mockReset();
   deps.routeCommand.mockReset().mockResolvedValue({ kind: "unconfigured" });
@@ -465,6 +469,41 @@ describe("operatorDock store", () => {
     });
   });
 
+  it("does not deny the preview audit when the dock closes during confirm", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
+    let resolveDispatch!: (r: DispatchResult) => void;
+    deps.dispatchIntent
+      .mockResolvedValueOnce({
+        status: "needsConfirmation",
+        summary: "Send prompt to active chat",
+        auditId: "audit-1",
+      } as DispatchResult)
+      .mockReturnValueOnce(
+        new Promise<DispatchResult>((resolve) => {
+          resolveDispatch = resolve;
+        }),
+      );
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("send hi");
+    await s.submitOperatorCommand();
+    const confirming = s.confirmOperatorPreview();
+    expect(s.operatorBusy()).toBe(true);
+
+    s.closeOperatorDock();
+    await flushAsync();
+    expect(deps.operatorAuditUpdate).not.toHaveBeenCalledWith("audit-1", "denied", "dismissed");
+
+    resolveDispatch({ status: "done", summary: "Sent prompt to Chat" });
+    await confirming;
+
+    expect(auditUpdatesFor("audit-1")).toEqual([["audit-1", "done", "Sent prompt to Chat"]]);
+    expect(s.operatorDockOpen()).toBe(false);
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+  });
+
   it("ignores a dispatch result that lands after the dock was closed", async () => {
     const openProject = intent({ action: "openProject" });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: openProject });
@@ -523,7 +562,7 @@ describe("operatorDock store", () => {
     expect(deps.dispatchIntent).not.toHaveBeenCalled();
   });
 
-  it("ignores a late needsConfirmation preview after close", async () => {
+  it("denies a stale needsConfirmation audit after the dock closes", async () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
     let resolveDispatch!: (r: DispatchResult) => void;
@@ -541,10 +580,12 @@ describe("operatorDock store", () => {
     s.closeOperatorDock();
     resolveDispatch({ status: "needsConfirmation", summary: "Send prompt to active chat", auditId: "audit-1" });
     await pending;
+    await flushAsync();
 
     expect(s.operatorView()).toEqual({ kind: "idle" });
     await s.confirmOperatorPreview();
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
+    expect(auditUpdatesFor("audit-1")).toEqual([["audit-1", "denied", "dismissed"]]);
   });
 
   it("keeps a failed result visible and does not clear input", async () => {

@@ -49,6 +49,8 @@ export const operatorRecent = recent;
 const [busy, setBusy] = createSignal(false);
 export const operatorBusy = busy;
 
+const settledPreviewAudits = new Set<string>();
+
 export function openOperatorDock(): boolean {
   if (!flagEnabled("operator")) return false;
   setOpen(true);
@@ -152,6 +154,7 @@ export async function confirmOperatorPreview(): Promise<void> {
   const current = view();
   if (current.kind !== "preview") return;
 
+  const auditId = current.auditId;
   const epoch = ++requestEpoch;
   setBusy(true);
   try {
@@ -159,6 +162,7 @@ export async function confirmOperatorPreview(): Promise<void> {
       confirmed: true,
       inputText: current.inputText,
     });
+    await settlePreviewAuditNow(auditId, auditStatusForResult(result), resultText(result));
     if (epoch === requestEpoch) applyResult(result);
   } finally {
     if (epoch === requestEpoch) setBusy(false);
@@ -170,7 +174,7 @@ export async function cancelOperatorPreview(): Promise<void> {
   if (busy()) return;
   const current = takePreview();
   if (!current) return;
-  await denyPreviewAudit(current.auditId);
+  await settlePreviewAuditNow(current.auditId, "denied", "dismissed");
 }
 
 function resetView() {
@@ -178,9 +182,10 @@ function resetView() {
 }
 
 function dismissPreview(): boolean {
+  if (busy()) return false;
   const current = takePreview();
   if (!current) return false;
-  void denyPreviewAudit(current.auditId);
+  settlePreviewAudit(current.auditId, "denied", "dismissed");
   return true;
 }
 
@@ -191,9 +196,37 @@ function takePreview(): PreviewDockView | null {
   return current;
 }
 
-async function denyPreviewAudit(auditId: string): Promise<void> {
+function settlePreviewAudit(
+  auditId: string,
+  status: OperatorAuditRow["status"],
+  result: string,
+): void {
+  if (!claimPreviewAudit(auditId)) return;
+  void updatePreviewAudit(auditId, status, result);
+}
+
+async function settlePreviewAuditNow(
+  auditId: string,
+  status: OperatorAuditRow["status"],
+  result: string,
+): Promise<void> {
+  if (!claimPreviewAudit(auditId)) return;
+  await updatePreviewAudit(auditId, status, result);
+}
+
+function claimPreviewAudit(auditId: string): boolean {
+  if (settledPreviewAudits.has(auditId)) return false;
+  settledPreviewAudits.add(auditId);
+  return true;
+}
+
+async function updatePreviewAudit(
+  auditId: string,
+  status: OperatorAuditRow["status"],
+  result: string,
+): Promise<void> {
   try {
-    await operatorAuditUpdate(auditId, "denied", "dismissed");
+    await operatorAuditUpdate(auditId, status, result);
   } catch (error) {
     console.warn("[pickforge] operator audit update failed", error);
   } finally {
@@ -213,7 +246,12 @@ async function submitIntent(
   confidence?: number,
 ) {
   const result = await dispatchIntent(intent, { inputText: text });
-  if (epoch !== requestEpoch) return;
+  if (epoch !== requestEpoch) {
+    if (result.status === "needsConfirmation") {
+      settlePreviewAudit(result.auditId, "denied", "dismissed");
+    }
+    return;
+  }
   if (result.status === "needsConfirmation") {
     setView({
       kind: "preview",
@@ -225,6 +263,26 @@ async function submitIntent(
     });
   } else {
     applyResult(result);
+  }
+}
+
+function resultText(result: DispatchResult): string {
+  return "summary" in result ? result.summary : result.message;
+}
+
+function auditStatusForResult(result: DispatchResult): OperatorAuditRow["status"] {
+  switch (result.status) {
+    case "done":
+      return "done";
+    case "noop":
+      return "noop";
+    case "needsConfirmation":
+      return "needs_confirmation";
+    case "denied":
+      return "denied";
+    case "failed":
+    case "unsupported":
+      return "failed";
   }
 }
 

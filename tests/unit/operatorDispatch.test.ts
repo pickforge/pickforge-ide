@@ -189,6 +189,9 @@ const deps = vi.hoisted(() => {
     vmSelectedWidget: vi.fn(),
     vmScreenshot: vi.fn(),
     vmShowSelectMode: vi.fn(),
+    vmSetSelection: vi.fn(),
+    vmWidgetTreeSemantic: vi.fn(),
+    matchWidget: vi.fn(),
     reset() {
       workspace.projects = [];
       workspace.activeRoot = null;
@@ -284,6 +287,14 @@ const deps = vi.hoisted(() => {
       this.vmSelectedWidget.mockReset().mockResolvedValue(null);
       this.vmScreenshot.mockReset().mockResolvedValue(null);
       this.vmShowSelectMode.mockReset().mockResolvedValue(undefined);
+      this.vmSetSelection.mockReset().mockResolvedValue(true);
+      this.vmWidgetTreeSemantic.mockReset().mockResolvedValue({
+        id: "root",
+        className: "MaterialApp",
+        label: null,
+        children: [],
+      });
+      this.matchWidget.mockReset().mockResolvedValue({ kind: "notFound" });
     },
   };
 });
@@ -390,7 +401,13 @@ vi.mock("../../src/lib/vm", () => ({
   vmFindIsolate: deps.vmFindIsolate,
   vmScreenshot: deps.vmScreenshot,
   vmSelectedWidget: deps.vmSelectedWidget,
+  vmSetSelection: deps.vmSetSelection,
   vmShowSelectMode: deps.vmShowSelectMode,
+  vmWidgetTreeSemantic: deps.vmWidgetTreeSemantic,
+}));
+
+vi.mock("../../src/lib/widgetMatch", () => ({
+  matchWidget: deps.matchWidget,
 }));
 
 function project(projectRoot: string, displayName: string) {
@@ -1217,6 +1234,112 @@ describe("dispatchIntent", () => {
     });
     expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
     expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("returns noop for semantic selection when the live VM session is unavailable", async () => {
+    setActiveRun();
+    deps.vmFindIsolate.mockRejectedValue(new Error("no VM"));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "selectWidget", description: "sign in" }));
+
+    expect(result).toEqual({ status: "noop", summary: "no active device/session" });
+    expect(deps.vmWidgetTreeSemantic).not.toHaveBeenCalled();
+    expect(deps.matchWidget).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("fails semantic selection when no Flutter run is active", async () => {
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "selectWidget", description: "sign in" }));
+
+    expect(result).toEqual({ status: "failed", message: "No active Flutter run in project App" });
+    expect(deps.vmFindIsolate).not.toHaveBeenCalled();
+    expect(deps.matchWidget).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("matches and selects a semantic widget through the VM seam", async () => {
+    setActiveRun();
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    const semanticTree = {
+      id: "root",
+      className: "MaterialApp",
+      label: null,
+      children: [],
+    };
+    deps.vmWidgetTreeSemantic.mockResolvedValue(semanticTree);
+    deps.matchWidget.mockResolvedValue({
+      kind: "match",
+      node: { index: 4, valueId: "widget-login", className: "LoginButton", label: "Sign in" },
+    });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "selectWidget", description: "sign in" }));
+
+    expect(result).toEqual({ status: "done", summary: "Selected LoginButton — 'Sign in'" });
+    expect(deps.vmWidgetTreeSemantic).toHaveBeenCalledWith("isolates/1", "pf-operator-widget-match");
+    expect(deps.matchWidget).toHaveBeenCalledWith("sign in", semanticTree);
+    expect(deps.vmSetSelection).toHaveBeenCalledWith(
+      "isolates/1",
+      "widget-login",
+      "pf-operator-widget-match",
+    );
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("keeps ambiguous semantic candidates local until the dock picks one", async () => {
+    setActiveRun();
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    deps.matchWidget.mockResolvedValue({
+      kind: "ambiguous",
+      candidates: [
+        { index: 4, valueId: "widget-login", className: "LoginButton", label: "Sign in" },
+        { index: 8, valueId: "widget-create", className: "LoginButton", label: "Create account" },
+      ],
+    });
+    const { dispatchIntent, selectWidgetCandidate } = await loadStore();
+
+    const pending = await dispatchIntent(intent({ action: "selectWidget", description: "the login button" }));
+
+    expect(pending).toMatchObject({
+      status: "needsConfirmation",
+      summary: "Choose the matching widget",
+      candidates: [
+        { index: 4, className: "LoginButton", label: "Sign in" },
+        { index: 8, className: "LoginButton", label: "Create account" },
+      ],
+    });
+    expect(JSON.stringify(pending)).not.toContain("widget-login");
+    expect(auditUpdateStatus()).toBe("needs_confirmation");
+
+    const picked = await selectWidgetCandidate(pending.auditId, 8);
+
+    expect(picked).toEqual({ status: "done", summary: "Selected LoginButton — 'Create account'" });
+    expect(deps.vmSetSelection).toHaveBeenCalledWith(
+      "isolates/1",
+      "widget-create",
+      "pf-operator-widget-match",
+    );
+  });
+
+  it("reports not-found and unconfigured semantic matching honestly", async () => {
+    setActiveRun();
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    const { dispatchIntent } = await loadStore();
+
+    deps.matchWidget.mockResolvedValueOnce({ kind: "notFound" });
+    await expect(dispatchIntent(intent({ action: "selectWidget", description: "missing control" }))).resolves.toEqual({
+      status: "failed",
+      message: "No widget matched \"missing control\"",
+    });
+
+    deps.matchWidget.mockResolvedValueOnce({ kind: "unconfigured" });
+    await expect(dispatchIntent(intent({ action: "selectWidget", description: "sign in" }))).resolves.toEqual({
+      status: "unsupported",
+      message: "Operator router is off. Choose a backend in Settings.",
+    });
   });
 
   it("captures a screenshot from the selected running device", async () => {

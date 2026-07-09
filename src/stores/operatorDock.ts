@@ -4,7 +4,13 @@
 import { createSignal } from "solid-js";
 import { parseCommand } from "../lib/operatorParser";
 import { routeCommand } from "../lib/operatorRouter";
-import { dispatchIntent, type DispatchResult } from "./operator";
+import {
+  discardWidgetSelection,
+  dispatchIntent,
+  selectWidgetCandidate,
+  type DispatchResult,
+  type WidgetSelectionCandidate,
+} from "./operator";
 import { flagEnabled } from "./flags";
 import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
 import type { OperatorIntent } from "../lib/operatorIntent";
@@ -21,6 +27,7 @@ export type DockView =
     inputText: string;
     confidence?: number;
     auditId: string;
+    candidates?: WidgetSelectionCandidate[];
   }
   | { kind: "result"; result: DispatchResult };
 
@@ -153,6 +160,7 @@ export async function confirmOperatorPreview(): Promise<void> {
   if (busy()) return;
   const current = view();
   if (current.kind !== "preview") return;
+  if (current.candidates) return;
 
   const auditId = current.auditId;
   const epoch = ++requestEpoch;
@@ -177,6 +185,44 @@ export async function cancelOperatorPreview(): Promise<void> {
   await settlePreviewAuditNow(current.auditId, "denied", "dismissed");
 }
 
+export function candidateIndexForKey(
+  key: string,
+  candidates: WidgetSelectionCandidate[],
+): number | null {
+  if (!/^[1-3]$/.test(key)) return null;
+  return candidates[Number(key) - 1]?.index ?? null;
+}
+
+export async function pickOperatorWidgetCandidate(index: number): Promise<void> {
+  if (busy()) return;
+  const current = view();
+  if (current.kind !== "preview" || !current.candidates) return;
+  if (!current.candidates.some((candidate) => candidate.index === index)) return;
+
+  const epoch = ++requestEpoch;
+  setBusy(true);
+  try {
+    let result: DispatchResult;
+    try {
+      result = await selectWidgetCandidate(current.auditId, index);
+    } catch (error) {
+      result = {
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    await settlePreviewAuditNow(
+      current.auditId,
+      candidateAuditStatus(result),
+      candidateResultText(result),
+    );
+    if (epoch === requestEpoch) applyResult(result);
+  } finally {
+    if (epoch === requestEpoch) setBusy(false);
+    void refreshRecent();
+  }
+}
+
 function resetView() {
   if (!dismissPreview()) setView({ kind: "idle" });
 }
@@ -193,7 +239,28 @@ function takePreview(): PreviewDockView | null {
   const current = view();
   if (current.kind !== "preview") return null;
   setView({ kind: "idle" });
+  if (current.candidates) discardWidgetSelection(current.auditId);
   return current;
+}
+
+function candidateAuditStatus(result: DispatchResult): OperatorAuditRow["status"] {
+  switch (result.status) {
+    case "done":
+      return "done";
+    case "noop":
+      return "noop";
+    case "denied":
+      return "denied";
+    case "failed":
+    case "unsupported":
+      return "failed";
+    case "needsConfirmation":
+      return "needs_confirmation";
+  }
+}
+
+function candidateResultText(result: DispatchResult): string {
+  return "summary" in result ? result.summary : result.message;
 }
 
 function settlePreviewAudit(
@@ -260,6 +327,7 @@ async function submitIntent(
       inputText: text,
       confidence,
       auditId: result.auditId,
+      candidates: result.candidates,
     });
   } else {
     applyResult(result);

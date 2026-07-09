@@ -395,6 +395,8 @@ fn remote_pty_ssh_args(remote: &RemotePty, command: Option<&str>) -> Result<Vec<
     validate_remote_root(&remote.remote_root)?;
 
     let mut args = ssh_base_args();
+    args.push("-o".to_string());
+    args.push("EscapeChar=none".to_string());
     args.push("-tt".to_string());
     args.push("--".to_string());
     args.push(target.host);
@@ -406,7 +408,7 @@ fn remote_pty_command(remote_root: &str, command: Option<&str>) -> String {
     let quoted_root = shell_quote_argv(&[remote_root]);
     match command {
         Some(command) => format!(
-            "cd {quoted_root} && exec sh -lc {}",
+            "cd {quoted_root} && exec \"$SHELL\" -c {}",
             shell_quote_argv(&[command])
         ),
         None => format!("cd {quoted_root} && exec \"$SHELL\" -l"),
@@ -528,11 +530,11 @@ mod tests {
             remote_pty_ssh_args(&remote("mac-mini", "/Users/dev/app"), None).unwrap(),
             vec![
                 "-o",
-                "BatchMode=yes",
-                "-o",
                 "ConnectTimeout=5",
                 "-o",
                 "StrictHostKeyChecking=accept-new",
+                "-o",
+                "EscapeChar=none",
                 "-tt",
                 "--",
                 "mac-mini",
@@ -542,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_pty_argv_with_command_runs_sh_lc_under_root() {
+    fn remote_pty_argv_with_command_runs_remote_shell_c_under_root() {
         assert_eq!(
             remote_pty_ssh_args(
                 &remote("mac-mini", "/Users/dev/app"),
@@ -551,15 +553,15 @@ mod tests {
             .unwrap(),
             vec![
                 "-o",
-                "BatchMode=yes",
-                "-o",
                 "ConnectTimeout=5",
                 "-o",
                 "StrictHostKeyChecking=accept-new",
+                "-o",
+                "EscapeChar=none",
                 "-tt",
                 "--",
                 "mac-mini",
-                "cd '/Users/dev/app' && exec sh -lc 'bun run test:unit'",
+                "cd '/Users/dev/app' && exec \"$SHELL\" -c 'bun run test:unit'",
             ]
         );
     }
@@ -568,13 +570,13 @@ mod tests {
     fn remote_pty_argv_quotes_root_and_command_as_data() {
         let args = remote_pty_ssh_args(
             &remote("mac-mini", "/Users/dev/it's $root`tick`"),
-            Some("printf '%s' \"$HOME\" `uname`"),
+            Some("printf '%s' \"$SHELL\" \"$HOME\" `uname`"),
         )
         .unwrap();
 
         assert_eq!(
             args.last().unwrap(),
-            r#"cd '/Users/dev/it'\''s $root`tick`' && exec sh -lc 'printf '\''%s'\'' "$HOME" `uname`'"#
+            r#"cd '/Users/dev/it'\''s $root`tick`' && exec "$SHELL" -c 'printf '\''%s'\'' "$SHELL" "$HOME" `uname`'"#
         );
     }
 

@@ -379,11 +379,11 @@ stty size > "$PF_FAKE_SSH_SIZE_AFTER" 2>/dev/null || true
         vec![
             "10",
             "<-o>",
-            "<BatchMode=yes>",
-            "<-o>",
             "<ConnectTimeout=5>",
             "<-o>",
             "<StrictHostKeyChecking=accept-new>",
+            "<-o>",
+            "<EscapeChar=none>",
             "<-tt>",
             "<-->",
             "<mac-mini>",

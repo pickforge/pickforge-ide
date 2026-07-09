@@ -1,0 +1,235 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const testEnv = vi.hoisted(() => {
+  const mem = new Map<string, string>();
+  globalThis.localStorage = {
+    getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
+    setItem: (k: string, v: string) => void mem.set(k, v),
+    removeItem: (k: string) => void mem.delete(k),
+    clear: () => mem.clear(),
+    key: () => null,
+    length: 0,
+  } as unknown as Storage;
+
+  const client = {
+    startOAuth: vi.fn(),
+    handleRedirect: vi.fn(),
+    getSession: vi.fn(),
+    refreshSession: vi.fn(),
+    signOut: vi.fn(),
+    getEntitlements: vi.fn(),
+    onAuthStateChange: vi.fn(() => vi.fn()),
+    dispose: vi.fn(),
+  };
+  return {
+    mem,
+    client,
+    authListener: null as null | ((change: { event: string; session: unknown }) => void),
+    getProAuthClient: vi.fn(() => client),
+    releaseProAuthRedirectGuard: vi.fn(),
+  };
+});
+
+vi.mock("../../src/lib/proAuth", () => ({
+  getProAuthClient: testEnv.getProAuthClient,
+  releaseProAuthRedirectGuard: testEnv.releaseProAuthRedirectGuard,
+}));
+
+const CACHE_KEY = "pickforge.proAccount";
+
+function authSession(email = "fresh@pickforge.dev") {
+  return {
+    user: {
+      id: "user-1",
+      email,
+      user_metadata: { full_name: "Fresh User" },
+    },
+  };
+}
+
+async function loadStores() {
+  vi.resetModules();
+  const flags = await import("../../src/stores/flags");
+  const account = await import("../../src/stores/account");
+  return { flags, account };
+}
+
+beforeEach(() => {
+  testEnv.mem.clear();
+  vi.clearAllMocks();
+  testEnv.authListener = null;
+  testEnv.getProAuthClient.mockReturnValue(testEnv.client);
+  testEnv.client.startOAuth.mockResolvedValue({ url: "https://example.com/oauth" });
+  testEnv.client.getSession.mockResolvedValue(null);
+  testEnv.client.refreshSession.mockResolvedValue(null);
+  testEnv.client.signOut.mockResolvedValue(undefined);
+  testEnv.client.getEntitlements.mockResolvedValue([]);
+  testEnv.client.onAuthStateChange.mockImplementation((listener) => {
+    testEnv.authListener = listener;
+    return vi.fn();
+  });
+});
+
+describe("account store", () => {
+  it("hydrates cached entitlements and filters expired entries when offline", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const past = new Date(Date.now() - 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+          { key: "old", value: true, expiresAt: past, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+    testEnv.client.getSession.mockRejectedValue(new Error("network offline"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountStatus()).toBe("signedIn");
+    expect(account.accountError()).toBeNull();
+    expect(account.accountSession()).toEqual({
+      userId: "user-1",
+      email: "cached@pickforge.dev",
+      displayName: "Cached User",
+    });
+    expect(account.accountEntitlements().map((item) => item.key)).toEqual(["pro"]);
+    expect(JSON.parse(testEnv.mem.get(CACHE_KEY)!).entitlements.map((item: { key: string }) => item.key)).toEqual([
+      "pro",
+    ]);
+  });
+
+  it("persists refreshed session identity and active entitlements", async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    testEnv.client.getSession.mockResolvedValue(authSession());
+    testEnv.client.getEntitlements.mockResolvedValue([
+      { key: "old", value: true, expiresAt: past, grantedAt: "2026-01-01T00:00:00.000Z" },
+      { key: "pro", value: true, expiresAt: null, grantedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountStatus()).toBe("signedIn");
+    expect(account.accountSession()).toEqual({
+      userId: "user-1",
+      email: "fresh@pickforge.dev",
+      displayName: "Fresh User",
+    });
+    expect(account.accountEntitlements().map((item) => item.key)).toEqual(["pro"]);
+    expect(testEnv.client.getEntitlements).toHaveBeenCalledWith({ forceRefresh: true });
+    expect(JSON.parse(testEnv.mem.get(CACHE_KEY)!)).toMatchObject({
+      version: 1,
+      session: { userId: "user-1", email: "fresh@pickforge.dev", displayName: "Fresh User" },
+      entitlements: [{ key: "pro" }],
+    });
+  });
+
+  it("does not construct the auth client when the flag is disabled", async () => {
+    const { account } = await loadStores();
+
+    await account.signIn("github");
+
+    expect(testEnv.getProAuthClient).not.toHaveBeenCalled();
+    expect(testEnv.client.startOAuth).not.toHaveBeenCalled();
+    expect(account.accountStatus()).toBe("signedOut");
+  });
+
+  it("initializes from the app bootstrap when accounts flips on without Settings", async () => {
+    const { flags, account } = await loadStores();
+    const dispose = account.installAccountStoreBootstrap();
+
+    expect(testEnv.getProAuthClient).not.toHaveBeenCalled();
+
+    flags.setFlagOverride("accounts", true);
+
+    expect(testEnv.getProAuthClient).toHaveBeenCalled();
+    expect(testEnv.client.onAuthStateChange).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it("keeps persisted cache on INITIAL_SESSION null but clears it on explicit sign out", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+    testEnv.client.getSession.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+    expect(account.accountStatus()).toBe("signedIn");
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(true);
+
+    testEnv.authListener?.({ event: "INITIAL_SESSION", session: null });
+
+    expect(account.accountStatus()).toBe("signedOut");
+    expect(account.accountSession()).toBeNull();
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(true);
+
+    await account.signOut();
+
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+  });
+
+  it("surfaces non-network auth errors when there is no cache", async () => {
+    testEnv.client.getSession.mockRejectedValue(new Error("invalid refresh token"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountStatus()).toBe("error");
+    expect(account.accountError()).toBe("invalid refresh token");
+  });
+
+  it("sets signingIn before auth client initialization finishes", async () => {
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    const pending = account.signIn("github");
+
+    expect(account.accountStatus()).toBe("signingIn");
+
+    await pending;
+    account.cancelSignIn();
+  });
+
+  it("ignores stale redirect errors and sanitizes active sign-in errors", async () => {
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    account.setAccountRedirectError("OAuth redirect failed: https://example.com/callback?code=secret\naccess_denied");
+
+    expect(account.accountStatus()).toBe("signedOut");
+    expect(account.accountError()).toBeNull();
+
+    await account.signIn("github");
+    account.setAccountRedirectError(
+      `OAuth redirect failed: https://example.com/callback?code=secret\n${"denied ".repeat(40)}`,
+    );
+
+    expect(account.accountStatus()).toBe("error");
+    expect(account.accountError()).toMatch(/^Sign-in failed: /);
+    expect(account.accountError()).not.toContain("https://");
+    expect(account.accountError()).not.toContain("\n");
+    expect(account.accountError()!.length).toBeLessThanOrEqual(136);
+  });
+});

@@ -51,7 +51,7 @@ import {
 import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
-import { flagStates, setFlagOverride, type FlagKey } from "../stores/flags";
+import { flagEnabled, flagStates, setFlagOverride, type FlagKey } from "../stores/flags";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
 import {
@@ -64,6 +64,15 @@ import {
   type RemoteHostOverview,
 } from "../lib/remoteHost";
 import { telemetryGet, telemetrySet } from "../lib/telemetry";
+import {
+  accountError,
+  accountSession,
+  accountStatus,
+  cancelSignIn,
+  hasProEntitlement,
+  signIn,
+  signOut,
+} from "../stores/account";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -796,6 +805,70 @@ export function SettingsScreen() {
             </For>
           </Show>
         </Section>
+
+        <Show when={flagEnabled("accounts")}>
+          <Section title="Account">
+            <Show
+              when={accountStatus() === "signingIn"}
+              fallback={
+                <Show
+                  when={accountSession()}
+                  fallback={
+                    <>
+                      <span class="pf-settings-muted">
+                        Sign-in is optional. PickForge works fully offline; an account only adds Pro features and settings sync.
+                      </span>
+                      <div class="pf-ql-row">
+                        <button class="pf-ql-add" onClick={() => void signIn("github")}>
+                          Continue with GitHub
+                        </button>
+                        <button class="pf-ql-add" onClick={() => void signIn("google")}>
+                          Continue with Google
+                        </button>
+                      </div>
+                    </>
+                  }
+                >
+                  {(account) => (
+                    <>
+                      <div class="pf-settings-row">
+                        <span class="pf-settings-label">
+                          {account().displayName ?? account().email ?? "Signed in"}
+                          <Show when={account().email && account().email !== (account().displayName ?? account().email)}>
+                            <span class="pf-settings-hint-inline">{account().email}</span>
+                          </Show>
+                        </span>
+                      </div>
+                      <div class="pf-settings-row">
+                        <span class="pf-settings-label">Plan</span>
+                        <span class="pf-settings-muted">{hasProEntitlement() ? "Pro" : "Free"}</span>
+                      </div>
+                      <span class="pf-settings-muted">
+                        PickForge sends no project data to your account. Only profile and entitlement state sync.
+                      </span>
+                      <div class="pf-ql-actions">
+                        <button class="pf-text-btn" onClick={() => void signOut()}>
+                          Sign out
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </Show>
+              }
+            >
+              <div class="pf-settings-row">
+                <span class="pf-settings-label">
+                  Waiting for browser sign-in…
+                  <span class="pf-settings-hint-inline">complete the OAuth flow in your browser</span>
+                </span>
+                <button class="pf-text-btn" onClick={cancelSignIn}>Cancel</button>
+              </div>
+            </Show>
+            <Show when={accountError()}>
+              <div class="pf-ql-warn">{accountError()}</div>
+            </Show>
+          </Section>
+        </Show>
 
         <Show when={import.meta.env.DEV}>
           <Section title="Feature flags">

@@ -22,6 +22,7 @@ reset this file.
 - Operator device/run intents (M1.5) wired dark behind the `operator` flag.
 - BYO operator routing (Claude Code / Codex / Ollama) landed dark behind the `operator` flag.
 - Landed accounts/auth wiring dark behind the `accounts` flag.
+- Local dictation pipeline (Rust + IPC) landed dark; composer UI follows.
 
 ## Validation
 

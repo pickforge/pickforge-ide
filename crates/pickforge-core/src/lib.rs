@@ -20,6 +20,7 @@ pub mod remote;
 pub mod storage;
 pub mod targets;
 pub mod transcript;
+pub mod voice;
 pub mod vm_service;
 
 pub use cdp::{decode_dom_node, find_node_path, CdpClient, CdpError, CdpTarget, DomNode};
@@ -65,4 +66,8 @@ pub use storage::{
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,
     TERMINAL_MODE_RESETS,
+};
+pub use voice::{
+    voice_availability, VoiceAvailability, VoiceDependency, VoiceEvent, VoiceEventKind,
+    VoiceSessionManager, VoiceStartRequest,
 };

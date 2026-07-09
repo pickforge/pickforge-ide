@@ -22,6 +22,7 @@
         "solid-js": "^1.9.5",
       },
       "devDependencies": {
+        "@pickforge/tauri-release": "^0.3.0",
         "@playwright/test": "^1.48.0",
         "@tauri-apps/cli": "^2",
         "@types/jsdom": "^28.0.3",
@@ -167,6 +168,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@pickforge/brand": ["@pickforge/brand@0.2.1", "", { "dependencies": { "@fontsource/geist-mono": "^5.2.8", "@fontsource/geist-sans": "^5.2.5" } }, "sha512-8VASbOUFJKUkb2zVvqto7aPynyICISCMzrh8jMRcvovtKNpzbLMrZ2xS7eeIPQyVs5NRbJ0457Vb0HQC+sIhQQ=="],
+
+    "@pickforge/tauri-release": ["@pickforge/tauri-release@0.3.0", "", { "bin": { "pickforge-tauri-release": "dist/cli.js" } }, "sha512-LTpsp6+zB9WU9eflvWH8tRFGNCJmiQW7ULYNnffQYCgfZ3fSqF33yDBKW38WdXdlyDBEcYpFnYjkw0+YnLob8Q=="],
 
     "@playwright/test": ["@playwright/test@1.61.0", "", { "dependencies": { "playwright": "1.61.0" }, "bin": { "playwright": "cli.js" } }, "sha512-cKA5B6lpFEMyMGjxF54QihfYpB4FkEGH+qZhtArDEG+wezQAJY8Pq6C7T1SjWz+FFzt3TbyoXBQYk/0292TdJA=="],
 

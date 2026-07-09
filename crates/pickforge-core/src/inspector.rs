@@ -65,11 +65,11 @@ pub fn decode_semantic_widget_tree(raw: &Value) -> SemanticWidgetNode {
         .unwrap_or_default();
     let class_name = first_string(
         raw,
-        &["widgetRuntimeType", "description", "type", "runtimeType"],
+        &["widgetRuntimeType", "type", "runtimeType"],
     )
     .unwrap_or("<unknown>")
     .to_string();
-    let label = first_string(raw, &["textPreview", "text", "preview"])
+    let label = first_string(raw, &["textPreview"])
         .or_else(|| {
             raw.get("description")
                 .and_then(Value::as_str)
@@ -145,6 +145,8 @@ mod tests {
         assert_eq!(node.children[0].label.as_deref(), Some("Sign in"));
         assert_eq!(node.children[1].class_name, "LoginButton");
         assert_eq!(node.children[1].label.as_deref(), Some("Continue"));
+        assert_eq!(node.children[2].class_name, "TextButton");
+        assert_eq!(node.children[2].label.as_deref(), Some("Create account"));
 
         let serialized = serde_json::to_string(&node).expect("semantic tree serializes");
         assert!(!serialized.contains("/Users/example/app/"));

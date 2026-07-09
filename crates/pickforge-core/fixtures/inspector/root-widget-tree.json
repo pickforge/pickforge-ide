@@ -29,6 +29,17 @@
         "line": 52,
         "column": 11
       }
+    },
+    {
+      "valueId": "inspector-4",
+      "type": "TextButton",
+      "runtimeType": "DiagnosticsNode",
+      "description": "Create account",
+      "creationLocation": {
+        "file": "/Users/example/app/lib/login.dart",
+        "line": 61,
+        "column": 11
+      }
     }
   ]
 }

@@ -4,6 +4,10 @@ import { extractRouterText, routeRawPrompt } from "./operatorRouter";
 
 export const WIDGET_MATCH_MAX_NODES = 800;
 export const WIDGET_MATCH_MAX_BYTES = 16 * 1024;
+export const WIDGET_MATCH_PROMPT_MARGIN_BYTES = 256;
+export const WIDGET_MATCH_LABEL_MAX_LENGTH = 60;
+
+const TREE_TRUNCATION_MARKER = "… subtree truncated";
 
 export type IndexedWidgetNode = {
   index: number;
@@ -44,7 +48,7 @@ export const widgetMatchResponseSchema = z.union([
 
 type WidgetMatchResponse = z.infer<typeof widgetMatchResponseSchema>;
 
-type QueuedWidgetNode = {
+type PendingWidgetNode = {
   node: SemanticWidgetNode;
   depth: number;
 };
@@ -65,46 +69,89 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return `${output}${ellipsis}`;
 }
 
+function serializeLabel(label: string | null): string | null {
+  if (!label) return null;
+  const normalized = label
+    .replace(/\s+/gu, " ")
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+    .trim();
+  if (!normalized) return null;
+  const characters = Array.from(normalized);
+  return characters.length > WIDGET_MATCH_LABEL_MAX_LENGTH
+    ? `${characters.slice(0, WIDGET_MATCH_LABEL_MAX_LENGTH - 1).join("")}…`
+    : normalized;
+}
+
 function widgetLinePrefix(index: number, node: SemanticWidgetNode, depth: number): string {
   return `${"  ".repeat(depth)}${index} ${node.className}`;
 }
 
 function widgetLine(index: number, node: SemanticWidgetNode, depth: number): string {
-  const label = node.label?.trim();
+  const label = serializeLabel(node.label);
   return `${widgetLinePrefix(index, node, depth)}${label ? ` — ${label}` : ""}`;
 }
 
-export function serializeWidgetTree(root: SemanticWidgetNode): SerializedWidgetTree {
-  const queue: QueuedWidgetNode[] = [{ node: root, depth: 0 }];
+function appendTruncationMarker(lines: string[], bytes: number, maxBytes: number): number {
+  const separator = lines.length > 0 ? "\n" : "";
+  if (bytes + byteLength(separator) + byteLength(TREE_TRUNCATION_MARKER) > maxBytes) {
+    return bytes;
+  }
+  lines.push(TREE_TRUNCATION_MARKER);
+  return bytes + byteLength(separator) + byteLength(TREE_TRUNCATION_MARKER);
+}
+
+export function serializeWidgetTree(
+  root: SemanticWidgetNode,
+  maxBytes = WIDGET_MATCH_MAX_BYTES,
+): SerializedWidgetTree {
+  const stack: PendingWidgetNode[] = [{ node: root, depth: 0 }];
   const nodes: IndexedWidgetNode[] = [];
   const lines: string[] = [];
   let bytes = 0;
   let truncated = false;
+  const markerReserve = byteLength(`\n${TREE_TRUNCATION_MARKER}`);
 
-  while (queue.length > 0) {
+  while (stack.length > 0) {
     if (nodes.length >= WIDGET_MATCH_MAX_NODES) {
       truncated = true;
+      bytes = appendTruncationMarker(lines, bytes, maxBytes);
       break;
     }
-    const current = queue.shift()!;
+    const current = stack.pop()!;
     const index = nodes.length + 1;
     const separator = lines.length > 0 ? "\n" : "";
-    const remaining = WIDGET_MATCH_MAX_BYTES - bytes - byteLength(separator);
+    const needsMarker = stack.length > 0 || current.node.children.length > 0;
+    const remaining = maxBytes - bytes - byteLength(separator) - (needsMarker ? markerReserve : 0);
     if (remaining <= 0) {
       truncated = true;
+      bytes = appendTruncationMarker(lines, bytes, maxBytes);
       break;
     }
     if (byteLength(widgetLinePrefix(index, current.node, current.depth)) > remaining) {
       truncated = true;
+      bytes = appendTruncationMarker(lines, bytes, maxBytes);
       break;
     }
     const fullLine = widgetLine(index, current.node, current.depth);
     const line = truncateUtf8(fullLine, remaining);
     if (!line) {
       truncated = true;
+      bytes = appendTruncationMarker(lines, bytes, maxBytes);
       break;
     }
-    if (line !== fullLine) truncated = true;
+    if (line !== fullLine) {
+      truncated = true;
+      lines.push(line);
+      bytes += byteLength(separator) + byteLength(line);
+      nodes.push({
+        index,
+        valueId: current.node.id,
+        className: current.node.className,
+        label: current.node.label,
+      });
+      bytes = appendTruncationMarker(lines, bytes, maxBytes);
+      break;
+    }
 
     lines.push(line);
     bytes += byteLength(separator) + byteLength(line);
@@ -114,12 +161,12 @@ export function serializeWidgetTree(root: SemanticWidgetNode): SerializedWidgetT
       className: current.node.className,
       label: current.node.label,
     });
-    for (const child of current.node.children) {
-      queue.push({ node: child, depth: current.depth + 1 });
+    for (const child of [...current.node.children].reverse()) {
+      stack.push({ node: child, depth: current.depth + 1 });
     }
   }
 
-  if (queue.length > 0) truncated = true;
+  if (stack.length > 0) truncated = true;
   return { text: lines.join("\n"), nodes, truncated };
 }
 
@@ -186,7 +233,16 @@ export async function matchWidget(
   description: string,
   root: SemanticWidgetNode,
 ): Promise<WidgetMatchResult> {
-  const tree = serializeWidgetTree(root);
+  const promptOverhead = byteLength(buildWidgetMatchPrompt(description, {
+    text: "",
+    nodes: [],
+    truncated: true,
+  }));
+  const treeBudget = Math.max(
+    0,
+    WIDGET_MATCH_MAX_BYTES - promptOverhead - WIDGET_MATCH_PROMPT_MARGIN_BYTES,
+  );
+  const tree = serializeWidgetTree(root, treeBudget);
   const routed = await routeRawPrompt(buildWidgetMatchPrompt(description, tree));
   if (routed.kind === "unconfigured") return routed;
   if (routed.kind === "error") return routed;

@@ -336,3 +336,15 @@ export function IconForgeFlame(
     </Svg>
   );
 }
+
+// Dictation mic: a capsule head, a listening arc, and a short stand — the same
+// hairline line-art language as the rest of the set.
+export function IconMic(props: IconProps): JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="6" y="2" width="4" height="7.5" rx="2" />
+      <path d="M4.5 8a3.5 3.5 0 0 0 7 0" />
+      <path d="M8 11.5v2.25M6.25 13.75h3.5" />
+    </Svg>
+  );
+}

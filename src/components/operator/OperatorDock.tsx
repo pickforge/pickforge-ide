@@ -2,9 +2,10 @@
 // shortcut, gated behind the operator flag. Parsing and dispatch live in
 // stores/operatorDock; this renders the input, the router/preview/result views,
 // and the recent-activity list.
-import { For, Match, Show, Switch, onMount } from "solid-js";
+import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import { MonoEyebrow, EmberButton } from "../ui";
+import { IconMic } from "../icons";
 import {
   cancelOperatorPreview,
   closeOperatorDock,
@@ -18,6 +19,19 @@ import {
   submitOperatorCommand,
   type DockView,
 } from "../../stores/operatorDock";
+import {
+  micBusyLocked,
+  refreshVoiceStatus,
+  resetVoiceDock,
+  toggleDictation,
+  voiceAvailability,
+  voiceDockActive,
+  voiceDockError,
+  voiceDockPhase,
+  voiceDockPreview,
+} from "../../stores/voiceDock";
+import { voiceDictationSettings } from "../../stores/voiceSettings";
+import { hotkeyMatches } from "../../stores/quickLaunch";
 import { previewPayloadLines } from "./previewPayload";
 import "./OperatorDock.css";
 
@@ -50,12 +64,44 @@ export function OperatorDock() {
   let inputEl!: HTMLInputElement;
   let panelEl!: HTMLDivElement;
 
-  onMount(() => inputEl.focus());
+  onMount(() => {
+    inputEl.focus();
+    void refreshVoiceStatus();
+  });
+  onCleanup(() => resetVoiceDock());
 
   const isComposing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229;
 
+  // The mic carries the composition's single ember only when it's the live
+  // focus — while a preview shows, the Confirm CTA owns the ember and the mic
+  // yields to a neutral live treatment (never two embers).
+  const micEmber = () => voiceDockActive() && operatorView().kind !== "preview";
+  // Busy only blocks starting a recording (micBusyLocked); stopping a live one
+  // stays reachable so the mic can't go dead while pw-record keeps rolling.
+  const micDisabled = () =>
+    voiceAvailability()?.available === false || micBusyLocked(operatorBusy());
+  // The button and the Mod+M hotkey share this gate so a hidden or disabled
+  // mic can never record.
+  const micUsable = () => voiceDictationSettings().micEnabled && !micDisabled();
+  const micTitle = () => {
+    const status = voiceAvailability();
+    if (!status) return "checking dictation…";
+    if (!status.available) {
+      if (status.error) return status.error;
+      return `dictation unavailable — install ${status.missing.join(", ")}`;
+    }
+    if (micBusyLocked(operatorBusy())) return "dictation paused while the command runs";
+    return voiceDockActive() ? "stop dictation (Mod+M)" : "start dictation (Mod+M)";
+  };
+
   const trapFocus = (e: KeyboardEvent) => {
     if (isComposing(e)) return;
+    if (hotkeyMatches(e, "Mod+M")) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (micUsable()) toggleDictation();
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -91,23 +137,62 @@ export function OperatorDock() {
           onKeyDown={trapFocus}
         >
           <MonoEyebrow text="Operator" />
-          <input
-            ref={inputEl}
-            class="pf-op-input"
-            type="text"
-            spellcheck={false}
-            autocomplete="off"
-            placeholder={PLACEHOLDER}
-            value={operatorInput()}
-            disabled={operatorBusy()}
-            onInput={(e) => setOperatorInput(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" || isComposing(e)) return;
-              e.preventDefault();
-              if (operatorView().kind === "preview") void confirmOperatorPreview();
-              else void submitOperatorCommand();
-            }}
-          />
+          <div class="pf-op-field">
+            <input
+              ref={inputEl}
+              class="pf-op-input"
+              type="text"
+              spellcheck={false}
+              autocomplete="off"
+              placeholder={PLACEHOLDER}
+              value={operatorInput()}
+              disabled={operatorBusy()}
+              onInput={(e) => setOperatorInput(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || isComposing(e)) return;
+                e.preventDefault();
+                if (operatorView().kind === "preview") void confirmOperatorPreview();
+                else void submitOperatorCommand();
+              }}
+            />
+            <Show when={voiceDictationSettings().micEnabled}>
+              <button
+                type="button"
+                class="pf-op-mic"
+                classList={{
+                  "pf-op-mic--live": voiceDockActive() && !micEmber(),
+                  "pf-op-mic--ember": micEmber(),
+                }}
+                disabled={micDisabled()}
+                title={micTitle()}
+                aria-label={micTitle()}
+                aria-pressed={voiceDockActive()}
+                onClick={() => toggleDictation()}
+              >
+                <IconMic size={15} />
+              </button>
+            </Show>
+          </div>
+
+          <Show when={voiceDockActive()}>
+            <div class="pf-op-note pf-op-note--voice">
+              <span class="pf-op-note-key">
+                {voiceDockPhase() === "finalizing" ? "transcribe" : "listening"}
+              </span>
+              <span class="pf-op-note-body">
+                {voiceDockPreview() || (voiceDockPhase() === "finalizing" ? "finishing…" : "speak now…")}
+              </span>
+            </div>
+          </Show>
+
+          <Show when={!voiceDockActive() && voiceDockError()}>
+            {(message) => (
+              <div class="pf-op-note pf-op-note--voice">
+                <span class="pf-op-note-key">voice</span>
+                <span class="pf-op-note-body">{message()}</span>
+              </div>
+            )}
+          </Show>
 
           <Switch>
             <Match when={asView("needsRouter")}>

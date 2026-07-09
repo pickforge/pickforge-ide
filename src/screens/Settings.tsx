@@ -51,7 +51,13 @@ import {
 import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
-import { flagEnabled, flagStates, setFlagOverride, type FlagKey } from "../stores/flags";
+import {
+  flagEnabled,
+  flagStates,
+  setFlagOverride,
+  subscribeToFlagChanges,
+  type FlagKey,
+} from "../stores/flags";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
 import {
@@ -71,6 +77,14 @@ import {
   type RemoteHostOverview,
 } from "../lib/remoteHost";
 import { telemetryGet, telemetrySet } from "../lib/telemetry";
+import { voiceStatus, type VoiceStatus } from "../lib/voice";
+import {
+  setVoiceMicEnabled,
+  setVoiceModelPath,
+  setVoicePushToCommand,
+  voiceDictationSettings,
+  voiceModelOverride,
+} from "../stores/voiceSettings";
 import {
   accountError,
   accountSession,
@@ -121,6 +135,7 @@ export function SettingsScreen() {
   const [remoteLoading, setRemoteLoading] = createSignal(false);
   const [remoteError, setRemoteError] = createSignal<string | null>(null);
   const [remoteNow, setRemoteNow] = createSignal(Date.now());
+  const [voiceState, setVoiceState] = createSignal<VoiceStatus | null>(null);
 
   const reloadArchived = async () => {
     const all = await db.projectsList(true);
@@ -167,12 +182,32 @@ export function SettingsScreen() {
       setRemoteLoading(false);
     }
   };
+  const reloadVoice = async () => {
+    try {
+      setVoiceState(await voiceStatus(voiceModelOverride()));
+    } catch (error) {
+      setVoiceState({
+        available: false,
+        missing: [],
+        modelPath: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
   onMount(() => {
     void reloadArchived();
     void reloadPickLab();
     void reloadTelemetry();
     void reloadRemoteHost();
+    if (flagEnabled("operator")) void reloadVoice();
   });
+  // Flipping the operator flag on while Settings is open must load the
+  // dictation status that onMount skipped.
+  onCleanup(
+    subscribeToFlagChanges(() => {
+      if (flagEnabled("operator") && voiceState() === null) void reloadVoice();
+    }),
+  );
   const pairingExpiryTimer = window.setInterval(() => setRemoteNow(Date.now()), 1_000);
   onCleanup(() => window.clearInterval(pairingExpiryTimer));
 
@@ -254,6 +289,17 @@ export function SettingsScreen() {
     setOperatorRouterBackend(backend as OperatorRouterSettingBackend);
   const changeRouterModel = (backend: OperatorRouterBackend, model: string) =>
     setOperatorRouterModel(backend, model);
+  const voiceStatusLabel = () => {
+    const status = voiceState();
+    if (!status) return "Checking…";
+    if (status.available) return "Ready";
+    if (status.error) return status.error;
+    if (status.missing.length > 0) return `Missing ${status.missing.join(", ")}`;
+    return "Unavailable";
+  };
+  const changeVoiceModelPath = (path: string) => {
+    setVoiceModelPath(path);
+  };
   const pickLabDoctorLabel = () => {
     const status = pickLab();
     if (!status?.cliAvailable) return "Not installed";
@@ -444,6 +490,69 @@ export function SettingsScreen() {
                 </>
               )}
             </Show>
+          </Section>
+        </Show>
+
+        <Show when={flagEnabled("operator")}>
+          <Section title="Dictation">
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">
+                Microphone
+                <span class="pf-settings-hint-inline">show the mic in the operator dock</span>
+              </span>
+              <div class="pf-seg">
+                <button
+                  classList={{ active: voiceDictationSettings().micEnabled }}
+                  onClick={() => setVoiceMicEnabled(true)}
+                >
+                  On
+                </button>
+                <button
+                  classList={{ active: !voiceDictationSettings().micEnabled }}
+                  onClick={() => setVoiceMicEnabled(false)}
+                >
+                  Off
+                </button>
+              </div>
+            </div>
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">
+                Push to command
+                <span class="pf-settings-hint-inline">run the command automatically once dictation finishes</span>
+              </span>
+              <div class="pf-seg">
+                <button
+                  classList={{ active: voiceDictationSettings().pushToCommand }}
+                  onClick={() => setVoicePushToCommand(true)}
+                >
+                  On
+                </button>
+                <button
+                  classList={{ active: !voiceDictationSettings().pushToCommand }}
+                  onClick={() => setVoicePushToCommand(false)}
+                >
+                  Off
+                </button>
+              </div>
+            </div>
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">
+                Whisper model
+                <span class="pf-settings-hint-inline">absolute path to a ggml model (no ~ expansion); empty uses the default</span>
+              </span>
+              <input
+                class="pf-input"
+                value={voiceDictationSettings().modelPath}
+                placeholder={voiceState()?.modelPath ?? "/absolute/path/to/ggml-base.bin"}
+                spellcheck={false}
+                onInput={(e) => changeVoiceModelPath(e.currentTarget.value)}
+                onChange={() => void reloadVoice()}
+              />
+            </div>
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">Status</span>
+              <span class="pf-settings-muted">{voiceStatusLabel()}</span>
+            </div>
           </Section>
         </Show>
 

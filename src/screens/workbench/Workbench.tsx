@@ -230,6 +230,12 @@ export function WorkbenchScreen() {
     const onKey = (e: KeyboardEvent) => {
       if (route() !== "workbench") return; // hotkeys only act on the workbench
       const t = e.target as HTMLElement | null;
+      // The operator dock is modal: global quick-launch (and Mod+O) must not
+      // fire from inside it, and — since this listener runs in the capture
+      // phase — must not steal keydowns the dock handles itself (Mod+M, Tab
+      // trap, Escape). This guard is the only thing keeping a user chip
+      // rebound to one of those keys from hijacking the dock.
+      if (t?.closest?.(".pf-op-dock")) return;
       const inXterm = !!t?.closest?.(".xterm");
       const inField =
         !inXterm &&

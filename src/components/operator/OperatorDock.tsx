@@ -75,7 +75,10 @@ export function OperatorDock() {
   // focus — while a preview shows, the Confirm CTA owns the ember and the mic
   // yields to a neutral live treatment (never two embers).
   const micEmber = () => voiceDockActive() && operatorView().kind !== "preview";
-  const micDisabled = () => voiceAvailability()?.available === false;
+  const micDisabled = () => operatorBusy() || voiceAvailability()?.available === false;
+  // The button and the Mod+M hotkey share this gate so a hidden or disabled
+  // mic can never record.
+  const micUsable = () => voiceDictationSettings().micEnabled && !micDisabled();
   const micTitle = () => {
     const status = voiceAvailability();
     if (!status) return "checking dictation…";
@@ -83,6 +86,7 @@ export function OperatorDock() {
       if (status.error) return status.error;
       return `dictation unavailable — install ${status.missing.join(", ")}`;
     }
+    if (operatorBusy()) return "dictation paused while the command runs";
     return voiceDockActive() ? "stop dictation (Mod+M)" : "start dictation (Mod+M)";
   };
 
@@ -91,7 +95,7 @@ export function OperatorDock() {
     if (hotkeyMatches(e, "Mod+M")) {
       e.preventDefault();
       e.stopPropagation();
-      if (!micDisabled()) toggleDictation();
+      if (micUsable()) toggleDictation();
       return;
     }
     if (e.key === "Escape") {

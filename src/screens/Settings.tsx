@@ -51,7 +51,13 @@ import {
 import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
-import { flagEnabled, flagStates, setFlagOverride, type FlagKey } from "../stores/flags";
+import {
+  flagEnabled,
+  flagStates,
+  setFlagOverride,
+  subscribeToFlagChanges,
+  type FlagKey,
+} from "../stores/flags";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
 import {
@@ -195,6 +201,13 @@ export function SettingsScreen() {
     void reloadRemoteHost();
     if (flagEnabled("operator")) void reloadVoice();
   });
+  // Flipping the operator flag on while Settings is open must load the
+  // dictation status that onMount skipped.
+  onCleanup(
+    subscribeToFlagChanges(() => {
+      if (flagEnabled("operator") && voiceState() === null) void reloadVoice();
+    }),
+  );
   const pairingExpiryTimer = window.setInterval(() => setRemoteNow(Date.now()), 1_000);
   onCleanup(() => window.clearInterval(pairingExpiryTimer));
 
@@ -525,12 +538,12 @@ export function SettingsScreen() {
             <div class="pf-settings-row">
               <span class="pf-settings-label">
                 Whisper model
-                <span class="pf-settings-hint-inline">override the ggml model path; empty uses the default</span>
+                <span class="pf-settings-hint-inline">absolute path to a ggml model (no ~ expansion); empty uses the default</span>
               </span>
               <input
                 class="pf-input"
                 value={voiceDictationSettings().modelPath}
-                placeholder="~/.local/share/whisper.cpp/models/ggml-base.bin"
+                placeholder={voiceState()?.modelPath ?? "/absolute/path/to/ggml-base.bin"}
                 spellcheck={false}
                 onInput={(e) => changeVoiceModelPath(e.currentTarget.value)}
                 onChange={() => void reloadVoice()}

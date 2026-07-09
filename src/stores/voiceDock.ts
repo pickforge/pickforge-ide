@@ -37,6 +37,11 @@ export const voiceDockActive = () => phase() === "recording" || phase() === "fin
 let sessionId: string | null = null;
 let epoch = 0;
 let finalized = false;
+// Synchronous start latch: the phase only flips to "recording" after the
+// status check resolves, so without it two quick toggles could both pass the
+// guard and spawn concurrent voice sessions. Set before any await, cleared
+// when the start settles.
+let starting = false;
 
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -67,30 +72,35 @@ export async function refreshVoiceStatus(): Promise<VoiceStatus | null> {
 }
 
 export async function startDictation(): Promise<void> {
-  if (voiceDockActive()) return;
-  setError(null);
-  const model = voiceModelOverride();
-  const status = await refreshVoiceStatus();
-  if (!status?.available) {
-    setPhase("error");
-    setError(status ? unavailableMessage(status) : "dictation is unavailable");
-    return;
-  }
-
-  const mine = ++epoch;
-  finalized = false;
-  sessionId = null;
-  setPreview("");
-  setPhase("recording");
+  if (starting || voiceDockActive()) return;
+  starting = true;
   try {
-    const id = await startVoice(onVoiceEvent(mine), { modelPathOverride: model });
-    if (mine !== epoch) {
-      void cancelVoice(id).catch(() => {});
+    setError(null);
+    const model = voiceModelOverride();
+    const status = await refreshVoiceStatus();
+    if (!status?.available) {
+      setPhase("error");
+      setError(status ? unavailableMessage(status) : "dictation is unavailable");
       return;
     }
-    sessionId = id;
-  } catch (error) {
-    applyError(errorText(error), mine);
+
+    const mine = ++epoch;
+    finalized = false;
+    sessionId = null;
+    setPreview("");
+    setPhase("recording");
+    try {
+      const id = await startVoice(onVoiceEvent(mine), { modelPathOverride: model });
+      if (mine !== epoch) {
+        void cancelVoice(id).catch(() => {});
+        return;
+      }
+      sessionId = id;
+    } catch (error) {
+      applyError(errorText(error), mine);
+    }
+  } finally {
+    starting = false;
   }
 }
 
@@ -121,6 +131,7 @@ export async function cancelDictation(): Promise<void> {
 }
 
 export function toggleDictation(): void {
+  if (starting) return;
   const current = phase();
   if (current === "recording") {
     void stopDictation();

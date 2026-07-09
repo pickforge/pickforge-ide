@@ -78,6 +78,49 @@ beforeEach(() => {
 });
 
 describe("voiceDock store", () => {
+  it("starts a single session when two starts race the status check", async () => {
+    captureSink();
+    let resolveStatus!: (status: VoiceStatus) => void;
+    deps.voiceStatus.mockReturnValue(
+      new Promise<VoiceStatus>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    const first = s.startDictation();
+    const second = s.startDictation();
+    resolveStatus(AVAILABLE);
+    await first;
+    await second;
+
+    expect(deps.startVoice).toHaveBeenCalledOnce();
+    expect(s.voiceDockPhase()).toBe("recording");
+  });
+
+  it("treats a rapid double toggle as a single start, and a toggle mid-start as a noop", async () => {
+    captureSink();
+    let resolveStatus!: (status: VoiceStatus) => void;
+    deps.voiceStatus.mockReturnValue(
+      new Promise<VoiceStatus>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    s.toggleDictation();
+    s.toggleDictation();
+    await flushAsync();
+    expect(s.voiceDockPhase()).toBe("idle");
+
+    resolveStatus(AVAILABLE);
+    await flushAsync();
+
+    expect(deps.startVoice).toHaveBeenCalledOnce();
+    expect(deps.stopVoice).not.toHaveBeenCalled();
+    expect(s.voiceDockPhase()).toBe("recording");
+  });
+
   it("runs the full flow: partials replace the preview, final lands in the input", async () => {
     captureSink();
     deps.stopVoice.mockResolvedValue("hello world");

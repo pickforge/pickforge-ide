@@ -1,0 +1,13 @@
+{
+  "result": {
+    "valueId": "legacy-root",
+    "description": "MaterialApp",
+    "children": [
+      {
+        "valueId": "legacy-text",
+        "description": "Text",
+        "textPreview": "Welcome back"
+      }
+    ]
+  }
+}

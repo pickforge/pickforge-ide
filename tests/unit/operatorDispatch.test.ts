@@ -1324,6 +1324,27 @@ describe("dispatchIntent", () => {
     );
   });
 
+  it("does not select a discarded semantic widget candidate", async () => {
+    setActiveRun();
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    deps.matchWidget.mockResolvedValue({
+      kind: "ambiguous",
+      candidates: [
+        { index: 4, valueId: "widget-login", className: "LoginButton", label: "Sign in" },
+      ],
+    });
+    const { discardWidgetSelection, dispatchIntent, selectWidgetCandidate } = await loadStore();
+
+    const pending = await dispatchIntent(intent({ action: "selectWidget", description: "the login button" }));
+    discardWidgetSelection(pending.auditId);
+
+    await expect(selectWidgetCandidate(pending.auditId, 4)).resolves.toEqual({
+      status: "failed",
+      message: "Widget choice is no longer available",
+    });
+    expect(deps.vmSetSelection).not.toHaveBeenCalled();
+  });
+
   it("reports not-found and unconfigured semantic matching honestly", async () => {
     setActiveRun();
     deps.vmFindIsolate.mockResolvedValue("isolates/1");

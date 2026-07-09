@@ -676,6 +676,40 @@ describe("operatorDock store", () => {
     expect(auditUpdatesFor("audit-1")).toEqual([["audit-1", "denied", "dismissed"]]);
   });
 
+  it("discards stale ambiguous widget candidates after the dock closes", async () => {
+    const selectWidget = intent({ action: "selectWidget", description: "the login button" });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: selectWidget });
+    let resolveDispatch!: (r: DispatchResult) => void;
+    deps.dispatchIntent.mockReturnValue(
+      new Promise<DispatchResult>((resolve) => {
+        resolveDispatch = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("select the login button");
+    const pending = s.submitOperatorCommand();
+
+    s.closeOperatorDock();
+    resolveDispatch({
+      status: "needsConfirmation",
+      summary: "Choose the matching widget",
+      auditId: "audit-widget-stale",
+      candidates: [{ index: 4, className: "LoginButton", label: "Sign in" }],
+    });
+    await pending;
+    await flushAsync();
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(deps.discardWidgetSelection).toHaveBeenCalledWith("audit-widget-stale");
+    expect(auditUpdatesFor("audit-widget-stale")).toEqual([
+      ["audit-widget-stale", "denied", "dismissed"],
+    ]);
+    await s.pickOperatorWidgetCandidate(4);
+    expect(deps.selectWidgetCandidate).not.toHaveBeenCalled();
+  });
+
   it("denies a stale routed needsConfirmation audit after the dock closes", async () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });

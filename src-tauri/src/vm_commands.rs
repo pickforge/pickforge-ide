@@ -10,6 +10,24 @@ use pickforge_core::{
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
+const ROOT_WIDGET_TREE_METHOD: &str = "ext.flutter.inspector.getRootWidgetTree";
+const ROOT_WIDGET_SUMMARY_TREE_METHOD: &str =
+    "ext.flutter.inspector.getRootWidgetSummaryTreeWithPreviews";
+
+fn root_widget_tree_params(isolate_id: &str, group_name: &str) -> Value {
+    json!({
+        "isolateId": isolate_id,
+        "groupName": group_name,
+        "isSummaryTree": "true",
+        "withPreviews": "true",
+        "fullDetails": "false",
+    })
+}
+
+fn root_widget_summary_tree_params(isolate_id: &str, group_name: &str) -> Value {
+    json!({ "isolateId": isolate_id, "objectGroup": group_name })
+}
+
 use crate::fs_commands::{approved_canonical, ApprovedRoots};
 
 /// One widget property (name + display value) for the inspector details panel.
@@ -127,7 +145,7 @@ pub async fn vm_find_isolate(client: State<'_, VmServiceClient>) -> Result<Strin
 
 /// The widget tree (summary). Disposes the prior object group first, then tries
 /// the modern `getRootWidgetTree` (Flutter 3.24+) and falls back to the legacy
-/// `getRootWidgetSummaryTree`.
+/// `getRootWidgetSummaryTreeWithPreviews`.
 #[tauri::command]
 pub async fn vm_widget_tree(
     client: State<'_, VmServiceClient>,
@@ -142,21 +160,16 @@ pub async fn vm_widget_tree(
         .await;
     let modern = client
         .call(
-            "ext.flutter.inspector.getRootWidgetTree",
-            json!({
-                "isolateId": isolate_id,
-                "groupName": group_name,
-                "isSummaryTree": "true",
-                "withPreviews": "true",
-            }),
+            ROOT_WIDGET_TREE_METHOD,
+            root_widget_tree_params(&isolate_id, &group_name),
         )
         .await;
     let result = match modern {
         Ok(v) => v,
         Err(_) => client
             .call(
-                "ext.flutter.inspector.getRootWidgetSummaryTree",
-                json!({ "isolateId": isolate_id, "objectGroup": group_name }),
+                ROOT_WIDGET_SUMMARY_TREE_METHOD,
+                root_widget_summary_tree_params(&isolate_id, &group_name),
             )
             .await
             .map_err(|e| e.to_string())?,
@@ -179,21 +192,16 @@ pub async fn vm_widget_tree_semantic(
         .await;
     let modern = client
         .call(
-            "ext.flutter.inspector.getRootWidgetTree",
-            json!({
-                "isolateId": isolate_id,
-                "groupName": group_name,
-                "isSummaryTree": "true",
-                "withPreviews": "true",
-            }),
+            ROOT_WIDGET_TREE_METHOD,
+            root_widget_tree_params(&isolate_id, &group_name),
         )
         .await;
     let result = match modern {
         Ok(v) => v,
         Err(_) => client
             .call(
-                "ext.flutter.inspector.getRootWidgetSummaryTree",
-                json!({ "isolateId": isolate_id, "objectGroup": group_name }),
+                ROOT_WIDGET_SUMMARY_TREE_METHOD,
+                root_widget_summary_tree_params(&isolate_id, &group_name),
             )
             .await
             .map_err(|e| e.to_string())?,
@@ -601,4 +609,33 @@ pub async fn vm_screenshot(
         .await
         .map_err(|e| e.to_string())?;
     Ok(result.get("result").and_then(Value::as_str).map(str::to_string))
+}
+
+#[cfg(test)]
+mod widget_tree_request_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn root_widget_tree_requests_are_compact_and_include_previews() {
+        assert_eq!(ROOT_WIDGET_TREE_METHOD, "ext.flutter.inspector.getRootWidgetTree");
+        assert_eq!(
+            root_widget_tree_params("isolates/1", "pickforge"),
+            json!({
+                "isolateId": "isolates/1",
+                "groupName": "pickforge",
+                "isSummaryTree": "true",
+                "withPreviews": "true",
+                "fullDetails": "false",
+            }),
+        );
+        assert_eq!(
+            ROOT_WIDGET_SUMMARY_TREE_METHOD,
+            "ext.flutter.inspector.getRootWidgetSummaryTreeWithPreviews",
+        );
+        assert_eq!(
+            root_widget_summary_tree_params("isolates/1", "pickforge"),
+            json!({ "isolateId": "isolates/1", "objectGroup": "pickforge" }),
+        );
+    }
 }

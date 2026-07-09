@@ -315,6 +315,7 @@ async function submitIntent(
   const result = await dispatchIntent(intent, { inputText: text });
   if (epoch !== requestEpoch) {
     if (result.status === "needsConfirmation") {
+      discardWidgetSelection(result.auditId);
       settlePreviewAudit(result.auditId, "denied", "dismissed");
     }
     return;

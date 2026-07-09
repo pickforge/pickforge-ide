@@ -154,4 +154,19 @@ mod tests {
         assert!(!serialized.contains("creationLocation"));
         assert!(!serialized.contains("bounds"));
     }
+
+    #[test]
+    fn decodes_legacy_summary_tree_previews() {
+        let response: Value = serde_json::from_str(include_str!(
+            "../fixtures/inspector/legacy-root-widget-summary-tree-with-previews.json"
+        ))
+        .expect("fixture is valid JSON");
+        let tree = response.get("result").expect("legacy response contains a tree");
+
+        let node = decode_semantic_widget_tree(tree);
+
+        assert_eq!(node.class_name, "MaterialApp");
+        assert_eq!(node.children[0].class_name, "Text");
+        assert_eq!(node.children[0].label.as_deref(), Some("Welcome back"));
+    }
 }

@@ -8,10 +8,27 @@ import { loadAgentModes } from "../lib/agentModes";
 import { isPrimaryChat } from "../lib/chatLabels";
 import { loadAgentEngine } from "../lib/chatDefaults";
 import * as db from "../lib/db";
+import {
+  adbScreenshot,
+  androidLaunchAvd,
+  iosScreenshot,
+  type DeviceEntry,
+} from "../lib/device";
 import type { Chat, Project } from "../lib/db";
 import { riskTier, type OperatorAction, type OperatorIntent } from "../lib/operatorIntent";
+import type { RunTarget } from "../lib/runTargets";
+import {
+  inspectDir,
+  inspectSave,
+  vmFindIsolate,
+  vmScreenshot,
+  vmSelectedWidget,
+  vmShowSelectMode,
+} from "../lib/vm";
 import { isChatArchived } from "./chatArchive";
+import { refreshDevices } from "./deviceList";
 import { flagEnabled } from "./flags";
+import { captureInRepo } from "./inspectStorage";
 import {
   agentChat,
   ensureAgentChat,
@@ -19,6 +36,20 @@ import {
   sendAgentMessage,
   steerAgentChat,
 } from "./agentChat";
+import {
+  deviceKey,
+  deviceLabel,
+  launchActiveTarget,
+  resolveSelectedDevice,
+} from "./runLaunch";
+import { setRunDevice } from "./runDevice";
+import {
+  reloadRun as reloadActiveRun,
+  restartRun as restartActiveRun,
+  runConsole,
+  stopRun as stopActiveRun,
+} from "./runConsole";
+import { activeTarget, runTargets, setActiveTargetId } from "./runTargets";
 import { startSwarm as startSwarmRun, swarmRuns } from "./swarm";
 import {
   addChat,
@@ -251,11 +282,19 @@ function summaryFor(intent: OperatorIntent): string {
     case "steerRun":
       return `Steer ${action.run ?? "active chat"}`;
     case "launchEmulator":
+      return `Launch emulator ${action.device ?? "default"}`;
     case "launchRun":
+      return `Launch run target ${action.target ?? "default"}`;
     case "reloadRun":
+      return "Hot reload active run";
+    case "stopRun":
+      return "Stop active run";
+    case "hotRestart":
+      return "Hot restart active run";
     case "enterSelectMode":
+      return "Enter select mode";
     case "takeScreenshot":
-      return `${action.action} is planned for #140`;
+      return "Take screenshot";
     case "selectWidget":
       return "selectWidget is planned for #142";
   }
@@ -471,14 +510,178 @@ function swarmSummary(projectRoot: string): string {
   return `Swarm runs: ${counts}`;
 }
 
+function runTargetLabel(target: RunTarget): string {
+  return target.label === target.id ? target.label : `${target.label} (${target.id})`;
+}
+
+function resolveRunTargetReference(targetRef: string | null): Resolution<RunTarget> {
+  const targets = runTargets();
+  if (!targetRef) {
+    const target = activeTarget();
+    if (!target) {
+      return {
+        ok: false,
+        message: `No run target available. Candidates: ${candidateList(targets.map(runTargetLabel))}`,
+      };
+    }
+    return { ok: true, value: target };
+  }
+
+  return resolveReference(
+    "Run target",
+    targetRef,
+    targets,
+    runTargetLabel,
+    (target) => [target.id, target.label],
+    (target) => [target.label, target.id],
+  );
+}
+
+async function activeProjectForDeviceIntent(intent: OperatorIntent): Promise<Resolution<Project>> {
+  const project = await projectFor(intent);
+  if (!project.ok) return project;
+  if (workspace.activeRoot !== project.value.projectRoot) {
+    return {
+      ok: false,
+      message: `Project ${project.value.displayName} is not active`,
+    };
+  }
+  return project;
+}
+
+function resolveDeviceReference(ref: string, devices: DeviceEntry[]): Resolution<DeviceEntry> {
+  return resolveReference(
+    "Device",
+    ref,
+    devices,
+    deviceLabel,
+    (device) => [device.displayName, device.avdId ?? "", device.serial ?? ""],
+    (device) => [device.displayName, device.avdId ?? "", device.serial ?? ""],
+  );
+}
+
+function defaultEmulator(devices: DeviceEntry[]): DeviceEntry | null {
+  const selected = resolveSelectedDevice();
+  if (selected?.kind === "emulator") {
+    const key = deviceKey(selected);
+    const match = devices.find((device) => deviceKey(device) === key);
+    if (match) return match;
+  }
+  return devices.find((device) => device.state === "running") ??
+    devices.find((device) => device.state === "stopped") ??
+    null;
+}
+
+async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | null): Promise<DispatchResult> {
+  const project = await activeProjectForDeviceIntent(intent);
+  if (!project.ok) return { status: "failed", message: project.message };
+
+  const devices = (await refreshDevices()).filter((device) => device.kind === "emulator");
+  const fallback = defaultEmulator(devices);
+  const resolved = deviceRef
+    ? resolveDeviceReference(deviceRef, devices)
+    : fallback
+      ? { ok: true as const, value: fallback }
+      : {
+          ok: false as const,
+          message: `No emulator available. Candidates: ${candidateList(devices.map(deviceLabel))}`,
+        };
+  if (!resolved.ok) return { status: "failed", message: resolved.message };
+
+  const device = resolved.value;
+  if (device.state === "offline") {
+    return { status: "failed", message: `${device.displayName} is offline or unauthorized` };
+  }
+  setRunDevice(project.value.projectRoot, deviceKey(device));
+  if (device.state === "running") {
+    return { status: "done", summary: `Selected emulator ${deviceLabel(device)}` };
+  }
+  if (!device.avdId) {
+    return { status: "failed", message: `Device "${device.displayName}" cannot be launched` };
+  }
+
+  await androidLaunchAvd(device.avdId);
+  return { status: "done", summary: `Launched emulator ${device.displayName}` };
+}
+
+async function launchRunIntent(intent: OperatorIntent, targetRef: string | null): Promise<DispatchResult> {
+  const project = await activeProjectForDeviceIntent(intent);
+  if (!project.ok) return { status: "failed", message: project.message };
+  if (runConsole.status() === "running") {
+    return { status: "noop", summary: "run already active" };
+  }
+
+  const target = resolveRunTargetReference(targetRef);
+  if (!target.ok) return { status: "failed", message: target.message };
+  if (targetRef) setActiveTargetId(target.value.id);
+  await launchActiveTarget();
+  return { status: "done", summary: `Launched run target ${target.value.label}` };
+}
+
+function runControlIntent(action: "reloadRun" | "hotRestart" | "stopRun"): DispatchResult {
+  if (runConsole.status() !== "running") {
+    return { status: "noop", summary: "no active run" };
+  }
+  if (action === "reloadRun") {
+    reloadActiveRun();
+    return { status: "done", summary: "Reloaded active run" };
+  }
+  if (action === "hotRestart") {
+    restartActiveRun();
+    return { status: "done", summary: "Hot restarted active run" };
+  }
+  stopActiveRun();
+  return { status: "done", summary: "Stopped active run" };
+}
+
+async function enterSelectModeIntent(): Promise<DispatchResult> {
+  let isolate: string;
+  try {
+    isolate = await vmFindIsolate();
+  } catch {
+    return { status: "noop", summary: "no active device/session" };
+  }
+  await vmShowSelectMode(isolate, true);
+  return { status: "done", summary: "Entered select mode" };
+}
+
+async function captureVmScreenshot(projectRoot: string): Promise<string | null> {
+  const isolate = await vmFindIsolate().catch(() => null);
+  if (!isolate) return null;
+  const selected = await vmSelectedWidget(isolate, "pf-operator-screenshot").catch(() => null);
+  if (!selected?.id) return null;
+  const png = await vmScreenshot(isolate, selected.id, 1024, 2048).catch(() => null);
+  if (!png) return null;
+  const dir = await inspectDir(captureInRepo(projectRoot), projectRoot);
+  const paths = await inspectSave(dir, "operator-screenshot", "Operator screenshot", png);
+  return paths.pngPath;
+}
+
+async function captureDeviceScreenshot(projectRoot: string): Promise<string | null> {
+  await refreshDevices();
+  const device = resolveSelectedDevice();
+  if (!device?.serial || device.state !== "running") return null;
+  const dir = await inspectDir(captureInRepo(projectRoot), projectRoot);
+  return device.kind === "simulator"
+    ? iosScreenshot(device.serial, dir, "operator-screenshot.png")
+    : adbScreenshot(device.serial, dir, "operator-screenshot.png");
+}
+
+async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchResult> {
+  const project = await activeProjectForDeviceIntent(intent);
+  if (!project.ok) return { status: "failed", message: project.message };
+
+  const target = runConsole.status() === "running" ? runConsole.target() : activeTarget();
+  const vmPath = target?.inspectorKind === "vmService"
+    ? await captureVmScreenshot(project.value.projectRoot)
+    : null;
+  const path = vmPath ?? await captureDeviceScreenshot(project.value.projectRoot);
+  if (!path) return { status: "noop", summary: "no active device/session" };
+  return { status: "done", summary: `Captured screenshot ${path}` };
+}
+
 function unsupported(action: OperatorAction): DispatchResult | null {
   switch (action.action) {
-    case "launchEmulator":
-    case "launchRun":
-    case "reloadRun":
-    case "enterSelectMode":
-    case "takeScreenshot":
-      return { status: "unsupported", message: `${action.action} is planned for #140` };
     case "selectWidget":
       return { status: "unsupported", message: "selectWidget is planned for #142" };
     default:
@@ -587,10 +790,19 @@ async function runIntent(intent: OperatorIntent, inputText?: string): Promise<Di
       return { status: "done", summary: `Steered ${chat.value.title}` };
     }
     case "launchEmulator":
+      return launchEmulatorIntent(intent, action.device);
     case "launchRun":
+      return launchRunIntent(intent, action.target);
     case "reloadRun":
+      return runControlIntent("reloadRun");
+    case "stopRun":
+      return runControlIntent("stopRun");
+    case "hotRestart":
+      return runControlIntent("hotRestart");
     case "enterSelectMode":
+      return enterSelectModeIntent();
     case "takeScreenshot":
+      return takeScreenshotIntent(intent);
     case "selectWidget":
       return { status: "unsupported", message: summaryFor(intent) };
   }

@@ -1,5 +1,6 @@
 {
   "productName": "PickForge Performance",
+  "identifier": "dev.pickforge.app.performance",
   "build": {
     "devUrl": "http://localhost:1422",
     "beforeDevCommand": "bun run dev:performance"

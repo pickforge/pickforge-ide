@@ -14,6 +14,7 @@ import { IconChevronRight, IconTerminal } from "./components/icons";
 import { layout, toggleDock } from "./stores/workbenchLayout";
 import { runConsole, toggleConsole } from "./stores/runConsole";
 import { startSwarmBridge } from "./stores/swarm";
+import { installAccountStoreBootstrap } from "./stores/account";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
 import { SettingsScreen } from "./screens/Settings";
@@ -32,6 +33,7 @@ const WINDOW_RESIZING_SETTLE_MS = 180;
 
 export function App() {
   const [, setReady] = createSignal(false);
+  installAccountStoreBootstrap();
   // macOS convention: window controls sit top-left, so the brand moves to the
   // top-right to balance the bar (matches the platform's own app chrome).
   const brandOnRight = () => hostPlatform() === "macos";

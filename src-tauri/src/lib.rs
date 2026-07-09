@@ -24,6 +24,8 @@ use pickforge_core::{
     PtyManager, VmServiceClient,
 };
 use tauri::{path::BaseDirectory, Manager};
+#[cfg(target_os = "linux")]
+use tauri_plugin_deep_link::DeepLinkExt;
 
 const SENTRY_DSN: &str =
     "https://14e43b283ec20c3174df7b690d812d1c@o4511699702317056.ingest.us.sentry.io/4511699813728261";
@@ -130,11 +132,23 @@ pub fn run() {
     // human-readable name shown by some shells.
     #[cfg(target_os = "linux")]
     {
-        gtk::glib::set_prgname(Some("dev.pickforge.app"));
+        gtk::glib::set_prgname(Some(context.config().identifier.as_str()));
         gtk::glib::set_application_name("PickForge");
     }
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+
+    let builder = builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(if enabled {
             tauri_plugin_sentry::init(&client)
         } else {
@@ -158,6 +172,11 @@ pub fn run() {
 
     builder
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            if let Err(error) = app.deep_link().register_all() {
+                eprintln!("failed to register deep link schemes: {error}");
+            }
+
             app.manage(AgentChatManager::new(
                 Arc::clone(&manager_database),
                 resolve_agent_app_root(app),
@@ -202,6 +221,7 @@ pub fn run() {
             fs_commands::read_image_data_url,
             fs_commands::path_basename,
             fs_commands::open_path,
+            fs_commands::open_external_url,
             fs_commands::pick_project_dir,
             device_commands::target_detect,
             device_commands::find_nearest_pubspec,

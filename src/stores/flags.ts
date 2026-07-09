@@ -68,3 +68,7 @@ export function flagStates(): FlagState[] {
 export function setFlagOverride(key: FlagKey, value: boolean | undefined) {
   flags.setOverride(key, value);
 }
+
+export function subscribeToFlagChanges(listener: () => void): () => void {
+  return flags.subscribe(listener);
+}

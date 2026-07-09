@@ -298,6 +298,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   agent_chat_interrupt: () => null,
   "plugin:app|version": () => "0.1.0",
   open_path: () => null,
+  open_external_url: () => null,
   git_status: () => ({
     isRepo: true,
     branch: "main",

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import http from "node:http";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const timeoutMs = Number.parseInt(process.env.PICKFORGE_ROUTER_TIMEOUT_MS ?? "60000", 10);
 
@@ -82,29 +85,45 @@ function buildPrompt(commandText) {
 }
 
 function runClaude(prompt, model) {
-  const result = spawnSync("claude", [
-    "-p",
-    prompt,
-    "--output-format",
-    "json",
-    "--model",
-    model,
-  ], { encoding: "utf8", timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 });
-  return processResult(result);
+  return withIsolatedCwd((cwd) => {
+    const result = spawnSync("claude", [
+      "-p",
+      prompt,
+      "--output-format",
+      "json",
+      "--safe-mode",
+      "--strict-mcp-config",
+      "--tools",
+      "",
+      "--permission-mode",
+      "plan",
+      "--no-session-persistence",
+      "--model",
+      model,
+    ], { cwd, encoding: "utf8", timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 });
+    return processResult(result);
+  });
 }
 
 function runCodex(prompt, model) {
-  const result = spawnSync("codex", [
-    "exec",
-    "--json",
-    "--skip-git-repo-check",
-    "-c",
-    'sandbox_mode="read-only"',
-    "-m",
-    model,
-    prompt,
-  ], { encoding: "utf8", timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 });
-  return processResult(result);
+  return withIsolatedCwd((cwd) => {
+    const result = spawnSync("codex", [
+      "exec",
+      "--json",
+      "--skip-git-repo-check",
+      "--cd",
+      cwd,
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
+      "--ignore-rules",
+      "--ignore-user-config",
+      "-m",
+      model,
+      prompt,
+    ], { cwd, encoding: "utf8", timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 });
+    return processResult(result);
+  });
 }
 
 function runOllama(prompt, model) {
@@ -147,6 +166,15 @@ function processResult(result) {
     throw new Error((result.stderr || result.stdout || `exit ${result.status}`).slice(-500));
   }
   return result.stdout;
+}
+
+function withIsolatedCwd(fn) {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pickforge-router-"));
+  try {
+    return fn(cwd);
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
 }
 
 function extractJson(backend, raw) {

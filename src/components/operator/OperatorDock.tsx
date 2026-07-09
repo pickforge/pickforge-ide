@@ -18,6 +18,7 @@ import {
   submitOperatorCommand,
   type DockView,
 } from "../../stores/operatorDock";
+import { previewPayloadLines } from "./previewPayload";
 import "./OperatorDock.css";
 
 const PLACEHOLDER = "operator command — try: open project <name>";
@@ -121,6 +122,15 @@ export function OperatorDock() {
               )}
             </Match>
 
+            <Match when={asView("validationError")}>
+              {(err) => (
+                <div class="pf-op-note pf-op-note--error">
+                  <span class="pf-op-note-key">parser</span>
+                  <span class="pf-op-note-body">{err().reason}</span>
+                </div>
+              )}
+            </Match>
+
             <Match when={asView("preview")}>
               {(p) => (
                 <div class="pf-op-preview">
@@ -130,6 +140,18 @@ export function OperatorDock() {
                       {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
                     </Show>
                   </div>
+                  {(() => {
+                    const lines = previewPayloadLines(p().intent);
+                    return (
+                      <Show when={lines.length > 0}>
+                        <div class="pf-op-preview-payload">
+                          <For each={lines}>
+                            {(line) => <div class="pf-op-preview-payload-line">{line}</div>}
+                          </For>
+                        </div>
+                      </Show>
+                    );
+                  })()}
                   <div class="pf-op-actions">
                     <EmberButton
                       label="Confirm"

@@ -52,11 +52,14 @@ BYO routing is dark behind the `operator` flag. Settings -> Operator router lets
 the user choose Off, Claude Code, Codex, or Ollama and enter the model id for
 that backend; Ollama defaults to `qwen2.5:3b` as a small local placeholder
 recommendation, not a guarantee that the model is installed. Claude Code uses
-`claude -p ... --output-format json --model <model>`, Codex uses
-`codex exec --json --skip-git-repo-check -c sandbox_mode="read-only" -m <model>`,
-and Ollama posts to fixed loopback `127.0.0.1:11434/api/generate`. Expected
-latency depends on the backend and model: local small Ollama models should be
-seconds-scale, CLI backends include process startup and provider latency.
+`claude -p ... --output-format json --safe-mode --strict-mcp-config --tools ""
+--permission-mode plan --no-session-persistence --model <model>` from a fresh
+empty temp directory. Codex uses `codex exec --json --skip-git-repo-check --cd
+<empty-dir> --sandbox read-only --ephemeral --ignore-rules --ignore-user-config
+-m <model>` against that same isolated directory. Ollama posts to fixed loopback
+`127.0.0.1:11434/api/generate`. Expected latency depends on the backend and
+model: local small Ollama models should be seconds-scale, CLI backends include
+process startup and provider latency.
 
 Manual parity checks are available outside CI:
 
@@ -105,6 +108,10 @@ Cross-cutting rules:
 | Absolute paths, device serials, hostnames | Never leave through routing payloads. | Never leave through routing payloads. | Never leave through routing payloads. This is enforced by local policy/redaction at the routing layer, not by the intent schema. |
 | Audio | Never leaves. Voice is transcribed locally by `whisper.cpp` in the free path. | Never leaves. Voice is transcribed locally by `whisper.cpp` in the free path. | Never leaves by default. Pro Realtime voice in M6 is the explicit, flagged exception. |
 | Intent JSON, approvals, run outcomes | Local audit store only. | Local audit store only. | Local audit store only. Server-side hosted mode records billing metadata per routed command: action name, token counts, and cost, never payload fields. The command text the router saw is processed for routing and is not retained in the ledger. |
+
+PickForge never attaches collected identifiers such as paths, serials, or
+hostnames to routing requests; the user's own typed command text is sent
+verbatim to the provider they configured.
 
 Local-only mode must remain fully functional. With hosted routing disabled, typed
 commands and local dictation still work through the deterministic parser.

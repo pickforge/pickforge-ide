@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OperatorAction, OperatorIntent } from "../../src/lib/operatorIntent";
+import { previewPayloadLines } from "../../src/components/operator/previewPayload";
 import type { DispatchResult } from "../../src/stores/operator";
 
 const deps = vi.hoisted(() => ({
@@ -112,6 +113,24 @@ describe("operatorDock store", () => {
     expect(deps.dispatchIntent).not.toHaveBeenCalled();
   });
 
+  it("surfaces validation errors without routing", async () => {
+    deps.parseCommand.mockReturnValue({
+      kind: "validationError",
+      reason: "swarm count must be 1-5",
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("start scout swarm of 6 map the repo");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorView()).toEqual({
+      kind: "validationError",
+      reason: "swarm count must be 1-5",
+    });
+    expect(deps.routeCommand).not.toHaveBeenCalled();
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
   it("surfaces an unconfigured router state without dispatching", async () => {
     deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
     const s = await loadStore();
@@ -175,6 +194,29 @@ describe("operatorDock store", () => {
       inputText: "tell it hi",
       confidence: 0.74,
     });
+    expect(previewPayloadLines(sendPrompt)).toContain("prompt: hi");
+  });
+
+  it("formats compact preview payloads for risky composed actions", () => {
+    expect(previewPayloadLines(intent({
+      action: "steerRun",
+      run: "app",
+      instruction: "focus on the failing widget test",
+    }))).toEqual([
+      "run: app",
+      "instruction: focus on the failing widget test",
+    ]);
+    expect(previewPayloadLines(intent({
+      action: "startSwarm",
+      mode: "review",
+      count: 3,
+      goal: "review the router diff",
+      provider: "mixed",
+    }))).toEqual([
+      "review swarm · 3 lanes",
+      "goal: review the router diff",
+      "provider: mixed",
+    ]);
   });
 
   it("surfaces router unclear and error states without dispatching", async () => {

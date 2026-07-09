@@ -13,6 +13,7 @@ import { onRouteChange } from "../router";
 export type DockView =
   | { kind: "idle" }
   | { kind: "needsRouter"; reason: string }
+  | { kind: "validationError"; reason: string }
   | {
     kind: "preview";
     intent: OperatorIntent;
@@ -93,6 +94,10 @@ export async function submitOperatorCommand(): Promise<void> {
   const text = input().trim();
   const parsed = parseCommand(text);
   if (parsed.kind === "empty") return;
+  if (parsed.kind === "validationError") {
+    setView({ kind: "validationError", reason: parsed.reason });
+    return;
+  }
   if (parsed.kind === "needsRouter") {
     const epoch = ++requestEpoch;
     setBusy(true);

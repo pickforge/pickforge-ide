@@ -1,5 +1,9 @@
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
+use std::process;
+use std::time::SystemTime;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -73,6 +77,7 @@ struct RouteRequest {
 struct RouteCommand {
     program: &'static str,
     args: Vec<String>,
+    cwd: PathBuf,
 }
 
 impl RouteRequest {
@@ -100,7 +105,7 @@ impl RouteRequest {
         })
     }
 
-    fn cli_command(&self) -> Option<RouteCommand> {
+    fn cli_command(&self, cwd: &Path) -> Option<RouteCommand> {
         match self.backend {
             RouterBackend::ClaudeCode => Some(RouteCommand {
                 program: "claude",
@@ -109,9 +114,17 @@ impl RouteRequest {
                     self.prompt.clone(),
                     "--output-format".to_string(),
                     "json".to_string(),
+                    "--safe-mode".to_string(),
+                    "--strict-mcp-config".to_string(),
+                    "--tools".to_string(),
+                    String::new(),
+                    "--permission-mode".to_string(),
+                    "plan".to_string(),
+                    "--no-session-persistence".to_string(),
                     "--model".to_string(),
                     self.model.clone(),
                 ],
+                cwd: cwd.to_path_buf(),
             }),
             RouterBackend::Codex => Some(RouteCommand {
                 program: "codex",
@@ -119,12 +132,18 @@ impl RouteRequest {
                     "exec".to_string(),
                     "--json".to_string(),
                     "--skip-git-repo-check".to_string(),
-                    "-c".to_string(),
-                    r#"sandbox_mode="read-only""#.to_string(),
+                    "--cd".to_string(),
+                    cwd.to_string_lossy().into_owned(),
+                    "--sandbox".to_string(),
+                    "read-only".to_string(),
+                    "--ephemeral".to_string(),
+                    "--ignore-rules".to_string(),
+                    "--ignore-user-config".to_string(),
                     "-m".to_string(),
                     self.model.clone(),
                     self.prompt.clone(),
                 ],
+                cwd: cwd.to_path_buf(),
             }),
             RouterBackend::Ollama => None,
         }
@@ -194,10 +213,14 @@ fn validate_prompt(prompt: &str) -> Result<(), RouterError> {
 }
 
 fn run_cli(req: &RouteRequest) -> Result<RawRouteOutput, RouterError> {
-    let command = req.cli_command().expect("CLI backend has a command");
+    let isolated = RouteTempDir::new()?;
+    let command = req
+        .cli_command(isolated.path())
+        .expect("CLI backend has a command");
     let args: Vec<&str> = command.args.iter().map(String::as_str).collect();
+    let cwd = command.cwd.to_string_lossy().into_owned();
     let started = Instant::now();
-    let outcome = run_timeout(command.program, &args, None, None, req.timeout)
+    let outcome = run_timeout(command.program, &args, Some(&cwd), None, req.timeout)
         .map_err(format_run_error)?;
     Ok(RawRouteOutput {
         output: String::from_utf8_lossy(&outcome.stdout).into_owned(),
@@ -209,6 +232,48 @@ fn run_cli(req: &RouteRequest) -> Result<RawRouteOutput, RouterError> {
 
 fn format_run_error(error: RunError) -> RouterError {
     RouterError::Process(error.to_string())
+}
+
+struct RouteTempDir {
+    path: PathBuf,
+}
+
+impl RouteTempDir {
+    fn new() -> Result<Self, RouterError> {
+        let base = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        for attempt in 0..16 {
+            let path = base.join(format!(
+                "pickforge-router-{}-{stamp}-{attempt}",
+                process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(RouterError::Process(format!(
+                        "create isolated router cwd: {error}"
+                    )));
+                }
+            }
+        }
+        Err(RouterError::Process(
+            "create isolated router cwd: exhausted name attempts".to_string(),
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for RouteTempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 fn run_ollama(req: &RouteRequest) -> Result<RawRouteOutput, RouterError> {
@@ -288,10 +353,18 @@ fn ollama_http_request(model: &str, prompt: &str) -> Result<String, RouterError>
 }
 
 fn parse_http_response(raw: &[u8]) -> Result<(bool, String, String), RouterError> {
-    let text = String::from_utf8_lossy(raw);
-    let (head, body) = text
-        .split_once("\r\n\r\n")
+    let boundary = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
         .ok_or_else(|| RouterError::Http("no header/body boundary".to_string()))?;
+    let head = String::from_utf8_lossy(&raw[..boundary]);
+    let body_bytes = &raw[(boundary + 4)..];
+    let body_bytes = if has_chunked_transfer_encoding(&head) {
+        decode_chunked_body(body_bytes)?
+    } else {
+        body_bytes.to_vec()
+    };
+    let body = String::from_utf8_lossy(&body_bytes).into_owned();
     let status = head.lines().next().unwrap_or("");
     let code = status
         .split_whitespace()
@@ -303,7 +376,51 @@ fn parse_http_response(raw: &[u8]) -> Result<(bool, String, String), RouterError
     } else {
         last_chars(&format!("{status}\n{body}"), STDERR_TAIL_CHARS)
     };
-    Ok((exit_ok, body.to_string(), stderr_tail))
+    Ok((exit_ok, body, stderr_tail))
+}
+
+fn has_chunked_transfer_encoding(head: &str) -> bool {
+    head.lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.trim().eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("chunked"))
+    })
+}
+
+fn decode_chunked_body(mut input: &[u8]) -> Result<Vec<u8>, RouterError> {
+    let mut out = Vec::new();
+    loop {
+        let line_end = input
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .ok_or_else(|| RouterError::Http("malformed chunked response".to_string()))?;
+        let size_line = String::from_utf8_lossy(&input[..line_end]);
+        let size_hex = size_line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_hex, 16)
+            .map_err(|_| RouterError::Http("invalid chunk size".to_string()))?;
+        input = &input[(line_end + 2)..];
+        if size == 0 {
+            return Ok(out);
+        }
+        if input.len() < size + 2 {
+            return Err(RouterError::Http("truncated chunked response".to_string()));
+        }
+        out.extend_from_slice(&input[..size]);
+        if out.len() > MAX_OLLAMA_RESPONSE_BYTES {
+            return Err(RouterError::Http(format!(
+                "decoded response exceeded {MAX_OLLAMA_RESPONSE_BYTES} bytes"
+            )));
+        }
+        let trailer = &input[size..(size + 2)];
+        if trailer != b"\r\n" {
+            return Err(RouterError::Http("malformed chunk terminator".to_string()));
+        }
+        input = &input[(size + 2)..];
+    }
 }
 
 fn elapsed_ms(started: Instant) -> u64 {
@@ -347,8 +464,10 @@ mod tests {
     fn builds_claude_argv() {
         let req = RouteRequest::new("claudeCode", "claude-opus-4-8", "open project App", None)
             .unwrap();
-        let cmd = req.cli_command().unwrap();
+        let cwd = Path::new("/tmp/pickforge-router-empty");
+        let cmd = req.cli_command(cwd).unwrap();
         assert_eq!(cmd.program, "claude");
+        assert_eq!(cmd.cwd, cwd);
         assert_eq!(
             cmd.args,
             [
@@ -356,6 +475,13 @@ mod tests {
                 "open project App",
                 "--output-format",
                 "json",
+                "--safe-mode",
+                "--strict-mcp-config",
+                "--tools",
+                "",
+                "--permission-mode",
+                "plan",
+                "--no-session-persistence",
                 "--model",
                 "claude-opus-4-8"
             ]
@@ -365,16 +491,23 @@ mod tests {
     #[test]
     fn builds_codex_argv() {
         let req = RouteRequest::new("codex", "gpt-5.5", "open project App", None).unwrap();
-        let cmd = req.cli_command().unwrap();
+        let cwd = Path::new("/tmp/pickforge-router-empty");
+        let cmd = req.cli_command(cwd).unwrap();
         assert_eq!(cmd.program, "codex");
+        assert_eq!(cmd.cwd, cwd);
         assert_eq!(
             cmd.args,
             [
                 "exec",
                 "--json",
                 "--skip-git-repo-check",
-                "-c",
-                r#"sandbox_mode="read-only""#,
+                "--cd",
+                "/tmp/pickforge-router-empty",
+                "--sandbox",
+                "read-only",
+                "--ephemeral",
+                "--ignore-rules",
+                "--ignore-user-config",
                 "-m",
                 "gpt-5.5",
                 "open project App"
@@ -385,7 +518,18 @@ mod tests {
     #[test]
     fn ollama_has_no_argv() {
         let req = RouteRequest::new("ollama", "qwen2.5:3b", "open project App", None).unwrap();
-        assert_eq!(req.cli_command(), None);
+        assert_eq!(req.cli_command(Path::new("/tmp/pickforge-router-empty")), None);
+    }
+
+    #[test]
+    fn isolated_route_temp_dir_is_removed_on_drop() {
+        let path = {
+            let dir = RouteTempDir::new().unwrap();
+            let path = dir.path().to_path_buf();
+            assert!(path.exists());
+            path
+        };
+        assert!(!path.exists());
     }
 
     #[test]
@@ -421,5 +565,27 @@ mod tests {
         assert_eq!(body, "nope");
         assert!(stderr.contains("500"));
         assert!(stderr.contains("nope"));
+    }
+
+    #[test]
+    fn parses_chunked_ollama_response_body() {
+        let raw = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: application/json\r\n",
+            "Transfer-Encoding: chunked\r\n",
+            "\r\n",
+            "10\r\n",
+            "{\"response\":\"ok\"",
+            "\r\n",
+            "1\r\n",
+            "}",
+            "\r\n",
+            "0\r\n",
+            "\r\n"
+        );
+        let (ok, body, stderr) = parse_http_response(raw.as_bytes()).unwrap();
+        assert!(ok);
+        assert_eq!(body, r#"{"response":"ok"}"#);
+        assert!(stderr.is_empty());
     }
 }

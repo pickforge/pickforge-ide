@@ -71,6 +71,9 @@
 .pf-op-note-reason {
   color: var(--pf-text-low);
 }
+.pf-op-note--error {
+  color: var(--pf-warning);
+}
 
 .pf-op-preview {
   display: flex;
@@ -88,6 +91,23 @@
 }
 .pf-op-preview-confidence {
   color: var(--pf-text-low);
+}
+.pf-op-preview-payload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-mono);
+  color: var(--pf-text-med);
+  background: var(--pf-item-fill);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  border-radius: var(--pf-radius-sm);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pf-op-preview-payload-line {
+  min-width: 0;
 }
 .pf-op-actions {
   display: flex;

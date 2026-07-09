@@ -130,7 +130,7 @@ pub fn run() {
     // human-readable name shown by some shells.
     #[cfg(target_os = "linux")]
     {
-        gtk::glib::set_prgname(Some("dev.pickforge.app"));
+        gtk::glib::set_prgname(Some(context.config().identifier.as_str()));
         gtk::glib::set_application_name("PickForge");
     }
 

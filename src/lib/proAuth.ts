@@ -46,7 +46,7 @@ function isAuthCallbackUrl(value: string): boolean {
 async function shouldHandleRedirect(): Promise<boolean> {
   try {
     const store = await import("../stores/account");
-    return store.shouldHandleAccountRedirect();
+    return store.shouldHandleAccountRedirect() || store.consumePendingAccountRedirect();
   } catch {
     return false;
   }

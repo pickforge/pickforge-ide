@@ -14,12 +14,21 @@ export interface AccountSession {
 export type AccountEntitlement = PickforgeEntitlement;
 
 const CACHE_KEY = "pickforge.proAccount";
+const PENDING_SIGN_IN_KEY = "pickforge.proAccount.pendingSignIn";
 const SIGN_IN_TIMEOUT_MS = 5 * 60 * 1000;
+const PENDING_SIGN_IN_TTL_MS = 10 * 60 * 1000;
+const CACHE_VERIFICATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface AccountCache {
   version: 1;
   session: AccountSession;
   entitlements: AccountEntitlement[];
+  verifiedAt: string | null;
+}
+
+interface PendingSignIn {
+  provider: PickforgeOAuthProvider;
+  startedAt: string;
 }
 
 interface InitOptions {
@@ -35,11 +44,13 @@ interface RefreshOptions {
 
 const [session, setSession] = createSignal<AccountSession | null>(null);
 const [entitlements, setEntitlements] = createSignal<AccountEntitlement[]>([]);
+const [verifiedAt, setVerifiedAt] = createSignal<string | null>(null);
 const [status, setStatus] = createSignal<AccountStatus>("signedOut");
 const [error, setError] = createSignal<string | null>(null);
 
 export const accountSession = session;
-export const accountEntitlements = () => activeEntitlements(entitlements());
+export const accountEntitlements = () =>
+  verifiedCacheActive() ? activeEntitlements(entitlements()) : [];
 export const accountStatus = status;
 export const accountError = error;
 
@@ -101,6 +112,13 @@ function activeEntitlements(items: AccountEntitlement[], now = Date.now()): Acco
   });
 }
 
+function verifiedCacheActive(now = Date.now()): boolean {
+  const value = verifiedAt();
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && now - timestamp <= CACHE_VERIFICATION_TTL_MS;
+}
+
 function readEntitlement(value: unknown): AccountEntitlement | null {
   const record = recordOf(value);
   if (!record) return null;
@@ -141,13 +159,22 @@ function loadCache(): AccountCache | null {
         .map(readEntitlement)
         .filter((item): item is AccountEntitlement => item !== null),
     );
-    return { version: 1, session, entitlements };
+    return {
+      version: 1,
+      session,
+      entitlements,
+      verifiedAt: stringOrNull(parsed?.verifiedAt),
+    };
   } catch {
     return null;
   }
 }
 
-function persistCache(nextSession: AccountSession | null, nextEntitlements: AccountEntitlement[]) {
+function persistCache(
+  nextSession: AccountSession | null,
+  nextEntitlements: AccountEntitlement[],
+  nextVerifiedAt = verifiedAt(),
+) {
   try {
     if (!nextSession) {
       localStorage.removeItem(CACHE_KEY);
@@ -159,9 +186,53 @@ function persistCache(nextSession: AccountSession | null, nextEntitlements: Acco
         version: 1,
         session: nextSession,
         entitlements: activeEntitlements(nextEntitlements),
+        verifiedAt: nextVerifiedAt,
       }),
     );
   } catch {
+  }
+}
+
+function clearPendingSignIn() {
+  try {
+    localStorage.removeItem(PENDING_SIGN_IN_KEY);
+  } catch {
+  }
+}
+
+function writePendingSignIn(provider: PickforgeOAuthProvider) {
+  try {
+    localStorage.setItem(
+      PENDING_SIGN_IN_KEY,
+      JSON.stringify({ provider, startedAt: new Date().toISOString() }),
+    );
+  } catch {
+  }
+}
+
+function readPendingSignIn(now = Date.now()): PendingSignIn | null {
+  try {
+    const raw = localStorage.getItem(PENDING_SIGN_IN_KEY);
+    if (!raw) return null;
+    const parsed = recordOf(JSON.parse(raw));
+    const providerValue = parsed?.provider;
+    const provider: PickforgeOAuthProvider | null =
+      providerValue === "github" || providerValue === "google" ? providerValue : null;
+    const startedAt = stringOrNull(parsed?.startedAt);
+    const timestamp = startedAt ? Date.parse(startedAt) : NaN;
+    if (
+      !provider ||
+      !startedAt ||
+      !Number.isFinite(timestamp) ||
+      now - timestamp > PENDING_SIGN_IN_TTL_MS
+    ) {
+      clearPendingSignIn();
+      return null;
+    }
+    return { provider, startedAt };
+  } catch {
+    clearPendingSignIn();
+    return null;
   }
 }
 
@@ -189,30 +260,57 @@ function clearSignInTimer() {
   }
 }
 
-function setSignedOut(options: { clearCache?: boolean } = {}) {
+function beginSigningIn() {
+  clearSignInTimer();
+  setStatus("signingIn");
+  setError(null);
+  signInTimer = setTimeout(() => {
+    if (status() === "signingIn") {
+      releaseProAuthRedirectGuard();
+      clearPendingSignIn();
+      setSession(null);
+      setEntitlements([]);
+      setVerifiedAt(null);
+      setStatus("signedOut");
+      setError("Sign-in timed out. Try again when the browser flow finishes.");
+    }
+  }, SIGN_IN_TIMEOUT_MS);
+}
+
+function setSignedOut(options: { clearCache?: boolean; clearPending?: boolean } = {}) {
   clearSignInTimer();
   releaseProAuthRedirectGuard();
+  if (options.clearPending !== false) clearPendingSignIn();
   setSession(null);
   setEntitlements([]);
+  setVerifiedAt(null);
   setStatus("signedOut");
   setError(null);
   if (options.clearCache !== false) persistCache(null, []);
 }
 
-function setSignedIn(nextSession: AccountSession, nextEntitlements: AccountEntitlement[]) {
+function setSignedIn(
+  nextSession: AccountSession,
+  nextEntitlements: AccountEntitlement[],
+  nextVerifiedAt: string | null = new Date().toISOString(),
+  options: { clearPending?: boolean } = {},
+) {
   clearSignInTimer();
   releaseProAuthRedirectGuard();
+  if (options.clearPending !== false) clearPendingSignIn();
   const active = activeEntitlements(nextEntitlements);
   setSession(nextSession);
   setEntitlements(active);
+  setVerifiedAt(nextVerifiedAt);
   setStatus("signedIn");
   setError(null);
-  persistCache(nextSession, active);
+  persistCache(nextSession, active, nextVerifiedAt);
 }
 
 function setAccountError(value: unknown) {
   clearSignInTimer();
   releaseProAuthRedirectGuard();
+  clearPendingSignIn();
   setStatus("error");
   setError(errorMessage(value));
 }
@@ -228,7 +326,7 @@ async function refreshFromAuth(options: RefreshOptions = {}) {
     if (!options.refreshSession && status() === "signingIn") return;
     nextSession = sessionFromAuth(authSession);
     if (!nextSession) {
-      setSignedOut({ clearCache: false });
+      setSignedOut({ clearCache: false, clearPending: false });
       return;
     }
   } catch (value) {
@@ -259,7 +357,8 @@ async function refreshFromAuth(options: RefreshOptions = {}) {
     if (generation !== refreshGeneration) return;
     if (options.silent && networkLikeError(value)) return;
     setEntitlements([]);
-    persistCache(nextSession, []);
+    setVerifiedAt(null);
+    persistCache(nextSession, [], null);
     setAccountError(value);
   }
 }
@@ -276,7 +375,7 @@ export async function initAccountStore(options: InitOptions = {}) {
 
   const cached = hydrate ? loadCache() : null;
   if (cached && status() !== "signingIn") {
-    setSignedIn(cached.session, cached.entitlements);
+    setSignedIn(cached.session, cached.entitlements, cached.verifiedAt ?? null, { clearPending: false });
   }
 
   try {
@@ -285,7 +384,10 @@ export async function initAccountStore(options: InitOptions = {}) {
       if (!accountsEnabled()) return;
       if (change.session === null) {
         if (change.event === "INITIAL_SESSION" && status() === "signingIn") return;
-        setSignedOut({ clearCache: change.event === "SIGNED_OUT" });
+        setSignedOut({
+          clearCache: change.event === "SIGNED_OUT",
+          clearPending: change.event === "SIGNED_OUT",
+        });
         return;
       }
       void refreshFromAuth({ forceRefresh: true, refreshSession: true, silent: true });
@@ -302,22 +404,13 @@ export async function initAccountStore(options: InitOptions = {}) {
 export async function signIn(provider: PickforgeOAuthProvider) {
   if (!accountsEnabled()) return;
   releaseProAuthRedirectGuard();
-  clearSignInTimer();
-  setStatus("signingIn");
-  setError(null);
-  signInTimer = setTimeout(() => {
-    if (status() === "signingIn") {
-      releaseProAuthRedirectGuard();
-      setSession(null);
-      setEntitlements([]);
-      setStatus("signedOut");
-      setError("Sign-in timed out. Try again when the browser flow finishes.");
-    }
-  }, SIGN_IN_TIMEOUT_MS);
+  clearPendingSignIn();
+  beginSigningIn();
   await initAccountStore({ hydrate: false, refresh: false });
   if (!accountsEnabled()) return;
 
   try {
+    writePendingSignIn(provider);
     await getProAuthClient().startOAuth(provider);
   } catch (value) {
     setAccountError(value);
@@ -328,6 +421,7 @@ export function cancelSignIn() {
   if (!accountsEnabled()) return;
   clearSignInTimer();
   releaseProAuthRedirectGuard();
+  clearPendingSignIn();
   setStatus(session() ? "signedIn" : "signedOut");
   setError(null);
 }
@@ -354,6 +448,13 @@ export function setAccountRedirectError(message: string) {
 
 export function shouldHandleAccountRedirect(): boolean {
   return accountsEnabled() && status() === "signingIn";
+}
+
+export function consumePendingAccountRedirect(): boolean {
+  if (!accountsEnabled() || !readPendingSignIn()) return false;
+  clearPendingSignIn();
+  beginSigningIn();
+  return true;
 }
 
 export function installAccountStoreBootstrap(): () => void {

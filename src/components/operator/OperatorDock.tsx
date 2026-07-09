@@ -40,6 +40,11 @@ function statusLabel(status: string): string {
   }
 }
 
+function confidenceLabel(value?: number): string | null {
+  if (value === undefined || value >= 1) return null;
+  return `${Math.round(value * 100)}% confidence`;
+}
+
 export function OperatorDock() {
   let inputEl!: HTMLInputElement;
   let panelEl!: HTMLDivElement;
@@ -109,7 +114,7 @@ export function OperatorDock() {
                 <div class="pf-op-note">
                   <span class="pf-op-note-key">router</span>
                   <span class="pf-op-note-body">
-                    needs the router model — BYO routing is not wired yet (#141).
+                    needs a router model. Configure Operator router in Settings.
                     <span class="pf-op-note-reason"> {nr().reason}</span>
                   </span>
                 </div>
@@ -119,7 +124,12 @@ export function OperatorDock() {
             <Match when={asView("preview")}>
               {(p) => (
                 <div class="pf-op-preview">
-                  <div class="pf-op-preview-summary">{p().summary}</div>
+                  <div class="pf-op-preview-summary">
+                    {p().summary}
+                    <Show when={confidenceLabel(p().confidence)}>
+                      {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
+                    </Show>
+                  </div>
                   <div class="pf-op-actions">
                     <EmberButton
                       label="Confirm"

@@ -86,6 +86,9 @@
   border-radius: var(--pf-radius-sm);
   padding: var(--pf-space-sm) var(--pf-space-md);
 }
+.pf-op-preview-confidence {
+  color: var(--pf-text-low);
+}
 .pf-op-actions {
   display: flex;
   gap: var(--pf-space-sm);

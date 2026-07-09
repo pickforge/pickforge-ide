@@ -3,6 +3,7 @@
 // this store drives the state machine so OperatorDock stays presentational.
 import { createSignal } from "solid-js";
 import { parseCommand } from "../lib/operatorParser";
+import { routeCommand } from "../lib/operatorRouter";
 import { dispatchIntent, type DispatchResult } from "./operator";
 import { flagEnabled } from "./flags";
 import { operatorAuditList, type OperatorAuditRow } from "../lib/db";
@@ -12,7 +13,13 @@ import { onRouteChange } from "../router";
 export type DockView =
   | { kind: "idle" }
   | { kind: "needsRouter"; reason: string }
-  | { kind: "preview"; intent: OperatorIntent; summary: string; inputText: string }
+  | {
+    kind: "preview";
+    intent: OperatorIntent;
+    summary: string;
+    inputText: string;
+    confidence?: number;
+  }
   | { kind: "result"; result: DispatchResult };
 
 const RECENT_LIMIT = 5;
@@ -87,25 +94,45 @@ export async function submitOperatorCommand(): Promise<void> {
   const parsed = parseCommand(text);
   if (parsed.kind === "empty") return;
   if (parsed.kind === "needsRouter") {
-    setView({ kind: "needsRouter", reason: parsed.reason });
+    const epoch = ++requestEpoch;
+    setBusy(true);
+    setView({ kind: "needsRouter", reason: "routing…" });
+    try {
+      const routed = await routeCommand(text);
+      if (epoch !== requestEpoch) return;
+      switch (routed.kind) {
+        case "proposal":
+          await submitIntent(
+            routed.intent,
+            text,
+            epoch,
+            routed.confidence < 1 ? routed.confidence : undefined,
+          );
+          return;
+        case "unclear":
+          setView({ kind: "needsRouter", reason: routed.reason });
+          return;
+        case "error":
+          setView({ kind: "needsRouter", reason: routed.message });
+          return;
+        case "unconfigured":
+          setView({
+            kind: "needsRouter",
+            reason: "Operator router is off. Choose a backend in Settings.",
+          });
+          return;
+      }
+    } finally {
+      if (epoch === requestEpoch) setBusy(false);
+      void refreshRecent();
+    }
     return;
   }
 
   const epoch = ++requestEpoch;
   setBusy(true);
   try {
-    const result = await dispatchIntent(parsed.intent, { inputText: text });
-    if (epoch !== requestEpoch) return;
-    if (result.status === "needsConfirmation") {
-      setView({
-        kind: "preview",
-        intent: parsed.intent,
-        summary: result.summary,
-        inputText: text,
-      });
-    } else {
-      applyResult(result);
-    }
+    await submitIntent(parsed.intent, text, epoch);
   } finally {
     if (epoch === requestEpoch) setBusy(false);
     void refreshRecent();
@@ -139,6 +166,27 @@ export function cancelOperatorPreview() {
 function applyResult(result: DispatchResult) {
   setView({ kind: "result", result });
   if (result.status === "done") setInput("");
+}
+
+async function submitIntent(
+  intent: OperatorIntent,
+  text: string,
+  epoch: number,
+  confidence?: number,
+) {
+  const result = await dispatchIntent(intent, { inputText: text });
+  if (epoch !== requestEpoch) return;
+  if (result.status === "needsConfirmation") {
+    setView({
+      kind: "preview",
+      intent,
+      summary: result.summary,
+      inputText: text,
+      confidence,
+    });
+  } else {
+    applyResult(result);
+  }
 }
 
 export function relativeTime(then: number, now = Date.now()): string {

@@ -55,6 +55,13 @@ import { flagEnabled, flagStates, setFlagOverride, type FlagKey } from "../store
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
 import {
+  operatorRouterSettings,
+  setOperatorRouterBackend,
+  setOperatorRouterModel,
+  type OperatorRouterBackend,
+  type OperatorRouterSettingBackend,
+} from "../stores/operatorRouterSettings";
+import {
   remoteHostIssuePairingCode,
   remoteHostStart,
   remoteHostStatus,
@@ -89,6 +96,11 @@ function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function formatLatency(ms: number): string {
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(ms >= 10_000 ? 0 : 1)}s`;
+  return `${Math.round(ms)}ms`;
 }
 
 export function SettingsScreen() {
@@ -218,6 +230,30 @@ export function SettingsScreen() {
   const conflicts = () => conflictingHotkeys(quickLaunchItems());
   const agentLabel = (id?: string) =>
     AGENTS.find((a) => a.id === id)?.label ?? id ?? "";
+  const routerBackendOptions = [
+    { value: "off", label: "Off" },
+    { value: "claudeCode", label: "Claude Code", icon: () => <IconClaude size={13} /> },
+    { value: "codex", label: "Codex", icon: () => <IconOpenAI size={13} /> },
+    { value: "ollama", label: "Ollama", icon: () => <IconIngot size={13} /> },
+  ];
+  const routerBackend = () => operatorRouterSettings().backend;
+  const activeRouterBackend = (): OperatorRouterBackend | null => {
+    const backend = routerBackend();
+    return backend === "off" ? null : backend;
+  };
+  const routerLatencyHint = () => {
+    const backend = activeRouterBackend();
+    if (!backend) return null;
+    const latency = operatorRouterSettings().lastLatencyMs[backend];
+    if (latency === undefined) return null;
+    const model = operatorRouterSettings().models[backend];
+    const via = routerBackendOptions.find((option) => option.value === backend)?.label ?? backend;
+    return `~${formatLatency(latency)} via ${via.toLowerCase()} · ${model}`;
+  };
+  const changeRouterBackend = (backend: string) =>
+    setOperatorRouterBackend(backend as OperatorRouterSettingBackend);
+  const changeRouterModel = (backend: OperatorRouterBackend, model: string) =>
+    setOperatorRouterModel(backend, model);
   const pickLabDoctorLabel = () => {
     const status = pickLab();
     if (!status?.cliAvailable) return "Not installed";
@@ -378,6 +414,38 @@ export function SettingsScreen() {
             )}
           </For>
         </Section>
+
+        <Show when={flagEnabled("operator")}>
+          <Section title="Operator router">
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">Backend</span>
+              <Dropdown
+                class="pf-settings-dropdown"
+                value={routerBackend()}
+                onChange={changeRouterBackend}
+                options={routerBackendOptions}
+              />
+            </div>
+            <Show when={activeRouterBackend()}>
+              {(backend) => (
+                <>
+                  <div class="pf-settings-row">
+                    <span class="pf-settings-label">Model</span>
+                    <input
+                      class="pf-input pf-router-model"
+                      value={operatorRouterSettings().models[backend()]}
+                      spellcheck={false}
+                      onInput={(e) => changeRouterModel(backend(), e.currentTarget.value)}
+                    />
+                  </div>
+                  <Show when={routerLatencyHint()}>
+                    {(hint) => <span class="pf-settings-muted">{hint()}</span>}
+                  </Show>
+                </>
+              )}
+            </Show>
+          </Section>
+        </Show>
 
         <Section title="Chats">
           <div class="pf-settings-row">

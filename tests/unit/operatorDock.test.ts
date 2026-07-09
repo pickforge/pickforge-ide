@@ -4,6 +4,7 @@ import type { DispatchResult } from "../../src/stores/operator";
 
 const deps = vi.hoisted(() => ({
   parseCommand: vi.fn(),
+  routeCommand: vi.fn(),
   dispatchIntent: vi.fn(),
   flagEnabled: vi.fn(),
   operatorAuditList: vi.fn(),
@@ -11,6 +12,9 @@ const deps = vi.hoisted(() => ({
 
 vi.mock("../../src/lib/operatorParser", () => ({
   parseCommand: deps.parseCommand,
+}));
+vi.mock("../../src/lib/operatorRouter", () => ({
+  routeCommand: deps.routeCommand,
 }));
 vi.mock("../../src/stores/operator", () => ({
   dispatchIntent: deps.dispatchIntent,
@@ -56,6 +60,7 @@ async function loadStore() {
 
 beforeEach(() => {
   deps.parseCommand.mockReset();
+  deps.routeCommand.mockReset().mockResolvedValue({ kind: "unconfigured" });
   deps.dispatchIntent.mockReset();
   deps.flagEnabled.mockReset().mockReturnValue(true);
   deps.operatorAuditList.mockReset().mockResolvedValue([]);
@@ -107,14 +112,84 @@ describe("operatorDock store", () => {
     expect(deps.dispatchIntent).not.toHaveBeenCalled();
   });
 
-  it("surfaces a needsRouter state without dispatching", async () => {
+  it("surfaces an unconfigured router state without dispatching", async () => {
     deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
     const s = await loadStore();
 
     s.setOperatorInput("teach me to fly");
     await s.submitOperatorCommand();
 
-    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "no deterministic match" });
+    expect(deps.routeCommand).toHaveBeenCalledWith("teach me to fly");
+    expect(s.operatorView()).toEqual({
+      kind: "needsRouter",
+      reason: "Operator router is off. Choose a backend in Settings.",
+    });
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("routes a tier-0 proposal through the normal dispatch result path", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: openProject,
+      confidence: 0.86,
+      latencyMs: 1200,
+    });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Opened project App" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInput("open App");
+    await s.submitOperatorCommand();
+
+    expect(deps.dispatchIntent).toHaveBeenCalledWith(openProject, { inputText: "open App" });
+    expect(s.operatorView()).toEqual({
+      kind: "result",
+      result: { status: "done", summary: "Opened project App" },
+    });
+    expect(s.operatorInput()).toBe("");
+  });
+
+  it("routes a tier-1 proposal to preview with confidence", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: sendPrompt,
+      confidence: 0.74,
+      latencyMs: 1300,
+    });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+    } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInput("tell it hi");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorView()).toMatchObject({
+      kind: "preview",
+      intent: sendPrompt,
+      summary: "Send prompt to active chat",
+      inputText: "tell it hi",
+      confidence: 0.74,
+    });
+  });
+
+  it("surfaces router unclear and error states without dispatching", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    const s = await loadStore();
+
+    deps.routeCommand.mockResolvedValueOnce({ kind: "unclear", reason: "too vague" });
+    s.setOperatorInput("make it better");
+    await s.submitOperatorCommand();
+    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "too vague" });
+
+    deps.routeCommand.mockResolvedValueOnce({ kind: "error", message: "model not found" });
+    s.setOperatorInput("open project App");
+    await s.submitOperatorCommand();
+    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "model not found" });
     expect(deps.dispatchIntent).not.toHaveBeenCalled();
   });
 
@@ -307,6 +382,37 @@ describe("operatorDock store", () => {
 
     s.openOperatorDock();
     expect(s.operatorView()).toEqual({ kind: "idle" });
+  });
+
+  it("ignores a slow router result that lands after the dock was closed", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    let resolveRoute!: (r: unknown) => void;
+    deps.routeCommand.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRoute = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("open App");
+    const pending = s.submitOperatorCommand();
+    expect(s.operatorBusy()).toBe(true);
+    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "routing…" });
+
+    s.closeOperatorDock();
+    resolveRoute({
+      kind: "proposal",
+      intent: openProject,
+      confidence: 0.7,
+      latencyMs: 1000,
+    });
+    await pending;
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(s.operatorBusy()).toBe(false);
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
   });
 
   it("ignores a late needsConfirmation preview after close", async () => {

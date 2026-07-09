@@ -20,6 +20,7 @@ reset this file.
 - Operator M1 core parser, dispatch, and audit landed dark behind the `operator` flag.
 - Operator composer dock landed dark behind the `operator` flag.
 - Operator device/run intents (M1.5) wired dark behind the `operator` flag.
+- BYO operator routing (Claude Code / Codex / Ollama) landed dark behind the `operator` flag.
 - Landed accounts/auth wiring dark behind the `accounts` flag.
 
 ## Validation

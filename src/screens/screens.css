@@ -152,6 +152,9 @@
   min-width: 220px;
   max-width: 280px;
 }
+.pf-router-model {
+  width: min(260px, 100%);
+}
 /* ---- quick-launch editor ---- */
 .pf-input {
   background: var(--pf-surface-2);

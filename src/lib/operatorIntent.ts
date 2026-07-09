@@ -89,7 +89,7 @@ const selectWidgetSchema = z.strictObject({
   description: nonEmptyString,
 });
 
-const operatorActionSchema = z.discriminatedUnion("action", [
+export const operatorActionSchema = z.discriminatedUnion("action", [
   openProjectSchema,
   openChatSchema,
   createChatSchema,
@@ -145,6 +145,11 @@ const legacyOperatorIntentSchema = z.strictObject({
 
 export type OperatorIntent = z.infer<typeof operatorIntentSchema>;
 export type OperatorAction = z.infer<typeof operatorActionSchema>;
+
+export const operatorActionNames = operatorActionSchema.options.map((option) => {
+  const [name] = option.shape.action.values;
+  return name;
+});
 
 export type OperatorIntentParseResult =
   | { ok: true; intent: OperatorIntent }

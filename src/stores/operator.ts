@@ -1,7 +1,16 @@
 import type { AgentProvider } from "../lib/agentChat";
+import {
+  loadAgentEfforts,
+  loadAgentModels,
+  nativeChatModel,
+} from "../lib/agentModels";
+import { loadAgentModes } from "../lib/agentModes";
+import { isPrimaryChat } from "../lib/chatLabels";
+import { loadAgentEngine } from "../lib/chatDefaults";
 import * as db from "../lib/db";
 import type { Chat, Project } from "../lib/db";
 import { riskTier, type OperatorAction, type OperatorIntent } from "../lib/operatorIntent";
+import { isChatArchived } from "./chatArchive";
 import { flagEnabled } from "./flags";
 import {
   agentChat,
@@ -170,6 +179,10 @@ function agentTarget(chat: Chat): Resolution<{ chat: Chat; provider: AgentProvid
   return { ok: true, value: { chat, provider } };
 }
 
+function isVisiblePrimaryChat(chat: Chat): boolean {
+  return !isChatArchived(chat.chatId) && isPrimaryChat(chat);
+}
+
 function summaryFor(intent: OperatorIntent): string {
   const action = intent.action;
   switch (action.action) {
@@ -256,6 +269,18 @@ async function finishAudit(
   await db.operatorAuditUpdate(auditId, status, result);
 }
 
+async function noteAuditUpdateFailure(
+  auditId: string,
+  status: AuditStatus,
+  result: string,
+): Promise<void> {
+  try {
+    await finishAudit(auditId, status, result);
+  } catch (error) {
+    console.warn("[pickforge] operator audit update failed", error);
+  }
+}
+
 async function terminalResult(
   intent: OperatorIntent,
   tier: 0 | 1,
@@ -292,7 +317,7 @@ async function chatToOpen(intent: OperatorIntent, chatRef: string | null): Promi
   if (chatRef) return resolveChatReference(project.value.projectRoot, chatRef);
 
   await ensureChatsLoaded(project.value.projectRoot);
-  const chats = chatsFor(project.value.projectRoot);
+  const chats = chatsFor(project.value.projectRoot).filter(isVisiblePrimaryChat);
   if (!chats.length) {
     return { ok: false, message: `no chat to open in ${project.value.displayName}` };
   }
@@ -310,11 +335,18 @@ async function sendToChat(chat: Chat, prompt: string): Promise<DispatchResult> {
   if (!target.ok) return { status: "failed", message: target.message };
   const state = agentChat(chat.chatId);
   if (!state?.sessionId) {
+    const provider = target.value.provider;
+    const model = state?.model ?? nativeChatModel(provider, loadAgentModels()[provider] ?? null);
     await ensureAgentChat(
       chat.chatId,
       chat.projectRoot,
-      target.value.provider,
-      state?.model ?? null,
+      provider,
+      model,
+      {
+        engine: loadAgentEngine(),
+        effort: loadAgentEfforts()[provider] ?? null,
+        mode: loadAgentModes()[provider] ?? null,
+      },
     );
   }
   await sendAgentMessage(chat.chatId, prompt);
@@ -326,8 +358,8 @@ async function resolveRunChat(intent: OperatorIntent, runRef: string | null): Pr
   return chatFor(intent, runRef);
 }
 
-function swarmSummary(): string {
-  const runs = swarmRuns();
+function swarmSummary(projectRoot: string): string {
+  const runs = swarmRuns().filter((run) => run.projectRoot === projectRoot);
   if (!runs.length) return "No swarm runs.";
   const statuses: Array<ReturnType<typeof swarmRuns>[number]["status"]> = [
     "queued",
@@ -393,8 +425,16 @@ async function runIntent(intent: OperatorIntent): Promise<DispatchResult> {
         if (!chat.ok) return { status: "failed", message: chat.message };
         return sendToChat(chat.value, action.prompt);
       }
+      const project = intent.projectRef ? await projectFor(intent) : null;
+      if (project && !project.ok) return { status: "failed", message: project.message };
       const chat = activeChat();
       if (!chat.ok) return { status: "failed", message: chat.message };
+      if (project && chat.value.projectRoot !== project.value.projectRoot) {
+        return {
+          status: "failed",
+          message: `Active chat "${chat.value.title}" is not in project ${project.value.displayName}`,
+        };
+      }
       return sendToChat(chat.value, action.prompt);
     }
     case "startSwarm": {
@@ -408,8 +448,11 @@ async function runIntent(intent: OperatorIntent): Promise<DispatchResult> {
       });
       return { status: "done", summary: `Started swarm ${runId}` };
     }
-    case "swarmStatus":
-      return { status: "done", summary: swarmSummary() };
+    case "swarmStatus": {
+      const project = await projectFor(intent);
+      if (!project.ok) return { status: "failed", message: project.message };
+      return { status: "done", summary: swarmSummary(project.value.projectRoot) };
+    }
     case "interruptRun": {
       const chat = await resolveRunChat(intent, action.run);
       if (!chat.ok) return { status: "failed", message: chat.message };
@@ -477,11 +520,11 @@ export async function dispatchIntent(
 
   try {
     const result = await runIntent(intent);
-    await finishAudit(auditId, auditStatusFor(result), resultText(result));
+    await noteAuditUpdateFailure(auditId, auditStatusFor(result), resultText(result));
     return result;
   } catch (error) {
     const message = errorText(error);
-    await finishAudit(auditId, "failed", message);
+    await noteAuditUpdateFailure(auditId, "failed", message);
     return { status: "failed", message };
   }
 }

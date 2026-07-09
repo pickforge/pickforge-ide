@@ -32,12 +32,23 @@ const deps = vi.hoisted(() => {
     activeChatId: null as string | null,
   };
   const agentStates = new Map<string, { sessionId: string | null; model: string | null }>();
-  const runs: Array<{ status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled" }> = [];
+  const archivedChats = new Set<string>();
+  const runs: Array<{
+    projectRoot: string;
+    status: "queued" | "starting" | "running" | "completed" | "failed" | "cancelled";
+  }> = [];
   return {
     workspace,
     agentStates,
+    archivedChats,
     runs,
     flagEnabled: vi.fn(),
+    loadAgentModels: vi.fn(),
+    loadAgentEfforts: vi.fn(),
+    nativeChatModel: vi.fn(),
+    loadAgentModes: vi.fn(),
+    loadAgentEngine: vi.fn(),
+    isChatArchived: vi.fn((chatId: string) => archivedChats.has(chatId)),
     operatorAuditInsert: vi.fn(),
     operatorAuditUpdate: vi.fn(),
     operatorAuditList: vi.fn(),
@@ -70,8 +81,24 @@ const deps = vi.hoisted(() => {
       workspace.chatsByRoot = {};
       workspace.activeChatId = null;
       agentStates.clear();
+      archivedChats.clear();
       runs.splice(0);
       this.flagEnabled.mockReset().mockReturnValue(true);
+      this.loadAgentModels.mockReset().mockReturnValue({
+        claudeCode: "claude-opus-4-8",
+        codex: "gpt-5.5",
+      });
+      this.loadAgentEfforts.mockReset().mockReturnValue({
+        claudeCode: "max",
+        codex: "high",
+      });
+      this.nativeChatModel.mockReset().mockImplementation((_provider: string, model: string | null) => model);
+      this.loadAgentModes.mockReset().mockReturnValue({
+        claudeCode: "plan",
+        codex: "read-only",
+      });
+      this.loadAgentEngine.mockReset().mockReturnValue("test-engine");
+      this.isChatArchived.mockClear();
       this.operatorAuditInsert.mockReset().mockResolvedValue(undefined);
       this.operatorAuditUpdate.mockReset().mockResolvedValue(undefined);
       this.operatorAuditList.mockReset().mockResolvedValue([]);
@@ -98,10 +125,28 @@ vi.mock("../../src/stores/flags", () => ({
   flagEnabled: deps.flagEnabled,
 }));
 
+vi.mock("../../src/lib/agentModels", () => ({
+  loadAgentModels: deps.loadAgentModels,
+  loadAgentEfforts: deps.loadAgentEfforts,
+  nativeChatModel: deps.nativeChatModel,
+}));
+
+vi.mock("../../src/lib/agentModes", () => ({
+  loadAgentModes: deps.loadAgentModes,
+}));
+
+vi.mock("../../src/lib/chatDefaults", () => ({
+  loadAgentEngine: deps.loadAgentEngine,
+}));
+
 vi.mock("../../src/lib/db", () => ({
   operatorAuditInsert: deps.operatorAuditInsert,
   operatorAuditUpdate: deps.operatorAuditUpdate,
   operatorAuditList: deps.operatorAuditList,
+}));
+
+vi.mock("../../src/stores/chatArchive", () => ({
+  isChatArchived: deps.isChatArchived,
 }));
 
 vi.mock("../../src/stores/workspace", () => ({
@@ -322,8 +367,45 @@ describe("dispatchIntent", () => {
     expect(deps.selectChat).toHaveBeenCalledWith("chat-new");
   });
 
+  it("opens the most recent visible primary chat when openChat has no chat ref", async () => {
+    deps.archivedChats.add("chat-archived");
+    deps.workspace.chatsByRoot["/repo/app"] = [
+      { ...chat("chat-visible", "/repo/app", "Visible Chat"), lastActivityAt: 20 },
+      { ...chat("chat-archived", "/repo/app", "Archived Chat"), lastActivityAt: 40 },
+      {
+        ...chat("chat-worker", "/repo/app", "Worker Chat"),
+        labelsJson: JSON.stringify({ role: "swarmWorker" }),
+        lastActivityAt: 60,
+      },
+    ];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openChat", chat: null }));
+
+    expect(result).toEqual({ status: "done", summary: "Opened chat Visible Chat" });
+    expect(deps.selectChat).toHaveBeenCalledWith("chat-visible");
+  });
+
   it("fails clearly when openChat has no chat ref and the project has no chats", async () => {
     deps.workspace.chatsByRoot["/repo/app"] = [];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openChat", chat: null }));
+
+    expect(result).toEqual({ status: "failed", message: "no chat to open in App" });
+    expect(deps.selectChat).not.toHaveBeenCalled();
+  });
+
+  it("fails clearly when openChat has no visible chats", async () => {
+    deps.archivedChats.add("chat-archived");
+    deps.workspace.chatsByRoot["/repo/app"] = [
+      { ...chat("chat-archived", "/repo/app", "Archived Chat"), lastActivityAt: 40 },
+      {
+        ...chat("chat-worker", "/repo/app", "Worker Chat"),
+        labelsJson: JSON.stringify({ role: "swarmWorker" }),
+        lastActivityAt: 60,
+      },
+    ];
     const { dispatchIntent } = await loadStore();
 
     const result = await dispatchIntent(intent({ action: "openChat", chat: null }));
@@ -374,7 +456,31 @@ describe("dispatchIntent", () => {
       "/repo/app",
       "codex",
       "gpt-5.5",
+      { engine: "test-engine", effort: "high", mode: "read-only" },
     );
+    expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "ship it");
+  });
+
+  it("uses configured agent defaults when cold-starting an unmounted chat", async () => {
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "sendPrompt", prompt: "ship it", chat: null }),
+      { confirmed: true },
+    );
+
+    expect(result.status).toBe("done");
+    expect(deps.ensureAgentChat).toHaveBeenCalledWith(
+      "chat-main",
+      "/repo/app",
+      "codex",
+      "gpt-5.5",
+      { engine: "test-engine", effort: "high", mode: "read-only" },
+    );
+    expect(deps.loadAgentModels).toHaveBeenCalled();
+    expect(deps.loadAgentEfforts).toHaveBeenCalled();
+    expect(deps.loadAgentModes).toHaveBeenCalled();
+    expect(deps.loadAgentEngine).toHaveBeenCalled();
     expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "ship it");
   });
 
@@ -389,6 +495,74 @@ describe("dispatchIntent", () => {
 
     expect(deps.ensureAgentChat).not.toHaveBeenCalled();
     expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "continue");
+  });
+
+  it("does not send to an active chat from a different project when projectRef is set", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.workspace.chatsByRoot["/repo/other"] = [
+      chat("chat-other", "/repo/other", "Other Chat", "agent", "codex"),
+    ];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "sendPrompt", prompt: "ship it", chat: null }, "Other"),
+      { confirmed: true },
+    );
+
+    expect(result).toEqual({
+      status: "failed",
+      message: 'Active chat "Main" is not in project Other',
+    });
+    expect(deps.ensureAgentChat).not.toHaveBeenCalled();
+    expect(deps.sendAgentMessage).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("scopes swarm status to the resolved project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.runs.push(
+      { projectRoot: "/repo/app", status: "running" },
+      { projectRoot: "/repo/app", status: "completed" },
+      { projectRoot: "/repo/other", status: "failed" },
+    );
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "swarmStatus" }, "App"));
+
+    expect(result).toEqual({
+      status: "done",
+      summary: "Swarm runs: running 1, completed 1",
+    });
+  });
+
+  it("returns done when a successful dispatch cannot update its audit row", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deps.operatorAuditUpdate.mockRejectedValueOnce(new Error("audit down"));
+    const { dispatchIntent } = await loadStore();
+
+    try {
+      const result = await dispatchIntent(intent({ action: "openProject" }, "App"));
+
+      expect(result).toEqual({ status: "done", summary: "Opened project App" });
+      expect(deps.selectProject).toHaveBeenCalledTimes(1);
+      expect(deps.operatorAuditUpdate).toHaveBeenCalledWith(
+        expect.any(String),
+        "done",
+        "Opened project App",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[pickforge] operator audit update failed",
+        expect.any(Error),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("returns failed and updates audit when a seam throws", async () => {

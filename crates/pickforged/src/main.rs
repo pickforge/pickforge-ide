@@ -1,3 +1,4 @@
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -9,7 +10,27 @@ use pickforge_core::{
     tailscale_status, DaemonConfig, DaemonListener, DaemonStatus, PairingCode, RemoteAuthStore,
     RemoteAuthStoreSnapshot, RemoteHostDaemon, REMOTE_PROTOCOL_NAME,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+const RUNTIME_STATE_FILE: &str = "pickforged-state.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DaemonRuntimeState {
+    pid: u32,
+    listener_addr: String,
+}
+
+struct RuntimeStateFileGuard {
+    path: PathBuf,
+}
+
+impl Drop for RuntimeStateFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -57,10 +78,19 @@ fn print_help() {
 }
 
 fn print_status() -> Result<(), String> {
+    let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
+    if let Some(state) = live_runtime_state(&home)? {
+        return print_json(&status_json_from_runtime_state(
+            &home,
+            &state,
+            status_endpoint_reports_daemon,
+        )?);
+    }
+
     let config = DaemonConfig::from_env(None).map_err(|err| err.to_string())?;
     let mut status = serde_json::to_value(status_from_config(config.clone())?)
         .map_err(|err| err.to_string())?;
-    status["listenerRunning"] = json!(listener_running(&config));
+    status["listenerRunning"] = json!(listener_running_from_config(&config));
     print_json(&status)
 }
 
@@ -68,18 +98,31 @@ async fn serve(args: &[String]) -> Result<(), String> {
     let listener = listener_arg(args)?.ok_or("missing --listen <loopback-host:port>")?;
     let home = pickforge_core::pickforge_home(None).map_err(|err| err.to_string())?;
     let server = spawn_remote_http_server(DaemonConfig {
-        pickforge_home: home,
+        pickforge_home: home.clone(),
         listener,
     })
     .await
     .map_err(|err| err.to_string())?;
+    let runtime_state = DaemonRuntimeState {
+        pid: std::process::id(),
+        listener_addr: server.info().local_addr.to_string(),
+    };
+    let runtime_guard = match write_runtime_state(&home, &runtime_state) {
+        Ok(guard) => guard,
+        Err(err) => {
+            let _ = server.shutdown().await;
+            return Err(err);
+        }
+    };
     println!(
         "pickforged listening on http://{}",
         server.info().local_addr
     );
-    std::future::pending::<()>().await;
-    #[allow(unreachable_code)]
-    Ok(())
+    let signal_result = wait_for_shutdown_signal().await;
+    let shutdown_result = server.shutdown().await.map_err(|err| err.to_string());
+    drop(runtime_guard);
+    signal_result?;
+    shutdown_result
 }
 
 fn issue_pairing_code(args: &[String]) -> Result<(), String> {
@@ -106,7 +149,7 @@ fn status_from_config(config: DaemonConfig) -> Result<DaemonStatus, String> {
     Ok(daemon.status(now_ms()))
 }
 
-fn listener_running(config: &DaemonConfig) -> bool {
+fn listener_running_from_config(config: &DaemonConfig) -> bool {
     let Ok(daemon) = RemoteHostDaemon::new(config.clone()) else {
         return false;
     };
@@ -114,6 +157,104 @@ fn listener_running(config: &DaemonConfig) -> bool {
         return false;
     };
     status_endpoint_reports_daemon(&target)
+}
+
+fn runtime_state_path(home: &str) -> PathBuf {
+    Path::new(home).join(RUNTIME_STATE_FILE)
+}
+
+fn write_runtime_state(
+    home: &str,
+    state: &DaemonRuntimeState,
+) -> Result<RuntimeStateFileGuard, String> {
+    let path = runtime_state_path(home);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let tmp = path.with_extension(format!("json.tmp-{}", std::process::id()));
+    let json = serde_json::to_vec_pretty(state).map_err(|err| err.to_string())?;
+    if let Err(err) = fs::write(&tmp, json) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err.to_string());
+    }
+    if let Err(err) = fs::rename(&tmp, &path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err.to_string());
+    }
+    Ok(RuntimeStateFileGuard { path })
+}
+
+fn live_runtime_state(home: &str) -> Result<Option<DaemonRuntimeState>, String> {
+    live_runtime_state_from_path(&runtime_state_path(home), pid_is_alive)
+}
+
+fn live_runtime_state_from_path(
+    path: &Path,
+    pid_alive: impl Fn(u32) -> bool,
+) -> Result<Option<DaemonRuntimeState>, String> {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.to_string()),
+    };
+    let state: DaemonRuntimeState =
+        serde_json::from_slice(&raw).map_err(|err| err.to_string())?;
+    if pid_alive(state.pid) {
+        Ok(Some(state))
+    } else {
+        let _ = fs::remove_file(path);
+        Ok(None)
+    }
+}
+
+fn status_json_from_runtime_state(
+    home: &str,
+    state: &DaemonRuntimeState,
+    listener_running: impl FnOnce(&str) -> bool,
+) -> Result<serde_json::Value, String> {
+    let listener = parse_listener(&state.listener_addr).map_err(|err| err.to_string())?;
+    let config = DaemonConfig {
+        pickforge_home: home.into(),
+        listener,
+    };
+    let mut status = serde_json::to_value(status_from_config(config)?)
+        .map_err(|err| err.to_string())?;
+    status["listenerRunning"] = json!(listener_running(&state.listener_addr));
+    Ok(status)
+}
+
+#[cfg(unix)]
+fn pid_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(not(unix))]
+fn pid_is_alive(pid: u32) -> bool {
+    pid == std::process::id()
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() -> Result<(), String> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .map_err(|err| err.to_string())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result.map_err(|err| err.to_string()),
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() -> Result<(), String> {
+    tokio::signal::ctrl_c()
+        .await
+        .map_err(|err| err.to_string())
 }
 
 fn status_endpoint_reports_daemon(target: &str) -> bool {
@@ -253,6 +394,10 @@ mod tests {
         remote_auth_store_path(&dir.to_string_lossy())
     }
 
+    fn temp_state_path(name: &str) -> PathBuf {
+        temp_auth_path(name).with_file_name(RUNTIME_STATE_FILE)
+    }
+
     #[test]
     fn arg_parsers_validate_listener_and_ports() {
         let args = vec![
@@ -293,6 +438,58 @@ mod tests {
         })
         .unwrap();
         assert!(loopback.listener_enabled);
+    }
+
+    #[test]
+    fn runtime_state_file_reads_live_pid() {
+        let path = temp_state_path("runtime-live");
+        let state = DaemonRuntimeState {
+            pid: 123,
+            listener_addr: "127.0.0.1:4747".into(),
+        };
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+
+        let loaded = live_runtime_state_from_path(&path, |pid| pid == 123)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(loaded, state);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn runtime_state_file_removes_stale_pid() {
+        let path = temp_state_path("runtime-stale");
+        let state = DaemonRuntimeState {
+            pid: 123,
+            listener_addr: "127.0.0.1:4747".into(),
+        };
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+
+        assert_eq!(
+            live_runtime_state_from_path(&path, |_| false).unwrap(),
+            None
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn status_from_runtime_state_reports_saved_listener() {
+        let state = DaemonRuntimeState {
+            pid: 123,
+            listener_addr: "127.0.0.1:4747".into(),
+        };
+
+        let status = status_json_from_runtime_state("/tmp/pickforge", &state, |addr| {
+            assert_eq!(addr, "127.0.0.1:4747");
+            true
+        })
+        .unwrap();
+
+        assert_eq!(status["listenerEnabled"], json!(true));
+        assert_eq!(status["listenerRunning"], json!(true));
+        assert_eq!(status["listener"]["kind"], json!("loopback"));
+        assert_eq!(status["listener"]["port"], json!(4747));
     }
 
     #[test]

@@ -5,8 +5,7 @@ use crate::process::CommandOutcome;
 use super::ssh::{ssh_run, SshError, SshTarget};
 
 const NEAREST_PUBSPEC_SCRIPT: &str = r#"dir=$1
-i=0
-while [ "$i" -le 10 ]; do
+while [ -n "$dir" ]; do
   if [ -f "$dir/pubspec.yaml" ]; then
     printf '%s\n' "$dir"
     exit 0
@@ -16,7 +15,6 @@ while [ "$i" -le 10 ]; do
     exit 0
   fi
   dir=$parent
-  i=$((i + 1))
 done"#;
 
 const DETECT_BINARIES_SCRIPT: &str = r#"for name do

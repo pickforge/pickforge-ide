@@ -134,16 +134,22 @@ fn tailnet_state_from_status(host: &str, json: &Value) -> ProbeState {
 }
 
 fn peer_matches(host: &str, peer: &Value) -> bool {
-    let host = normalize_name(host);
+    let normalized_host = normalize_name(host);
     peer.get("HostName")
         .and_then(Value::as_str)
         .map(normalize_name)
-        .is_some_and(|name| name == host)
+        .is_some_and(|name| name == normalized_host)
         || peer
             .get("DNSName")
             .and_then(Value::as_str)
             .map(normalize_name)
-            .is_some_and(|dns| dns == host || dns.starts_with(&format!("{host}.")))
+            .is_some_and(|dns| {
+                dns == normalized_host || dns.starts_with(&format!("{normalized_host}."))
+            })
+        || peer
+            .get("TailscaleIPs")
+            .and_then(Value::as_array)
+            .is_some_and(|ips| ips.iter().any(|ip| ip.as_str() == Some(host)))
 }
 
 fn normalize_name(value: &str) -> String {
@@ -193,11 +199,13 @@ mod tests {
         "nodekey:mac": {
           "HostName": "Mac-Mini",
           "DNSName": "mac-mini.tailnet.ts.net.",
+          "TailscaleIPs": ["100.64.0.10"],
           "Online": true
         },
         "nodekey:linux": {
           "HostName": "linux-box",
           "DNSName": "linux-box.tailnet.ts.net.",
+          "TailscaleIPs": ["100.64.0.11"],
           "Online": false
         }
       }
@@ -210,6 +218,10 @@ mod tests {
         assert_eq!(tailnet_state_from_status("MAC-MINI", &json), ProbeState::Ok);
         assert_eq!(
             tailnet_state_from_status("mac-mini.tailnet.ts.net", &json),
+            ProbeState::Ok
+        );
+        assert_eq!(
+            tailnet_state_from_status("100.64.0.10", &json),
             ProbeState::Ok
         );
     }

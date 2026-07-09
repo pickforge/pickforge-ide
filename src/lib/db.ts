@@ -91,6 +91,17 @@ export interface AgentRunLog {
   wrapperScriptPath: string;
 }
 
+export interface OperatorAuditRow {
+  id: string;
+  createdAt: number;
+  projectRoot: string | null;
+  inputText: string;
+  intentJson: string;
+  riskTier: number;
+  status: "started" | "done" | "failed" | "denied" | "needs_confirmation";
+  result: string | null;
+}
+
 // ---- projects ----
 export const projectsList = (includeArchived = false) =>
   invoke<Project[]>("projects_list", { includeArchived });
@@ -152,3 +163,14 @@ export const agentRunFinish = (
   hotReloadCount: number,
 ) =>
   invoke<void>("agent_run_finish", { id, finishedAt, exitCode, hotReloadCount });
+
+// ---- operator audit ----
+export const operatorAuditInsert = (row: OperatorAuditRow) =>
+  invoke<void>("operator_audit_insert", { row });
+export const operatorAuditUpdate = (
+  id: string,
+  status: OperatorAuditRow["status"],
+  result: string | null,
+) => invoke<void>("operator_audit_update", { id, status, result });
+export const operatorAuditList = (limit = 100) =>
+  invoke<OperatorAuditRow[]>("operator_audit_list", { limit });

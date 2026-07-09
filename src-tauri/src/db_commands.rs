@@ -3,7 +3,7 @@
 
 use pickforge_core::{
     AgentRunLog, AgentUsageSummary, Chat, Database, OrchestraTask, PickHistory, Project,
-    ProjectSettings, RunSessionLog,
+    OperatorAuditRow, ProjectSettings, RunSessionLog,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -183,6 +183,34 @@ pub fn agent_usage_summary(
     project_root: Option<String>,
 ) -> Result<Vec<AgentUsageSummary>, String> {
     db.agent_usage_summary(project_root.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn operator_audit_insert(
+    db: State<'_, Arc<Database>>,
+    row: OperatorAuditRow,
+) -> Result<(), String> {
+    db.operator_audit_insert(&row).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn operator_audit_update(
+    db: State<'_, Arc<Database>>,
+    id: String,
+    status: String,
+    result: Option<String>,
+) -> Result<(), String> {
+    db.operator_audit_update_status(&id, &status, result.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn operator_audit_list(
+    db: State<'_, Arc<Database>>,
+    limit: i64,
+) -> Result<Vec<OperatorAuditRow>, String> {
+    db.operator_audit_list_recent(limit)
         .map_err(|e| e.to_string())
 }
 

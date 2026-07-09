@@ -173,6 +173,19 @@ pub struct OrchestraTask {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct OperatorAuditRow {
+    pub id: String,
+    pub created_at: i64,
+    pub project_root: Option<String>,
+    pub input_text: String,
+    pub intent_json: String,
+    pub risk_tier: i64,
+    pub status: String,
+    pub result: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentUsageSummary {
     pub provider: String,
     pub model: Option<String>,

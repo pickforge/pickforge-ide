@@ -9,6 +9,8 @@
         "@pickforge/auth": "^0.4.0",
         "@pickforge/brand": "0.2.1",
         "@pickforge/flags": "^0.4.0",
+        "@pickforge/sync": "^0.6.0",
+        "@supabase/supabase-js": "^2.110.0",
         "@tauri-apps/api": "^2",
         "@tauri-apps/plugin-deep-link": "^2.4.9",
         "@tauri-apps/plugin-dialog": "^2",
@@ -176,6 +178,8 @@
     "@pickforge/brand": ["@pickforge/brand@0.2.1", "", { "dependencies": { "@fontsource/geist-mono": "^5.2.8", "@fontsource/geist-sans": "^5.2.5" } }, "sha512-8VASbOUFJKUkb2zVvqto7aPynyICISCMzrh8jMRcvovtKNpzbLMrZ2xS7eeIPQyVs5NRbJ0457Vb0HQC+sIhQQ=="],
 
     "@pickforge/flags": ["@pickforge/flags@0.4.0", "", {}, "sha512-Z0nlxk3/0HXA7em8+ZQ+BV3jfF2U0E8uCdDPdyW2WdbMHe2pF7rgukTAIAyAZexEB3c7SATEYCbrnNsEd9V9Nw=="],
+
+    "@pickforge/sync": ["@pickforge/sync@0.6.0", "", {}, "sha512-sImQLFKg76EWs0b69fyElHKKugoIhiu4ctxtKeUzCSzBZTHC4jCJf/ggRBYT5UHHa/E2ZMeZDppEWHByJEdeJw=="],
 
     "@pickforge/tauri-release": ["@pickforge/tauri-release@0.3.0", "", { "bin": { "pickforge-tauri-release": "dist/cli.js" } }, "sha512-LTpsp6+zB9WU9eflvWH8tRFGNCJmiQW7ULYNnffQYCgfZ3fSqF33yDBKW38WdXdlyDBEcYpFnYjkw0+YnLob8Q=="],
 

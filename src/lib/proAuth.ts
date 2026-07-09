@@ -3,6 +3,7 @@ import {
   type PickforgeAuthClient,
   type PickforgeOAuthProvider,
 } from "@pickforge/auth";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { openExternalUrl } from "./opener";
 import {
   PICKFORGE_PRO_REDIRECT_URI,
@@ -13,6 +14,7 @@ import {
 const STORAGE_PREFIX = "pickforge.proAuth.";
 
 let client: PickforgeAuthClient | null = null;
+let supabaseClient: SupabaseClient | null = null;
 let redirectInFlight = false;
 
 function storageKey(key: string): string {
@@ -132,6 +134,36 @@ export function getProAuthClient(): PickforgeAuthClient {
   });
 
   return client;
+}
+
+/** The raw Supabase client for authenticated data access (settings sync). It
+ *  shares the auth client's storage adapter, so it reads the same signed-in
+ *  session and its access token rides every PostgREST request for RLS. */
+export function getProSupabaseClient(): SupabaseClient {
+  if (supabaseClient) return supabaseClient;
+  if (!tauriAvailable()) {
+    throw new Error("PickForge settings sync requires the desktop runtime");
+  }
+
+  supabaseClient = createClient(
+    PICKFORGE_PRO_SUPABASE_URL,
+    PICKFORGE_PRO_SUPABASE_ANON_KEY,
+    {
+      auth: {
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        flowType: "pkce",
+        persistSession: true,
+        storage: {
+          getItem: (key) => localStorage.getItem(storageKey(key)),
+          setItem: (key, value) => localStorage.setItem(storageKey(key), value),
+          removeItem: (key) => localStorage.removeItem(storageKey(key)),
+        },
+      },
+    },
+  );
+
+  return supabaseClient;
 }
 
 export type { PickforgeOAuthProvider };

@@ -44,7 +44,7 @@ function parseCount(raw: string | undefined): number | "invalid" {
 
 function compose(action: OperatorAction, projectRef: string | null): ParseResult {
   const parsed = parseOperatorIntent(JSON.stringify({
-    v: 1,
+    v: 2,
     id: crypto.randomUUID(),
     provenance: "typed",
     confidence: 1,
@@ -175,6 +175,64 @@ const rules: CommandRule[] = [
         action: { action: "steerRun", run: null, instruction },
         projectRef: null,
       };
+    },
+  },
+  {
+    match(input) {
+      return /^(?:hot\s+reload|reload)$/i.test(input)
+        ? { action: { action: "reloadRun" }, projectRef: null }
+        : null;
+    },
+  },
+  {
+    match(input) {
+      return /^(?:hot\s+restart|restart\s+run)$/i.test(input)
+        ? { action: { action: "hotRestart" }, projectRef: null }
+        : null;
+    },
+  },
+  {
+    match(input) {
+      return /^stop\s+(?:the\s+)?run$/i.test(input)
+        ? { action: { action: "stopRun" }, projectRef: null }
+        : null;
+    },
+  },
+  {
+    match(input) {
+      if (/^run(?:\s+the)?\s+app$/i.test(input) || /^start(?:\s+the)?\s+run$/i.test(input)) {
+        return { action: { action: "launchRun", target: null }, projectRef: null };
+      }
+      const match = /^run\s+on\s+([\s\S]+)$/i.exec(input);
+      const target = nonEmpty(match?.[1]);
+      return target ? { action: { action: "launchRun", target }, projectRef: null } : null;
+    },
+  },
+  {
+    match(input) {
+      const launch = /^launch\s+(?:avd|emulator)\s+([\s\S]+)$/i.exec(input);
+      const launched = nonEmpty(launch?.[1]);
+      if (launched) {
+        return { action: { action: "launchEmulator", device: launched }, projectRef: null };
+      }
+
+      const switchTo = /^switch\s+to\s+(?:the\s+)?([\s\S]+?)\s+(?:avd|emulator)$/i.exec(input);
+      const switched = nonEmpty(switchTo?.[1]);
+      return switched ? { action: { action: "launchEmulator", device: switched }, projectRef: null } : null;
+    },
+  },
+  {
+    match(input) {
+      return /^widget\s+(?:picker|select\s+mode)\s+on$/i.test(input)
+        ? { action: { action: "enterSelectMode" }, projectRef: null }
+        : null;
+    },
+  },
+  {
+    match(input) {
+      return /^(?:screenshot|take(?:\s+a)?\s+screenshot)$/i.test(input)
+        ? { action: { action: "takeScreenshot" }, projectRef: null }
+        : null;
     },
   },
 ];

@@ -1,1 +1,1 @@
-{"v":1,"id":"intent-steer-run","provenance":"typed","confidence":0.87,"projectRef":"Games List","action":{"action":"steerRun","run":"run-2026-07-09-02","instruction":"Focus on the fixture contract first."}}
+{"v":2,"id":"intent-steer-run","provenance":"typed","confidence":0.87,"projectRef":"Games List","action":{"action":"steerRun","run":"run-2026-07-09-02","instruction":"Focus on the fixture contract first."}}

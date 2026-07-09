@@ -1,9 +1,9 @@
 # PickForge Operator
 
 Operator is the local intent layer over PickForge's existing agent chat, swarm,
-run-target, device, and selection surfaces. M0 freezes the words, data
-boundaries, threat model, and v1 `OperatorIntent` contract. It does not add
-execution wiring, UI, IPC commands, or a router.
+run-target, device, and selection surfaces. M0 froze the words, data boundaries,
+threat model, and initial `OperatorIntent` contract. M1.5 bumps the current
+contract to v2 for device/run execution.
 
 ## Vocabulary
 
@@ -160,9 +160,9 @@ Threats:
 
 Mitigations:
 
-- The v1 schema constrains shape: allowlisted actions and typed fields. It does
+- The v2 schema constrains shape: allowlisted actions and typed fields. It does
   not prove string content is safe. `projectRef`, `chat`, `run`, `device`,
-  `target`, and `model` are opaque reference strings that the M1 executor must
+  `target`, and `model` are opaque reference strings that the local executor must
   resolve against existing local entities such as the project list, chat list,
   run registry, device list, and target registry.
 - Resolution, not the schema, prevents path or shell smuggling. Content-level
@@ -196,7 +196,7 @@ Mitigations:
 - A compromised local seat does not get code execution on a remote host beyond
   what the allowlist grants.
 
-## v1 Intent Allowlist
+## v2 Intent Allowlist
 
 Risk tiers:
 
@@ -205,7 +205,7 @@ Risk tiers:
 - Tier 1, spend/write: needs approval in `approveWrites`; auto-runs in `auto`
   unless provenance is `voice` and policy requires confirmation.
 - Tier 2, external/destructive: git pushes, PR actions, account changes, and
-  billing changes. Tier 2 is intentionally empty in v1 and is not representable
+  billing changes. Tier 2 is intentionally empty in v2 and is not representable
   in the schema.
 - Rust `RiskTier::Read` equals TS `0`; Rust `RiskTier::SpendWrite` equals TS
   `1`.
@@ -220,16 +220,21 @@ Risk tiers:
 | `swarmStatus` | M1 core | No payload. | Tier 0 |
 | `interruptRun` | M1 core | Optional run reference. Interrupt is tier 1 because it destroys in-flight paid work. | Tier 1 |
 | `steerRun` | M1 core | Optional run reference and non-empty instruction. | Tier 1 |
-| `launchEmulator` | M1.5 device-run | Optional device reference. | Tier 0 |
+| `launchEmulator` | M1.5 device-run | Optional device reference. Issue vocabulary for `selectDevice` maps to `launchEmulator { device }` instead of adding a duplicate action. | Tier 0 |
 | `launchRun` | M1.5 device-run | Optional target reference. | Tier 0 |
 | `reloadRun` | M1.5 device-run | No payload. | Tier 0 |
+| `stopRun` | M1.5 device-run | No payload. Stops the active run-console run. | Tier 0 |
+| `hotRestart` | M1.5 device-run | No payload. Full restart of the active run. | Tier 0 |
 | `enterSelectMode` | M1.5 device-run | No payload. | Tier 0 |
-| `takeScreenshot` | M1.5 device-run | No payload. | Tier 0 |
+| `takeScreenshot` | M1.5 device-run | No payload. Issue vocabulary for `deviceScreenshot` maps here instead of adding a duplicate action. | Tier 0 |
 | `selectWidget` | M1.6 semantic selection | Non-empty widget description. | Tier 0 |
 
 ## Versioning and Contract
 
-- The envelope carries literal `v: 1`.
+- The envelope carries literal `v: 2`.
+- Stored `v: 1` envelopes are accepted only through the version translator and
+  are normalized to v2 on read. The v1 action set remains strict, so v1 envelopes
+  cannot contain v2-only actions such as `stopRun` or `hotRestart`.
 - Parsers are strict. Unknown `v`, unknown action name, unknown or extra fields,
   and out-of-range values are rejected as typed errors and never partially
   accepted.

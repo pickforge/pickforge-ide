@@ -11,7 +11,7 @@ function expectIntent(input: string, action: OperatorAction, projectRef: string 
   const contract = parseOperatorIntent(JSON.stringify(parsed.intent));
   expect(contract.ok, input).toBe(true);
   expect(parsed.intent).toMatchObject({
-    v: 1,
+    v: 2,
     provenance: "typed",
     confidence: 1,
     projectRef,
@@ -130,6 +130,86 @@ describe("parseCommand", () => {
         input: "steer focus on tests",
         action: { action: "steerRun", run: null, instruction: "focus on tests" },
       },
+      {
+        input: "hot reload",
+        action: { action: "reloadRun" },
+      },
+      {
+        input: "RELOAD",
+        action: { action: "reloadRun" },
+      },
+      {
+        input: "hot restart",
+        action: { action: "hotRestart" },
+      },
+      {
+        input: "restart run",
+        action: { action: "hotRestart" },
+      },
+      {
+        input: "stop run",
+        action: { action: "stopRun" },
+      },
+      {
+        input: "stop the run",
+        action: { action: "stopRun" },
+      },
+      {
+        input: "run app",
+        action: { action: "launchRun", target: null },
+      },
+      {
+        input: "run the app",
+        action: { action: "launchRun", target: null },
+      },
+      {
+        input: "start run",
+        action: { action: "launchRun", target: null },
+      },
+      {
+        input: "start the run",
+        action: { action: "launchRun", target: null },
+      },
+      {
+        input: "run on Flutter Debug",
+        action: { action: "launchRun", target: "Flutter Debug" },
+      },
+      {
+        input: "launch avd Pixel 8",
+        action: { action: "launchEmulator", device: "Pixel 8" },
+      },
+      {
+        input: "launch emulator Pixel 8 Pro",
+        action: { action: "launchEmulator", device: "Pixel 8 Pro" },
+      },
+      {
+        input: "switch to the Pixel 8 avd",
+        action: { action: "launchEmulator", device: "Pixel 8" },
+      },
+      {
+        input: "switch to Pixel 8 emulator",
+        action: { action: "launchEmulator", device: "Pixel 8" },
+      },
+      {
+        input: "widget picker on",
+        action: { action: "enterSelectMode" },
+      },
+      {
+        input: "widget select mode on",
+        action: { action: "enterSelectMode" },
+      },
+      {
+        input: "screenshot",
+        action: { action: "takeScreenshot" },
+      },
+      {
+        input: "take a screenshot",
+        action: { action: "takeScreenshot" },
+      },
+      {
+        input: "take screenshot",
+        action: { action: "takeScreenshot" },
+      },
     ];
 
     for (const item of cases) {
@@ -183,6 +263,19 @@ describe("parseCommand", () => {
       reason: "swarm count must be 1-5",
     });
     expect(parseCommand("make it better")).toEqual({
+      kind: "needsRouter",
+      reason: "no deterministic match",
+    });
+  });
+
+  it("keeps run-control keywords from shadowing existing commands", () => {
+    expectIntent("interrupt run", { action: "interruptRun", run: null });
+    expectIntent("stop run", { action: "stopRun" });
+    expect(parseCommand("stop Main")).toEqual({
+      kind: "needsRouter",
+      reason: "no deterministic match",
+    });
+    expect(parseCommand("restart Main")).toEqual({
       kind: "needsRouter",
       reason: "no deterministic match",
     });

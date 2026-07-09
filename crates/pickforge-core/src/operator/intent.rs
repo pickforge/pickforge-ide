@@ -17,8 +17,20 @@ impl OperatorIntent {
     /// Routers may only propose `{action, confidence}`; the composer stamps the
     /// full envelope before this parser is used.
     pub fn from_json(json: &str) -> Result<OperatorIntent, IntentParseError> {
-        let intent = serde_json::from_str::<OperatorIntent>(json)
+        let value = serde_json::from_str::<serde_json::Value>(json)
             .map_err(|e| IntentParseError::Malformed(e.to_string()))?;
+        let version = serde_json::from_value::<VersionProbe>(value.clone())
+            .map_err(|e| IntentParseError::Malformed(e.to_string()))?;
+        let intent = match version.v {
+            1 => {
+                let legacy = serde_json::from_value::<LegacyOperatorIntent>(value)
+                    .map_err(|e| IntentParseError::Malformed(e.to_string()))?;
+                legacy.upgrade()
+            }
+            2 => serde_json::from_value::<OperatorIntent>(value)
+                .map_err(|e| IntentParseError::Malformed(e.to_string()))?,
+            v => return Err(IntentParseError::UnsupportedVersion { v }),
+        };
         intent.validate()?;
         Ok(intent)
     }
@@ -28,7 +40,7 @@ impl OperatorIntent {
     }
 
     fn validate(&self) -> Result<(), IntentParseError> {
-        if self.v != 1 {
+        if self.v != 2 {
             return Err(IntentParseError::UnsupportedVersion { v: self.v });
         }
         validate_non_empty("id", &self.id)?;
@@ -39,6 +51,36 @@ impl OperatorIntent {
             });
         }
         self.action.validate()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+struct VersionProbe {
+    v: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyOperatorIntent {
+    #[serde(rename = "v")]
+    _v: u8,
+    id: String,
+    provenance: IntentProvenance,
+    confidence: f64,
+    project_ref: Option<String>,
+    action: LegacyOperatorAction,
+}
+
+impl LegacyOperatorIntent {
+    fn upgrade(self) -> OperatorIntent {
+        OperatorIntent {
+            v: 2,
+            id: self.id,
+            provenance: self.provenance,
+            confidence: self.confidence,
+            project_ref: self.project_ref,
+            action: self.action.into(),
+        }
     }
 }
 
@@ -73,9 +115,81 @@ pub enum OperatorAction {
     LaunchEmulator { device: Option<String> },
     LaunchRun { target: Option<String> },
     ReloadRun {},
+    StopRun {},
+    HotRestart {},
     EnterSelectMode {},
     TakeScreenshot {},
     SelectWidget { description: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(
+    tag = "action",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum LegacyOperatorAction {
+    OpenProject {},
+    OpenChat { chat: Option<String> },
+    CreateChat { provider: AgentProvider, model: Option<String> },
+    SendPrompt { prompt: String, chat: Option<String> },
+    StartSwarm {
+        mode: SwarmMode,
+        count: u8,
+        goal: String,
+        provider: SwarmProvider,
+    },
+    SwarmStatus {},
+    InterruptRun { run: Option<String> },
+    SteerRun { run: Option<String>, instruction: String },
+    LaunchEmulator { device: Option<String> },
+    LaunchRun { target: Option<String> },
+    ReloadRun {},
+    EnterSelectMode {},
+    TakeScreenshot {},
+    SelectWidget { description: String },
+}
+
+impl From<LegacyOperatorAction> for OperatorAction {
+    fn from(action: LegacyOperatorAction) -> Self {
+        match action {
+            LegacyOperatorAction::OpenProject {} => OperatorAction::OpenProject {},
+            LegacyOperatorAction::OpenChat { chat } => OperatorAction::OpenChat { chat },
+            LegacyOperatorAction::CreateChat { provider, model } => {
+                OperatorAction::CreateChat { provider, model }
+            }
+            LegacyOperatorAction::SendPrompt { prompt, chat } => {
+                OperatorAction::SendPrompt { prompt, chat }
+            }
+            LegacyOperatorAction::StartSwarm {
+                mode,
+                count,
+                goal,
+                provider,
+            } => OperatorAction::StartSwarm {
+                mode,
+                count,
+                goal,
+                provider,
+            },
+            LegacyOperatorAction::SwarmStatus {} => OperatorAction::SwarmStatus {},
+            LegacyOperatorAction::InterruptRun { run } => OperatorAction::InterruptRun { run },
+            LegacyOperatorAction::SteerRun { run, instruction } => {
+                OperatorAction::SteerRun { run, instruction }
+            }
+            LegacyOperatorAction::LaunchEmulator { device } => {
+                OperatorAction::LaunchEmulator { device }
+            }
+            LegacyOperatorAction::LaunchRun { target } => OperatorAction::LaunchRun { target },
+            LegacyOperatorAction::ReloadRun {} => OperatorAction::ReloadRun {},
+            LegacyOperatorAction::EnterSelectMode {} => OperatorAction::EnterSelectMode {},
+            LegacyOperatorAction::TakeScreenshot {} => OperatorAction::TakeScreenshot {},
+            LegacyOperatorAction::SelectWidget { description } => {
+                OperatorAction::SelectWidget { description }
+            }
+        }
+    }
 }
 
 impl OperatorAction {
@@ -87,6 +201,8 @@ impl OperatorAction {
             | OperatorAction::LaunchEmulator { .. }
             | OperatorAction::LaunchRun { .. }
             | OperatorAction::ReloadRun {}
+            | OperatorAction::StopRun {}
+            | OperatorAction::HotRestart {}
             | OperatorAction::EnterSelectMode {}
             | OperatorAction::TakeScreenshot {}
             | OperatorAction::SelectWidget { .. } => RiskTier::Read,
@@ -183,7 +299,7 @@ mod tests {
 
     fn envelope(action: &str) -> String {
         format!(
-            r#"{{"v":1,"id":"intent-test","provenance":"typed","confidence":0.9,"projectRef":null,{action}}}"#
+            r#"{{"v":2,"id":"intent-test","provenance":"typed","confidence":0.9,"projectRef":null,{action}}}"#
         )
     }
 
@@ -201,6 +317,8 @@ mod tests {
             envelope(r#""action":{"action":"launchEmulator","device":"Pixel 8"}"#),
             envelope(r#""action":{"action":"launchRun","target":"flutter"}"#),
             envelope(r#""action":{"action":"reloadRun"}"#),
+            envelope(r#""action":{"action":"stopRun"}"#),
+            envelope(r#""action":{"action":"hotRestart"}"#),
             envelope(r#""action":{"action":"enterSelectMode"}"#),
             envelope(r#""action":{"action":"takeScreenshot"}"#),
             envelope(r#""action":{"action":"selectWidget","description":"the login button"}"#),
@@ -214,10 +332,25 @@ mod tests {
     #[test]
     fn rejects_bad_version() {
         let err = OperatorIntent::from_json(
-            r#"{"v":2,"id":"intent-test","provenance":"typed","confidence":0.9,"projectRef":null,"action":{"action":"swarmStatus"}}"#,
+            r#"{"v":3,"id":"intent-test","provenance":"typed","confidence":0.9,"projectRef":null,"action":{"action":"swarmStatus"}}"#,
         )
         .unwrap_err();
-        assert_eq!(err, IntentParseError::UnsupportedVersion { v: 2 });
+        assert_eq!(err, IntentParseError::UnsupportedVersion { v: 3 });
+    }
+
+    #[test]
+    fn upgrades_v1_envelopes_on_read() {
+        let intent = OperatorIntent::from_json(
+            r#"{"v":1,"id":"intent-test","provenance":"typed","confidence":0.9,"projectRef":null,"action":{"action":"launchRun","target":"flutter"}}"#,
+        )
+        .unwrap();
+        assert_eq!(intent.v, 2);
+        assert_eq!(
+            intent.action,
+            OperatorAction::LaunchRun {
+                target: Some("flutter".to_string())
+            }
+        );
     }
 
     #[test]
@@ -276,6 +409,8 @@ mod tests {
             OperatorAction::LaunchEmulator { device: None },
             OperatorAction::LaunchRun { target: None },
             OperatorAction::ReloadRun {},
+            OperatorAction::StopRun {},
+            OperatorAction::HotRestart {},
             OperatorAction::EnterSelectMode {},
             OperatorAction::TakeScreenshot {},
             OperatorAction::SelectWidget { description: "button".to_string() },

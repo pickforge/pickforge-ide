@@ -68,6 +68,14 @@ const reloadRunSchema = z.strictObject({
   action: z.literal("reloadRun"),
 });
 
+const stopRunSchema = z.strictObject({
+  action: z.literal("stopRun"),
+});
+
+const hotRestartSchema = z.strictObject({
+  action: z.literal("hotRestart"),
+});
+
 const enterSelectModeSchema = z.strictObject({
   action: z.literal("enterSelectMode"),
 });
@@ -93,18 +101,46 @@ const operatorActionSchema = z.discriminatedUnion("action", [
   launchEmulatorSchema,
   launchRunSchema,
   reloadRunSchema,
+  stopRunSchema,
+  hotRestartSchema,
+  enterSelectModeSchema,
+  takeScreenshotSchema,
+  selectWidgetSchema,
+]);
+
+const legacyOperatorActionSchema = z.discriminatedUnion("action", [
+  openProjectSchema,
+  openChatSchema,
+  createChatSchema,
+  sendPromptSchema,
+  startSwarmSchema,
+  swarmStatusSchema,
+  interruptRunSchema,
+  steerRunSchema,
+  launchEmulatorSchema,
+  launchRunSchema,
+  reloadRunSchema,
   enterSelectModeSchema,
   takeScreenshotSchema,
   selectWidgetSchema,
 ]);
 
 export const operatorIntentSchema = z.strictObject({
-  v: z.literal(1),
+  v: z.literal(2),
   id: nonEmptyString,
   provenance: z.union([z.literal("typed"), z.literal("voice")]),
   confidence: z.number().min(0).max(1),
   projectRef: optionalString,
   action: operatorActionSchema,
+});
+
+const legacyOperatorIntentSchema = z.strictObject({
+  v: z.literal(1),
+  id: nonEmptyString,
+  provenance: z.union([z.literal("typed"), z.literal("voice")]),
+  confidence: z.number().min(0).max(1),
+  projectRef: optionalString,
+  action: legacyOperatorActionSchema,
 });
 
 export type OperatorIntent = z.infer<typeof operatorIntentSchema>;
@@ -126,6 +162,19 @@ export function parseOperatorIntent(json: string): OperatorIntentParseResult {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 
+  const version = z.object({ v: z.int() }).safeParse(value);
+  if (!version.success) {
+    return { ok: false, error: version.error.message };
+  }
+
+  if (version.data.v === 1) {
+    const legacy = legacyOperatorIntentSchema.safeParse(value);
+    if (!legacy.success) {
+      return { ok: false, error: legacy.error.message };
+    }
+    return { ok: true, intent: { ...legacy.data, v: 2 } };
+  }
+
   const parsed = operatorIntentSchema.safeParse(value);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.message };
@@ -142,6 +191,8 @@ export function riskTier(action: OperatorAction): 0 | 1 {
     case "launchEmulator":
     case "launchRun":
     case "reloadRun":
+    case "stopRun":
+    case "hotRestart":
     case "enterSelectMode":
     case "takeScreenshot":
     case "selectWidget":

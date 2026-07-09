@@ -1,1 +1,1 @@
-{"v":1,"id":"intent-swarm-status","provenance":"typed","confidence":0.99,"projectRef":"Games List","action":{"action":"swarmStatus"}}
+{"v":2,"id":"intent-swarm-status","provenance":"typed","confidence":0.99,"projectRef":"Games List","action":{"action":"swarmStatus"}}

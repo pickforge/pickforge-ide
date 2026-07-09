@@ -23,7 +23,7 @@ fn fixture_files(kind: &str) -> Vec<std::path::PathBuf> {
 #[test]
 fn valid_operator_intent_fixtures_round_trip() {
     let files = fixture_files("valid");
-    assert_eq!(files.len(), 15);
+    assert_eq!(files.len(), 17);
 
     for path in files {
         let raw = fs::read_to_string(&path).unwrap();
@@ -33,7 +33,7 @@ fn valid_operator_intent_fixtures_round_trip() {
         let input = serde_json::from_str::<Value>(&raw).unwrap();
         let expected = if path.file_name().is_some_and(|name| name == "omittedOptionals.json") {
             json!({
-                "v": 1,
+                "v": 2,
                 "id": "intent-omitted-optionals",
                 "provenance": "typed",
                 "confidence": 0.83,

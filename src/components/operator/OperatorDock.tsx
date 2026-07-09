@@ -129,6 +129,7 @@ export function OperatorDock() {
                     <button
                       type="button"
                       class="pf-op-cancel"
+                      disabled={operatorBusy()}
                       onClick={() => cancelOperatorPreview()}
                     >
                       Cancel

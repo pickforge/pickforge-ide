@@ -7,6 +7,7 @@ import { dispatchIntent, type DispatchResult } from "./operator";
 import { flagEnabled } from "./flags";
 import { operatorAuditList, type OperatorAuditRow } from "../lib/db";
 import type { OperatorIntent } from "../lib/operatorIntent";
+import { onRouteChange } from "../router";
 
 export type DockView =
   | { kind: "idle" }
@@ -22,7 +23,7 @@ export const operatorDockOpen = open;
 const [input, setInput] = createSignal("");
 export const operatorInput = input;
 export function setOperatorInput(value: string) {
-  if (value !== input() && view().kind === "preview") setView({ kind: "idle" });
+  if (value !== input() && view().kind !== "idle") setView({ kind: "idle" });
   setInput(value);
 }
 
@@ -59,6 +60,13 @@ export function toggleOperatorDock(): boolean {
   }
   return openOperatorDock();
 }
+
+// The dock is a workbench surface but portals to the document root, and the
+// workbench stays mounted (display:none) on other routes — close it whenever
+// the route leaves the workbench so it can't float over another screen.
+onRouteChange((r) => {
+  if (r !== "workbench" && open()) closeOperatorDock();
+});
 
 export function dismissOperatorResult() {
   setView({ kind: "idle" });
@@ -124,6 +132,7 @@ export async function confirmOperatorPreview(): Promise<void> {
 }
 
 export function cancelOperatorPreview() {
+  if (busy()) return;
   if (view().kind === "preview") setView({ kind: "idle" });
 }
 

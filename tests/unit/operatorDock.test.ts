@@ -21,6 +21,22 @@ vi.mock("../../src/stores/flags", () => ({
 vi.mock("../../src/lib/db", () => ({
   operatorAuditList: deps.operatorAuditList,
 }));
+vi.mock("../../src/router", () => {
+  let current = "workbench";
+  const listeners = new Set<(r: string) => void>();
+  return {
+    route: () => current,
+    onRouteChange: (listener: (r: string) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    navigate: (r: string) => {
+      const changed = r !== current;
+      current = r;
+      if (changed) for (const listener of listeners) listener(r);
+    },
+  };
+});
 
 function intent(action: OperatorAction): OperatorIntent {
   return {
@@ -184,6 +200,86 @@ describe("operatorDock store", () => {
     await s.confirmOperatorPreview();
 
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears needsRouter feedback when the input is edited", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    const s = await loadStore();
+
+    s.setOperatorInput("do something vague");
+    await s.submitOperatorCommand();
+    expect(s.operatorView().kind).toBe("needsRouter");
+
+    s.setOperatorInput("do something vaguer");
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+  });
+
+  it("clears a shown result when the input is edited", async () => {
+    const openChat = intent({ action: "openChat", chat: "ghost" });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: openChat });
+    deps.dispatchIntent.mockResolvedValue({ status: "failed", message: "nope" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInput("open chat ghost");
+    await s.submitOperatorCommand();
+    expect(s.operatorView().kind).toBe("result");
+
+    s.setOperatorInput("open chat ghost2");
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+  });
+
+  it("closes the dock when the route leaves the workbench", async () => {
+    const s = await loadStore();
+    const router = (await import("../../src/router")) as unknown as {
+      route: () => string;
+      navigate: (r: string) => void;
+    };
+
+    expect(s.openOperatorDock()).toBe(true);
+    s.setOperatorInput("open project app");
+
+    router.navigate("settings");
+
+    expect(s.operatorDockOpen()).toBe(false);
+    expect(s.operatorInput()).toBe("");
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+
+    router.navigate("workbench");
+    expect(s.operatorDockOpen()).toBe(false);
+    expect(s.openOperatorDock()).toBe(true);
+    expect(s.operatorDockOpen()).toBe(true);
+  });
+
+  it("ignores cancel while a confirm is in flight", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
+    let resolveDispatch!: (r: DispatchResult) => void;
+    deps.dispatchIntent
+      .mockResolvedValueOnce({ status: "needsConfirmation", summary: "Send prompt to active chat" } as DispatchResult)
+      .mockReturnValueOnce(
+        new Promise<DispatchResult>((resolve) => {
+          resolveDispatch = resolve;
+        }),
+      );
+    const s = await loadStore();
+
+    s.setOperatorInput("send hi");
+    await s.submitOperatorCommand();
+    const confirming = s.confirmOperatorPreview();
+    expect(s.operatorBusy()).toBe(true);
+
+    s.cancelOperatorPreview();
+    expect(s.operatorView().kind).toBe("preview");
+
+    resolveDispatch({ status: "done", summary: "Sent prompt to Chat" });
+    await confirming;
+
+    expect(s.operatorView()).toEqual({
+      kind: "result",
+      result: { status: "done", summary: "Sent prompt to Chat" },
+    });
   });
 
   it("ignores a dispatch result that lands after the dock was closed", async () => {

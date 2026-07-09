@@ -605,8 +605,10 @@ function isLaunchableVirtualDevice(device: DeviceEntry): boolean {
   return device.kind === "emulator" || device.kind === "simulator";
 }
 
-function virtualDeviceKindLabel(device: DeviceEntry): "emulator" | "simulator" {
-  return device.kind === "simulator" ? "simulator" : "emulator";
+function selectableDeviceKindLabel(device: DeviceEntry): "device" | "emulator" | "simulator" {
+  if (device.kind === "simulator") return "simulator";
+  if (device.kind === "emulator") return "emulator";
+  return "device";
 }
 
 function defaultVirtualDevice(devices: DeviceEntry[]): DeviceEntry | null {
@@ -621,16 +623,24 @@ function defaultVirtualDevice(devices: DeviceEntry[]): DeviceEntry | null {
     null;
 }
 
+function compatibleDevices(target: RunTarget | null, devices: DeviceEntry[]): DeviceEntry[] {
+  return devices.filter((device) => isCompatibleDevice(target, device.kind));
+}
+
 function compatibleVirtualDevices(target: RunTarget | null, devices: DeviceEntry[]): DeviceEntry[] {
-  return devices.filter((device) => isLaunchableVirtualDevice(device) && isCompatibleDevice(target, device.kind));
+  return compatibleDevices(target, devices).filter(isLaunchableVirtualDevice);
 }
 
 async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | null): Promise<DispatchResult> {
   const project = await activeProjectForDeviceIntent(intent);
   if (!project.ok) return { status: "failed", message: project.message };
 
-  const devices = compatibleVirtualDevices(activeRunTarget(), await refreshDevices());
-  const fallback = defaultVirtualDevice(devices);
+  const target = activeRunTarget();
+  const refreshedDevices = await refreshDevices();
+  const devices = deviceRef
+    ? compatibleDevices(target, refreshedDevices)
+    : compatibleVirtualDevices(target, refreshedDevices);
+  const fallback = deviceRef ? null : defaultVirtualDevice(devices);
   const resolved = deviceRef
     ? resolveDeviceReference(deviceRef, devices)
     : fallback
@@ -647,7 +657,10 @@ async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | 
   }
   setRunDevice(project.value.projectRoot, deviceKey(device));
   if (device.state === "running") {
-    return { status: "done", summary: `Selected ${virtualDeviceKindLabel(device)} ${deviceLabel(device)}` };
+    return { status: "done", summary: `Selected ${selectableDeviceKindLabel(device)} ${deviceLabel(device)}` };
+  }
+  if (!isLaunchableVirtualDevice(device)) {
+    return { status: "done", summary: `Selected ${selectableDeviceKindLabel(device)} ${deviceLabel(device)}` };
   }
   if (device.kind === "simulator") {
     if (!device.serial) {

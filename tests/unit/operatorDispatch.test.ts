@@ -915,6 +915,45 @@ describe("dispatchIntent", () => {
     expect(auditUpdateStatus()).toBe("done");
   });
 
+  it("selects a connected physical device by explicit ref", async () => {
+    deps.devices.push(device("Pixel 9", {
+      serial: "R58M12345",
+      avdId: null,
+      state: "running",
+      kind: "physical",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "pixel" }));
+
+    expect(result).toEqual({ status: "done", summary: "Selected device Pixel 9 · R58M12345" });
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/repo/app", "R58M12345");
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("does not default launchEmulator to a physical device", async () => {
+    deps.devices.push(device("Pixel 9", {
+      serial: "R58M12345",
+      avdId: null,
+      state: "running",
+      kind: "physical",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: null }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "No virtual device available. Candidates: none",
+    });
+    expect(deps.setRunDevice).not.toHaveBeenCalled();
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
   it("does not default launchEmulator to a virtual device incompatible with the active target", async () => {
     deps.targets.push(runTarget("ios", "iOS", {
       deviceConvention: "xcodeDestination",
@@ -935,7 +974,7 @@ describe("dispatchIntent", () => {
     expect(auditUpdateStatus()).toBe("failed");
   });
 
-  it("resolves launchEmulator names only within target-compatible virtual devices", async () => {
+  it("resolves launchEmulator names only within target-compatible devices", async () => {
     deps.targets.push(runTarget("ios", "iOS", {
       deviceConvention: "xcodeDestination",
       inspectorKind: "iosAccessibility",

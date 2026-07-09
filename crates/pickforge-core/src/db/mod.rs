@@ -6,7 +6,7 @@ mod models;
 
 pub use models::{
     AgentRunLog, AgentSessionRow, AgentTimelineEntry, AgentUsageSummary, Chat, OrchestraTask,
-    PickHistory, Project, ProjectSettings, RunSessionLog,
+    OperatorAuditRow, PickHistory, Project, ProjectSettings, RunSessionLog,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,7 +34,7 @@ const RUST_BASELINE: u32 = 11;
 
 /// Latest schema version this build understands. Bump (and add a numbered Rust
 /// migration in `apply_rust_migrations`) whenever the schema changes from here.
-const LATEST_VERSION: u32 = 13;
+const LATEST_VERSION: u32 = 14;
 
 /// The full, current desired schema. Every statement is `IF NOT EXISTS`, so
 /// running it against a database that already holds some tables only fills the
@@ -117,6 +117,19 @@ CREATE TABLE IF NOT EXISTS orchestra_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_orchestra_tasks_project
   ON orchestra_tasks(project_root, sort_order);
+
+CREATE TABLE IF NOT EXISTS operator_audit (
+  id           TEXT NOT NULL PRIMARY KEY,
+  created_at   INTEGER NOT NULL,
+  project_root TEXT,
+  input_text   TEXT NOT NULL,
+  intent_json  TEXT NOT NULL,
+  risk_tier    INTEGER NOT NULL,
+  status       TEXT NOT NULL,
+  result       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_operator_audit_created
+  ON operator_audit(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS project_settings (
   project_root                TEXT NOT NULL PRIMARY KEY,
@@ -459,6 +472,23 @@ fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Resul
             )?;
             Ok(())
         }
+        14 => {
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS operator_audit (
+                   id           TEXT NOT NULL PRIMARY KEY,
+                   created_at   INTEGER NOT NULL,
+                   project_root TEXT,
+                   input_text   TEXT NOT NULL,
+                   intent_json  TEXT NOT NULL,
+                   risk_tier    INTEGER NOT NULL,
+                   status       TEXT NOT NULL,
+                   result       TEXT
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_operator_audit_created
+                   ON operator_audit(created_at DESC);",
+            )?;
+            Ok(())
+        }
         _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
     }
 }
@@ -769,6 +799,52 @@ impl Database {
              ORDER BY sort_order ASC, created_at ASC",
         )?;
         let rows = stmt.query_map(params![project_root], orchestra_task_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    // ---- operator audit ----
+
+    pub fn operator_audit_insert(&self, row: &OperatorAuditRow) -> Result<(), DbError> {
+        self.lock().execute(
+            "INSERT INTO operator_audit \
+               (id, created_at, project_root, input_text, intent_json, risk_tier, status, result) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![
+                row.id,
+                row.created_at,
+                row.project_root,
+                row.input_text,
+                row.intent_json,
+                row.risk_tier,
+                row.status,
+                row.result
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn operator_audit_update_status(
+        &self,
+        id: &str,
+        status: &str,
+        result: Option<&str>,
+    ) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE operator_audit SET status = ?2, result = ?3 WHERE id = ?1",
+            params![id, status, result],
+        )?;
+        Ok(())
+    }
+
+    pub fn operator_audit_list_recent(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<OperatorAuditRow>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM operator_audit ORDER BY created_at DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], operator_audit_from_row)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -1204,6 +1280,19 @@ fn orchestra_task_from_row(row: &Row) -> rusqlite::Result<OrchestraTask> {
         sort_order: row.get("sort_order")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
+    })
+}
+
+fn operator_audit_from_row(row: &Row) -> rusqlite::Result<OperatorAuditRow> {
+    Ok(OperatorAuditRow {
+        id: row.get("id")?,
+        created_at: row.get("created_at")?,
+        project_root: row.get("project_root")?,
+        input_text: row.get("input_text")?,
+        intent_json: row.get("intent_json")?,
+        risk_tier: row.get("risk_tier")?,
+        status: row.get("status")?,
+        result: row.get("result")?,
     })
 }
 
@@ -1659,6 +1748,37 @@ mod tests {
         db.orchestra_task_delete("t1").unwrap();
         assert_eq!(ids(&db), ["t3", "t2"]);
         assert_eq!(db.orchestra_tasks_for_project("/other").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn operator_audit_round_trip() {
+        let db = Database::open_in_memory().unwrap();
+        let row = |id: &str, created_at: i64| OperatorAuditRow {
+            id: id.into(),
+            created_at,
+            project_root: Some("/p".into()),
+            input_text: "send fix to chat Main".into(),
+            intent_json: r#"{"v":1}"#.into(),
+            risk_tier: 1,
+            status: "started".into(),
+            result: None,
+        };
+
+        db.operator_audit_insert(&row("a1", 10)).unwrap();
+        db.operator_audit_insert(&row("a2", 20)).unwrap();
+        db.operator_audit_update_status("a1", "done", Some("sent"))
+            .unwrap();
+
+        let rows = db.operator_audit_list_recent(10).unwrap();
+        assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["a2", "a1"]);
+
+        let updated = rows.iter().find(|row| row.id == "a1").unwrap();
+        assert_eq!(updated.project_root.as_deref(), Some("/p"));
+        assert_eq!(updated.input_text, "send fix to chat Main");
+        assert_eq!(updated.intent_json, r#"{"v":1}"#);
+        assert_eq!(updated.risk_tier, 1);
+        assert_eq!(updated.status, "done");
+        assert_eq!(updated.result.as_deref(), Some("sent"));
     }
 
     #[test]

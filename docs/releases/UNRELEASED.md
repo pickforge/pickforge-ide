@@ -13,6 +13,7 @@ reset this file.
 
 - Migrated release CI to the shared `@pickforge/tauri-release` tooling and draft-only `latest.json` finalization.
 - Added the `pickforged` daemon foundation with hashed-token pairing auth.
+- Operator M1 core parser, dispatch, and audit landed dark behind the `operator` flag.
 
 ## Validation
 

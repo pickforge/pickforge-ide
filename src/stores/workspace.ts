@@ -90,7 +90,7 @@ export function findChat(chatId: string): db.Chat | undefined {
   return undefined;
 }
 
-const loadingRoots = new Set<string>();
+const loadingRoots = new Map<string, Promise<db.Chat[]>>();
 
 async function fetchChats(root: string): Promise<db.Chat[]> {
   const chats = await db.chatsList(root);
@@ -100,12 +100,18 @@ async function fetchChats(root: string): Promise<db.Chat[]> {
 
 /** Load a project's chats once; safe to call on every expand/render. */
 export async function ensureChatsLoaded(root: string) {
-  if (state.chatsByRoot[root] || loadingRoots.has(root)) return;
-  loadingRoots.add(root);
+  if (state.chatsByRoot[root]) return;
+  const pending = loadingRoots.get(root);
+  if (pending) {
+    await pending;
+    return;
+  }
+  const promise = fetchChats(root);
+  loadingRoots.set(root, promise);
   try {
-    await fetchChats(root);
+    await promise;
   } finally {
-    loadingRoots.delete(root);
+    if (loadingRoots.get(root) === promise) loadingRoots.delete(root);
   }
 }
 

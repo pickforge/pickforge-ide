@@ -116,6 +116,8 @@ verbatim to the provider they configured.
 
 Local-only mode must remain fully functional. With hosted routing disabled, typed
 commands and local dictation still work through the deterministic parser.
+The free dictation pipeline is local-only by construction: it shells only to
+`pw-record` and `whisper-cli`; Pro Realtime (#134) is the flagged exception.
 
 ## Threat Model
 

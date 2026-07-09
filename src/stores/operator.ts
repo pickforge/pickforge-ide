@@ -134,6 +134,9 @@ export function resolveProjectReference(projectRef: string | null): Resolution<P
     return { ok: true, value: active };
   }
 
+  const rootMatch = workspace.projects.find((project) => project.projectRoot === projectRef.trim());
+  if (rootMatch) return { ok: true, value: rootMatch };
+
   return resolveReference(
     "Project",
     projectRef,
@@ -154,6 +157,22 @@ export async function resolveChatReference(
 
   await ensureChatsLoaded(projectRoot);
   const chats = chatsFor(projectRoot);
+  const idMatch = findChat(chatRef);
+  if (idMatch) {
+    if (idMatch.projectRoot !== projectRoot) {
+      return {
+        ok: false,
+        message: `Chat "${chatRef}" is not in project ${projectRoot}`,
+      };
+    }
+    if (!isVisiblePrimaryChat(idMatch)) {
+      return {
+        ok: false,
+        message: `Chat "${chatRef}" is archived or hidden. Candidates: ${idMatch.title}`,
+      };
+    }
+    return { ok: true, value: idMatch };
+  }
   const visibleChats = chats.filter(isVisiblePrimaryChat);
   const visibleMatches = visibleChats.filter((chat) =>
     referenceMatches(chatRef, chat, (item) => [item.title], (item) => [item.title]),
@@ -342,6 +361,16 @@ async function chatFor(intent: OperatorIntent, chatRef: string | null): Promise<
   return resolveChatReference(project.value.projectRoot, chatRef);
 }
 
+function openChatFallbackRef(inputText: string | undefined): string | null {
+  const match = /^open\s+chat\s+([\s\S]+)$/i.exec(inputText?.trim() ?? "");
+  return nonEmpty(match?.[1]);
+}
+
+function nonEmpty(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed ? trimmed : null;
+}
+
 async function chatToOpen(intent: OperatorIntent, chatRef: string | null): Promise<Resolution<Chat>> {
   const project = await projectFor(intent);
   if (!project.ok) return project;
@@ -367,10 +396,15 @@ async function sendToChat(chat: Chat, prompt: string): Promise<DispatchResult> {
   const state = agentChat(chat.chatId);
   if (!state?.sessionId) {
     const provider = target.value.provider;
-    const latestSession = await db.agentSessionLatestForChat(chat.chatId);
-    const model = latestSession
-      ? nativeChatModel(provider, latestSession.model)
-      : state?.model ?? nativeChatModel(provider, loadAgentModels()[provider] ?? null);
+    let model: string | null;
+    if (state) {
+      model = state.model;
+    } else {
+      const latestSession = await db.agentSessionLatestForChat(chat.chatId);
+      model = latestSession
+        ? nativeChatModel(provider, latestSession.model)
+        : nativeChatModel(provider, loadAgentModels()[provider] ?? null);
+    }
     await ensureAgentChat(
       chat.chatId,
       chat.projectRoot,
@@ -387,8 +421,22 @@ async function sendToChat(chat: Chat, prompt: string): Promise<DispatchResult> {
   return { status: "done", summary: `Sent prompt to ${chat.title}` };
 }
 
+async function activeChatForIntent(intent: OperatorIntent): Promise<Resolution<Chat>> {
+  const project = intent.projectRef ? await projectFor(intent) : null;
+  if (project && !project.ok) return { ok: false, message: project.message };
+  const chat = activeChat();
+  if (!chat.ok) return chat;
+  if (project && chat.value.projectRoot !== project.value.projectRoot) {
+    return {
+      ok: false,
+      message: `Active chat "${chat.value.title}" is not in project ${project.value.displayName}`,
+    };
+  }
+  return chat;
+}
+
 async function resolveRunChat(intent: OperatorIntent, runRef: string | null): Promise<Resolution<Chat>> {
-  if (!runRef) return activeChat();
+  if (!runRef) return activeChatForIntent(intent);
   return chatFor(intent, runRef);
 }
 
@@ -426,7 +474,7 @@ function unsupported(action: OperatorAction): DispatchResult | null {
   }
 }
 
-async function runIntent(intent: OperatorIntent): Promise<DispatchResult> {
+async function runIntent(intent: OperatorIntent, inputText?: string): Promise<DispatchResult> {
   const action = intent.action;
   const unsupportedResult = unsupported(action);
   if (unsupportedResult) return unsupportedResult;
@@ -439,7 +487,12 @@ async function runIntent(intent: OperatorIntent): Promise<DispatchResult> {
       return { status: "done", summary: `Opened project ${project.value.displayName}` };
     }
     case "openChat": {
-      const chat = await chatToOpen(intent, action.chat);
+      let chat = await chatToOpen(intent, action.chat);
+      const fallbackRef = intent.projectRef ? openChatFallbackRef(inputText) : null;
+      if (!chat.ok && fallbackRef && fallbackRef !== action.chat) {
+        const fallback = await chatToOpen({ ...intent, projectRef: null }, fallbackRef);
+        if (fallback.ok) chat = fallback;
+      }
       if (!chat.ok) return { status: "failed", message: chat.message };
       selectChat(chat.value.chatId);
       return { status: "done", summary: `Opened chat ${chat.value.title}` };
@@ -469,16 +522,8 @@ async function runIntent(intent: OperatorIntent): Promise<DispatchResult> {
         if (!chat.ok) return { status: "failed", message: chat.message };
         return sendToChat(chat.value, action.prompt);
       }
-      const project = intent.projectRef ? await projectFor(intent) : null;
-      if (project && !project.ok) return { status: "failed", message: project.message };
-      const chat = activeChat();
+      const chat = await activeChatForIntent(intent);
       if (!chat.ok) return { status: "failed", message: chat.message };
-      if (project && chat.value.projectRoot !== project.value.projectRoot) {
-        return {
-          status: "failed",
-          message: `Active chat "${chat.value.title}" is not in project ${project.value.displayName}`,
-        };
-      }
       return sendToChat(chat.value, action.prompt);
     }
     case "startSwarm": {
@@ -567,7 +612,7 @@ export async function dispatchIntent(
   }
 
   try {
-    const result = await runIntent(intent);
+    const result = await runIntent(intent, opts.inputText);
     await noteAuditUpdateFailure(auditId, auditStatusFor(result), resultText(result));
     return result;
   } catch (error) {

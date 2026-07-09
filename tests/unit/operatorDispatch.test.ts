@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OperatorAction, OperatorIntent } from "../../src/lib/operatorIntent";
+import { parseCommand } from "../../src/lib/operatorParser";
 
 const deps = vi.hoisted(() => {
   type Project = {
@@ -343,6 +344,19 @@ describe("dispatchIntent", () => {
     expect(deps.selectProject).toHaveBeenCalledWith("/repo/app");
   });
 
+  it("resolves project roots exactly before display name matching", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "/repo/app"),
+    ];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openProject" }, "/repo/app"));
+
+    expect(result.status).toBe("done");
+    expect(deps.selectProject).toHaveBeenCalledWith("/repo/app");
+  });
+
   it("resolves projects by unique substring match", async () => {
     deps.workspace.projects = [
       project("/repo/app", "App"),
@@ -384,6 +398,36 @@ describe("dispatchIntent", () => {
     expect(result.status).toBe("done");
     expect(deps.ensureChatsLoaded).toHaveBeenCalledWith("/repo/app");
     expect(deps.selectChat).toHaveBeenCalledWith("chat-review");
+  });
+
+  it("resolves named chat references by exact chat id before title matching", async () => {
+    deps.workspace.chatsByRoot["/repo/app"] = [
+      chat("chat-review", "/repo/app", "Review Notes"),
+      chat("chat-other", "/repo/app", "Other Notes"),
+    ];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openChat", chat: "chat-review" }));
+
+    expect(result.status).toBe("done");
+    expect(deps.selectChat).toHaveBeenCalledWith("chat-review");
+  });
+
+  it("rejects chat id references outside the resolved project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.workspace.chatsByRoot["/repo/other"] = [
+      chat("chat-other", "/repo/other", "Other Chat"),
+    ];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openChat", chat: "chat-other" }, "App"));
+
+    expect(result.status).toBe("failed");
+    expect("message" in result ? result.message : "").toContain("not in project /repo/app");
+    expect(deps.selectChat).not.toHaveBeenCalled();
   });
 
   it("opens the most recently active project chat when openChat has no chat ref", async () => {
@@ -470,6 +514,20 @@ describe("dispatchIntent", () => {
     expect(deps.selectChat).not.toHaveBeenCalled();
   });
 
+  it("fails exact hidden chat id resolution clearly", async () => {
+    deps.archivedChats.add("chat-archived");
+    deps.workspace.chatsByRoot["/repo/app"] = [
+      { ...chat("chat-archived", "/repo/app", "Archived Chat"), lastActivityAt: 40 },
+    ];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openChat", chat: "chat-archived" }));
+
+    expect(result.status).toBe("failed");
+    expect("message" in result ? result.message : "").toContain("archived or hidden");
+    expect(deps.selectChat).not.toHaveBeenCalled();
+  });
+
   it("fails ambiguous chat resolution and lists candidates", async () => {
     deps.workspace.chatsByRoot["/repo/app"] = [
       chat("chat-main", "/repo/app", "Main Chat"),
@@ -499,6 +557,7 @@ describe("dispatchIntent", () => {
 
   it("preserves the stored agent model when sending to an existing cold chat", async () => {
     deps.agentStates.set("chat-main", { sessionId: null, model: "gpt-5.5" });
+    deps.latestSessions.set("chat-main", { model: "gpt-5.4" });
     const { dispatchIntent } = await loadStore();
 
     const result = await dispatchIntent(
@@ -514,6 +573,7 @@ describe("dispatchIntent", () => {
       "gpt-5.5",
       { engine: "test-engine", effort: "high", mode: "read-only" },
     );
+    expect(deps.agentSessionLatestForChat).not.toHaveBeenCalled();
     expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "ship it");
   });
 
@@ -622,6 +682,48 @@ describe("dispatchIntent", () => {
     expect(auditUpdateStatus()).toBe("done");
   });
 
+  it("does not interrupt the active chat when projectRef resolves to a different project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.agentStates.set("chat-main", { sessionId: "session-1", model: "gpt-5.5", turnActive: true });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "interruptRun", run: null }, "Other"),
+      { confirmed: true },
+    );
+
+    expect(result).toEqual({
+      status: "failed",
+      message: 'Active chat "Main" is not in project Other',
+    });
+    expect(deps.interruptAgentChat).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("does not steer the active chat when projectRef resolves to a different project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.agentStates.set("chat-main", { sessionId: "session-1", model: "gpt-5.5", turnActive: false });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "steerRun", run: null, instruction: "focus" }, "Other"),
+      { confirmed: true },
+    );
+
+    expect(result).toEqual({
+      status: "failed",
+      message: 'Active chat "Main" is not in project Other',
+    });
+    expect(deps.steerAgentChat).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
   it("does not send to an active chat from a different project when projectRef is set", async () => {
     deps.workspace.projects = [
       project("/repo/app", "App"),
@@ -644,6 +746,23 @@ describe("dispatchIntent", () => {
     expect(deps.ensureAgentChat).not.toHaveBeenCalled();
     expect(deps.sendAgentMessage).not.toHaveBeenCalled();
     expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("falls back to the full open-chat title when an in qualifier candidate fails", async () => {
+    deps.workspace.chatsByRoot["/repo/app"] = [
+      chat("chat-sign-in", "/repo/app", "Sign in flow"),
+    ];
+    const parsed = parseCommand("open chat Sign in flow");
+    expect(parsed.kind).toBe("intent");
+    if (parsed.kind !== "intent") throw new Error("expected intent");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(parsed.intent, {
+      inputText: "open chat Sign in flow",
+    });
+
+    expect(result).toEqual({ status: "done", summary: "Opened chat Sign in flow" });
+    expect(deps.selectChat).toHaveBeenCalledWith("chat-sign-in");
   });
 
   it("scopes swarm status to the resolved project", async () => {

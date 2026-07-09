@@ -17,13 +17,22 @@ type CommandRule = {
   match(input: string): RuleResult | null;
 };
 
-function clean(input: string): string {
-  return input.trim().replace(/\s+/g, " ");
-}
-
 function nonEmpty(value: string | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed ? trimmed : null;
+}
+
+function splitLastInQualifier(value: string): { value: string; projectRef: string | null } {
+  let last: RegExpExecArray | null = null;
+  const pattern = /\s+in\s+/gi;
+  for (let match = pattern.exec(value); match; match = pattern.exec(value)) {
+    last = match;
+  }
+  if (!last) return { value: value.trim(), projectRef: null };
+  return {
+    value: value.slice(0, last.index).trim(),
+    projectRef: nonEmpty(value.slice(last.index + last[0].length)),
+  };
 }
 
 function parseCount(raw: string | undefined): number | "invalid" {
@@ -58,12 +67,13 @@ const rules: CommandRule[] = [
   },
   {
     match(input) {
-      const match = /^open\s+chat\s+(.+?)(?:\s+in\s+(.+))?$/i.exec(input);
-      const chat = nonEmpty(match?.[1]);
+      const match = /^open\s+chat\s+([\s\S]+)$/i.exec(input);
+      const split = match?.[1] ? splitLastInQualifier(match[1]) : null;
+      const chat = nonEmpty(split?.value);
       if (!chat) return null;
       return {
         action: { action: "openChat", chat },
-        projectRef: nonEmpty(match?.[2]),
+        projectRef: split?.projectRef ?? null,
       };
     },
   },
@@ -91,7 +101,7 @@ const rules: CommandRule[] = [
   },
   {
     match(input) {
-      const named = /^send\s+(.+?)\s+to\s+chat\s+(.+)$/i.exec(input);
+      const named = /^send\s+([\s\S]+?)\s+to\s+chat\s+([\s\S]+)$/i.exec(input);
       const namedPrompt = nonEmpty(named?.[1]);
       const chat = nonEmpty(named?.[2]);
       if (namedPrompt && chat) {
@@ -101,7 +111,7 @@ const rules: CommandRule[] = [
         };
       }
 
-      const active = /^send\s+(.+)$/i.exec(input);
+      const active = /^send\s+([\s\S]+)$/i.exec(input);
       const prompt = nonEmpty(active?.[1]);
       if (!prompt) return null;
       return {
@@ -112,7 +122,7 @@ const rules: CommandRule[] = [
   },
   {
     match(input) {
-      const match = /^start\s+(scout|review)\s+swarm(?:\s+of\s+(\d+))?\s+(.+)$/i.exec(input);
+      const match = /^start\s+(scout|review)\s+swarm(?:\s+of\s+(\d+))?\s+([\s\S]+)$/i.exec(input);
       const mode = match?.[1]?.toLowerCase();
       const goal = nonEmpty(match?.[3]);
       if ((mode !== "scout" && mode !== "review") || !goal) return null;
@@ -126,7 +136,7 @@ const rules: CommandRule[] = [
   },
   {
     match(input) {
-      const match = /^swarm\s+(scout|review)(?:\s+(\d+)x)?\s+(.+)$/i.exec(input);
+      const match = /^swarm\s+(scout|review)(?:\s+(\d+)x)?\s+([\s\S]+)$/i.exec(input);
       const mode = match?.[1]?.toLowerCase();
       const goal = nonEmpty(match?.[3]);
       if ((mode !== "scout" && mode !== "review") || !goal) return null;
@@ -150,7 +160,7 @@ const rules: CommandRule[] = [
       if (/^interrupt(?:\s+(?:run|chat))?$/i.test(input)) {
         return { action: { action: "interruptRun", run: null }, projectRef: null };
       }
-      const match = /^interrupt\s+(.+)$/i.exec(input);
+      const match = /^interrupt\s+([\s\S]+)$/i.exec(input);
       const run = nonEmpty(match?.[1]);
       if (!run) return null;
       return { action: { action: "interruptRun", run }, projectRef: null };
@@ -158,7 +168,7 @@ const rules: CommandRule[] = [
   },
   {
     match(input) {
-      const match = /^steer\s+(.+)$/i.exec(input);
+      const match = /^steer\s+([\s\S]+)$/i.exec(input);
       const instruction = nonEmpty(match?.[1]);
       if (!instruction) return null;
       return {
@@ -170,7 +180,7 @@ const rules: CommandRule[] = [
 ];
 
 export function parseCommand(input: string): ParseResult {
-  const command = clean(input);
+  const command = input.trim();
   if (!command) return { kind: "empty" };
 
   for (const rule of rules) {

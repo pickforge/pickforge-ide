@@ -41,6 +41,11 @@ describe("parseCommand", () => {
         projectRef: "PickForge",
       },
       {
+        input: "open chat Sign in flow in PickForge",
+        action: { action: "openChat", chat: "Sign in flow" },
+        projectRef: "PickForge",
+      },
+      {
         input: "new claude chat",
         action: { action: "createChat", provider: "claude", model: null },
       },
@@ -130,6 +135,38 @@ describe("parseCommand", () => {
     for (const item of cases) {
       expectIntent(item.input, item.action, item.projectRef ?? null);
     }
+  });
+
+  it("preserves free-text payload whitespace", () => {
+    const prompt = "fix   this\n  const value = 1;\nthen explain";
+    expectIntent(`send ${prompt}`, {
+      action: "sendPrompt",
+      prompt,
+      chat: null,
+    });
+
+    const namedPrompt = "review   this\n  diff";
+    expectIntent(`send ${namedPrompt} to chat Main`, {
+      action: "sendPrompt",
+      prompt: namedPrompt,
+      chat: "Main",
+    });
+
+    const goal = "map   risks\n  include tests";
+    expectIntent(`start scout swarm ${goal}`, {
+      action: "startSwarm",
+      mode: "scout",
+      count: 3,
+      goal,
+      provider: "mixed",
+    });
+
+    const instruction = "focus   on parser\n  and dispatch";
+    expectIntent(`steer ${instruction}`, {
+      action: "steerRun",
+      run: null,
+      instruction,
+    });
   });
 
   it("routes ambiguous and unknown input away from the deterministic parser", () => {

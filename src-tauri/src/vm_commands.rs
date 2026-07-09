@@ -14,7 +14,16 @@ const ROOT_WIDGET_TREE_METHOD: &str = "ext.flutter.inspector.getRootWidgetTree";
 const ROOT_WIDGET_SUMMARY_TREE_METHOD: &str =
     "ext.flutter.inspector.getRootWidgetSummaryTreeWithPreviews";
 
-fn root_widget_tree_params(isolate_id: &str, group_name: &str) -> Value {
+fn widget_tree_params(isolate_id: &str, group_name: &str) -> Value {
+    json!({
+        "isolateId": isolate_id,
+        "groupName": group_name,
+        "isSummaryTree": "true",
+        "withPreviews": "true",
+    })
+}
+
+fn semantic_widget_tree_params(isolate_id: &str, group_name: &str) -> Value {
     json!({
         "isolateId": isolate_id,
         "groupName": group_name,
@@ -161,7 +170,7 @@ pub async fn vm_widget_tree(
     let modern = client
         .call(
             ROOT_WIDGET_TREE_METHOD,
-            root_widget_tree_params(&isolate_id, &group_name),
+            widget_tree_params(&isolate_id, &group_name),
         )
         .await;
     let result = match modern {
@@ -193,7 +202,7 @@ pub async fn vm_widget_tree_semantic(
     let modern = client
         .call(
             ROOT_WIDGET_TREE_METHOD,
-            root_widget_tree_params(&isolate_id, &group_name),
+            semantic_widget_tree_params(&isolate_id, &group_name),
         )
         .await;
     let result = match modern {
@@ -617,10 +626,29 @@ mod widget_tree_request_tests {
     use serde_json::json;
 
     #[test]
-    fn root_widget_tree_requests_are_compact_and_include_previews() {
+    fn widget_tree_requests_keep_full_details_for_the_workbench() {
         assert_eq!(ROOT_WIDGET_TREE_METHOD, "ext.flutter.inspector.getRootWidgetTree");
         assert_eq!(
-            root_widget_tree_params("isolates/1", "pickforge"),
+            widget_tree_params("isolates/1", "pickforge"),
+            json!({
+                "isolateId": "isolates/1",
+                "groupName": "pickforge",
+                "isSummaryTree": "true",
+                "withPreviews": "true",
+            }),
+        );
+        let tree = decode_widget_tree(&json!({
+            "valueId": "root",
+            "description": "MaterialApp",
+            "creationLocation": { "file": "lib/main.dart", "line": 12, "column": 4 },
+        }));
+        assert_eq!(tree.creation_location.unwrap().file, "lib/main.dart");
+    }
+
+    #[test]
+    fn semantic_widget_tree_requests_are_compact_and_include_previews() {
+        assert_eq!(
+            semantic_widget_tree_params("isolates/1", "pickforge"),
             json!({
                 "isolateId": "isolates/1",
                 "groupName": "pickforge",

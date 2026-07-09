@@ -207,6 +207,7 @@ describe("widget tree serialization", () => {
     const label = [
       "/Users/dev/app/lib/main.dart",
       "C:\\Users\\dev\\app\\main.dart",
+      "file:///Users/dev/app/lib/main.dart",
       "runner:5173",
       "studio.local",
       "100.100.12.3",
@@ -226,7 +227,7 @@ describe("widget tree serialization", () => {
 
   it("redacts a description-derived class before routing", async () => {
     const { serializeWidgetTree } = await loadMatcher();
-    const className = "/Users/dev/app/widgets/PrivateButton";
+    const className = "file:///Users/dev/app/widgets/PrivateButton";
     const serialized = serializeWidgetTree({
       id: "description-derived-class",
       className,
@@ -320,5 +321,19 @@ describe("matchWidget", () => {
     );
     expect(prompt).toContain("The tree was truncated.");
     expect(prompt).toContain("… +");
+  });
+
+  it("caps the routed description before calculating the tree budget", async () => {
+    const { matchWidget, WIDGET_MATCH_DESCRIPTION_MAX_LENGTH } = await loadMatcher();
+    deps.routeRawPrompt.mockResolvedValue({ kind: "unconfigured" });
+    const description = "d".repeat(WIDGET_MATCH_DESCRIPTION_MAX_LENGTH + 100);
+
+    await matchWidget(description, tree());
+
+    const prompt = deps.routeRawPrompt.mock.calls[0][0] as string;
+    const routedDescription = JSON.parse(prompt.split("\n").at(-1)!) as string;
+    expect(Array.from(routedDescription)).toHaveLength(WIDGET_MATCH_DESCRIPTION_MAX_LENGTH);
+    expect(routedDescription).toMatch(/…$/);
+    expect(routedDescription).not.toBe(description);
   });
 });

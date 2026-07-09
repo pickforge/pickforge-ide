@@ -6,12 +6,14 @@ export const WIDGET_MATCH_MAX_NODES = 800;
 export const WIDGET_MATCH_MAX_BYTES = 16 * 1024;
 export const WIDGET_MATCH_PROMPT_MARGIN_BYTES = 256;
 export const WIDGET_MATCH_LABEL_MAX_LENGTH = 60;
+export const WIDGET_MATCH_DESCRIPTION_MAX_LENGTH = 500;
 // Phase 1 selects breadth-first within global node/byte caps, a 12-level depth cap, and 16-child cap.
 // Phase 2 renders that selected set in preorder, preserving document indentation without starving siblings.
 export const WIDGET_MATCH_MAX_DEPTH = 12;
 export const WIDGET_MATCH_MAX_CHILDREN = 16;
 
 const TREE_TRUNCATION_MARKER = "… subtree truncated";
+const FILE_URI = /file:\/\/\/[^\s]+/gi;
 const POSIX_PATH = /(?<![\w/])\/(?:[^\s/]+\/)*[^\s/]+/g;
 const WINDOWS_PATH = /\b[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])*[^\s\\/]+/g;
 const HOST_PORT = /\b(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|(?:\d{1,3}\.){3}\d{1,3}):\d{2,5}\b/gi;
@@ -73,6 +75,7 @@ function sanitizeRoutedText(value: string | null): string | null {
   const normalized = value
     .replace(/\s+/gu, " ")
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+    .replace(FILE_URI, "…")
     .replace(WINDOWS_PATH, "…")
     .replace(POSIX_PATH, "…")
     .replace(HOST_PORT, "…")
@@ -85,6 +88,13 @@ function sanitizeRoutedText(value: string | null): string | null {
   return characters.length > WIDGET_MATCH_LABEL_MAX_LENGTH
     ? `${characters.slice(0, WIDGET_MATCH_LABEL_MAX_LENGTH - 1).join("")}…`
     : normalized;
+}
+
+function capWidgetMatchDescription(description: string): string {
+  const characters = Array.from(description);
+  return characters.length > WIDGET_MATCH_DESCRIPTION_MAX_LENGTH
+    ? `${characters.slice(0, WIDGET_MATCH_DESCRIPTION_MAX_LENGTH - 1).join("")}…`
+    : description;
 }
 
 function widgetLinePrefix(index: number, node: SemanticWidgetNode, depth: number): string {
@@ -222,6 +232,7 @@ export function buildWidgetMatchPrompt(
   description: string,
   tree: SerializedWidgetTree,
 ): string {
+  const cappedDescription = capWidgetMatchDescription(description);
   const truncation = tree.truncated
     ? "The tree was truncated. Do not infer a match outside the listed nodes."
     : "The tree is complete.";
@@ -238,7 +249,7 @@ export function buildWidgetMatchPrompt(
     "Widget tree:",
     tree.text,
     "User description as JSON string:",
-    JSON.stringify(description),
+    JSON.stringify(cappedDescription),
   ].join("\n");
 }
 

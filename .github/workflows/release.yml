@@ -73,7 +73,7 @@ jobs:
           - name: macos-aarch64
             os: macos-latest
             bundles: ""
-            target: aarch64-apple-darwin
+            target: ""
           - name: windows
             os: windows-latest
             bundles: ""
@@ -94,10 +94,6 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Add macOS Rust target
-        if: runner.os == 'macOS'
-        run: rustup target add aarch64-apple-darwin
 
       - name: Install Linux bundle dependencies
         if: runner.os == 'Linux'

@@ -91,6 +91,16 @@ export interface AgentRunLog {
   wrapperScriptPath: string;
 }
 
+export interface AgentSessionRow {
+  id: string;
+  chatId: string;
+  provider: string;
+  providerSessionId: string | null;
+  model: string | null;
+  status: string;
+  createdAt: number;
+}
+
 export interface OperatorAuditRow {
   id: string;
   createdAt: number;
@@ -98,7 +108,7 @@ export interface OperatorAuditRow {
   inputText: string;
   intentJson: string;
   riskTier: number;
-  status: "started" | "done" | "failed" | "denied" | "needs_confirmation";
+  status: "started" | "done" | "failed" | "denied" | "needs_confirmation" | "noop";
   result: string | null;
 }
 
@@ -163,6 +173,8 @@ export const agentRunFinish = (
   hotReloadCount: number,
 ) =>
   invoke<void>("agent_run_finish", { id, finishedAt, exitCode, hotReloadCount });
+export const agentSessionLatestForChat = (chatId: string) =>
+  invoke<AgentSessionRow | null>("agent_session_latest_for_chat", { chatId });
 
 // ---- operator audit ----
 export const operatorAuditInsert = (row: OperatorAuditRow) =>

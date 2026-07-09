@@ -31,7 +31,12 @@ const deps = vi.hoisted(() => {
     chatsByRoot: {} as Record<string, Chat[]>,
     activeChatId: null as string | null,
   };
-  const agentStates = new Map<string, { sessionId: string | null; model: string | null }>();
+  const agentStates = new Map<string, {
+    sessionId: string | null;
+    model: string | null;
+    turnActive?: boolean;
+  }>();
+  const latestSessions = new Map<string, { model: string | null }>();
   const archivedChats = new Set<string>();
   const runs: Array<{
     projectRoot: string;
@@ -40,6 +45,7 @@ const deps = vi.hoisted(() => {
   return {
     workspace,
     agentStates,
+    latestSessions,
     archivedChats,
     runs,
     flagEnabled: vi.fn(),
@@ -52,6 +58,7 @@ const deps = vi.hoisted(() => {
     operatorAuditInsert: vi.fn(),
     operatorAuditUpdate: vi.fn(),
     operatorAuditList: vi.fn(),
+    agentSessionLatestForChat: vi.fn((chatId: string) => latestSessions.get(chatId) ?? null),
     addChat: vi.fn(),
     chatsFor: vi.fn((root: string) => workspace.chatsByRoot[root] ?? []),
     ensureChatsLoaded: vi.fn(),
@@ -81,6 +88,7 @@ const deps = vi.hoisted(() => {
       workspace.chatsByRoot = {};
       workspace.activeChatId = null;
       agentStates.clear();
+      latestSessions.clear();
       archivedChats.clear();
       runs.splice(0);
       this.flagEnabled.mockReset().mockReturnValue(true);
@@ -102,6 +110,7 @@ const deps = vi.hoisted(() => {
       this.operatorAuditInsert.mockReset().mockResolvedValue(undefined);
       this.operatorAuditUpdate.mockReset().mockResolvedValue(undefined);
       this.operatorAuditList.mockReset().mockResolvedValue([]);
+      this.agentSessionLatestForChat.mockClear();
       this.addChat.mockReset().mockResolvedValue("chat-new");
       this.chatsFor.mockClear();
       this.ensureChatsLoaded.mockReset().mockResolvedValue(undefined);
@@ -143,6 +152,7 @@ vi.mock("../../src/lib/db", () => ({
   operatorAuditInsert: deps.operatorAuditInsert,
   operatorAuditUpdate: deps.operatorAuditUpdate,
   operatorAuditList: deps.operatorAuditList,
+  agentSessionLatestForChat: deps.agentSessionLatestForChat,
 }));
 
 vi.mock("../../src/stores/chatArchive", () => ({
@@ -282,8 +292,32 @@ describe("dispatchIntent", () => {
 
     expect(result.status).toBe("done");
     expect(deps.addChat).toHaveBeenCalledWith("Operator chat", "claudeCode", "/repo/app", "agent");
-    expect(deps.ensureAgentChat).toHaveBeenCalledWith("chat-new", "/repo/app", "claudeCode", "opus");
+    expect(deps.ensureAgentChat).toHaveBeenCalledWith(
+      "chat-new",
+      "/repo/app",
+      "claudeCode",
+      "opus",
+      { engine: "test-engine", effort: "max", mode: "plan" },
+    );
     expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("starts created chats with configured model and run options when no model is explicit", async () => {
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "createChat", provider: "codex", model: null }, "App"),
+      { confirmed: true },
+    );
+
+    expect(result.status).toBe("done");
+    expect(deps.ensureAgentChat).toHaveBeenCalledWith(
+      "chat-new",
+      "/repo/app",
+      "codex",
+      "gpt-5.5",
+      { engine: "test-engine", effort: "high", mode: "read-only" },
+    );
   });
 
   it("falls back to compact action JSON when audit input text is absent", async () => {
@@ -414,6 +448,28 @@ describe("dispatchIntent", () => {
     expect(deps.selectChat).not.toHaveBeenCalled();
   });
 
+  it("fails named chat resolution when the name only matches hidden chats", async () => {
+    deps.archivedChats.add("chat-archived");
+    deps.workspace.chatsByRoot["/repo/app"] = [
+      { ...chat("chat-archived", "/repo/app", "Hidden Chat"), lastActivityAt: 40 },
+      {
+        ...chat("chat-worker", "/repo/app", "Hidden Worker"),
+        labelsJson: JSON.stringify({ role: "swarmWorker" }),
+        lastActivityAt: 60,
+      },
+      { ...chat("chat-visible", "/repo/app", "Visible Chat"), lastActivityAt: 20 },
+    ];
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "openChat", chat: "hidden" }));
+
+    expect(result.status).toBe("failed");
+    expect("message" in result ? result.message : "").toContain("archived or hidden");
+    expect("message" in result ? result.message : "").toContain("Hidden Chat");
+    expect("message" in result ? result.message : "").toContain("Hidden Worker");
+    expect(deps.selectChat).not.toHaveBeenCalled();
+  });
+
   it("fails ambiguous chat resolution and lists candidates", async () => {
     deps.workspace.chatsByRoot["/repo/app"] = [
       chat("chat-main", "/repo/app", "Main Chat"),
@@ -461,6 +517,46 @@ describe("dispatchIntent", () => {
     expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "ship it");
   });
 
+  it("uses the persisted latest session model when cold-starting an unmounted chat", async () => {
+    deps.latestSessions.set("chat-main", { model: "gpt-5.4" });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "sendPrompt", prompt: "ship it", chat: null }),
+      { confirmed: true },
+    );
+
+    expect(result.status).toBe("done");
+    expect(deps.ensureAgentChat).toHaveBeenCalledWith(
+      "chat-main",
+      "/repo/app",
+      "codex",
+      "gpt-5.4",
+      { engine: "test-engine", effort: "high", mode: "read-only" },
+    );
+    expect(deps.agentSessionLatestForChat).toHaveBeenCalledWith("chat-main");
+    expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "ship it");
+  });
+
+  it("preserves an explicit null persisted session model when cold-starting a chat", async () => {
+    deps.latestSessions.set("chat-main", { model: null });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "sendPrompt", prompt: "ship it", chat: null }),
+      { confirmed: true },
+    );
+
+    expect(result.status).toBe("done");
+    expect(deps.ensureAgentChat).toHaveBeenCalledWith(
+      "chat-main",
+      "/repo/app",
+      "codex",
+      null,
+      { engine: "test-engine", effort: "high", mode: "read-only" },
+    );
+  });
+
   it("uses configured agent defaults when cold-starting an unmounted chat", async () => {
     const { dispatchIntent } = await loadStore();
 
@@ -481,6 +577,7 @@ describe("dispatchIntent", () => {
     expect(deps.loadAgentEfforts).toHaveBeenCalled();
     expect(deps.loadAgentModes).toHaveBeenCalled();
     expect(deps.loadAgentEngine).toHaveBeenCalled();
+    expect(deps.agentSessionLatestForChat).toHaveBeenCalledWith("chat-main");
     expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "ship it");
   });
 
@@ -495,6 +592,34 @@ describe("dispatchIntent", () => {
 
     expect(deps.ensureAgentChat).not.toHaveBeenCalled();
     expect(deps.sendAgentMessage).toHaveBeenCalledWith("chat-main", "continue");
+  });
+
+  it("returns noop when interrupt targets a cold or idle chat", async () => {
+    deps.agentStates.set("chat-main", { sessionId: "session-1", model: "gpt-5.5", turnActive: false });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "interruptRun", run: null }),
+      { confirmed: true },
+    );
+
+    expect(result).toEqual({ status: "noop", summary: "nothing to interrupt" });
+    expect(deps.interruptAgentChat).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("interrupts only when the target chat has a live active turn", async () => {
+    deps.agentStates.set("chat-main", { sessionId: "session-1", model: "gpt-5.5", turnActive: true });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "interruptRun", run: null }),
+      { confirmed: true },
+    );
+
+    expect(result).toEqual({ status: "done", summary: "Interrupted Main" });
+    expect(deps.interruptAgentChat).toHaveBeenCalledWith("chat-main");
+    expect(auditUpdateStatus()).toBe("done");
   });
 
   it("does not send to an active chat from a different project when projectRef is set", async () => {

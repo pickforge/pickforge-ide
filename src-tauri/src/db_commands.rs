@@ -2,8 +2,8 @@
 //! reads/writes are local and sub-millisecond.
 
 use pickforge_core::{
-    AgentRunLog, AgentUsageSummary, Chat, Database, OrchestraTask, PickHistory, Project,
-    OperatorAuditRow, ProjectSettings, RunSessionLog,
+    AgentRunLog, AgentSessionRow, AgentUsageSummary, Chat, Database, OperatorAuditRow,
+    OrchestraTask, PickHistory, Project, ProjectSettings, RunSessionLog,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -183,6 +183,15 @@ pub fn agent_usage_summary(
     project_root: Option<String>,
 ) -> Result<Vec<AgentUsageSummary>, String> {
     db.agent_usage_summary(project_root.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agent_session_latest_for_chat(
+    db: State<'_, Arc<Database>>,
+    chat_id: String,
+) -> Result<Option<AgentSessionRow>, String> {
+    db.latest_agent_session_for_chat(&chat_id)
         .map_err(|e| e.to_string())
 }
 

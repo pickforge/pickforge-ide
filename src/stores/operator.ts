@@ -32,6 +32,7 @@ import {
 
 export type DispatchResult =
   | { status: "done"; summary: string }
+  | { status: "noop"; summary: string }
   | { status: "needsConfirmation"; summary: string }
   | { status: "denied" | "failed" | "unsupported"; message: string };
 
@@ -102,6 +103,19 @@ function resolveReference<T>(
   };
 }
 
+function referenceMatches<T>(
+  ref: string,
+  item: T,
+  exactValues: (item: T) => string[],
+  partialValues: (item: T) => string[],
+): boolean {
+  const query = normalize(ref);
+  return (
+    exactValues(item).some((value) => normalize(value) === query) ||
+    partialValues(item).some((value) => normalize(value).includes(query))
+  );
+}
+
 export function resolveProjectReference(projectRef: string | null): Resolution<Project> {
   if (!projectRef) {
     if (!workspace.activeRoot) {
@@ -140,10 +154,25 @@ export async function resolveChatReference(
 
   await ensureChatsLoaded(projectRoot);
   const chats = chatsFor(projectRoot);
+  const visibleChats = chats.filter(isVisiblePrimaryChat);
+  const visibleMatches = visibleChats.filter((chat) =>
+    referenceMatches(chatRef, chat, (item) => [item.title], (item) => [item.title]),
+  );
+  const hiddenMatches = chats
+    .filter((chat) => !isVisiblePrimaryChat(chat))
+    .filter((chat) =>
+      referenceMatches(chatRef, chat, (item) => [item.title], (item) => [item.title]),
+    );
+  if (!visibleMatches.length && hiddenMatches.length) {
+    return {
+      ok: false,
+      message: `Chat "${chatRef}" is archived or hidden. Candidates: ${candidateList(hiddenMatches.map((chat) => chat.title))}`,
+    };
+  }
   return resolveReference(
     "Chat",
     chatRef,
-    chats,
+    visibleChats,
     (chat) => chat.title,
     (chat) => [chat.title],
     (chat) => [chat.title],
@@ -221,6 +250,8 @@ function auditStatusFor(result: DispatchResult): AuditStatus {
   switch (result.status) {
     case "done":
       return "done";
+    case "noop":
+      return "noop";
     case "needsConfirmation":
       return "needs_confirmation";
     case "denied":
@@ -336,7 +367,10 @@ async function sendToChat(chat: Chat, prompt: string): Promise<DispatchResult> {
   const state = agentChat(chat.chatId);
   if (!state?.sessionId) {
     const provider = target.value.provider;
-    const model = state?.model ?? nativeChatModel(provider, loadAgentModels()[provider] ?? null);
+    const latestSession = await db.agentSessionLatestForChat(chat.chatId);
+    const model = latestSession
+      ? nativeChatModel(provider, latestSession.model)
+      : state?.model ?? nativeChatModel(provider, loadAgentModels()[provider] ?? null);
     await ensureAgentChat(
       chat.chatId,
       chat.projectRoot,
@@ -416,7 +450,17 @@ async function runIntent(intent: OperatorIntent): Promise<DispatchResult> {
       const provider = agentProviderFromIntent(action.provider);
       const chatId = await addChat("Operator chat", provider, project.value.projectRoot, "agent");
       if (!chatId) return { status: "failed", message: "Could not create operator chat" };
-      await ensureAgentChat(chatId, project.value.projectRoot, provider, action.model);
+      await ensureAgentChat(
+        chatId,
+        project.value.projectRoot,
+        provider,
+        action.model ?? nativeChatModel(provider, loadAgentModels()[provider] ?? null),
+        {
+          engine: loadAgentEngine(),
+          effort: loadAgentEfforts()[provider] ?? null,
+          mode: loadAgentModes()[provider] ?? null,
+        },
+      );
       return { status: "done", summary: "Created Operator chat" };
     }
     case "sendPrompt": {
@@ -458,6 +502,10 @@ async function runIntent(intent: OperatorIntent): Promise<DispatchResult> {
       if (!chat.ok) return { status: "failed", message: chat.message };
       const target = agentTarget(chat.value);
       if (!target.ok) return { status: "failed", message: target.message };
+      const state = agentChat(chat.value.chatId);
+      if (!state?.sessionId || !state.turnActive) {
+        return { status: "noop", summary: "nothing to interrupt" };
+      }
       await interruptAgentChat(chat.value.chatId);
       return { status: "done", summary: `Interrupted ${chat.value.title}` };
     }

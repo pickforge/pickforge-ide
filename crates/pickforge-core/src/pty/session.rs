@@ -53,6 +53,8 @@ pub struct RemotePty {
 /// Options for spawning a shell. `rows`/`cols` of 0 default to 24×80.
 #[derive(Debug, Clone, Default)]
 pub struct SpawnOptions {
+    /// Local working directory for non-remote spawns. Remote PTYs ignore this;
+    /// `remote_root` handles the remote `cd`.
     pub cwd: Option<String>,
     pub rows: u16,
     pub cols: u16,
@@ -196,7 +198,7 @@ impl PtyManager {
         for arg in args {
             cmd.arg(arg);
         }
-        if let Some(cwd) = opts.cwd.filter(|c| !c.is_empty()) {
+        if let Some(cwd) = local_spawn_cwd(opts.remote.as_ref(), opts.cwd.as_deref()) {
             cmd.cwd(cwd);
         }
         // Base the shell's env on the resolved login-shell environment (so PATH
@@ -408,10 +410,18 @@ fn remote_pty_command(remote_root: &str, command: Option<&str>) -> String {
     let quoted_root = shell_quote_argv(&[remote_root]);
     match command {
         Some(command) => format!(
-            "cd {quoted_root} && exec \"$SHELL\" -c {}",
+            "cd {quoted_root} && exec \"$SHELL\" -lc {}",
             shell_quote_argv(&[command])
         ),
         None => format!("cd {quoted_root} && exec \"$SHELL\" -l"),
+    }
+}
+
+fn local_spawn_cwd<'a>(remote: Option<&RemotePty>, cwd: Option<&'a str>) -> Option<&'a str> {
+    if remote.is_some() {
+        None
+    } else {
+        cwd.filter(|c| !c.is_empty())
     }
 }
 
@@ -544,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_pty_argv_with_command_runs_remote_shell_c_under_root() {
+    fn remote_pty_argv_with_command_runs_remote_login_shell_c_under_root() {
         assert_eq!(
             remote_pty_ssh_args(
                 &remote("mac-mini", "/Users/dev/app"),
@@ -561,7 +571,7 @@ mod tests {
                 "-tt",
                 "--",
                 "mac-mini",
-                "cd '/Users/dev/app' && exec \"$SHELL\" -c 'bun run test:unit'",
+                "cd '/Users/dev/app' && exec \"$SHELL\" -lc 'bun run test:unit'",
             ]
         );
     }
@@ -576,8 +586,16 @@ mod tests {
 
         assert_eq!(
             args.last().unwrap(),
-            r#"cd '/Users/dev/it'\''s $root`tick`' && exec "$SHELL" -c 'printf '\''%s'\'' "$SHELL" "$HOME" `uname`'"#
+            r#"cd '/Users/dev/it'\''s $root`tick`' && exec "$SHELL" -lc 'printf '\''%s'\'' "$SHELL" "$HOME" `uname`'"#
         );
+    }
+
+    #[test]
+    fn remote_pty_ignores_local_cwd() {
+        let remote = remote("mac-mini", "/Users/dev/app");
+        let cwd = "/does/not/exist";
+        assert_eq!(local_spawn_cwd(Some(&remote), Some(cwd)), None);
+        assert_eq!(local_spawn_cwd(None, Some(cwd)), Some(cwd));
     }
 
     #[test]

@@ -278,6 +278,8 @@ fn remote_pty_spawn_uses_ssh_argv_and_keeps_pty_io_and_resize() {
     let argv_log = dir.join("argv.log");
     let size_before = dir.join("size-before.log");
     let size_after = dir.join("size-after.log");
+    let missing_cwd = dir.join("missing-local-cwd");
+    assert!(!missing_cwd.exists(), "test cwd must stay nonexistent");
 
     std::fs::write(
         &fake_ssh,
@@ -323,6 +325,7 @@ stty size > "$PF_FAKE_SSH_SIZE_AFTER" 2>/dev/null || true
     let id = manager
         .spawn(
             SpawnOptions {
+                cwd: Some(missing_cwd.to_string_lossy().into_owned()),
                 rows: 7,
                 cols: 19,
                 extra_env,

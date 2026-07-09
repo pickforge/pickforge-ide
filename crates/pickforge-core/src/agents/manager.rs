@@ -15,8 +15,9 @@ use super::codex_app::{
 };
 use super::codex_exec::{spawn_codex_turn, CodexExecTurn, CodexTurnOptions};
 use super::event::AgentEvent;
+use super::remote_exec::RemoteExec;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgentProvider {
     ClaudeCode,
     Codex,
@@ -77,6 +78,7 @@ pub struct AgentStartOverrides {
     /// start (the SDK fixes effort per query); Codex applies effort per turn
     /// via `send`, so this is ignored there.
     pub effort: Option<String>,
+    pub remote: Option<RemoteExec>,
 }
 
 #[derive(Clone)]
@@ -86,6 +88,7 @@ pub struct AgentChatManager {
     inner: Arc<Mutex<HashMap<String, SessionState>>>,
     codex_app_clients: Arc<Mutex<HashMap<PathBuf, Arc<CodexAppClient>>>>,
     claude_bridge: Arc<Mutex<Option<Arc<ClaudeBridgeClient>>>>,
+    remote_sessions: Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     starting_chats: Arc<Mutex<HashSet<String>>>,
     #[cfg(test)]
     test_binaries: TestBinaries,
@@ -94,6 +97,7 @@ pub struct AgentChatManager {
 struct SessionState {
     chat_id: String,
     project_root: PathBuf,
+    remote: Option<RemoteExec>,
     provider: AgentProvider,
     engine: Engine,
     model: Option<String>,
@@ -119,6 +123,13 @@ struct SessionState {
     /// sink when a reloaded webview re-attaches mid-turn — without this the
     /// rebuilt UI has no prompt while the agent stays blocked waiting.
     pending_approvals: Vec<(String, AgentEvent)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RemoteSessionKey {
+    chat_id: String,
+    provider: AgentProvider,
+    host: String,
 }
 
 #[derive(Clone)]
@@ -167,6 +178,7 @@ impl AgentChatManager {
             inner: Arc::new(Mutex::new(HashMap::new())),
             codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
             claude_bridge: Arc::new(Mutex::new(None)),
+            remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
             #[cfg(test)]
             test_binaries: TestBinaries::default(),
@@ -184,6 +196,8 @@ impl AgentChatManager {
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     ) -> Result<String, AgentChatError> {
         let _start_guard = self.acquire_start_guard(chat_id)?;
+        let remote = overrides.remote.clone();
+        let engine = engine_for_start(engine, remote.as_ref());
         let latest = self.db.latest_agent_session_for_chat(chat_id)?;
         let (session_id, mut provider_session_id) =
             match latest.filter(|row| row.provider == provider.as_str()) {
@@ -208,6 +222,9 @@ impl AgentChatManager {
                     (session_id, None)
                 }
             };
+        if let Some(remote) = remote.as_ref() {
+            provider_session_id = self.remote_session_id(chat_id, provider, &remote.host);
+        }
 
         let codex_app_client = if engine == Engine::V2 && provider == AgentProvider::Codex {
             let client = self.codex_app_client(project_root.clone())?;
@@ -259,6 +276,7 @@ impl AgentChatManager {
                 SessionState {
                     chat_id: chat_id.to_string(),
                     project_root: project_root.clone(),
+                    remote: remote.clone(),
                     provider,
                     engine,
                     model: model.clone(),
@@ -360,6 +378,7 @@ impl AgentChatManager {
         let (
             chat_id,
             project_root,
+            remote,
             provider,
             engine,
             session_model,
@@ -382,6 +401,7 @@ impl AgentChatManager {
             (
                 state.chat_id.clone(),
                 state.project_root.clone(),
+                state.remote.clone(),
                 state.provider,
                 state.engine,
                 state.model.clone(),
@@ -598,6 +618,7 @@ impl AgentChatManager {
                         effort,
                         resume_thread_id: provider_session_id,
                         binary: self.codex_binary(),
+                        remote,
                     },
                     move |event| wrapped_sink(event),
                 )
@@ -615,6 +636,7 @@ impl AgentChatManager {
                         permission_mode: None,
                         allowed_tools: None,
                         binary: self.claude_binary(),
+                        remote,
                     },
                     move |event| wrapped_sink(event),
                 )
@@ -910,9 +932,37 @@ impl AgentChatManager {
     ) -> Arc<dyn Fn(AgentEvent) + Send + Sync> {
         let db = Arc::clone(&self.db);
         let sink_inner = Arc::clone(&self.inner);
+        let remote_sessions = Arc::clone(&self.remote_sessions);
         Arc::new(move |event| {
-            handle_runner_event(&db, &sink_inner, &session_id, &chat_id, event);
+            handle_runner_event(
+                &db,
+                &sink_inner,
+                &remote_sessions,
+                &session_id,
+                &chat_id,
+                event,
+            );
         })
+    }
+
+    fn remote_session_id(
+        &self,
+        chat_id: &str,
+        provider: AgentProvider,
+        host: &str,
+    ) -> Option<String> {
+        self.remote_sessions
+            .lock()
+            .ok()
+            .and_then(|sessions| {
+                sessions
+                    .get(&RemoteSessionKey {
+                        chat_id: chat_id.to_string(),
+                        provider,
+                        host: host.to_string(),
+                    })
+                    .cloned()
+            })
     }
 
     fn codex_app_client(
@@ -1137,6 +1187,15 @@ impl AgentChatManager {
             let _ = turn.kill();
             turn.reap();
         }
+        if let Some(remote) = state.remote.as_ref() {
+            if let Ok(mut sessions) = self.remote_sessions.lock() {
+                sessions.remove(&RemoteSessionKey {
+                    chat_id: state.chat_id.clone(),
+                    provider: state.provider,
+                    host: remote.host.clone(),
+                });
+            }
+        }
         match (state.engine, state.provider) {
             (Engine::V2, AgentProvider::ClaudeCode) => {
                 if let Ok(client) = self.cached_claude_bridge_client() {
@@ -1176,6 +1235,7 @@ impl AgentChatManager {
             inner: Arc::new(Mutex::new(HashMap::new())),
             codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
             claude_bridge: Arc::new(Mutex::new(None)),
+            remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
             test_binaries: TestBinaries {
                 codex: codex_binary,
@@ -1246,6 +1306,7 @@ fn upsert_session_state(
     if let Some(existing) = inner.get_mut(&session_id) {
         existing.chat_id = state.chat_id;
         existing.project_root = state.project_root;
+        existing.remote = state.remote;
         existing.provider = state.provider;
         existing.engine = state.engine;
         existing.model = state.model;
@@ -1393,6 +1454,7 @@ impl ActiveTurn {
 fn handle_runner_event(
     db: &Database,
     inner: &Arc<Mutex<HashMap<String, SessionState>>>,
+    remote_sessions: &Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     session_id: &str,
     chat_id: &str,
     event: AgentEvent,
@@ -1440,6 +1502,18 @@ fn handle_runner_event(
             if let Ok(mut states) = inner.lock() {
                 if let Some(state) = states.get_mut(session_id) {
                     state.provider_session_id = Some(provider_session_id.clone());
+                    if let Some(remote) = state.remote.as_ref() {
+                        if let Ok(mut sessions) = remote_sessions.lock() {
+                            sessions.insert(
+                                RemoteSessionKey {
+                                    chat_id: state.chat_id.clone(),
+                                    provider: state.provider,
+                                    host: remote.host.clone(),
+                                },
+                                provider_session_id.clone(),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1640,6 +1714,14 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
 
+fn engine_for_start(engine: Engine, remote: Option<&RemoteExec>) -> Engine {
+    if remote.is_some() {
+        Engine::V1
+    } else {
+        engine
+    }
+}
+
 #[cfg(test)]
 #[derive(Clone, Default)]
 struct TestBinaries {
@@ -1805,6 +1887,41 @@ mod tests {
         assert_eq!("v1".parse::<Engine>().unwrap(), Engine::V1);
         assert_eq!("v2".parse::<Engine>().unwrap(), Engine::V2);
         assert!("V2".parse::<Engine>().is_err());
+    }
+
+    #[test]
+    fn remote_sessions_force_v1_before_v2_dispatch() {
+        let remote = RemoteExec::new("mac-mini", "/srv/app").unwrap();
+
+        assert_eq!(engine_for_start(Engine::V2, Some(&remote)), Engine::V1);
+        assert_eq!(engine_for_start(Engine::V1, Some(&remote)), Engine::V1);
+        assert_eq!(engine_for_start(Engine::V2, None), Engine::V2);
+    }
+
+    #[test]
+    fn remote_session_cache_is_scoped_to_the_host() {
+        let manager = AgentChatManager::new(Arc::new(Database::open_in_memory().unwrap()), PathBuf::new());
+        manager
+            .remote_sessions
+            .lock()
+            .unwrap()
+            .insert(
+                RemoteSessionKey {
+                    chat_id: "chat-1".to_string(),
+                    provider: AgentProvider::Codex,
+                    host: "mac-mini".to_string(),
+                },
+                "thread-mac".to_string(),
+            );
+
+        assert_eq!(
+            manager.remote_session_id("chat-1", AgentProvider::Codex, "mac-mini"),
+            Some("thread-mac".to_string())
+        );
+        assert_eq!(
+            manager.remote_session_id("chat-1", AgentProvider::Codex, "linux-box"),
+            None
+        );
     }
 
     #[test]

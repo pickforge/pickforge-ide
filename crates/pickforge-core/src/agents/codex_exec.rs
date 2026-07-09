@@ -12,6 +12,7 @@ use super::event::{
     AgentEvent, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem, ToolCallStatus,
     TurnStatus,
 };
+use super::remote_exec::{remote_ssh_exit_error, RemoteExec, RemoteExecError};
 
 #[derive(Debug, Clone)]
 pub struct CodexTurnOptions {
@@ -21,6 +22,7 @@ pub struct CodexTurnOptions {
     pub effort: Option<String>,
     pub resume_thread_id: Option<String>,
     pub binary: Option<String>,
+    pub remote: Option<RemoteExec>,
 }
 
 pub struct CodexExecTurn {
@@ -35,6 +37,65 @@ pub enum AgentSpawnError {
     Io(#[from] std::io::Error),
     #[error("codex exec did not expose {0}")]
     MissingPipe(&'static str),
+    #[error(transparent)]
+    Remote(#[from] RemoteExecError),
+}
+
+struct TurnCommand {
+    program: String,
+    args: Vec<String>,
+    cwd: Option<PathBuf>,
+    remote_host: Option<String>,
+}
+
+fn turn_command(opts: &CodexTurnOptions) -> Result<TurnCommand, AgentSpawnError> {
+    let binary = opts
+        .binary
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "codex".to_string());
+    let mut args = vec![
+        binary.clone(),
+        "exec".to_string(),
+        "--json".to_string(),
+        "--skip-git-repo-check".to_string(),
+        "-c".to_string(),
+        r#"sandbox_mode="workspace-write""#.to_string(),
+        "-c".to_string(),
+        r#"approval_policy="never""#.to_string(),
+    ];
+    if let Some(effort) = opts.effort.as_deref().filter(|value| !value.trim().is_empty()) {
+        args.push("-c".to_string());
+        args.push(format!(r#"model_reasoning_effort="{effort}""#));
+    }
+    if let Some(model) = opts.model.as_deref().filter(|value| !value.trim().is_empty()) {
+        args.push("-m".to_string());
+        args.push(model.to_string());
+    }
+    if let Some(thread_id) = opts
+        .resume_thread_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        args.push("resume".to_string());
+        args.push(thread_id.to_string());
+    }
+    args.push(opts.prompt.clone());
+    if let Some(remote) = opts.remote.as_ref() {
+        return Ok(TurnCommand {
+            program: "ssh".to_string(),
+            args: remote.ssh_args(&args)?,
+            cwd: None,
+            remote_host: Some(remote.host.clone()),
+        });
+    }
+    args.remove(0);
+    Ok(TurnCommand {
+        program: binary,
+        args,
+        cwd: Some(opts.cwd.clone()),
+        remote_host: None,
+    })
 }
 
 pub fn parse_codex_exec_line(line: &str) -> Option<AgentEvent> {
@@ -48,42 +109,16 @@ pub fn spawn_codex_turn<F>(
 where
     F: Fn(AgentEvent) + Send + Sync + 'static,
 {
-    let CodexTurnOptions {
-        prompt,
-        cwd,
-        model,
-        effort,
-        resume_thread_id,
-        binary,
-    } = opts;
-    let program = binary
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "codex".to_string());
-
-    let mut cmd = Command::new(program);
-    cmd.arg("exec")
-        .arg("--json")
-        .arg("--skip-git-repo-check")
-        .arg("-c")
-        .arg(r#"sandbox_mode="workspace-write""#)
-        .arg("-c")
-        .arg(r#"approval_policy="never""#);
-    if let Some(effort) = effort.filter(|value| !value.trim().is_empty()) {
-        cmd.arg("-c")
-            .arg(format!(r#"model_reasoning_effort="{effort}""#));
-    }
-    if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
-        cmd.arg("-m").arg(model);
-    }
-    if let Some(thread_id) = resume_thread_id.filter(|value| !value.trim().is_empty()) {
-        cmd.arg("resume").arg(thread_id);
-    }
-    cmd.arg(prompt)
-        .current_dir(cwd)
+    let turn_command = turn_command(&opts)?;
+    let mut cmd = Command::new(&turn_command.program);
+    cmd.args(&turn_command.args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear();
+    if let Some(cwd) = turn_command.cwd.as_ref() {
+        cmd.current_dir(cwd);
+    }
     for (key, value) in crate::process::user_shell_environment().clone() {
         cmd.env(key, value);
     }
@@ -126,7 +161,7 @@ where
     let reader_thread = match std::thread::Builder::new()
         .name("codex-exec-stdout".to_string())
         .spawn(move || {
-            read_loop(stdout, reader_state, reader_sink);
+            read_loop(stdout, reader_state, reader_sink, turn_command.remote_host);
         }) {
         Ok(handle) => handle,
         Err(err) => {
@@ -307,7 +342,12 @@ fn parse_usage(value: &Value) -> AgentEvent {
     }
 }
 
-fn read_loop<F>(stdout: impl Read, state: Arc<CodexTurnState>, sink: Arc<F>)
+fn read_loop<F>(
+    stdout: impl Read,
+    state: Arc<CodexTurnState>,
+    sink: Arc<F>,
+    remote_host: Option<String>,
+)
 where
     F: Fn(AgentEvent) + Send + Sync + 'static,
 {
@@ -357,7 +397,14 @@ where
             &sink,
             &state.terminal_sent,
             AgentEvent::TurnFailed {
-                error: format!("codex exec exited with status {code}"),
+                error: if code == "255" {
+                    remote_host
+                        .as_deref()
+                        .map(remote_ssh_exit_error)
+                        .unwrap_or_else(|| format!("codex exec exited with status {code}"))
+                } else {
+                    format!("codex exec exited with status {code}")
+                },
             },
         );
     }
@@ -733,6 +780,7 @@ mod tests {
                     effort: None,
                     resume_thread_id: None,
                     binary: Some(script.path.to_string_lossy().to_string()),
+                    remote: None,
                 },
                 move |event| sink_events.lock().expect("events lock").push(event),
             ) {
@@ -793,6 +841,29 @@ mod tests {
             .lines()
             .filter_map(parse_codex_exec_line)
             .collect()
+    }
+
+    #[test]
+    fn remote_turn_uses_one_quoted_ssh_command() {
+        let options = CodexTurnOptions {
+            prompt: "say it's $HOME".to_string(),
+            cwd: PathBuf::from("/local/project"),
+            model: Some("gpt remote".to_string()),
+            effort: Some("high".to_string()),
+            resume_thread_id: Some("thread'one".to_string()),
+            binary: Some("codex".to_string()),
+            remote: Some(RemoteExec::new("mac-mini", "/srv/it's $app").unwrap()),
+        };
+
+        let command = turn_command(&options).unwrap();
+
+        assert_eq!(command.program, "ssh");
+        assert_eq!(command.cwd, None);
+        assert_eq!(command.remote_host.as_deref(), Some("mac-mini"));
+        assert_eq!(
+            command.args.last().unwrap(),
+            "cd '/srv/it'\\''s $app' && exec 'codex' 'exec' '--json' '--skip-git-repo-check' '-c' 'sandbox_mode=\"workspace-write\"' '-c' 'approval_policy=\"never\"' '-c' 'model_reasoning_effort=\"high\"' '-m' 'gpt remote' 'resume' 'thread'\\''one' 'say it'\\''s $HOME'"
+        );
     }
 
     #[test]

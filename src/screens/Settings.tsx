@@ -51,6 +51,7 @@ import {
 import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
+import { flagStates, setFlagOverride, type FlagKey } from "../stores/flags";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
 import { telemetryGet, telemetrySet } from "../lib/telemetry";
@@ -601,6 +602,41 @@ export function SettingsScreen() {
             </For>
           </Show>
         </Section>
+
+        <Show when={import.meta.env.DEV}>
+          <Section title="Feature flags">
+            <For each={flagStates()}>
+              {(f) => (
+                <div class="pf-settings-row">
+                  <span class="pf-settings-label">
+                    {f.key}
+                    <span class="pf-settings-hint-inline">{f.description}</span>
+                  </span>
+                  <div class="pf-seg">
+                    <button
+                      classList={{ active: f.override === true }}
+                      onClick={() => setFlagOverride(f.key as FlagKey, true)}
+                    >
+                      On
+                    </button>
+                    <button
+                      classList={{ active: f.override === false }}
+                      onClick={() => setFlagOverride(f.key as FlagKey, false)}
+                    >
+                      Off
+                    </button>
+                    <button
+                      classList={{ active: f.override === undefined }}
+                      onClick={() => setFlagOverride(f.key as FlagKey, undefined)}
+                    >
+                      Default ({f.defaultValue ? "on" : "off"})
+                    </button>
+                  </div>
+                </div>
+              )}
+            </For>
+          </Section>
+        </Show>
       </div>
     </div>
   );

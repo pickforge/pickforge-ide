@@ -11,11 +11,8 @@ reset this file.
 
 ## Internal/release changes
 
-<<<<<<< HEAD
 - Migrated release CI to the shared `@pickforge/tauri-release` tooling and draft-only `latest.json` finalization.
-=======
 - Added the `pickforged` daemon foundation with hashed-token pairing auth.
->>>>>>> 8e1ad55 (feat(remote): add host foundation)
 
 ## Validation
 

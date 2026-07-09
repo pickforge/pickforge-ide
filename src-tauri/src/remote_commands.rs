@@ -140,15 +140,23 @@ pub async fn project_remote_set(
 ) -> Result<(), String> {
     let db = Arc::clone(&db);
     tauri::async_runtime::spawn_blocking(move || {
-        if remote_root.is_empty() || !remote_root.starts_with('/') {
-            return Err("remote root must be an absolute path".into());
-        }
+        validate_project_remote_root(&remote_root)?;
         ensure_remote_ssh_host_allowed(&host)?;
         db.projects_set_remote(&project_root, &host, &remote_root)
             .map_err(|err| err.to_string())
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+fn validate_project_remote_root(remote_root: &str) -> Result<(), String> {
+    if remote_root.is_empty() || !remote_root.starts_with('/') {
+        return Err("remote root must be an absolute path".into());
+    }
+    if remote_root.chars().all(|ch| ch == '/') {
+        return Err("remote root must name a project directory, not /".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -581,6 +589,14 @@ mod tests {
         .unwrap_err();
 
         assert!(err.contains("invalid remote host"));
+    }
+
+    #[test]
+    fn project_remote_root_rejects_the_filesystem_root() {
+        assert!(validate_project_remote_root("/")
+            .unwrap_err()
+            .contains("project directory"));
+        assert!(validate_project_remote_root("/srv/app").is_ok());
     }
 
     #[tokio::test]

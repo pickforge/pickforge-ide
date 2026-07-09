@@ -3,6 +3,7 @@ import { workspace } from "../stores/workspace";
 import { flagEnabled } from "../stores/flags";
 
 export type CapturedRemotePtys = Partial<Record<string, RemotePty | null>>;
+export type PaneSpawnMode = "pending" | "local" | "remote";
 
 export function remotePtyFor(
   projectRoot: string | null | undefined,
@@ -23,6 +24,18 @@ export function captureRemotePtyForPane(
   return { ...panes, [paneId]: remote };
 }
 
+export function paneSpawnModeFor(
+  panes: CapturedRemotePtys,
+  paneId: string,
+): PaneSpawnMode {
+  const remote = panes[paneId];
+  return remote === undefined ? "pending" : remote ? "remote" : "local";
+}
+
+export function shouldUseLocalMcp(mode: PaneSpawnMode): boolean {
+  return mode === "local";
+}
+
 function normalizedLocalPath(path: string): string | null {
   if (!path || path.includes("\0")) return null;
   const normalized = path.replaceAll("\\", "/");
@@ -37,6 +50,10 @@ function pathSuffix(path: string, root: string): string | null {
   return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
 }
 
+function isMeaningfulRemoteRoot(root: string): boolean {
+  return root !== "/" && root.split("/").filter(Boolean).length >= 2;
+}
+
 export function remotePathFor(
   localPath: string,
   projectRoot: string | null | undefined,
@@ -47,7 +64,9 @@ export function remotePathFor(
   const remoteBase = normalizedLocalPath(remoteRoot);
   if (!path || !localRoot || !remoteBase || !remoteRoot.startsWith("/")) return null;
 
-  if (pathSuffix(path, remoteBase) !== null) return path;
+  if (isMeaningfulRemoteRoot(remoteBase) && pathSuffix(path, remoteBase) !== null) {
+    return path;
+  }
 
   const suffix = pathSuffix(path, localRoot);
   if (suffix === null) return null;

@@ -224,7 +224,7 @@ export function DebugConsole() {
                 runCommand={run.command}
                 cwd={run.cwd ?? undefined}
                 onReady={attachConsole}
-                onExit={consoleExited}
+                onExit={() => consoleExited()}
                 onOutput={onRunOutput}
                 onSelectionChange={setAskSel}
                 readOnly

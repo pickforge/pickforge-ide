@@ -10,8 +10,10 @@ import { AskAiMenu } from "./AskAiMenu";
 import { IconClose, IconGrip, IconSplit, IconSplitTrigger } from "./icons";
 import {
   captureRemotePtyForPane,
+  paneSpawnModeFor,
   remotePtyFor,
   type CapturedRemotePtys,
+  type PaneSpawnMode,
 } from "../lib/remoteContext";
 import type { RemotePty } from "../lib/pty";
 import "./TerminalHost.css";
@@ -173,7 +175,7 @@ export interface TerminalHostHandle {
   *  ready yet. Agent quick-launches use this so the launched agent runs INSIDE
   *  the recoverable session (surviving close/restart), not a raw split pane. */
   runInPrimary: (command: string) => string | null;
-  primaryIsRemote: () => boolean;
+  primarySpawnMode: () => PaneSpawnMode;
   primaryRemotePty: () => RemotePty | null;
 }
 
@@ -228,7 +230,9 @@ export function TerminalHost(props: {
   const [focusedId, setFocusedId] = createSignal<string>(first.id);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
   const [paneRemote, setPaneRemote] = createSignal<CapturedRemotePtys>({});
+  const [deadPanes, setDeadPanes] = createSignal<string[]>([]);
   const handles = new Map<string, TerminalHandle>();
+  const closedPanes = new Set<string>();
   let containerEl!: HTMLDivElement;
 
   const leaves = createMemo(() => collectLeaves(root()));
@@ -244,12 +248,22 @@ export function TerminalHost(props: {
     handles.get(id)?.focus();
   };
 
+  const primarySpawnMode = () => paneSpawnModeFor(paneRemote(), primaryId());
   const primaryRemotePty = () => {
     const remote = paneRemote()[primaryId()];
     if (remote !== undefined) return remote;
     return remotePtyFor(props.session?.projectRoot ?? props.cwd);
   };
-  const primaryIsRemote = () => primaryRemotePty() !== null;
+
+  const notifyPaneClosed = (id: string) => {
+    if (closedPanes.has(id)) return;
+    closedPanes.add(id);
+    props.onPaneClosed?.(id);
+  };
+  const markPtyDead = (id: string) => {
+    setDeadPanes((panes) => (panes.includes(id) ? panes : [...panes, id]));
+    notifyPaneClosed(id);
+  };
 
   const doSplit = (leafId: string, dir: Dir) => {
     const fresh = newLeaf();
@@ -306,13 +320,13 @@ export function TerminalHost(props: {
         // The survivor's raw shell dies in the swap (the promoted pane
         // re-attaches the chat session instead) — report it as closed so any
         // agent ownership it held doesn't outlive the shell.
-        props.onPaneClosed?.(survivor.id);
+        notifyPaneClosed(survivor.id);
         if (focusedId() === survivor.id) setFocusedId(promoted.id);
       }
     }
     setRoot(next);
     handles.delete(id);
-    props.onPaneClosed?.(id);
+    notifyPaneClosed(id);
     setMenuFor((m) => (m === id ? null : m));
     if (focusedId() === id) {
       const remaining = collectLeaves(next);
@@ -463,13 +477,14 @@ export function TerminalHost(props: {
   props.onReady?.({
     typeToFocused: (text) => {
       const id = focusedId();
+      if (deadPanes().includes(id)) return null;
       const h = handles.get(id);
       if (!h) return null;
       h.typeText(text);
       return id;
     },
     openInNewPane,
-    primaryIsRemote,
+    primarySpawnMode,
     primaryRemotePty,
     runInPrimary: (command) => {
       // The primary pane is the only session-backed one; run the agent there so
@@ -479,6 +494,7 @@ export function TerminalHost(props: {
       // than dropping the launch. The primary pane id is stable and known up
       // front, so callers can still arm auto-naming on it immediately.
       const id = primaryId();
+      if (deadPanes().includes(id)) return null;
       const h = handles.get(id);
       if (!h) {
         pendingPrimaryCmd = command;
@@ -534,6 +550,9 @@ export function TerminalHost(props: {
                     </Show>
                     <Show when={paneRemote()[leaf.id]}>
                       {(remote) => <span class="pf-pane-cwd">ssh:{remote().host}</span>}
+                    </Show>
+                    <Show when={deadPanes().includes(leaf.id)}>
+                      <span class="pf-pane-cwd">closed</span>
                     </Show>
                   </div>
                   <div class="pf-pane-ctls">
@@ -627,7 +646,9 @@ export function TerminalHost(props: {
                       // agent launch queued before its handle existed.
                       if (leaf.id === primaryId()) flushPrimaryCmd();
                     }}
-                    onExit={() => requestClose(leaf.id)}
+                    onExit={(exit) =>
+                      exit.preserveBuffer ? markPtyDead(leaf.id) : requestClose(leaf.id)
+                    }
                   />
                 </div>
               </div>

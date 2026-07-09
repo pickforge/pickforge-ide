@@ -19,7 +19,7 @@ import { loadAgentModels } from "../../lib/agentModels";
 import { ForgeEmptyState, PaneReveal } from "../../components/ui";
 import { IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
-import { remotePathFor } from "../../lib/remoteContext";
+import { remotePathFor, shouldUseLocalMcp } from "../../lib/remoteContext";
 import { editorCommand } from "../../stores/fileOpenSettings";
 import { openPathSystem } from "../../lib/opener";
 import {
@@ -80,10 +80,11 @@ export function WorkbenchScreen() {
     const root = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
     const host = getTerminalHost(chatId);
     if (!host) return;
-    const remote = host.primaryIsRemote();
-    if (item.agentId && root && !remote) await ensureMcpRunning(root);
+    const mode = host.primarySpawnMode();
+    const localMcp = !!item.agentId && shouldUseLocalMcp(mode);
+    if (localMcp && root) await ensureMcpRunning(root);
     // Remote agent MCP wiring lands in PR 3; remote shells must not receive local paths.
-    const text = commandForItem(item, item.agentId && !remote ? mcpEnv(root) : {});
+    const text = commandForItem(item, localMcp ? mcpEnv(root) : {});
     if (!text) return;
     const paneId = item.agentId ? host.runInPrimary(text) : host.openInNewPane(text);
     if (paneId && item.agentId) armChatAutoName(chatId, paneId);
@@ -262,8 +263,8 @@ export function WorkbenchScreen() {
           e.stopPropagation();
           // Remote-side binary detection lands in PR 3; let the remote shell report it.
           const bin = binaryForItem(item);
-          const remote = getTerminalHost(workspace.activeChatId)?.primaryIsRemote() ?? false;
-          if (!remote && bin && available()[bin] === false) return;
+          const mode = getTerminalHost(workspace.activeChatId)?.primarySpawnMode();
+          if (mode === "local" && bin && available()[bin] === false) return;
           void launchItem(item);
           return;
         }

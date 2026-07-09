@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { deliverPtyExit, startPtyWithLocalFallback } from "../../src/lib/remoteTerminal";
+import { remotePtyExit, startPtyWithLocalFallback } from "../../src/lib/remoteTerminal";
 
 const remote = { host: "mac-mini", remoteRoot: "/srv/app" };
 
@@ -11,7 +11,10 @@ describe("startPtyWithLocalFallback", () => {
     });
     const onFallback = vi.fn();
 
-    await expect(startPtyWithLocalFallback(remote, start, onFallback)).resolves.toBe(42);
+    await expect(startPtyWithLocalFallback(remote, start, onFallback)).resolves.toEqual({
+      remote: null,
+      value: 42,
+    });
 
     expect(start).toHaveBeenNthCalledWith(1, remote);
     expect(start).toHaveBeenNthCalledWith(2, null);
@@ -19,14 +22,11 @@ describe("startPtyWithLocalFallback", () => {
   });
 });
 
-describe("deliverPtyExit", () => {
+describe("remotePtyExit", () => {
   it("warns and still closes an established remote session that exits 255", () => {
-    const onNotice = vi.fn();
-    const onExit = vi.fn();
+    const exit = remotePtyExit(remote, 255);
 
-    deliverPtyExit(remote, 255, onNotice, onExit);
-
-    expect(onNotice).toHaveBeenCalledOnce();
-    expect(onExit).toHaveBeenCalledExactlyOnceWith(255);
+    expect(exit.notice).toContain("ssh:mac-mini");
+    expect(exit.preserveBuffer).toBe(true);
   });
 });

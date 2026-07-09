@@ -23,9 +23,12 @@ vi.mock("../../src/stores/workspace", () => ({
 
 import {
   captureRemotePtyForPane,
+  paneSpawnModeFor,
   remotePathFor,
   remotePtyFor,
+  shouldUseLocalMcp,
 } from "../../src/lib/remoteContext";
+import { startPtyWithLocalFallback } from "../../src/lib/remoteTerminal";
 
 describe("remotePtyFor", () => {
   beforeEach(() => {
@@ -99,6 +102,20 @@ describe("remotePtyFor", () => {
     });
   });
 
+  it("uses local MCP context when a remote start resolves through the fallback", async () => {
+    const started = await startPtyWithLocalFallback(
+      { host: "mac-mini", remoteRoot: "/srv/app" },
+      async (remote) => {
+        if (remote) throw new Error("remote unavailable");
+        return 42;
+      },
+      () => {},
+    );
+    const panes = captureRemotePtyForPane({}, "pane-1", started.remote);
+
+    expect(shouldUseLocalMcp(paneSpawnModeFor(panes, "pane-1"))).toBe(true);
+  });
+
   it("keeps a path already under the remote root", () => {
     expect(remotePathFor("/srv/app/lib/main.dart", "/home/dev/app", "/srv/app/")).toBe(
       "/srv/app/lib/main.dart",
@@ -115,5 +132,13 @@ describe("remotePtyFor", () => {
     expect(remotePathFor("/home/dev/other/main.dart", "/home/dev/app", "/srv/app")).toBeNull();
     expect(remotePathFor("/home/dev/app-copy/main.dart", "/home/dev/app", "/srv/app")).toBeNull();
     expect(remotePathFor("/home/dev/app/../secret.txt", "/home/dev/app", "/srv/app")).toBeNull();
+  });
+
+  it("does not treat a filesystem-root binding as an already-remote path", () => {
+    expect(remotePathFor("/home/dev/app/lib/main.dart", "/home/dev/app", "/")).toBe(
+      "/lib/main.dart",
+    );
+    expect(remotePathFor("/tmp/other.dart", "/home/dev/app", "/")).toBeNull();
+    expect(remotePathFor("/srv/other.dart", "/home/dev/app", "/srv")).toBeNull();
   });
 });

@@ -112,7 +112,7 @@ export function WorkbenchScreen() {
       );
       return;
     }
-    host.openInNewPane(cmd, remotePath ? remote : null);
+    host.openInNewPane(cmd, remotePath ? { remote } : { forceLocal: true });
   };
 
   // Track which chats have a mount in flight so a re-run of this effect (e.g. a

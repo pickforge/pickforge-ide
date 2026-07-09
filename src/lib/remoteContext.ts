@@ -31,19 +31,26 @@ function normalizedLocalPath(path: string): string | null {
   return normalized.replace(/\/+$/, "") || "/";
 }
 
+function pathSuffix(path: string, root: string): string | null {
+  if (path === root) return "";
+  if (root === "/") return path.slice(1);
+  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+}
+
 export function remotePathFor(
   localPath: string,
   projectRoot: string | null | undefined,
   remoteRoot: string,
 ): string | null {
   const path = normalizedLocalPath(localPath);
-  const root = projectRoot ? normalizedLocalPath(projectRoot) : null;
-  if (!path || !root || !remoteRoot.startsWith("/") || remoteRoot.includes("\0")) return null;
+  const localRoot = projectRoot ? normalizedLocalPath(projectRoot) : null;
+  const remoteBase = normalizedLocalPath(remoteRoot);
+  if (!path || !localRoot || !remoteBase || !remoteRoot.startsWith("/")) return null;
 
-  const suffix =
-    path === root ? "" : root === "/" ? path.slice(1) : path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+  if (pathSuffix(path, remoteBase) !== null) return path;
+
+  const suffix = pathSuffix(path, localRoot);
   if (suffix === null) return null;
 
-  const remoteBase = remoteRoot.replace(/\/+$/, "") || "/";
   return suffix ? `${remoteBase === "/" ? "" : remoteBase}/${suffix}` : remoteBase;
 }

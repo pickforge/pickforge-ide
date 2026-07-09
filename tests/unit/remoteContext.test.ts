@@ -99,6 +99,12 @@ describe("remotePtyFor", () => {
     });
   });
 
+  it("keeps a path already under the remote root", () => {
+    expect(remotePathFor("/srv/app/lib/main.dart", "/home/dev/app", "/srv/app/")).toBe(
+      "/srv/app/lib/main.dart",
+    );
+  });
+
   it("maps an in-project local path into the remote root", () => {
     expect(remotePathFor("/home/dev/app/lib/main.dart", "/home/dev/app", "/srv/app/")).toBe(
       "/srv/app/lib/main.dart",

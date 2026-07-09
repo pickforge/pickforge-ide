@@ -18,6 +18,7 @@ import {
   type RemotePty,
 } from "../lib/pty";
 import { remotePtyFor } from "../lib/remoteContext";
+import { deliverPtyExit, startPtyWithLocalFallback } from "../lib/remoteTerminal";
 import {
   buildConsoleTheme,
   buildTerminalTheme,
@@ -300,7 +301,8 @@ export function TerminalPane(props: {
         : props.remote === undefined
           ? remotePtyFor(projectRoot)
           : props.remote;
-      props.onSpawn?.(remote);
+      let activeRemote = remote;
+      props.onSpawn?.(activeRemote);
 
       term.open(container);
 
@@ -329,25 +331,25 @@ export function TerminalPane(props: {
       };
       const onExit = (code: number | null) => {
         if (disposed) return;
-        if (remote && code === 255) {
-          term.write(
-            `\r\n\x1b[31mssh:${remote.host} exited 255: transport failure or remote exit 255. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
-          );
-          return;
-        }
-        props.onExit?.(code);
+        deliverPtyExit(
+          activeRemote,
+          code,
+          (notice) => term.write(`\r\n\x1b[31m${notice}\x1b[0m\r\n`),
+          (exitCode) => props.onExit?.(exitCode),
+        );
       };
 
       // A chat pane spawns a SESSION-BACKED shell (dtach/tmux, attach-or-create)
       // so its agent survives; every other pane (interactive or one-shot run
       // console) spawns the raw shell exactly as before.
-      const spawn = props.chat
-        ? ptySpawnChat({
+      const start = (spawnRemote: RemotePty | null) =>
+        props.chat
+          ? ptySpawnChat({
             chatId: props.chat.chatId,
             projectRoot: props.chat.projectRoot,
             cwd: props.cwd ?? null,
             env: props.env ?? null,
-            remote,
+            remote: spawnRemote,
             backend: props.chat.backend,
             sessionId: props.chat.sessionId ?? null,
             rows: term.rows,
@@ -364,17 +366,25 @@ export function TerminalPane(props: {
             });
             return res.ptyId;
           })
-        : ptySpawn({
+          : ptySpawn({
             cwd: props.cwd ?? null,
             projectRoot,
             command: props.runCommand ?? null,
             env: props.env ?? null,
-            remote,
+            remote: spawnRemote,
             rows: term.rows,
             cols: term.cols,
             onOutput,
             onExit,
           });
+
+      const spawn = startPtyWithLocalFallback(remote, start, (failedRemote) => {
+        activeRemote = null;
+        props.onSpawn?.(null);
+        term.write(
+          `\r\n\x1b[2mssh:${failedRemote.host} unavailable; started a local shell. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
+        );
+      });
 
       spawn
         .then((id) => {

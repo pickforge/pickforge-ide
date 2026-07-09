@@ -152,7 +152,7 @@ export function WidgetTree() {
       void openPathSystem(path).catch(() => {});
       return;
     }
-    host.openInNewPane(cmd, remotePath ? remote : null);
+    host.openInNewPane(cmd, remotePath ? { remote } : { forceLocal: true });
   };
 
   // Fetch properties + thumbnail when the selection changes.
@@ -213,7 +213,7 @@ export function WidgetTree() {
       const paths = await inspectSave(dir, base, md, png);
       const ask = `Read ${paths.mdPath} (PickForge widget capture: screenshot path + source file:line + props inside). ${prompt()}`;
       const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = host.openInNewPane(command);
+      const paneId = host.openInNewPane(command, { forceLocal: true });
       if (paneId) {
         armChatAutoName(workspace.activeChatId, paneId);
         // Persist the dispatch (pick + agent run) for the forge audit. Best

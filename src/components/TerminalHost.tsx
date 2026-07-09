@@ -24,6 +24,11 @@ interface Leaf {
   callsign: string;
   remote?: RemotePty | null;
 }
+
+export interface PaneSpawnOptions {
+  forceLocal?: boolean;
+  remote?: RemotePty | null;
+}
 interface Split {
   kind: "split";
   id: string;
@@ -161,7 +166,7 @@ export interface TerminalHostHandle {
   typeToFocused: (text: string) => string | null;
   /** Split the focused pane and run `command` in the new pane; returns the new
    *  pane's id (e.g. to arm auto-naming on it). */
-  openInNewPane: (command: string, remote?: RemotePty | null) => string;
+  openInNewPane: (command: string, options?: PaneSpawnOptions) => string;
   /** Run `command` (with a trailing newline) in this host's PRIMARY,
    *  session-backed pane — the one wired to the chat's recoverable dtach/tmux
    *  session — and focus it. Returns the primary pane's id, or null if it isn't
@@ -271,8 +276,8 @@ export function TerminalHost(props: {
     focus(id);
     h.typeText(cmd + "\r");
   };
-  const openInNewPane = (command: string, remote?: RemotePty | null): string => {
-    const fresh = newLeaf(remote);
+  const openInNewPane = (command: string, options?: PaneSpawnOptions): string => {
+    const fresh = newLeaf(options?.forceLocal ? null : options?.remote);
     pendingCmd.set(fresh.id, command);
     setRoot((r) => splitTree(r, focusedId(), "down", fresh));
     setFocusedId(fresh.id);

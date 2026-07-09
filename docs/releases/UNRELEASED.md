@@ -14,6 +14,7 @@ reset this file.
 
 - Migrated release CI to the shared `@pickforge/tauri-release` tooling and draft-only `latest.json` finalization.
 - Added the `pickforged` daemon foundation with hashed-token pairing auth.
+- Landed the per-project remote host backend for bindings, SSH probing, and remote detection; UI follows.
 - Operator M1 core parser, dispatch, and audit landed dark behind the `operator` flag.
 - Operator composer dock landed dark behind the `operator` flag.
 - Landed accounts/auth wiring dark behind the `accounts` flag.

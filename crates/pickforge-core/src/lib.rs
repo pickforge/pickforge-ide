@@ -47,13 +47,15 @@ pub use pty::{
     SpawnOptions,
 };
 pub use remote::{
-    decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener,
-    remote_auth_store_path, spawn_remote_http_server, tailscale_ssh_set, tailscale_status,
-    ClientTokenRecord, DaemonConfig, DaemonConfigEnvError, DaemonConfigError, DaemonListener,
-    DaemonStatus, IssuedClientToken, PairingCode, RemoteAuthError, RemoteAuthStore,
-    RemoteAuthStoreSnapshot, RemoteCapability, RemoteFrame, RemoteFrameError, RemoteHostDaemon,
-    RemoteHttpServer, RemoteHttpServerInfo, RemoteRequest, RemoteResponse, RemoteServerError,
-    TailscaleStatus, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
+    decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener, probe_host,
+    remote_auth_store_path, remote_detect_binaries, remote_nearest_pubspec,
+    spawn_remote_http_server, ssh_run, tailscale_ssh_set, tailscale_status, ClientTokenRecord,
+    DaemonConfig, DaemonConfigEnvError, DaemonConfigError, DaemonListener, DaemonStatus,
+    IssuedClientToken, PairingCode, ProbeState, RemoteAuthError, RemoteAuthStore,
+    RemoteAuthStoreSnapshot, RemoteCapability, RemoteDetectError, RemoteFrame, RemoteFrameError,
+    RemoteHostDaemon, RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo, RemoteRequest,
+    RemoteResponse, RemoteServerError, SshError, SshTarget, TailscaleStatus,
+    REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
 };
 pub use storage::{
     load_telemetry_config, pickforge_env_vars, pickforge_home, project_id, save_telemetry_config,

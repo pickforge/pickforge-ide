@@ -1,10 +1,14 @@
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use pickforge_core::{
-    listener_from_parts, pickforge_home, remote_auth_store_path, spawn_remote_http_server,
-    tailscale_ssh_set, tailscale_status, ClientTokenRecord, DaemonConfig, DaemonListener,
-    PairingCode, RemoteAuthStore, RemoteHttpServer, RemoteHttpServerInfo, TailscaleStatus,
+    listener_from_parts, pickforge_home, probe_host,
+    remote_detect_binaries as core_remote_detect_binaries,
+    remote_nearest_pubspec as core_remote_nearest_pubspec, remote_auth_store_path,
+    spawn_remote_http_server, tailscale_ssh_set, tailscale_status, ClientTokenRecord,
+    DaemonConfig, DaemonListener, Database, PairingCode, RemoteAuthStore, RemoteHostHealth,
+    RemoteHttpServer, RemoteHttpServerInfo, SshTarget, TailscaleStatus,
 };
 use serde::Serialize;
 use tauri::State;
@@ -12,6 +16,7 @@ use tauri::State;
 const DEFAULT_REMOTE_HOST: &str = "127.0.0.1";
 const DEFAULT_REMOTE_PORT: u16 = 4747;
 const DEFAULT_PAIRING_TTL_MS: i64 = 10 * 60 * 1000;
+const REMOTE_STEP_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct RemoteHostState {
     server: Mutex<RemoteHostSlot>,
@@ -124,6 +129,61 @@ pub fn remote_host_revoke_client(client_id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn remote_tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, String> {
     run_tailscale_action(move || tailscale_ssh_set(enabled)).await
+}
+
+#[tauri::command]
+pub fn project_remote_set(
+    db: State<'_, Arc<Database>>,
+    project_root: String,
+    host: String,
+    remote_root: String,
+) -> Result<(), String> {
+    SshTarget::new(host.as_str()).map_err(|err| err.to_string())?;
+    if remote_root.is_empty() || !remote_root.starts_with('/') {
+        return Err("remote root must be an absolute path".into());
+    }
+    db.projects_set_remote(&project_root, &host, &remote_root)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn project_remote_clear(
+    db: State<'_, Arc<Database>>,
+    project_root: String,
+) -> Result<(), String> {
+    db.projects_clear_remote(&project_root)
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn remote_host_health(host: String) -> Result<RemoteHostHealth, String> {
+    tauri::async_runtime::spawn_blocking(move || probe_host(&host, REMOTE_STEP_TIMEOUT))
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub async fn remote_nearest_pubspec(host: String, start: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        core_remote_nearest_pubspec(&host, &start, REMOTE_STEP_TIMEOUT)
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn remote_detect_binaries(
+    host: String,
+    names: Vec<String>,
+) -> Result<Vec<bool>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let refs = names.iter().map(String::as_str).collect::<Vec<_>>();
+        core_remote_detect_binaries(&host, &refs, REMOTE_STEP_TIMEOUT)
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 impl RemoteHostState {

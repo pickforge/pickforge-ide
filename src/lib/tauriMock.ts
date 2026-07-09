@@ -9,8 +9,8 @@ const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
 const AGENT_CHAT_FIXTURE = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
 
 const SAMPLE_PROJECTS = [
-  { projectRoot: "/home/dev/acme-app", displayName: "acme-app", createdAt: now, lastOpenedAt: now, sortOrder: 0, archivedAt: null },
-  { projectRoot: "/home/dev/widgets", displayName: "widgets", createdAt: now, lastOpenedAt: now, sortOrder: 1, archivedAt: null },
+  { projectRoot: "/home/dev/acme-app", displayName: "acme-app", createdAt: now, lastOpenedAt: now, sortOrder: 0, archivedAt: null, remoteHost: null, remoteRoot: null },
+  { projectRoot: "/home/dev/widgets", displayName: "widgets", createdAt: now, lastOpenedAt: now, sortOrder: 1, archivedAt: null, remoteHost: null, remoteRoot: null },
 ];
 const SAMPLE_CHATS = [
   { chatId: "chat-1", projectRoot: "/home/dev/acme-app", title: "Login screen", kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
@@ -198,6 +198,16 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
   remote_host_revoke_client: () => null,
   remote_tailscale_ssh_set: () => remoteOverview().tailscale,
+  project_remote_set: () => null,
+  project_remote_clear: () => null,
+  remote_host_health: () => ({
+    checkedAtMs: now,
+    tailnet: { state: "ok" },
+    ssh: { state: "ok" },
+    daemon: { state: "failed", reason: "pickforged not reachable" },
+  }),
+  remote_nearest_pubspec: () => "/home/dev/acme-app",
+  remote_detect_binaries: (a) => (a.names as string[]).map(() => true),
   target_detect: () => ({ targetId: "flutter", displayName: "Flutter", confidence: "exact", priority: 100, capabilities: ["detect", "launch", "hotReload", "captureScreenshot", "streamLogs", "inspectSelection"] }),
   adb_list_devices: () => [{ serial: "emulator-5554", state: "device", model: "Pixel_10" }],
   android_device_list: () => [

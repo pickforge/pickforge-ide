@@ -45,6 +45,18 @@ export interface RemoteHostOverview {
   defaultPort: number;
 }
 
+export type ProbeState =
+  | { state: "ok" }
+  | { state: "failed"; reason: string }
+  | { state: "skipped" };
+
+export interface RemoteHostHealth {
+  checkedAtMs: number;
+  tailnet: ProbeState;
+  ssh: ProbeState;
+  daemon: ProbeState;
+}
+
 export const remoteHostStatus = () =>
   invoke<RemoteHostOverview>("remote_host_status");
 
@@ -62,3 +74,21 @@ export const remoteHostRevokeClient = (clientId: string) =>
 
 export const remoteTailscaleSshSet = (enabled: boolean) =>
   invoke<TailscaleStatus>("remote_tailscale_ssh_set", { enabled });
+
+export const projectRemoteSet = (
+  projectRoot: string,
+  host: string,
+  remoteRoot: string,
+) => invoke<void>("project_remote_set", { projectRoot, host, remoteRoot });
+
+export const projectRemoteClear = (projectRoot: string) =>
+  invoke<void>("project_remote_clear", { projectRoot });
+
+export const remoteHostHealth = (host: string) =>
+  invoke<RemoteHostHealth>("remote_host_health", { host });
+
+export const remoteNearestPubspec = (host: string, start: string) =>
+  invoke<string | null>("remote_nearest_pubspec", { host, start });
+
+export const remoteDetectBinaries = (host: string, names: string[]) =>
+  invoke<boolean[]>("remote_detect_binaries", { host, names });

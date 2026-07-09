@@ -3,14 +3,18 @@ import { operatorActionSchema } from "../../src/lib/operatorIntent";
 
 const env = vi.hoisted(() => {
   const storage = new Map<string, string>();
+  const state = { setItemError: null as Error | null };
   const localStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => storage.set(key, value),
+    setItem: (key: string, value: string) => {
+      if (state.setItemError) throw state.setItemError;
+      storage.set(key, value);
+    },
     removeItem: (key: string) => storage.delete(key),
     clear: () => storage.clear(),
   };
   (globalThis as { localStorage?: unknown }).localStorage = localStorage;
-  return { invoke: vi.fn(), storage };
+  return { invoke: vi.fn(), storage, state };
 });
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: env.invoke }));
@@ -29,6 +33,7 @@ async function configure(backend: "claudeCode" | "codex" | "ollama", model = "mo
 
 beforeEach(() => {
   env.storage.clear();
+  env.state.setItemError = null;
   env.invoke.mockReset();
 });
 
@@ -127,6 +132,32 @@ describe("operator router proposals", () => {
       },
     });
     expect(settings.operatorRouterSettings().lastLatencyMs.ollama).toBe(1_800);
+  });
+
+  it("keeps successful routes when latency persistence throws", async () => {
+    const { routeCommand } = await loadRouter();
+    await configure("ollama", "qwen2.5:3b");
+    env.state.setItemError = new Error("storage unavailable");
+    env.invoke.mockResolvedValue({
+      output: JSON.stringify({
+        response: "{\"action\":{\"action\":\"openProject\"},\"confidence\":0.72,\"projectRef\":\"App\"}",
+      }),
+      latencyMs: 1_800,
+      exitOk: true,
+      stderrTail: "",
+    });
+
+    const result = await routeCommand("open App");
+
+    expect(result).toMatchObject({
+      kind: "proposal",
+      confidence: 0.72,
+      latencyMs: 1_800,
+      intent: {
+        projectRef: "App",
+        action: { action: "openProject" },
+      },
+    });
   });
 
   it("returns unclear and error states from routed output", async () => {

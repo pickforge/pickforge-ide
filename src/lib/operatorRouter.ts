@@ -178,6 +178,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function persistLatencyBestEffort(backend: OperatorRouterBackend, latencyMs: number): void {
+  try {
+    persistOperatorRouterLatency(backend, latencyMs);
+  } catch {
+    return;
+  }
+}
+
 export async function routeCommand(text: string): Promise<RouteResult> {
   const backend = configuredRouterBackend();
   if (!backend) return { kind: "unconfigured" };
@@ -191,7 +199,7 @@ export async function routeCommand(text: string): Promise<RouteResult> {
       prompt: buildRouterPrompt(text),
       timeoutMs: ROUTER_TIMEOUT_MS,
     });
-    persistOperatorRouterLatency(backend, raw.latencyMs);
+    persistLatencyBestEffort(backend, raw.latencyMs);
     if (!raw.exitOk) {
       return {
         kind: "error",

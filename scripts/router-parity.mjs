@@ -115,6 +115,8 @@ function runCodex(prompt, model) {
       cwd,
       "--sandbox",
       "read-only",
+      "-c",
+      'approval_policy="never"',
       "--ephemeral",
       "--ignore-rules",
       "--ignore-user-config",

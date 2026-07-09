@@ -55,11 +55,12 @@ recommendation, not a guarantee that the model is installed. Claude Code uses
 `claude -p ... --output-format json --safe-mode --strict-mcp-config --tools ""
 --permission-mode plan --no-session-persistence --model <model>` from a fresh
 empty temp directory. Codex uses `codex exec --json --skip-git-repo-check --cd
-<empty-dir> --sandbox read-only --ephemeral --ignore-rules --ignore-user-config
--m <model>` against that same isolated directory. Ollama posts to fixed loopback
-`127.0.0.1:11434/api/generate`. Expected latency depends on the backend and
-model: local small Ollama models should be seconds-scale, CLI backends include
-process startup and provider latency.
+<empty-dir> --sandbox read-only -c approval_policy="never" --ephemeral
+--ignore-rules --ignore-user-config -m <model>` against that same isolated
+directory. Ollama posts to fixed loopback `127.0.0.1:11434/api/generate`.
+Expected latency depends on the backend and model: local small Ollama models
+should be seconds-scale, CLI backends include process startup and provider
+latency.
 
 Manual parity checks are available outside CI:
 

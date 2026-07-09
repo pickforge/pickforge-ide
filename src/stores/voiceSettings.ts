@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 
 export interface VoiceDictationSettings {
   micEnabled: boolean;
@@ -54,6 +55,7 @@ export function setVoiceMicEnabled(micEnabled: boolean) {
     persist(next);
     return next;
   });
+  noteSettingsEdit("operatorConfig");
 }
 
 export function setVoicePushToCommand(pushToCommand: boolean) {
@@ -62,6 +64,7 @@ export function setVoicePushToCommand(pushToCommand: boolean) {
     persist(next);
     return next;
   });
+  noteSettingsEdit("operatorConfig");
 }
 
 export function setVoiceModelPath(modelPath: string) {

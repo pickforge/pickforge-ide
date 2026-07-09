@@ -3,6 +3,7 @@
 // or type a literal command. Persisted in localStorage like agentModels.
 import { createSignal } from "solid-js";
 import { launchBinary, launchCommand } from "../lib/agentModels";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 
 export interface QuickLaunchItem {
   id: string;
@@ -51,6 +52,7 @@ export const quickLaunchItems = items;
 function persist(next: QuickLaunchItem[]) {
   setItems(next);
   localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, items: next }));
+  noteSettingsEdit("keybindings");
 }
 
 export function setQuickLaunchItems(next: QuickLaunchItem[]) {
@@ -71,6 +73,7 @@ export function removeQuickLaunchItem(id: string) {
 export function resetQuickLaunchItems() {
   localStorage.removeItem(STORE_KEY);
   setItems(clone(DEFAULT_QUICK_LAUNCH));
+  noteSettingsEdit("keybindings");
 }
 
 /** The text to type for an item; agent items resolve the model-pinned command. */

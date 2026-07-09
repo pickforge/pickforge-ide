@@ -2,6 +2,10 @@
 // signed in. Opt-in is off by default; enabling it runs a full pull-then-push
 // per enabled group with last-writer-wins. Syncs fire on: sign-in, a change to
 // the sync toggles, window focus, and the manual "Sync now" action.
+//
+// All sync state (opt-in, group toggles, per-group meta) is keyed PER USER so a
+// second account on the same machine never inherits the first account's opt-in
+// or content hashes; signing out keeps each user's blob for their next sign-in.
 import { createEffect, createRoot, createSignal } from "solid-js";
 import {
   pullGroup,
@@ -14,6 +18,11 @@ import {
 import { getProSupabaseClient } from "../lib/proAuth";
 import { accountSession } from "./account";
 import { flagEnabled, subscribeToFlagChanges } from "./flags";
+import {
+  nowCanonical,
+  settingsEditTime,
+  withSettingsEditsMuted,
+} from "../lib/settingsSyncEdits";
 import {
   applyAppSettings,
   applyKeybindings,
@@ -38,19 +47,31 @@ export interface SettingsSyncState {
 }
 
 const STATE_KEY = "pickforge.settingsSync";
-const META_KEY = "pickforge.settingsSync.meta";
 
 const BLOCKED_MESSAGE = "A value was blocked from syncing.";
 const GENERIC_ERROR = "Settings sync hit a snag — it will retry.";
+
+function stateKey(userId: string): string {
+  return `${STATE_KEY}.${userId}`;
+}
+
+function metaKey(userId: string): string {
+  return `${STATE_KEY}.${userId}.meta`;
+}
 
 function defaultGroups(): Record<SyncFieldGroup, boolean> {
   return { appSettings: true, operatorConfig: true, keybindings: true, remoteBindings: true };
 }
 
-function loadState(): SettingsSyncState {
+function defaultState(): SettingsSyncState {
+  return { optedIn: false, groups: defaultGroups() };
+}
+
+function loadState(userId: string | null): SettingsSyncState {
+  if (!userId) return defaultState();
   try {
-    const raw = localStorage.getItem(STATE_KEY);
-    if (!raw) return { optedIn: false, groups: defaultGroups() };
+    const raw = localStorage.getItem(stateKey(userId));
+    if (!raw) return defaultState();
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const groups = defaultGroups();
     const saved = parsed.groups;
@@ -62,35 +83,56 @@ function loadState(): SettingsSyncState {
     }
     return { optedIn: parsed.optedIn === true, groups };
   } catch {
-    return { optedIn: false, groups: defaultGroups() };
+    return defaultState();
   }
 }
 
-const [state, setState] = createSignal<SettingsSyncState>(loadState());
+const [state, setState] = createSignal<SettingsSyncState>(defaultState());
 const [lastSyncedAt, setLastSyncedAt] = createSignal<string | null>(null);
 const [syncError, setSyncError] = createSignal<string | null>(null);
 const [syncing, setSyncing] = createSignal(false);
 const [tick, setTick] = createSignal(0);
 
-export const settingsSyncState = state;
 export const settingsSyncing = syncing;
 export const settingsSyncErrorMessage = syncError;
 
-function persistState(next: SettingsSyncState) {
-  setState(next);
-  localStorage.setItem(STATE_KEY, JSON.stringify(next));
+let loadedUserId: string | null | undefined;
+
+/** Reload the state signal when the signed-in user changes. Reading the session
+ *  here also subscribes reactive consumers to sign-in/out flips. */
+function ensureUserState(): string | null {
+  const userId = accountSession()?.userId ?? null;
+  if (loadedUserId !== userId) {
+    loadedUserId = userId;
+    setState(loadState(userId));
+    setLastSyncedAt(null);
+    setSyncError(null);
+  }
+  return userId;
 }
 
-// ---- per-group metadata: the last synced snapshot + its edit timestamp ----
+export function settingsSyncState(): SettingsSyncState {
+  ensureUserState();
+  return state();
+}
+
+function persistState(userId: string, next: SettingsSyncState) {
+  setState(next);
+  localStorage.setItem(stateKey(userId), JSON.stringify(next));
+}
+
+// ---- per-group metadata: the last synced snapshot + its sync timestamp ----
 
 interface GroupMeta {
   hash: string | null;
   mtime: string;
 }
 
-function loadMeta(): Record<string, GroupMeta> {
+const EPOCH = "0000-00-00T00:00:00.000000Z";
+
+function loadMeta(userId: string): Record<string, GroupMeta> {
   try {
-    const raw = localStorage.getItem(META_KEY);
+    const raw = localStorage.getItem(metaKey(userId));
     const parsed = raw ? JSON.parse(raw) : null;
     return parsed && typeof parsed === "object" ? (parsed as Record<string, GroupMeta>) : {};
   } catch {
@@ -98,38 +140,18 @@ function loadMeta(): Record<string, GroupMeta> {
   }
 }
 
-function readGroupMeta(group: SyncFieldGroup): GroupMeta {
-  const meta = loadMeta()[group];
+function readGroupMeta(userId: string, group: SyncFieldGroup): GroupMeta {
+  const meta = loadMeta(userId)[group];
   if (meta && typeof meta.mtime === "string") {
     return { hash: typeof meta.hash === "string" ? meta.hash : null, mtime: meta.mtime };
   }
   return { hash: null, mtime: EPOCH };
 }
 
-function writeGroupMeta(group: SyncFieldGroup, meta: GroupMeta) {
-  const all = loadMeta();
+function writeGroupMeta(userId: string, group: SyncFieldGroup, meta: GroupMeta) {
+  const all = loadMeta(userId);
   all[group] = meta;
-  localStorage.setItem(META_KEY, JSON.stringify(all));
-}
-
-// ---- canonical microsecond UTC timestamps, monotonic within a process ----
-
-const EPOCH = "0000-00-00T00:00:00.000000Z";
-let lastMicros = 0;
-
-function nowCanonical(): string {
-  let micros = Date.now() * 1000;
-  if (micros <= lastMicros) micros = lastMicros + 1;
-  lastMicros = micros;
-  const date = new Date(Math.floor(micros / 1000));
-  const sub = micros % 1000;
-  const fraction =
-    String(date.getUTCMilliseconds()).padStart(3, "0") + String(sub).padStart(3, "0");
-  const p = (value: number, size = 2) => String(value).padStart(size, "0");
-  return (
-    `${p(date.getUTCFullYear(), 4)}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())}` +
-    `T${p(date.getUTCHours())}:${p(date.getUTCMinutes())}:${p(date.getUTCSeconds())}.${fraction}Z`
-  );
+  localStorage.setItem(metaKey(userId), JSON.stringify(all));
 }
 
 // ---- group IO: collect a payload / apply one back into the local stores ----
@@ -150,27 +172,31 @@ async function collectGroup(group: SyncFieldGroup): Promise<Json> {
 }
 
 async function applyGroup(group: SyncFieldGroup, payload: Json): Promise<void> {
-  switch (group) {
-    case "appSettings":
-      return applyAppSettings(payload);
-    case "operatorConfig":
-      return applyOperatorConfig(payload);
-    case "keybindings":
-      return applyKeybindings(payload);
-    case "remoteBindings": {
-      const [{ workspace, setProjectRemoteLocal }, db] = await Promise.all([
-        import("./workspace"),
-        import("../lib/db"),
-      ]);
-      await applyRemoteBindings(payload, {
-        projects: workspace.projects,
-        async setBinding(root, remoteHost, remoteRoot) {
-          await db.projectRemoteSet(root, remoteHost, remoteRoot);
-          setProjectRemoteLocal(root, remoteHost, remoteRoot);
-        },
-      });
+  // Muted: writing server values through the store setters must not stamp new
+  // local edit times, or every pull would immediately look like a local edit.
+  await withSettingsEditsMuted(async () => {
+    switch (group) {
+      case "appSettings":
+        return applyAppSettings(payload);
+      case "operatorConfig":
+        return applyOperatorConfig(payload);
+      case "keybindings":
+        return applyKeybindings(payload);
+      case "remoteBindings": {
+        const [{ workspace, setProjectRemoteLocal }, db] = await Promise.all([
+          import("./workspace"),
+          import("../lib/db"),
+        ]);
+        await applyRemoteBindings(payload, {
+          projects: workspace.projects,
+          async setBinding(root, remoteHost, remoteRoot) {
+            await db.projectRemoteSet(root, remoteHost, remoteRoot);
+            setProjectRemoteLocal(root, remoteHost, remoteRoot);
+          },
+        });
+      }
     }
-  }
+  });
 }
 
 // ---- engine ----
@@ -181,63 +207,81 @@ interface SyncContext {
 }
 
 function context(): SyncContext | null {
-  const session = accountSession();
-  if (!settingsSyncEnabled() || !session) return null;
+  const userId = ensureUserState();
+  if (!userId || !settingsSyncEnabled()) return null;
   try {
     // The real client is a runtime superset of the sync engine's structural
     // client type (its query builder chains eq/is/lt/order after select).
     const supabase = getProSupabaseClient() as unknown as SupabaseClientLike;
-    return { supabase, userId: session.userId };
+    return { supabase, userId };
   } catch {
     return null;
+  }
+}
+
+/** remoteBindings collects/applies against workspace.projects, and the first
+ *  automatic sync (the sign-in effect) can fire before loadWorkspace() has
+ *  populated it — so every run waits for the workspace `loaded` signal, the
+ *  same gate the focus-refresh path relies on. Polled: it flips exactly once
+ *  at startup, so the loop lives only for that window. */
+async function workspaceReady(): Promise<void> {
+  const { workspace } = await import("./workspace");
+  while (!workspace.loaded) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 }
 
 async function syncGroup(ctx: SyncContext, group: SyncFieldGroup): Promise<void> {
   const local = await collectGroup(group);
   const localStr = JSON.stringify(local);
-  const meta = readGroupMeta(group);
-  const changedLocally = meta.hash !== null && localStr !== meta.hash;
-  const mtime = changedLocally ? nowCanonical() : meta.mtime;
+  const meta = readGroupMeta(ctx.userId, group);
+  const changedLocally = meta.hash === null || localStr !== meta.hash;
+  // LWW compares real edit times: a dirty group carries the timestamp of the
+  // EDIT (stamped by the source store's setter), not of this sync run, so a
+  // machine that edited earlier but syncs later still loses to a newer write.
+  const localMtime = changedLocally ? settingsEditTime(group) ?? nowCanonical() : meta.mtime;
 
   const server = await pullGroup({ supabase: ctx.supabase, userId: ctx.userId, group });
 
   const serverWins =
     server !== null &&
-    // First time this group is seen (no local snapshot): adopt the server value.
-    (meta.hash === null || server.updatedAt > mtime);
+    // First sync for this user on this machine: adopt the account's value.
+    (meta.hash === null || server.updatedAt > localMtime);
 
   if (serverWins && server) {
     await applyGroup(group, server.payload);
-    writeGroupMeta(group, { hash: JSON.stringify(await collectGroup(group)), mtime: server.updatedAt });
+    writeGroupMeta(ctx.userId, group, {
+      hash: JSON.stringify(await collectGroup(group)),
+      mtime: server.updatedAt,
+    });
     return;
   }
 
   // Nothing new locally and the server is not ahead — already in sync.
-  if (!changedLocally && meta.hash !== null && server !== null) return;
+  if (!changedLocally && server !== null) return;
 
   const result = await pushGroup({
     supabase: ctx.supabase,
     userId: ctx.userId,
     group,
     payload: local,
-    updatedAt: changedLocally || meta.hash === null ? nowCanonical() : mtime,
+    updatedAt: localMtime,
   });
 
   if (result.status === "written") {
-    writeGroupMeta(group, { hash: localStr, mtime: result.record.updatedAt });
+    writeGroupMeta(ctx.userId, group, { hash: localStr, mtime: result.record.updatedAt });
     return;
   }
 
   // A concurrent writer won the race — adopt whatever the server now holds.
   if (result.record) {
     await applyGroup(group, result.record.payload);
-    writeGroupMeta(group, {
+    writeGroupMeta(ctx.userId, group, {
       hash: JSON.stringify(await collectGroup(group)),
       mtime: result.record.updatedAt,
     });
   } else {
-    writeGroupMeta(group, { hash: localStr, mtime: nowCanonical() });
+    writeGroupMeta(ctx.userId, group, { hash: localStr, mtime: nowCanonical() });
   }
 }
 
@@ -245,11 +289,12 @@ let inFlight: Promise<void> | null = null;
 
 /** Sync the given groups (default: all enabled). No-op when disabled/signed out.
  *  Concurrent callers share the in-flight run. */
-export function sync(groups: SyncFieldGroup[] = enabledGroups()): Promise<void> {
+export function sync(groups?: SyncFieldGroup[]): Promise<void> {
   const ctx = context();
-  if (!ctx || groups.length === 0) return Promise.resolve();
+  const targets = groups ?? enabledGroups();
+  if (!ctx || targets.length === 0) return Promise.resolve();
   if (inFlight) return inFlight;
-  inFlight = runSync(ctx, groups).finally(() => {
+  inFlight = runSync(ctx, targets).finally(() => {
     inFlight = null;
   });
   return inFlight;
@@ -259,10 +304,18 @@ async function runSync(ctx: SyncContext, groups: SyncFieldGroup[]): Promise<void
   setSyncing(true);
   let blocked = false;
   let failed = false;
+  let succeeded = 0;
   try {
+    try {
+      await workspaceReady();
+    } catch {
+      setSyncError(GENERIC_ERROR);
+      return;
+    }
     for (const group of groups) {
       try {
         await syncGroup(ctx, group);
+        succeeded += 1;
       } catch (error) {
         if (error instanceof SyncError && error.code === "boundary_violation") {
           blocked = true;
@@ -271,7 +324,8 @@ async function runSync(ctx: SyncContext, groups: SyncFieldGroup[]): Promise<void
         }
       }
     }
-    setLastSyncedAt(new Date().toISOString());
+    // "Last synced" stays honest: only bump it when at least one group made it.
+    if (succeeded > 0) setLastSyncedAt(new Date().toISOString());
     setSyncError(blocked ? BLOCKED_MESSAGE : failed ? GENERIC_ERROR : null);
   } finally {
     setSyncing(false);
@@ -279,7 +333,7 @@ async function runSync(ctx: SyncContext, groups: SyncFieldGroup[]): Promise<void
 }
 
 function enabledGroups(): SyncFieldGroup[] {
-  const current = state();
+  const current = settingsSyncState();
   if (!current.optedIn) return [];
   return SYNC_GROUPS.filter((group) => current.groups[group]);
 }
@@ -291,13 +345,17 @@ export function settingsSyncEnabled(): boolean {
 }
 
 export function setSettingsSyncOptIn(optedIn: boolean): void {
-  persistState({ ...state(), optedIn });
+  const userId = ensureUserState();
+  if (!userId) return;
+  persistState(userId, { ...state(), optedIn });
   setSyncError(null);
   if (optedIn) void sync();
 }
 
 export function setSettingsSyncGroup(group: SyncFieldGroup, on: boolean): void {
-  persistState({ ...state(), groups: { ...state().groups, [group]: on } });
+  const userId = ensureUserState();
+  if (!userId) return;
+  persistState(userId, { ...state(), groups: { ...state().groups, [group]: on } });
   if (on && state().optedIn) void sync([group]);
 }
 
@@ -331,7 +389,7 @@ export function installSettingsSyncBootstrap(): () => void {
     // Fires on sign-in (session becomes non-null) and on flag changes, since
     // settingsSyncEnabled() reads the flag version signal.
     createEffect(() => {
-      if (settingsSyncEnabled() && state().optedIn) void sync();
+      if (settingsSyncEnabled() && settingsSyncState().optedIn) void sync();
     });
   });
 
@@ -339,7 +397,7 @@ export function installSettingsSyncBootstrap(): () => void {
   const unsubscribeFlags = subscribeToFlagChanges(() => setTick((value) => value + 1));
 
   const onFocus = () => {
-    if (settingsSyncEnabled() && state().optedIn) void sync();
+    if (settingsSyncEnabled() && settingsSyncState().optedIn) void sync();
   };
   let unlistenFocus: (() => void) | undefined;
   void (async () => {

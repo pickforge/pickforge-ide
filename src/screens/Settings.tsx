@@ -1042,7 +1042,9 @@ export function SettingsScreen() {
                         <span class="pf-settings-muted">{hasProEntitlement() ? "Pro" : "Free"}</span>
                       </div>
                       <span class="pf-settings-muted">
-                        PickForge sends no project data to your account. Only profile and entitlement state sync.
+                        {flagEnabled("settingsSync")
+                          ? "PickForge sends no project data to your account beyond the settings groups you enable below. Only profile, entitlement state, and those groups sync."
+                          : "PickForge sends no project data to your account. Only profile and entitlement state sync."}
                       </span>
                       <Show when={flagEnabled("settingsSync")}>
                         <div class="pf-settings-row">
@@ -1065,6 +1067,9 @@ export function SettingsScreen() {
                             </button>
                           </div>
                         </div>
+                        <span class="pf-settings-muted">
+                          Synced groups hold UI preferences, operator router choices, quick-launch keybindings, and remote host bindings. Secrets and absolute local paths are blocked from syncing.
+                        </span>
                         <Show when={settingsSyncState().optedIn}>
                           <For each={SYNC_GROUPS}>
                             {(group) => (

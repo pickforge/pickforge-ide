@@ -187,10 +187,14 @@ export function applyKeybindings(payload: Json): void {
   const root = versioned(payload);
   if (!root || !Array.isArray(root.items)) return;
 
-  const items = root.items
-    .map(readQuickLaunchItem)
-    .filter((item): item is QuickLaunchItem => item !== null);
-  if (items.length === 0) return;
+  // An empty list is a valid "all chips deleted" state and must apply; only a
+  // malformed payload (any unreadable entry) is rejected.
+  const items: QuickLaunchItem[] = [];
+  for (const value of root.items) {
+    const item = readQuickLaunchItem(value);
+    if (!item) return;
+    items.push(item);
+  }
 
   setQuickLaunchItems(items);
 }

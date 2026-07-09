@@ -18,7 +18,11 @@ const env = vi.hoisted(() => {
   };
   const session = { current: null as { userId: string } | null };
   const engine = { pullGroup: vi.fn(), pushGroup: vi.fn() };
-  return { mem, session, engine };
+  const workspace = {
+    setState: (() => {}) as (...args: unknown[]) => void,
+    state: null as unknown as { loaded: boolean; projects: unknown[] },
+  };
+  return { mem, session, engine, workspace };
 });
 
 vi.mock("../../src/lib/proAuth", () => ({
@@ -29,12 +33,21 @@ vi.mock("../../src/stores/account", () => ({
   accountSession: () => env.session.current,
 }));
 
+vi.mock("../../src/stores/workspace", async () => {
+  const { createStore } = await import("solid-js/store");
+  const [state, setState] = createStore({ loaded: true, projects: [] as unknown[] });
+  env.workspace = { state, setState: setState as (...args: unknown[]) => void };
+  return { workspace: state, setProjectRemoteLocal: vi.fn() };
+});
+
 vi.mock("@pickforge/sync", async (importActual) => {
   const actual = await importActual<typeof import("@pickforge/sync")>();
   return { ...actual, pullGroup: env.engine.pullGroup, pushGroup: env.engine.pushGroup };
 });
 
-const USER_ID = "11111111-1111-4111-8111-111111111111";
+const USER_A = "11111111-1111-4111-8111-111111111111";
+const USER_B = "22222222-2222-4222-8222-222222222222";
+const USER_ID = USER_A;
 
 beforeEach(() => {
   env.mem.clear();
@@ -55,9 +68,19 @@ async function loadSerializers() {
 async function loadStore() {
   vi.resetModules();
   const flags = await import("../../src/stores/flags");
+  // Instantiate the workspace mock up front so tests can flip `loaded`.
+  await import("../../src/stores/workspace");
   const store = await import("../../src/stores/settingsSyncStore");
   return { flags, store };
 }
+
+function onlyAppSettings(store: Awaited<ReturnType<typeof loadStore>>["store"]) {
+  store.setSettingsSyncGroup("operatorConfig", false);
+  store.setSettingsSyncGroup("keybindings", false);
+  store.setSettingsSyncGroup("remoteBindings", false);
+}
+
+const flushTasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("settingsSync serializers", () => {
   it("round-trips appSettings", async () => {
@@ -170,11 +193,19 @@ describe("settingsSync serializers", () => {
 
     const before = s.collectKeybindings();
     s.applyKeybindings({ v: 1, items: "nope" } as any);
-    s.applyKeybindings({ v: 1, items: [] } as any);
     s.applyKeybindings({ v: 1, items: [{ label: "no id" }] } as any);
     expect(s.collectKeybindings()).toEqual(before);
     // The store still holds the default items (nothing was wiped).
     expect(ql.quickLaunchItems().length).toBeGreaterThan(0);
+  });
+
+  it("applies an empty keybindings list as a valid all-chips-deleted state", async () => {
+    const s = await loadSerializers();
+    const ql = await import("../../src/stores/quickLaunch");
+
+    expect(ql.quickLaunchItems().length).toBeGreaterThan(0);
+    s.applyKeybindings({ v: 1, items: [] } as any);
+    expect(ql.quickLaunchItems()).toEqual([]);
   });
 
   it("applies remote bindings only to locally-unbound projects", async () => {
@@ -210,6 +241,7 @@ describe("settingsSync engine", () => {
     env.session.current = null;
     store.setSettingsSyncOptIn(true);
     await store.sync();
+    expect(store.settingsSyncState().optedIn).toBe(false);
     expect(env.engine.pullGroup).not.toHaveBeenCalled();
     expect(env.engine.pushGroup).not.toHaveBeenCalled();
   });
@@ -218,7 +250,6 @@ describe("settingsSync engine", () => {
     const { flags, store } = await loadStore();
     flags.setFlagOverride("settingsSync", true);
     env.session.current = { userId: USER_ID };
-    // Keep remoteBindings out so the workspace/db graph is never loaded.
     store.setSettingsSyncGroup("remoteBindings", false);
 
     store.setSettingsSyncOptIn(true);
@@ -236,9 +267,7 @@ describe("settingsSync engine", () => {
 
     flags.setFlagOverride("settingsSync", true);
     env.session.current = { userId: USER_ID };
-    store.setSettingsSyncGroup("operatorConfig", false);
-    store.setSettingsSyncGroup("keybindings", false);
-    store.setSettingsSyncGroup("remoteBindings", false);
+    onlyAppSettings(store);
 
     const serverRecord: SyncRecord = {
       fieldGroup: "appSettings",
@@ -252,5 +281,133 @@ describe("settingsSync engine", () => {
 
     expect(theme.appTheme()).toBe("light");
     expect(env.engine.pushGroup).not.toHaveBeenCalled();
+  });
+
+  it("scopes opt-in, groups, and meta per user", async () => {
+    const { flags, store } = await loadStore();
+    flags.setFlagOverride("settingsSync", true);
+
+    env.session.current = { userId: USER_A };
+    store.setSettingsSyncGroup("keybindings", false);
+    store.setSettingsSyncOptIn(true);
+    await store.sync();
+    expect(store.settingsSyncState().optedIn).toBe(true);
+    expect(env.mem.has(`pickforge.settingsSync.${USER_A}`)).toBe(true);
+    expect(env.mem.has(`pickforge.settingsSync.${USER_A}.meta`)).toBe(true);
+
+    // User B on the same machine starts fresh — no inherited opt-in, groups,
+    // or content hashes.
+    env.session.current = { userId: USER_B };
+    expect(store.settingsSyncState().optedIn).toBe(false);
+    expect(store.settingsSyncState().groups.keybindings).toBe(true);
+    expect(env.mem.has(`pickforge.settingsSync.${USER_B}`)).toBe(false);
+    expect(env.mem.has(`pickforge.settingsSync.${USER_B}.meta`)).toBe(false);
+    store.setSettingsSyncGroup("appSettings", false);
+    expect(store.settingsSyncState().groups.appSettings).toBe(false);
+
+    // A's blob survives sign-out/sign-in cycles untouched by B's edits.
+    env.session.current = { userId: USER_A };
+    expect(store.settingsSyncState().optedIn).toBe(true);
+    expect(store.settingsSyncState().groups.appSettings).toBe(true);
+    expect(store.settingsSyncState().groups.keybindings).toBe(false);
+  });
+
+  it("does not bump last-synced when every group fails", async () => {
+    const { flags, store } = await loadStore();
+    flags.setFlagOverride("settingsSync", true);
+    env.session.current = { userId: USER_ID };
+    onlyAppSettings(store);
+    env.engine.pullGroup.mockRejectedValue(new Error("offline"));
+
+    store.setSettingsSyncOptIn(true);
+    await store.sync();
+
+    expect(store.lastSyncedRelative()).toBeNull();
+    expect(store.settingsSyncErrorMessage()).toBe("Settings sync hit a snag — it will retry.");
+
+    env.engine.pullGroup.mockResolvedValue(null);
+    await store.sync();
+    expect(store.lastSyncedRelative()).toBe("just now");
+    expect(store.settingsSyncErrorMessage()).toBeNull();
+  });
+
+  it("waits for the workspace to load before syncing", async () => {
+    const { flags, store } = await loadStore();
+    env.workspace.setState("loaded", false);
+    flags.setFlagOverride("settingsSync", true);
+    env.session.current = { userId: USER_ID };
+    onlyAppSettings(store);
+
+    store.setSettingsSyncOptIn(true);
+    const done = store.sync();
+    await flushTasks();
+    expect(env.engine.pullGroup).not.toHaveBeenCalled();
+
+    env.workspace.setState("loaded", true);
+    await done;
+    expect(env.engine.pullGroup).toHaveBeenCalled();
+  });
+
+  it("stamps pushes with the edit time, not the sync time", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-02T00:00:00Z"));
+      const { flags, store } = await loadStore();
+      const theme = await import("../../src/stores/theme");
+      flags.setFlagOverride("settingsSync", true);
+      env.session.current = { userId: USER_ID };
+      onlyAppSettings(store);
+      store.setSettingsSyncOptIn(true);
+      await store.sync();
+      expect(env.engine.pushGroup.mock.calls.length).toBe(1);
+
+      vi.setSystemTime(new Date("2026-01-02T01:00:00Z"));
+      theme.applyTheme("light");
+
+      vi.setSystemTime(new Date("2026-01-02T05:00:00Z"));
+      await store.sync();
+
+      expect(env.engine.pushGroup.mock.calls.length).toBe(2);
+      const push = env.engine.pushGroup.mock.calls.at(-1)![0];
+      expect(push.updatedAt.startsWith("2026-01-02T01:00:00")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("loses to a server write newer than the local edit (edit-time LWW)", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-02T00:00:00Z"));
+      const { flags, store } = await loadStore();
+      const theme = await import("../../src/stores/theme");
+      theme.applyTheme("light");
+      flags.setFlagOverride("settingsSync", true);
+      env.session.current = { userId: USER_ID };
+      onlyAppSettings(store);
+      store.setSettingsSyncOptIn(true);
+      await store.sync();
+      expect(env.engine.pushGroup.mock.calls.length).toBe(1);
+
+      // This machine edits at 01:00 but doesn't sync yet…
+      vi.setSystemTime(new Date("2026-01-02T01:00:00Z"));
+      theme.applyTheme("dark");
+
+      // …and another machine wrote the group at 02:00.
+      env.engine.pullGroup.mockResolvedValue({
+        fieldGroup: "appSettings",
+        payload: { v: 1, theme: "light", runButtonLabels: true, windowControlsSide: "left" },
+        updatedAt: "2026-01-02T02:00:00.000000Z",
+      } satisfies SyncRecord);
+
+      // Syncing at 05:00 must NOT let the stale 01:00 edit beat the 02:00 write.
+      vi.setSystemTime(new Date("2026-01-02T05:00:00Z"));
+      await store.sync();
+
+      expect(theme.appTheme()).toBe("light");
+      expect(env.engine.pushGroup.mock.calls.length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

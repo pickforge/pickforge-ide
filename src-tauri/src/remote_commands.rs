@@ -309,6 +309,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_HOME: AtomicU64 = AtomicU64::new(1);

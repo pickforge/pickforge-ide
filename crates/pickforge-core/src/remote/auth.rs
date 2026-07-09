@@ -467,7 +467,48 @@ fn set_private_permissions(path: &Path) -> Result<(), RemoteAuthError> {
         std::fs::set_permissions(path, permissions)
             .map_err(|err| RemoteAuthError::Io(err.to_string()))?;
     }
-    let _ = path;
+    #[cfg(windows)]
+    {
+        set_private_permissions_windows(path)?;
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_private_permissions_windows(path: &Path) -> Result<(), RemoteAuthError> {
+    let user = std::env::var("USERNAME")
+        .map_err(|err| RemoteAuthError::Io(format!("USERNAME is required for icacls: {err}")))?
+        .trim()
+        .to_string();
+    if user.is_empty() {
+        return Err(RemoteAuthError::Io(
+            "USERNAME is required for icacls".into(),
+        ));
+    }
+    let grant = format!("{user}:F");
+    let output = std::process::Command::new("icacls")
+        .arg(path)
+        .arg("/inheritance:r")
+        .arg("/grant:r")
+        .arg(&grant)
+        .output()
+        .map_err(|err| RemoteAuthError::Io(err.to_string()))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if detail.is_empty() {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            detail
+        };
+        return Err(RemoteAuthError::Io(format!(
+            "icacls failed for {}: {detail}",
+            path.display()
+        )));
+    }
     Ok(())
 }
 
@@ -628,6 +669,23 @@ mod tests {
         store.save_to_path(&path).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn store_tightens_auth_file_permissions_on_windows() {
+        let path = std::env::temp_dir().join(format!(
+            "pickforge-remote-auth-private-{}-{}.json",
+            std::process::id(),
+            random_hex(4)
+        ));
+        let mut store = RemoteAuthStore::default();
+        store.issue_pairing_code(1_000, 60_000).unwrap();
+        store.save_to_path(&path).unwrap();
+        let snapshot = RemoteAuthStore::snapshot_from_path(&path).unwrap();
+        assert_eq!(snapshot.pairing_codes.len(), 1);
+        std::fs::remove_file(path.with_extension("json.lock")).ok();
         std::fs::remove_file(path).ok();
     }
 

@@ -3,7 +3,10 @@
 //! tap-to-select / navigate stream events to the UI.
 
 use base64::Engine;
-use pickforge_core::{decode_widget_tree, pickforge_home, VmServiceClient, WidgetNode};
+use pickforge_core::{
+    decode_semantic_widget_tree, decode_widget_tree, pickforge_home, SemanticWidgetNode,
+    VmServiceClient, WidgetNode,
+};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
@@ -160,6 +163,43 @@ pub async fn vm_widget_tree(
     };
     let tree = result.get("result").unwrap_or(&result);
     Ok(decode_widget_tree(tree))
+}
+
+#[tauri::command]
+pub async fn vm_widget_tree_semantic(
+    client: State<'_, VmServiceClient>,
+    isolate_id: String,
+    group_name: String,
+) -> Result<SemanticWidgetNode, String> {
+    let _ = client
+        .call(
+            "ext.flutter.inspector.disposeGroup",
+            json!({ "isolateId": isolate_id, "objectGroup": group_name }),
+        )
+        .await;
+    let modern = client
+        .call(
+            "ext.flutter.inspector.getRootWidgetTree",
+            json!({
+                "isolateId": isolate_id,
+                "groupName": group_name,
+                "isSummaryTree": "true",
+                "withPreviews": "true",
+            }),
+        )
+        .await;
+    let result = match modern {
+        Ok(v) => v,
+        Err(_) => client
+            .call(
+                "ext.flutter.inspector.getRootWidgetSummaryTree",
+                json!({ "isolateId": isolate_id, "objectGroup": group_name }),
+            )
+            .await
+            .map_err(|e| e.to_string())?,
+    };
+    let tree = result.get("result").unwrap_or(&result);
+    Ok(decode_semantic_widget_tree(tree))
 }
 
 /// Highlight a widget on the device by its valueId (object group must be alive).

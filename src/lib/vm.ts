@@ -8,12 +8,21 @@ export interface WidgetNode {
   creationLocation: { file: string; line: number; column: number } | null;
 }
 
+export interface SemanticWidgetNode {
+  id: string;
+  className: string;
+  label: string | null;
+  children: SemanticWidgetNode[];
+}
+
 export const vmConnect = (url: string) => invoke<void>("vm_connect", { url });
 export const vmDisconnect = () => invoke<void>("vm_disconnect");
 export const vmStatus = () => invoke<string | null>("vm_status");
 export const vmGetVm = () => invoke<unknown>("vm_get_vm");
 export const vmWidgetTree = (isolateId: string, groupName: string) =>
   invoke<WidgetNode>("vm_widget_tree", { isolateId, groupName });
+export const vmWidgetTreeSemantic = (isolateId: string, groupName: string) =>
+  invoke<SemanticWidgetNode>("vm_widget_tree_semantic", { isolateId, groupName });
 
 // ---- Flutter widget inspector ----
 export const vmFindIsolate = () => invoke<string>("vm_find_isolate");

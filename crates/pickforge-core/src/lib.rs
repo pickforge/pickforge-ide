@@ -24,7 +24,10 @@ pub mod voice;
 pub mod vm_service;
 
 pub use cdp::{decode_dom_node, find_node_path, CdpClient, CdpError, CdpTarget, DomNode};
-pub use inspector::{decode_widget_tree, CreationLocation, WidgetNode};
+pub use inspector::{
+    decode_semantic_widget_tree, decode_widget_tree, CreationLocation, SemanticWidgetNode,
+    WidgetNode,
+};
 pub use vm_service::{VmError, VmServiceClient};
 
 pub use targets::{

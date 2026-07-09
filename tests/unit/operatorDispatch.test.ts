@@ -915,6 +915,53 @@ describe("dispatchIntent", () => {
     expect(auditUpdateStatus()).toBe("done");
   });
 
+  it("does not default launchEmulator to a virtual device incompatible with the active target", async () => {
+    deps.targets.push(runTarget("ios", "iOS", {
+      deviceConvention: "xcodeDestination",
+      inspectorKind: "iosAccessibility",
+      logSource: "oslog",
+    }));
+    deps.devices.push(device("Pixel 8", { avdId: "Pixel_8" }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: null }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "No virtual device available. Candidates: none",
+    });
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("resolves launchEmulator names only within target-compatible virtual devices", async () => {
+    deps.targets.push(runTarget("ios", "iOS", {
+      deviceConvention: "xcodeDestination",
+      inspectorKind: "iosAccessibility",
+      logSource: "oslog",
+    }));
+    deps.devices.push(
+      device("Pixel 8", { avdId: "Pixel_8" }),
+      device("iPhone 15", {
+        serial: "SIM-123",
+        avdId: null,
+        kind: "simulator",
+      }),
+    );
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "pixel" }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Device \"pixel\" was not found. Candidates: iPhone 15",
+    });
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
   it("fails ambiguous device resolution and lists candidates", async () => {
     deps.devices.push(
       device("Pixel 8", { avdId: "Pixel_8" }),
@@ -1101,6 +1148,36 @@ describe("dispatchIntent", () => {
       "operator-screenshot.png",
     );
     expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("fails screenshot when the active run belongs to a different project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.workspace.activeRoot = "/repo/other";
+    setActiveRun(runTarget("detected", "React Native", {
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+      logSource: "logcat",
+    }), "/repo/app");
+    deps.devices.push(device("Pixel 8", {
+      serial: "emulator-5554",
+      avdId: "Pixel_8",
+      state: "running",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }, "Other"));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Active run is not in project Other",
+    });
+    expect(deps.inspectDir).not.toHaveBeenCalled();
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.iosScreenshot).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
   });
 
   it("does not fall back to a device screenshot for a no-device target", async () => {

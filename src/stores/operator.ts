@@ -17,7 +17,7 @@ import {
 } from "../lib/device";
 import type { Chat, Project } from "../lib/db";
 import { riskTier, type OperatorAction, type OperatorIntent } from "../lib/operatorIntent";
-import type { RunTarget } from "../lib/runTargets";
+import { isCompatibleDevice, type RunTarget } from "../lib/runTargets";
 import {
   inspectDir,
   inspectSave,
@@ -621,11 +621,15 @@ function defaultVirtualDevice(devices: DeviceEntry[]): DeviceEntry | null {
     null;
 }
 
+function compatibleVirtualDevices(target: RunTarget | null, devices: DeviceEntry[]): DeviceEntry[] {
+  return devices.filter((device) => isLaunchableVirtualDevice(device) && isCompatibleDevice(target, device.kind));
+}
+
 async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | null): Promise<DispatchResult> {
   const project = await activeProjectForDeviceIntent(intent);
   if (!project.ok) return { status: "failed", message: project.message };
 
-  const devices = (await refreshDevices()).filter(isLaunchableVirtualDevice);
+  const devices = compatibleVirtualDevices(activeRunTarget(), await refreshDevices());
   const fallback = defaultVirtualDevice(devices);
   const resolved = deviceRef
     ? resolveDeviceReference(deviceRef, devices)
@@ -753,6 +757,9 @@ async function captureDeviceScreenshot(projectRoot: string): Promise<string | nu
 async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchResult> {
   const project = await activeProjectForDeviceIntent(intent);
   if (!project.ok) return { status: "failed", message: project.message };
+  if (runConsole.status() === "running" && !activeRunBelongsToProject(project.value.projectRoot)) {
+    return { status: "failed", message: `Active run is not in project ${project.value.displayName}` };
+  }
 
   const target = activeRunTarget();
   const vmPath = target?.inspectorKind === "vmService"

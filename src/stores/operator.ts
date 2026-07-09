@@ -16,15 +16,18 @@ import {
   type DeviceEntry,
 } from "../lib/device";
 import type { Chat, Project } from "../lib/db";
-import { riskTier, type OperatorAction, type OperatorIntent } from "../lib/operatorIntent";
+import { riskTier, type OperatorIntent } from "../lib/operatorIntent";
 import { isCompatibleDevice, type RunTarget } from "../lib/runTargets";
+import { matchWidget, type IndexedWidgetNode } from "../lib/widgetMatch";
 import {
   inspectDir,
   inspectSave,
   vmFindIsolate,
   vmScreenshot,
   vmSelectedWidget,
+  vmSetSelection,
   vmShowSelectMode,
+  vmWidgetTreeSemantic,
 } from "../lib/vm";
 import { isChatArchived } from "./chatArchive";
 import { refreshDevices } from "./deviceList";
@@ -68,12 +71,23 @@ import {
 export type DispatchResult =
   | { status: "done"; summary: string }
   | { status: "noop"; summary: string }
-  | { status: "needsConfirmation"; summary: string; auditId: string }
+  | {
+    status: "needsConfirmation";
+    summary: string;
+    auditId: string;
+    candidates?: WidgetSelectionCandidate[];
+  }
   | { status: "denied" | "failed" | "unsupported"; message: string };
+
+export type WidgetSelectionCandidate = {
+  index: number;
+  className: string;
+  label: string | null;
+};
 
 type DispatchResultDraft =
   | Exclude<DispatchResult, { status: "needsConfirmation" }>
-  | { status: "needsConfirmation"; summary: string };
+  | { status: "needsConfirmation"; summary: string; candidates?: WidgetSelectionCandidate[] };
 
 export type DispatchOptions = {
   confirmed?: boolean;
@@ -86,6 +100,15 @@ type Resolution<T> =
   | { ok: false; message: string };
 
 type AuditStatus = db.OperatorAuditRow["status"];
+
+type PendingWidgetSelection = {
+  isolate: string;
+  groupName: string;
+  candidates: Map<number, IndexedWidgetNode>;
+};
+
+const WIDGET_MATCH_OBJECT_GROUP = "pf-operator-widget-match";
+const pendingWidgetSelections = new Map<string, PendingWidgetSelection>();
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
@@ -305,7 +328,7 @@ function summaryFor(intent: OperatorIntent): string {
     case "takeScreenshot":
       return "Take screenshot";
     case "selectWidget":
-      return "selectWidget is planned for #142";
+      return `Select widget ${action.description}`;
   }
 }
 
@@ -750,6 +773,77 @@ async function enterSelectModeIntent(intent: OperatorIntent): Promise<DispatchRe
   return { status: "done", summary: "Entered select mode" };
 }
 
+function selectedWidgetSummary(node: Pick<IndexedWidgetNode, "className" | "label">): string {
+  return `Selected ${node.className}${node.label ? ` — '${node.label}'` : ""}`;
+}
+
+function candidateFor(node: IndexedWidgetNode): WidgetSelectionCandidate {
+  return { index: node.index, className: node.className, label: node.label };
+}
+
+async function selectWidgetIntent(
+  intent: OperatorIntent,
+  description: string,
+  auditId: string,
+): Promise<DispatchResultDraft> {
+  const project = await activeProjectForDeviceIntent(intent);
+  if (!project.ok) return { status: "failed", message: project.message };
+  const target = activeFlutterRunForProject(project.value);
+  if (!target.ok) return { status: "failed", message: target.message };
+  let isolate: string;
+  try {
+    isolate = await vmFindIsolate();
+  } catch {
+    return { status: "noop", summary: "no active device/session" };
+  }
+
+  const tree = await vmWidgetTreeSemantic(isolate, WIDGET_MATCH_OBJECT_GROUP);
+  const match = await matchWidget(description, tree);
+  switch (match.kind) {
+    case "match": {
+      const selected = await vmSetSelection(isolate, match.node.valueId, WIDGET_MATCH_OBJECT_GROUP);
+      if (!selected) return { status: "failed", message: "Could not select the matched widget" };
+      return { status: "done", summary: selectedWidgetSummary(match.node) };
+    }
+    case "ambiguous":
+      pendingWidgetSelections.set(auditId, {
+        isolate,
+        groupName: WIDGET_MATCH_OBJECT_GROUP,
+        candidates: new Map(match.candidates.map((candidate) => [candidate.index, candidate])),
+      });
+      return {
+        status: "needsConfirmation",
+        summary: "Choose the matching widget",
+        candidates: match.candidates.map(candidateFor),
+      };
+    case "notFound":
+      return { status: "failed", message: `No widget matched "${description}"` };
+    case "unconfigured":
+      return {
+        status: "unsupported",
+        message: "Operator router is off. Choose a backend in Settings.",
+      };
+    case "error":
+      return { status: "failed", message: `Widget matching failed: ${match.message}` };
+  }
+}
+
+export async function selectWidgetCandidate(auditId: string, index: number): Promise<DispatchResult> {
+  const pending = pendingWidgetSelections.get(auditId);
+  const candidate = pending?.candidates.get(index);
+  if (!pending || !candidate) {
+    return { status: "failed", message: "Widget choice is no longer available" };
+  }
+  pendingWidgetSelections.delete(auditId);
+  const selected = await vmSetSelection(pending.isolate, candidate.valueId, pending.groupName);
+  if (!selected) return { status: "failed", message: "Could not select the chosen widget" };
+  return { status: "done", summary: selectedWidgetSummary(candidate) };
+}
+
+export function discardWidgetSelection(auditId: string): void {
+  pendingWidgetSelections.delete(auditId);
+}
+
 async function captureVmScreenshot(projectRoot: string): Promise<string | null> {
   const isolate = await vmFindIsolate().catch(() => null);
   if (!isolate) return null;
@@ -792,19 +886,12 @@ async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchRes
   return { status: "noop", summary: "no device or VM session to capture" };
 }
 
-function unsupported(action: OperatorAction): DispatchResult | null {
-  switch (action.action) {
-    case "selectWidget":
-      return { status: "unsupported", message: "selectWidget is planned for #142" };
-    default:
-      return null;
-  }
-}
-
-async function runIntent(intent: OperatorIntent, inputText?: string): Promise<DispatchResult> {
+async function runIntent(
+  intent: OperatorIntent,
+  inputText: string | undefined,
+  auditId: string,
+): Promise<DispatchResultDraft> {
   const action = intent.action;
-  const unsupportedResult = unsupported(action);
-  if (unsupportedResult) return unsupportedResult;
 
   switch (action.action) {
     case "openProject": {
@@ -916,7 +1003,7 @@ async function runIntent(intent: OperatorIntent, inputText?: string): Promise<Di
     case "takeScreenshot":
       return takeScreenshotIntent(intent);
     case "selectWidget":
-      return { status: "unsupported", message: summaryFor(intent) };
+      return selectWidgetIntent(intent, action.description, auditId);
   }
 }
 
@@ -960,9 +1047,12 @@ export async function dispatchIntent(
   }
 
   try {
-    const result = await runIntent(intent, opts.inputText);
-    await noteAuditUpdateFailure(auditId, auditStatusFor(result), resultText(result));
-    return result;
+    const result = await runIntent(intent, opts.inputText, auditId);
+    const auditedResult: DispatchResult = result.status === "needsConfirmation"
+      ? { ...result, auditId }
+      : result;
+    await noteAuditUpdateFailure(auditId, auditStatusFor(auditedResult), resultText(auditedResult));
+    return auditedResult;
   } catch (error) {
     const message = errorText(error);
     await noteAuditUpdateFailure(auditId, "failed", message);

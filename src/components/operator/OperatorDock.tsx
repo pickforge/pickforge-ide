@@ -8,12 +8,14 @@ import { MonoEyebrow, EmberButton } from "../ui";
 import { IconMic } from "../icons";
 import {
   cancelOperatorPreview,
+  candidateIndexForKey,
   closeOperatorDock,
   confirmOperatorPreview,
   operatorBusy,
   operatorInput,
   operatorRecent,
   operatorView,
+  pickOperatorWidgetCandidate,
   relativeTime,
   setOperatorInput,
   submitOperatorCommand,
@@ -108,6 +110,16 @@ export function OperatorDock() {
       if (operatorView().kind === "preview") void cancelOperatorPreview();
       else closeOperatorDock();
       return;
+    }
+    const current = operatorView();
+    if (current.kind === "preview" && current.candidates) {
+      const index = candidateIndexForKey(e.key, current.candidates);
+      if (index !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+        void pickOperatorWidgetCandidate(index);
+        return;
+      }
     }
     if (e.key !== "Tab") return;
     const focusables = Array.from(
@@ -217,43 +229,85 @@ export function OperatorDock() {
             </Match>
 
             <Match when={asView("preview")}>
-              {(p) => (
-                <div class="pf-op-preview">
-                  <div class="pf-op-preview-summary">
-                    {p().summary}
-                    <Show when={confidenceLabel(p().confidence)}>
-                      {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
-                    </Show>
-                  </div>
-                  {(() => {
-                    const lines = previewPayloadLines(p().intent);
-                    return (
-                      <Show when={lines.length > 0}>
-                        <div class="pf-op-preview-payload">
-                          <For each={lines}>
-                            {(line) => <div class="pf-op-preview-payload-line">{line}</div>}
+              {(p) => {
+                const candidates = () => p().candidates;
+                return (
+                  <div class="pf-op-preview">
+                    <div class="pf-op-preview-summary">
+                      {p().summary}
+                      <Show when={confidenceLabel(p().confidence)}>
+                        {(label) => <span class="pf-op-preview-confidence"> · {label()}</span>}
+                      </Show>
+                    </div>
+                    <Show
+                      when={candidates()}
+                      fallback={(() => {
+                        const lines = previewPayloadLines(p().intent);
+                        return (
+                          <Show when={lines.length > 0}>
+                            <div class="pf-op-preview-payload">
+                              <For each={lines}>
+                                {(line) => <div class="pf-op-preview-payload-line">{line}</div>}
+                              </For>
+                            </div>
+                          </Show>
+                        );
+                      })()}
+                    >
+                      {(choices) => (
+                        <div class="pf-op-candidates" aria-label="Widget candidates">
+                          <For each={choices()}>
+                            {(candidate, position) => (
+                              <button
+                                type="button"
+                                class="pf-op-candidate"
+                                disabled={operatorBusy()}
+                                onClick={() => void pickOperatorWidgetCandidate(candidate.index)}
+                              >
+                                <span class="pf-op-candidate-key">{position() + 1}</span>
+                                <span class="pf-op-candidate-label">
+                                  {candidate.className}
+                                  <Show when={candidate.label}> — {candidate.label}</Show>
+                                </span>
+                                <span class="pf-op-candidate-index">#{candidate.index}</span>
+                              </button>
+                            )}
                           </For>
                         </div>
+                      )}
+                    </Show>
+                    <div class="pf-op-actions">
+                      <Show
+                        when={!candidates()}
+                        fallback={
+                          <button
+                            type="button"
+                            class="pf-op-cancel"
+                            disabled={operatorBusy()}
+                            onClick={() => void cancelOperatorPreview()}
+                          >
+                            Cancel
+                          </button>
+                        }
+                      >
+                        <EmberButton
+                          label="Confirm"
+                          disabled={operatorBusy()}
+                          onClick={() => void confirmOperatorPreview()}
+                        />
+                        <button
+                          type="button"
+                          class="pf-op-cancel"
+                          disabled={operatorBusy()}
+                          onClick={() => void cancelOperatorPreview()}
+                        >
+                          Cancel
+                        </button>
                       </Show>
-                    );
-                  })()}
-                  <div class="pf-op-actions">
-                    <EmberButton
-                      label="Confirm"
-                      disabled={operatorBusy()}
-                      onClick={() => void confirmOperatorPreview()}
-                    />
-                    <button
-                      type="button"
-                      class="pf-op-cancel"
-                      disabled={operatorBusy()}
-                      onClick={() => void cancelOperatorPreview()}
-                    >
-                      Cancel
-                    </button>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              }}
             </Match>
 
             <Match when={asView("result")}>

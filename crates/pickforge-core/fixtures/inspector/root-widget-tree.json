@@ -1,0 +1,49 @@
+{
+  "valueId": "inspector-1",
+  "description": "MaterialApp",
+  "type": "MaterialApp",
+  "creationLocation": {
+    "file": "/Users/example/app/lib/main.dart",
+    "line": 12,
+    "column": 3
+  },
+  "bounds": "Rect.fromLTWH(0.0, 0.0, 390.0, 844.0)",
+  "children": [
+    {
+      "valueId": "inspector-2",
+      "description": "Text",
+      "widgetRuntimeType": "Text",
+      "textPreview": "Sign in",
+      "creationLocation": {
+        "file": "/Users/example/app/lib/login.dart",
+        "line": 44,
+        "column": 11
+      }
+    },
+    {
+      "valueId": "inspector-3",
+      "description": "Continue",
+      "widgetRuntimeType": "LoginButton",
+      "creationLocation": {
+        "file": "/Users/example/app/lib/login.dart",
+        "line": 52,
+        "column": 11
+      }
+    },
+    {
+      "valueId": "inspector-4",
+      "type": "DiagnosticsNode",
+      "runtimeType": "TextButton",
+      "description": "Create account",
+      "creationLocation": {
+        "file": "/Users/example/app/lib/login.dart",
+        "line": 61,
+        "column": 11
+      }
+    },
+    {
+      "valueId": "inspector-5",
+      "description": "SummaryOnlyWidget"
+    }
+  ]
+}

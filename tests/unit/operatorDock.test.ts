@@ -7,6 +7,8 @@ const deps = vi.hoisted(() => ({
   parseCommand: vi.fn(),
   routeCommand: vi.fn(),
   dispatchIntent: vi.fn(),
+  selectWidgetCandidate: vi.fn(),
+  discardWidgetSelection: vi.fn(),
   flagEnabled: vi.fn(),
   operatorAuditList: vi.fn(),
   operatorAuditUpdate: vi.fn(),
@@ -20,6 +22,8 @@ vi.mock("../../src/lib/operatorRouter", () => ({
 }));
 vi.mock("../../src/stores/operator", () => ({
   dispatchIntent: deps.dispatchIntent,
+  selectWidgetCandidate: deps.selectWidgetCandidate,
+  discardWidgetSelection: deps.discardWidgetSelection,
 }));
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: deps.flagEnabled,
@@ -75,6 +79,8 @@ beforeEach(() => {
   deps.parseCommand.mockReset();
   deps.routeCommand.mockReset().mockResolvedValue({ kind: "unconfigured" });
   deps.dispatchIntent.mockReset();
+  deps.selectWidgetCandidate.mockReset();
+  deps.discardWidgetSelection.mockReset();
   deps.flagEnabled.mockReset().mockReturnValue(true);
   deps.operatorAuditList.mockReset().mockResolvedValue([]);
   deps.operatorAuditUpdate.mockReset().mockResolvedValue(undefined);
@@ -340,6 +346,75 @@ describe("operatorDock store", () => {
     expect(s.operatorRecent()[0]).toMatchObject({ id: "audit-1", status: "denied" });
   });
 
+  it("picks an ambiguous widget candidate and settles the same audit row", async () => {
+    const selectWidget = intent({ action: "selectWidget", description: "the login button" });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: selectWidget });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Choose the matching widget",
+      auditId: "audit-widget",
+      candidates: [
+        { index: 4, className: "LoginButton", label: "Sign in" },
+        { index: 8, className: "LoginButton", label: "Create account" },
+      ],
+    } as DispatchResult);
+    deps.selectWidgetCandidate.mockResolvedValue({
+      status: "done",
+      summary: "Selected LoginButton — 'Create account'",
+    } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInput("select the login button");
+    await s.submitOperatorCommand();
+    expect(s.operatorView()).toMatchObject({ kind: "preview", auditId: "audit-widget" });
+
+    await s.pickOperatorWidgetCandidate(8);
+
+    expect(deps.selectWidgetCandidate).toHaveBeenCalledWith("audit-widget", 8);
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith(
+      "audit-widget",
+      "done",
+      "Selected LoginButton — 'Create account'",
+    );
+    expect(s.operatorView()).toEqual({
+      kind: "result",
+      result: { status: "done", summary: "Selected LoginButton — 'Create account'" },
+    });
+  });
+
+  it("dismisses an ambiguous widget candidate view and discards its local mapping", async () => {
+    const selectWidget = intent({ action: "selectWidget", description: "the login button" });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: selectWidget });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Choose the matching widget",
+      auditId: "audit-widget",
+      candidates: [{ index: 4, className: "LoginButton", label: "Sign in" }],
+    } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInput("select the login button");
+    await s.submitOperatorCommand();
+    await s.cancelOperatorPreview();
+
+    expect(deps.discardWidgetSelection).toHaveBeenCalledWith("audit-widget");
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith("audit-widget", "denied", "dismissed");
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+  });
+
+  it("maps candidate-view keyboard choices one through three to candidate indexes", async () => {
+    const s = await loadStore();
+    const candidates = [
+      { index: 4, className: "LoginButton", label: "Sign in" },
+      { index: 8, className: "LoginButton", label: "Create account" },
+    ];
+
+    expect(s.candidateIndexForKey("1", candidates)).toBe(4);
+    expect(s.candidateIndexForKey("2", candidates)).toBe(8);
+    expect(s.candidateIndexForKey("3", candidates)).toBeNull();
+    expect(s.candidateIndexForKey("Enter", candidates)).toBeNull();
+  });
+
   it("marks a pending preview audit as denied when the input text is edited", async () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
@@ -599,6 +674,40 @@ describe("operatorDock store", () => {
     await s.confirmOperatorPreview();
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
     expect(auditUpdatesFor("audit-1")).toEqual([["audit-1", "denied", "dismissed"]]);
+  });
+
+  it("discards stale ambiguous widget candidates after the dock closes", async () => {
+    const selectWidget = intent({ action: "selectWidget", description: "the login button" });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: selectWidget });
+    let resolveDispatch!: (r: DispatchResult) => void;
+    deps.dispatchIntent.mockReturnValue(
+      new Promise<DispatchResult>((resolve) => {
+        resolveDispatch = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("select the login button");
+    const pending = s.submitOperatorCommand();
+
+    s.closeOperatorDock();
+    resolveDispatch({
+      status: "needsConfirmation",
+      summary: "Choose the matching widget",
+      auditId: "audit-widget-stale",
+      candidates: [{ index: 4, className: "LoginButton", label: "Sign in" }],
+    });
+    await pending;
+    await flushAsync();
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(deps.discardWidgetSelection).toHaveBeenCalledWith("audit-widget-stale");
+    expect(auditUpdatesFor("audit-widget-stale")).toEqual([
+      ["audit-widget-stale", "denied", "dismissed"],
+    ]);
+    await s.pickOperatorWidgetCandidate(4);
+    expect(deps.selectWidgetCandidate).not.toHaveBeenCalled();
   });
 
   it("denies a stale routed needsConfirmation audit after the dock closes", async () => {

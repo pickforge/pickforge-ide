@@ -21,6 +21,7 @@ reset this file.
 - Operator composer dock landed dark behind the `operator` flag.
 - Operator device/run intents (M1.5) wired dark behind the `operator` flag.
 - BYO operator routing (Claude Code / Codex / Ollama) landed dark behind the `operator` flag.
+- Semantic Flutter widget selection now routes only indexed class names and labels, with local disambiguation and selection.
 - Landed accounts/auth wiring dark behind the `accounts` flag.
 - Local dictation pipeline (Rust + IPC) landed dark; composer UI follows.
 - Core PTY can spawn over Tailscale SSH for remote projects; terminal and agent wiring follows.

@@ -103,7 +103,7 @@ Cross-cutting rules:
 | --- | --- | --- | --- |
 | Command text, typed or transcribed | Stays local. | Sent to the user's own provider. | Sent to the hosted router. |
 | Project and chat display names | Local. | Allowed after local routing redaction. | Allowed after local routing redaction: names only, never absolute paths. This is enforced by policy/redaction, not the intent schema. |
-| Compact widget-tree serialization from semantic selection | Local. | Allowed. | Allowed, redacted to structure and labels. |
+| Compact widget-tree serialization from semantic selection | Local. | Allowed. | Allowed, redacted to indented local indices, class names, and labels; breadth-first truncated before routing with no paths or locations. |
 | Source code, file contents, diffs | Never leaves via the Operator. | Never leaves via the Operator. | Never leaves via the Operator. |
 | Agent transcripts, screenshots, `.pickforge/` artifacts, support bundles | Never by default. Any expansion needs preview, redaction, and explicit opt-in. | Never by default. Any expansion needs preview, redaction, and explicit opt-in. | Never by default. Any expansion needs preview, redaction, and explicit opt-in. |
 | Absolute paths, device serials, hostnames | Never leave through routing payloads. | Never leave through routing payloads. | Never leave through routing payloads. This is enforced by local policy/redaction at the routing layer, not by the intent schema. |
@@ -275,7 +275,7 @@ Risk tiers:
 | `hotRestart` | M1.5 device-run | No payload. Full restart of the active run. | Tier 0 |
 | `enterSelectMode` | M1.5 device-run | No payload. | Tier 0 |
 | `takeScreenshot` | M1.5 device-run | No payload. Issue vocabulary for `deviceScreenshot` maps here instead of adding a duplicate action. | Tier 0 |
-| `selectWidget` | M1.6 semantic selection | Non-empty widget description. | Tier 0 |
+| `selectWidget` | M1.6 semantic selection | Non-empty widget description. Matches against a sanitized live Flutter widget tree; ambiguity is resolved in the dock. | Tier 0 |
 
 ## Versioning and Contract
 

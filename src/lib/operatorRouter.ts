@@ -33,14 +33,19 @@ export type RouteResult =
   | { kind: "error"; message: string }
   | { kind: "unconfigured" };
 
-interface RawRouteOutput {
+export interface RawRouteOutput {
   output: string;
   latencyMs: number;
   exitOk: boolean;
   stderrTail: string;
 }
 
-const ROUTER_TIMEOUT_MS = 30_000;
+export type RawRouterResult =
+  | { kind: "output"; backend: OperatorRouterBackend; output: string; latencyMs: number }
+  | { kind: "error"; message: string }
+  | { kind: "unconfigured" };
+
+export const ROUTER_TIMEOUT_MS = 30_000;
 
 const ACTION_CATALOG = [
   "Return one JSON object for one PickForge developer command.",
@@ -132,7 +137,7 @@ export function extractOllamaProposalJson(output: string): string {
   return stripJsonFences(parsed.response);
 }
 
-function extractProposalJson(backend: OperatorRouterBackend, output: string): string {
+export function extractRouterText(backend: OperatorRouterBackend, output: string): string {
   switch (backend) {
     case "claudeCode":
       return extractClaudeProposalJson(output);
@@ -187,6 +192,27 @@ function persistLatencyBestEffort(backend: OperatorRouterBackend, latencyMs: num
 }
 
 export async function routeCommand(text: string): Promise<RouteResult> {
+  const raw = await routeRawPrompt(buildRouterPrompt(text));
+  if (raw.kind === "unconfigured") return raw;
+  if (raw.kind === "error") return raw;
+
+  try {
+    const proposal = parseProposal(extractRouterText(raw.backend, raw.output));
+    if ("unclear" in proposal) {
+      return { kind: "unclear", reason: proposal.reason ?? "router could not map this command" };
+    }
+    return {
+      kind: "proposal",
+      intent: composeIntent(proposal.action, proposal.confidence, proposal.projectRef),
+      confidence: proposal.confidence,
+      latencyMs: raw.latencyMs,
+    };
+  } catch (error) {
+    return { kind: "error", message: errorMessage(error) };
+  }
+}
+
+export async function routeRawPrompt(prompt: string): Promise<RawRouterResult> {
   const backend = configuredRouterBackend();
   if (!backend) return { kind: "unconfigured" };
   const model = operatorRouterSettings().models[backend].trim();
@@ -196,7 +222,7 @@ export async function routeCommand(text: string): Promise<RouteResult> {
     const raw = await invoke<RawRouteOutput>("operator_route_raw", {
       backend,
       model,
-      prompt: buildRouterPrompt(text),
+      prompt,
       timeoutMs: ROUTER_TIMEOUT_MS,
     });
     persistLatencyBestEffort(backend, raw.latencyMs);
@@ -206,14 +232,10 @@ export async function routeCommand(text: string): Promise<RouteResult> {
         message: raw.stderrTail.trim() || "router command exited unsuccessfully",
       };
     }
-    const proposal = parseProposal(extractProposalJson(backend, raw.output));
-    if ("unclear" in proposal) {
-      return { kind: "unclear", reason: proposal.reason ?? "router could not map this command" };
-    }
     return {
-      kind: "proposal",
-      intent: composeIntent(proposal.action, proposal.confidence, proposal.projectRef),
-      confidence: proposal.confidence,
+      kind: "output",
+      backend,
+      output: raw.output,
       latencyMs: raw.latencyMs,
     };
   } catch (error) {

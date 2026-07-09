@@ -304,6 +304,7 @@ pub fn run() {
             vm_commands::vm_status,
             vm_commands::vm_get_vm,
             vm_commands::vm_widget_tree,
+            vm_commands::vm_widget_tree_semantic,
             vm_commands::vm_find_isolate,
             vm_commands::vm_set_selection,
             vm_commands::vm_show_select_mode,

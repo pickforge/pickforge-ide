@@ -29,7 +29,8 @@ playwright-report/
 # Local AI session caches
 .superpowers/
 .codex/
-.claude/
+.claude/*
+!.claude/skills/
 .codegraph/
 .worktrees/
 

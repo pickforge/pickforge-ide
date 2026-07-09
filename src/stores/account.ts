@@ -266,6 +266,7 @@ function beginSigningIn() {
   setError(null);
   signInTimer = setTimeout(() => {
     if (status() === "signingIn") {
+      refreshGeneration += 1;
       releaseProAuthRedirectGuard();
       clearPendingSignIn();
       setSession(null);
@@ -419,6 +420,7 @@ export async function signIn(provider: PickforgeOAuthProvider) {
 
 export function cancelSignIn() {
   if (!accountsEnabled()) return;
+  refreshGeneration += 1;
   clearSignInTimer();
   releaseProAuthRedirectGuard();
   clearPendingSignIn();

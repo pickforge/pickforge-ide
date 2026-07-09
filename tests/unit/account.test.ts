@@ -482,6 +482,33 @@ describe("account store", () => {
     expect(account.accountStatus()).toBe("signedOut");
   });
 
+  it("stays signed out when cancelSignIn wins a callback refresh race", async () => {
+    const pendingSession = deferred<ReturnType<typeof authSession>>();
+    testEnv.client.refreshSession.mockReturnValue(pendingSession.promise);
+    testEnv.client.getEntitlements.mockResolvedValue([
+      { key: "pro", value: true, expiresAt: null, grantedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.signIn("github");
+    testEnv.authListener?.({ event: "SIGNED_IN", session: authSession("callback@pickforge.dev") });
+
+    account.cancelSignIn();
+    expect(account.accountStatus()).toBe("signedOut");
+
+    pendingSession.resolve(authSession("callback@pickforge.dev"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(account.accountStatus()).toBe("signedOut");
+    expect(account.accountSession()).toBeNull();
+    expect(account.accountEntitlements()).toEqual([]);
+    expect(testEnv.client.getEntitlements).not.toHaveBeenCalled();
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+  });
+
   it("clears local state and cache when remote sign out fails", async () => {
     const future = new Date(Date.now() + 60_000).toISOString();
     testEnv.mem.set(

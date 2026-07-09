@@ -24,6 +24,8 @@ use pickforge_core::{
     PtyManager, VmServiceClient,
 };
 use tauri::{path::BaseDirectory, Manager};
+#[cfg(target_os = "linux")]
+use tauri_plugin_deep_link::DeepLinkExt;
 
 const SENTRY_DSN: &str =
     "https://14e43b283ec20c3174df7b690d812d1c@o4511699702317056.ingest.us.sentry.io/4511699813728261";
@@ -170,6 +172,11 @@ pub fn run() {
 
     builder
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            if let Err(error) = app.deep_link().register_all() {
+                eprintln!("failed to register deep link schemes: {error}");
+            }
+
             app.manage(AgentChatManager::new(
                 Arc::clone(&manager_database),
                 resolve_agent_app_root(app),

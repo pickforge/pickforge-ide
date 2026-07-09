@@ -39,7 +39,9 @@ import {
 import {
   deviceKey,
   deviceLabel,
+  isBooting,
   launchActiveTarget,
+  launchError,
   resolveSelectedDevice,
 } from "./runLaunch";
 import { setRunDevice } from "./runDevice";
@@ -549,6 +551,26 @@ async function activeProjectForDeviceIntent(intent: OperatorIntent): Promise<Res
   return project;
 }
 
+function normalizeProjectPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function pathIsWithinProject(path: string, projectRoot: string): boolean {
+  const normalizedPath = normalizeProjectPath(path);
+  const normalizedRoot = normalizeProjectPath(projectRoot);
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function activeRunBelongsToProject(projectRoot: string): boolean {
+  const cwd = runConsole.current()?.cwd;
+  if (!cwd) return workspace.activeRoot === projectRoot;
+  return pathIsWithinProject(cwd, projectRoot);
+}
+
+function activeRunTarget(): RunTarget | null {
+  return runConsole.status() === "running" ? runConsole.target() : activeTarget();
+}
+
 function resolveDeviceReference(ref: string, devices: DeviceEntry[]): Resolution<DeviceEntry> {
   return resolveReference(
     "Device",
@@ -615,18 +637,40 @@ async function launchRunIntent(intent: OperatorIntent, targetRef: string | null)
   if (!target.ok) return { status: "failed", message: target.message };
   if (targetRef) setActiveTargetId(target.value.id);
   await launchActiveTarget();
+  if (isBooting()) return { status: "failed", message: "Run launch is already in progress" };
+  const error = launchError();
+  if (error) return { status: "failed", message: error };
+  if (runConsole.status() !== "running") {
+    return { status: "noop", summary: "run launch did not start" };
+  }
   return { status: "done", summary: `Launched run target ${target.value.label}` };
 }
 
-function runControlIntent(action: "reloadRun" | "hotRestart" | "stopRun"): DispatchResult {
+async function runControlIntent(
+  intent: OperatorIntent,
+  action: "reloadRun" | "hotRestart" | "stopRun",
+): Promise<DispatchResult> {
+  const project = await activeProjectForDeviceIntent(intent);
+  if (!project.ok) return { status: "failed", message: project.message };
   if (runConsole.status() !== "running") {
     return { status: "noop", summary: "no active run" };
   }
+  if (!activeRunBelongsToProject(project.value.projectRoot)) {
+    return { status: "failed", message: `Active run is not in project ${project.value.displayName}` };
+  }
+
+  const target = runConsole.target();
   if (action === "reloadRun") {
+    if (!target?.capabilities.includes("hotReload")) {
+      return { status: "failed", message: "Active run target does not support hot reload" };
+    }
     reloadActiveRun();
     return { status: "done", summary: "Reloaded active run" };
   }
   if (action === "hotRestart") {
+    if (!target?.capabilities.includes("hotRestart")) {
+      return { status: "failed", message: "Active run target does not support hot restart" };
+    }
     restartActiveRun();
     return { status: "done", summary: "Hot restarted active run" };
   }
@@ -634,7 +678,9 @@ function runControlIntent(action: "reloadRun" | "hotRestart" | "stopRun"): Dispa
   return { status: "done", summary: "Stopped active run" };
 }
 
-async function enterSelectModeIntent(): Promise<DispatchResult> {
+async function enterSelectModeIntent(intent: OperatorIntent): Promise<DispatchResult> {
+  const project = await activeProjectForDeviceIntent(intent);
+  if (!project.ok) return { status: "failed", message: project.message };
   let isolate: string;
   try {
     isolate = await vmFindIsolate();
@@ -671,7 +717,7 @@ async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchRes
   const project = await activeProjectForDeviceIntent(intent);
   if (!project.ok) return { status: "failed", message: project.message };
 
-  const target = runConsole.status() === "running" ? runConsole.target() : activeTarget();
+  const target = activeRunTarget();
   const vmPath = target?.inspectorKind === "vmService"
     ? await captureVmScreenshot(project.value.projectRoot)
     : null;
@@ -794,13 +840,13 @@ async function runIntent(intent: OperatorIntent, inputText?: string): Promise<Di
     case "launchRun":
       return launchRunIntent(intent, action.target);
     case "reloadRun":
-      return runControlIntent("reloadRun");
+      return runControlIntent(intent, "reloadRun");
     case "stopRun":
-      return runControlIntent("stopRun");
+      return runControlIntent(intent, "stopRun");
     case "hotRestart":
-      return runControlIntent("hotRestart");
+      return runControlIntent(intent, "hotRestart");
     case "enterSelectMode":
-      return enterSelectModeIntent();
+      return enterSelectModeIntent(intent);
     case "takeScreenshot":
       return takeScreenshotIntent(intent);
     case "selectWidget":

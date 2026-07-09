@@ -69,6 +69,10 @@ const deps = vi.hoisted(() => {
     target: null as RunTarget | null,
     current: null as { key: number; command: string; cwd: string | null } | null,
   };
+  const runLaunchState = {
+    booting: false,
+    error: null as string | null,
+  };
   let activeTargetId = "";
   const activeTarget = () => targets.find((target) => target.id === activeTargetId) ?? targets[0] ?? null;
   const deviceKey = (device: DeviceEntry) => device.serial ?? device.avdId ?? device.displayName;
@@ -83,6 +87,7 @@ const deps = vi.hoisted(() => {
     devices,
     targets,
     runConsoleState,
+    runLaunchState,
     flagEnabled: vi.fn(),
     loadAgentModels: vi.fn(),
     loadAgentEfforts: vi.fn(),
@@ -123,6 +128,8 @@ const deps = vi.hoisted(() => {
     iosScreenshot: vi.fn(),
     setRunDevice: vi.fn(),
     launchActiveTarget: vi.fn(),
+    isBooting: vi.fn(() => runLaunchState.booting),
+    launchError: vi.fn(() => runLaunchState.error),
     resolveSelectedDevice: vi.fn(() => {
       const target = activeTarget();
       const list = devices.filter((device) => {
@@ -172,6 +179,8 @@ const deps = vi.hoisted(() => {
       runConsoleState.status = "idle";
       runConsoleState.target = null;
       runConsoleState.current = null;
+      runLaunchState.booting = false;
+      runLaunchState.error = null;
       activeTargetId = "";
       this.flagEnabled.mockReset().mockReturnValue(true);
       this.loadAgentModels.mockReset().mockReturnValue({
@@ -213,7 +222,18 @@ const deps = vi.hoisted(() => {
       this.adbScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
       this.iosScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
       this.setRunDevice.mockReset().mockResolvedValue(undefined);
-      this.launchActiveTarget.mockReset().mockResolvedValue(undefined);
+      this.launchActiveTarget.mockReset().mockImplementation(async () => {
+        const target = activeTarget();
+        runConsoleState.status = "running";
+        runConsoleState.target = target;
+        runConsoleState.current = {
+          key: 1,
+          command: target?.command ?? "",
+          cwd: workspace.activeRoot,
+        };
+      });
+      this.isBooting.mockClear();
+      this.launchError.mockClear();
       this.resolveSelectedDevice.mockClear();
       this.deviceKey.mockClear();
       this.deviceLabel.mockClear();
@@ -309,7 +329,9 @@ vi.mock("../../src/stores/runDevice", () => ({
 vi.mock("../../src/stores/runLaunch", () => ({
   deviceKey: deps.deviceKey,
   deviceLabel: deps.deviceLabel,
+  isBooting: deps.isBooting,
   launchActiveTarget: deps.launchActiveTarget,
+  launchError: deps.launchError,
   resolveSelectedDevice: deps.resolveSelectedDevice,
 }));
 
@@ -403,6 +425,17 @@ function device(
     kind: "emulator" as const,
     ...overrides,
   };
+}
+
+function setActiveRun(target = runTarget("detected", "Flutter"), cwd = "/repo/app") {
+  deps.runConsoleState.status = "running";
+  deps.runConsoleState.target = target;
+  deps.runConsoleState.current = {
+    key: 1,
+    command: target.command,
+    cwd,
+  };
+  return target;
 }
 
 function intent(action: OperatorAction, projectRef: string | null = null): OperatorIntent {
@@ -798,6 +831,38 @@ describe("dispatchIntent", () => {
     expect(deps.launchActiveTarget).toHaveBeenCalledTimes(1);
   });
 
+  it("fails launchRun when the run launcher soft-aborts with an exposed error", async () => {
+    deps.targets.push(runTarget("detected", "Flutter"));
+    deps.launchActiveTarget.mockImplementation(async () => {
+      deps.runLaunchState.error = "Pixel 8 is offline or unauthorized";
+    });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchRun", target: null }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Pixel 8 is offline or unauthorized",
+    });
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("fails launchRun when another boot is already in progress", async () => {
+    deps.targets.push(runTarget("detected", "Flutter"));
+    deps.launchActiveTarget.mockImplementation(async () => {
+      deps.runLaunchState.booting = true;
+    });
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchRun", target: null }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Run launch is already in progress",
+    });
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
   it("fails ambiguous run target resolution and lists candidates", async () => {
     deps.targets.push(
       runTarget("flutter-app", "App Debug"),
@@ -844,7 +909,7 @@ describe("dispatchIntent", () => {
   });
 
   it("wires reload, hot restart, and stop to the active run console", async () => {
-    deps.runConsoleState.status = "running";
+    setActiveRun();
     const { dispatchIntent } = await loadStore();
 
     await expect(dispatchIntent(intent({ action: "reloadRun" }))).resolves.toEqual({
@@ -864,6 +929,43 @@ describe("dispatchIntent", () => {
     expect(deps.restartRun).toHaveBeenCalledTimes(1);
     expect(deps.stopRun).toHaveBeenCalledTimes(1);
     expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("fails reload and hot restart when the active target lacks those capabilities", async () => {
+    setActiveRun(runTarget("detected", "Release Flutter", { capabilities: ["launch", "stop"] }));
+    const { dispatchIntent } = await loadStore();
+
+    await expect(dispatchIntent(intent({ action: "reloadRun" }))).resolves.toEqual({
+      status: "failed",
+      message: "Active run target does not support hot reload",
+    });
+    await expect(dispatchIntent(intent({ action: "hotRestart" }))).resolves.toEqual({
+      status: "failed",
+      message: "Active run target does not support hot restart",
+    });
+
+    expect(deps.reloadRun).not.toHaveBeenCalled();
+    expect(deps.restartRun).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
+  });
+
+  it("fails run control when projectRef points at a different active project than the run cwd", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.workspace.activeRoot = "/repo/other";
+    setActiveRun(runTarget("detected", "Flutter"), "/repo/app");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "reloadRun" }, "Other"));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Active run is not in project Other",
+    });
+    expect(deps.reloadRun).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
   });
 
   it("returns noop for run controls when there is no active run", async () => {
@@ -908,6 +1010,24 @@ describe("dispatchIntent", () => {
     expect(result).toEqual({ status: "noop", summary: "no active device/session" });
     expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
     expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("fails select mode when projectRef is not the active project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "enterSelectMode" }, "Other"));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Project Other is not active",
+    });
+    expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
   });
 
   it("captures a screenshot from the selected running device", async () => {
@@ -972,7 +1092,7 @@ describe("dispatchIntent", () => {
   });
 
   it("dispatches a parsed v1 envelope after upgrading it to v2", async () => {
-    deps.runConsoleState.status = "running";
+    setActiveRun();
     const parsed = parseOperatorIntent(JSON.stringify({
       v: 1,
       id: "intent-v1-reload",

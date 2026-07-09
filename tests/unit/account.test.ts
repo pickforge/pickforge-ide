@@ -47,6 +47,16 @@ function authSession(email = "fresh@pickforge.dev") {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 async function loadStores() {
   vi.resetModules();
   const flags = await import("../../src/stores/flags");
@@ -221,6 +231,43 @@ describe("account store", () => {
     }
   });
 
+  it("does not grant Pro for a false pro entitlement value", async () => {
+    testEnv.client.getSession.mockResolvedValue(authSession());
+    testEnv.client.getEntitlements.mockResolvedValue([
+      { key: "pro", value: false, expiresAt: null, grantedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountEntitlements().map((item) => item.key)).toEqual(["pro"]);
+    expect(account.hasProEntitlement()).toBe(false);
+  });
+
+  it("does not grant Pro from a cached false pro entitlement value", async () => {
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: false, expiresAt: null, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+    testEnv.client.getSession.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountEntitlements().map((item) => item.key)).toEqual(["pro"]);
+    expect(account.hasProEntitlement()).toBe(false);
+  });
+
   it("does not construct the auth client when the flag is disabled", async () => {
     const { account } = await loadStores();
 
@@ -276,6 +323,32 @@ describe("account store", () => {
     expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
   });
 
+  it("keeps signingIn through INITIAL_SESSION null and completes on the callback auth event", async () => {
+    testEnv.client.refreshSession.mockResolvedValue(authSession("callback@pickforge.dev"));
+    testEnv.client.getEntitlements.mockResolvedValue([
+      { key: "pro", value: true, expiresAt: null, grantedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.signIn("github");
+    expect(account.accountStatus()).toBe("signingIn");
+
+    testEnv.authListener?.({ event: "INITIAL_SESSION", session: null });
+
+    expect(account.accountStatus()).toBe("signingIn");
+    expect(account.shouldHandleAccountRedirect()).toBe(true);
+
+    testEnv.authListener?.({ event: "SIGNED_IN", session: authSession("callback@pickforge.dev") });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(account.accountStatus()).toBe("signedIn");
+    expect(account.accountSession()?.email).toBe("callback@pickforge.dev");
+    expect(account.hasProEntitlement()).toBe(true);
+  });
+
   it("clears local state and cache when remote sign out fails", async () => {
     const future = new Date(Date.now() + 60_000).toISOString();
     testEnv.mem.set(
@@ -301,6 +374,54 @@ describe("account store", () => {
     expect(account.accountSession()).toBeNull();
     expect(account.accountEntitlements()).toEqual([]);
     expect(account.accountError()).toBe("network unavailable");
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+  });
+
+  it("clears cached session on authoritative startup session refresh failure", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+    testEnv.client.getSession.mockRejectedValue(new Error("invalid refresh token"));
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountStatus()).toBe("error");
+    expect(account.accountError()).toBe("invalid refresh token");
+    expect(account.accountSession()).toBeNull();
+    expect(account.accountEntitlements()).toEqual([]);
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+  });
+
+  it("stays signed out when signOut wins a slow startup refresh race", async () => {
+    const pendingSession = deferred<ReturnType<typeof authSession>>();
+    testEnv.client.getSession.mockReturnValue(pendingSession.promise);
+    testEnv.client.getEntitlements.mockResolvedValue([
+      { key: "pro", value: true, expiresAt: null, grantedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    const init = account.initAccountStore();
+    await account.signOut();
+
+    pendingSession.resolve(authSession("stale@pickforge.dev"));
+    await init;
+
+    expect(account.accountStatus()).toBe("signedOut");
+    expect(account.accountSession()).toBeNull();
+    expect(account.accountEntitlements()).toEqual([]);
     expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
   });
 

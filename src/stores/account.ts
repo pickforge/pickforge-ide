@@ -47,6 +47,7 @@ let initialized = false;
 let signInTimer: ReturnType<typeof setTimeout> | null = null;
 let unsubscribeAuth: (() => void) | null = null;
 let unsubscribeBootstrap: (() => void) | null = null;
+let refreshGeneration = 0;
 
 function accountsEnabled(): boolean {
   return flagEnabled("accounts");
@@ -218,10 +219,12 @@ function setAccountError(value: unknown) {
 
 async function refreshFromAuth(options: RefreshOptions = {}) {
   if (!accountsEnabled()) return;
+  const generation = ++refreshGeneration;
   let nextSession: AccountSession | null = null;
   try {
     const auth = getProAuthClient();
     const authSession = options.refreshSession ? await auth.refreshSession() : await auth.getSession();
+    if (generation !== refreshGeneration) return;
     if (!options.refreshSession && status() === "signingIn") return;
     nextSession = sessionFromAuth(authSession);
     if (!nextSession) {
@@ -229,12 +232,15 @@ async function refreshFromAuth(options: RefreshOptions = {}) {
       return;
     }
   } catch (value) {
+    if (generation !== refreshGeneration) return;
     if (options.silent && !options.refreshSession && status() === "signingIn") return;
-    if (options.silent && (session() !== null || networkLikeError(value))) return;
+    if (options.silent && networkLikeError(value)) return;
+    if (options.silent && session() !== null) setSignedOut({ clearCache: true });
     setAccountError(value);
     return;
   }
   if (!nextSession) return;
+  if (generation !== refreshGeneration) return;
 
   const cachedEntitlements = session()?.userId === nextSession.userId ? entitlements() : [];
   setSession(nextSession);
@@ -246,9 +252,11 @@ async function refreshFromAuth(options: RefreshOptions = {}) {
   try {
     const auth = getProAuthClient();
     const nextEntitlements = await auth.getEntitlements({ forceRefresh: options.forceRefresh });
+    if (generation !== refreshGeneration) return;
     if (!options.refreshSession && status() === "signingIn") return;
     setSignedIn(nextSession, nextEntitlements);
   } catch (value) {
+    if (generation !== refreshGeneration) return;
     if (options.silent && networkLikeError(value)) return;
     setEntitlements([]);
     persistCache(nextSession, []);
@@ -276,6 +284,7 @@ export async function initAccountStore(options: InitOptions = {}) {
     unsubscribeAuth ??= auth.onAuthStateChange((change) => {
       if (!accountsEnabled()) return;
       if (change.session === null) {
+        if (change.event === "INITIAL_SESSION" && status() === "signingIn") return;
         setSignedOut({ clearCache: change.event === "SIGNED_OUT" });
         return;
       }
@@ -325,6 +334,7 @@ export function cancelSignIn() {
 
 export async function signOut() {
   if (!accountsEnabled()) return;
+  refreshGeneration += 1;
   clearSignInTimer();
   setError(null);
   let signOutError: unknown = null;
@@ -361,5 +371,5 @@ export function installAccountStoreBootstrap(): () => void {
 }
 
 export function hasProEntitlement(): boolean {
-  return accountEntitlements().some((item) => item.key === "pro");
+  return accountEntitlements().some((item) => item.key === "pro" && item.value !== false);
 }

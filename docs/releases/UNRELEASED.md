@@ -24,6 +24,7 @@ reset this file.
 - Landed accounts/auth wiring dark behind the `accounts` flag.
 - Local dictation pipeline (Rust + IPC) landed dark; composer UI follows.
 - Core PTY can spawn over Tailscale SSH for remote projects; terminal and agent wiring follows.
+- Dictation mic landed in the operator dock (live preview, push-to-command, model override) behind the `operator` flag.
 
 ## Validation
 

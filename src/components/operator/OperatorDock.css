@@ -28,7 +28,14 @@
   animation: pf-op-in var(--pf-dur-fast) var(--pf-ease-forge) both;
 }
 
+.pf-op-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 .pf-op-input {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-body-md);
   color: var(--pf-text-hi);
@@ -36,6 +43,65 @@
   border: var(--pf-hairline-width) solid var(--pf-hairline);
   border-radius: var(--pf-radius-sm);
   padding: var(--pf-space-sm) var(--pf-space-md);
+  padding-right: calc(var(--pf-space-md) + var(--pf-space-xl));
+}
+
+/* Mic affordance — a quiet machine-voice icon inside the palette. It only wears
+ * the ember while recording is the composition's single accent (see the
+ * component's micEmber gate); otherwise it stays hairline/neutral. */
+.pf-op-mic {
+  position: absolute;
+  right: var(--pf-space-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pf-space-xl);
+  height: var(--pf-space-xl);
+  color: var(--pf-text-med);
+  background: transparent;
+  border: var(--pf-hairline-width) solid transparent;
+  border-radius: var(--pf-radius-sm);
+  cursor: pointer;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-op-mic:not(:disabled):hover {
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-2);
+}
+.pf-op-mic:disabled {
+  color: var(--pf-text-low);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.pf-op-mic--live {
+  color: var(--pf-text-hi);
+  background: var(--pf-surface-2);
+}
+.pf-op-mic--ember {
+  color: var(--pf-ember);
+  background: transparent;
+  box-shadow: var(--pf-glow-ember-soft);
+  animation: pf-op-mic-pulse var(--pf-dur-breath) var(--pf-ease-forge) infinite;
+}
+@keyframes pf-op-mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: var(--pf-glow-ember-soft);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-op-mic--ember {
+    animation: none;
+    box-shadow: var(--pf-glow-ember-soft);
+  }
+}
+
+.pf-op-note--voice {
+  color: var(--pf-text-med);
 }
 .pf-op-input::placeholder {
   color: var(--pf-text-low);

@@ -22,13 +22,29 @@ function fromHash(): Route {
 }
 
 const [route, setRouteSignal] = createSignal<Route>(fromHash());
-window.addEventListener("hashchange", () => setRouteSignal(fromHash()));
+window.addEventListener("hashchange", () => applyRoute(fromHash()));
 
 export { route };
+
+// Imperative subscription for module-scope stores that must react to route
+// changes outside a reactive root (solid effects don't run there in tests).
+type RouteListener = (r: Route) => void;
+const listeners = new Set<RouteListener>();
+
+export function onRouteChange(listener: RouteListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function applyRoute(r: Route) {
+  const changed = r !== route();
+  setRouteSignal(r);
+  if (changed) for (const listener of listeners) listener(r);
+}
 
 export function navigate(r: Route) {
   if (window.location.hash !== `#/${r}`) {
     window.location.hash = `/${r}`;
   }
-  setRouteSignal(r);
+  applyRoute(r);
 }

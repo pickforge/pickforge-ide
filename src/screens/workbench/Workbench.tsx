@@ -49,6 +49,9 @@ import {
 } from "../../lib/chatAutoName";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
+import { flagEnabled } from "../../stores/flags";
+import { operatorDockOpen, toggleOperatorDock } from "../../stores/operatorDock";
+import { OperatorDock } from "../../components/operator/OperatorDock";
 import { Tour } from "../../components/Tour";
 import { startTour, tourSeen } from "../../stores/tour";
 import "./workbench.css";
@@ -245,6 +248,13 @@ export function WorkbenchScreen() {
           return;
         }
       }
+      // Operator composer — behind the flag, after quick-launch so a user's own
+      // Mod+O binding still wins. Mod+O is free among the default hotkeys.
+      if (flagEnabled("operator") && hotkeyMatches(e, "Mod+O")) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleOperatorDock();
+      }
     };
     window.addEventListener("keydown", onKey, true);
 
@@ -410,6 +420,10 @@ export function WorkbenchScreen() {
       <div class="pf-dc-host" classList={{ "pf-dc-host--hidden": !runConsole.open() }}>
         <DebugConsole />
       </div>
+
+      <Show when={operatorDockOpen()}>
+        <OperatorDock />
+      </Show>
 
       <Tour />
     </div>

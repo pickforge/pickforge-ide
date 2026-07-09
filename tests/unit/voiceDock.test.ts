@@ -266,6 +266,33 @@ describe("voiceDock store", () => {
     expect(deps.setOperatorInput).not.toHaveBeenCalled();
   });
 
+  it("cancels the backend session on an unsolicited mid-recording error, then allows a fresh start", async () => {
+    captureSink();
+    const s = await loadStore();
+
+    await s.startDictation();
+    emit(errorEvent("segment transcription failed"));
+    await flushAsync();
+
+    expect(deps.cancelVoice).toHaveBeenCalledExactlyOnceWith("sess-1");
+    expect(s.voiceDockPhase()).toBe("error");
+    expect(s.voiceDockError()).toBe("segment transcription failed");
+
+    captureSink("sess-2");
+    await s.startDictation();
+
+    expect(deps.startVoice).toHaveBeenCalledTimes(2);
+    expect(s.voiceDockPhase()).toBe("recording");
+    expect(s.voiceDockError()).toBeNull();
+
+    // The retry session still lands its transcript normally.
+    deps.stopVoice.mockResolvedValue("second take");
+    await s.stopDictation();
+    expect(deps.stopVoice).toHaveBeenCalledWith("sess-2");
+    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("second take");
+    expect(deps.cancelVoice).toHaveBeenCalledOnce();
+  });
+
   it("surfaces a rejected stop() as an error", async () => {
     captureSink();
     deps.stopVoice.mockRejectedValue(new Error("pipeline failed"));

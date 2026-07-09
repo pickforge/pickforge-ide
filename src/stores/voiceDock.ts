@@ -181,9 +181,15 @@ function onVoiceEvent(mine: number) {
       case "final":
         if (event.text != null) applyFinal(event.text, mine);
         break;
-      case "error":
+      case "error": {
+        // Unsolicited backend error (e.g. a segment transcription failure):
+        // besides surfacing it quietly, cancel the session so its registry
+        // entry doesn't linger unreachable — no stop/cancel would settle it.
+        const id = mine === epoch && !finalized ? sessionId : null;
         applyError(event.text ?? "dictation failed", mine);
+        if (id) void cancelVoice(id).catch(() => {});
         break;
+      }
       case "level":
         break;
     }

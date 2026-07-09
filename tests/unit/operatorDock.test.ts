@@ -61,6 +61,12 @@ async function loadStore() {
   return import("../../src/stores/operatorDock");
 }
 
+async function flushAsync() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 beforeEach(() => {
   deps.parseCommand.mockReset();
   deps.routeCommand.mockReset().mockResolvedValue({ kind: "unconfigured" });
@@ -311,7 +317,7 @@ describe("operatorDock store", () => {
     } as DispatchResult);
     deps.operatorAuditList
       .mockResolvedValueOnce([awaitingRow])
-      .mockResolvedValueOnce([{ ...awaitingRow, status: "denied" as const, result: "cancelled by user" }]);
+      .mockResolvedValueOnce([{ ...awaitingRow, status: "denied" as const, result: "dismissed" }]);
     const s = await loadStore();
 
     s.setOperatorInput("start scout swarm g");
@@ -322,12 +328,12 @@ describe("operatorDock store", () => {
 
     expect(s.operatorView()).toEqual({ kind: "idle" });
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
-    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith("audit-1", "denied", "cancelled by user");
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith("audit-1", "denied", "dismissed");
     expect(s.operatorRecent().some((row) => row.status === "needs_confirmation")).toBe(false);
     expect(s.operatorRecent()[0]).toMatchObject({ id: "audit-1", status: "denied" });
   });
 
-  it("clears a pending preview when the input text is edited", async () => {
+  it("marks a pending preview audit as denied when the input text is edited", async () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
     deps.dispatchIntent.mockResolvedValue({
@@ -342,12 +348,37 @@ describe("operatorDock store", () => {
     expect(s.operatorView().kind).toBe("preview");
 
     s.setOperatorInput("send hi there");
+    await flushAsync();
 
     expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith("audit-1", "denied", "dismissed");
 
     await s.confirmOperatorPreview();
 
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks a pending preview audit as denied when the dock closes", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+      auditId: "audit-1",
+    } as DispatchResult);
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("send hi");
+    await s.submitOperatorCommand();
+    expect(s.operatorView().kind).toBe("preview");
+
+    s.closeOperatorDock();
+    await flushAsync();
+
+    expect(s.operatorDockOpen()).toBe(false);
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith("audit-1", "denied", "dismissed");
   });
 
   it("clears needsRouter feedback when the input is edited", async () => {

@@ -583,6 +583,10 @@ function isDeviceBackedTarget(target: RunTarget | null): boolean {
   return !!target?.needsDevice && target.deviceConvention !== "none";
 }
 
+function supportsScreenshotInspection(target: RunTarget | null): boolean {
+  return target?.inspectorKind === "vmService" || isDeviceBackedTarget(target);
+}
+
 function activeFlutterRunForProject(project: Project): Resolution<RunTarget> {
   if (runConsole.status() !== "running") {
     return { ok: false, message: `No active Flutter run in project ${project.displayName}` };
@@ -785,13 +789,15 @@ async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchRes
   }
 
   const target = runConsole.target();
-  if (!isDeviceBackedTarget(target)) {
+  if (!supportsScreenshotInspection(target)) {
     return { status: "noop", summary: "no device-backed run/target" };
   }
   const vmPath = target?.inspectorKind === "vmService"
     ? await captureVmScreenshot(project.value.projectRoot)
     : null;
-  const path = vmPath ?? await captureDeviceScreenshot(project.value.projectRoot);
+  if (vmPath) return { status: "done", summary: `Captured screenshot ${vmPath}` };
+  if (!isDeviceBackedTarget(target)) return { status: "noop", summary: "no active device/session" };
+  const path = await captureDeviceScreenshot(project.value.projectRoot);
   if (!path) return { status: "noop", summary: "no active device/session" };
   return { status: "done", summary: `Captured screenshot ${path}` };
 }

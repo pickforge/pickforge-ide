@@ -1276,6 +1276,35 @@ describe("dispatchIntent", () => {
     expect(deps.adbScreenshot).not.toHaveBeenCalled();
   });
 
+  it("captures a VM screenshot from a live pinned-device Flutter run", async () => {
+    const target = runTarget("pinned", "Pinned Flutter", {
+      needsDevice: false,
+      deviceConvention: "none",
+      inspectorKind: "vmService",
+    });
+    deps.targets.push(target);
+    setActiveRun(target);
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    deps.vmSelectedWidget.mockResolvedValue({
+      id: "widget-1",
+      className: "Text",
+      children: [],
+      creationLocation: null,
+    });
+    deps.vmScreenshot.mockResolvedValue("png-b64");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({
+      status: "done",
+      summary: "Captured screenshot /repo/app/.pickforge/operator-screenshot/screenshot.png",
+    });
+    expect(deps.vmScreenshot).toHaveBeenCalledWith("isolates/1", "widget-1", 1024, 2048);
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.iosScreenshot).not.toHaveBeenCalled();
+  });
+
   it("does not call any screenshot capture seam when there is no active run", async () => {
     deps.targets.push(runTarget("detected", "Flutter"));
     deps.vmFindIsolate.mockResolvedValue("isolates/1");

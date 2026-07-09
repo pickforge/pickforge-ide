@@ -24,6 +24,8 @@ export type DockView =
   }
   | { kind: "result"; result: DispatchResult };
 
+type PreviewDockView = Extract<DockView, { kind: "preview" }>;
+
 const RECENT_LIMIT = 5;
 
 const [open, setOpen] = createSignal(false);
@@ -32,7 +34,7 @@ export const operatorDockOpen = open;
 const [input, setInput] = createSignal("");
 export const operatorInput = input;
 export function setOperatorInput(value: string) {
-  if (value !== input() && view().kind !== "idle") setView({ kind: "idle" });
+  if (value !== input() && view().kind !== "idle") resetView();
   setInput(value);
 }
 
@@ -58,7 +60,7 @@ export function closeOperatorDock() {
   requestEpoch++;
   setOpen(false);
   setInput("");
-  setView({ kind: "idle" });
+  resetView();
   setBusy(false);
 }
 
@@ -166,11 +168,32 @@ export async function confirmOperatorPreview(): Promise<void> {
 
 export async function cancelOperatorPreview(): Promise<void> {
   if (busy()) return;
+  const current = takePreview();
+  if (!current) return;
+  await denyPreviewAudit(current.auditId);
+}
+
+function resetView() {
+  if (!dismissPreview()) setView({ kind: "idle" });
+}
+
+function dismissPreview(): boolean {
+  const current = takePreview();
+  if (!current) return false;
+  void denyPreviewAudit(current.auditId);
+  return true;
+}
+
+function takePreview(): PreviewDockView | null {
   const current = view();
-  if (current.kind !== "preview") return;
+  if (current.kind !== "preview") return null;
   setView({ kind: "idle" });
+  return current;
+}
+
+async function denyPreviewAudit(auditId: string): Promise<void> {
   try {
-    await operatorAuditUpdate(current.auditId, "denied", "cancelled by user");
+    await operatorAuditUpdate(auditId, "denied", "dismissed");
   } catch (error) {
     console.warn("[pickforge] operator audit update failed", error);
   } finally {

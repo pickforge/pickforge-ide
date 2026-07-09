@@ -6,8 +6,17 @@ export const WIDGET_MATCH_MAX_NODES = 800;
 export const WIDGET_MATCH_MAX_BYTES = 16 * 1024;
 export const WIDGET_MATCH_PROMPT_MARGIN_BYTES = 256;
 export const WIDGET_MATCH_LABEL_MAX_LENGTH = 60;
+// Routed serialization caps global nodes (800), nesting levels (12), and children per node (16).
+export const WIDGET_MATCH_MAX_DEPTH = 12;
+export const WIDGET_MATCH_MAX_CHILDREN = 16;
 
 const TREE_TRUNCATION_MARKER = "… subtree truncated";
+const POSIX_PATH = /(?<![\w/])\/(?:[^\s/]+\/)*[^\s/]+/g;
+const WINDOWS_PATH = /\b[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])*[^\s\\/]+/g;
+const HOST_PORT = /\b(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|(?:\d{1,3}\.){3}\d{1,3}):\d{2,5}\b/gi;
+const LOCAL_HOST = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.local\b/gi;
+const TAILNET_IP = /\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/g;
+const LONG_SERIAL = /\b(?=[A-Za-z0-9_-]{12,}\b)(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+\b/g;
 
 export type IndexedWidgetNode = {
   index: number;
@@ -48,10 +57,9 @@ export const widgetMatchResponseSchema = z.union([
 
 type WidgetMatchResponse = z.infer<typeof widgetMatchResponseSchema>;
 
-type PendingWidgetNode = {
-  node: SemanticWidgetNode;
-  depth: number;
-};
+type PendingWidgetEntry =
+  | { kind: "node"; node: SemanticWidgetNode; depth: number }
+  | { kind: "marker"; text: string };
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -74,6 +82,12 @@ function serializeLabel(label: string | null): string | null {
   const normalized = label
     .replace(/\s+/gu, " ")
     .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+    .replace(WINDOWS_PATH, "…")
+    .replace(POSIX_PATH, "…")
+    .replace(HOST_PORT, "…")
+    .replace(LOCAL_HOST, "…")
+    .replace(TAILNET_IP, "…")
+    .replace(LONG_SERIAL, "…")
     .trim();
   if (!normalized) return null;
   const characters = Array.from(normalized);
@@ -100,11 +114,15 @@ function appendTruncationMarker(lines: string[], bytes: number, maxBytes: number
   return bytes + byteLength(separator) + byteLength(TREE_TRUNCATION_MARKER);
 }
 
+function limitMarker(depth: number, text: string): string {
+  return `${"  ".repeat(depth)}${text}`;
+}
+
 export function serializeWidgetTree(
   root: SemanticWidgetNode,
   maxBytes = WIDGET_MATCH_MAX_BYTES,
 ): SerializedWidgetTree {
-  const stack: PendingWidgetNode[] = [{ node: root, depth: 0 }];
+  const stack: PendingWidgetEntry[] = [{ kind: "node", node: root, depth: 0 }];
   const nodes: IndexedWidgetNode[] = [];
   const lines: string[] = [];
   let bytes = 0;
@@ -112,12 +130,23 @@ export function serializeWidgetTree(
   const markerReserve = byteLength(`\n${TREE_TRUNCATION_MARKER}`);
 
   while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.kind === "marker") {
+      const separator = lines.length > 0 ? "\n" : "";
+      if (bytes + byteLength(separator) + byteLength(current.text) > maxBytes) {
+        truncated = true;
+        bytes = appendTruncationMarker(lines, bytes, maxBytes);
+        break;
+      }
+      lines.push(current.text);
+      bytes += byteLength(separator) + byteLength(current.text);
+      continue;
+    }
     if (nodes.length >= WIDGET_MATCH_MAX_NODES) {
       truncated = true;
       bytes = appendTruncationMarker(lines, bytes, maxBytes);
       break;
     }
-    const current = stack.pop()!;
     const index = nodes.length + 1;
     const separator = lines.length > 0 ? "\n" : "";
     const needsMarker = stack.length > 0 || current.node.children.length > 0;
@@ -161,8 +190,23 @@ export function serializeWidgetTree(
       className: current.node.className,
       label: current.node.label,
     });
-    for (const child of [...current.node.children].reverse()) {
-      stack.push({ node: child, depth: current.depth + 1 });
+    const nextDepth = current.depth + 1;
+    if (current.node.children.length > 0 && current.depth >= WIDGET_MATCH_MAX_DEPTH) {
+      truncated = true;
+      stack.push({ kind: "marker", text: limitMarker(nextDepth, "… depth truncated") });
+      continue;
+    }
+    const visibleChildren = current.node.children.slice(0, WIDGET_MATCH_MAX_CHILDREN);
+    const omittedChildren = current.node.children.length - visibleChildren.length;
+    if (omittedChildren > 0) {
+      truncated = true;
+      stack.push({
+        kind: "marker",
+        text: limitMarker(nextDepth, `… +${omittedChildren} more`),
+      });
+    }
+    for (const child of [...visibleChildren].reverse()) {
+      stack.push({ kind: "node", node: child, depth: nextDepth });
     }
   }
 
@@ -180,6 +224,7 @@ export function buildWidgetMatchPrompt(
   return [
     "Select the one Flutter widget that best matches the user's description.",
     "The tree is sanitized: indices, class names, labels, and indentation only.",
+    `Tree limits: ${WIDGET_MATCH_MAX_NODES} nodes, ${WIDGET_MATCH_MAX_DEPTH} levels, and ${WIDGET_MATCH_MAX_CHILDREN} children per node; omissions are marked.`,
     truncation,
     "Return only one JSON object with exactly one shape:",
     '{"match":{"index":number}}',

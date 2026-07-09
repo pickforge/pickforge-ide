@@ -62,16 +62,20 @@ describe("widget tree serialization", () => {
 
   it("caps serialization deterministically and records truncation", async () => {
     const { serializeWidgetTree, WIDGET_MATCH_MAX_BYTES, WIDGET_MATCH_MAX_NODES } = await loadMatcher();
+    let nextId = 0;
+    const buildBranchingTree = (depth: number): SemanticWidgetNode => ({
+      id: `id-${nextId++}`,
+      className: "N",
+      label: null,
+      children: depth > 0
+        ? Array.from({ length: 16 }, () => buildBranchingTree(depth - 1))
+        : [],
+    });
     const root: SemanticWidgetNode = {
       id: "root",
       className: "Root",
       label: null,
-      children: Array.from({ length: WIDGET_MATCH_MAX_NODES }, (_, index) => ({
-        id: `id-${index}`,
-        className: "Leaf",
-        label: String(index),
-        children: [],
-      })),
+      children: [buildBranchingTree(3)],
     };
 
     const serialized = serializeWidgetTree(root);
@@ -122,6 +126,78 @@ describe("widget tree serialization", () => {
     expect(serialized.text).toContain("… subtree truncated");
     expect(serialized.truncated).toBe(true);
     expect(serialized.nodes.map((node) => node.valueId)).toEqual(["root-id"]);
+  });
+
+  it("keeps top-level siblings after a wide first subtree", async () => {
+    const { serializeWidgetTree } = await loadMatcher();
+    const serialized = serializeWidgetTree({
+      id: "root",
+      className: "Root",
+      label: null,
+      children: [
+        {
+          id: "wide",
+          className: "Wide",
+          label: null,
+          children: Array.from({ length: 20 }, (_, index) => ({
+            id: `wide-${index}`,
+            className: "Leaf",
+            label: null,
+            children: [],
+          })),
+        },
+        { id: "sibling-a", className: "Sibling", label: null, children: [] },
+        { id: "sibling-b", className: "Sibling", label: null, children: [] },
+      ],
+    });
+
+    expect(serialized.nodes.map((node) => node.valueId)).toContain("sibling-a");
+    expect(serialized.nodes.map((node) => node.valueId)).toContain("sibling-b");
+    expect(serialized.text).toContain("… +4 more");
+  });
+
+  it("keeps top-level siblings after a deep first subtree", async () => {
+    const { serializeWidgetTree, WIDGET_MATCH_MAX_DEPTH } = await loadMatcher();
+    let branch: SemanticWidgetNode = { id: "deep-end", className: "Leaf", label: null, children: [] };
+    for (let depth = 0; depth < WIDGET_MATCH_MAX_DEPTH + 4; depth++) {
+      branch = { id: `deep-${depth}`, className: "Branch", label: null, children: [branch] };
+    }
+    const serialized = serializeWidgetTree({
+      id: "root",
+      className: "Root",
+      label: null,
+      children: [
+        branch,
+        { id: "sibling-a", className: "Sibling", label: null, children: [] },
+        { id: "sibling-b", className: "Sibling", label: null, children: [] },
+      ],
+    });
+
+    expect(serialized.nodes.map((node) => node.valueId)).toContain("sibling-a");
+    expect(serialized.nodes.map((node) => node.valueId)).toContain("sibling-b");
+    expect(serialized.text).toContain("… depth truncated");
+  });
+
+  it("redacts label paths, hosts, tailnet IPs, and serials without dropping the node", async () => {
+    const { serializeWidgetTree } = await loadMatcher();
+    const label = [
+      "/Users/dev/app/lib/main.dart",
+      "C:\\Users\\dev\\app\\main.dart",
+      "runner:5173",
+      "studio.local",
+      "100.100.12.3",
+      "R58M1234ABCDEFGH",
+    ].join(" ");
+    const serialized = serializeWidgetTree({
+      id: "sensitive-label",
+      className: "Text",
+      label,
+      children: [],
+    });
+
+    for (const value of label.split(" ")) expect(serialized.text).not.toContain(value);
+    expect(serialized.text).toContain("Text — …");
+    expect(serialized.nodes).toMatchObject([{ valueId: "sensitive-label" }]);
   });
 });
 
@@ -184,11 +260,16 @@ describe("matchWidget", () => {
       id: "root",
       className: "Root",
       label: null,
-      children: Array.from({ length: 800 }, (_, index) => ({
-        id: `node-${index}`,
-        className: "Text",
-        label: "x".repeat(80),
-        children: [],
+      children: Array.from({ length: 16 }, (_, parent) => ({
+        id: `parent-${parent}`,
+        className: "Column",
+        label: null,
+        children: Array.from({ length: 16 }, (_, child) => ({
+          id: `child-${parent}-${child}`,
+          className: "Text",
+          label: "x".repeat(80),
+          children: [],
+        })),
       })),
     };
 

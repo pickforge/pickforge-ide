@@ -40,6 +40,10 @@
         "line": 61,
         "column": 11
       }
+    },
+    {
+      "valueId": "inspector-5",
+      "description": "SummaryOnlyWidget"
     }
   ]
 }

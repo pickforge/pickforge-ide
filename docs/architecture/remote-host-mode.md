@@ -22,8 +22,8 @@ This PR adds the local foundation for that project-attached flow:
 - Settings can start/stop the in-process listener, issue and copy a pairing
   code, inspect Tailscale status, and toggle Tailscale SSH.
 
-There is still no database sync, no MCP network exposure, and no remote
-terminal/agent streaming in this slice. The listener exposes only `HostInfo`,
+There is still no database sync or MCP network exposure in this slice. The
+listener exposes only `HostInfo`,
 pairing exchange, token authentication, and self-revocation. Other remote
 capabilities stay unadvertised until their typed adapters exist.
 
@@ -32,6 +32,11 @@ capabilities stay unadvertised until their typed adapters exist.
 Tailscale SSH is the single remote transport for exec and PTY work. PickForge
 does not run an embedded SSH server; it relies on `tailscale set
 --ssh=true|false` and the remote machine's own SSH environment.
+
+Structured agent chats on a bound project run the V1 agent CLIs over that SSH
+transport and stream their existing JSON events back to the local UI. The V2
+bridge and app-server engines remain local-only until their long-lived protocol
+can be remoted safely.
 
 `pickforged` handles pairing, discovery, and health over its HTTP listener. In
 this slice that listener is loopback-only for local testing. When per-project

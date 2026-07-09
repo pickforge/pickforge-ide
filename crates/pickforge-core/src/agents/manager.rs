@@ -1899,6 +1899,33 @@ mod tests {
     }
 
     #[test]
+    fn remote_start_never_initializes_a_v2_client() {
+        let manager = AgentChatManager::new(
+            Arc::new(Database::open_in_memory().unwrap()),
+            PathBuf::new(),
+        );
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-remote-v1",
+                PathBuf::from("/srv/app"),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    remote: Some(RemoteExec::new("mac-mini", "/srv/app").unwrap()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap();
+
+        let states = manager.inner.lock().unwrap();
+        assert_eq!(states[&session_id].engine, Engine::V1);
+        assert!(manager.codex_app_clients.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn remote_session_cache_is_scoped_to_the_host() {
         let manager = AgentChatManager::new(Arc::new(Database::open_in_memory().unwrap()), PathBuf::new());
         manager

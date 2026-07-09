@@ -76,7 +76,7 @@ impl From<RemotePtyInput> for RemotePty {
     }
 }
 
-fn authorize_remote_pty_binding(
+pub(crate) fn authorize_remote_pty_binding(
     project_root: Option<&str>,
     remote: &RemotePty,
     binding: Option<(Option<&str>, Option<&str>)>,
@@ -99,7 +99,7 @@ fn authorize_remote_pty_binding(
         .map_err(|err| format!("remote terminal authorization failed: {err}"))
 }
 
-fn authorize_remote_pty(
+pub(crate) fn authorize_remote_pty(
     db: &Database,
     project_root: Option<&str>,
     remote: Option<&RemotePty>,
@@ -107,7 +107,7 @@ fn authorize_remote_pty(
     authorize_remote_pty_with(db, project_root, remote, ensure_remote_ssh_host_allowed)
 }
 
-fn authorize_remote_pty_with(
+pub(crate) fn authorize_remote_pty_with(
     db: &Database,
     project_root: Option<&str>,
     remote: Option<&RemotePty>,

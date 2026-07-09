@@ -25,6 +25,7 @@ import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
+import { remotePtyFor } from "../lib/remoteContext";
 
 export type AgentTimelineItem =
   | {
@@ -112,6 +113,7 @@ export interface AgentChatState {
   contextUsed: number | null;
   contextWindow: number | null;
   rateLimits: string | null;
+  remoteHost: string | null;
   totals: AgentChatTotals;
   cumulativeUsage: CumulativeUsageSnapshot | null;
   historyLoaded: boolean;
@@ -208,6 +210,7 @@ function emptyState(provider: AgentProvider, model: string | null): AgentChatSta
     contextUsed: null,
     contextWindow: null,
     rateLimits: null,
+    remoteHost: null,
     totals: emptyTotals(),
     cumulativeUsage: null,
     historyLoaded: false,
@@ -848,6 +851,7 @@ export async function ensureAgentChat(
   options: EnsureAgentChatOptions = {},
 ): Promise<void> {
   const safeModel = nativeChatModel(provider, model);
+  const remote = remotePtyFor(projectRoot);
   const created = !chats[chatId];
   if (created) setChats(chatId, emptyState(provider, safeModel));
   setChats(chatId, { projectRoot, provider, model: safeModel });
@@ -904,6 +908,7 @@ export async function ensureAgentChat(
         permissionMode: overrides.permissionMode,
         ...options,
         effort: chats[chatId].effort,
+        remote,
         onEvent: (event) => receiveAgentEvent(chatId, event),
       });
       if (stale()) {
@@ -912,7 +917,14 @@ export async function ensureAgentChat(
         return;
       }
       const currentModel = chats[chatId]?.model ?? startModel;
-      setChats(chatId, { sessionId, projectRoot, provider, model: currentModel, error: null });
+      setChats(chatId, {
+        sessionId,
+        projectRoot,
+        provider,
+        model: currentModel,
+        error: null,
+        remoteHost: remote?.host ?? null,
+      });
       if (provider === "claudeCode" && currentModel !== startModel) {
         queueAgentChatSetModel(chatId, sessionId, currentModel);
       }

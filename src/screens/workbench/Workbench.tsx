@@ -19,6 +19,11 @@ import { loadAgentModels } from "../../lib/agentModels";
 import { ForgeEmptyState, PaneReveal } from "../../components/ui";
 import { IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
+import {
+  canLaunchAgentForMode,
+  remotePathFor,
+  shouldUseLocalMcp,
+} from "../../lib/remoteContext";
 import { editorCommand } from "../../stores/fileOpenSettings";
 import { openPathSystem } from "../../lib/opener";
 import {
@@ -77,11 +82,15 @@ export function WorkbenchScreen() {
     const chatId = workspace.activeChatId;
     if (!chatId) return;
     const root = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
-    if (item.agentId && root) await ensureMcpRunning(root);
-    const text = commandForItem(item, item.agentId ? mcpEnv(root) : {});
-    if (!text) return;
     const host = getTerminalHost(chatId);
     if (!host) return;
+    const mode = host.primarySpawnMode();
+    if (item.agentId && !canLaunchAgentForMode(mode)) return;
+    const localMcp = !!item.agentId && shouldUseLocalMcp(mode);
+    if (localMcp && root) await ensureMcpRunning(root);
+    // Remote agent MCP wiring lands in PR 3; remote shells must not receive local paths.
+    const text = commandForItem(item, localMcp ? mcpEnv(root) : {});
+    if (!text) return;
     const paneId = item.agentId ? host.runInPrimary(text) : host.openInNewPane(text);
     if (paneId && item.agentId) armChatAutoName(chatId, paneId);
   };
@@ -89,17 +98,27 @@ export function WorkbenchScreen() {
   // Open a file per the user's preference: a new editor pane (nvim/custom) or the
   // OS default editor.
   const openFileInActive = (path: string) => {
-    const cmd = editorCommand(path);
-    const host = getTerminalHost(workspace.activeChatId);
+    const chatId = workspace.activeChatId;
+    const host = getTerminalHost(chatId);
     // Editor-pane modes need a live terminal host; with none open, fall back to
     // the OS opener so the file still opens.
-    if (cmd === null || !host) {
+    if (!chatId || !host) {
       void openPathSystem(path).catch((e) =>
         console.error("[pickforge] open_path failed", e),
       );
       return;
     }
-    host.openInNewPane(cmd);
+    const remote = host.primaryRemotePty();
+    const projectRoot = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
+    const remotePath = remote ? remotePathFor(path, projectRoot, remote.remoteRoot) : null;
+    const cmd = editorCommand(remotePath ?? path);
+    if (cmd === null) {
+      void openPathSystem(path).catch((e) =>
+        console.error("[pickforge] open_path failed", e),
+      );
+      return;
+    }
+    host.openInNewPane(cmd, remotePath ? { remote } : { forceLocal: true });
   };
 
   // Track which chats have a mount in flight so a re-run of this effect (e.g. a
@@ -247,9 +266,10 @@ export function WorkbenchScreen() {
         if (hotkeyMatches(e, item.hotkey)) {
           e.preventDefault();
           e.stopPropagation();
-          // Match the chip's disabled gate: a missing binary shouldn't fire.
+          // Remote-side binary detection lands in PR 3; let the remote shell report it.
           const bin = binaryForItem(item);
-          if (bin && available()[bin] === false) return;
+          const mode = getTerminalHost(workspace.activeChatId)?.primarySpawnMode();
+          if (mode === "local" && bin && available()[bin] === false) return;
           void launchItem(item);
           return;
         }

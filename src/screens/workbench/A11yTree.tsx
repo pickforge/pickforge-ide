@@ -244,7 +244,7 @@ export function A11yTree(props: {
       const paths = await inspectSave(dir, base, md, png);
       const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by ${handles().search}). ${instruction}`;
       const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = host.openInNewPane(command);
+      const paneId = host.openInNewPane(command, { forceLocal: true });
       if (paneId) {
         armChatAutoName(chatId, paneId);
         // Persist the dispatch (pick + agent run) for the forge audit. Best

@@ -5,8 +5,14 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type PtyBytes = ArrayBuffer | Uint8Array | number[];
 
+export interface RemotePty {
+  host: string;
+  remoteRoot: string;
+}
+
 export interface SpawnOptions {
   cwd?: string | null;
+  projectRoot?: string | null;
   /** When set, run this command once (`$SHELL -c <command>`) instead of an
    *  interactive shell — the pty exits when the command does. */
   command?: string | null;
@@ -14,6 +20,7 @@ export interface SpawnOptions {
    *  (incl. `PICKFORGE_IPC_ENDPOINT`) that let an embedded agent discover the
    *  local MCP endpoint. */
   env?: Record<string, string> | null;
+  remote?: RemotePty | null;
   rows: number;
   cols: number;
   onOutput: (data: PtyBytes) => void;
@@ -30,8 +37,10 @@ export async function ptySpawn(opts: SpawnOptions): Promise<number> {
 
   return invoke<number>("pty_spawn", {
     cwd: opts.cwd ?? null,
+    projectRoot: opts.projectRoot ?? null,
     command: opts.command ?? null,
     env: opts.env ?? null,
+    remote: opts.remote ?? null,
     rows: opts.rows,
     cols: opts.cols,
     onOutput,
@@ -49,6 +58,7 @@ export interface ChatSpawnOptions {
   projectRoot: string;
   cwd?: string | null;
   env?: Record<string, string> | null;
+  remote?: RemotePty | null;
   backend: ChatBackend;
   /** The session id already stored on the chat (preserved on a raw fallback). */
   sessionId?: string | null;
@@ -83,6 +93,7 @@ export async function ptySpawnChat(opts: ChatSpawnOptions): Promise<ChatSpawnRes
     projectRoot: opts.projectRoot,
     cwd: opts.cwd ?? null,
     env: opts.env ?? null,
+    remote: opts.remote ?? null,
     backend: opts.backend,
     sessionId: opts.sessionId ?? null,
     rows: opts.rows,

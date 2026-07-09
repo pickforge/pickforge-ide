@@ -8,6 +8,14 @@ import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { TerminalPane, type TerminalHandle } from "./Terminal";
 import { AskAiMenu } from "./AskAiMenu";
 import { IconClose, IconGrip, IconSplit, IconSplitTrigger } from "./icons";
+import {
+  captureRemotePtyForPane,
+  paneSpawnModeFor,
+  remotePtyFor,
+  type CapturedRemotePtys,
+  type PaneSpawnMode,
+} from "../lib/remoteContext";
+import type { RemotePty } from "../lib/pty";
 import "./TerminalHost.css";
 
 type Dir = "left" | "right" | "up" | "down";
@@ -16,6 +24,12 @@ interface Leaf {
   kind: "leaf";
   id: string;
   callsign: string;
+  remote?: RemotePty | null;
+}
+
+export interface PaneSpawnOptions {
+  forceLocal?: boolean;
+  remote?: RemotePty | null;
 }
 interface Split {
   kind: "split";
@@ -44,9 +58,9 @@ interface Divider {
 const CALLSIGNS = ["Mae", "Gus", "Ivy", "Bo", "Cal", "Rex", "Nim", "Ada", "Jun", "Lux"];
 let paneCounter = 0;
 let splitCounter = 0;
-function newLeaf(): Leaf {
+function newLeaf(remote?: RemotePty | null): Leaf {
   const n = paneCounter++;
-  return { kind: "leaf", id: `pane-${n}`, callsign: CALLSIGNS[n % CALLSIGNS.length] };
+  return { kind: "leaf", id: `pane-${n}`, callsign: CALLSIGNS[n % CALLSIGNS.length], remote };
 }
 function newSplitId(): string {
   return `split-${splitCounter++}`;
@@ -154,13 +168,15 @@ export interface TerminalHostHandle {
   typeToFocused: (text: string) => string | null;
   /** Split the focused pane and run `command` in the new pane; returns the new
    *  pane's id (e.g. to arm auto-naming on it). */
-  openInNewPane: (command: string) => string;
+  openInNewPane: (command: string, options?: PaneSpawnOptions) => string;
   /** Run `command` (with a trailing newline) in this host's PRIMARY,
    *  session-backed pane — the one wired to the chat's recoverable dtach/tmux
    *  session — and focus it. Returns the primary pane's id, or null if it isn't
-   *  ready yet. Agent quick-launches use this so the launched agent runs INSIDE
-   *  the recoverable session (surviving close/restart), not a raw split pane. */
+  *  ready yet. Agent quick-launches use this so the launched agent runs INSIDE
+  *  the recoverable session (surviving close/restart), not a raw split pane. */
   runInPrimary: (command: string) => string | null;
+  primarySpawnMode: () => PaneSpawnMode;
+  primaryRemotePty: () => RemotePty | null;
 }
 
 export function TerminalHost(props: {
@@ -213,7 +229,10 @@ export function TerminalHost(props: {
   const [root, setRoot] = createSignal<Node>(first);
   const [focusedId, setFocusedId] = createSignal<string>(first.id);
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
+  const [paneRemote, setPaneRemote] = createSignal<CapturedRemotePtys>({});
+  const [deadPanes, setDeadPanes] = createSignal<string[]>([]);
   const handles = new Map<string, TerminalHandle>();
+  const closedPanes = new Set<string>();
   let containerEl!: HTMLDivElement;
 
   const leaves = createMemo(() => collectLeaves(root()));
@@ -227,6 +246,23 @@ export function TerminalHost(props: {
   const focus = (id: string) => {
     setFocusedId(id);
     handles.get(id)?.focus();
+  };
+
+  const primarySpawnMode = () => paneSpawnModeFor(paneRemote(), primaryId());
+  const primaryRemotePty = () => {
+    const remote = paneRemote()[primaryId()];
+    if (remote !== undefined) return remote;
+    return remotePtyFor(props.session?.projectRoot ?? props.cwd);
+  };
+
+  const notifyPaneClosed = (id: string) => {
+    if (closedPanes.has(id)) return;
+    closedPanes.add(id);
+    props.onPaneClosed?.(id);
+  };
+  const markPtyDead = (id: string) => {
+    setDeadPanes((panes) => (panes.includes(id) ? panes : [...panes, id]));
+    notifyPaneClosed(id);
   };
 
   const doSplit = (leafId: string, dir: Dir) => {
@@ -254,8 +290,8 @@ export function TerminalHost(props: {
     focus(id);
     h.typeText(cmd + "\r");
   };
-  const openInNewPane = (command: string): string => {
-    const fresh = newLeaf();
+  const openInNewPane = (command: string, options?: PaneSpawnOptions): string => {
+    const fresh = newLeaf(options?.forceLocal ? null : options?.remote);
     pendingCmd.set(fresh.id, command);
     setRoot((r) => splitTree(r, focusedId(), "down", fresh));
     setFocusedId(fresh.id);
@@ -284,13 +320,13 @@ export function TerminalHost(props: {
         // The survivor's raw shell dies in the swap (the promoted pane
         // re-attaches the chat session instead) — report it as closed so any
         // agent ownership it held doesn't outlive the shell.
-        props.onPaneClosed?.(survivor.id);
+        notifyPaneClosed(survivor.id);
         if (focusedId() === survivor.id) setFocusedId(promoted.id);
       }
     }
     setRoot(next);
     handles.delete(id);
-    props.onPaneClosed?.(id);
+    notifyPaneClosed(id);
     setMenuFor((m) => (m === id ? null : m));
     if (focusedId() === id) {
       const remaining = collectLeaves(next);
@@ -441,12 +477,15 @@ export function TerminalHost(props: {
   props.onReady?.({
     typeToFocused: (text) => {
       const id = focusedId();
+      if (deadPanes().includes(id)) return null;
       const h = handles.get(id);
       if (!h) return null;
       h.typeText(text);
       return id;
     },
     openInNewPane,
+    primarySpawnMode,
+    primaryRemotePty,
     runInPrimary: (command) => {
       // The primary pane is the only session-backed one; run the agent there so
       // it lives inside the recoverable dtach/tmux session. If its handle isn't
@@ -455,6 +494,7 @@ export function TerminalHost(props: {
       // than dropping the launch. The primary pane id is stable and known up
       // front, so callers can still arm auto-naming on it immediately.
       const id = primaryId();
+      if (deadPanes().includes(id)) return null;
       const h = handles.get(id);
       if (!h) {
         pendingPrimaryCmd = command;
@@ -508,6 +548,12 @@ export function TerminalHost(props: {
                     <Show when={baseName(props.cwd)}>
                       <span class="pf-pane-cwd">{baseName(props.cwd)}</span>
                     </Show>
+                    <Show when={paneRemote()[leaf.id]}>
+                      {(remote) => <span class="pf-pane-cwd">ssh:{remote().host}</span>}
+                    </Show>
+                    <Show when={deadPanes().includes(leaf.id)}>
+                      <span class="pf-pane-cwd">closed</span>
+                    </Show>
                   </div>
                   <div class="pf-pane-ctls">
                     <button
@@ -559,7 +605,12 @@ export function TerminalHost(props: {
                 <div class="pf-pane-inner">
                   <TerminalPane
                     cwd={props.cwd}
+                    projectRoot={props.session?.projectRoot ?? props.cwd}
+                    remote={leaf.remote}
                     env={props.env}
+                    onSpawn={(remote) =>
+                      setPaneRemote((panes) => captureRemotePtyForPane(panes, leaf.id, remote))
+                    }
                     chat={
                       props.session && props.chatId && leaf.id === primaryId()
                         ? {
@@ -595,7 +646,9 @@ export function TerminalHost(props: {
                       // agent launch queued before its handle existed.
                       if (leaf.id === primaryId()) flushPrimaryCmd();
                     }}
-                    onExit={() => requestClose(leaf.id)}
+                    onExit={(exit) =>
+                      exit.preserveBuffer ? markPtyDead(leaf.id) : requestClose(leaf.id)
+                    }
                   />
                 </div>
               </div>

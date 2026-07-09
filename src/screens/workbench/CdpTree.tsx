@@ -237,7 +237,7 @@ export function CdpTree(props: {
         : `NO exact source — search by selector / text / class`;
       const ask = `Read ${paths.mdPath} (PickForge web UI capture: selected DOM node + ${sourceNote}). ${instruction}`;
       const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = host.openInNewPane(command);
+      const paneId = host.openInNewPane(command, { forceLocal: true });
       if (paneId) {
         armChatAutoName(chatId, paneId);
         // Persist the dispatch for the forge audit (best-effort). When a source

@@ -15,7 +15,14 @@ import {
   ptyWrite,
   toBytes,
   type PtyBytes,
+  type RemotePty,
 } from "../lib/pty";
+import { remotePtyFor } from "../lib/remoteContext";
+import {
+  remotePtyExit,
+  startPtyWithLocalFallback,
+  type PtyExit,
+} from "../lib/remoteTerminal";
 import {
   buildConsoleTheme,
   buildTerminalTheme,
@@ -41,13 +48,16 @@ export interface TerminalHandle {
 
 export function TerminalPane(props: {
   cwd?: string;
+  projectRoot?: string;
+  remote?: RemotePty | null;
   /** When set, the pty runs this command once instead of an interactive shell
    *  (the Debug Console's view-only run output). */
   runCommand?: string;
   /** Extra `PICKFORGE_*` env for the spawned shell (MCP endpoint discovery). */
   env?: Record<string, string> | null;
+  onSpawn?: (remote: RemotePty | null) => void;
   onReady?: (handle: TerminalHandle) => void;
-  onExit?: (code: number | null) => void;
+  onExit?: (exit: PtyExit) => void;
   /** Fires with each non-empty line the user types and submits (Enter).
    *  Reconstructed from real keystrokes only — injected typeText is invisible
    *  here, so it never includes chip-launched command prefixes. */
@@ -125,6 +135,7 @@ export function TerminalPane(props: {
 
     let sessionId: number | null = null;
     let pendingInput = ""; // typed before the pty spawn resolves (e.g. open-in-pane)
+    let ptyClosed = false;
     let disposed = false;
     let observer: ResizeObserver | undefined;
     let fitFrame: number | null = null;
@@ -268,6 +279,7 @@ export function TerminalPane(props: {
       const unregister = registerDropTarget({
         el: container,
         write: (text) => {
+          if (ptyClosed) return false;
           if (sessionId === null) {
             pendingInput += text;
             term.focus();
@@ -288,6 +300,14 @@ export function TerminalPane(props: {
       // font with mis-aligned columns.
       await ensureTerminalFontLoaded();
       if (disposed) return;
+
+      const projectRoot = props.chat?.projectRoot ?? props.projectRoot ?? props.cwd;
+      const remote = props.runCommand
+        ? null
+        : props.remote === undefined
+          ? remotePtyFor(projectRoot)
+          : props.remote;
+      let activeRemote = remote;
 
       term.open(container);
 
@@ -315,18 +335,26 @@ export function TerminalPane(props: {
         if (props.onOutput) props.onOutput(decoder.decode(bytes, { stream: true }));
       };
       const onExit = (code: number | null) => {
-        if (!disposed) props.onExit?.(code);
+        if (disposed) return;
+        ptyClosed = true;
+        sessionId = null;
+        pendingInput = "";
+        const exit = remotePtyExit(activeRemote, code);
+        if (exit.notice) term.write(`\r\n\x1b[31m${exit.notice}\x1b[0m\r\n`);
+        props.onExit?.(exit);
       };
 
       // A chat pane spawns a SESSION-BACKED shell (dtach/tmux, attach-or-create)
       // so its agent survives; every other pane (interactive or one-shot run
       // console) spawns the raw shell exactly as before.
-      const spawn = props.chat
-        ? ptySpawnChat({
+      const start = (spawnRemote: RemotePty | null) =>
+        props.chat
+          ? ptySpawnChat({
             chatId: props.chat.chatId,
             projectRoot: props.chat.projectRoot,
             cwd: props.cwd ?? null,
             env: props.env ?? null,
+            remote: spawnRemote,
             backend: props.chat.backend,
             sessionId: props.chat.sessionId ?? null,
             rows: term.rows,
@@ -343,25 +371,36 @@ export function TerminalPane(props: {
             });
             return res.ptyId;
           })
-        : ptySpawn({
+          : ptySpawn({
             cwd: props.cwd ?? null,
+            projectRoot,
             command: props.runCommand ?? null,
             env: props.env ?? null,
+            remote: spawnRemote,
             rows: term.rows,
             cols: term.cols,
             onOutput,
             onExit,
           });
 
+      const spawn = startPtyWithLocalFallback(remote, start, (failedRemote) => {
+        activeRemote = null;
+        term.write(
+          `\r\n\x1b[2mssh:${failedRemote.host} unavailable; started a local shell. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
+        );
+      });
+
       spawn
-        .then((id) => {
-          if (disposed) {
+        .then(({ remote: effectiveRemote, value: id }) => {
+          if (disposed || ptyClosed) {
             // The pane went away before the spawn resolved: detach a chat session
             // so it survives for the next attach, kill a raw pty — or, if the
             // chat is being deleted, kill the session so it doesn't outlive it.
             teardownPty(id);
             return;
           }
+          activeRemote = effectiveRemote;
+          props.onSpawn?.(effectiveRemote);
           sessionId = id;
           queuePtyResize(term.rows, term.cols);
           // Flush anything typed (via typeText) before the spawn resolved.
@@ -372,6 +411,7 @@ export function TerminalPane(props: {
         })
         .catch((err) => {
           if (disposed) return;
+          ptyClosed = true;
           // The spawn was rejected before any pty exists — e.g. the run cwd
           // resolved outside the approved roots. Surface it honestly in the
           // pane and drive the SAME exit path a real exit would, so the run
@@ -379,14 +419,14 @@ export function TerminalPane(props: {
           console.error("[pickforge] pty_spawn failed", err);
           const msg = typeof err === "string" ? err : (err as Error)?.message ?? String(err);
           term.write(`\r\n\x1b[31mFailed to start: ${msg}\x1b[0m\r\n`);
-          props.onExit?.(null);
+          props.onExit?.({ code: null, notice: null, preserveBuffer: false });
         });
 
       subs.push(
         term.onData((data) => {
           // View-only consoles never forward keystrokes to the pty (the toolbar
           // drives it via typeText, which writes directly).
-          if (props.readOnly) return;
+          if (props.readOnly || ptyClosed) return;
           if (sessionId !== null) void ptyWrite(sessionId, encoder.encode(data));
           if (props.onUserSubmit) trackUserInput(data);
         }),
@@ -475,6 +515,7 @@ export function TerminalPane(props: {
 
       props.onReady?.({
         typeText: (text: string) => {
+          if (ptyClosed) return;
           if (sessionId !== null) void ptyWrite(sessionId, encoder.encode(text));
           else pendingInput += text; // buffer until the spawn resolves
           term.focus();

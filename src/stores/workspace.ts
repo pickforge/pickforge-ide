@@ -209,6 +209,8 @@ export async function addProject(root: string, displayName: string) {
     lastOpenedAt: now,
     sortOrder,
     archivedAt: null,
+    remoteHost: null,
+    remoteRoot: null,
   });
   await loadWorkspace();
   await selectProject(root);

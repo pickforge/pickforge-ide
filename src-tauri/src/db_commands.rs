@@ -317,6 +317,8 @@ mod projects_list_tests {
             last_opened_at: 0,
             sort_order: 0,
             archived_at: archived,
+            remote_host: None,
+            remote_root: None,
         }
     }
 

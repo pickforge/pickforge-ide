@@ -34,7 +34,7 @@ const RUST_BASELINE: u32 = 11;
 
 /// Latest schema version this build understands. Bump (and add a numbered Rust
 /// migration in `apply_rust_migrations`) whenever the schema changes from here.
-const LATEST_VERSION: u32 = 14;
+const LATEST_VERSION: u32 = 15;
 
 /// The full, current desired schema. Every statement is `IF NOT EXISTS`, so
 /// running it against a database that already holds some tables only fills the
@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at     INTEGER NOT NULL,
   last_opened_at INTEGER NOT NULL,
   sort_order     INTEGER NOT NULL DEFAULT 0,
-  archived_at    INTEGER
+  archived_at    INTEGER,
+  remote_host    TEXT,
+  remote_root    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chats (
@@ -263,6 +265,8 @@ const RECONCILABLE_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "kind", "ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'terminal'"),
     // projects — archived_at backfilled for databases that came through v2.
     ("projects", "archived_at", "ALTER TABLE projects ADD COLUMN archived_at INTEGER"), // Drift v9
+    ("projects", "remote_host", "ALTER TABLE projects ADD COLUMN remote_host TEXT"),
+    ("projects", "remote_root", "ALTER TABLE projects ADD COLUMN remote_root TEXT"),
     // run_session_log — target_file added a version after the table itself.
     ("run_session_log", "target_file", "ALTER TABLE run_session_log ADD COLUMN target_file TEXT"), // Drift v4
     // pick_history — chatId arrived alongside the projects/chats split.
@@ -489,6 +493,15 @@ fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Resul
             )?;
             Ok(())
         }
+        15 => {
+            if !has_column(tx, "projects", "remote_host")? {
+                tx.execute_batch("ALTER TABLE projects ADD COLUMN remote_host TEXT;")?;
+            }
+            if !has_column(tx, "projects", "remote_root")? {
+                tx.execute_batch("ALTER TABLE projects ADD COLUMN remote_root TEXT;")?;
+            }
+            Ok(())
+        }
         _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
     }
 }
@@ -577,21 +590,47 @@ impl Database {
     pub fn upsert_project(&self, p: &Project) -> Result<(), DbError> {
         self.lock().execute(
             "INSERT INTO projects \
-               (project_root, display_name, created_at, last_opened_at, sort_order, archived_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+               (project_root, display_name, created_at, last_opened_at, sort_order, archived_at, \
+                remote_host, remote_root) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
              ON CONFLICT(project_root) DO UPDATE SET \
                display_name = excluded.display_name, \
                last_opened_at = excluded.last_opened_at, \
                sort_order = excluded.sort_order, \
-               archived_at = excluded.archived_at",
+               archived_at = excluded.archived_at, \
+               remote_host = COALESCE(excluded.remote_host, projects.remote_host), \
+               remote_root = COALESCE(excluded.remote_root, projects.remote_root)",
             params![
                 p.project_root,
                 p.display_name,
                 p.created_at,
                 p.last_opened_at,
                 p.sort_order,
-                p.archived_at
+                p.archived_at,
+                p.remote_host,
+                p.remote_root
             ],
+        )?;
+        Ok(())
+    }
+
+    pub fn projects_set_remote(
+        &self,
+        project_root: &str,
+        host: &str,
+        remote_root: &str,
+    ) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE projects SET remote_host = ?2, remote_root = ?3 WHERE project_root = ?1",
+            params![project_root, host, remote_root],
+        )?;
+        Ok(())
+    }
+
+    pub fn projects_clear_remote(&self, project_root: &str) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE projects SET remote_host = NULL, remote_root = NULL WHERE project_root = ?1",
+            params![project_root],
         )?;
         Ok(())
     }
@@ -1247,6 +1286,8 @@ fn project_from_row(row: &Row) -> rusqlite::Result<Project> {
         last_opened_at: row.get("last_opened_at")?,
         sort_order: row.get("sort_order")?,
         archived_at: row.get("archived_at")?,
+        remote_host: row.get("remote_host")?,
+        remote_root: row.get("remote_root")?,
     })
 }
 
@@ -1543,6 +1584,8 @@ mod tests {
             last_opened_at: 2,
             sort_order: 0,
             archived_at: None,
+            remote_host: None,
+            remote_root: None,
         })
         .unwrap();
         db.upsert_chat(&Chat {
@@ -1587,6 +1630,8 @@ mod tests {
             last_opened_at: 2,
             sort_order: 0,
             archived_at: None,
+            remote_host: None,
+            remote_root: None,
         })
         .unwrap();
         db.upsert_chat(&Chat {
@@ -1646,6 +1691,8 @@ mod tests {
             last_opened_at: 2,
             sort_order: sort,
             archived_at: None,
+            remote_host: None,
+            remote_root: None,
         };
         db.upsert_project(&mk("/a", "A", 0)).unwrap();
         db.upsert_project(&mk("/b", "B", 1)).unwrap();
@@ -1681,6 +1728,50 @@ mod tests {
         // No-op for an unknown root.
         db.update_project_sort_order("/nope", 9).unwrap();
         assert_eq!(db.list_projects(false).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn project_remote_binding_round_trips_and_clears() {
+        let db = Database::open_in_memory().unwrap();
+        db.upsert_project(&Project {
+            project_root: "/p".into(),
+            display_name: "Proj".into(),
+            created_at: 1,
+            last_opened_at: 2,
+            sort_order: 0,
+            archived_at: None,
+            remote_host: None,
+            remote_root: None,
+        })
+        .unwrap();
+
+        db.projects_set_remote("/p", "mac-mini", "/Users/dev/app")
+            .unwrap();
+        let projects = db.list_projects(false).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].remote_host.as_deref(), Some("mac-mini"));
+        assert_eq!(projects[0].remote_root.as_deref(), Some("/Users/dev/app"));
+
+        db.upsert_project(&Project {
+            project_root: "/p".into(),
+            display_name: "Renamed".into(),
+            created_at: 3,
+            last_opened_at: 4,
+            sort_order: 1,
+            archived_at: None,
+            remote_host: None,
+            remote_root: None,
+        })
+        .unwrap();
+        let project = db.list_projects(false).unwrap().remove(0);
+        assert_eq!(project.display_name, "Renamed");
+        assert_eq!(project.remote_host.as_deref(), Some("mac-mini"));
+        assert_eq!(project.remote_root.as_deref(), Some("/Users/dev/app"));
+
+        db.projects_clear_remote("/p").unwrap();
+        let project = db.list_projects(false).unwrap().remove(0);
+        assert_eq!(project.remote_host, None);
+        assert_eq!(project.remote_root, None);
     }
 
     #[test]
@@ -2069,6 +2160,8 @@ mod tests {
                 last_opened_at: 2,
                 sort_order: 0,
                 archived_at: None,
+                remote_host: None,
+                remote_root: None,
             })
             .unwrap();
             assert_eq!(db.list_projects(false).unwrap().len(), 1);
@@ -2294,6 +2387,45 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[test]
+    fn rust_v14_schema_migrates_to_remote_project_fields() {
+        let path = temp_db_path("rust-v14-project-remote");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE projects (
+                   project_root   TEXT NOT NULL PRIMARY KEY,
+                   display_name   TEXT NOT NULL,
+                   created_at     INTEGER NOT NULL,
+                   last_opened_at INTEGER NOT NULL,
+                   sort_order     INTEGER NOT NULL DEFAULT 0,
+                   archived_at    INTEGER
+                 );
+                 INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Proj', 1, 2);
+                 PRAGMA user_version = 14;",
+            )
+            .unwrap();
+            assert_eq!(user_version(&conn), 14);
+            assert!(!has_column(&conn, "projects", "remote_host").unwrap());
+            assert!(!has_column(&conn, "projects", "remote_root").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            assert!(has_column(&db.lock(), "projects", "remote_host").unwrap());
+            assert!(has_column(&db.lock(), "projects", "remote_root").unwrap());
+            let project = db.list_projects(false).unwrap().remove(0);
+            assert_eq!(project.remote_host, None);
+            assert_eq!(project.remote_root, None);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn seed_agent_chat(db: &Database, project_root: &str, chat_id: &str) {
         db.upsert_project(&Project {
             project_root: project_root.into(),
@@ -2302,6 +2434,8 @@ mod tests {
             last_opened_at: 1,
             sort_order: 0,
             archived_at: None,
+            remote_host: None,
+            remote_root: None,
         })
         .unwrap();
         db.upsert_chat(&Chat {

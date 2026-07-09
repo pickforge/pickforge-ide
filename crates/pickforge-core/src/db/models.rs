@@ -18,6 +18,10 @@ pub struct Project {
     #[serde(default)]
     pub sort_order: i64,
     pub archived_at: Option<i64>,
+    #[serde(default)]
+    pub remote_host: Option<String>,
+    #[serde(default)]
+    pub remote_root: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

@@ -54,7 +54,7 @@ pub fn tailscale_status() -> TailscaleStatus {
     status.binary_path = Some(path.to_string_lossy().into_owned());
     status.version = tailscale_version().ok();
 
-    match run_json(&["status", "--json"]) {
+    match tailscale_status_json(TAILSCALE_STATUS_TIMEOUT) {
         Ok(json) => apply_status_json(&mut status, &json),
         Err(err) => status.error = Some(err),
     }
@@ -76,7 +76,15 @@ fn tailscale_version() -> Result<String, String> {
 }
 
 fn run_json(args: &[&str]) -> Result<Value, String> {
-    let out = run_tailscale(args)?;
+    run_json_with_timeout(args, TAILSCALE_STATUS_TIMEOUT)
+}
+
+pub(crate) fn tailscale_status_json(timeout: Duration) -> Result<Value, String> {
+    run_json_with_timeout(&["status", "--json"], timeout)
+}
+
+fn run_json_with_timeout(args: &[&str], timeout: Duration) -> Result<Value, String> {
+    let out = run_tailscale_with_timeout(args, timeout)?;
     serde_json::from_str(&out).map_err(|err| err.to_string())
 }
 

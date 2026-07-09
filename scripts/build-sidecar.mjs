@@ -1,12 +1,12 @@
-// Build the `pickforge-mcp` stdio adapter and stage it as a Tauri sidecar.
+// Build the Cargo sidecars and stage them for Tauri packaging.
 //
 // Tauri bundles "external binaries" listed under `bundle.externalBin`, resolving
 // each by appending the *target triple* to the configured name (e.g.
 // `binaries/pickforge-mcp` -> `binaries/pickforge-mcp-x86_64-unknown-linux-gnu`).
-// Cargo emits the binary as plain `pickforge-mcp` under `target/<profile>/`, so
-// this script compiles it and copies it to the triple-suffixed path the bundler
+// Cargo emits binaries as plain names under `target/<profile>/`, so this script
+// compiles them and copies them to the triple-suffixed paths the bundler
 // expects. Run from `beforeBuildCommand` so a packaged app actually ships the
-// adapter (without this, MCP discovery finds nothing in a release build).
+// adapters.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -39,24 +39,28 @@ const cargoTarget = requestedTriple ? triple : null;
 // binary matches the bundle's profile.
 const debug = process.argv.includes("--debug");
 const profile = debug ? "debug" : "release";
+const cargoSidecars = ["pickforge-mcp", "pickforged"];
 
-const cargoArgs = ["build", "-p", "pickforge-mcp"];
+const cargoArgs = ["build"];
+for (const sidecar of cargoSidecars) cargoArgs.push("-p", sidecar);
 if (!debug) cargoArgs.push("--release");
 if (cargoTarget) cargoArgs.push("--target", cargoTarget);
 
 console.log(`[sidecar] cargo ${cargoArgs.join(" ")}`);
 execFileSync("cargo", cargoArgs, { cwd: root, stdio: "inherit" });
 
-const ext = process.platform === "win32" ? ".exe" : "";
-const built = cargoTarget
-  ? join(root, "target", cargoTarget, profile, `pickforge-mcp${ext}`)
-  : join(root, "target", profile, `pickforge-mcp${ext}`);
+const ext = triple.includes("windows") ? ".exe" : "";
 const destDir = join(root, "src-tauri", "binaries");
-const dest = join(destDir, `pickforge-mcp-${triple}${ext}`);
 
 mkdirSync(destDir, { recursive: true });
-copyFileSync(built, dest);
-console.log(`[sidecar] staged ${dest}`);
+for (const sidecar of cargoSidecars) {
+  const built = cargoTarget
+    ? join(root, "target", cargoTarget, profile, `${sidecar}${ext}`)
+    : join(root, "target", profile, `${sidecar}${ext}`);
+  const dest = join(destDir, `${sidecar}-${triple}${ext}`);
+  copyFileSync(built, dest);
+  console.log(`[sidecar] staged ${dest}`);
+}
 
 // The Claude bridge runs on the Agent SDK — a packaged app has neither Bun nor
 // the repo's node_modules, so compile it into a self-contained executable and

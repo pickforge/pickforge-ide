@@ -6,11 +6,13 @@ reset this file.
 
 ## User-facing changes
 
-- None yet.
+- Added Remote Host settings for starting the local daemon listener, issuing
+  pairing codes, and toggling Tailscale SSH.
 
 ## Internal/release changes
 
 - Migrated release CI to the shared `@pickforge/tauri-release` tooling and draft-only `latest.json` finalization.
+- Added the `pickforged` daemon foundation with hashed-token pairing auth.
 
 ## Validation
 

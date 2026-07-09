@@ -16,8 +16,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 portable-pty = { workspace = true }
+rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 roxmltree = "0.20"
+sha2 = "0.10"
 tokio = { workspace = true }
 futures-util = { workspace = true }
 tokio-tungstenite = { workspace = true }
@@ -25,3 +27,6 @@ url = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }

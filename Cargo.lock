@@ -3176,14 +3176,17 @@ dependencies = [
  "futures-util",
  "libc",
  "portable-pty",
+ "rand 0.8.6",
  "roxmltree",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3213,6 +3216,16 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-sentry",
  "tauri-plugin-updater",
+ "tokio",
+]
+
+[[package]]
+name = "pickforged"
+version = "0.1.9"
+dependencies = [
+ "pickforge-core",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

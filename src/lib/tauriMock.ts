@@ -121,6 +121,36 @@ const MOCK_USAGE_SUMMARY = [
   { provider: "codex", model: "gpt-5.3-codex-spark", chats: 1, turns: null, inputTokens: 22400, cachedInputTokens: 8000, outputTokens: 4120, costUsd: 0 },
 ];
 let MOCK_TELEMETRY = { crash_reports: true };
+let MOCK_REMOTE_RUNNING = false;
+let MOCK_REMOTE_PAIRING: { code: string; createdAtMs: number; expiresAtMs: number; usedAtMs: number | null }[] = [];
+
+function remoteOverview() {
+  return {
+    running: MOCK_REMOTE_RUNNING,
+    listener: MOCK_REMOTE_RUNNING
+      ? { kind: "loopback", host: "127.0.0.1", port: 4747 }
+      : { kind: "disabled" },
+    localUrl: MOCK_REMOTE_RUNNING ? "http://127.0.0.1:4747" : null,
+    authPath: "/home/dev/.pickforge/remote-auth.json",
+    pairingCodes: MOCK_REMOTE_PAIRING,
+    clients: [],
+    tailscale: {
+      available: true,
+      binaryPath: "/usr/bin/tailscale",
+      version: "1.98.8",
+      backendState: "Running",
+      online: true,
+      hostName: "acme-host",
+      dnsName: "acme-host.tailnet.ts.net.",
+      tailscaleIps: ["100.64.0.10"],
+      sshCapable: true,
+      sshEnabled: false,
+      error: null,
+    },
+    defaultHost: "127.0.0.1",
+    defaultPort: 4747,
+  };
+}
 
 const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   orchestra_task_upsert: (a) => {
@@ -147,6 +177,27 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     return null;
   },
   detect_binaries: (a) => (a.names as string[]).map(() => true),
+  remote_host_status: () => remoteOverview(),
+  remote_host_start: () => {
+    MOCK_REMOTE_RUNNING = true;
+    return remoteOverview();
+  },
+  remote_host_stop: () => {
+    MOCK_REMOTE_RUNNING = false;
+    return remoteOverview();
+  },
+  remote_host_issue_pairing_code: () => {
+    const code = {
+      code: "2345-6789-ABCD-EFGH",
+      createdAtMs: now,
+      expiresAtMs: now + 600_000,
+      usedAtMs: null,
+    };
+    MOCK_REMOTE_PAIRING = [code];
+    return code;
+  },
+  remote_host_revoke_client: () => null,
+  remote_tailscale_ssh_set: () => remoteOverview().tailscale,
   target_detect: () => ({ targetId: "flutter", displayName: "Flutter", confidence: "exact", priority: 100, capabilities: ["detect", "launch", "hotReload", "captureScreenshot", "streamLogs", "inspectSelection"] }),
   adb_list_devices: () => [{ serial: "emulator-5554", state: "device", model: "Pixel_10" }],
   android_device_list: () => [

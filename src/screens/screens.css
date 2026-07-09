@@ -305,6 +305,34 @@
   letter-spacing: 0.06em;
   color: var(--pf-text-low);
 }
+.pf-remote-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--pf-space-sm);
+  min-width: 0;
+}
+.pf-remote-port {
+  width: 84px;
+  text-align: right;
+}
+.pf-remote-code-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--pf-space-sm);
+  min-width: 0;
+}
+.pf-remote-code {
+  font-family: var(--pf-font-mono);
+  white-space: nowrap;
+}
+.pf-remote-code-refresh {
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
 .pf-zoom {
   display: inline-flex;
   align-items: center;

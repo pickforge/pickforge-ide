@@ -9,6 +9,8 @@ export interface Project {
   lastOpenedAt: number;
   sortOrder: number;
   archivedAt: number | null;
+  remoteHost: string | null;
+  remoteRoot: string | null;
 }
 
 export interface Chat {
@@ -126,6 +128,13 @@ export const projectDelete = (root: string) =>
 /** Narrow sort_order write (project reorder) — touches only sort_order. */
 export const updateProjectSortOrder = (root: string, sortOrder: number) =>
   invoke<void>("update_project_sort_order", { root, sortOrder });
+export const projectRemoteSet = (
+  projectRoot: string,
+  host: string,
+  remoteRoot: string,
+) => invoke<void>("project_remote_set", { projectRoot, host, remoteRoot });
+export const projectRemoteClear = (projectRoot: string) =>
+  invoke<void>("project_remote_clear", { projectRoot });
 
 // ---- chats ----
 export const chatsList = (projectRoot: string) =>

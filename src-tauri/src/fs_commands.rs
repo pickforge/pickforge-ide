@@ -846,6 +846,8 @@ mod approved_root_tests {
             last_opened_at: 0,
             sort_order: 0,
             archived_at: None,
+            remote_host: None,
+            remote_root: None,
         };
         db.upsert_project(&mk(&keep, "keep")).unwrap();
         db.upsert_project(&mk(&gone, "gone")).unwrap();
@@ -888,6 +890,8 @@ mod approved_root_tests {
             last_opened_at: 0,
             sort_order: 0,
             archived_at: None,
+            remote_host: None,
+            remote_root: None,
         })
         .unwrap();
 
@@ -975,6 +979,8 @@ mod approved_root_tests {
             last_opened_at: 0,
             sort_order: 0,
             archived_at: arch,
+            remote_host: None,
+            remote_root: None,
         };
         db.upsert_project(&mk(&active, "active", None)).unwrap();
         db.upsert_project(&mk(&archived, "archived", Some(1))).unwrap();

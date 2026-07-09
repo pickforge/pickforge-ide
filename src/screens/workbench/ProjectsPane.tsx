@@ -524,9 +524,9 @@ export function ProjectsPane() {
       const t = ctrl.test();
       return t.kind === "error" ? t.message : null;
     };
-    const testHealth = () => {
+    const testResult = () => {
       const t = ctrl.test();
-      return t.kind === "done" ? t.health : null;
+      return t.kind === "done" ? t : null;
     };
     const unreachable = () => {
       const h = project()?.remoteHost;
@@ -545,8 +545,10 @@ export function ProjectsPane() {
       if (await ctrl.doDetach()) setProjectRemoteLocal(p.root, null, null);
     };
     const onTest = async () => {
-      const health = await ctrl.runTest(host());
-      if (health) recordHealth(host().trim(), health);
+      // The result carries the host pinned at probe start, so an input edit
+      // mid-probe can never cache one host's health under another.
+      const res = await ctrl.runTest(host());
+      if (res) recordHealth(res.host, res.health);
     };
 
     return (
@@ -593,12 +595,13 @@ export function ProjectsPane() {
         <Show when={testError()}>
           {(msg) => <div class="pf-remote-error">{msg()}</div>}
         </Show>
-        <Show when={testHealth()}>
-          {(h) => (
+        <Show when={testResult()}>
+          {(t) => (
             <div class="pf-remote-probes">
-              <ProbeRow label="tailnet" probe={h().tailnet} />
-              <ProbeRow label="ssh" probe={h().ssh} />
-              <ProbeRow label="daemon" probe={h().daemon} />
+              <div class="pf-remote-probes-host">{t().host}</div>
+              <ProbeRow label="tailnet" probe={t().health.tailnet} />
+              <ProbeRow label="ssh" probe={t().health.ssh} />
+              <ProbeRow label="daemon" probe={t().health.daemon} />
             </div>
           )}
         </Show>

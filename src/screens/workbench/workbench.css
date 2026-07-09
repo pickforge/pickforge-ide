@@ -1063,6 +1063,14 @@ body.pf-resizing .pf-dock-panel {
   gap: 2px;
   padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
 }
+.pf-remote-probes-host {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pf-remote-probe {
   display: flex;
   justify-content: space-between;

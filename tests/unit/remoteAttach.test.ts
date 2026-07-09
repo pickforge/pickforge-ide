@@ -80,7 +80,7 @@ describe("remoteAttach controller", () => {
       const health = okHealth();
       healthMock.mockResolvedValue(health);
       await ctrl.runTest("box");
-      expect(ctrl.test()).toEqual({ kind: "done", health });
+      expect(ctrl.test()).toEqual({ kind: "done", host: "box", health });
 
       healthMock.mockRejectedValue("ssh refused");
       await ctrl.runTest("box");
@@ -92,5 +92,65 @@ describe("remoteAttach controller", () => {
       await ctrl.runTest("   ");
       expect(healthMock).not.toHaveBeenCalled();
       expect(ctrl.test().kind).toBe("error");
+    }));
+
+  it("pins the host captured at probe start through the result", () =>
+    withCtrl(async (ctrl) => {
+      const health = okHealth();
+      let resolve!: (h: RemoteHostHealth) => void;
+      healthMock.mockReturnValue(new Promise<RemoteHostHealth>((r) => (resolve = r)));
+      // The panel would pass a live input value; the probe pins " box-a " -> "box-a"
+      // at start, so an edit to box-b mid-flight cannot relabel the result.
+      const pending = ctrl.runTest(" box-a ");
+      expect(ctrl.test()).toEqual({ kind: "running", host: "box-a" });
+      resolve(health);
+      expect(await pending).toEqual({ host: "box-a", health });
+      expect(ctrl.test()).toEqual({ kind: "done", host: "box-a", health });
+    }));
+
+  it("clearAttachError never knocks an in-flight attach out of busy", () =>
+    withCtrl(async (ctrl) => {
+      let resolve!: () => void;
+      setMock.mockReturnValue(new Promise<void>((r) => (resolve = r)));
+      const pending = ctrl.doAttach("box", "/remote/proj");
+      expect(ctrl.attach().kind).toBe("busy");
+      ctrl.clearAttachError();
+      expect(ctrl.attach().kind).toBe("busy");
+      resolve();
+      expect(await pending).toBe(true);
+      expect(ctrl.attach()).toEqual({ kind: "idle" });
+    }));
+
+  it("clearAttachError dismisses an inline error", () =>
+    withCtrl(async (ctrl) => {
+      setMock.mockRejectedValue("nope");
+      await ctrl.doAttach("box", "/remote/proj");
+      expect(ctrl.attach().kind).toBe("error");
+      ctrl.clearAttachError();
+      expect(ctrl.attach()).toEqual({ kind: "idle" });
+    }));
+
+  it("rejects re-entrant attach/detach while one is in flight", () =>
+    withCtrl(async (ctrl) => {
+      let resolve!: () => void;
+      setMock.mockReturnValue(new Promise<void>((r) => (resolve = r)));
+      const first = ctrl.doAttach("box", "/remote/proj");
+      expect(await ctrl.doAttach("box", "/remote/proj")).toBe(false);
+      expect(await ctrl.doDetach()).toBe(false);
+      expect(setMock).toHaveBeenCalledTimes(1);
+      expect(clearMock).not.toHaveBeenCalled();
+      resolve();
+      expect(await first).toBe(true);
+    }));
+
+  it("rejects a re-entrant test connection while one is running", () =>
+    withCtrl(async (ctrl) => {
+      let resolve!: (h: RemoteHostHealth) => void;
+      healthMock.mockReturnValue(new Promise<RemoteHostHealth>((r) => (resolve = r)));
+      const first = ctrl.runTest("box");
+      expect(await ctrl.runTest("box")).toBeNull();
+      expect(healthMock).toHaveBeenCalledTimes(1);
+      resolve(okHealth());
+      expect(await first).not.toBeNull();
     }));
 });

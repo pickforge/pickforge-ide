@@ -16,11 +16,19 @@ export type AttachState =
   | { kind: "busy" }
   | { kind: "error"; message: string };
 
+// running/done pin the host captured when the probe started, so the result is
+// always cached and rendered under the host that was actually probed — even if
+// the input is edited mid-flight.
 export type TestState =
   | { kind: "idle" }
-  | { kind: "running" }
-  | { kind: "done"; health: RemoteHostHealth }
+  | { kind: "running"; host: string }
+  | { kind: "done"; host: string; health: RemoteHostHealth }
   | { kind: "error"; message: string };
+
+export interface TestResult {
+  host: string;
+  health: RemoteHostHealth;
+}
 
 function errText(e: unknown): string {
   if (typeof e === "string") return e;
@@ -33,7 +41,7 @@ export interface RemoteAttach {
   test: Accessor<TestState>;
   doAttach: (host: string, remoteRoot: string) => Promise<boolean>;
   doDetach: () => Promise<boolean>;
-  runTest: (host: string) => Promise<RemoteHostHealth | null>;
+  runTest: (host: string) => Promise<TestResult | null>;
   clearAttachError: () => void;
   resetTest: () => void;
 }
@@ -43,6 +51,7 @@ export function createRemoteAttach(projectRoot: () => string): RemoteAttach {
   const [test, setTest] = createSignal<TestState>({ kind: "idle" });
 
   const doAttach = async (host: string, remoteRoot: string): Promise<boolean> => {
+    if (attach().kind === "busy") return false;
     const h = host.trim();
     const r = remoteRoot.trim();
     if (!h || !r) {
@@ -61,6 +70,7 @@ export function createRemoteAttach(projectRoot: () => string): RemoteAttach {
   };
 
   const doDetach = async (): Promise<boolean> => {
+    if (attach().kind === "busy") return false;
     setAttach({ kind: "busy" });
     try {
       await projectRemoteClear(projectRoot());
@@ -72,17 +82,18 @@ export function createRemoteAttach(projectRoot: () => string): RemoteAttach {
     }
   };
 
-  const runTest = async (host: string): Promise<RemoteHostHealth | null> => {
+  const runTest = async (host: string): Promise<TestResult | null> => {
+    if (test().kind === "running") return null;
     const h = host.trim();
     if (!h) {
       setTest({ kind: "error", message: "Enter a host first." });
       return null;
     }
-    setTest({ kind: "running" });
+    setTest({ kind: "running", host: h });
     try {
       const health = await remoteHostHealth(h);
-      setTest({ kind: "done", health });
-      return health;
+      setTest({ kind: "done", host: h, health });
+      return { host: h, health };
     } catch (e) {
       setTest({ kind: "error", message: errText(e) });
       return null;
@@ -95,7 +106,10 @@ export function createRemoteAttach(projectRoot: () => string): RemoteAttach {
     doAttach,
     doDetach,
     runTest,
-    clearAttachError: () => setAttach({ kind: "idle" }),
+    // Only dismisses an inline error — must never knock an in-flight
+    // attach/detach out of busy (that would re-enable the buttons mid-request).
+    clearAttachError: () =>
+      setAttach((a) => (a.kind === "error" ? { kind: "idle" } : a)),
     resetTest: () => setTest({ kind: "idle" }),
   };
 }

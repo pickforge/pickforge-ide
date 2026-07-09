@@ -121,6 +121,66 @@ describe("voiceDock store", () => {
     expect(s.voiceDockPhase()).toBe("recording");
   });
 
+  it("never starts a session when the dock resets during the pending status check", async () => {
+    captureSink();
+    let resolveStatus!: (status: VoiceStatus) => void;
+    deps.voiceStatus.mockReturnValue(
+      new Promise<VoiceStatus>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    const pending = s.startDictation();
+    s.resetVoiceDock();
+    resolveStatus(AVAILABLE);
+    await pending;
+
+    expect(deps.startVoice).not.toHaveBeenCalled();
+    expect(s.voiceDockPhase()).toBe("idle");
+    expect(s.voiceDockError()).toBeNull();
+  });
+
+  it("cancels a session that startVoice resolves after the dock reset", async () => {
+    let resolveStart!: (id: string) => void;
+    deps.startVoice.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    const pending = s.startDictation();
+    await flushAsync();
+    expect(deps.startVoice).toHaveBeenCalledOnce();
+
+    s.resetVoiceDock();
+    resolveStart("sess-late");
+    await pending;
+    await flushAsync();
+
+    expect(deps.cancelVoice).toHaveBeenCalledWith("sess-late");
+    expect(s.voiceDockPhase()).toBe("idle");
+    expect(deps.stopVoice).not.toHaveBeenCalled();
+  });
+
+  it("keeps stop reachable while the operator is busy during a live recording", async () => {
+    captureSink();
+    deps.stopVoice.mockResolvedValue("captured");
+    const s = await loadStore();
+
+    expect(s.micBusyLocked(true)).toBe(true);
+    expect(s.micBusyLocked(false)).toBe(false);
+
+    await s.startDictation();
+    expect(s.micBusyLocked(true)).toBe(false);
+
+    await s.stopDictation();
+
+    expect(deps.setOperatorInput).toHaveBeenCalledExactlyOnceWith("captured");
+    expect(s.micBusyLocked(true)).toBe(true);
+  });
+
   it("runs the full flow: partials replace the preview, final lands in the input", async () => {
     captureSink();
     deps.stopVoice.mockResolvedValue("hello world");

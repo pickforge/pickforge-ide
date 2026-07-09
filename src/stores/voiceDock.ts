@@ -31,6 +31,13 @@ export const voiceAvailability = availability;
 
 export const voiceDockActive = () => phase() === "recording" || phase() === "finalizing";
 
+// A busy operator (submitting/confirming) blocks STARTING a recording, but
+// never locks out STOPPING one that is already live — otherwise the mic goes
+// dead while pw-record keeps rolling.
+export function micBusyLocked(operatorBusy: boolean): boolean {
+  return operatorBusy && !voiceDockActive();
+}
+
 // A session in flight; the epoch supersedes stale channel events and pending
 // awaits when the user cancels/restarts, and `finalized` makes the final land
 // exactly once (stop() returns the transcript *and* emits a final event).
@@ -74,17 +81,21 @@ export async function refreshVoiceStatus(): Promise<VoiceStatus | null> {
 export async function startDictation(): Promise<void> {
   if (starting || voiceDockActive()) return;
   starting = true;
+  // Claim the epoch before the first await so a dock reset during the status
+  // check (or the startVoice call) supersedes this start instead of letting a
+  // late-resolving session record into a closed dock.
+  const mine = ++epoch;
   try {
     setError(null);
     const model = voiceModelOverride();
     const status = await refreshVoiceStatus();
+    if (mine !== epoch) return;
     if (!status?.available) {
       setPhase("error");
       setError(status ? unavailableMessage(status) : "dictation is unavailable");
       return;
     }
 
-    const mine = ++epoch;
     finalized = false;
     sessionId = null;
     setPreview("");

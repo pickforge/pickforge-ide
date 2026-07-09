@@ -20,6 +20,7 @@ import {
   type DockView,
 } from "../../stores/operatorDock";
 import {
+  micBusyLocked,
   refreshVoiceStatus,
   resetVoiceDock,
   toggleDictation,
@@ -75,7 +76,10 @@ export function OperatorDock() {
   // focus — while a preview shows, the Confirm CTA owns the ember and the mic
   // yields to a neutral live treatment (never two embers).
   const micEmber = () => voiceDockActive() && operatorView().kind !== "preview";
-  const micDisabled = () => operatorBusy() || voiceAvailability()?.available === false;
+  // Busy only blocks starting a recording (micBusyLocked); stopping a live one
+  // stays reachable so the mic can't go dead while pw-record keeps rolling.
+  const micDisabled = () =>
+    voiceAvailability()?.available === false || micBusyLocked(operatorBusy());
   // The button and the Mod+M hotkey share this gate so a hidden or disabled
   // mic can never record.
   const micUsable = () => voiceDictationSettings().micEnabled && !micDisabled();
@@ -86,7 +90,7 @@ export function OperatorDock() {
       if (status.error) return status.error;
       return `dictation unavailable — install ${status.missing.join(", ")}`;
     }
-    if (operatorBusy()) return "dictation paused while the command runs";
+    if (micBusyLocked(operatorBusy())) return "dictation paused while the command runs";
     return voiceDockActive() ? "stop dictation (Mod+M)" : "start dictation (Mod+M)";
   };
 

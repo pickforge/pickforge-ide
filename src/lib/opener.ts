@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const openPathSystem = (path: string) => invoke<void>("open_path", { path });
 
+export const openExternalUrl = (url: string) => invoke<void>("open_external_url", { url });
+
 /// Open the native directory picker from the Rust side and register the chosen
 /// directory as an approved filesystem root server-side. Returns the picked path,
 /// or null if the user cancelled. Use this (not the JS dialog `open`) for the

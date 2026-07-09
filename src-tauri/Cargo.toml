@@ -17,10 +17,12 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 sentry = "0.42"
 tauri-plugin-sentry = "0.5"
+tauri-plugin-deep-link = "2.4.9"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+url = "2"
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 base64 = "0.22"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
@@ -40,4 +42,5 @@ libc = "0.2"
 gtk = "0.18"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2.4.2", features = ["deep-link"] }
 tauri-plugin-updater = "2"

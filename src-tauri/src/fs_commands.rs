@@ -543,6 +543,124 @@ pub async fn open_path(roots: State<'_, ApprovedRoots>, path: String) -> Result<
     .map_err(|e| e.to_string())?
 }
 
+fn validate_external_url(url: &str) -> Result<String, String> {
+    const HOSTLESS_HTTPS_PREFIX: &str = "https:///";
+    let trimmed = url.trim_start();
+    if matches!(
+        trimmed.get(..HOSTLESS_HTTPS_PREFIX.len()),
+        Some(prefix) if prefix.eq_ignore_ascii_case(HOSTLESS_HTTPS_PREFIX)
+    ) {
+        return Err("https URL must include a host".into());
+    }
+    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+    if parsed.scheme() != "https" {
+        return Err("only https URLs can be opened".into());
+    }
+    if parsed.cannot_be_a_base() || parsed.host_str().map(str::is_empty).unwrap_or(true) {
+        return Err("https URL must include a host".into());
+    }
+    Ok(parsed.as_str().to_string())
+}
+
+struct ExternalUrlOpener<'a> {
+    program: &'static str,
+    args: Vec<&'a str>,
+}
+
+fn external_url_opener(url: &str) -> ExternalUrlOpener<'_> {
+    #[cfg(target_os = "macos")]
+    {
+        ExternalUrlOpener {
+            program: "open",
+            args: vec![url],
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        ExternalUrlOpener {
+            program: "rundll32",
+            args: vec!["url.dll,FileProtocolHandler", url],
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        ExternalUrlOpener {
+            program: "xdg-open",
+            args: vec![url],
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    let url = validate_external_url(&url)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let opener = external_url_opener(url.as_str());
+
+        let out = pickforge_core::run(opener.program, &opener.args, None, None)
+            .map_err(|e| e.to_string())?;
+        if out.success() {
+            Ok(())
+        } else {
+            Err(format!("{} exited with {:?}", opener.program, out.code))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod open_external_url_tests {
+    use super::*;
+
+    #[test]
+    fn allows_https_urls() {
+        assert_eq!(
+            validate_external_url("https://example.com/oauth?code=abc&state=one%20two").unwrap(),
+            "https://example.com/oauth?code=abc&state=one%20two"
+        );
+    }
+
+    #[test]
+    fn rejects_non_https_urls() {
+        for url in [
+            "http://example.com",
+            "file:///tmp/token",
+            "javascript:alert(1)",
+            "pickforge://auth/callback?code=abc",
+            "https://",
+            "https:///",
+            "https:///callback",
+        ] {
+            assert!(validate_external_url(url).is_err(), "{url} should be rejected");
+        }
+    }
+
+    #[test]
+    fn opener_receives_the_normalized_url() {
+        let normalized =
+            validate_external_url("https://example.com/a/../oauth?code=abc&state=one%20two")
+                .unwrap();
+        let opener = external_url_opener(&normalized);
+
+        assert_eq!(opener.args.last().copied(), Some(normalized.as_str()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_opener_is_shell_free() {
+        let normalized =
+            validate_external_url("https://example.com/oauth?code=abc&state=one%20two").unwrap();
+        let opener = external_url_opener(&normalized);
+
+        assert_eq!(opener.program, "rundll32");
+        assert_eq!(
+            opener.args,
+            vec!["url.dll,FileProtocolHandler", normalized.as_str()]
+        );
+    }
+}
+
 #[cfg(test)]
 mod approved_root_tests {
     use super::*;

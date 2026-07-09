@@ -134,7 +134,13 @@ pub fn run() {
         gtk::glib::set_application_name("PickForge");
     }
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|_, _, _| {}));
+
+    let builder = builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(if enabled {
             tauri_plugin_sentry::init(&client)
         } else {
@@ -202,6 +208,7 @@ pub fn run() {
             fs_commands::read_image_data_url,
             fs_commands::path_basename,
             fs_commands::open_path,
+            fs_commands::open_external_url,
             fs_commands::pick_project_dir,
             device_commands::target_detect,
             device_commands::find_nearest_pubspec,

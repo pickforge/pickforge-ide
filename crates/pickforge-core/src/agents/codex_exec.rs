@@ -20,6 +20,8 @@ pub struct CodexTurnOptions {
     pub cwd: PathBuf,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub sandbox: Option<String>,
+    pub approval_policy: Option<String>,
     pub resume_thread_id: Option<String>,
     pub binary: Option<String>,
     pub remote: Option<RemoteExec>,
@@ -60,13 +62,25 @@ fn turn_command(opts: &CodexTurnOptions) -> Result<TurnCommand, AgentSpawnError>
         "--json".to_string(),
         "--skip-git-repo-check".to_string(),
         "-c".to_string(),
-        r#"sandbox_mode="workspace-write""#.to_string(),
+        config_override(
+            "sandbox_mode",
+            opts.sandbox
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("workspace-write"),
+        ),
         "-c".to_string(),
-        r#"approval_policy="never""#.to_string(),
+        config_override(
+            "approval_policy",
+            opts.approval_policy
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("never"),
+        ),
     ];
     if let Some(effort) = opts.effort.as_deref().filter(|value| !value.trim().is_empty()) {
         args.push("-c".to_string());
-        args.push(format!(r#"model_reasoning_effort="{effort}""#));
+        args.push(config_override("model_reasoning_effort", effort));
     }
     if let Some(model) = opts.model.as_deref().filter(|value| !value.trim().is_empty()) {
         args.push("-m".to_string());
@@ -96,6 +110,13 @@ fn turn_command(opts: &CodexTurnOptions) -> Result<TurnCommand, AgentSpawnError>
         cwd: Some(opts.cwd.clone()),
         remote_host: None,
     })
+}
+
+fn config_override(key: &str, value: &str) -> String {
+    format!(
+        "{key}={}",
+        serde_json::to_string(value).expect("config override serializes")
+    )
 }
 
 pub fn parse_codex_exec_line(line: &str) -> Option<AgentEvent> {
@@ -778,6 +799,8 @@ mod tests {
                     cwd: script.dir.clone(),
                     model: None,
                     effort: None,
+                    sandbox: None,
+                    approval_policy: None,
                     resume_thread_id: None,
                     binary: Some(script.path.to_string_lossy().to_string()),
                     remote: None,
@@ -850,6 +873,8 @@ mod tests {
             cwd: PathBuf::from("/local/project"),
             model: Some("gpt remote".to_string()),
             effort: Some("high".to_string()),
+            sandbox: Some("read-only".to_string()),
+            approval_policy: Some("on-request".to_string()),
             resume_thread_id: Some("thread'one".to_string()),
             binary: Some("codex".to_string()),
             remote: Some(RemoteExec::new("mac-mini", "/srv/it's $app").unwrap()),
@@ -862,7 +887,7 @@ mod tests {
         assert_eq!(command.remote_host.as_deref(), Some("mac-mini"));
         assert_eq!(
             command.args.last().unwrap(),
-            "cd '/srv/it'\\''s $app' && exec 'codex' 'exec' '--json' '--skip-git-repo-check' '-c' 'sandbox_mode=\"workspace-write\"' '-c' 'approval_policy=\"never\"' '-c' 'model_reasoning_effort=\"high\"' '-m' 'gpt remote' 'resume' 'thread'\\''one' 'say it'\\''s $HOME'"
+            "cd '/srv/it'\\''s $app' && exec \"$SHELL\" -lc ''\\''codex'\\'' '\\''exec'\\'' '\\''--json'\\'' '\\''--skip-git-repo-check'\\'' '\\''-c'\\'' '\\''sandbox_mode=\"read-only\"'\\'' '\\''-c'\\'' '\\''approval_policy=\"on-request\"'\\'' '\\''-c'\\'' '\\''model_reasoning_effort=\"high\"'\\'' '\\''-m'\\'' '\\''gpt remote'\\'' '\\''resume'\\'' '\\''thread'\\''\\'\\'''\\''one'\\'' '\\''say it'\\''\\'\\'''\\''s $HOME'\\'''"
         );
     }
 

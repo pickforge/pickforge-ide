@@ -34,10 +34,11 @@ impl RemoteExec {
             return Err(RemoteExecError::InvalidRemoteRoot);
         }
         let argv = agent_argv.iter().map(String::as_str).collect::<Vec<_>>();
+        let agent_command = shell_quote_argv(&argv);
         let remote_command = format!(
-            "cd {} && exec {}",
+            "cd {} && exec \"$SHELL\" -lc {}",
             shell_quote_argv(&[&self.remote_root]),
-            shell_quote_argv(&argv)
+            shell_quote_argv(&[&agent_command])
         );
         Ok(ssh_one_shot_args(&target, remote_command))
     }
@@ -75,7 +76,7 @@ mod tests {
                 "StrictHostKeyChecking=accept-new",
                 "--",
                 "mac-mini",
-                "cd '/Users/dev/it'\\''s $root' && exec 'codex' 'exec' 'prompt with spaces'",
+                "cd '/Users/dev/it'\\''s $root' && exec \"$SHELL\" -lc ''\\''codex'\\'' '\\''exec'\\'' '\\''prompt with spaces'\\'''",
             ]
         );
     }

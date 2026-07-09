@@ -436,6 +436,7 @@ pub struct ClaudeTurnOptions {
     pub prompt: String,
     pub cwd: PathBuf,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub resume_session_id: Option<String>,
     pub permission_mode: Option<String>,
     pub allowed_tools: Option<String>,
@@ -531,6 +532,10 @@ fn turn_command(opts: &ClaudeTurnOptions) -> Result<TurnCommand, AgentSpawnError
     if let Some(model) = opts.model.as_deref().filter(|value| !value.trim().is_empty()) {
         args.push("--model".to_string());
         args.push(model.to_string());
+    }
+    if let Some(effort) = opts.effort.as_deref().filter(|value| !value.trim().is_empty()) {
+        args.push("--effort".to_string());
+        args.push(effort.to_string());
     }
     if let Some(session_id) = opts
         .resume_session_id
@@ -946,6 +951,7 @@ mod tests {
             prompt: "ignored".to_string(),
             cwd: std::env::temp_dir(),
             model: None,
+            effort: None,
             resume_session_id: None,
             permission_mode: None,
             allowed_tools: None,
@@ -960,9 +966,10 @@ mod tests {
             prompt: "say it's $HOME".to_string(),
             cwd: PathBuf::from("/local/project"),
             model: Some("model with spaces".to_string()),
+            effort: Some("high".to_string()),
             resume_session_id: Some("session'one".to_string()),
-            permission_mode: None,
-            allowed_tools: None,
+            permission_mode: Some("plan".to_string()),
+            allowed_tools: Some("Read,Bash(git status)".to_string()),
             binary: Some("claude".to_string()),
             remote: Some(RemoteExec::new("mac-mini", "/Users/dev/it's $root").unwrap()),
         };
@@ -974,7 +981,7 @@ mod tests {
         assert_eq!(command.remote_host.as_deref(), Some("mac-mini"));
         assert_eq!(
             command.args.last().unwrap(),
-            "cd '/Users/dev/it'\\''s $root' && exec 'claude' '-p' 'say it'\\''s $HOME' '--output-format' 'stream-json' '--include-partial-messages' '--verbose' '--permission-mode' 'acceptEdits' '--allowedTools' 'Bash,Edit,Write,Read,Glob,Grep,WebSearch,WebFetch,TodoWrite' '--model' 'model with spaces' '--resume' 'session'\\''one'"
+            "cd '/Users/dev/it'\\''s $root' && exec \"$SHELL\" -lc ''\\''claude'\\'' '\\''-p'\\'' '\\''say it'\\''\\'\\'''\\''s $HOME'\\'' '\\''--output-format'\\'' '\\''stream-json'\\'' '\\''--include-partial-messages'\\'' '\\''--verbose'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--allowedTools'\\'' '\\''Read,Bash(git status)'\\'' '\\''--model'\\'' '\\''model with spaces'\\'' '\\''--effort'\\'' '\\''high'\\'' '\\''--resume'\\'' '\\''session'\\''\\'\\'''\\''one'\\'''"
         );
     }
 

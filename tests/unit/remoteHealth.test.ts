@@ -20,6 +20,24 @@ vi.mock("../../src/lib/remoteHost", () => ({
   remoteHostHealth: (host: string) => healthMock(host),
 }));
 
+// Controllable workspace store + always-on flag, so the startup prime loop can
+// be driven: projects loading AFTER the poller starts must still probe promptly.
+const ws = vi.hoisted(() => ({
+  setProjects: undefined as unknown as (p: { remoteHost: string | null }[]) => void,
+  reset: undefined as unknown as () => void,
+}));
+vi.mock("../../src/stores/workspace", async () => {
+  const { createStore } = await import("solid-js/store");
+  const [state, setState] = createStore({
+    projects: [] as { remoteHost: string | null }[],
+    loaded: false,
+  });
+  ws.setProjects = (projects) => setState({ projects, loaded: true });
+  ws.reset = () => setState({ projects: [], loaded: false });
+  return { workspace: state };
+});
+vi.mock("../../src/stores/flags", () => ({ flagEnabled: () => true }));
+
 import {
   distinctHosts,
   healthOf,
@@ -32,6 +50,8 @@ import {
   refreshHost,
   relTime,
   resetRemoteHealth,
+  startPolling,
+  stopPolling,
 } from "../../src/stores/remoteHealth";
 import type { RemoteHostHealth } from "../../src/lib/remoteHost";
 
@@ -52,8 +72,10 @@ describe("remoteHealth poller", () => {
   beforeEach(() => {
     resetRemoteHealth();
     healthMock.mockReset();
+    ws.reset();
   });
   afterEach(() => {
+    stopPolling();
     vi.useRealTimers();
   });
 
@@ -124,6 +146,56 @@ describe("remoteHealth poller", () => {
     it("is unknown before any probe", () => {
       expect(healthStatus("never")).toBe("unknown");
       expect(healthOf("never")).toBeNull();
+    });
+  });
+
+  describe("startup prime loop", () => {
+    it("probes bound hosts promptly when projects load AFTER the poller starts", async () => {
+      vi.useFakeTimers();
+      healthMock.mockResolvedValue(okHealth());
+      startPolling();
+      // Poller is up but the workspace hasn't loaded yet: nothing probed.
+      expect(healthMock).not.toHaveBeenCalled();
+      // loadWorkspace() lands a bound project — the next 2s re-check probes it
+      // instead of waiting a full 30s cadence for the first badge.
+      ws.setProjects([{ remoteHost: "late-box" }, { remoteHost: null }]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(healthMock).toHaveBeenCalledTimes(1);
+      expect(healthMock).toHaveBeenCalledWith("late-box");
+      expect(healthStatus("late-box")).toBe("ok");
+    });
+
+    it("stops re-checking once the workspace loaded with no bound hosts", async () => {
+      vi.useFakeTimers();
+      healthMock.mockResolvedValue(okHealth());
+      startPolling();
+      // Workspace loads with only local projects: the prime loop shuts off, and
+      // a host bound later waits for the normal cadence instead of a prime tick.
+      ws.setProjects([{ remoteHost: null }]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      ws.setProjects([{ remoteHost: "late-box" }, { remoteHost: null }]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(healthMock).not.toHaveBeenCalled();
+      // ...the 30s interval tick still picks it up.
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(healthMock).toHaveBeenCalledWith("late-box");
+    });
+
+    it("is bounded when the workspace never loads", async () => {
+      vi.useFakeTimers();
+      healthMock.mockResolvedValue(okHealth());
+      startPolling();
+      // 15 tries x 2s with nothing loaded exhausts the loop (the 30s interval
+      // tick also fires in this window, but sees no bound hosts).
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(healthMock).not.toHaveBeenCalled();
+      // A host appearing after exhaustion is NOT prime-probed within 2s...
+      ws.setProjects([{ remoteHost: "late-box" }]);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(healthMock).not.toHaveBeenCalled();
+      // ...but the regular cadence still reaches it.
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(healthMock).toHaveBeenCalledWith("late-box");
     });
   });
 

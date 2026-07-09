@@ -1025,7 +1025,7 @@ body.pf-resizing .pf-dock-panel {
 .pf-remote-panel {
   display: flex;
   flex-direction: column;
-  min-width: 220px;
+  min-width: calc(var(--pf-space-xxl) * 7);
 }
 .pf-remote-input {
   font-family: var(--pf-font-mono);
@@ -1060,7 +1060,7 @@ body.pf-resizing .pf-dock-panel {
 .pf-remote-probes {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--pf-space-xs) / 2);
   padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
 }
 .pf-remote-probes-host {
@@ -1106,7 +1106,7 @@ body.pf-resizing .pf-dock-panel {
   align-items: center;
   gap: var(--pf-space-xs);
   flex: none;
-  max-width: 96px;
+  max-width: calc(var(--pf-space-xxxl) * 2);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
   color: var(--pf-text-low);
@@ -1117,8 +1117,8 @@ body.pf-resizing .pf-dock-panel {
   white-space: nowrap;
 }
 .pf-remote-badge-dot {
-  width: 6px;
-  height: 6px;
+  width: calc(var(--pf-space-md) / 2);
+  height: calc(var(--pf-space-md) / 2);
   border-radius: var(--pf-radius-pill);
   background: var(--pf-text-low);
   flex: none;

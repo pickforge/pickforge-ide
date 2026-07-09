@@ -29,12 +29,20 @@ reset this file.
 - Workflow YAML parse check:
   `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 - `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.
+- `bun run test:unit` — 535 tests green, including the remote attach panel
+  state machine, remote health poller (dedupe/backoff/startup prime), and the
+  operator parser/dispatch/dock suites.
+- `bun run build` — `tsc --noEmit` + vite production build clean.
+- `bunx playwright test` — VRT snapshots unchanged (remote UI is flag-gated
+  and badge renders only for bound projects).
 
 ### Not tested yet
 
-- App build.
+- Tauri app bundle build.
 - Installer or updater flow.
 - Platform smoke checks.
+- Live second-machine remote attach smoke (real tailnet host: attach, probe
+  states, badge, detach).
 
 ### Release blockers
 

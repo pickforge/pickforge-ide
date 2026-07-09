@@ -121,15 +121,49 @@ function tick() {
   void pollHosts(distinctHosts(workspace.projects));
 }
 
+const PRIME_MS = 2_000;
+const PRIME_LIMIT = 15;
+
 let subscribers = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
+let primeTimer: ReturnType<typeof setInterval> | undefined;
 
-function start() {
+function stopPrime() {
+  if (primeTimer !== undefined) {
+    clearInterval(primeTimer);
+    primeTimer = undefined;
+  }
+}
+
+/** The poller usually starts before loadWorkspace() has populated projects, so
+ *  the initial tick sees no bound hosts and already-bound projects would wait a
+ *  full 30s for their first badge. Re-check on a short cadence until bound
+ *  hosts appear (tick once, then stop) or the workspace finished loading with
+ *  none bound — bounded so it can never spin forever. */
+function startPrime() {
+  let tries = 0;
+  primeTimer = setInterval(() => {
+    tries += 1;
+    if (distinctHosts(workspace.projects).length > 0) {
+      stopPrime();
+      tick();
+      return;
+    }
+    if (workspace.loaded || tries >= PRIME_LIMIT) stopPrime();
+  }, PRIME_MS);
+}
+
+/** Start the shared poller (idempotent). Views subscribe via useRemoteHealth;
+ *  exported so tests can drive the lifecycle directly. */
+export function startPolling(): void {
+  if (timer !== undefined) return;
   tick();
+  startPrime();
   timer = setInterval(tick, POLL_MS);
 }
 
-function stop() {
+export function stopPolling(): void {
+  stopPrime();
   if (timer !== undefined) {
     clearInterval(timer);
     timer = undefined;
@@ -140,10 +174,10 @@ function stop() {
  *  subscriber, stops when the last unmounts. */
 export function useRemoteHealth(): void {
   onMount(() => {
-    if (subscribers++ === 0) start();
+    if (subscribers++ === 0) startPolling();
   });
   onCleanup(() => {
-    if (--subscribers === 0) stop();
+    if (--subscribers === 0) stopPolling();
   });
 }
 

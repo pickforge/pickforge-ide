@@ -1,0 +1,1 @@
+{"v":1,"id":"intent-count-float","provenance":"typed","confidence":0.9,"projectRef":"Games List","action":{"action":"startSwarm","mode":"review","count":3.5,"goal":"Review the operator contract.","provider":"codex"}}

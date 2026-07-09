@@ -1,0 +1,1 @@
+{"v":1,"id":"intent-create-chat","provenance":"typed","confidence":0.93,"projectRef":"Games List","action":{"action":"createChat","provider":"codex","model":"gpt-5.5"}}

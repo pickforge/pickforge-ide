@@ -13,6 +13,7 @@ pub mod git;
 pub mod inspector;
 pub mod ios;
 pub mod mcp;
+pub mod operator;
 pub mod process;
 pub mod pty;
 pub mod storage;

@@ -194,6 +194,7 @@ describe("operatorDock store", () => {
     deps.dispatchIntent.mockResolvedValue({
       status: "needsConfirmation",
       summary: "Send prompt to active chat",
+      auditId: "audit-routed",
     } as DispatchResult);
     const s = await loadStore();
 
@@ -206,6 +207,7 @@ describe("operatorDock store", () => {
       summary: "Send prompt to active chat",
       inputText: "tell it hi",
       confidence: 0.74,
+      auditId: "audit-routed",
     });
     expect(previewPayloadLines(sendPrompt)).toContain("prompt: hi");
   });
@@ -597,6 +599,42 @@ describe("operatorDock store", () => {
     await s.confirmOperatorPreview();
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
     expect(auditUpdatesFor("audit-1")).toEqual([["audit-1", "denied", "dismissed"]]);
+  });
+
+  it("denies a stale routed needsConfirmation audit after the dock closes", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: sendPrompt,
+      confidence: 0.72,
+      latencyMs: 1000,
+    });
+    let resolveDispatch!: (r: DispatchResult) => void;
+    deps.dispatchIntent.mockReturnValue(
+      new Promise<DispatchResult>((resolve) => {
+        resolveDispatch = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("tell it hi");
+    const pending = s.submitOperatorCommand();
+    await flushAsync();
+    expect(deps.dispatchIntent).toHaveBeenCalledWith(sendPrompt, { inputText: "tell it hi" });
+
+    s.closeOperatorDock();
+    resolveDispatch({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+      auditId: "audit-routed",
+    });
+    await pending;
+    await flushAsync();
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(auditUpdatesFor("audit-routed")).toEqual([["audit-routed", "denied", "dismissed"]]);
   });
 
   it("keeps a failed result visible and does not clear input", async () => {

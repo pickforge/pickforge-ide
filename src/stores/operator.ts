@@ -45,7 +45,6 @@ import {
   launchError,
   resolveSelectedDevice,
   resolveScreenshotDevice,
-  screenshotTarget,
 } from "./runLaunch";
 import { setRunDevice } from "./runDevice";
 import {
@@ -781,20 +780,16 @@ async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchRes
     return { status: "failed", message: `Active run is not in project ${project.value.displayName}` };
   }
 
-  const target = screenshotTarget();
-  if (!target) {
-    return { status: "noop", summary: "no device-backed run/target" };
-  }
+  const vmPath = await captureVmScreenshot(project.value.projectRoot);
+  if (vmPath) return { status: "done", summary: `Captured screenshot ${vmPath}` };
+
   await refreshDevices();
   const device = resolveScreenshotDevice();
-  if (!device) return { status: "noop", summary: "no active device/session" };
-  const vmPath = target.inspectorKind === "vmService" && runConsole.status() === "running"
-    ? await captureVmScreenshot(project.value.projectRoot)
-    : null;
-  if (vmPath) return { status: "done", summary: `Captured screenshot ${vmPath}` };
-  const path = await captureDeviceScreenshot(project.value.projectRoot, device);
-  if (!path) return { status: "noop", summary: "no active device/session" };
-  return { status: "done", summary: `Captured screenshot ${path}` };
+  if (device) {
+    const path = await captureDeviceScreenshot(project.value.projectRoot, device);
+    if (path) return { status: "done", summary: `Captured screenshot ${path}` };
+  }
+  return { status: "noop", summary: "no device or VM session to capture" };
 }
 
 function unsupported(action: OperatorAction): DispatchResult | null {

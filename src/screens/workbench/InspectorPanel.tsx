@@ -14,12 +14,16 @@ import { IconRefresh } from "../../components/icons";
 import type { DeviceEntry } from "../../lib/device";
 import { setRunDevice } from "../../stores/runDevice";
 import { useDeviceList } from "../../stores/deviceList";
-import { compatibleDevices, deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
+import {
+  compatibleDevices,
+  currentDeviceTarget,
+  deviceKey,
+  deviceLabel,
+  resolveSelectedDevice,
+} from "../../stores/runLaunch";
 import { workspace } from "../../stores/workspace";
 import { connectVm, disconnectVm, setVmUrl, vmService } from "../../stores/vmService";
-import { runConsole } from "../../stores/runConsole";
-import { activeTarget } from "../../stores/runTargets";
-import { hasCapability, type InspectorKind, type RunTarget } from "../../lib/runTargets";
+import { hasCapability, type InspectorKind } from "../../lib/runTargets";
 import { WidgetTree } from "./WidgetTree";
 import { A11yTree } from "./A11yTree";
 import { CdpTree } from "./CdpTree";
@@ -37,10 +41,7 @@ export function InspectorPanel() {
   // Flutter VM / no-target inspector. Null when nothing is selected → legacy VM.
   // The target whose capabilities gate the rail: a LIVE run wins, else the
   // selected launcher target (same precedence as inspectorKind below).
-  const inspectTarget = (): RunTarget | null => {
-    const running = runConsole.status() === "running" ? runConsole.target() : null;
-    return running ?? activeTarget() ?? null;
-  };
+  const inspectTarget = currentDeviceTarget;
   const inspectorKind = (): InspectorKind | null =>
     inspectTarget()?.inspectorKind ?? null;
   // Honest capability gates so an absent capability mutes its action (with a

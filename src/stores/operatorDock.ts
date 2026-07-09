@@ -6,7 +6,7 @@ import { parseCommand } from "../lib/operatorParser";
 import { routeCommand } from "../lib/operatorRouter";
 import { dispatchIntent, type DispatchResult } from "./operator";
 import { flagEnabled } from "./flags";
-import { operatorAuditList, type OperatorAuditRow } from "../lib/db";
+import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
 import type { OperatorIntent } from "../lib/operatorIntent";
 import { onRouteChange } from "../router";
 
@@ -20,8 +20,11 @@ export type DockView =
     summary: string;
     inputText: string;
     confidence?: number;
+    auditId: string;
   }
   | { kind: "result"; result: DispatchResult };
+
+type PreviewDockView = Extract<DockView, { kind: "preview" }>;
 
 const RECENT_LIMIT = 5;
 
@@ -31,7 +34,7 @@ export const operatorDockOpen = open;
 const [input, setInput] = createSignal("");
 export const operatorInput = input;
 export function setOperatorInput(value: string) {
-  if (value !== input() && view().kind !== "idle") setView({ kind: "idle" });
+  if (value !== input() && view().kind !== "idle") resetView();
   setInput(value);
 }
 
@@ -46,6 +49,8 @@ export const operatorRecent = recent;
 const [busy, setBusy] = createSignal(false);
 export const operatorBusy = busy;
 
+const settledPreviewAudits = new Set<string>();
+
 export function openOperatorDock(): boolean {
   if (!flagEnabled("operator")) return false;
   setOpen(true);
@@ -57,7 +62,7 @@ export function closeOperatorDock() {
   requestEpoch++;
   setOpen(false);
   setInput("");
-  setView({ kind: "idle" });
+  resetView();
   setBusy(false);
 }
 
@@ -149,12 +154,14 @@ export async function confirmOperatorPreview(): Promise<void> {
   const current = view();
   if (current.kind !== "preview") return;
 
+  const auditId = current.auditId;
   const epoch = ++requestEpoch;
   setBusy(true);
   try {
     const result = await dispatchIntent(current.intent, {
       confirmed: true,
       inputText: current.inputText,
+      reuseAuditId: auditId,
     });
     if (epoch === requestEpoch) applyResult(result);
   } finally {
@@ -163,9 +170,68 @@ export async function confirmOperatorPreview(): Promise<void> {
   }
 }
 
-export function cancelOperatorPreview() {
+export async function cancelOperatorPreview(): Promise<void> {
   if (busy()) return;
-  if (view().kind === "preview") setView({ kind: "idle" });
+  const current = takePreview();
+  if (!current) return;
+  await settlePreviewAuditNow(current.auditId, "denied", "dismissed");
+}
+
+function resetView() {
+  if (!dismissPreview()) setView({ kind: "idle" });
+}
+
+function dismissPreview(): boolean {
+  if (busy()) return false;
+  const current = takePreview();
+  if (!current) return false;
+  settlePreviewAudit(current.auditId, "denied", "dismissed");
+  return true;
+}
+
+function takePreview(): PreviewDockView | null {
+  const current = view();
+  if (current.kind !== "preview") return null;
+  setView({ kind: "idle" });
+  return current;
+}
+
+function settlePreviewAudit(
+  auditId: string,
+  status: OperatorAuditRow["status"],
+  result: string,
+): void {
+  if (!claimPreviewAudit(auditId)) return;
+  void updatePreviewAudit(auditId, status, result);
+}
+
+async function settlePreviewAuditNow(
+  auditId: string,
+  status: OperatorAuditRow["status"],
+  result: string,
+): Promise<void> {
+  if (!claimPreviewAudit(auditId)) return;
+  await updatePreviewAudit(auditId, status, result);
+}
+
+function claimPreviewAudit(auditId: string): boolean {
+  if (settledPreviewAudits.has(auditId)) return false;
+  settledPreviewAudits.add(auditId);
+  return true;
+}
+
+async function updatePreviewAudit(
+  auditId: string,
+  status: OperatorAuditRow["status"],
+  result: string,
+): Promise<void> {
+  try {
+    await operatorAuditUpdate(auditId, status, result);
+  } catch (error) {
+    console.warn("[pickforge] operator audit update failed", error);
+  } finally {
+    await refreshRecent();
+  }
 }
 
 function applyResult(result: DispatchResult) {
@@ -180,7 +246,12 @@ async function submitIntent(
   confidence?: number,
 ) {
   const result = await dispatchIntent(intent, { inputText: text });
-  if (epoch !== requestEpoch) return;
+  if (epoch !== requestEpoch) {
+    if (result.status === "needsConfirmation") {
+      settlePreviewAudit(result.auditId, "denied", "dismissed");
+    }
+    return;
+  }
   if (result.status === "needsConfirmation") {
     setView({
       kind: "preview",
@@ -188,6 +259,7 @@ async function submitIntent(
       summary: result.summary,
       inputText: text,
       confidence,
+      auditId: result.auditId,
     });
   } else {
     applyResult(result);

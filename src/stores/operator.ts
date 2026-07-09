@@ -44,6 +44,7 @@ import {
   launchActiveTarget,
   launchError,
   resolveSelectedDevice,
+  resolveScreenshotDevice,
 } from "./runLaunch";
 import { setRunDevice } from "./runDevice";
 import {
@@ -67,12 +68,17 @@ import {
 export type DispatchResult =
   | { status: "done"; summary: string }
   | { status: "noop"; summary: string }
-  | { status: "needsConfirmation"; summary: string }
+  | { status: "needsConfirmation"; summary: string; auditId: string }
   | { status: "denied" | "failed" | "unsupported"; message: string };
+
+type DispatchResultDraft =
+  | Exclude<DispatchResult, { status: "needsConfirmation" }>
+  | { status: "needsConfirmation"; summary: string };
 
 export type DispatchOptions = {
   confirmed?: boolean;
   inputText?: string;
+  reuseAuditId?: string;
 };
 
 type Resolution<T> =
@@ -303,11 +309,11 @@ function summaryFor(intent: OperatorIntent): string {
   }
 }
 
-function resultText(result: DispatchResult): string {
+function resultText(result: DispatchResultDraft): string {
   return "summary" in result ? result.summary : result.message;
 }
 
-function auditStatusFor(result: DispatchResult): AuditStatus {
+function auditStatusFor(result: DispatchResultDraft): AuditStatus {
   switch (result.status) {
     case "done":
       return "done";
@@ -377,13 +383,16 @@ async function terminalResult(
   intent: OperatorIntent,
   tier: 0 | 1,
   projectRoot: string | null,
-  result: DispatchResult,
+  result: DispatchResultDraft,
   inputText: string | undefined,
 ): Promise<DispatchResult> {
   try {
     const auditId = await insertAudit(intent, tier, projectRoot, inputText);
-    await finishAudit(auditId, auditStatusFor(result), resultText(result));
-    return result;
+    const auditedResult: DispatchResult = result.status === "needsConfirmation"
+      ? { ...result, auditId }
+      : result;
+    await finishAudit(auditId, auditStatusFor(auditedResult), resultText(auditedResult));
+    return auditedResult;
   } catch (error) {
     return { status: "failed", message: errorText(error) };
   }
@@ -572,10 +581,6 @@ function activeRunTarget(): RunTarget | null {
   return runConsole.status() === "running" ? runConsole.target() : activeTarget();
 }
 
-function isDeviceBackedTarget(target: RunTarget | null): boolean {
-  return !!target?.needsDevice && target.deviceConvention !== "none";
-}
-
 function activeFlutterRunForProject(project: Project): Resolution<RunTarget> {
   if (runConsole.status() !== "running") {
     return { ok: false, message: `No active Flutter run in project ${project.displayName}` };
@@ -757,10 +762,11 @@ async function captureVmScreenshot(projectRoot: string): Promise<string | null> 
   return paths.pngPath;
 }
 
-async function captureDeviceScreenshot(projectRoot: string): Promise<string | null> {
-  await refreshDevices();
-  const device = resolveSelectedDevice();
-  if (!device?.serial || device.state !== "running") return null;
+async function captureDeviceScreenshot(
+  projectRoot: string,
+  device: DeviceEntry,
+): Promise<string | null> {
+  if (!device.serial) return null;
   const dir = await inspectDir(captureInRepo(projectRoot), projectRoot);
   return device.kind === "simulator"
     ? iosScreenshot(device.serial, dir, "operator-screenshot.png")
@@ -774,16 +780,16 @@ async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchRes
     return { status: "failed", message: `Active run is not in project ${project.value.displayName}` };
   }
 
-  const target = activeRunTarget();
-  const vmPath = target?.inspectorKind === "vmService"
-    ? await captureVmScreenshot(project.value.projectRoot)
-    : null;
-  if (!vmPath && !isDeviceBackedTarget(target)) {
-    return { status: "noop", summary: "no device-backed run/target" };
+  const vmPath = await captureVmScreenshot(project.value.projectRoot);
+  if (vmPath) return { status: "done", summary: `Captured screenshot ${vmPath}` };
+
+  await refreshDevices();
+  const device = resolveScreenshotDevice();
+  if (device) {
+    const path = await captureDeviceScreenshot(project.value.projectRoot, device);
+    if (path) return { status: "done", summary: `Captured screenshot ${path}` };
   }
-  const path = vmPath ?? await captureDeviceScreenshot(project.value.projectRoot);
-  if (!path) return { status: "noop", summary: "no active device/session" };
-  return { status: "done", summary: `Captured screenshot ${path}` };
+  return { status: "noop", summary: "no device or VM session to capture" };
 }
 
 function unsupported(action: OperatorAction): DispatchResult | null {
@@ -948,7 +954,7 @@ export async function dispatchIntent(
 
   let auditId: string;
   try {
-    auditId = await insertAudit(intent, tier, projectRoot, opts.inputText);
+    auditId = opts.reuseAuditId ?? await insertAudit(intent, tier, projectRoot, opts.inputText);
   } catch (error) {
     return { status: "failed", message: errorText(error) };
   }

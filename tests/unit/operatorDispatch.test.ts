@@ -124,6 +124,7 @@ const deps = vi.hoisted(() => {
     swarmRuns: vi.fn(() => runs),
     refreshDevices: vi.fn(async () => devices),
     androidLaunchAvd: vi.fn(),
+    iosBootDevice: vi.fn(),
     adbScreenshot: vi.fn(),
     iosScreenshot: vi.fn(),
     setRunDevice: vi.fn(),
@@ -219,6 +220,7 @@ const deps = vi.hoisted(() => {
       this.swarmRuns.mockClear();
       this.refreshDevices.mockReset().mockResolvedValue(devices);
       this.androidLaunchAvd.mockReset().mockResolvedValue(undefined);
+      this.iosBootDevice.mockReset().mockResolvedValue(undefined);
       this.adbScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
       this.iosScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
       this.setRunDevice.mockReset().mockResolvedValue(undefined);
@@ -319,6 +321,7 @@ vi.mock("../../src/stores/deviceList", () => ({
 vi.mock("../../src/lib/device", () => ({
   androidLaunchAvd: deps.androidLaunchAvd,
   adbScreenshot: deps.adbScreenshot,
+  iosBootDevice: deps.iosBootDevice,
   iosScreenshot: deps.iosScreenshot,
 }));
 
@@ -848,18 +851,21 @@ describe("dispatchIntent", () => {
   });
 
   it("fails launchRun when another boot is already in progress", async () => {
-    deps.targets.push(runTarget("detected", "Flutter"));
-    deps.launchActiveTarget.mockImplementation(async () => {
-      deps.runLaunchState.booting = true;
-    });
+    deps.targets.push(
+      runTarget("detected", "Flutter"),
+      runTarget("vscode-1", "Web Debug", { needsDevice: false, deviceConvention: "none" }),
+    );
+    deps.runLaunchState.booting = true;
     const { dispatchIntent } = await loadStore();
 
-    const result = await dispatchIntent(intent({ action: "launchRun", target: null }));
+    const result = await dispatchIntent(intent({ action: "launchRun", target: "web debug" }));
 
     expect(result).toEqual({
       status: "failed",
       message: "Run launch is already in progress",
     });
+    expect(deps.setActiveTargetId).not.toHaveBeenCalled();
+    expect(deps.launchActiveTarget).not.toHaveBeenCalled();
     expect(auditUpdateStatus()).toBe("failed");
   });
 
@@ -889,6 +895,23 @@ describe("dispatchIntent", () => {
     expect(deps.refreshDevices).toHaveBeenCalledTimes(1);
     expect(deps.setRunDevice).toHaveBeenCalledWith("/repo/app", "Pixel_8_API_35");
     expect(deps.androidLaunchAvd).toHaveBeenCalledWith("Pixel_8_API_35");
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("launches a stopped simulator by resolved name and selects it for the project", async () => {
+    deps.devices.push(device("iPhone 15", {
+      serial: "SIM-123",
+      avdId: null,
+      kind: "simulator",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "iphone" }));
+
+    expect(result).toEqual({ status: "done", summary: "Launched simulator iPhone 15" });
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/repo/app", "SIM-123");
+    expect(deps.iosBootDevice).toHaveBeenCalledWith("SIM-123");
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
     expect(auditUpdateStatus()).toBe("done");
   });
 
@@ -991,6 +1014,7 @@ describe("dispatchIntent", () => {
   });
 
   it("enters Flutter select mode through the VM service seam", async () => {
+    setActiveRun();
     deps.vmFindIsolate.mockResolvedValue("isolates/1");
     const { dispatchIntent } = await loadStore();
 
@@ -1002,6 +1026,7 @@ describe("dispatchIntent", () => {
   });
 
   it("returns noop for select mode when there is no VM session", async () => {
+    setActiveRun();
     deps.vmFindIsolate.mockRejectedValue(new Error("no VM"));
     const { dispatchIntent } = await loadStore();
 
@@ -1010,6 +1035,26 @@ describe("dispatchIntent", () => {
     expect(result).toEqual({ status: "noop", summary: "no active device/session" });
     expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
     expect(auditUpdateStatus()).toBe("noop");
+  });
+
+  it("fails select mode when the active run is not a Flutter VM-service target", async () => {
+    setActiveRun(runTarget("detected", "React Native", {
+      capabilities: ["launch", "stop", "inspectSelection"],
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+      logSource: "logcat",
+    }));
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "enterSelectMode" }));
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Active run is not a Flutter VM-service target",
+    });
+    expect(deps.vmShowSelectMode).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("failed");
   });
 
   it("fails select mode when projectRef is not the active project", async () => {
@@ -1056,6 +1101,28 @@ describe("dispatchIntent", () => {
       "operator-screenshot.png",
     );
     expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("does not fall back to a device screenshot for a no-device target", async () => {
+    deps.targets.push(runTarget("web", "Web", {
+      capabilities: ["detect", "captureScreenshot"],
+      needsDevice: false,
+      deviceConvention: "none",
+      inspectorKind: "cdp",
+    }));
+    deps.devices.push(device("Pixel 8", {
+      serial: "emulator-5554",
+      avdId: "Pixel_8",
+      state: "running",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({ status: "noop", summary: "no device-backed run/target" });
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.iosScreenshot).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("noop");
   });
 
   it("captures a VM screenshot when a selected Flutter widget is available", async () => {

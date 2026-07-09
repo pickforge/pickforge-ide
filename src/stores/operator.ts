@@ -11,6 +11,7 @@ import * as db from "../lib/db";
 import {
   adbScreenshot,
   androidLaunchAvd,
+  iosBootDevice,
   iosScreenshot,
   type DeviceEntry,
 } from "../lib/device";
@@ -571,6 +572,24 @@ function activeRunTarget(): RunTarget | null {
   return runConsole.status() === "running" ? runConsole.target() : activeTarget();
 }
 
+function isDeviceBackedTarget(target: RunTarget | null): boolean {
+  return !!target?.needsDevice && target.deviceConvention !== "none";
+}
+
+function activeFlutterRunForProject(project: Project): Resolution<RunTarget> {
+  if (runConsole.status() !== "running") {
+    return { ok: false, message: `No active Flutter run in project ${project.displayName}` };
+  }
+  if (!activeRunBelongsToProject(project.projectRoot)) {
+    return { ok: false, message: `Active run is not in project ${project.displayName}` };
+  }
+  const target = runConsole.target();
+  if (target?.inspectorKind !== "vmService") {
+    return { ok: false, message: "Active run is not a Flutter VM-service target" };
+  }
+  return { ok: true, value: target };
+}
+
 function resolveDeviceReference(ref: string, devices: DeviceEntry[]): Resolution<DeviceEntry> {
   return resolveReference(
     "Device",
@@ -582,9 +601,17 @@ function resolveDeviceReference(ref: string, devices: DeviceEntry[]): Resolution
   );
 }
 
-function defaultEmulator(devices: DeviceEntry[]): DeviceEntry | null {
+function isLaunchableVirtualDevice(device: DeviceEntry): boolean {
+  return device.kind === "emulator" || device.kind === "simulator";
+}
+
+function virtualDeviceKindLabel(device: DeviceEntry): "emulator" | "simulator" {
+  return device.kind === "simulator" ? "simulator" : "emulator";
+}
+
+function defaultVirtualDevice(devices: DeviceEntry[]): DeviceEntry | null {
   const selected = resolveSelectedDevice();
-  if (selected?.kind === "emulator") {
+  if (selected && isLaunchableVirtualDevice(selected)) {
     const key = deviceKey(selected);
     const match = devices.find((device) => deviceKey(device) === key);
     if (match) return match;
@@ -598,15 +625,15 @@ async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | 
   const project = await activeProjectForDeviceIntent(intent);
   if (!project.ok) return { status: "failed", message: project.message };
 
-  const devices = (await refreshDevices()).filter((device) => device.kind === "emulator");
-  const fallback = defaultEmulator(devices);
+  const devices = (await refreshDevices()).filter(isLaunchableVirtualDevice);
+  const fallback = defaultVirtualDevice(devices);
   const resolved = deviceRef
     ? resolveDeviceReference(deviceRef, devices)
     : fallback
       ? { ok: true as const, value: fallback }
       : {
           ok: false as const,
-          message: `No emulator available. Candidates: ${candidateList(devices.map(deviceLabel))}`,
+          message: `No virtual device available. Candidates: ${candidateList(devices.map(deviceLabel))}`,
         };
   if (!resolved.ok) return { status: "failed", message: resolved.message };
 
@@ -616,7 +643,14 @@ async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | 
   }
   setRunDevice(project.value.projectRoot, deviceKey(device));
   if (device.state === "running") {
-    return { status: "done", summary: `Selected emulator ${deviceLabel(device)}` };
+    return { status: "done", summary: `Selected ${virtualDeviceKindLabel(device)} ${deviceLabel(device)}` };
+  }
+  if (device.kind === "simulator") {
+    if (!device.serial) {
+      return { status: "failed", message: `Device "${device.displayName}" cannot be launched` };
+    }
+    await iosBootDevice(device.serial);
+    return { status: "done", summary: `Launched simulator ${device.displayName}` };
   }
   if (!device.avdId) {
     return { status: "failed", message: `Device "${device.displayName}" cannot be launched` };
@@ -632,6 +666,7 @@ async function launchRunIntent(intent: OperatorIntent, targetRef: string | null)
   if (runConsole.status() === "running") {
     return { status: "noop", summary: "run already active" };
   }
+  if (isBooting()) return { status: "failed", message: "Run launch is already in progress" };
 
   const target = resolveRunTargetReference(targetRef);
   if (!target.ok) return { status: "failed", message: target.message };
@@ -681,6 +716,8 @@ async function runControlIntent(
 async function enterSelectModeIntent(intent: OperatorIntent): Promise<DispatchResult> {
   const project = await activeProjectForDeviceIntent(intent);
   if (!project.ok) return { status: "failed", message: project.message };
+  const target = activeFlutterRunForProject(project.value);
+  if (!target.ok) return { status: "failed", message: target.message };
   let isolate: string;
   try {
     isolate = await vmFindIsolate();
@@ -721,6 +758,9 @@ async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchRes
   const vmPath = target?.inspectorKind === "vmService"
     ? await captureVmScreenshot(project.value.projectRoot)
     : null;
+  if (!vmPath && !isDeviceBackedTarget(target)) {
+    return { status: "noop", summary: "no device-backed run/target" };
+  }
   const path = vmPath ?? await captureDeviceScreenshot(project.value.projectRoot);
   if (!path) return { status: "noop", summary: "no active device/session" };
   return { status: "done", summary: `Captured screenshot ${path}` };

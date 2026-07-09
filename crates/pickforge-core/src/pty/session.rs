@@ -16,13 +16,16 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use super::env::normalize_pty_env;
 use super::shell::{resolve_shell, ShellInvocation};
 use crate::process::user_shell_environment;
+use crate::remote::{shell_quote_argv, ssh_base_args, SshTarget};
 
 /// Events emitted by a running PTY session.
 #[derive(Debug, Clone)]
 pub enum PtyEvent {
     /// A chunk of raw bytes read from the pty master.
     Output(Vec<u8>),
-    /// The shell exited (EOF on the master). `code` is best-effort.
+    /// The shell exited (EOF on the master). `code` is best-effort. For remote
+    /// SSH PTYs, `255` means SSH transport/auth failure; remote command exits
+    /// keep their normal status.
     Exit(Option<i32>),
 }
 
@@ -41,14 +44,24 @@ where
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePty {
+    pub host: String,
+    pub remote_root: String,
+}
+
 /// Options for spawning a shell. `rows`/`cols` of 0 default to 24×80.
 #[derive(Debug, Clone, Default)]
 pub struct SpawnOptions {
+    /// Local working directory for non-remote spawns. Remote PTYs ignore this;
+    /// `remote_root` handles the remote `cd`.
     pub cwd: Option<String>,
     pub rows: u16,
     pub cols: u16,
     /// Extra environment merged on top of the normalised login-shell env —
-    /// the `PICKFORGE_*` vars (and an IPC endpoint) go here.
+    /// the `PICKFORGE_*` vars (and an IPC endpoint) go here. Remote PTYs apply
+    /// this only to the local `ssh` client; this slice does not forward env to
+    /// the remote shell.
     pub extra_env: HashMap<String, String>,
     /// When set, run this command (`$SHELL -c <command>`) once and exit, instead
     /// of an interactive shell. The Debug Console uses this so a finished run
@@ -66,12 +79,19 @@ pub struct SpawnOptions {
     /// — the session, and the shell inside it, must outlive the pane. A raw
     /// interactive shell leaves this false and keeps the process-group teardown.
     pub detach_on_drop: bool,
+    /// When set, spawn a local `ssh -tt` client and run the shell/command under
+    /// `remote_root` on the target host.
+    pub remote: Option<RemotePty>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PtyError {
     #[error("pty session {0} not found")]
     NotFound(u32),
+    #[error("invalid remote PTY root")]
+    InvalidRemoteRoot,
+    #[error(transparent)]
+    Ssh(#[from] crate::remote::SshError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("{0}")]
@@ -133,14 +153,6 @@ impl PtyManager {
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
 
-        let pty_system = native_pty_system();
-        let pair = pty_system.openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
-
         // One-shot command mode (Debug Console) is ALWAYS a raw `$SHELL -c` and
         // never session-backed — a `program_override` would be wrong here (it
         // would reattach to a stale session instead of running the command), so
@@ -151,27 +163,42 @@ impl PtyManager {
             .filter(|c| !c.trim().is_empty())
             .cloned();
 
-        let (program, args) = match (&one_shot, opts.program_override.clone()) {
-            // Session-backed chat shell: spawn the dtach/tmux client verbatim.
-            (None, Some((prog, prog_args))) => (prog, prog_args),
-            // Raw shell (interactive, or one-shot `$SHELL -c <command>`).
-            _ => {
-                let ShellInvocation { program, mut args } = resolve_shell();
-                if let Some(command) = one_shot.as_ref() {
-                    args.push("-c".to_string());
-                    args.push(command.clone());
+        let (program, args) = if let Some(remote) = opts.remote.as_ref() {
+            (
+                "ssh".to_string(),
+                remote_pty_ssh_args(remote, one_shot.as_deref())?,
+            )
+        } else {
+            match (&one_shot, opts.program_override.clone()) {
+                // Session-backed chat shell: spawn the dtach/tmux client verbatim.
+                (None, Some((prog, prog_args))) => (prog, prog_args),
+                // Raw shell (interactive, or one-shot `$SHELL -c <command>`).
+                _ => {
+                    let ShellInvocation { program, mut args } = resolve_shell();
+                    if let Some(command) = one_shot.as_ref() {
+                        args.push("-c".to_string());
+                        args.push(command.clone());
+                    }
+                    (program, args)
                 }
-                (program, args)
             }
         };
         // A one-shot command can never run detached — it must reap normally.
         let detach_on_drop = opts.detach_on_drop && one_shot.is_none();
 
+        let pty_system = native_pty_system();
+        let pair = pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+
         let mut cmd = CommandBuilder::new(program);
         for arg in args {
             cmd.arg(arg);
         }
-        if let Some(cwd) = opts.cwd.filter(|c| !c.is_empty()) {
+        if let Some(cwd) = local_spawn_cwd(opts.remote.as_ref(), opts.cwd.as_deref()) {
             cmd.cwd(cwd);
         }
         // Base the shell's env on the resolved login-shell environment (so PATH
@@ -365,6 +392,47 @@ impl PtyManager {
     }
 }
 
+fn remote_pty_ssh_args(remote: &RemotePty, command: Option<&str>) -> Result<Vec<String>, PtyError> {
+    let target = SshTarget::new(remote.host.clone())?;
+    validate_remote_root(&remote.remote_root)?;
+
+    let mut args = ssh_base_args();
+    args.push("-o".to_string());
+    args.push("EscapeChar=none".to_string());
+    args.push("-tt".to_string());
+    args.push("--".to_string());
+    args.push(target.host);
+    args.push(remote_pty_command(&remote.remote_root, command));
+    Ok(args)
+}
+
+fn remote_pty_command(remote_root: &str, command: Option<&str>) -> String {
+    let quoted_root = shell_quote_argv(&[remote_root]);
+    match command {
+        Some(command) => format!(
+            "cd {quoted_root} && exec \"$SHELL\" -lc {}",
+            shell_quote_argv(&[command])
+        ),
+        None => format!("cd {quoted_root} && exec \"$SHELL\" -l"),
+    }
+}
+
+fn local_spawn_cwd<'a>(remote: Option<&RemotePty>, cwd: Option<&'a str>) -> Option<&'a str> {
+    if remote.is_some() {
+        None
+    } else {
+        cwd.filter(|c| !c.is_empty())
+    }
+}
+
+fn validate_remote_root(remote_root: &str) -> Result<(), PtyError> {
+    if remote_root.is_empty() || !remote_root.starts_with('/') || remote_root.contains('\0') {
+        Err(PtyError::InvalidRemoteRoot)
+    } else {
+        Ok(())
+    }
+}
+
 fn read_loop<S: PtySink>(
     id: u32,
     mut reader: Box<dyn Read + Send>,
@@ -451,6 +519,108 @@ fn terminate_process_groups(shell_pid: Option<u32>, foreground_leader: Option<li
         // SAFETY: as above; SIGKILL is unconditionally fatal.
         unsafe {
             libc::killpg(*pgid, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote(host: &str, remote_root: &str) -> RemotePty {
+        RemotePty {
+            host: host.to_string(),
+            remote_root: remote_root.to_string(),
+        }
+    }
+
+    #[test]
+    fn remote_pty_argv_without_command_starts_login_shell_under_root() {
+        assert_eq!(
+            remote_pty_ssh_args(&remote("mac-mini", "/Users/dev/app"), None).unwrap(),
+            vec![
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                "EscapeChar=none",
+                "-tt",
+                "--",
+                "mac-mini",
+                "cd '/Users/dev/app' && exec \"$SHELL\" -l",
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_pty_argv_with_command_runs_remote_login_shell_c_under_root() {
+        assert_eq!(
+            remote_pty_ssh_args(
+                &remote("mac-mini", "/Users/dev/app"),
+                Some("bun run test:unit")
+            )
+            .unwrap(),
+            vec![
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                "EscapeChar=none",
+                "-tt",
+                "--",
+                "mac-mini",
+                "cd '/Users/dev/app' && exec \"$SHELL\" -lc 'bun run test:unit'",
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_pty_argv_quotes_root_and_command_as_data() {
+        let args = remote_pty_ssh_args(
+            &remote("mac-mini", "/Users/dev/it's $root`tick`"),
+            Some("printf '%s' \"$SHELL\" \"$HOME\" `uname`"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            args.last().unwrap(),
+            r#"cd '/Users/dev/it'\''s $root`tick`' && exec "$SHELL" -lc 'printf '\''%s'\'' "$SHELL" "$HOME" `uname`'"#
+        );
+    }
+
+    #[test]
+    fn remote_pty_ignores_local_cwd() {
+        let remote = remote("mac-mini", "/Users/dev/app");
+        let cwd = "/does/not/exist";
+        assert_eq!(local_spawn_cwd(Some(&remote), Some(cwd)), None);
+        assert_eq!(local_spawn_cwd(None, Some(cwd)), Some(cwd));
+    }
+
+    #[test]
+    fn remote_pty_rejects_invalid_hosts() {
+        for host in ["", "-oProxyCommand=sh"] {
+            assert!(
+                matches!(
+                    remote_pty_ssh_args(&remote(host, "/Users/dev/app"), None),
+                    Err(PtyError::Ssh(crate::remote::SshError::InvalidHost))
+                ),
+                "{host:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_pty_rejects_invalid_roots() {
+        for root in ["", "relative/path", "\0", "/Users/dev/app\0bad"] {
+            assert!(
+                matches!(
+                    remote_pty_ssh_args(&remote("mac-mini", root), None),
+                    Err(PtyError::InvalidRemoteRoot)
+                ),
+                "{root:?}"
+            );
         }
     }
 }

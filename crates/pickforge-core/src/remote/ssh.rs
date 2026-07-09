@@ -34,18 +34,27 @@ pub fn ssh_run(
 }
 
 pub(crate) fn build_ssh_args(host: &str, argv: &[&str]) -> Result<Vec<String>, SshError> {
-    validate_host(host)?;
-    Ok(vec![
-        "-o".into(),
-        "BatchMode=yes".into(),
+    let target = SshTarget::new(host)?;
+    let mut args = ssh_batch_args();
+    args.push("--".into());
+    args.push(target.host);
+    args.push(shell_quote_argv(argv));
+    Ok(args)
+}
+
+pub(crate) fn ssh_base_args() -> Vec<String> {
+    vec![
         "-o".into(),
         "ConnectTimeout=5".into(),
         "-o".into(),
         "StrictHostKeyChecking=accept-new".into(),
-        "--".into(),
-        host.into(),
-        shell_quote_argv(argv),
-    ])
+    ]
+}
+
+fn ssh_batch_args() -> Vec<String> {
+    let mut args = vec!["-o".into(), "BatchMode=yes".into()];
+    args.extend(ssh_base_args());
+    args
 }
 
 pub(crate) fn shell_quote_argv(argv: &[&str]) -> String {

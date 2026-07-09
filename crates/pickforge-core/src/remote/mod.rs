@@ -31,6 +31,7 @@ pub use protocol::{
 pub use server::{
     spawn_remote_http_server, RemoteHttpServer, RemoteHttpServerInfo, RemoteServerError,
 };
+pub(crate) use ssh::{shell_quote_argv, ssh_base_args};
 pub use ssh::{ssh_run, SshError, SshTarget};
 pub use tailscale::{
     listener_from_parts, tailscale_ssh_set, tailscale_status, TailscaleStatus,

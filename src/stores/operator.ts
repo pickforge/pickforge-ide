@@ -44,6 +44,8 @@ import {
   launchActiveTarget,
   launchError,
   resolveSelectedDevice,
+  resolveScreenshotDevice,
+  screenshotTarget,
 } from "./runLaunch";
 import { setRunDevice } from "./runDevice";
 import {
@@ -77,6 +79,7 @@ type DispatchResultDraft =
 export type DispatchOptions = {
   confirmed?: boolean;
   inputText?: string;
+  reuseAuditId?: string;
 };
 
 type Resolution<T> =
@@ -579,14 +582,6 @@ function activeRunTarget(): RunTarget | null {
   return runConsole.status() === "running" ? runConsole.target() : activeTarget();
 }
 
-function isDeviceBackedTarget(target: RunTarget | null): boolean {
-  return !!target?.needsDevice && target.deviceConvention !== "none";
-}
-
-function supportsScreenshotInspection(target: RunTarget | null): boolean {
-  return target?.inspectorKind === "vmService" || isDeviceBackedTarget(target);
-}
-
 function activeFlutterRunForProject(project: Project): Resolution<RunTarget> {
   if (runConsole.status() !== "running") {
     return { ok: false, message: `No active Flutter run in project ${project.displayName}` };
@@ -768,10 +763,11 @@ async function captureVmScreenshot(projectRoot: string): Promise<string | null> 
   return paths.pngPath;
 }
 
-async function captureDeviceScreenshot(projectRoot: string): Promise<string | null> {
-  await refreshDevices();
-  const device = resolveSelectedDevice();
-  if (!device?.serial || device.state !== "running") return null;
+async function captureDeviceScreenshot(
+  projectRoot: string,
+  device: DeviceEntry,
+): Promise<string | null> {
+  if (!device.serial) return null;
   const dir = await inspectDir(captureInRepo(projectRoot), projectRoot);
   return device.kind === "simulator"
     ? iosScreenshot(device.serial, dir, "operator-screenshot.png")
@@ -781,23 +777,22 @@ async function captureDeviceScreenshot(projectRoot: string): Promise<string | nu
 async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchResult> {
   const project = await activeProjectForDeviceIntent(intent);
   if (!project.ok) return { status: "failed", message: project.message };
-  if (runConsole.status() !== "running") {
-    return { status: "noop", summary: "no device-backed run/target" };
-  }
-  if (!activeRunBelongsToProject(project.value.projectRoot)) {
+  if (runConsole.status() === "running" && !activeRunBelongsToProject(project.value.projectRoot)) {
     return { status: "failed", message: `Active run is not in project ${project.value.displayName}` };
   }
 
-  const target = runConsole.target();
-  if (!supportsScreenshotInspection(target)) {
+  const target = screenshotTarget();
+  if (!target) {
     return { status: "noop", summary: "no device-backed run/target" };
   }
-  const vmPath = target?.inspectorKind === "vmService"
+  await refreshDevices();
+  const device = resolveScreenshotDevice();
+  if (!device) return { status: "noop", summary: "no active device/session" };
+  const vmPath = target.inspectorKind === "vmService" && runConsole.status() === "running"
     ? await captureVmScreenshot(project.value.projectRoot)
     : null;
   if (vmPath) return { status: "done", summary: `Captured screenshot ${vmPath}` };
-  if (!isDeviceBackedTarget(target)) return { status: "noop", summary: "no active device/session" };
-  const path = await captureDeviceScreenshot(project.value.projectRoot);
+  const path = await captureDeviceScreenshot(project.value.projectRoot, device);
   if (!path) return { status: "noop", summary: "no active device/session" };
   return { status: "done", summary: `Captured screenshot ${path}` };
 }
@@ -964,7 +959,7 @@ export async function dispatchIntent(
 
   let auditId: string;
   try {
-    auditId = await insertAudit(intent, tier, projectRoot, opts.inputText);
+    auditId = opts.reuseAuditId ?? await insertAudit(intent, tier, projectRoot, opts.inputText);
   } catch (error) {
     return { status: "failed", message: errorText(error) };
   }

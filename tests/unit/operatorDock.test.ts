@@ -293,6 +293,7 @@ describe("operatorDock store", () => {
     expect(deps.dispatchIntent).toHaveBeenLastCalledWith(sendPrompt, {
       confirmed: true,
       inputText: "send hi",
+      reuseAuditId: "audit-1",
     });
     expect(s.operatorView()).toEqual({
       kind: "result",
@@ -456,6 +457,11 @@ describe("operatorDock store", () => {
     await s.submitOperatorCommand();
     const confirming = s.confirmOperatorPreview();
     expect(s.operatorBusy()).toBe(true);
+    expect(deps.dispatchIntent).toHaveBeenLastCalledWith(sendPrompt, {
+      confirmed: true,
+      inputText: "send hi",
+      reuseAuditId: "audit-1",
+    });
 
     void s.cancelOperatorPreview();
     expect(s.operatorView().kind).toBe("preview");
@@ -491,6 +497,11 @@ describe("operatorDock store", () => {
     await s.submitOperatorCommand();
     const confirming = s.confirmOperatorPreview();
     expect(s.operatorBusy()).toBe(true);
+    expect(deps.dispatchIntent).toHaveBeenLastCalledWith(sendPrompt, {
+      confirmed: true,
+      inputText: "send hi",
+      reuseAuditId: "audit-1",
+    });
 
     s.closeOperatorDock();
     await flushAsync();
@@ -499,7 +510,7 @@ describe("operatorDock store", () => {
     resolveDispatch({ status: "done", summary: "Sent prompt to Chat" });
     await confirming;
 
-    expect(auditUpdatesFor("audit-1")).toEqual([["audit-1", "done", "Sent prompt to Chat"]]);
+    expect(auditUpdatesFor("audit-1")).toEqual([]);
     expect(s.operatorDockOpen()).toBe(false);
     expect(s.operatorView()).toEqual({ kind: "idle" });
   });

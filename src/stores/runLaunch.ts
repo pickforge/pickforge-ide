@@ -12,7 +12,7 @@ import { armVmAutoConnect, disconnectVm } from "./vmService";
 import { ensureMcpRunning, mcpRunStarted } from "./mcp";
 import { workspace } from "./workspace";
 import { androidLaunchAvd, iosBootDevice, type DeviceEntry } from "../lib/device";
-import { isCompatibleDevice, withDevice, type RunTarget } from "../lib/runTargets";
+import { hasCapability, isCompatibleDevice, withDevice, type RunTarget } from "../lib/runTargets";
 import { BootEpoch } from "../lib/bootEpoch";
 
 const BOOT_TIMEOUT_MS = 120_000;
@@ -48,7 +48,7 @@ export function cancelBoot(): void {
 /** The target whose platform constrains the device list: a LIVE run wins (it's
  *  what's on the device), else the selected launcher target — the same
  *  precedence the Debug Console and Inspector use. */
-function currentDeviceTarget(): RunTarget | null {
+export function currentDeviceTarget(): RunTarget | null {
   const running = runConsole.status() === "running" ? runConsole.target() : null;
   return running ?? activeTarget() ?? null;
 }
@@ -81,6 +81,22 @@ export function resolveSelectedDevice(): DeviceEntry | null {
     list.find((d) => d.state === "stopped") ??
     null
   );
+}
+
+export function screenshotTarget(): RunTarget | null {
+  const target = currentDeviceTarget();
+  if (!hasCapability(target, "captureScreenshot")) return null;
+  return target?.inspectorKind === "vmService" || target?.deviceConvention !== "none"
+    ? target
+    : null;
+}
+
+export function resolveScreenshotDevice(): DeviceEntry | null {
+  const target = screenshotTarget();
+  if (!target) return null;
+  const device = resolveSelectedDevice();
+  if (!device?.serial || device.state !== "running") return null;
+  return isCompatibleDevice(target, device.kind) ? device : null;
 }
 
 /** A stable per-entry key for selection/persistence (serial if running, else

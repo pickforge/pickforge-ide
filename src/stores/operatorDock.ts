@@ -161,8 +161,8 @@ export async function confirmOperatorPreview(): Promise<void> {
     const result = await dispatchIntent(current.intent, {
       confirmed: true,
       inputText: current.inputText,
+      reuseAuditId: auditId,
     });
-    await settlePreviewAuditNow(auditId, auditStatusForResult(result), resultText(result));
     if (epoch === requestEpoch) applyResult(result);
   } finally {
     if (epoch === requestEpoch) setBusy(false);
@@ -263,26 +263,6 @@ async function submitIntent(
     });
   } else {
     applyResult(result);
-  }
-}
-
-function resultText(result: DispatchResult): string {
-  return "summary" in result ? result.summary : result.message;
-}
-
-function auditStatusForResult(result: DispatchResult): OperatorAuditRow["status"] {
-  switch (result.status) {
-    case "done":
-      return "done";
-    case "noop":
-      return "noop";
-    case "needsConfirmation":
-      return "needs_confirmation";
-    case "denied":
-      return "denied";
-    case "failed":
-    case "unsupported":
-      return "failed";
   }
 }
 

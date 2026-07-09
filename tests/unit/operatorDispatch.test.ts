@@ -75,9 +75,35 @@ const deps = vi.hoisted(() => {
   };
   let activeTargetId = "";
   const activeTarget = () => targets.find((target) => target.id === activeTargetId) ?? targets[0] ?? null;
+  const currentDeviceTarget = () =>
+    runConsoleState.status === "running" ? runConsoleState.target : activeTarget();
+  const isCompatibleDevice = (
+    target: RunTarget | null,
+    kind: DeviceEntry["kind"],
+  ) => {
+    if (target?.deviceConvention === "xcodeDestination") return kind === "simulator";
+    if (target?.deviceConvention === "rnDevice" || target?.deviceConvention === "env") {
+      return kind !== "simulator";
+    }
+    return true;
+  };
+  const screenshotTarget = () => {
+    const target = currentDeviceTarget();
+    if (!target?.capabilities.includes("captureScreenshot")) return null;
+    return target.inspectorKind === "vmService" || target.deviceConvention !== "none"
+      ? target
+      : null;
+  };
   const deviceKey = (device: DeviceEntry) => device.serial ?? device.avdId ?? device.displayName;
   const deviceLabel = (device: DeviceEntry) =>
     device.state === "running" && device.serial ? `${device.displayName} · ${device.serial}` : device.displayName;
+  const resolveSelectedDevice = () => {
+    const target = currentDeviceTarget();
+    const list = devices.filter((device) => isCompatibleDevice(target, device.kind));
+    return list.find((device) => device.state === "running") ??
+      list.find((device) => device.state === "stopped") ??
+      null;
+  };
   return {
     workspace,
     agentStates,
@@ -131,19 +157,16 @@ const deps = vi.hoisted(() => {
     launchActiveTarget: vi.fn(),
     isBooting: vi.fn(() => runLaunchState.booting),
     launchError: vi.fn(() => runLaunchState.error),
-    resolveSelectedDevice: vi.fn(() => {
-      const target = activeTarget();
-      const list = devices.filter((device) => {
-        if (target?.deviceConvention === "xcodeDestination") return device.kind === "simulator";
-        if (target?.deviceConvention === "rnDevice" || target?.deviceConvention === "env") {
-          return device.kind !== "simulator";
-        }
-        return true;
-      });
-      return list.find((device) => device.state === "running") ??
-        list.find((device) => device.state === "stopped") ??
-        null;
+    currentDeviceTarget: vi.fn(currentDeviceTarget),
+    screenshotTarget: vi.fn(screenshotTarget),
+    resolveScreenshotDevice: vi.fn(() => {
+      const target = screenshotTarget();
+      if (!target) return null;
+      const selected = resolveSelectedDevice();
+      if (!selected?.serial || selected.state !== "running") return null;
+      return isCompatibleDevice(target, selected.kind) ? selected : null;
     }),
+    resolveSelectedDevice: vi.fn(resolveSelectedDevice),
     deviceKey: vi.fn(deviceKey),
     deviceLabel: vi.fn(deviceLabel),
     reloadRun: vi.fn(),
@@ -236,6 +259,9 @@ const deps = vi.hoisted(() => {
       });
       this.isBooting.mockClear();
       this.launchError.mockClear();
+      this.currentDeviceTarget.mockClear();
+      this.screenshotTarget.mockClear();
+      this.resolveScreenshotDevice.mockClear();
       this.resolveSelectedDevice.mockClear();
       this.deviceKey.mockClear();
       this.deviceLabel.mockClear();
@@ -330,12 +356,15 @@ vi.mock("../../src/stores/runDevice", () => ({
 }));
 
 vi.mock("../../src/stores/runLaunch", () => ({
+  currentDeviceTarget: deps.currentDeviceTarget,
   deviceKey: deps.deviceKey,
   deviceLabel: deps.deviceLabel,
   isBooting: deps.isBooting,
   launchActiveTarget: deps.launchActiveTarget,
   launchError: deps.launchError,
   resolveSelectedDevice: deps.resolveSelectedDevice,
+  resolveScreenshotDevice: deps.resolveScreenshotDevice,
+  screenshotTarget: deps.screenshotTarget,
 }));
 
 vi.mock("../../src/stores/runConsole", () => ({
@@ -402,7 +431,7 @@ function baseRunTarget(id: string, label: string) {
     id,
     label,
     command: "flutter run",
-    capabilities: ["launch", "hotReload", "hotRestart", "stop"],
+    capabilities: ["launch", "hotReload", "hotRestart", "stop", "captureScreenshot", "inspectSelection"],
     needsDevice: true,
     deviceConvention: "arg" as const,
     inspectorKind: "vmService" as const,
@@ -531,6 +560,34 @@ describe("dispatchIntent", () => {
       { engine: "test-engine", effort: "max", mode: "plan" },
     );
     expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("reuses the preview audit row for confirmed tier-1 actions", async () => {
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({
+        action: "startSwarm",
+        mode: "review",
+        count: 2,
+        goal: "check the operator flow",
+        provider: "mixed",
+      }, "App"),
+      {
+        confirmed: true,
+        inputText: "start review swarm",
+        reuseAuditId: "audit-1",
+      },
+    );
+
+    expect(result).toEqual({ status: "done", summary: "Started swarm swarm-1" });
+    expect(deps.operatorAuditInsert).not.toHaveBeenCalled();
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledTimes(1);
+    expect(deps.operatorAuditUpdate).toHaveBeenCalledWith(
+      "audit-1",
+      "done",
+      "Started swarm swarm-1",
+    );
   });
 
   it("starts created chats with configured model and run options when no model is explicit", async () => {
@@ -1250,6 +1307,11 @@ describe("dispatchIntent", () => {
     const target = runTarget("detected", "Flutter");
     deps.targets.push(target);
     setActiveRun(target);
+    deps.devices.push(device("Pixel 8", {
+      serial: "emulator-5554",
+      avdId: "Pixel_8",
+      state: "running",
+    }));
     deps.vmFindIsolate.mockResolvedValue("isolates/1");
     deps.vmSelectedWidget.mockResolvedValue({
       id: "widget-1",
@@ -1284,6 +1346,11 @@ describe("dispatchIntent", () => {
     });
     deps.targets.push(target);
     setActiveRun(target);
+    deps.devices.push(device("Pixel 8", {
+      serial: "emulator-5554",
+      avdId: "Pixel_8",
+      state: "running",
+    }));
     deps.vmFindIsolate.mockResolvedValue("isolates/1");
     deps.vmSelectedWidget.mockResolvedValue({
       id: "widget-1",
@@ -1305,7 +1372,39 @@ describe("dispatchIntent", () => {
     expect(deps.iosScreenshot).not.toHaveBeenCalled();
   });
 
-  it("does not call any screenshot capture seam when there is no active run", async () => {
+  it("captures from a launch-only iOS target with a booted simulator", async () => {
+    const target = runTarget("native-ios", "Native iOS", {
+      capabilities: ["detect", "launch", "captureScreenshot", "streamLogs", "inspectSelection"],
+      deviceConvention: "xcodeDestination",
+      inspectorKind: "iosAccessibility",
+      logSource: "oslog",
+    });
+    deps.targets.push(target);
+    deps.devices.push(device("iPhone 16", {
+      serial: "SIM-1",
+      avdId: null,
+      state: "running",
+      kind: "simulator",
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({
+      status: "done",
+      summary: "Captured screenshot /repo/app/.pickforge/operator-screenshot.png",
+    });
+    expect(deps.iosScreenshot).toHaveBeenCalledWith(
+      "SIM-1",
+      "/repo/app/.pickforge",
+      "operator-screenshot.png",
+    );
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.vmFindIsolate).not.toHaveBeenCalled();
+    expect(auditUpdateStatus()).toBe("done");
+  });
+
+  it("does not call any screenshot capture seam when nothing is connected", async () => {
     deps.targets.push(runTarget("detected", "Flutter"));
     deps.vmFindIsolate.mockResolvedValue("isolates/1");
     deps.vmSelectedWidget.mockResolvedValue({
@@ -1319,7 +1418,7 @@ describe("dispatchIntent", () => {
 
     const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
 
-    expect(result).toEqual({ status: "noop", summary: "no device-backed run/target" });
+    expect(result).toEqual({ status: "noop", summary: "no active device/session" });
     expect(deps.vmFindIsolate).not.toHaveBeenCalled();
     expect(deps.vmSelectedWidget).not.toHaveBeenCalled();
     expect(deps.vmScreenshot).not.toHaveBeenCalled();

@@ -22,11 +22,14 @@ export const operatorDockOpen = open;
 const [input, setInput] = createSignal("");
 export const operatorInput = input;
 export function setOperatorInput(value: string) {
+  if (value !== input() && view().kind === "preview") setView({ kind: "idle" });
   setInput(value);
 }
 
 const [view, setView] = createSignal<DockView>({ kind: "idle" });
 export const operatorView = view;
+
+let requestEpoch = 0;
 
 const [recent, setRecent] = createSignal<OperatorAuditRow[]>([]);
 export const operatorRecent = recent;
@@ -42,6 +45,7 @@ export function openOperatorDock(): boolean {
 }
 
 export function closeOperatorDock() {
+  requestEpoch++;
   setOpen(false);
   setInput("");
   setView({ kind: "idle" });
@@ -79,9 +83,11 @@ export async function submitOperatorCommand(): Promise<void> {
     return;
   }
 
+  const epoch = ++requestEpoch;
   setBusy(true);
   try {
     const result = await dispatchIntent(parsed.intent, { inputText: text });
+    if (epoch !== requestEpoch) return;
     if (result.status === "needsConfirmation") {
       setView({
         kind: "preview",
@@ -93,7 +99,7 @@ export async function submitOperatorCommand(): Promise<void> {
       applyResult(result);
     }
   } finally {
-    setBusy(false);
+    if (epoch === requestEpoch) setBusy(false);
     void refreshRecent();
   }
 }
@@ -103,15 +109,16 @@ export async function confirmOperatorPreview(): Promise<void> {
   const current = view();
   if (current.kind !== "preview") return;
 
+  const epoch = ++requestEpoch;
   setBusy(true);
   try {
     const result = await dispatchIntent(current.intent, {
       confirmed: true,
       inputText: current.inputText,
     });
-    applyResult(result);
+    if (epoch === requestEpoch) applyResult(result);
   } finally {
-    setBusy(false);
+    if (epoch === requestEpoch) setBusy(false);
     void refreshRecent();
   }
 }

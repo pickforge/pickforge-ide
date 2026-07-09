@@ -46,7 +46,10 @@ export function OperatorDock() {
 
   onMount(() => inputEl.focus());
 
+  const isComposing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229;
+
   const trapFocus = (e: KeyboardEvent) => {
+    if (isComposing(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -93,7 +96,7 @@ export function OperatorDock() {
             disabled={operatorBusy()}
             onInput={(e) => setOperatorInput(e.currentTarget.value)}
             onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
+              if (e.key !== "Enter" || isComposing(e)) return;
               e.preventDefault();
               if (operatorView().kind === "preview") void confirmOperatorPreview();
               else void submitOperatorCommand();

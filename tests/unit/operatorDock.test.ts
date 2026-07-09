@@ -167,6 +167,76 @@ describe("operatorDock store", () => {
     expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
   });
 
+  it("clears a pending preview when the input text is edited", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
+    deps.dispatchIntent.mockResolvedValue({ status: "needsConfirmation", summary: "Send prompt to active chat" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInput("send hi");
+    await s.submitOperatorCommand();
+    expect(s.operatorView().kind).toBe("preview");
+
+    s.setOperatorInput("send hi there");
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+
+    await s.confirmOperatorPreview();
+
+    expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a dispatch result that lands after the dock was closed", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: openProject });
+    let resolveDispatch!: (r: DispatchResult) => void;
+    deps.dispatchIntent.mockReturnValue(
+      new Promise<DispatchResult>((resolve) => {
+        resolveDispatch = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("open project app");
+    const pending = s.submitOperatorCommand();
+    expect(s.operatorBusy()).toBe(true);
+
+    s.closeOperatorDock();
+    resolveDispatch({ status: "done", summary: "Opened project App" });
+    await pending;
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(s.operatorBusy()).toBe(false);
+
+    s.openOperatorDock();
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+  });
+
+  it("ignores a late needsConfirmation preview after close", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
+    let resolveDispatch!: (r: DispatchResult) => void;
+    deps.dispatchIntent.mockReturnValue(
+      new Promise<DispatchResult>((resolve) => {
+        resolveDispatch = resolve;
+      }),
+    );
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("send hi");
+    const pending = s.submitOperatorCommand();
+
+    s.closeOperatorDock();
+    resolveDispatch({ status: "needsConfirmation", summary: "Send prompt to active chat" });
+    await pending;
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    await s.confirmOperatorPreview();
+    expect(deps.dispatchIntent).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a failed result visible and does not clear input", async () => {
     const openChat = intent({ action: "openChat", chat: "ghost" });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: openChat });

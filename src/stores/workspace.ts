@@ -222,6 +222,16 @@ export async function archiveProject(root: string) {
   await loadWorkspace();
 }
 
+/** Reflect a remote-host binding change in the store after the DB write already
+ *  landed (project_remote_set / project_remote_clear). Pass nulls to detach. */
+export function setProjectRemoteLocal(
+  root: string,
+  remoteHost: string | null,
+  remoteRoot: string | null,
+) {
+  setState("projects", (p) => p.projectRoot === root, { remoteHost, remoteRoot });
+}
+
 export async function renameProject(root: string, displayName: string) {
   const name = displayName.trim();
   const p = state.projects.find((x) => x.projectRoot === root);

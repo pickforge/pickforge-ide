@@ -8,6 +8,8 @@ reset this file.
 
 - Added Remote Host settings for starting the local daemon listener, issuing
   pairing codes, and toggling Tailscale SSH.
+- Projects can now attach a remote host (over your tailnet) from the project
+  menu, with a live health badge in the sidebar and a test-connection check.
 - Launching PickForge again now focuses the running window.
 
 ## Internal/release changes

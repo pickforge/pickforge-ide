@@ -265,6 +265,7 @@ pub fn pty_spawn_chat(
         command: None, // a chat shell is NEVER the one-shot path
         program_override: prepared.program_override.clone(),
         detach_on_drop: prepared.backend != SessionBackend::Raw,
+        remote: None,
     };
 
     let pty_id = manager

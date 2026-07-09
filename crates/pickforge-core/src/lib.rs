@@ -44,8 +44,8 @@ pub use process::{
 pub use pty::{
     dtach_socket_path, kill_dtach_master, prepare_chat_session, select_backend, session_name,
     sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
-    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, SessionBackend, SessionStatus,
-    SpawnOptions,
+    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, RemotePty, SessionBackend,
+    SessionStatus, SpawnOptions,
 };
 pub use remote::{
     decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener, probe_host,

@@ -2,11 +2,14 @@
 //! command, and confirm the marker streams back through the sink. This is the
 //! Phase 0 exit criterion expressed as an automatable test (no GUI needed).
 
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::mpsc;
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use pickforge_core::{PtyEvent, PtyManager, SpawnOptions};
+use pickforge_core::{PtyEvent, PtyManager, RemotePty, SpawnOptions};
 
 #[test]
 fn shell_echo_round_trips_through_the_sink() {
@@ -257,4 +260,153 @@ fn resize_and_kill_are_idempotent_enough() {
     manager.kill(id).expect("kill again is a no-op");
     assert!(manager.resize(id, 10, 10).is_err(), "resize after kill errors");
     assert!(manager.is_empty(), "registry drained after kill");
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_pty_spawn_uses_ssh_argv_and_keeps_pty_io_and_resize() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "pickforge-fake-ssh-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create fake ssh dir");
+    let fake_ssh = dir.join("ssh");
+    let argv_log = dir.join("argv.log");
+    let size_before = dir.join("size-before.log");
+    let size_after = dir.join("size-after.log");
+
+    std::fs::write(
+        &fake_ssh,
+        r#"#!/bin/sh
+set -eu
+: > "$PF_FAKE_SSH_ARGV"
+printf '%s\n' "$#" >> "$PF_FAKE_SSH_ARGV"
+for arg in "$@"; do
+  printf '<%s>\n' "$arg" >> "$PF_FAKE_SSH_ARGV"
+done
+stty size > "$PF_FAKE_SSH_SIZE_BEFORE" 2>/dev/null || true
+printf 'PF_FAKE_SSH_READY\n'
+IFS= read -r line
+printf 'PF_FAKE_SSH_STDIN:%s\n' "$line"
+stty size > "$PF_FAKE_SSH_SIZE_AFTER" 2>/dev/null || true
+"#,
+    )
+    .expect("write fake ssh");
+    let mut perms = std::fs::metadata(&fake_ssh)
+        .expect("fake ssh metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&fake_ssh, perms).expect("make fake ssh executable");
+
+    let old_path = std::env::var("PATH").unwrap_or_default();
+    let mut extra_env = HashMap::new();
+    extra_env.insert("PATH".to_string(), format!("{}:{old_path}", dir.display()));
+    extra_env.insert(
+        "PF_FAKE_SSH_ARGV".to_string(),
+        argv_log.to_string_lossy().into_owned(),
+    );
+    extra_env.insert(
+        "PF_FAKE_SSH_SIZE_BEFORE".to_string(),
+        size_before.to_string_lossy().into_owned(),
+    );
+    extra_env.insert(
+        "PF_FAKE_SSH_SIZE_AFTER".to_string(),
+        size_after.to_string_lossy().into_owned(),
+    );
+
+    let manager = PtyManager::new();
+    let (tx, rx) = mpsc::channel::<PtyEvent>();
+    let id = manager
+        .spawn(
+            SpawnOptions {
+                rows: 7,
+                cols: 19,
+                extra_env,
+                remote: Some(RemotePty {
+                    host: "mac-mini".to_string(),
+                    remote_root: "/Users/dev/app root".to_string(),
+                }),
+                ..Default::default()
+            },
+            move |event| {
+                let _ = tx.send(event);
+            },
+        )
+        .expect("spawn remote pty");
+
+    let mut seen = String::new();
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < deadline && !seen.contains("PF_FAKE_SSH_READY") {
+        match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(PtyEvent::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+            Ok(PtyEvent::Exit(_)) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    assert!(
+        seen.contains("PF_FAKE_SSH_READY"),
+        "fake ssh did not start: {seen:?}"
+    );
+
+    manager.resize(id, 13, 31).expect("resize remote pty");
+    manager
+        .write(id, b"pf_remote_input\n")
+        .expect("write remote pty");
+
+    let mut exited = false;
+    let deadline = Instant::now() + Duration::from_secs(6);
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(PtyEvent::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
+            Ok(PtyEvent::Exit(_)) => {
+                exited = true;
+                break;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    manager.kill(id).ok();
+
+    let argv = std::fs::read_to_string(&argv_log).expect("read argv log");
+    assert_eq!(
+        argv.lines().collect::<Vec<_>>(),
+        vec![
+            "10",
+            "<-o>",
+            "<BatchMode=yes>",
+            "<-o>",
+            "<ConnectTimeout=5>",
+            "<-o>",
+            "<StrictHostKeyChecking=accept-new>",
+            "<-tt>",
+            "<-->",
+            "<mac-mini>",
+            "<cd '/Users/dev/app root' && exec \"$SHELL\" -l>",
+        ]
+    );
+    assert!(
+        seen.contains("PF_FAKE_SSH_STDIN:pf_remote_input"),
+        "stdin did not reach fake ssh: {seen:?}"
+    );
+    assert!(exited, "fake ssh should exit after stdin");
+    assert_eq!(
+        std::fs::read_to_string(&size_before)
+            .expect("read initial size")
+            .trim(),
+        "7 19"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&size_after)
+            .expect("read resized size")
+            .trim(),
+        "13 31"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
 }

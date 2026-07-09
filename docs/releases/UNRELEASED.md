@@ -23,6 +23,7 @@ reset this file.
 - BYO operator routing (Claude Code / Codex / Ollama) landed dark behind the `operator` flag.
 - Landed accounts/auth wiring dark behind the `accounts` flag.
 - Local dictation pipeline (Rust + IPC) landed dark; composer UI follows.
+- Core PTY can spawn over Tailscale SSH for remote projects; terminal and agent wiring follows.
 
 ## Validation
 

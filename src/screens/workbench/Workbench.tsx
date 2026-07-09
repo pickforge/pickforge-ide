@@ -19,7 +19,11 @@ import { loadAgentModels } from "../../lib/agentModels";
 import { ForgeEmptyState, PaneReveal } from "../../components/ui";
 import { IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
-import { remotePathFor, shouldUseLocalMcp } from "../../lib/remoteContext";
+import {
+  canLaunchAgentForMode,
+  remotePathFor,
+  shouldUseLocalMcp,
+} from "../../lib/remoteContext";
 import { editorCommand } from "../../stores/fileOpenSettings";
 import { openPathSystem } from "../../lib/opener";
 import {
@@ -81,6 +85,7 @@ export function WorkbenchScreen() {
     const host = getTerminalHost(chatId);
     if (!host) return;
     const mode = host.primarySpawnMode();
+    if (item.agentId && !canLaunchAgentForMode(mode)) return;
     const localMcp = !!item.agentId && shouldUseLocalMcp(mode);
     if (localMcp && root) await ensureMcpRunning(root);
     // Remote agent MCP wiring lands in PR 3; remote shells must not receive local paths.

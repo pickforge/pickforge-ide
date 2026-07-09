@@ -22,6 +22,7 @@ vi.mock("../../src/stores/workspace", () => ({
 }));
 
 import {
+  canLaunchAgentForMode,
   captureRemotePtyForPane,
   paneSpawnModeFor,
   remotePathFor,
@@ -116,6 +117,16 @@ describe("remotePtyFor", () => {
     expect(shouldUseLocalMcp(paneSpawnModeFor(panes, "pane-1"))).toBe(true);
   });
 
+  it("blocks an agent launch until the primary spawn mode resolves", () => {
+    expect(canLaunchAgentForMode(paneSpawnModeFor({}, "pane-1"))).toBe(false);
+
+    const panes = captureRemotePtyForPane({}, "pane-1", {
+      host: "mac-mini",
+      remoteRoot: "/srv/app",
+    });
+    expect(canLaunchAgentForMode(paneSpawnModeFor(panes, "pane-1"))).toBe(true);
+  });
+
   it("keeps a path already under the remote root", () => {
     expect(remotePathFor("/srv/app/lib/main.dart", "/home/dev/app", "/srv/app/")).toBe(
       "/srv/app/lib/main.dart",
@@ -139,6 +150,8 @@ describe("remotePtyFor", () => {
       "/lib/main.dart",
     );
     expect(remotePathFor("/tmp/other.dart", "/home/dev/app", "/")).toBeNull();
-    expect(remotePathFor("/srv/other.dart", "/home/dev/app", "/srv")).toBeNull();
+    expect(remotePathFor("/app/other.dart", "/home/dev/app", "/app")).toBe(
+      "/app/other.dart",
+    );
   });
 });

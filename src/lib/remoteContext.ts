@@ -36,6 +36,10 @@ export function shouldUseLocalMcp(mode: PaneSpawnMode): boolean {
   return mode === "local";
 }
 
+export function canLaunchAgentForMode(mode: PaneSpawnMode): boolean {
+  return mode !== "pending";
+}
+
 function normalizedLocalPath(path: string): string | null {
   if (!path || path.includes("\0")) return null;
   const normalized = path.replaceAll("\\", "/");
@@ -51,7 +55,7 @@ function pathSuffix(path: string, root: string): string | null {
 }
 
 function isMeaningfulRemoteRoot(root: string): boolean {
-  return root !== "/" && root.split("/").filter(Boolean).length >= 2;
+  return root !== "/";
 }
 
 export function remotePathFor(

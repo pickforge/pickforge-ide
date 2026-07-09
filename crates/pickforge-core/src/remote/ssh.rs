@@ -35,11 +35,7 @@ pub fn ssh_run(
 
 pub(crate) fn build_ssh_args(host: &str, argv: &[&str]) -> Result<Vec<String>, SshError> {
     let target = SshTarget::new(host)?;
-    let mut args = ssh_batch_args();
-    args.push("--".into());
-    args.push(target.host);
-    args.push(shell_quote_argv(argv));
-    Ok(args)
+    Ok(ssh_one_shot_args(&target, shell_quote_argv(argv)))
 }
 
 pub(crate) fn ssh_base_args() -> Vec<String> {
@@ -54,6 +50,14 @@ pub(crate) fn ssh_base_args() -> Vec<String> {
 fn ssh_batch_args() -> Vec<String> {
     let mut args = vec!["-o".into(), "BatchMode=yes".into()];
     args.extend(ssh_base_args());
+    args
+}
+
+pub(crate) fn ssh_one_shot_args(target: &SshTarget, remote_command: String) -> Vec<String> {
+    let mut args = ssh_batch_args();
+    args.push("--".into());
+    args.push(target.host.clone());
+    args.push(remote_command);
     args
 }
 

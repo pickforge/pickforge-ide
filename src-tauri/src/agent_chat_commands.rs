@@ -11,18 +11,81 @@ use base64::{engine::general_purpose, Engine as _};
 use image::{codecs::png::PngEncoder, ColorType, ImageEncoder, RgbaImage};
 use pickforge_core::agents::{
     list_agent_skills, AgentChatManager, AgentEvent, AgentProvider, AgentSkill,
-    AgentStartOverrides, Engine,
+    AgentStartOverrides, Engine, RemoteExec,
 };
 use pickforge_core::db::{AgentTimelineEntry, Database};
 use pickforge_core::pickforge_home;
+use pickforge_core::RemotePty;
+use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::fs_commands::{approved_canonical, ApprovedRoots};
+use crate::pty_commands::authorize_remote_pty;
+#[cfg(test)]
+use crate::pty_commands::authorize_remote_pty_with;
 
 static IMAGE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MAX_STASH_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const STASH_IMAGE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAgentInput {
+    host: String,
+    remote_root: String,
+}
+
+impl From<RemoteAgentInput> for RemotePty {
+    fn from(value: RemoteAgentInput) -> Self {
+        Self {
+            host: value.host,
+            remote_root: value.remote_root,
+        }
+    }
+}
+
+fn resolve_agent_chat_start(
+    db: &Database,
+    roots: &ApprovedRoots,
+    project_root: &str,
+    engine: Engine,
+    remote: Option<RemotePty>,
+) -> Result<(PathBuf, Engine, Option<RemoteExec>), String> {
+    if let Some(remote) = remote {
+        authorize_remote_pty(db, Some(project_root), Some(&remote))?;
+        let remote_exec = RemoteExec::new(remote.host, remote.remote_root)
+            .map_err(|err| format!("remote agent authorization failed: {err}"))?;
+        return Ok((
+            PathBuf::from(&remote_exec.remote_root),
+            Engine::V1,
+            Some(remote_exec),
+        ));
+    }
+    Ok((approved_canonical(project_root, roots)?, engine, None))
+}
+
+#[cfg(test)]
+fn resolve_agent_chat_start_with(
+    db: &Database,
+    roots: &ApprovedRoots,
+    project_root: &str,
+    engine: Engine,
+    remote: Option<RemotePty>,
+    authorize_host: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(PathBuf, Engine, Option<RemoteExec>), String> {
+    if let Some(remote) = remote {
+        authorize_remote_pty_with(db, Some(project_root), Some(&remote), authorize_host)?;
+        let remote_exec = RemoteExec::new(remote.host, remote.remote_root)
+            .map_err(|err| format!("remote agent authorization failed: {err}"))?;
+        return Ok((
+            PathBuf::from(&remote_exec.remote_root),
+            Engine::V1,
+            Some(remote_exec),
+        ));
+    }
+    Ok((approved_canonical(project_root, roots)?, engine, None))
+}
 
 /* Session start and turn spawn block on provider handshakes (codex app-server
  * thread_start, claude bridge chat_start) that can take seconds. Sync commands
@@ -32,6 +95,7 @@ const STASH_IMAGE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub async fn agent_chat_start(
     mgr: State<'_, AgentChatManager>,
     roots: State<'_, ApprovedRoots>,
+    db: State<'_, Arc<Database>>,
     chat_id: String,
     project_root: String,
     provider: String,
@@ -42,6 +106,7 @@ pub async fn agent_chat_start(
     approval_policy: Option<String>,
     permission_mode: Option<String>,
     allowed_tools: Option<Vec<String>>,
+    remote: Option<RemoteAgentInput>,
     on_event: Channel<AgentEvent>,
 ) -> Result<String, String> {
     let provider = provider
@@ -52,7 +117,9 @@ pub async fn agent_chat_start(
         .unwrap_or("v2")
         .parse::<Engine>()
         .map_err(|e| e.to_string())?;
-    let project_root: PathBuf = approved_canonical(&project_root, &roots)?;
+    let remote = remote.map(Into::into);
+    let (project_root, engine, remote) =
+        resolve_agent_chat_start(&db, &roots, &project_root, engine, remote)?;
     let sink = Arc::new(move |event| {
         let _ = on_event.send(event);
     });
@@ -70,6 +137,7 @@ pub async fn agent_chat_start(
                 permission_mode,
                 allowed_tools,
                 effort,
+                remote,
             },
             sink,
         )
@@ -537,6 +605,94 @@ fn gc_stale_stashed_images(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pickforge_core::Project;
+
+    fn remote(host: &str, remote_root: &str) -> RemotePty {
+        RemotePty {
+            host: host.to_string(),
+            remote_root: remote_root.to_string(),
+        }
+    }
+
+    fn remote_project(root: &str, host: &str, remote_root: &str) -> Project {
+        Project {
+            project_root: root.to_string(),
+            display_name: "App".to_string(),
+            created_at: 0,
+            last_opened_at: 0,
+            sort_order: 0,
+            archived_at: None,
+            remote_host: Some(host.to_string()),
+            remote_root: Some(remote_root.to_string()),
+        }
+    }
+
+    #[test]
+    fn remote_agent_start_skips_local_root_validation_and_forces_v1() {
+        let db = Database::open_in_memory().unwrap();
+        db.upsert_project(&remote_project(
+            "/not/present/locally",
+            "mac-mini",
+            "/srv/app",
+        ))
+        .unwrap();
+
+        let (cwd, engine, remote_exec) = resolve_agent_chat_start_with(
+            &db,
+            &ApprovedRoots::default(),
+            "/not/present/locally",
+            Engine::V2,
+            Some(remote("mac-mini", "/srv/app")),
+            |host| {
+                assert_eq!(host, "mac-mini");
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(cwd, PathBuf::from("/srv/app"));
+        assert_eq!(engine, Engine::V1);
+        assert_eq!(remote_exec.unwrap().host, "mac-mini");
+    }
+
+    #[test]
+    fn remote_agent_start_rejects_mismatched_binding_before_host_verification() {
+        let db = Database::open_in_memory().unwrap();
+        db.upsert_project(&remote_project("/project", "mac-mini", "/srv/app"))
+            .unwrap();
+
+        let error = resolve_agent_chat_start_with(
+            &db,
+            &ApprovedRoots::default(),
+            "/project",
+            Engine::V2,
+            Some(remote("linux-box", "/srv/app")),
+            |_| panic!("host verification must not run for a mismatched binding"),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("remote terminal is not authorized for project /project"));
+    }
+
+    #[test]
+    fn remote_agent_start_rejects_an_offline_host() {
+        let db = Database::open_in_memory().unwrap();
+        db.upsert_project(&remote_project("/project", "mac-mini", "/srv/app"))
+            .unwrap();
+
+        let error = resolve_agent_chat_start_with(
+            &db,
+            &ApprovedRoots::default(),
+            "/project",
+            Engine::V2,
+            Some(remote("mac-mini", "/srv/app")),
+            |_| Err("remote host is not an online tailnet peer: host is offline".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("remote terminal authorization failed"));
+        assert!(error.contains("not an online tailnet peer"));
+    }
 
     #[test]
     fn parses_root_level_model_reasoning_effort() {
@@ -592,8 +748,7 @@ mod tests {
 
     #[test]
     fn encode_rgba_png_rejects_encoded_output_over_limit() {
-        let error =
-            encode_rgba_png(1, 1, Cow::Borrowed(&[0, 0, 0, 255]), 8).unwrap_err();
+        let error = encode_rgba_png(1, 1, Cow::Borrowed(&[0, 0, 0, 255]), 8).unwrap_err();
 
         assert_eq!(error, "image exceeds 10 MB limit");
     }
@@ -617,8 +772,7 @@ mod tests {
         let file = std::fs::File::create(&path).unwrap();
         file.set_len(MAX_STASH_IMAGE_BYTES as u64 + 1).unwrap();
 
-        let error =
-            agent_stash_image_from_path(path.to_string_lossy().into_owned()).unwrap_err();
+        let error = agent_stash_image_from_path(path.to_string_lossy().into_owned()).unwrap_err();
 
         assert_eq!(error, "image exceeds 10 MB limit");
         std::fs::remove_dir_all(&dir).unwrap();

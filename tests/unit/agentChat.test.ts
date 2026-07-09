@@ -22,6 +22,7 @@ const activity = vi.hoisted(() => ({
   agentTurnDone: vi.fn(),
   agentTurnCleared: vi.fn(),
 }));
+const flags = vi.hoisted(() => ({ remoteProjects: false }));
 const workspace = vi.hoisted(() => ({
   chats: new Map<string, {
     chatId: string;
@@ -59,6 +60,11 @@ const workspace = vi.hoisted(() => ({
     }
   }),
   isChatArchived: vi.fn(),
+  projects: [] as Array<{
+    projectRoot: string;
+    remoteHost: string | null;
+    remoteRoot: string | null;
+  }>,
 }));
 
 vi.mock("../../src/stores/chatActivity", () => activity);
@@ -66,8 +72,16 @@ vi.mock("../../src/stores/workspace", () => ({
   findChat: workspace.findChat,
   setChatTitle: workspace.setChatTitle,
   setChatAgent: workspace.setChatAgent,
+  workspace: {
+    get projects() {
+      return workspace.projects;
+    },
+  },
 }));
 vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isChatArchived }));
+vi.mock("../../src/stores/flags", () => ({
+  flagEnabled: (key: string) => key === "remoteProjects" && flags.remoteProjects,
+}));
 
 import {
   agentChat,
@@ -206,6 +220,8 @@ beforeEach(() => {
     workspace.chats.get(id) ?? workspace.makeChat(id)
   ));
   workspace.isChatArchived.mockReset().mockReturnValue(false);
+  workspace.projects = [];
+  flags.remoteProjects = false;
 });
 
 describe("agentChat IPC wrappers", () => {
@@ -877,6 +893,39 @@ describe("hydrateAgentChatHistory", () => {
 });
 
 describe("ensureAgentChat", () => {
+  it("starts a bound remote project without using its local path", async () => {
+    const chatId = nextChatId();
+    flags.remoteProjects = true;
+    workspace.projects = [
+      {
+        projectRoot: "/not/present/locally",
+        remoteHost: "mac-mini",
+        remoteRoot: "/srv/app",
+      },
+    ];
+    mockInvoke();
+
+    await ensureAgentChat(chatId, "/not/present/locally", "codex", null, { engine: "v2" });
+
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    expect(startCall?.[1]).toEqual(
+      expect.objectContaining({
+        projectRoot: "/not/present/locally",
+        engine: "v2",
+        remote: { host: "mac-mini", remoteRoot: "/srv/app" },
+      }),
+    );
+    expect(agentChat(chatId)?.remoteHost).toBe("mac-mini");
+
+    startCall?.[1].onEvent.onmessage({
+      kind: "turnFailed",
+      error:
+        "ssh:mac-mini exited 255: transport failure or remote exit 255. Open the project's Remote panel and choose Test connection.",
+    });
+    expect(agentChat(chatId)?.error).toContain("ssh:mac-mini exited 255");
+    expect(agentChat(chatId)?.error).toContain("Test connection");
+  });
+
   it("starts once per chat id", async () => {
     const chatId = nextChatId();
     mockInvoke();

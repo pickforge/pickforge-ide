@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 use crate::db::{AgentSessionRow, Database, DbError};
 
 use super::claude_bridge::{spawn as spawn_claude_bridge, ClaudeBridgeClient, ClaudeBridgeOptions};
@@ -15,8 +17,9 @@ use super::codex_app::{
 };
 use super::codex_exec::{spawn_codex_turn, CodexExecTurn, CodexTurnOptions};
 use super::event::AgentEvent;
+use super::remote_exec::RemoteExec;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgentProvider {
     ClaudeCode,
     Codex,
@@ -77,6 +80,7 @@ pub struct AgentStartOverrides {
     /// start (the SDK fixes effort per query); Codex applies effort per turn
     /// via `send`, so this is ignored there.
     pub effort: Option<String>,
+    pub remote: Option<RemoteExec>,
 }
 
 #[derive(Clone)]
@@ -86,6 +90,7 @@ pub struct AgentChatManager {
     inner: Arc<Mutex<HashMap<String, SessionState>>>,
     codex_app_clients: Arc<Mutex<HashMap<PathBuf, Arc<CodexAppClient>>>>,
     claude_bridge: Arc<Mutex<Option<Arc<ClaudeBridgeClient>>>>,
+    remote_sessions: Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     starting_chats: Arc<Mutex<HashSet<String>>>,
     #[cfg(test)]
     test_binaries: TestBinaries,
@@ -94,6 +99,7 @@ pub struct AgentChatManager {
 struct SessionState {
     chat_id: String,
     project_root: PathBuf,
+    remote: Option<RemoteExec>,
     provider: AgentProvider,
     engine: Engine,
     model: Option<String>,
@@ -119,6 +125,32 @@ struct SessionState {
     /// sink when a reloaded webview re-attaches mid-turn — without this the
     /// rebuilt UI has no prompt while the agent stays blocked waiting.
     pending_approvals: Vec<(String, AgentEvent)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RemoteSessionKey {
+    chat_id: String,
+    provider: AgentProvider,
+    host: String,
+    remote_root: String,
+}
+
+const REMOTE_PROVIDER_SESSION_PREFIX: &str = "remote:ssh:";
+
+#[derive(Serialize, Deserialize)]
+struct PersistedRemoteSession {
+    host: String,
+    remote_root: String,
+    provider_session_id: String,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct V1TurnOverrides {
+    effort: Option<String>,
+    sandbox: Option<String>,
+    approval_policy: Option<String>,
+    permission_mode: Option<String>,
+    allowed_tools: Option<String>,
 }
 
 #[derive(Clone)]
@@ -167,6 +199,7 @@ impl AgentChatManager {
             inner: Arc::new(Mutex::new(HashMap::new())),
             codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
             claude_bridge: Arc::new(Mutex::new(None)),
+            remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
             #[cfg(test)]
             test_binaries: TestBinaries::default(),
@@ -184,8 +217,14 @@ impl AgentChatManager {
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     ) -> Result<String, AgentChatError> {
         let _start_guard = self.acquire_start_guard(chat_id)?;
+        let remote = overrides.remote.clone();
+        let engine = engine_for_start(engine, remote.as_ref());
+        if engine == Engine::V1 && provider == AgentProvider::ClaudeCode {
+            claude_v1_permission_mode(overrides.permission_mode.clone())?;
+            claude_v1_allowed_tools(overrides.allowed_tools.clone())?;
+        }
         let latest = self.db.latest_agent_session_for_chat(chat_id)?;
-        let (session_id, mut provider_session_id) =
+        let (session_id, persisted_provider_session_id) =
             match latest.filter(|row| row.provider == provider.as_str()) {
                 Some(row) => {
                     if row.model != model {
@@ -208,6 +247,14 @@ impl AgentChatManager {
                     (session_id, None)
                 }
             };
+        let mut provider_session_id = if let Some(remote) = remote.as_ref() {
+            self.remote_session_id(chat_id, provider, &remote.host, &remote.remote_root)
+                .or_else(|| {
+                    remote_provider_session_id(persisted_provider_session_id.as_deref(), remote)
+                })
+        } else {
+            local_provider_session_id(persisted_provider_session_id)
+        };
 
         let codex_app_client = if engine == Engine::V2 && provider == AgentProvider::Codex {
             let client = self.codex_app_client(project_root.clone())?;
@@ -259,6 +306,7 @@ impl AgentChatManager {
                 SessionState {
                     chat_id: chat_id.to_string(),
                     project_root: project_root.clone(),
+                    remote: remote.clone(),
                     provider,
                     engine,
                     model: model.clone(),
@@ -360,13 +408,16 @@ impl AgentChatManager {
         let (
             chat_id,
             project_root,
+            remote,
             provider,
             engine,
             session_model,
             provider_session_id,
             sandbox,
             approval_policy,
-            restart,
+            session_effort,
+            permission_mode,
+            allowed_tools,
         ) = {
             let mut inner = self.lock_inner()?;
             let state = inner
@@ -382,21 +433,35 @@ impl AgentChatManager {
             (
                 state.chat_id.clone(),
                 state.project_root.clone(),
+                state.remote.clone(),
                 state.provider,
                 state.engine,
                 state.model.clone(),
                 state.provider_session_id.clone(),
                 state.sandbox.clone(),
                 state.approval_policy.clone(),
-                (
-                    state.effort.clone(),
-                    state.permission_mode.clone(),
-                    state.allowed_tools.clone(),
-                ),
+                state.effort.clone(),
+                state.permission_mode.clone(),
+                state.allowed_tools.clone(),
             )
         };
         let codex_model = turn_model.or_else(|| session_model.clone());
         let session_id_owned = session_id.to_string();
+        let remote_v1 = remote.is_some();
+        let v1_overrides = if engine == Engine::V1 {
+            v1_turn_overrides(
+                provider,
+                remote_v1,
+                effort.clone(),
+                session_effort.clone(),
+                sandbox.clone(),
+                approval_policy.clone(),
+                permission_mode.clone(),
+                allowed_tools.clone(),
+            )?
+        } else {
+            V1TurnOverrides::default()
+        };
 
         // Persist the prompt BEFORE the provider dispatch so it always wins the
         // sequence race against assistant/usage events the reader thread may
@@ -533,12 +598,11 @@ impl AgentChatManager {
             // expiry, idle exit) while the session stays resumable — restart it
             // transparently instead of sending into a void.
             if !client.chat_started(&session_id_owned) {
-                let (effort, permission_mode, allowed_tools) = restart;
                 if let Err(err) = client.chat_start(
                     &session_id_owned,
                     project_root.clone(),
                     session_model.clone(),
-                    effort,
+                    session_effort,
                     provider_session_id.clone(),
                     Some(
                         permission_mode
@@ -595,9 +659,12 @@ impl AgentChatManager {
                         prompt: text.to_string(),
                         cwd: project_root,
                         model: codex_model,
-                        effort,
+                        effort: v1_overrides.effort,
+                        sandbox: v1_overrides.sandbox,
+                        approval_policy: v1_overrides.approval_policy,
                         resume_thread_id: provider_session_id,
                         binary: self.codex_binary(),
+                        remote,
                     },
                     move |event| wrapped_sink(event),
                 )
@@ -611,10 +678,12 @@ impl AgentChatManager {
                         prompt: text.to_string(),
                         cwd: project_root,
                         model: session_model,
+                        effort: v1_overrides.effort,
                         resume_session_id: provider_session_id,
-                        permission_mode: None,
-                        allowed_tools: None,
+                        permission_mode: v1_overrides.permission_mode,
+                        allowed_tools: v1_overrides.allowed_tools,
                         binary: self.claude_binary(),
+                        remote,
                     },
                     move |event| wrapped_sink(event),
                 )
@@ -910,9 +979,39 @@ impl AgentChatManager {
     ) -> Arc<dyn Fn(AgentEvent) + Send + Sync> {
         let db = Arc::clone(&self.db);
         let sink_inner = Arc::clone(&self.inner);
+        let remote_sessions = Arc::clone(&self.remote_sessions);
         Arc::new(move |event| {
-            handle_runner_event(&db, &sink_inner, &session_id, &chat_id, event);
+            handle_runner_event(
+                &db,
+                &sink_inner,
+                &remote_sessions,
+                &session_id,
+                &chat_id,
+                event,
+            );
         })
+    }
+
+    fn remote_session_id(
+        &self,
+        chat_id: &str,
+        provider: AgentProvider,
+        host: &str,
+        remote_root: &str,
+    ) -> Option<String> {
+        self.remote_sessions
+            .lock()
+            .ok()
+            .and_then(|sessions| {
+                sessions
+                    .get(&RemoteSessionKey {
+                        chat_id: chat_id.to_string(),
+                        provider,
+                        host: host.to_string(),
+                        remote_root: remote_root.to_string(),
+                    })
+                    .cloned()
+            })
     }
 
     fn codex_app_client(
@@ -1137,6 +1236,16 @@ impl AgentChatManager {
             let _ = turn.kill();
             turn.reap();
         }
+        if let Some(remote) = state.remote.as_ref() {
+            if let Ok(mut sessions) = self.remote_sessions.lock() {
+                sessions.remove(&RemoteSessionKey {
+                    chat_id: state.chat_id.clone(),
+                    provider: state.provider,
+                    host: remote.host.clone(),
+                    remote_root: remote.remote_root.clone(),
+                });
+            }
+        }
         match (state.engine, state.provider) {
             (Engine::V2, AgentProvider::ClaudeCode) => {
                 if let Ok(client) = self.cached_claude_bridge_client() {
@@ -1176,6 +1285,7 @@ impl AgentChatManager {
             inner: Arc::new(Mutex::new(HashMap::new())),
             codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
             claude_bridge: Arc::new(Mutex::new(None)),
+            remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
             test_binaries: TestBinaries {
                 codex: codex_binary,
@@ -1246,6 +1356,7 @@ fn upsert_session_state(
     if let Some(existing) = inner.get_mut(&session_id) {
         existing.chat_id = state.chat_id;
         existing.project_root = state.project_root;
+        existing.remote = state.remote;
         existing.provider = state.provider;
         existing.engine = state.engine;
         existing.model = state.model;
@@ -1393,6 +1504,7 @@ impl ActiveTurn {
 fn handle_runner_event(
     db: &Database,
     inner: &Arc<Mutex<HashMap<String, SessionState>>>,
+    remote_sessions: &Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     session_id: &str,
     chat_id: &str,
     event: AgentEvent,
@@ -1432,14 +1544,38 @@ fn handle_runner_event(
         AgentEvent::SessionStarted {
             provider_session_id,
         } => {
+            let persisted_session_id = inner
+                .lock()
+                .ok()
+                .and_then(|states| {
+                    states.get(session_id).and_then(|state| {
+                        state.remote.as_ref().map(|remote| {
+                            persisted_remote_provider_session_id(remote, provider_session_id)
+                        })
+                    })
+                })
+                .unwrap_or_else(|| provider_session_id.clone());
             if let Err(err) =
-                db.agent_session_set_provider_session_id(session_id, provider_session_id)
+                db.agent_session_set_provider_session_id(session_id, &persisted_session_id)
             {
                 errors.push(err.to_string());
             }
             if let Ok(mut states) = inner.lock() {
                 if let Some(state) = states.get_mut(session_id) {
                     state.provider_session_id = Some(provider_session_id.clone());
+                    if let Some(remote) = state.remote.as_ref() {
+                        if let Ok(mut sessions) = remote_sessions.lock() {
+                            sessions.insert(
+                                RemoteSessionKey {
+                                    chat_id: state.chat_id.clone(),
+                                    provider: state.provider,
+                                    host: remote.host.clone(),
+                                    remote_root: remote.remote_root.clone(),
+                                },
+                                provider_session_id.clone(),
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1640,6 +1776,101 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
 
+fn engine_for_start(engine: Engine, remote: Option<&RemoteExec>) -> Engine {
+    if remote.is_some() {
+        Engine::V1
+    } else {
+        engine
+    }
+}
+
+fn v1_turn_overrides(
+    provider: AgentProvider,
+    remote: bool,
+    turn_effort: Option<String>,
+    session_effort: Option<String>,
+    sandbox: Option<String>,
+    approval_policy: Option<String>,
+    permission_mode: Option<String>,
+    allowed_tools: Option<Vec<String>>,
+) -> Result<V1TurnOverrides, AgentChatError> {
+    match provider {
+        AgentProvider::Codex => Ok(V1TurnOverrides {
+            effort: turn_effort.or(session_effort),
+            sandbox: sandbox.or_else(|| remote.then(|| "workspace-write".to_string())),
+            approval_policy: approval_policy.or_else(|| remote.then(|| "on-request".to_string())),
+            ..V1TurnOverrides::default()
+        }),
+        AgentProvider::ClaudeCode => Ok(V1TurnOverrides {
+            effort: turn_effort.or(session_effort),
+            permission_mode: claude_v1_permission_mode(permission_mode)?,
+            allowed_tools: claude_v1_allowed_tools(allowed_tools)?,
+            ..V1TurnOverrides::default()
+        }),
+    }
+}
+
+fn claude_v1_permission_mode(mode: Option<String>) -> Result<Option<String>, AgentChatError> {
+    let Some(mode) = non_empty(mode) else {
+        return Ok(None);
+    };
+    let mode = match mode.as_str() {
+        "default" => "acceptEdits",
+        "acceptEdits" | "auto" | "bypassPermissions" | "manual" | "dontAsk" | "plan" => {
+            mode.as_str()
+        }
+        _ => {
+            return Err(AgentChatError::Unsupported(format!(
+                "v1 claude cannot represent permission mode {mode}"
+            )));
+        }
+    };
+    Ok(Some(mode.to_string()))
+}
+
+fn claude_v1_allowed_tools(
+    allowed_tools: Option<Vec<String>>,
+) -> Result<Option<String>, AgentChatError> {
+    let Some(allowed_tools) = allowed_tools else {
+        return Ok(None);
+    };
+    if allowed_tools.iter().any(|tool| {
+        tool.is_empty() || tool.trim() != tool || tool.contains(',') || tool.contains('\0')
+    }) {
+        return Err(AgentChatError::Unsupported(
+            "v1 claude cannot represent the configured allowed tools".to_string(),
+        ));
+    }
+    Ok(Some(allowed_tools.join(",")))
+}
+
+fn persisted_remote_provider_session_id(remote: &RemoteExec, provider_session_id: &str) -> String {
+    let value = PersistedRemoteSession {
+        host: remote.host.clone(),
+        remote_root: remote.remote_root.clone(),
+        provider_session_id: provider_session_id.to_string(),
+    };
+    format!(
+        "{REMOTE_PROVIDER_SESSION_PREFIX}{}",
+        serde_json::to_string(&value).expect("remote session id serializes")
+    )
+}
+
+fn remote_provider_session_id(
+    provider_session_id: Option<&str>,
+    remote: &RemoteExec,
+) -> Option<String> {
+    let provider_session_id = provider_session_id?;
+    let value = provider_session_id.strip_prefix(REMOTE_PROVIDER_SESSION_PREFIX)?;
+    let persisted = serde_json::from_str::<PersistedRemoteSession>(value).ok()?;
+    (persisted.host == remote.host && persisted.remote_root == remote.remote_root)
+        .then_some(persisted.provider_session_id)
+}
+
+fn local_provider_session_id(provider_session_id: Option<String>) -> Option<String> {
+    provider_session_id.filter(|id| !id.starts_with(REMOTE_PROVIDER_SESSION_PREFIX))
+}
+
 #[cfg(test)]
 #[derive(Clone, Default)]
 struct TestBinaries {
@@ -1805,6 +2036,309 @@ mod tests {
         assert_eq!("v1".parse::<Engine>().unwrap(), Engine::V1);
         assert_eq!("v2".parse::<Engine>().unwrap(), Engine::V2);
         assert!("V2".parse::<Engine>().is_err());
+    }
+
+    #[test]
+    fn remote_sessions_force_v1_before_v2_dispatch() {
+        let remote = RemoteExec::new("mac-mini", "/srv/app").unwrap();
+
+        assert_eq!(engine_for_start(Engine::V2, Some(&remote)), Engine::V1);
+        assert_eq!(engine_for_start(Engine::V1, Some(&remote)), Engine::V1);
+        assert_eq!(engine_for_start(Engine::V2, None), Engine::V2);
+    }
+
+    #[test]
+    fn remote_start_never_initializes_a_v2_client() {
+        let manager = AgentChatManager::new(
+            Arc::new(Database::open_in_memory().unwrap()),
+            PathBuf::new(),
+        );
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-remote-v1",
+                PathBuf::from("/srv/app"),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    remote: Some(RemoteExec::new("mac-mini", "/srv/app").unwrap()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap();
+
+        let states = manager.inner.lock().unwrap();
+        assert_eq!(states[&session_id].engine, Engine::V1);
+        assert!(manager.codex_app_clients.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_start_rejects_unrepresentable_claude_restrictions() {
+        let manager = AgentChatManager::new(
+            Arc::new(Database::open_in_memory().unwrap()),
+            PathBuf::new(),
+        );
+        let (_events, sink) = event_sink();
+
+        let error = manager
+            .start(
+                "chat-remote-v1",
+                PathBuf::from("/srv/app"),
+                AgentProvider::ClaudeCode,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    allowed_tools: Some(vec!["Read,Edit".to_string()]),
+                    remote: Some(RemoteExec::new("mac-mini", "/srv/app").unwrap()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap_err();
+
+        assert!(matches!(&error, AgentChatError::Unsupported(_)));
+        assert!(error
+            .to_string()
+            .contains("cannot represent the configured allowed tools"));
+    }
+
+    #[test]
+    fn remote_session_cache_is_scoped_to_the_host_and_root() {
+        let manager = AgentChatManager::new(
+            Arc::new(Database::open_in_memory().unwrap()),
+            PathBuf::new(),
+        );
+        manager.remote_sessions.lock().unwrap().insert(
+            RemoteSessionKey {
+                chat_id: "chat-1".to_string(),
+                provider: AgentProvider::Codex,
+                host: "mac-mini".to_string(),
+                remote_root: "/srv/app-a".to_string(),
+            },
+            "thread-mac".to_string(),
+        );
+
+        assert_eq!(
+            manager.remote_session_id("chat-1", AgentProvider::Codex, "mac-mini", "/srv/app-a"),
+            Some("thread-mac".to_string())
+        );
+        assert_eq!(
+            manager.remote_session_id("chat-1", AgentProvider::Codex, "mac-mini", "/srv/app-b"),
+            None
+        );
+        assert_eq!(
+            manager.remote_session_id("chat-1", AgentProvider::Codex, "linux-box", "/srv/app-a"),
+            None
+        );
+    }
+
+    #[test]
+    fn v1_turn_override_mapping_preserves_configured_modes() {
+        for (sandbox, approval_policy, effort) in [
+            ("read-only", "on-request", "low"),
+            ("workspace-write", "on-request", "medium"),
+            ("danger-full-access", "never", "high"),
+        ] {
+            assert_eq!(
+                v1_turn_overrides(
+                    AgentProvider::Codex,
+                    true,
+                    None,
+                    Some(effort.to_string()),
+                    Some(sandbox.to_string()),
+                    Some(approval_policy.to_string()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+                V1TurnOverrides {
+                    effort: Some(effort.to_string()),
+                    sandbox: Some(sandbox.to_string()),
+                    approval_policy: Some(approval_policy.to_string()),
+                    ..V1TurnOverrides::default()
+                }
+            );
+        }
+
+        assert_eq!(
+            v1_turn_overrides(
+                AgentProvider::Codex,
+                true,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap(),
+            V1TurnOverrides {
+                sandbox: Some("workspace-write".to_string()),
+                approval_policy: Some("on-request".to_string()),
+                ..V1TurnOverrides::default()
+            }
+        );
+
+        for (permission_mode, expected) in [
+            ("default", "acceptEdits"),
+            ("plan", "plan"),
+            ("bypassPermissions", "bypassPermissions"),
+        ] {
+            assert_eq!(
+                v1_turn_overrides(
+                    AgentProvider::ClaudeCode,
+                    true,
+                    None,
+                    Some("xhigh".to_string()),
+                    None,
+                    None,
+                    Some(permission_mode.to_string()),
+                    Some(vec!["Read".to_string(), "Bash(git status)".to_string()]),
+                )
+                .unwrap(),
+                V1TurnOverrides {
+                    effort: Some("xhigh".to_string()),
+                    permission_mode: Some(expected.to_string()),
+                    allowed_tools: Some("Read,Bash(git status)".to_string()),
+                    ..V1TurnOverrides::default()
+                }
+            );
+        }
+
+        assert!(v1_turn_overrides(
+            AgentProvider::ClaudeCode,
+            true,
+            None,
+            None,
+            None,
+            None,
+            Some("restricted".to_string()),
+            None,
+        )
+        .is_err());
+        assert!(v1_turn_overrides(
+            AgentProvider::ClaudeCode,
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(vec!["Read,Edit".to_string()]),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn remote_session_ids_only_resume_for_the_same_binding() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let remote = RemoteExec::new("mac-mini", "/srv/app-a").unwrap();
+        db.agent_session_create(&AgentSessionRow {
+            id: "session-1".to_string(),
+            chat_id: "chat-1".to_string(),
+            provider: AgentProvider::Codex.as_str().to_string(),
+            provider_session_id: Some(persisted_remote_provider_session_id(&remote, "thread-a")),
+            model: None,
+            status: "idle".to_string(),
+            created_at: 1,
+        })
+        .unwrap();
+
+        let local_manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new());
+        let (_events, sink) = event_sink();
+        let local_session = local_manager
+            .start(
+                "chat-1",
+                PathBuf::from("/local/app"),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        assert_eq!(
+            local_manager.inner.lock().unwrap()[&local_session].provider_session_id,
+            None
+        );
+
+        let same_binding_manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new());
+        let (_events, sink) = event_sink();
+        let same_binding_session = same_binding_manager
+            .start(
+                "chat-1",
+                PathBuf::from("/srv/app-a"),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    remote: Some(remote.clone()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap();
+        assert_eq!(
+            same_binding_manager.inner.lock().unwrap()[&same_binding_session].provider_session_id,
+            Some("thread-a".to_string())
+        );
+
+        let other_binding_manager = AgentChatManager::new(db, PathBuf::new());
+        let (_events, sink) = event_sink();
+        let other_binding_session = other_binding_manager
+            .start(
+                "chat-1",
+                PathBuf::from("/srv/app-b"),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    remote: Some(RemoteExec::new("mac-mini", "/srv/app-b").unwrap()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap();
+        assert_eq!(
+            other_binding_manager.inner.lock().unwrap()[&other_binding_session].provider_session_id,
+            None
+        );
+    }
+
+    #[test]
+    fn remote_session_started_persists_a_scoped_provider_id() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new());
+        let remote = RemoteExec::new("mac-mini", "/srv/app").unwrap();
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-1",
+                PathBuf::from("/srv/app"),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    remote: Some(remote.clone()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap();
+
+        (manager.wrapping_sink(session_id.clone(), "chat-1".to_string()))(
+            AgentEvent::SessionStarted {
+                provider_session_id: "thread-a".to_string(),
+            },
+        );
+
+        let row = db.latest_agent_session_for_chat("chat-1").unwrap().unwrap();
+        assert_eq!(
+            row.provider_session_id,
+            Some(persisted_remote_provider_session_id(&remote, "thread-a"))
+        );
     }
 
     #[test]
@@ -2118,7 +2652,9 @@ done
             )
             .unwrap();
 
-        manager.send(&session_id, "start", None, None, None).unwrap();
+        manager
+            .send(&session_id, "start", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             events
                 .iter()
@@ -2273,7 +2809,9 @@ done
             )
             .unwrap();
 
-        manager.send(&session_id, "first", None, None, None).unwrap();
+        manager
+            .send(&session_id, "first", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),
@@ -2376,7 +2914,9 @@ done
             )
             .unwrap();
 
-        manager.send(&session_id, "first", None, None, None).unwrap();
+        manager
+            .send(&session_id, "first", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),
@@ -2563,7 +3103,9 @@ printf '%s\n' \
             )
             .unwrap();
 
-        manager.send(&session_id, "hello", None, None, None).unwrap();
+        manager
+            .send(&session_id, "hello", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             matches!(events.last(), Some(AgentEvent::TurnDone { .. }))
         });
@@ -2675,7 +3217,9 @@ printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"c
             )
             .unwrap();
 
-        manager.send(&session_id, "hello", None, None, None).unwrap();
+        manager
+            .send(&session_id, "hello", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             matches!(events.last(), Some(AgentEvent::TurnDone { .. }))
         });
@@ -2715,7 +3259,9 @@ sleep 5
             )
             .unwrap();
 
-        manager.send(&session_id, "first", None, None, None).unwrap();
+        manager
+            .send(&session_id, "first", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             events
                 .iter()
@@ -2807,7 +3353,9 @@ printf '%s\n' \
                 sink,
             )
             .unwrap();
-        manager.send(&session_id, "first", None, None, None).unwrap();
+        manager
+            .send(&session_id, "first", None, None, None)
+            .unwrap();
         wait_for_events(&events, |events| {
             matches!(
                 events.last(),

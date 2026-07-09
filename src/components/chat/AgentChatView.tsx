@@ -71,6 +71,7 @@ export function AgentChatView(props: {
   );
 
   const showNotice = () => state()?.providerSwitched ?? false;
+  const remoteHost = () => state()?.remoteHost ?? null;
 
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
   createEffect(() => {
@@ -196,6 +197,15 @@ export function AgentChatView(props: {
             ✕
           </button>
         </div>
+      </Show>
+      <Show when={remoteHost()}>
+        {(host) => (
+          <div class="pf-chat-switch-notice" role="status">
+            <span class="pf-chat-switch-notice-text">
+              Running remotely via ssh on {host()} — streaming responses
+            </span>
+          </div>
+        )}
       </Show>
       <Show when={pendingProvider()}>
         {(next) => (

@@ -13,6 +13,7 @@ use super::event::{
     AgentEvent, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem, ToolCallStatus,
     TurnStatus,
 };
+use super::remote_exec::{remote_ssh_exit_error, RemoteExec, RemoteExecError};
 
 const DEFAULT_ALLOWED_TOOLS: &str = "Bash,Edit,Write,Read,Glob,Grep,WebSearch,WebFetch,TodoWrite";
 const DEFAULT_PERMISSION_MODE: &str = "acceptEdits";
@@ -435,10 +436,12 @@ pub struct ClaudeTurnOptions {
     pub prompt: String,
     pub cwd: PathBuf,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub resume_session_id: Option<String>,
     pub permission_mode: Option<String>,
     pub allowed_tools: Option<String>,
     pub binary: Option<String>,
+    pub remote: Option<RemoteExec>,
 }
 
 pub struct ClaudeStreamTurn {
@@ -496,6 +499,67 @@ pub enum AgentSpawnError {
     ProcessLockPoisoned,
     #[error(transparent)]
     Io(std::io::Error),
+    #[error(transparent)]
+    Remote(#[from] RemoteExecError),
+}
+
+struct TurnCommand {
+    program: String,
+    args: Vec<String>,
+    cwd: Option<PathBuf>,
+    remote_host: Option<String>,
+}
+
+fn turn_command(opts: &ClaudeTurnOptions) -> Result<TurnCommand, AgentSpawnError> {
+    let binary = opts.binary.clone().unwrap_or_else(|| "claude".to_string());
+    let mut args = vec![
+        binary.clone(),
+        "-p".to_string(),
+        opts.prompt.clone(),
+        "--output-format".to_string(),
+        "stream-json".to_string(),
+        "--include-partial-messages".to_string(),
+        "--verbose".to_string(),
+        "--permission-mode".to_string(),
+        opts.permission_mode
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PERMISSION_MODE.to_string()),
+        "--allowedTools".to_string(),
+        opts.allowed_tools
+            .clone()
+            .unwrap_or_else(|| DEFAULT_ALLOWED_TOOLS.to_string()),
+    ];
+    if let Some(model) = opts.model.as_deref().filter(|value| !value.trim().is_empty()) {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+    }
+    if let Some(effort) = opts.effort.as_deref().filter(|value| !value.trim().is_empty()) {
+        args.push("--effort".to_string());
+        args.push(effort.to_string());
+    }
+    if let Some(session_id) = opts
+        .resume_session_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        args.push("--resume".to_string());
+        args.push(session_id.to_string());
+    }
+    if let Some(remote) = opts.remote.as_ref() {
+        return Ok(TurnCommand {
+            program: "ssh".to_string(),
+            args: remote.ssh_args(&args)?,
+            cwd: None,
+            remote_host: Some(remote.host.clone()),
+        });
+    }
+    args.remove(0);
+    Ok(TurnCommand {
+        program: binary,
+        args,
+        cwd: Some(opts.cwd.clone()),
+        remote_host: None,
+    })
 }
 
 pub fn spawn_claude_turn<F>(
@@ -505,33 +569,19 @@ pub fn spawn_claude_turn<F>(
 where
     F: Fn(AgentEvent) + Send + Sync + 'static,
 {
-    let binary = opts.binary.unwrap_or_else(|| "claude".to_string());
-    let mut command = Command::new(&binary);
+    let turn_command = turn_command(&opts)?;
+    let mut command = Command::new(&turn_command.program);
     command
-        .arg("-p")
-        .arg(opts.prompt)
-        .arg("--output-format")
-        .arg("stream-json")
-        .arg("--include-partial-messages")
-        .arg("--verbose")
-        .arg("--permission-mode")
-        .arg(opts.permission_mode.unwrap_or_else(|| DEFAULT_PERMISSION_MODE.to_string()))
-        .arg("--allowedTools")
-        .arg(opts.allowed_tools.unwrap_or_else(|| DEFAULT_ALLOWED_TOOLS.to_string()))
-        .current_dir(opts.cwd)
+        .args(&turn_command.args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-
-    if let Some(model) = opts.model {
-        command.arg("--model").arg(model);
-    }
-    if let Some(session_id) = opts.resume_session_id {
-        command.arg("--resume").arg(session_id);
+    if let Some(cwd) = turn_command.cwd.as_ref() {
+        command.current_dir(cwd);
     }
 
     let mut child = command.spawn().map_err(|source| AgentSpawnError::Spawn {
-        binary: binary.clone(),
+        binary: turn_command.program.clone(),
         source,
     })?;
 
@@ -564,7 +614,7 @@ where
     let reader_state = Arc::clone(&state);
     let reader_thread = match std::thread::Builder::new()
         .name("claude-stream-reader".to_string())
-        .spawn(move || read_stdout(stdout, reader_state, sink))
+        .spawn(move || read_stdout(stdout, reader_state, sink, turn_command.remote_host))
     {
         Ok(thread) => thread,
         Err(error) => {
@@ -587,7 +637,12 @@ struct TurnState {
     interrupted: AtomicBool,
 }
 
-fn read_stdout<F>(stdout: impl Read, state: Arc<TurnState>, sink: Arc<F>)
+fn read_stdout<F>(
+    stdout: impl Read,
+    state: Arc<TurnState>,
+    sink: Arc<F>,
+    remote_host: Option<String>,
+)
 where
     F: Fn(AgentEvent) + Send + Sync + 'static,
 {
@@ -644,7 +699,14 @@ where
                 &sink,
                 &state.terminal_emitted,
                 AgentEvent::TurnFailed {
-                    error: format!("claude exited with status {status_text}"),
+                    error: if status.code() == Some(255) {
+                        remote_host
+                            .as_deref()
+                            .map(remote_ssh_exit_error)
+                            .unwrap_or_else(|| format!("claude exited with status {status_text}"))
+                    } else {
+                        format!("claude exited with status {status_text}")
+                    },
                 },
             );
         }
@@ -889,11 +951,38 @@ mod tests {
             prompt: "ignored".to_string(),
             cwd: std::env::temp_dir(),
             model: None,
+            effort: None,
             resume_session_id: None,
             permission_mode: None,
             allowed_tools: None,
             binary: Some(binary.to_string_lossy().to_string()),
+            remote: None,
         }
+    }
+
+    #[test]
+    fn remote_turn_uses_one_quoted_ssh_command() {
+        let options = ClaudeTurnOptions {
+            prompt: "say it's $HOME".to_string(),
+            cwd: PathBuf::from("/local/project"),
+            model: Some("model with spaces".to_string()),
+            effort: Some("high".to_string()),
+            resume_session_id: Some("session'one".to_string()),
+            permission_mode: Some("plan".to_string()),
+            allowed_tools: Some("Read,Bash(git status)".to_string()),
+            binary: Some("claude".to_string()),
+            remote: Some(RemoteExec::new("mac-mini", "/Users/dev/it's $root").unwrap()),
+        };
+
+        let command = turn_command(&options).unwrap();
+
+        assert_eq!(command.program, "ssh");
+        assert_eq!(command.cwd, None);
+        assert_eq!(command.remote_host.as_deref(), Some("mac-mini"));
+        assert_eq!(
+            command.args.last().unwrap(),
+            "cd '/Users/dev/it'\\''s $root' && exec \"$SHELL\" -lc ''\\''claude'\\'' '\\''-p'\\'' '\\''say it'\\''\\'\\'''\\''s $HOME'\\'' '\\''--output-format'\\'' '\\''stream-json'\\'' '\\''--include-partial-messages'\\'' '\\''--verbose'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--allowedTools'\\'' '\\''Read,Bash(git status)'\\'' '\\''--model'\\'' '\\''model with spaces'\\'' '\\''--effort'\\'' '\\''high'\\'' '\\''--resume'\\'' '\\''session'\\''\\'\\'''\\''one'\\'''"
+        );
     }
 
     #[cfg(unix)]

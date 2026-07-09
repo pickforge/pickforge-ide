@@ -105,6 +105,7 @@ export interface AgentChatStartOptions {
   approvalPolicy?: string;
   permissionMode?: string;
   allowedTools?: string[];
+  remote?: { host: string; remoteRoot: string } | null;
   onEvent: (event: AgentEvent) => void;
 }
 
@@ -129,6 +130,7 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
     approvalPolicy: opts.approvalPolicy ?? null,
     permissionMode: opts.permissionMode ?? null,
     allowedTools: opts.allowedTools ?? null,
+    remote: opts.remote ?? null,
     onEvent,
   });
 }

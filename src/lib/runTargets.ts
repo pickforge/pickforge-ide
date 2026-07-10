@@ -505,7 +505,7 @@ export async function discoverRemoteRunTargets(remote: RemotePty): Promise<RunTa
     command: defaultCommand({ targetId: "flutter" } as TargetDetection)!,
     cwd: pubspecRoot,
     capabilities: [
-      "detect", "launch", "stop", "hotReload", "hotRestart", "captureScreenshot",
+      "detect", "launch", "stop", "hotReload", "hotRestart",
       "streamLogs", "inspectSelection", "mapSelectionToSource", "exposeMcpTools",
     ],
     needsDevice: false,

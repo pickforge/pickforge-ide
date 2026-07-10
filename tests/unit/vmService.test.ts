@@ -159,4 +159,42 @@ describe("remote VM-service flow", () => {
     expect(mocks.tunnelOpen).toHaveBeenCalledTimes(2);
     expect(vmService.error()).toContain("closed again");
   });
+
+  it("does not let an old tunnel-close handler disrupt a reopened connection", async () => {
+    let resolveDisconnect!: () => void;
+    mocks.vmDisconnect.mockImplementation(() => new Promise<void>((resolve) => {
+      resolveDisconnect = resolve;
+    }));
+    armVmAutoConnect({
+      remote: { host: "mac-mini", remoteRoot: "/srv/app" },
+      projectRoot: "/local/app",
+      runId: "run-9",
+    });
+    ingestRunOutput("ws://127.0.0.1:8181/token/ws");
+    await flush();
+    await flush();
+
+    mocks.tunnelClosed?.({
+      tunnelId: "tunnel-1",
+      host: "mac-mini",
+      localPort: 43123,
+      runId: "run-9",
+      exitCode: 255,
+    });
+    await flush();
+
+    armVmAutoConnect({
+      remote: { host: "mac-mini", remoteRoot: "/srv/app" },
+      projectRoot: "/local/app",
+      runId: "run-10",
+    });
+    ingestRunOutput("ws://127.0.0.1:8181/token/ws");
+    await flush();
+    await flush();
+    resolveDisconnect();
+    await flush();
+
+    expect(mocks.tunnelOpen).toHaveBeenCalledTimes(2);
+    expect(vmService.connected()).toBe(true);
+  });
 });

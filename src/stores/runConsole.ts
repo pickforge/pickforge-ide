@@ -10,7 +10,12 @@ import { type RunTarget } from "../lib/runTargets";
 import { watchDartChanges, type WatchHandle } from "../lib/fsWatch";
 import { newSessionId, recordRunFinish, recordRunStart } from "../lib/runRecord";
 import { autoReloadEnabled } from "./autoReload";
-import { disarmVmAutoConnect, hasVmTransport, reattachVm } from "./vmService";
+import {
+  disarmVmAutoConnect,
+  hadVmTransport,
+  hasVmTransport,
+  reattachVm,
+} from "./vmService";
 import { remotePtyFor } from "../lib/remoteContext";
 import type { RemotePty } from "../lib/pty";
 import type { PtyExit } from "../lib/remoteTerminal";
@@ -230,7 +235,7 @@ export function startRun(
 /** The run process exited (finished, crashed, or stopped): mark stopped and
  *  stop the watcher, but KEEP the pane mounted so its output stays visible. */
 export function consoleExited(exit?: PtyExit) {
-  if (exit?.code === 255 && current()?.remote && hasVmTransport()) {
+  if (exit?.code === 255 && current()?.remote && (hasVmTransport() || hadVmTransport())) {
     setStatus("disconnected");
     stopWatch();
     finishRunRecord("ssh disconnected");

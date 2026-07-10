@@ -42,6 +42,7 @@ let connectionRetries = 0;
 let tunnelEvents: Promise<void> | null = null;
 let unlistenTunnelEvents: RemoteTunnelUnlisten | null = null;
 let remoteConnectionGeneration = 0;
+let remoteTransportWasLive = false;
 
 export async function connectVm(target?: string): Promise<void> {
   const u = (target ?? url()).trim();
@@ -59,12 +60,15 @@ export async function connectVm(target?: string): Promise<void> {
 }
 
 export async function disconnectVm(): Promise<void> {
-  remoteConnectionGeneration += 1;
+  const generation = ++remoteConnectionGeneration;
+  const state = remoteVm;
+  remoteTransportWasLive = false;
   stopConnectionWatch();
   await vm.vmDisconnect().catch(() => {});
+  if (generation !== remoteConnectionGeneration) return;
   setConnected(false);
-  await closeRemoteTunnel(remoteVm);
-  remoteVm = null;
+  await closeRemoteTunnel(state);
+  if (generation === remoteConnectionGeneration && remoteVm === state) remoteVm = null;
 }
 
 const VM_URL_RE = /((?:https?|wss?):\/\/(?:127\.0\.0\.1|localhost):\d+\/[A-Za-z0-9_=-]+(?:\/ws)?(?:\?[^\s]*)?)/;
@@ -105,6 +109,7 @@ let armed = false;
 
 export function armVmAutoConnect(context?: RemoteRunContext): void {
   remoteConnectionGeneration += 1;
+  remoteTransportWasLive = false;
   armed = true;
   buf = "";
   armedRemote = context ?? null;
@@ -114,6 +119,7 @@ export function armVmAutoConnect(context?: RemoteRunContext): void {
 
 export function disarmVmAutoConnect(): void {
   remoteConnectionGeneration += 1;
+  remoteTransportWasLive = false;
   armed = false;
   buf = "";
   armedRemote = null;
@@ -136,6 +142,10 @@ export function ingestRunOutput(chunk: string): void {
 
 export function hasVmTransport(): boolean {
   return !!remoteVm?.tunnel;
+}
+
+export function hadVmTransport(): boolean {
+  return remoteTransportWasLive;
 }
 
 export async function reattachVm(): Promise<void> {
@@ -190,6 +200,7 @@ async function connectRemoteVm(remoteWs: string, context: RemoteRunContext): Pro
     return;
   }
   state.tunnel = tunnel;
+  remoteTransportWasLive = true;
   state.localWs = rewriteVmServiceUrlForTunnel(remoteWs, tunnel.localPort);
   remoteVm = state;
   try {
@@ -230,9 +241,11 @@ async function ensureTunnelEvents(): Promise<void> {
 async function handleTunnelClosed(closed: RemoteTunnelClosed): Promise<void> {
   const state = remoteVm;
   if (!state || state.tunnel?.tunnelId !== closed.tunnelId) return;
+  const generation = remoteConnectionGeneration;
   state.tunnel = null;
   stopConnectionWatch();
   await vm.vmDisconnect().catch(() => {});
+  if (generation !== remoteConnectionGeneration) return;
   setConnected(false);
   if (state.childReopenUsed) {
     setError("Remote VM tunnel closed again; reconnect it from the run console");
@@ -291,6 +304,7 @@ export function resetVmServiceForTest(): void {
   buf = "";
   connectionRetries = 0;
   remoteConnectionGeneration += 1;
+  remoteTransportWasLive = false;
   setUrl(DEFAULT_URL);
   setConnected(false);
   setError(null);

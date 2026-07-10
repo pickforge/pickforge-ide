@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   transportLive: true,
+  transportWasLive: true,
   remote: { host: "mac-mini", remoteRoot: "/srv/app" } as { host: string; remoteRoot: string } | null,
 }));
 
@@ -19,6 +20,7 @@ vi.mock("../../src/lib/remoteContext", () => ({
 vi.mock("../../src/stores/vmService", () => ({
   disarmVmAutoConnect: deps.disarm,
   hasVmTransport: () => state.transportLive,
+  hadVmTransport: () => state.transportWasLive,
   reattachVm: deps.reattach,
 }));
 
@@ -58,6 +60,7 @@ const target = {
 describe("remote run reattach state", () => {
   beforeEach(() => {
     state.transportLive = true;
+    state.transportWasLive = true;
     state.remote = { host: "mac-mini", remoteRoot: "/srv/app" };
     deps.disarm.mockReset();
     deps.reattach.mockReset().mockResolvedValue(undefined);
@@ -92,11 +95,23 @@ describe("remote run reattach state", () => {
 
   it("stops normally when no remote VM transport was live", () => {
     state.transportLive = false;
+    state.transportWasLive = false;
     startRun(target, "/local/app");
 
     consoleExited({ code: 255, notice: "ssh exit", preserveBuffer: true });
 
     expect(runConsole.status()).toBe("stopped");
     expect(deps.disarm).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the reattach state when the tunnel closes before the PTY exits", () => {
+    startRun(target, "/local/app");
+    state.transportLive = false;
+    state.transportWasLive = true;
+
+    consoleExited({ code: 255, notice: "ssh exit", preserveBuffer: true });
+
+    expect(runConsole.status()).toBe("disconnected");
+    expect(deps.disarm).not.toHaveBeenCalled();
   });
 });

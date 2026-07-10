@@ -5,16 +5,15 @@ use crate::process::CommandOutcome;
 use super::ssh::{shell_quote_argv, ssh_run, SshError, SshTarget};
 
 const NEAREST_PUBSPEC_SCRIPT: &str = r#"dir=$1
-while [ -n "$dir" ]; do
-  if [ -f "$dir/pubspec.yaml" ]; then
-    printf '%s\n' "$dir"
-    exit 0
-  fi
-  parent=$(dirname "$dir")
-  if [ "$parent" = "$dir" ]; then
-    exit 0
-  fi
-  dir=$parent
+if [ -f "$dir/pubspec.yaml" ]; then
+  printf '%s\n' "$dir"
+  exit 0
+fi
+find "$dir" \
+  -type d \( -name .git -o -name .dart_tool -o -name build \) -prune -o \
+  -type f -name pubspec.yaml -print -quit |
+while IFS= read -r pubspec; do
+  dirname "$pubspec"
 done"#;
 
 const DETECT_BINARIES_SCRIPT: &str = r#"for name do
@@ -195,6 +194,34 @@ mod tests {
                 "/Users/dev/it's $app",
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nearest_pubspec_script_finds_an_app_below_the_bound_root() {
+        let root = std::env::temp_dir().join(format!(
+            "pickforge-nearest-pubspec-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let app = root.join("apps/app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join("pubspec.yaml"), "name: app\n").unwrap();
+
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(NEAREST_PUBSPEC_SCRIPT)
+            .arg("pickforge-nearest-pubspec")
+            .arg(&root)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), app.display().to_string());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

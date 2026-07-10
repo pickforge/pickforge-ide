@@ -74,6 +74,7 @@ describe("discoverRemoteRunTargets", () => {
         id: "remote-flutter",
         command: "flutter --color run",
         cwd: "/srv/repo/apps/app",
+        capabilities: expect.not.arrayContaining(["captureScreenshot"]),
         needsDevice: false,
         inspectorKind: "vmService",
       }),

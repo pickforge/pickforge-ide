@@ -495,7 +495,7 @@ export async function discoverRemoteRunTargets(remote: RemotePty): Promise<RunTa
     id: "remote-flutter",
     label: "Flutter · remote",
     command: defaultCommand({ targetId: "flutter" } as TargetDetection)!,
-    cwd: remote.remoteRoot,
+    cwd: pubspecRoot,
     capabilities: [
       "detect", "launch", "stop", "hotReload", "hotRestart", "captureScreenshot",
       "streamLogs", "inspectSelection", "mapSelectionToSource", "exposeMcpTools",
@@ -513,4 +513,34 @@ export function discoverRunTargetsForProject(
   remote: RemotePty | null,
 ): Promise<RunTarget[]> {
   return remote ? discoverRemoteRunTargets(remote) : discoverRunTargets(root);
+}
+
+export interface RunTargetDiscoveryResult {
+  targets: RunTarget[];
+  error: string | null;
+}
+
+export class RunTargetDiscovery {
+  private generation = 0;
+
+  cancel(): void {
+    this.generation += 1;
+  }
+
+  async discover(
+    root: string,
+    remote: RemotePty | null,
+  ): Promise<RunTargetDiscoveryResult | null> {
+    const generation = ++this.generation;
+    try {
+      const targets = await discoverRunTargetsForProject(root, remote);
+      return generation === this.generation ? { targets, error: null } : null;
+    } catch (error) {
+      if (generation !== this.generation) return null;
+      return {
+        targets: [],
+        error: error instanceof Error ? error.message : "Remote run target detection failed",
+      };
+    }
+  }
 }

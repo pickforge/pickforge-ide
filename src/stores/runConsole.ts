@@ -178,7 +178,10 @@ export function startRun(
   setTarget(t);
   // The target carries its own run dir (derived from its program's pubspec, or
   // an explicit launch.json cwd); fall back to the project root.
-  const base = remote?.remoteRoot ?? t.cwd ?? projectRoot;
+  const base = t.cwd ?? remote?.remoteRoot ?? projectRoot;
+  const executionRemote = remote && t.cwd
+    ? { ...remote, remoteRoot: t.cwd }
+    : remote;
   setOpen(true);
   persist();
   setStatus("running");
@@ -190,10 +193,10 @@ export function startRun(
     command: t.command,
     cwd: base,
     projectRoot,
-    remote,
+    remote: executionRemote,
   };
   setCurrent(run);
-  runBase = remote ? null : base; // watch THIS run's dir, not just the first console's cwd
+  runBase = executionRemote ? null : base; // watch THIS run's dir, not just the first console's cwd
   syncAutoReloadWatch();
   // Persist the launch as a run-history row (best effort — a write failure must
   // never block the run). A fresh session id per launch, finished on exit/stop.

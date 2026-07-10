@@ -232,22 +232,18 @@ pub async fn remote_tunnel_open(
 }
 
 #[tauri::command]
-pub async fn remote_tunnel_close(
+pub fn remote_tunnel_close(
     manager: State<'_, TunnelManager>,
-    db: State<'_, Arc<Database>>,
-    project_root: String,
-    host: String,
     tunnel_id: String,
 ) -> Result<(), String> {
-    let manager = (*manager).clone();
-    let db = Arc::clone(&db);
-    tauri::async_runtime::spawn_blocking(move || {
-        authorize_remote_tunnel(&db, &project_root, &host)?;
-        manager.close(&tunnel_id);
-        Ok(())
-    })
-    .await
-    .map_err(|err| err.to_string())?
+    close_remote_tunnel(&manager, &tunnel_id)
+}
+
+fn close_remote_tunnel(manager: &TunnelManager, tunnel_id: &str) -> Result<(), String> {
+    manager
+        .close(tunnel_id)
+        .then_some(())
+        .ok_or_else(|| format!("remote tunnel {tunnel_id} does not belong to this app instance"))
 }
 
 fn authorize_remote_tunnel(db: &Database, project_root: &str, host: &str) -> Result<(), String> {

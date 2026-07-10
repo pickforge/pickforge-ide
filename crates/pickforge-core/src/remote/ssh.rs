@@ -67,6 +67,8 @@ pub(crate) fn ssh_tunnel_args(
     remote_port: u16,
 ) -> Vec<String> {
     let mut args = ssh_batch_args();
+    args.push("-o".into());
+    args.push("ExitOnForwardFailure=yes".into());
     args.push("-N".into());
     args.push("-L".into());
     args.push(format!(
@@ -169,6 +171,8 @@ mod tests {
                 "ConnectTimeout=5",
                 "-o",
                 "StrictHostKeyChecking=accept-new",
+                "-o",
+                "ExitOnForwardFailure=yes",
                 "-N",
                 "-L",
                 "127.0.0.1:43123:127.0.0.1:8181",

@@ -114,8 +114,8 @@ export const remoteTunnelOpen = (
   runId: string,
 ) => invoke<RemoteTunnel>("remote_tunnel_open", { projectRoot, host, remotePort, runId });
 
-export const remoteTunnelClose = (projectRoot: string, host: string, tunnelId: string) =>
-  invoke<void>("remote_tunnel_close", { projectRoot, host, tunnelId });
+export const remoteTunnelClose = (tunnelId: string) =>
+  invoke<void>("remote_tunnel_close", { tunnelId });
 
 export const onRemoteTunnelClosed = (callback: (tunnel: RemoteTunnelClosed) => void) =>
   listen<RemoteTunnelClosed>("remote-tunnel-closed", (event) => callback(event.payload));

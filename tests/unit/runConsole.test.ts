@@ -77,6 +77,19 @@ describe("remote run reattach state", () => {
     expect(deps.reattach).toHaveBeenCalledOnce();
   });
 
+  it("runs a remote monorepo app from its detected pubspec directory", () => {
+    state.remote = { host: "mac-mini", remoteRoot: "/srv/repo" };
+    const run = startRun(
+      { ...target, cwd: "/srv/repo/apps/app" },
+      "/local/app",
+    );
+
+    expect(run).toMatchObject({
+      cwd: "/srv/repo/apps/app",
+      remote: { host: "mac-mini", remoteRoot: "/srv/repo/apps/app" },
+    });
+  });
+
   it("stops normally when no remote VM transport was live", () => {
     state.transportLive = false;
     startRun(target, "/local/app");

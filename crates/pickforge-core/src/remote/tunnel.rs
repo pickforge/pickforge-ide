@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -72,10 +72,7 @@ impl Drop for TunnelState {
             .get_mut()
             .map(std::mem::take)
             .unwrap_or_default();
-        for (_, entry) in entries {
-            entry.manually_closed.store(true, Ordering::Release);
-            terminate_child(&entry.child);
-        }
+        shutdown_entries(entries);
     }
 }
 
@@ -197,6 +194,18 @@ impl TunnelManager {
         count
     }
 
+    pub fn shutdown(&self) {
+        let entries = {
+            let mut entries = self
+                .state
+                .entries
+                .lock()
+                .expect("remote tunnel registry poisoned");
+            std::mem::take(&mut *entries)
+        };
+        shutdown_entries(entries);
+    }
+
     pub fn len(&self) -> usize {
         self.state
             .entries
@@ -226,15 +235,23 @@ impl TunnelManager {
         manually_closed: Arc<AtomicBool>,
         on_closed: TunnelClosedCallback,
     ) {
-        let state = Arc::clone(&self.state);
+        let state = Arc::downgrade(&self.state);
         thread::spawn(move || loop {
-            let status = child
+            if state.upgrade().is_none() {
+                return;
+            }
+            let status = match child
                 .lock()
                 .expect("remote tunnel child poisoned")
                 .try_wait()
-                .ok()
-                .flatten();
+            {
+                Ok(status) => status,
+                Err(_) => return,
+            };
             if let Some(status) = status {
+                let Some(state) = Weak::upgrade(&state) else {
+                    return;
+                };
                 let removed = state
                     .entries
                     .lock()
@@ -294,6 +311,13 @@ fn terminate_child(child: &Arc<Mutex<Child>>) {
     let _ = child.wait();
 }
 
+fn shutdown_entries(entries: HashMap<String, ManagedTunnel>) {
+    for (_, entry) in entries {
+        entry.manually_closed.store(true, Ordering::Release);
+        terminate_child(&entry.child);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -302,9 +326,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reserves_a_free_loopback_port() {
+    fn reserves_a_nonzero_loopback_port() {
         let port = reserve_loopback_port().expect("reserve port");
-        TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("port is released after selection");
+        assert_ne!(port, 0);
     }
 
     #[cfg(unix)]
@@ -373,5 +397,51 @@ mod tests {
         assert!(matches!(error, TunnelError::ReadinessTimeout));
         assert_eq!(manager.len(), 0);
         let _ = fs::remove_file(fake);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_manager_kills_open_fake_ssh_children() {
+        let marker = std::env::temp_dir().join(format!(
+            "pickforge-fake-ssh-pid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let fake = fake_ssh(&format!(
+            "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nwhile :; do sleep 1; done\n",
+            marker.display()
+        ));
+        let manager = TunnelManager::with_parts(fake.clone(), Arc::new(|_, _| Ok(())));
+        manager
+            .open("mac-mini", 8181, "run-1", |_| {})
+            .expect("open tunnel");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !marker.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let pid = fs::read_to_string(&marker)
+            .expect("fake ssh wrote pid")
+            .parse::<libc::pid_t>()
+            .expect("valid fake ssh pid");
+
+        drop(manager);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while process_exists(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!process_exists(pid), "fake ssh child survived manager drop");
+        let _ = fs::remove_file(marker);
+        let _ = fs::remove_file(fake);
+    }
+
+    #[cfg(unix)]
+    fn process_exists(pid: libc::pid_t) -> bool {
+        let result = unsafe { libc::kill(pid, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 }

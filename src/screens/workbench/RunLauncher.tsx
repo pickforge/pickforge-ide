@@ -2,10 +2,10 @@
 // (play) action itself is the transport button in the console toolbar next to
 // reload/restart/stop (see DebugConsole); these are just the pickers. Neutral
 // chrome — the single ember stays on the focused terminal.
-import { createEffect, Show } from "solid-js";
+import { createEffect, onCleanup, Show } from "solid-js";
 import { Dropdown } from "../../components/Dropdown";
 import { StatusPill } from "../../components/ui";
-import { discoverRunTargetsForProject, supportTierMeta } from "../../lib/runTargets";
+import { RunTargetDiscovery, supportTierMeta } from "../../lib/runTargets";
 import { remotePtyFor } from "../../lib/remoteContext";
 import { workspace } from "../../stores/workspace";
 import { useDeviceList } from "../../stores/deviceList";
@@ -27,29 +27,25 @@ export function RunLauncher() {
   // an Android run, or vice versa).
   useDeviceList();
   const devices = compatibleDevices;
+  const discovery = new RunTargetDiscovery();
+  onCleanup(() => discovery.cancel());
 
   // Reload run targets whenever the active project changes.
   createEffect(() => {
     const root = workspace.activeRoot;
     if (!root) {
+      discovery.cancel();
       setRunTargets([]);
       setRunTargetDiscoveryError(null);
       return;
     }
     const remote = remotePtyFor(root);
     setRunTargetDiscoveryError(null);
-    void (async () => {
-      try {
-        const found = await discoverRunTargetsForProject(root, remote);
-        if (workspace.activeRoot === root) setRunTargets(found);
-      } catch (error) {
-        if (workspace.activeRoot !== root) return;
-        setRunTargets([]);
-        setRunTargetDiscoveryError(
-          error instanceof Error ? error.message : "Remote run target detection failed",
-        );
-      }
-    })();
+    void discovery.discover(root, remote).then((result) => {
+      if (!result) return;
+      setRunTargets(result.targets);
+      setRunTargetDiscoveryError(result.error);
+    });
   });
 
   const showDevices = () => !!activeTarget()?.needsDevice && devices().length > 0;

@@ -355,6 +355,7 @@ pub fn run() {
                     }
             ) {
                 app.state::<Arc<VoiceSessionManager>>().shutdown();
+                app.state::<TunnelManager>().shutdown();
             }
         });
 }

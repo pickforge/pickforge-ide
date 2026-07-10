@@ -83,6 +83,23 @@ describe("remote VM-service flow", () => {
     expect(vmService.connected()).toBe(true);
   });
 
+  it("surfaces a tunnel-open rejection with the remote connection pointer", async () => {
+    mocks.tunnelOpen.mockReset().mockRejectedValue(new Error("host is offline"));
+    armVmAutoConnect({
+      remote: { host: "mac-mini", remoteRoot: "/srv/app" },
+      projectRoot: "/local/app",
+      runId: "run-9",
+    });
+    ingestRunOutput("ws://127.0.0.1:8181/token/ws");
+    await flush();
+    await flush();
+
+    expect(mocks.vmConnect).not.toHaveBeenCalled();
+    expect(vmService.error()).toContain("ssh:mac-mini unavailable");
+    expect(vmService.error()).toContain("Test connection");
+    expect(vmService.error()).toContain("host is offline");
+  });
+
   it("reopens once when the SSH tunnel child exits", async () => {
     armVmAutoConnect({
       remote: { host: "mac-mini", remoteRoot: "/srv/app" },

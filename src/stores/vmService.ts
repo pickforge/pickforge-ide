@@ -163,12 +163,22 @@ async function connectRemoteVm(remoteWs: string, context: RemoteRunContext): Pro
       childReopenUsed: false,
     };
   state.remoteWs = remoteWs;
-  const tunnel = await remoteTunnelOpen(
-    state.projectRoot,
-    state.remote.host,
-    remoteVmPort(remoteWs),
-    state.runId,
-  );
+  let tunnel: RemoteTunnel;
+  try {
+    tunnel = await remoteTunnelOpen(
+      state.projectRoot,
+      state.remote.host,
+      remoteVmPort(remoteWs),
+      state.runId,
+    );
+  } catch (e) {
+    setConnected(false);
+    setError(
+      `ssh:${state.remote.host} unavailable; could not open the VM-service tunnel. ` +
+      `Open the project's Remote panel and choose Test connection. ${String(e)}`,
+    );
+    throw e;
+  }
   state.tunnel = tunnel;
   state.localWs = rewriteVmServiceUrlForTunnel(remoteWs, tunnel.localPort);
   remoteVm = state;
@@ -186,7 +196,7 @@ async function closeRemoteTunnel(state: RemoteVmState | null): Promise<void> {
   const tunnel = state?.tunnel;
   if (!state || !tunnel) return;
   state.tunnel = null;
-  await remoteTunnelClose(state.projectRoot, state.remote.host, tunnel.tunnelId).catch(() => {});
+  await remoteTunnelClose(tunnel.tunnelId).catch(() => {});
 }
 
 async function ensureTunnelEvents(): Promise<void> {

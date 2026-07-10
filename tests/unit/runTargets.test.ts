@@ -26,6 +26,7 @@ import {
   isTestProgram,
   logSourceOf,
   runProfile,
+  RunTargetDiscovery,
   shquote,
   stripJsonc,
   supportTier,
@@ -60,22 +61,22 @@ describe("defaultCommand", () => {
 
 describe("discoverRemoteRunTargets", () => {
   it("uses host-only Flutter discovery and leaves device selection to the host", async () => {
-    remote.nearestPubspec.mockResolvedValue("/srv/app");
+    remote.nearestPubspec.mockResolvedValue("/srv/repo/apps/app");
     remote.binaries.mockResolvedValue([true]);
 
     await expect(
-      discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/app" }),
+      discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/repo" }),
     ).resolves.toEqual([
       expect.objectContaining({
         id: "remote-flutter",
         command: "flutter --color run",
-        cwd: "/srv/app",
+        cwd: "/srv/repo/apps/app",
         needsDevice: false,
         inspectorKind: "vmService",
       }),
     ]);
 
-    expect(remote.nearestPubspec).toHaveBeenCalledWith("mac-mini", "/srv/app");
+    expect(remote.nearestPubspec).toHaveBeenCalledWith("mac-mini", "/srv/repo");
     expect(remote.binaries).toHaveBeenCalledWith("mac-mini", ["flutter"]);
   });
 
@@ -86,6 +87,34 @@ describe("discoverRemoteRunTargets", () => {
     await expect(
       discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/app" }),
     ).rejects.toThrow("Flutter is not available on remote host mac-mini");
+  });
+
+  it("drops stale discovery results after the binding changes for the same project", async () => {
+    let resolveOld!: (value: string) => void;
+    let resolveFresh!: (value: string) => void;
+    const oldPubspec = new Promise<string>((resolve) => { resolveOld = resolve; });
+    const freshPubspec = new Promise<string>((resolve) => { resolveFresh = resolve; });
+    remote.nearestPubspec.mockImplementation((host: string) =>
+      host === "old-host" ? oldPubspec : freshPubspec);
+    remote.binaries.mockResolvedValue([true]);
+    const discovery = new RunTargetDiscovery();
+
+    const stale = discovery.discover("/local/app", {
+      host: "old-host",
+      remoteRoot: "/srv/old",
+    });
+    const fresh = discovery.discover("/local/app", {
+      host: "new-host",
+      remoteRoot: "/srv/new",
+    });
+
+    resolveFresh("/srv/new/app");
+    await expect(fresh).resolves.toEqual({
+      targets: [expect.objectContaining({ cwd: "/srv/new/app" })],
+      error: null,
+    });
+    resolveOld("/srv/old/app");
+    await expect(stale).resolves.toBeNull();
   });
 });
 

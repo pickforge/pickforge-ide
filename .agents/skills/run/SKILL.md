@@ -25,6 +25,7 @@ separate worktrees. Prepare the lab:
 
 ```sh
 set -e
+[ ! -f "$PWD/.lab.env" ] || { echo "lab state exists — clean up the previous lab first" >&2; false; }
 bun install --frozen-lockfile
 command -v ss >/dev/null || { echo "ss (iproute2) required" >&2; false; }
 for candidate in {1421..1439}; do ! ss -ltnH "sport = :$candidate" | grep -q . && { PORT=$candidate; break; }; done
@@ -74,17 +75,21 @@ is blank or the app has not finished compiling.
 
 ## Cleanup
 
-Only kill PIDs whose environment contains the lab home; this protects a normal
-dev app from the same checkout. The `[x]` pattern avoids matching the shell.
+Only kill PIDs whose environment contains the lab home (helpers: whose cwd is
+this checkout); this protects a normal dev app and other worktrees' labs. The
+group kill (`kill -- -pid`) also takes down cargo/rustc children if cleanup
+runs mid-compile. The `[x]` pattern avoids matching the shell.
 
 ```sh
+[ -f "$PWD/.lab.env" ] || { echo "no lab state in this checkout" >&2; false; }
 source "$PWD/.lab.env"
+: "${PORT:?}" "${DISPLAY_NUM:?}" "${LAB_HOME:?}"
 export PORT DISPLAY_NUM LAB_HOME
-bash -c 'for pid in $(pgrep -f "[d]ev.pickforge.app.labtest$DISPLAY_NUM" || true); do grep -zqF "$LAB_HOME" "/proc/$pid/environ" 2>/dev/null && kill "$pid"; done'
-bash -c 'for pid in $(pgrep -f "[p]ickforge-tauri" || true); do grep -zqF "$LAB_HOME" "/proc/$pid/environ" 2>/dev/null && kill "$pid"; done'
-bash -c 'for pid in $(pgrep -f "[v]ite.*--port $PORT" || true); do kill "$pid" 2>/dev/null || true; done'
-bash -c 'for pid in $(pgrep -f "[x]fwm4.*:$DISPLAY_NUM" || true); do kill "$pid" 2>/dev/null || true; done'
-bash -c 'for pid in $(pgrep -f "[X]vfb :$DISPLAY_NUM" || true); do kill "$pid" 2>/dev/null || true; done'
+bash -c 'for pid in $(pgrep -f "[d]ev.pickforge.app.labtest$DISPLAY_NUM" || true); do grep -zqF "$LAB_HOME" "/proc/$pid/environ" 2>/dev/null && { kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null; } || true; done'
+bash -c 'for pid in $(pgrep -f "[p]ickforge-tauri" || true); do grep -zqF "$LAB_HOME" "/proc/$pid/environ" 2>/dev/null && kill "$pid" 2>/dev/null || true; done'
+bash -c 'for pid in $(pgrep -f "[v]ite.*--port $PORT" || true); do [ "$(readlink "/proc/$pid/cwd" 2>/dev/null)" = "$PWD" ] && kill "$pid" 2>/dev/null || true; done'
+bash -c 'for pid in $(pgrep -f "[x]fwm4.*:$DISPLAY_NUM" || true); do [ "$(readlink "/proc/$pid/cwd" 2>/dev/null)" = "$PWD" ] && kill "$pid" 2>/dev/null || true; done'
+bash -c 'for pid in $(pgrep -f "[X]vfb :$DISPLAY_NUM" || true); do [ "$(readlink "/proc/$pid/cwd" 2>/dev/null)" = "$PWD" ] && kill "$pid" 2>/dev/null || true; done'
 rm -rf "$LAB_HOME" "$PWD/.lab.env"
 ```
 

@@ -4,7 +4,11 @@ use crate::process::CommandOutcome;
 
 use super::ssh::{shell_quote_argv, ssh_run, SshError, SshTarget};
 
-const NEAREST_PUBSPEC_SCRIPT: &str = r#"dir=$1
+const PROBE_BEGIN: &str = "__PF_REMOTE_PROBE_BEGIN__";
+const PROBE_END: &str = "__PF_REMOTE_PROBE_END__";
+
+const NEAREST_PUBSPEC_SCRIPT: &str = r#"printf '%s\n' '__PF_REMOTE_PROBE_BEGIN__'
+dir=$1
 is_flutter() {
   awk '
     /^[[:space:]]*dependencies:[[:space:]]*(#.*)?$/ { dependencies = 1; next }
@@ -22,15 +26,18 @@ while IFS= read -r pubspec; do
     dirname "$pubspec"
     break
   fi
-done"#;
+done
+printf '%s\n' '__PF_REMOTE_PROBE_END__'"#;
 
-const DETECT_BINARIES_SCRIPT: &str = r#"for name do
+const DETECT_BINARIES_SCRIPT: &str = r#"printf '%s\n' '__PF_REMOTE_PROBE_BEGIN__'
+for name do
   if command -v "$name" >/dev/null 2>&1; then
     printf '1\n'
   else
     printf '0\n'
   fi
-done"#;
+done
+printf '%s\n' '__PF_REMOTE_PROBE_END__'"#;
 
 const LOGIN_SHELL_SCRIPT: &str = r#"exec "${SHELL:-/bin/sh}" -lc "$1""#;
 
@@ -62,8 +69,8 @@ pub fn remote_nearest_pubspec(
     if !outcome.success() {
         return Err(RemoteDetectError::Command(command_summary(&outcome)));
     }
-    Ok(outcome
-        .stdout_utf8()
+    let stdout = outcome.stdout_utf8();
+    Ok(probe_output(&stdout)?
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
@@ -88,7 +95,7 @@ pub fn remote_detect_binaries(
     }
 
     let stdout = outcome.stdout_utf8();
-    let lines = stdout
+    let lines = probe_output(&stdout)?
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -165,6 +172,16 @@ fn flutter_app_argv(project_dir: &str) -> Vec<String> {
     ]
 }
 
+fn probe_output(stdout: &str) -> Result<&str, RemoteDetectError> {
+    let (_, output) = stdout.split_once(PROBE_BEGIN).ok_or_else(|| {
+        RemoteDetectError::Command("remote probe output is missing its begin marker".into())
+    })?;
+    let (output, _) = output.split_once(PROBE_END).ok_or_else(|| {
+        RemoteDetectError::Command("remote probe output is missing its end marker".into())
+    })?;
+    Ok(output)
+}
+
 fn command_summary(outcome: &CommandOutcome) -> String {
     let stderr = String::from_utf8_lossy(&outcome.stderr).trim().to_string();
     if !stderr.is_empty() {
@@ -233,7 +250,12 @@ mod tests {
             .unwrap();
 
         assert!(output.status.success());
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), app.display().to_string());
+        assert_eq!(
+            probe_output(&String::from_utf8_lossy(&output.stdout))
+                .unwrap()
+                .trim(),
+            app.display().to_string()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -242,6 +264,12 @@ mod tests {
         assert!(NEAREST_PUBSPEC_SCRIPT.contains("find \"$dir\""));
         assert!(NEAREST_PUBSPEC_SCRIPT.contains("is_flutter \"$pubspec\""));
         assert!(!NEAREST_PUBSPEC_SCRIPT.contains("-quit"));
+    }
+
+    #[test]
+    fn probe_output_ignores_login_banner_before_markers() {
+        let output = "Welcome to mac-mini\n__PF_REMOTE_PROBE_BEGIN__\n1\n__PF_REMOTE_PROBE_END__\n";
+        assert_eq!(probe_output(output).unwrap().trim(), "1");
     }
 
     #[test]

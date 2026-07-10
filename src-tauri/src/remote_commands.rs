@@ -160,6 +160,12 @@ fn validate_project_remote_root(remote_root: &str) -> Result<(), String> {
     if remote_root.chars().all(|ch| ch == '/') {
         return Err("remote root must name a project directory, not /".into());
     }
+    if remote_root
+        .split('/')
+        .any(|component| matches!(component, "." | ".."))
+    {
+        return Err("remote root must not contain . or .. path segments".into());
+    }
     Ok(())
 }
 
@@ -674,6 +680,15 @@ mod tests {
             .unwrap_err()
             .contains("project directory"));
         assert!(validate_project_remote_root("/srv/app").is_ok());
+    }
+
+    #[test]
+    fn project_remote_set_rejects_non_normalized_roots() {
+        for root in ["/srv/./app", "/srv/app/../other"] {
+            assert!(validate_project_remote_root(root)
+                .unwrap_err()
+                .contains("must not contain . or .."));
+        }
     }
 
     #[tokio::test]

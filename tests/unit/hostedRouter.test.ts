@@ -128,12 +128,12 @@ describe("hostedRoute", () => {
   });
 
   it("maps other server errors to error", async () => {
-    env.invoke.mockResolvedValue({ data: { error: "rate_limited" }, error: null });
+    env.invoke.mockResolvedValue({ data: { error: "internal_error" }, error: null });
     const { hostedRoute } = await loadHosted();
 
     await expect(hostedRoute("open Billing")).resolves.toEqual({
       kind: "error",
-      message: "rate_limited",
+      message: "internal_error",
     });
   });
 
@@ -213,59 +213,15 @@ describe("hostedRoute", () => {
     expect(body.context.chatNames).not.toContain("worker lane one");
   });
 
-  it("retries a 409 route_in_progress once with the same key, then serves the proposal", async () => {
-    env.invoke
-      .mockResolvedValueOnce({ data: { error: "route_in_progress" }, error: null })
-      .mockResolvedValueOnce({ data: { proposalJson: PROPOSAL, costCents: 2 }, error: null });
+  it("maps a 429 rate_limited response to a quiet friendly error without retrying", async () => {
+    const httpError = { context: { json: async () => ({ error: "rate_limited" }) } };
+    env.invoke.mockResolvedValue({ data: null, error: httpError });
     const { hostedRoute } = await loadHosted();
-    vi.useFakeTimers();
-    try {
-      const pending = hostedRoute("open Billing");
-      await vi.advanceTimersByTimeAsync(900);
-      const result = await pending;
 
-      expect(env.invoke).toHaveBeenCalledTimes(2);
-      const keys = env.invoke.mock.calls.map((call) => call[1].headers["x-idempotency-key"]);
-      expect(keys[0]).toBe(keys[1]);
-      expect(result).toMatchObject({ kind: "proposal", costCents: 2 });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+    const result = await hostedRoute("open Billing");
 
-  it("reads the 409 body from an HTTP error response and retries", async () => {
-    const httpError = { context: { json: async () => ({ error: "route_in_progress" }) } };
-    env.invoke
-      .mockResolvedValueOnce({ data: null, error: httpError })
-      .mockResolvedValueOnce({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
-    const { hostedRoute } = await loadHosted();
-    vi.useFakeTimers();
-    try {
-      const pending = hostedRoute("open Billing");
-      await vi.advanceTimersByTimeAsync(900);
-      const result = await pending;
-
-      expect(result).toMatchObject({ kind: "proposal" });
-      expect(env.invoke).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("surfaces an error when route_in_progress persists after the retry", async () => {
-    env.invoke.mockResolvedValue({ data: { error: "route_in_progress" }, error: null });
-    const { hostedRoute } = await loadHosted();
-    vi.useFakeTimers();
-    try {
-      const pending = hostedRoute("open Billing");
-      await vi.advanceTimersByTimeAsync(900);
-      const result = await pending;
-
-      expect(result.kind).toBe("error");
-      expect(env.invoke).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(result).toEqual({ kind: "error", message: "routing rate limit — try again in a moment" });
+    expect(env.invoke).toHaveBeenCalledTimes(1);
   });
 });
 

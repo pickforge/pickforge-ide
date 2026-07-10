@@ -14,7 +14,6 @@ import { activeProject, chatsFor, workspace } from "../stores/workspace";
 export const HOSTED_ROUTER_FUNCTION = "operator-router";
 export const HOSTED_CONTEXT_MAX_CHATS = 12;
 export const HOSTED_CONTEXT_MAX_WIDGET_LABELS = 12;
-export const ROUTE_IN_PROGRESS_RETRY_MS = 800;
 
 export type HostedRouteResult = RouteResult | { kind: "needsCredits"; balance: number };
 
@@ -98,18 +97,14 @@ function proposalToResult(proposal: RouterProposal, latencyMs: number, costCents
   };
 }
 
-function isRouteInProgress(record: Record<string, unknown> | null): boolean {
-  return record?.error === "route_in_progress";
-}
-
 interface HostedCall {
   record: Record<string, unknown> | null;
   transportError: string | null;
 }
 
-// A non-2xx status (e.g. 409 route_in_progress) surfaces as a FunctionsHttpError
-// whose response body carries the structured { error, ... } payload; read it so
-// concurrency and insufficient-credit signals survive the HTTP status.
+// A non-2xx status (402 insufficient_credits, 429 rate_limited, other 4xx)
+// surfaces as a FunctionsHttpError whose response body carries the structured
+// { error, ... } payload; read it so those signals survive the HTTP status.
 async function readErrorRecord(error: unknown): Promise<Record<string, unknown> | null> {
   const context = (error as { context?: unknown }).context;
   if (context && typeof (context as { json?: unknown }).json === "function") {
@@ -136,18 +131,15 @@ async function callHostedRouter(body: HostedRouteRequestBody, key: string): Prom
   return { record, transportError: null };
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function interpretRecord(record: Record<string, unknown> | null, latencyMs: number): HostedRouteResult {
   if (!record) return { kind: "error", message: "hosted router returned no data" };
 
   if (record.error === "insufficient_credits") {
     return { kind: "needsCredits", balance: toNumber(record.balance) };
   }
-  if (isRouteInProgress(record)) {
-    return { kind: "error", message: "hosted router is still processing this command — try again" };
+  if (record.error === "rate_limited") {
+    // A per-user 429; never auto-retry, or the app would hammer the limiter.
+    return { kind: "error", message: "routing rate limit — try again in a moment" };
   }
   if (typeof record.error === "string") {
     return { kind: "error", message: record.error };
@@ -177,17 +169,9 @@ export async function hostedRoute(commandText: string): Promise<HostedRouteResul
   const context = currentRoutingContext();
   if (context) body.context = context;
 
-  // One fresh key per command; on a concurrent-request 409 the retry reuses that
-  // same key so the now-completed row serves the stored proposal instead of
-  // spending a second time.
-  const key = crypto.randomUUID();
   const start = Date.now();
   try {
-    let call = await callHostedRouter(body, key);
-    if (isRouteInProgress(call.record)) {
-      await delay(ROUTE_IN_PROGRESS_RETRY_MS);
-      call = await callHostedRouter(body, key);
-    }
+    const call = await callHostedRouter(body, crypto.randomUUID());
     if (call.transportError) return { kind: "error", message: call.transportError };
     return interpretRecord(call.record, Date.now() - start);
   } catch (error) {

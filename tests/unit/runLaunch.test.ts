@@ -110,4 +110,21 @@ describe("launchActiveTarget remote routing", () => {
       runId: "run-9",
     });
   });
+
+  it("ignores a second Run click while disconnecting the previous inspector", async () => {
+    let resolveDisconnect!: () => void;
+    deps.disconnectVm.mockImplementation(() => new Promise<void>((resolve) => {
+      resolveDisconnect = resolve;
+    }));
+
+    const first = launchActiveTarget();
+    const second = launchActiveTarget();
+
+    expect(deps.disconnectVm).toHaveBeenCalledTimes(1);
+    expect(deps.startRun).not.toHaveBeenCalled();
+    resolveDisconnect();
+    await Promise.all([first, second]);
+
+    expect(deps.startRun).toHaveBeenCalledTimes(1);
+  });
 });

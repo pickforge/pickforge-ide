@@ -22,7 +22,9 @@ pub use daemon::{
     parse_listener, DaemonConfig, DaemonConfigEnvError, DaemonConfigError, DaemonListener,
     DaemonStatus, RemoteHostDaemon,
 };
-pub use detect::{remote_detect_binaries, remote_nearest_pubspec, RemoteDetectError};
+pub use detect::{
+    remote_detect_binaries, remote_nearest_pubspec, remote_pubspec_uses_flutter, RemoteDetectError,
+};
 pub use health::{probe_host, probe_tailnet_peer, ProbeState, RemoteHostHealth};
 pub use protocol::{
     decode_remote_frame, encode_remote_frame, RemoteCapability, RemoteFrame, RemoteFrameError,

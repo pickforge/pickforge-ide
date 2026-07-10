@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::process::CommandOutcome;
 
-use super::ssh::{ssh_run, SshError, SshTarget};
+use super::ssh::{shell_quote_argv, ssh_run, SshError, SshTarget};
 
 const NEAREST_PUBSPEC_SCRIPT: &str = r#"dir=$1
 while [ -n "$dir" ]; do
@@ -24,6 +24,16 @@ const DETECT_BINARIES_SCRIPT: &str = r#"for name do
     printf '0\n'
   fi
 done"#;
+
+const LOGIN_SHELL_SCRIPT: &str = r#"exec "${SHELL:-/bin/sh}" -lc "$1""#;
+
+const FLUTTER_APP_SCRIPT: &str = r#"awk '
+  /^[[:space:]]*dependencies:[[:space:]]*(#.*)?$/ { dependencies = 1; next }
+  dependencies && /^[^[:space:]#]/ { exit }
+  dependencies && /^[[:space:]]+flutter:[[:space:]]*(#.*)?$/ { flutter = 1; next }
+  flutter && /^[[:space:]]+sdk:[[:space:]]*flutter([[:space:]#]|$)/ { found = 1; exit }
+  END { exit !found }
+' "$1/pubspec.yaml""#;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteDetectError {
@@ -95,6 +105,22 @@ pub fn remote_detect_binaries(
         .collect()
 }
 
+pub fn remote_pubspec_uses_flutter(
+    host: &str,
+    project_dir: &str,
+    timeout: Duration,
+) -> Result<bool, RemoteDetectError> {
+    let target = SshTarget::new(host)?;
+    let argv = flutter_app_argv(project_dir);
+    let refs = argv.iter().map(String::as_str).collect::<Vec<_>>();
+    let outcome = ssh_run(&target, &refs, timeout)?;
+    match outcome.code {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(RemoteDetectError::Command(command_summary(&outcome))),
+    }
+}
+
 fn nearest_pubspec_argv(start_dir: &str) -> Vec<String> {
     vec![
         "sh".into(),
@@ -106,14 +132,30 @@ fn nearest_pubspec_argv(start_dir: &str) -> Vec<String> {
 }
 
 fn detect_binaries_argv(names: &[&str]) -> Vec<String> {
-    let mut argv = vec![
+    let mut command = vec![
         "sh".into(),
         "-c".into(),
         DETECT_BINARIES_SCRIPT.into(),
         "pickforge-detect-binaries".into(),
     ];
-    argv.extend(names.iter().map(|name| (*name).to_string()));
-    argv
+    command.extend(names.iter().map(|name| (*name).to_string()));
+    vec![
+        "sh".into(),
+        "-c".into(),
+        LOGIN_SHELL_SCRIPT.into(),
+        "pickforge-login-shell".into(),
+        shell_quote_argv(&command.iter().map(String::as_str).collect::<Vec<_>>()),
+    ]
+}
+
+fn flutter_app_argv(project_dir: &str) -> Vec<String> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        FLUTTER_APP_SCRIPT.into(),
+        "pickforge-flutter-app".into(),
+        project_dir.into(),
+    ]
 }
 
 fn command_summary(outcome: &CommandOutcome) -> String {
@@ -176,17 +218,38 @@ mod tests {
     }
 
     #[test]
-    fn detect_binaries_argv_is_fixed_script_plus_names() {
+    fn detect_binaries_argv_runs_the_probe_in_the_login_shell() {
+        let command = shell_quote_argv(&[
+            "sh",
+            "-c",
+            DETECT_BINARIES_SCRIPT,
+            "pickforge-detect-binaries",
+            "dart",
+            "bun $bad",
+            "node`bad`",
+        ]);
         assert_eq!(
             detect_binaries_argv(&["dart", "bun $bad", "node`bad`"]),
             vec![
                 "sh",
                 "-c",
-                DETECT_BINARIES_SCRIPT,
-                "pickforge-detect-binaries",
-                "dart",
-                "bun $bad",
-                "node`bad`",
+                LOGIN_SHELL_SCRIPT,
+                "pickforge-login-shell",
+                &command,
+            ]
+        );
+    }
+
+    #[test]
+    fn flutter_app_argv_reads_the_detected_pubspec() {
+        assert_eq!(
+            flutter_app_argv("/Users/dev/it's $app"),
+            vec![
+                "sh",
+                "-c",
+                FLUTTER_APP_SCRIPT,
+                "pickforge-flutter-app",
+                "/Users/dev/it's $app",
             ]
         );
     }

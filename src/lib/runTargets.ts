@@ -5,7 +5,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { findNearestPubspec, targetDetect, type TargetDetection } from "./device";
 import type { RemotePty } from "./pty";
-import { remoteDetectBinaries, remoteNearestPubspec } from "./remoteHost";
+import {
+  remoteDetectBinaries,
+  remoteNearestPubspec,
+  remotePubspecUsesFlutter,
+} from "./remoteHost";
 
 /** How the chosen device serial is applied to a target's command — decided once
  *  per adapter instead of re-sniffed from the command string at each call site.
@@ -480,12 +484,16 @@ export async function discoverRunTargets(root: string): Promise<RunTarget[]> {
 }
 
 export async function discoverRemoteRunTargets(remote: RemotePty): Promise<RunTarget[]> {
-  const [pubspecRoot, binaries] = await Promise.all([
-    remoteNearestPubspec(remote.host, remote.remoteRoot),
-    remoteDetectBinaries(remote.host, ["flutter"]),
-  ]);
+  const pubspecRoot = await remoteNearestPubspec(remote.host, remote.remoteRoot);
   if (!pubspecRoot) {
     throw new Error(`No Flutter project found on ${remote.host} from ${remote.remoteRoot}`);
+  }
+  const [isFlutterApp, binaries] = await Promise.all([
+    remotePubspecUsesFlutter(remote.host, pubspecRoot),
+    remoteDetectBinaries(remote.host, ["flutter"]),
+  ]);
+  if (!isFlutterApp) {
+    throw new Error(`Remote project at ${pubspecRoot} is not a Flutter app`);
   }
   if (!binaries[0]) {
     throw new Error(`Flutter is not available on remote host ${remote.host}`);

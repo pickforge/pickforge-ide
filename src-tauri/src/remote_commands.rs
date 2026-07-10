@@ -5,7 +5,8 @@ use std::time::Duration;
 use pickforge_core::{
     listener_from_parts, pickforge_home, probe_host, probe_tailnet_peer,
     remote_detect_binaries as core_remote_detect_binaries,
-    remote_nearest_pubspec as core_remote_nearest_pubspec, remote_auth_store_path,
+    remote_nearest_pubspec as core_remote_nearest_pubspec,
+    remote_pubspec_uses_flutter as core_remote_pubspec_uses_flutter, remote_auth_store_path,
     spawn_remote_http_server, tailscale_ssh_set, tailscale_status, ClientTokenRecord,
     DaemonConfig, DaemonListener, Database, PairingCode, ProbeState, RemoteAuthStore,
     RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo, RemotePty, RemoteTunnel,
@@ -201,6 +202,20 @@ pub async fn remote_detect_binaries(
         ensure_remote_ssh_host_allowed(&host)?;
         let refs = names.iter().map(String::as_str).collect::<Vec<_>>();
         core_remote_detect_binaries(&host, &refs, REMOTE_STEP_TIMEOUT)
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn remote_pubspec_uses_flutter(
+    host: String,
+    project_dir: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_remote_ssh_host_allowed(&host)?;
+        core_remote_pubspec_uses_flutter(&host, &project_dir, REMOTE_STEP_TIMEOUT)
             .map_err(|err| err.to_string())
     })
     .await

@@ -22,6 +22,7 @@ const BOOT_POLL_MS = 2000;
 const [booting, setBooting] = createSignal(false);
 const [bootKind, setBootKind] = createSignal<"emulator" | "simulator">("emulator");
 const [error, setError] = createSignal<string | null>(null);
+let launching = false;
 /** True while an emulator/simulator is booting before a run. */
 export const isBooting = booting;
 /** What the in-flight boot is booting ("emulator" | "simulator"), for UI copy.
@@ -169,7 +170,16 @@ function abortableSleep(ms: number, live: () => boolean): Promise<void> {
 export async function launchActiveTarget(): Promise<void> {
   const t = activeTarget();
   if (!t) return;
-  if (booting() || runConsole.status() === "running") return; // never stack runs
+  if (launching || booting() || runConsole.status() === "running") return;
+  launching = true;
+  try {
+    await launchTarget(t);
+  } finally {
+    launching = false;
+  }
+}
+
+async function launchTarget(t: RunTarget): Promise<void> {
   openConsole();
   setError(null);
   const remote = remotePtyFor(workspace.activeRoot);

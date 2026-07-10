@@ -41,6 +41,7 @@ let retryingConnection = false;
 let connectionRetries = 0;
 let tunnelEvents: Promise<void> | null = null;
 let unlistenTunnelEvents: RemoteTunnelUnlisten | null = null;
+let remoteConnectionGeneration = 0;
 
 export async function connectVm(target?: string): Promise<void> {
   const u = (target ?? url()).trim();
@@ -58,6 +59,7 @@ export async function connectVm(target?: string): Promise<void> {
 }
 
 export async function disconnectVm(): Promise<void> {
+  remoteConnectionGeneration += 1;
   stopConnectionWatch();
   await vm.vmDisconnect().catch(() => {});
   setConnected(false);
@@ -102,6 +104,7 @@ let buf = "";
 let armed = false;
 
 export function armVmAutoConnect(context?: RemoteRunContext): void {
+  remoteConnectionGeneration += 1;
   armed = true;
   buf = "";
   armedRemote = context ?? null;
@@ -110,6 +113,7 @@ export function armVmAutoConnect(context?: RemoteRunContext): void {
 }
 
 export function disarmVmAutoConnect(): void {
+  remoteConnectionGeneration += 1;
   armed = false;
   buf = "";
   armedRemote = null;
@@ -152,7 +156,9 @@ export async function reattachVm(): Promise<void> {
 }
 
 async function connectRemoteVm(remoteWs: string, context: RemoteRunContext): Promise<void> {
+  const generation = remoteConnectionGeneration;
   await ensureTunnelEvents();
+  if (generation !== remoteConnectionGeneration) return;
   const state: RemoteVmState = remoteVm && remoteVm.projectRoot === context.projectRoot
     ? remoteVm
     : {
@@ -179,11 +185,22 @@ async function connectRemoteVm(remoteWs: string, context: RemoteRunContext): Pro
     );
     throw e;
   }
+  if (generation !== remoteConnectionGeneration) {
+    await remoteTunnelClose(tunnel.tunnelId).catch(() => {});
+    return;
+  }
   state.tunnel = tunnel;
   state.localWs = rewriteVmServiceUrlForTunnel(remoteWs, tunnel.localPort);
   remoteVm = state;
   try {
     await connectVm(state.localWs);
+    if (generation !== remoteConnectionGeneration) {
+      await vm.vmDisconnect().catch(() => {});
+      setConnected(false);
+      await closeRemoteTunnel(state);
+      if (remoteVm === state) remoteVm = null;
+      return;
+    }
     connectionRetries = 0;
     startConnectionWatch();
   } catch (e) {
@@ -273,6 +290,7 @@ export function resetVmServiceForTest(): void {
   armed = false;
   buf = "";
   connectionRetries = 0;
+  remoteConnectionGeneration += 1;
   setUrl(DEFAULT_URL);
   setConnected(false);
   setError(null);

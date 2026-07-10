@@ -94,6 +94,9 @@ export const remoteNearestPubspec = (host: string, start: string) =>
 export const remoteDetectBinaries = (host: string, names: string[]) =>
   invoke<boolean[]>("remote_detect_binaries", { host, names });
 
+export const remotePubspecUsesFlutter = (host: string, projectDir: string) =>
+  invoke<boolean>("remote_pubspec_uses_flutter", { host, projectDir });
+
 export interface RemoteTunnel {
   tunnelId: string;
   localPort: number;

@@ -4,6 +4,7 @@ const env = vi.hoisted(() => ({
   invoke: vi.fn(),
   functionsInvoke: vi.fn(),
   signOut: vi.fn(),
+  currentUserId: null as string | null,
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -18,6 +19,7 @@ vi.mock("../../src/lib/proAuth", () => ({
 
 vi.mock("../../src/stores/account", () => ({
   signOut: env.signOut,
+  accountSession: () => (env.currentUserId ? { userId: env.currentUserId } : null),
 }));
 
 import {
@@ -31,6 +33,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   env.signOut.mockResolvedValue(undefined);
+  env.currentUserId = null;
 });
 
 describe("exportFileName", () => {
@@ -179,5 +182,17 @@ describe("performAccountDeletion", () => {
     });
     await performAccountDeletion();
     expect(env.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not sign out a switched-to account when A's deletion completes", async () => {
+    env.currentUserId = "user-a";
+    env.functionsInvoke.mockImplementation(async () => {
+      // The user switched to account B while A's deletion was in flight.
+      env.currentUserId = "user-b";
+      return { data: { deleted: true }, error: null };
+    });
+    const result = await performAccountDeletion();
+    expect(result.ok).toBe(true);
+    expect(env.signOut).not.toHaveBeenCalled();
   });
 });

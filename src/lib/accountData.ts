@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getProSupabaseClient } from "./proAuth";
-import { signOut } from "../stores/account";
+import { accountSession, signOut } from "../stores/account";
 
 export type ExportResult =
   | { ok: true; saved: boolean; path: string | null }
@@ -120,10 +120,17 @@ export async function deleteAccount(): Promise<DeleteResult> {
 
 /** Delete the account and, on success or an expired session, sign out to clear
  *  local account state so the UI returns to signed-out. A transient failure
- *  keeps the user signed in and surfaces a retry message. */
+ *  keeps the user signed in and surfaces a retry message. The success sign-out
+ *  is scoped to the initiating account: if the user switched accounts while the
+ *  deletion was in flight, the now-active (intact) account must not be signed
+ *  out. The 401 sign-out is about the current invalid session, so it stays
+ *  unconditional. */
 export async function performAccountDeletion(): Promise<DeleteResult> {
+  const startedFor = accountSession()?.userId ?? null;
   const result = await deleteAccount();
-  if (result.ok || result.reason === "sessionExpired") {
+  if (result.ok) {
+    if ((accountSession()?.userId ?? null) === startedFor) await signOut();
+  } else if (result.reason === "sessionExpired") {
     await signOut();
   }
   return result;

@@ -178,15 +178,18 @@ export function SettingsScreen() {
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [accountNotice, setAccountNotice] = createSignal<string | null>(null);
 
-  // When the session changes or clears, drop the previous user's export path and
-  // reset the destructive delete dialog, so a next/anonymous user never sees the
-  // last account's export path or a half-typed/busy confirmation.
+  // When the session changes or clears, reset export + delete state so a
+  // next/anonymous account sees a clean export control and never inherits the
+  // last account's export path or a half-typed/busy confirmation. An export
+  // still in flight is already guarded (it won't write or set status for the old
+  // account); clearing the busy flag just re-enables the control immediately.
   let lastAccountUserId: string | null | undefined;
   createEffect(() => {
     const userId = accountSession()?.userId ?? null;
     if (userId === lastAccountUserId) return;
     lastAccountUserId = userId;
     setExportStatus(null);
+    setExporting(false);
     setDeleteOpen(false);
     setDeleteConfirm("");
     setDeleting(false);

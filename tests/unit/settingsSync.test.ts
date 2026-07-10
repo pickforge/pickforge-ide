@@ -143,6 +143,19 @@ describe("settingsSync serializers", () => {
     expect(restored.dictation).toEqual({ micEnabled: false, pushToCommand: true });
   });
 
+  it("round-trips the hosted router backend through sync", async () => {
+    const s = await loadSerializers();
+    const router = await import("../../src/stores/operatorRouterSettings");
+
+    router.setOperatorRouterBackend("hosted");
+    const payload = s.collectOperatorConfig();
+    expect((payload as Record<string, any>).router.backend).toBe("hosted");
+
+    router.setOperatorRouterBackend("off");
+    s.applyOperatorConfig(payload);
+    expect((s.collectOperatorConfig() as Record<string, any>).router.backend).toBe("hosted");
+  });
+
   it("round-trips keybindings from the quick-launch store", async () => {
     const s = await loadSerializers();
     const ql = await import("../../src/stores/quickLaunch");

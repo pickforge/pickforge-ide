@@ -300,6 +300,37 @@ describe("operatorDock store", () => {
     expect(s.operatorView()).toMatchObject({ kind: "result" });
   });
 
+  it("clears the stale hosted cost meta when a routed preview is cancelled", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: sendPrompt,
+      confidence: 0.74,
+      latencyMs: 1300,
+      costCents: 3,
+    });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+      auditId: "audit-routed",
+    } as DispatchResult);
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 100;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("tell it hi");
+    await s.submitOperatorCommand();
+    expect(s.operatorView().kind).toBe("preview");
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 3, balanceCents: 100 });
+
+    await s.cancelOperatorPreview();
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(s.operatorRouteMeta()).toBeNull();
+  });
+
   it("dispatches a tier-0 intent straight to a result and clears input on done", async () => {
     const openProject = intent({ action: "openProject" });
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: openProject });

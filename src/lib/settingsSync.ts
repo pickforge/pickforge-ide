@@ -89,7 +89,11 @@ export function applyAppSettings(payload: Json): void {
 // per-machine telemetry, not a setting, so it stays out too.
 
 function isRouterBackend(value: unknown): value is OperatorRouterSettingBackend {
-  return value === "off" || ROUTER_BACKENDS.includes(value as OperatorRouterBackend);
+  return (
+    value === "off" ||
+    value === "hosted" ||
+    ROUTER_BACKENDS.includes(value as OperatorRouterBackend)
+  );
 }
 
 export function collectOperatorConfig(): Json {

@@ -40,20 +40,26 @@ set `id`, `provenance`, approval, cost, or any execution policy field.
 
 ## Routing Ladder
 
-Typed commands first go through the deterministic parser. When that parser says
-`needsRouter`, a configured router proposes one strict action. The ladder is
-deterministic → BYO → hosted → didn't understand: a BYO backend (Claude Code,
-Codex, Ollama) proposes locally, and hosted routing (#133) closes the ladder as
-the Pro fallback. Hosted is selectable only when signed in; if it is not
-configured, `configuredRouterBackend()` falls through so local-only routing keeps
-working. If each step is unconfigured, unclear, invalid, or errors, the dock
-returns the honest "didn't understand" state and nothing is dispatched.
+Typed commands first go through the deterministic parser. It always runs first
+and for free. When it says `needsRouter`, the command goes to the single router
+backend the user has configured — and only that one. The ladder is deterministic
+→ the chosen router → didn't understand. There is exactly one router tier: the
+user picks Off, a BYO backend (Claude Code, Codex, Ollama), or Hosted (Pro).
+Hosted is a *selectable* backend for Pro, never an automatic fallback: a BYO miss
+does not silently escalate to the paid hosted lane, so credits are only ever
+spent when the user has deliberately chosen Hosted. Hosted is selectable only
+when signed in; if it is not configured, `configuredRouterBackend()` falls
+through so local-only routing keeps working. In code, `routeCommand()` calls
+`hostedRoute` only when the configured backend is `hosted`. If the step is
+unconfigured, unclear, invalid, or errors, the dock returns the honest "didn't
+understand" state and nothing is dispatched.
 
 Hosted routing reaffirms the data boundary below: only `commandText` plus the
-allowlisted context (project and chat display names, and any live widget labels)
-leave the machine, each redacted through the same routing sanitizer, and the
-hosted proposal gets zero extra trust — it re-enters the identical strict schema
-validation, action allowlist, and local policy gates as BYO output.
+allowlisted context (project and visible primary chat display names, and any live
+widget labels) leave the machine, each redacted through the same routing
+sanitizer, and the hosted proposal gets zero extra trust — it re-enters the
+identical strict schema validation, action allowlist, and local policy gates as
+BYO output.
 
 ## BYO Router Setup
 

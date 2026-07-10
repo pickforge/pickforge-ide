@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { SemanticWidgetNode } from "./vm";
 import { extractRouterText, routeRawPrompt } from "./operatorRouter";
+import { configuredRouterBackend } from "../stores/operatorRouterSettings";
 
 export const WIDGET_MATCH_MAX_NODES = 800;
 export const WIDGET_MATCH_MAX_BYTES = 16 * 1024;
@@ -293,6 +294,16 @@ export async function matchWidget(
   description: string,
   root: SemanticWidgetNode,
 ): Promise<WidgetMatchResult> {
+  // Semantic selection runs only over the local/BYO raw transport; the hosted
+  // endpoint does not accept widget-tree payloads yet, so degrade honestly
+  // rather than route through an unconfigured transport and return an empty match.
+  if (configuredRouterBackend() === "hosted") {
+    return {
+      kind: "error",
+      message: "semantic widget selection uses a BYO router — set one in Settings",
+    };
+  }
+
   const promptOverhead = byteLength(buildWidgetMatchPrompt(description, {
     text: "",
     nodes: [],

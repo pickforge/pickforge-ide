@@ -16,7 +16,7 @@ const env = vi.hoisted(() => {
     session: null as { userId: string } | null,
     project: null as { displayName: string } | null,
     root: null as string | null,
-    chats: [] as Array<{ chatId: string; title: string }>,
+    chats: [] as Array<{ chatId: string; title: string; labelsJson?: string | null }>,
     archived: new Set<string>(),
   };
 });
@@ -194,6 +194,78 @@ describe("hostedRoute", () => {
     expect(serialized).not.toContain("/home/dev");
     expect(serialized).not.toContain("prod-box.local");
     expect(serialized).not.toContain("8080");
+  });
+
+  it("never ships swarm-worker chats in the context payload", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
+    env.project = { displayName: "Billing" };
+    env.root = "/root";
+    env.chats = [
+      { chatId: "c1", title: "primary planning", labelsJson: null },
+      { chatId: "c2", title: "worker lane one", labelsJson: JSON.stringify({ role: "swarmWorker" }) },
+    ];
+    const { hostedRoute } = await loadHosted();
+
+    await hostedRoute("open");
+
+    const body = env.invoke.mock.calls[0][1].body;
+    expect(body.context.chatNames).toContain("primary planning");
+    expect(body.context.chatNames).not.toContain("worker lane one");
+  });
+
+  it("retries a 409 route_in_progress once with the same key, then serves the proposal", async () => {
+    env.invoke
+      .mockResolvedValueOnce({ data: { error: "route_in_progress" }, error: null })
+      .mockResolvedValueOnce({ data: { proposalJson: PROPOSAL, costCents: 2 }, error: null });
+    const { hostedRoute } = await loadHosted();
+    vi.useFakeTimers();
+    try {
+      const pending = hostedRoute("open Billing");
+      await vi.advanceTimersByTimeAsync(900);
+      const result = await pending;
+
+      expect(env.invoke).toHaveBeenCalledTimes(2);
+      const keys = env.invoke.mock.calls.map((call) => call[1].headers["x-idempotency-key"]);
+      expect(keys[0]).toBe(keys[1]);
+      expect(result).toMatchObject({ kind: "proposal", costCents: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads the 409 body from an HTTP error response and retries", async () => {
+    const httpError = { context: { json: async () => ({ error: "route_in_progress" }) } };
+    env.invoke
+      .mockResolvedValueOnce({ data: null, error: httpError })
+      .mockResolvedValueOnce({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
+    const { hostedRoute } = await loadHosted();
+    vi.useFakeTimers();
+    try {
+      const pending = hostedRoute("open Billing");
+      await vi.advanceTimersByTimeAsync(900);
+      const result = await pending;
+
+      expect(result).toMatchObject({ kind: "proposal" });
+      expect(env.invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces an error when route_in_progress persists after the retry", async () => {
+    env.invoke.mockResolvedValue({ data: { error: "route_in_progress" }, error: null });
+    const { hostedRoute } = await loadHosted();
+    vi.useFakeTimers();
+    try {
+      const pending = hostedRoute("open Billing");
+      await vi.advanceTimersByTimeAsync(900);
+      const result = await pending;
+
+      expect(result.kind).toBe("error");
+      expect(env.invoke).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

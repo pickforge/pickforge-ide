@@ -6,6 +6,7 @@ import {
   type RouterProposal,
 } from "./operatorRouter";
 import { sanitizeRoutedText } from "./widgetMatch";
+import { isPrimaryChat } from "./chatLabels";
 import { accountSession } from "../stores/account";
 import { isChatArchived } from "../stores/chatArchive";
 import { activeProject, chatsFor, workspace } from "../stores/workspace";
@@ -13,6 +14,7 @@ import { activeProject, chatsFor, workspace } from "../stores/workspace";
 export const HOSTED_ROUTER_FUNCTION = "operator-router";
 export const HOSTED_CONTEXT_MAX_CHATS = 12;
 export const HOSTED_CONTEXT_MAX_WIDGET_LABELS = 12;
+export const ROUTE_IN_PROGRESS_RETRY_MS = 800;
 
 export type HostedRouteResult = RouteResult | { kind: "needsCredits"; balance: number };
 
@@ -64,7 +66,7 @@ function currentRoutingContext(): HostedRoutingContext | undefined {
   const root = workspace.activeRoot;
   const chatTitles = root
     ? chatsFor(root)
-        .filter((chat) => !isChatArchived(chat.chatId))
+        .filter((chat) => !isChatArchived(chat.chatId) && isPrimaryChat(chat))
         .map((chat) => chat.title)
     : [];
   return buildHostedRoutingContext({
@@ -96,12 +98,56 @@ function proposalToResult(proposal: RouterProposal, latencyMs: number, costCents
   };
 }
 
-function interpretResponse(data: unknown, latencyMs: number): HostedRouteResult {
+function isRouteInProgress(record: Record<string, unknown> | null): boolean {
+  return record?.error === "route_in_progress";
+}
+
+interface HostedCall {
+  record: Record<string, unknown> | null;
+  transportError: string | null;
+}
+
+// A non-2xx status (e.g. 409 route_in_progress) surfaces as a FunctionsHttpError
+// whose response body carries the structured { error, ... } payload; read it so
+// concurrency and insufficient-credit signals survive the HTTP status.
+async function readErrorRecord(error: unknown): Promise<Record<string, unknown> | null> {
+  const context = (error as { context?: unknown }).context;
+  if (context && typeof (context as { json?: unknown }).json === "function") {
+    try {
+      const body = await (context as { json: () => Promise<unknown> }).json();
+      return body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function callHostedRouter(body: HostedRouteRequestBody, key: string): Promise<HostedCall> {
+  const { data, error } = await getProSupabaseClient().functions.invoke(HOSTED_ROUTER_FUNCTION, {
+    body,
+    headers: { "x-idempotency-key": key },
+  });
+  if (error) {
+    const record = await readErrorRecord(error);
+    return record ? { record, transportError: null } : { record: null, transportError: errorMessage(error) };
+  }
   const record = data && typeof data === "object" ? (data as Record<string, unknown>) : null;
+  return { record, transportError: null };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function interpretRecord(record: Record<string, unknown> | null, latencyMs: number): HostedRouteResult {
   if (!record) return { kind: "error", message: "hosted router returned no data" };
 
   if (record.error === "insufficient_credits") {
     return { kind: "needsCredits", balance: toNumber(record.balance) };
+  }
+  if (isRouteInProgress(record)) {
+    return { kind: "error", message: "hosted router is still processing this command — try again" };
   }
   if (typeof record.error === "string") {
     return { kind: "error", message: record.error };
@@ -131,14 +177,19 @@ export async function hostedRoute(commandText: string): Promise<HostedRouteResul
   const context = currentRoutingContext();
   if (context) body.context = context;
 
+  // One fresh key per command; on a concurrent-request 409 the retry reuses that
+  // same key so the now-completed row serves the stored proposal instead of
+  // spending a second time.
+  const key = crypto.randomUUID();
   const start = Date.now();
   try {
-    const { data, error } = await getProSupabaseClient().functions.invoke(HOSTED_ROUTER_FUNCTION, {
-      body,
-      headers: { "x-idempotency-key": crypto.randomUUID() },
-    });
-    if (error) return { kind: "error", message: errorMessage(error) };
-    return interpretResponse(data, Date.now() - start);
+    let call = await callHostedRouter(body, key);
+    if (isRouteInProgress(call.record)) {
+      await delay(ROUTE_IN_PROGRESS_RETRY_MS);
+      call = await callHostedRouter(body, key);
+    }
+    if (call.transportError) return { kind: "error", message: call.transportError };
+    return interpretRecord(call.record, Date.now() - start);
   } catch (error) {
     return { kind: "error", message: errorMessage(error) };
   }

@@ -265,6 +265,7 @@ function takePreview(): PreviewDockView | null {
   const current = view();
   if (current.kind !== "preview") return null;
   setView({ kind: "idle" });
+  setRouteMeta(null);
   if (current.candidates) discardWidgetSelection(current.auditId);
   return current;
 }

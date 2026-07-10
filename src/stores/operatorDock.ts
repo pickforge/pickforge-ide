@@ -12,13 +12,20 @@ import {
   type WidgetSelectionCandidate,
 } from "./operator";
 import { flagEnabled } from "./flags";
+import { creditBalanceCents, refreshCreditBalance } from "./credits";
 import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
 import type { OperatorIntent } from "../lib/operatorIntent";
-import { onRouteChange } from "../router";
+import { navigate, onRouteChange } from "../router";
+
+export interface HostedRouteMeta {
+  costCents: number;
+  balanceCents: number | null;
+}
 
 export type DockView =
   | { kind: "idle" }
   | { kind: "needsRouter"; reason: string }
+  | { kind: "needsCredits"; balance: number }
   | { kind: "validationError"; reason: string }
   | {
     kind: "preview";
@@ -48,6 +55,14 @@ export function setOperatorInput(value: string) {
 const [view, setView] = createSignal<DockView>({ kind: "idle" });
 export const operatorView = view;
 
+const [routeMeta, setRouteMeta] = createSignal<HostedRouteMeta | null>(null);
+export const operatorRouteMeta = routeMeta;
+
+export function openBuyCredits() {
+  closeOperatorDock();
+  navigate("settings");
+}
+
 let requestEpoch = 0;
 
 const [recent, setRecent] = createSignal<OperatorAuditRow[]>([]);
@@ -69,6 +84,7 @@ export function closeOperatorDock() {
   requestEpoch++;
   setOpen(false);
   setInput("");
+  setRouteMeta(null);
   resetView();
   setBusy(false);
 }
@@ -113,18 +129,27 @@ export async function submitOperatorCommand(): Promise<void> {
   if (parsed.kind === "needsRouter") {
     const epoch = ++requestEpoch;
     setBusy(true);
+    setRouteMeta(null);
     setView({ kind: "needsRouter", reason: "routing…" });
     try {
       const routed = await routeCommand(text);
       if (epoch !== requestEpoch) return;
       switch (routed.kind) {
         case "proposal":
+          if (routed.costCents !== undefined) {
+            await refreshCreditBalance();
+            if (epoch !== requestEpoch) return;
+            setRouteMeta({ costCents: routed.costCents, balanceCents: creditBalanceCents() });
+          }
           await submitIntent(
             routed.intent,
             text,
             epoch,
             routed.confidence < 1 ? routed.confidence : undefined,
           );
+          return;
+        case "needsCredits":
+          setView({ kind: "needsCredits", balance: routed.balance });
           return;
         case "unclear":
           setView({ kind: "needsRouter", reason: routed.reason });
@@ -224,6 +249,7 @@ export async function pickOperatorWidgetCandidate(index: number): Promise<void> 
 }
 
 function resetView() {
+  setRouteMeta(null);
   if (!dismissPreview()) setView({ kind: "idle" });
 }
 

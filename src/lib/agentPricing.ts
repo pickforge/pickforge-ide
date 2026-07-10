@@ -31,3 +31,12 @@ export function estimateCostUsd(
     1_000_000
   );
 }
+
+export function formatCostCents(cents: number): string {
+  const rounded = Math.max(0, Math.round(cents));
+  return rounded < 100 ? `${rounded}¢` : `$${(rounded / 100).toFixed(2)}`;
+}
+
+export function formatCreditBalance(cents: number): string {
+  return `${Math.max(0, Math.round(cents))} credits`;
+}

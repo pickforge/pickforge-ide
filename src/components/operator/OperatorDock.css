@@ -141,6 +141,21 @@
   color: var(--pf-warning);
 }
 
+/* Hosted routing ran out of credits — a quiet prompt, never an error. */
+.pf-op-credits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+}
+
+/* Hosted route cost + remaining balance, appended under the result line. */
+.pf-op-meta {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  letter-spacing: var(--pf-tracking-eyebrow);
+}
+
 .pf-op-preview {
   display: flex;
   flex-direction: column;

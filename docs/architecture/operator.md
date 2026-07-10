@@ -41,10 +41,19 @@ set `id`, `provenance`, approval, cost, or any execution policy field.
 ## Routing Ladder
 
 Typed commands first go through the deterministic parser. When that parser says
-`needsRouter`, a configured BYO router may propose one strict action locally via
-Claude Code, Codex, or Ollama. Hosted routing (#133) is the later fallback for
-eligible Pro users. If each step is unconfigured, unclear, invalid, or errors,
-the dock returns the honest "didn't understand" state and nothing is dispatched.
+`needsRouter`, a configured router proposes one strict action. The ladder is
+deterministic → BYO → hosted → didn't understand: a BYO backend (Claude Code,
+Codex, Ollama) proposes locally, and hosted routing (#133) closes the ladder as
+the Pro fallback. Hosted is selectable only when signed in; if it is not
+configured, `configuredRouterBackend()` falls through so local-only routing keeps
+working. If each step is unconfigured, unclear, invalid, or errors, the dock
+returns the honest "didn't understand" state and nothing is dispatched.
+
+Hosted routing reaffirms the data boundary below: only `commandText` plus the
+allowlisted context (project and chat display names, and any live widget labels)
+leave the machine, each redacted through the same routing sanitizer, and the
+hosted proposal gets zero extra trust — it re-enters the identical strict schema
+validation, action allowlist, and local policy gates as BYO output.
 
 ## BYO Router Setup
 

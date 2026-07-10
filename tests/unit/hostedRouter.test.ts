@@ -1,0 +1,252 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const env = vi.hoisted(() => {
+  const storage = new Map<string, string>();
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => void storage.set(key, value),
+    removeItem: (key: string) => void storage.delete(key),
+    clear: () => storage.clear(),
+    key: () => null,
+    length: 0,
+  };
+  return {
+    storage,
+    invoke: vi.fn(),
+    session: null as { userId: string } | null,
+    project: null as { displayName: string } | null,
+    root: null as string | null,
+    chats: [] as Array<{ chatId: string; title: string }>,
+    archived: new Set<string>(),
+  };
+});
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+
+vi.mock("../../src/lib/proAuth", () => ({
+  getProSupabaseClient: () => ({ functions: { invoke: env.invoke } }),
+}));
+
+vi.mock("../../src/stores/account", () => ({
+  accountSession: () => env.session,
+}));
+
+vi.mock("../../src/stores/workspace", () => ({
+  activeProject: () => env.project,
+  chatsFor: () => env.chats,
+  workspace: {
+    get activeRoot() {
+      return env.root;
+    },
+  },
+}));
+
+vi.mock("../../src/stores/chatArchive", () => ({
+  isChatArchived: (chatId: string) => env.archived.has(chatId),
+}));
+
+const PROPOSAL = JSON.stringify({
+  action: { action: "openProject" },
+  confidence: 0.82,
+  projectRef: "Billing",
+});
+
+async function loadHosted() {
+  vi.resetModules();
+  return import("../../src/lib/hostedRouter");
+}
+
+async function loadRouter() {
+  vi.resetModules();
+  return import("../../src/lib/operatorRouter");
+}
+
+beforeEach(() => {
+  env.storage.clear();
+  env.invoke.mockReset();
+  env.session = { userId: "user-1" };
+  env.project = null;
+  env.root = null;
+  env.chats = [];
+  env.archived = new Set();
+});
+
+describe("hostedRoute", () => {
+  it("short-circuits to unconfigured when signed out", async () => {
+    env.session = null;
+    const { hostedRoute } = await loadHosted();
+
+    await expect(hostedRoute("open Billing")).resolves.toEqual({ kind: "unconfigured" });
+    expect(env.invoke).not.toHaveBeenCalled();
+  });
+
+  it("routes a hosted proposal, validates it, and returns cost", async () => {
+    env.invoke.mockResolvedValue({
+      data: { proposalJson: PROPOSAL, usage: { input: 40, output: 8 }, costCents: 2 },
+      error: null,
+    });
+    const { hostedRoute } = await loadHosted();
+
+    const result = await hostedRoute("open Billing");
+
+    expect(env.invoke).toHaveBeenCalledWith("operator-router", expect.objectContaining({
+      body: { commandText: "open Billing" },
+      headers: expect.objectContaining({ "x-idempotency-key": expect.any(String) }),
+    }));
+    expect(result).toMatchObject({
+      kind: "proposal",
+      confidence: 0.82,
+      costCents: 2,
+      intent: {
+        v: 2,
+        provenance: "typed",
+        projectRef: "Billing",
+        action: { action: "openProject" },
+      },
+    });
+  });
+
+  it("generates a fresh idempotency key per attempt", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
+    const { hostedRoute } = await loadHosted();
+
+    await hostedRoute("open Billing");
+    await hostedRoute("open Billing");
+
+    const keys = env.invoke.mock.calls.map((call) => call[1].headers["x-idempotency-key"]);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("maps insufficient_credits to needsCredits with the balance", async () => {
+    env.invoke.mockResolvedValue({
+      data: { error: "insufficient_credits", balance: 12 },
+      error: null,
+    });
+    const { hostedRoute } = await loadHosted();
+
+    await expect(hostedRoute("open Billing")).resolves.toEqual({ kind: "needsCredits", balance: 12 });
+  });
+
+  it("maps other server errors to error", async () => {
+    env.invoke.mockResolvedValue({ data: { error: "rate_limited" }, error: null });
+    const { hostedRoute } = await loadHosted();
+
+    await expect(hostedRoute("open Billing")).resolves.toEqual({
+      kind: "error",
+      message: "rate_limited",
+    });
+  });
+
+  it("maps a transport error to error", async () => {
+    env.invoke.mockResolvedValue({ data: null, error: new Error("network down") });
+    const { hostedRoute } = await loadHosted();
+
+    await expect(hostedRoute("open Billing")).resolves.toEqual({
+      kind: "error",
+      message: "network down",
+    });
+  });
+
+  it("rejects an invalid hosted proposal instead of trusting it", async () => {
+    env.invoke.mockResolvedValue({
+      data: { proposalJson: JSON.stringify({ action: { action: "deleteEverything" }, confidence: 1 }), costCents: 1 },
+      error: null,
+    });
+    const { hostedRoute } = await loadHosted();
+
+    const result = await hostedRoute("nuke it");
+    expect(result.kind).toBe("error");
+  });
+
+  it("returns unclear when the hosted model cannot map the command", async () => {
+    env.invoke.mockResolvedValue({
+      data: { proposalJson: JSON.stringify({ unclear: true, reason: "too vague" }), costCents: 1 },
+      error: null,
+    });
+    const { hostedRoute } = await loadHosted();
+
+    await expect(hostedRoute("do the thing")).resolves.toEqual({ kind: "unclear", reason: "too vague" });
+  });
+
+  it("only sends commandText plus allowlisted, redacted context (data boundary)", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
+    env.project = { displayName: "Billing" };
+    env.root = "/home/dev/Projects/Billing";
+    env.chats = [
+      { chatId: "c1", title: "ci logs" },
+      { chatId: "c2", title: "deploy to prod-box.local:8080" },
+      { chatId: "c3", title: "archived notes" },
+    ];
+    env.archived = new Set(["c3"]);
+    const { hostedRoute } = await loadHosted();
+
+    await hostedRoute("open ci chat");
+
+    const body = env.invoke.mock.calls[0][1].body;
+    expect(Object.keys(body).sort()).toEqual(["commandText", "context"]);
+    expect(Object.keys(body.context).sort()).toEqual(["chatNames", "projectName"]);
+    expect(body.context.projectName).toBe("Billing");
+    expect(body.context.chatNames).toContain("ci logs");
+    // The archived chat never ships; the hostname:port is redacted, not sent raw.
+    expect(body.context.chatNames).not.toContain("archived notes");
+
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("/home/dev");
+    expect(serialized).not.toContain("prod-box.local");
+    expect(serialized).not.toContain("8080");
+  });
+});
+
+describe("buildHostedRoutingContext", () => {
+  it("keeps only the three allowlisted keys and redacts each value", async () => {
+    const { buildHostedRoutingContext } = await loadHosted();
+
+    const context = buildHostedRoutingContext({
+      projectName: "Billing",
+      chatTitles: ["ci logs", "ssh 100.101.102.103 box"],
+      widgetLabels: ["Sign in", "/Users/me/secret/path"],
+    });
+
+    expect(context && Object.keys(context).sort()).toEqual(["chatNames", "projectName", "widgetLabels"]);
+    const serialized = JSON.stringify(context);
+    expect(serialized).not.toContain("100.101.102.103");
+    expect(serialized).not.toContain("/Users/me");
+  });
+
+  it("caps chat and widget label counts", async () => {
+    const { buildHostedRoutingContext, HOSTED_CONTEXT_MAX_CHATS } = await loadHosted();
+    const titles = Array.from({ length: HOSTED_CONTEXT_MAX_CHATS + 5 }, (_, i) => `chat ${i}`);
+
+    const context = buildHostedRoutingContext({ projectName: "App", chatTitles: titles });
+    expect(context?.chatNames).toHaveLength(HOSTED_CONTEXT_MAX_CHATS);
+  });
+
+  it("returns undefined when nothing survives redaction", async () => {
+    const { buildHostedRoutingContext } = await loadHosted();
+    expect(buildHostedRoutingContext({ projectName: null, chatTitles: [] })).toBeUndefined();
+  });
+});
+
+describe("routeCommand hosted delegation", () => {
+  it("delegates to hostedRoute when the backend is hosted and signed in", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 3 }, error: null });
+    const router = await loadRouter();
+    const settings = await import("../../src/stores/operatorRouterSettings");
+    settings.setOperatorRouterBackend("hosted");
+
+    const result = await router.routeCommand("open Billing");
+
+    expect(env.invoke).toHaveBeenCalledWith("operator-router", expect.anything());
+    expect(result).toMatchObject({ kind: "proposal", costCents: 3 });
+  });
+
+  it("falls through to unconfigured when hosted is selected but signed out", async () => {
+    env.session = null;
+    const router = await loadRouter();
+    const settings = await import("../../src/stores/operatorRouterSettings");
+    settings.setOperatorRouterBackend("hosted");
+
+    await expect(router.routeCommand("open Billing")).resolves.toEqual({ kind: "unconfigured" });
+    expect(env.invoke).not.toHaveBeenCalled();
+  });
+});

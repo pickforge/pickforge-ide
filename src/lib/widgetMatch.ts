@@ -70,7 +70,7 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-function sanitizeRoutedText(value: string | null): string | null {
+export function sanitizeRoutedText(value: string | null): string | null {
   if (!value) return null;
   const normalized = value
     .replace(/\s+/gu, " ")

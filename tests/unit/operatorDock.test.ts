@@ -12,6 +12,8 @@ const deps = vi.hoisted(() => ({
   flagEnabled: vi.fn(),
   operatorAuditList: vi.fn(),
   operatorAuditUpdate: vi.fn(),
+  refreshCreditBalance: vi.fn(),
+  creditBalance: null as number | null,
 }));
 
 vi.mock("../../src/lib/operatorParser", () => ({
@@ -27,6 +29,10 @@ vi.mock("../../src/stores/operator", () => ({
 }));
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: deps.flagEnabled,
+}));
+vi.mock("../../src/stores/credits", () => ({
+  refreshCreditBalance: deps.refreshCreditBalance,
+  creditBalanceCents: () => deps.creditBalance,
 }));
 vi.mock("../../src/lib/db", () => ({
   operatorAuditList: deps.operatorAuditList,
@@ -84,6 +90,8 @@ beforeEach(() => {
   deps.flagEnabled.mockReset().mockReturnValue(true);
   deps.operatorAuditList.mockReset().mockResolvedValue([]);
   deps.operatorAuditUpdate.mockReset().mockResolvedValue(undefined);
+  deps.refreshCreditBalance.mockReset().mockResolvedValue(undefined);
+  deps.creditBalance = null;
 });
 
 describe("operatorDock store", () => {
@@ -254,6 +262,42 @@ describe("operatorDock store", () => {
     await s.submitOperatorCommand();
     expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "model not found" });
     expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a hosted needsCredits result as a quiet buy-credits state", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({ kind: "needsCredits", balance: 40 });
+    const s = await loadStore();
+
+    s.setOperatorInput("open the billing project");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorView()).toEqual({ kind: "needsCredits", balance: 40 });
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("records hosted cost and refreshed balance after a hosted route", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: openProject,
+      confidence: 0.9,
+      latencyMs: 900,
+      costCents: 2,
+    });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Opened project Billing" } as DispatchResult);
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 148;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("open Billing");
+    await s.submitOperatorCommand();
+
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 2, balanceCents: 148 });
+    expect(s.operatorView()).toMatchObject({ kind: "result" });
   });
 
   it("dispatches a tier-0 intent straight to a result and clears input on done", async () => {

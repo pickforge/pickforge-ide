@@ -31,6 +31,7 @@ reset this file.
 - Added managed SSH VM-service tunnels for remote Flutter runs and inspector reattach.
 - Dictation mic landed in the operator dock (live preview, push-to-command, model override) behind the `operator` flag.
 - Settings sync landed dark behind the `settingsSync` flag (opt-in, per-group).
+- Hosted Pro Operator routing and credit purchase landed dark behind the `operator` flag (requires sign-in): a hosted router backend closes the routing ladder, the dock surfaces cost/balance and a quiet buy-credits prompt, and Settings gains a credit-pack purchase flow. Local and BYO routing stay free.
 
 ## Validation
 

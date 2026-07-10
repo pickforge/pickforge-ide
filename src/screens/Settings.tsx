@@ -95,6 +95,14 @@ import {
   signOut,
 } from "../stores/account";
 import {
+  creditBalanceCents,
+  refreshCreditBalance,
+  startCreditCheckout,
+  CREDIT_PACKS,
+  type CreditPack,
+} from "../stores/credits";
+import { formatCreditBalance } from "../lib/agentPricing";
+import {
   lastSyncedRelative,
   setSettingsSyncGroup,
   setSettingsSyncOptIn,
@@ -288,11 +296,12 @@ export function SettingsScreen() {
     { value: "claudeCode", label: "Claude Code", icon: () => <IconClaude size={13} /> },
     { value: "codex", label: "Codex", icon: () => <IconOpenAI size={13} /> },
     { value: "ollama", label: "Ollama", icon: () => <IconIngot size={13} /> },
+    { value: "hosted", label: "Hosted (Pro)" },
   ];
   const routerBackend = () => operatorRouterSettings().backend;
   const activeRouterBackend = (): OperatorRouterBackend | null => {
     const backend = routerBackend();
-    return backend === "off" ? null : backend;
+    return backend === "off" || backend === "hosted" ? null : backend;
   };
   const routerLatencyHint = () => {
     const backend = activeRouterBackend();
@@ -303,8 +312,33 @@ export function SettingsScreen() {
     const via = routerBackendOptions.find((option) => option.value === backend)?.label ?? backend;
     return `~${formatLatency(latency)} via ${via.toLowerCase()} · ${model}`;
   };
-  const changeRouterBackend = (backend: string) =>
+  const changeRouterBackend = (backend: string) => {
+    if (backend === "hosted" && !accountSession()) return;
     setOperatorRouterBackend(backend as OperatorRouterSettingBackend);
+  };
+  const [creditCheckoutBusy, setCreditCheckoutBusy] = createSignal(false);
+  const [creditCheckoutError, setCreditCheckoutError] = createSignal<string | null>(null);
+  const buyCredits = async (pack: CreditPack) => {
+    setCreditCheckoutBusy(true);
+    setCreditCheckoutError(null);
+    try {
+      await startCreditCheckout(pack);
+    } catch (error) {
+      setCreditCheckoutError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCreditCheckoutBusy(false);
+    }
+  };
+  createEffect(() => {
+    if (flagEnabled("operator") && accountSession()) void refreshCreditBalance();
+  });
+  onMount(() => {
+    const onFocus = () => {
+      if (flagEnabled("operator") && accountSession()) void refreshCreditBalance();
+    };
+    window.addEventListener("focus", onFocus);
+    onCleanup(() => window.removeEventListener("focus", onFocus));
+  });
   const changeRouterModel = (backend: OperatorRouterBackend, model: string) =>
     setOperatorRouterModel(backend, model);
   const voiceStatusLabel = () => {
@@ -490,6 +524,14 @@ export function SettingsScreen() {
                 options={routerBackendOptions}
               />
             </div>
+            <Show when={!accountSession()}>
+              <span class="pf-settings-muted">Sign in to use hosted routing.</span>
+            </Show>
+            <Show when={routerBackend() === "hosted" && accountSession()}>
+              <span class="pf-settings-muted">
+                Hosted routing uses PickForge credits. Local and BYO routing stay free.
+              </span>
+            </Show>
             <Show when={activeRouterBackend()}>
               {(backend) => (
                 <>
@@ -1041,6 +1083,38 @@ export function SettingsScreen() {
                         <span class="pf-settings-label">Plan</span>
                         <span class="pf-settings-muted">{hasProEntitlement() ? "Pro" : "Free"}</span>
                       </div>
+                      <Show when={flagEnabled("operator")}>
+                        <div class="pf-settings-row">
+                          <span class="pf-settings-label">
+                            Operator credits
+                            <span class="pf-settings-hint-inline">prepaid balance for hosted routing</span>
+                          </span>
+                          <span class="pf-settings-muted">
+                            {creditBalanceCents() === null
+                              ? "—"
+                              : formatCreditBalance(creditBalanceCents()!)}
+                          </span>
+                        </div>
+                        <div class="pf-ql-row">
+                          <For each={CREDIT_PACKS}>
+                            {(option) => (
+                              <button
+                                class="pf-ql-add"
+                                disabled={creditCheckoutBusy()}
+                                onClick={() => void buyCredits(option.pack)}
+                              >
+                                {option.priceLabel}
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                        <span class="pf-settings-muted">
+                          Credits pay for hosted Operator routing (and later hosted voice). Local and BYO routing stay free.
+                        </span>
+                        <Show when={creditCheckoutError()}>
+                          <div class="pf-ql-warn">{creditCheckoutError()}</div>
+                        </Show>
+                      </Show>
                       <span class="pf-settings-muted">
                         {flagEnabled("settingsSync")
                           ? "PickForge sends no project data to your account beyond the settings groups you enable below. Only profile, entitlement state, and those groups sync."

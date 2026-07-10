@@ -3,7 +3,7 @@
 // this store drives the state machine so OperatorDock stays presentational.
 import { createSignal } from "solid-js";
 import { parseCommand } from "../lib/operatorParser";
-import { routeCommand } from "../lib/operatorRouter";
+import { routeCommand, type RouteOutcome } from "../lib/operatorRouter";
 import {
   discardWidgetSelection,
   dispatchIntent,
@@ -12,13 +12,20 @@ import {
   type WidgetSelectionCandidate,
 } from "./operator";
 import { flagEnabled } from "./flags";
+import { creditBalanceCents, refreshCreditBalance } from "./credits";
 import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
 import type { OperatorIntent } from "../lib/operatorIntent";
-import { onRouteChange } from "../router";
+import { navigate, onRouteChange } from "../router";
+
+export interface HostedRouteMeta {
+  costCents: number;
+  balanceCents: number | null;
+}
 
 export type DockView =
   | { kind: "idle" }
   | { kind: "needsRouter"; reason: string }
+  | { kind: "needsCredits"; balance: number }
   | { kind: "validationError"; reason: string }
   | {
     kind: "preview";
@@ -48,6 +55,20 @@ export function setOperatorInput(value: string) {
 const [view, setView] = createSignal<DockView>({ kind: "idle" });
 export const operatorView = view;
 
+const [routeMeta, setRouteMeta] = createSignal<HostedRouteMeta | null>(null);
+export const operatorRouteMeta = routeMeta;
+
+export function openBuyCredits() {
+  closeOperatorDock();
+  navigate("settings");
+}
+
+function billedCost(routed: RouteOutcome): number | undefined {
+  return routed.kind === "proposal" || routed.kind === "unclear" || routed.kind === "error"
+    ? routed.costCents
+    : undefined;
+}
+
 let requestEpoch = 0;
 
 const [recent, setRecent] = createSignal<OperatorAuditRow[]>([]);
@@ -69,6 +90,7 @@ export function closeOperatorDock() {
   requestEpoch++;
   setOpen(false);
   setInput("");
+  setRouteMeta(null);
   resetView();
   setBusy(false);
 }
@@ -113,10 +135,19 @@ export async function submitOperatorCommand(): Promise<void> {
   if (parsed.kind === "needsRouter") {
     const epoch = ++requestEpoch;
     setBusy(true);
+    setRouteMeta(null);
     setView({ kind: "needsRouter", reason: "routing…" });
     try {
       const routed = await routeCommand(text);
+      // Reconcile billing before the epoch guard: a hosted route that completed
+      // server-side already charged, so the balance must refresh even if the
+      // dock was closed mid-flight. Only the dropped UI is gated on the epoch.
+      const cost = billedCost(routed);
+      if (cost !== undefined) await refreshCreditBalance();
       if (epoch !== requestEpoch) return;
+      if (cost !== undefined) {
+        setRouteMeta({ costCents: cost, balanceCents: creditBalanceCents() });
+      }
       switch (routed.kind) {
         case "proposal":
           await submitIntent(
@@ -125,6 +156,9 @@ export async function submitOperatorCommand(): Promise<void> {
             epoch,
             routed.confidence < 1 ? routed.confidence : undefined,
           );
+          return;
+        case "needsCredits":
+          setView({ kind: "needsCredits", balance: routed.balance });
           return;
         case "unclear":
           setView({ kind: "needsRouter", reason: routed.reason });
@@ -224,6 +258,7 @@ export async function pickOperatorWidgetCandidate(index: number): Promise<void> 
 }
 
 function resetView() {
+  setRouteMeta(null);
   if (!dismissPreview()) setView({ kind: "idle" });
 }
 
@@ -239,6 +274,7 @@ function takePreview(): PreviewDockView | null {
   const current = view();
   if (current.kind !== "preview") return null;
   setView({ kind: "idle" });
+  setRouteMeta(null);
   if (current.candidates) discardWidgetSelection(current.auditId);
   return current;
 }

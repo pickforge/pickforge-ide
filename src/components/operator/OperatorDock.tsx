@@ -6,14 +6,17 @@ import { For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import { MonoEyebrow, EmberButton } from "../ui";
 import { IconMic } from "../icons";
+import { formatCostCents, formatCreditBalance } from "../../lib/agentPricing";
 import {
   cancelOperatorPreview,
   candidateIndexForKey,
   closeOperatorDock,
   confirmOperatorPreview,
+  openBuyCredits,
   operatorBusy,
   operatorInput,
   operatorRecent,
+  operatorRouteMeta,
   operatorView,
   pickOperatorWidgetCandidate,
   relativeTime,
@@ -60,6 +63,14 @@ function statusLabel(status: string): string {
 function confidenceLabel(value?: number): string | null {
   if (value === undefined || value >= 1) return null;
   return `${Math.round(value * 100)}% confidence`;
+}
+
+function routeMetaLabel(): string | null {
+  const meta = operatorRouteMeta();
+  if (!meta) return null;
+  const balance =
+    meta.balanceCents !== null ? ` · ${formatCreditBalance(meta.balanceCents)} left` : "";
+  return `routed · ${formatCostCents(meta.costCents)}${balance}`;
 }
 
 export function OperatorDock() {
@@ -209,12 +220,40 @@ export function OperatorDock() {
           <Switch>
             <Match when={asView("needsRouter")}>
               {(nr) => (
-                <div class="pf-op-note">
-                  <span class="pf-op-note-key">router</span>
-                  <span class="pf-op-note-body">
-                    needs a router model. Configure Operator router in Settings.
-                    <span class="pf-op-note-reason"> {nr().reason}</span>
-                  </span>
+                <>
+                  <div class="pf-op-note">
+                    <span class="pf-op-note-key">router</span>
+                    <span class="pf-op-note-body">
+                      needs a router model. Configure Operator router in Settings.
+                      <span class="pf-op-note-reason"> {nr().reason}</span>
+                    </span>
+                  </div>
+                  <Show when={routeMetaLabel()}>
+                    {(label) => <div class="pf-op-meta">{label()}</div>}
+                  </Show>
+                </>
+              )}
+            </Match>
+
+            <Match when={asView("needsCredits")}>
+              {(nc) => (
+                <div class="pf-op-credits">
+                  <div class="pf-op-note">
+                    <span class="pf-op-note-key">credits</span>
+                    <span class="pf-op-note-body">
+                      hosted routing needs credits.
+                      <span class="pf-op-note-reason"> {formatCreditBalance(nc().balance)} left</span>
+                    </span>
+                  </div>
+                  <div class="pf-op-actions">
+                    <button
+                      type="button"
+                      class="pf-op-cancel"
+                      onClick={() => openBuyCredits()}
+                    >
+                      Buy credits
+                    </button>
+                  </div>
                 </div>
               )}
             </Match>
@@ -276,6 +315,11 @@ export function OperatorDock() {
                         </div>
                       )}
                     </Show>
+                    <Show when={routeMetaLabel()}>
+                      {(label) => (
+                        <div class="pf-op-meta">{label()} · charged for routing; confirm runs the action</div>
+                      )}
+                    </Show>
                     <div class="pf-op-actions">
                       <Show
                         when={!candidates()}
@@ -314,21 +358,26 @@ export function OperatorDock() {
               {(r) => {
                 const res = () => r().result;
                 return (
-                  <div
-                    class="pf-op-result"
-                    classList={{
-                      "pf-op-result--ok":
-                        res().status === "done" || res().status === "noop",
-                      "pf-op-result--error":
-                        res().status === "failed" || res().status === "unsupported",
-                      "pf-op-result--warn": res().status === "denied",
-                    }}
-                  >
-                    {(() => {
-                      const value = res();
-                      return "summary" in value ? value.summary : value.message;
-                    })()}
-                  </div>
+                  <>
+                    <div
+                      class="pf-op-result"
+                      classList={{
+                        "pf-op-result--ok":
+                          res().status === "done" || res().status === "noop",
+                        "pf-op-result--error":
+                          res().status === "failed" || res().status === "unsupported",
+                        "pf-op-result--warn": res().status === "denied",
+                      }}
+                    >
+                      {(() => {
+                        const value = res();
+                        return "summary" in value ? value.summary : value.message;
+                      })()}
+                    </div>
+                    <Show when={routeMetaLabel()}>
+                      {(label) => <div class="pf-op-meta">{label()}</div>}
+                    </Show>
+                  </>
                 );
               }}
             </Match>

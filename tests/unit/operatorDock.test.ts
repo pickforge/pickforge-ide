@@ -12,6 +12,8 @@ const deps = vi.hoisted(() => ({
   flagEnabled: vi.fn(),
   operatorAuditList: vi.fn(),
   operatorAuditUpdate: vi.fn(),
+  refreshCreditBalance: vi.fn(),
+  creditBalance: null as number | null,
 }));
 
 vi.mock("../../src/lib/operatorParser", () => ({
@@ -27,6 +29,10 @@ vi.mock("../../src/stores/operator", () => ({
 }));
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: deps.flagEnabled,
+}));
+vi.mock("../../src/stores/credits", () => ({
+  refreshCreditBalance: deps.refreshCreditBalance,
+  creditBalanceCents: () => deps.creditBalance,
 }));
 vi.mock("../../src/lib/db", () => ({
   operatorAuditList: deps.operatorAuditList,
@@ -84,6 +90,8 @@ beforeEach(() => {
   deps.flagEnabled.mockReset().mockReturnValue(true);
   deps.operatorAuditList.mockReset().mockResolvedValue([]);
   deps.operatorAuditUpdate.mockReset().mockResolvedValue(undefined);
+  deps.refreshCreditBalance.mockReset().mockResolvedValue(undefined);
+  deps.creditBalance = null;
 });
 
 describe("operatorDock store", () => {
@@ -254,6 +262,167 @@ describe("operatorDock store", () => {
     await s.submitOperatorCommand();
     expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "model not found" });
     expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a hosted needsCredits result as a quiet buy-credits state", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({ kind: "needsCredits", balance: 40 });
+    const s = await loadStore();
+
+    s.setOperatorInput("open the billing project");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorView()).toEqual({ kind: "needsCredits", balance: 40 });
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("records hosted cost and refreshed balance after a hosted route", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: openProject,
+      confidence: 0.9,
+      latencyMs: 900,
+      costCents: 2,
+    });
+    deps.dispatchIntent.mockResolvedValue({ status: "done", summary: "Opened project Billing" } as DispatchResult);
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 148;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("open Billing");
+    await s.submitOperatorCommand();
+
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 2, balanceCents: 148 });
+    expect(s.operatorView()).toMatchObject({ kind: "result" });
+  });
+
+  it("surfaces the routing cost on an unclear hosted answer", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({ kind: "unclear", reason: "too vague", costCents: 1 });
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 148;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("make it better");
+    await s.submitOperatorCommand();
+
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "too vague" });
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 1, balanceCents: 148 });
+  });
+
+  it("refreshes the balance and shows the cost when a billed hosted route errors", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({ kind: "error", message: "hosted router returned invalid JSON", costCents: 3 });
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 97;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("open App");
+    await s.submitOperatorCommand();
+
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 3, balanceCents: 97 });
+    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "hosted router returned invalid JSON" });
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("still refreshes the balance when a hosted route settles after the dock closed", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    let resolveRoute!: (r: unknown) => void;
+    deps.routeCommand.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRoute = resolve;
+      }),
+    );
+    deps.refreshCreditBalance.mockResolvedValue(undefined);
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("open App");
+    const pending = s.submitOperatorCommand();
+
+    s.closeOperatorDock();
+    resolveRoute({
+      kind: "proposal",
+      intent: openProject,
+      confidence: 0.9,
+      latencyMs: 900,
+      costCents: 2,
+    });
+    await pending;
+
+    // The money truth reconciles even though the dock is gone…
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    // …while the dropped UI stays cleared and nothing dispatches.
+    expect(s.operatorRouteMeta()).toBeNull();
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("keeps the routing cost meta on a tier-1 hosted preview so the card can show it", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: sendPrompt,
+      confidence: 0.74,
+      latencyMs: 1300,
+      costCents: 2,
+    });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+      auditId: "audit-routed",
+    } as DispatchResult);
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 148;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("tell it hi");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorView()).toMatchObject({ kind: "preview", auditId: "audit-routed" });
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 2, balanceCents: 148 });
+  });
+
+  it("clears the stale hosted cost meta when a routed preview is cancelled", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: sendPrompt,
+      confidence: 0.74,
+      latencyMs: 1300,
+      costCents: 3,
+    });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+      auditId: "audit-routed",
+    } as DispatchResult);
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 100;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("tell it hi");
+    await s.submitOperatorCommand();
+    expect(s.operatorView().kind).toBe("preview");
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 3, balanceCents: 100 });
+
+    await s.cancelOperatorPreview();
+
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(s.operatorRouteMeta()).toBeNull();
   });
 
   it("dispatches a tier-0 intent straight to a result and clears input on done", async () => {

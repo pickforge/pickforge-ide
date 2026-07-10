@@ -58,7 +58,9 @@ with service-role access limited to server-side billing/webhook functions.
 
 - Edge Function: Stripe webhook receiver.
 - Edge Function: signed premium skill-pack URL issuer.
-- Edge Function: account deletion/export workflow if required by policy.
+- Edge Function: account deletion/export workflow (delivered — LGPD Art. 18 user
+  rights; `export-account-data` and `delete-account`, surfaced in the Account
+  settings behind the `accounts` flag).
 - Realtime: team membership and shared metadata updates after RLS policies are
   proven with tests.
 

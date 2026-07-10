@@ -235,6 +235,7 @@ pub fn run() {
             fs_commands::open_path,
             fs_commands::open_external_url,
             fs_commands::pick_project_dir,
+            fs_commands::save_text_file,
             device_commands::target_detect,
             device_commands::find_nearest_pubspec,
             device_commands::adb_list_devices,

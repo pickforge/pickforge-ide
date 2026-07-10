@@ -1,0 +1,102 @@
+import { type JSX, Show, onCleanup, onMount } from "solid-js";
+import { Portal } from "solid-js/web";
+import { MonoEyebrow } from "./ui";
+import "./ConfirmDialog.css";
+
+/** A centered confirmation modal following the operator dock's Portal + backdrop
+ *  pattern. The parent owns the body and confirm-gating; this handles the
+ *  overlay, focus, Escape, and the cancel/confirm controls. */
+export function ConfirmDialog(props: {
+  open: boolean;
+  eyebrow: string;
+  title: string;
+  children: JSX.Element;
+  confirmLabel: string;
+  cancelLabel?: string;
+  destructive?: boolean;
+  confirmDisabled?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}): JSX.Element {
+  let panelEl: HTMLDivElement | undefined;
+  let cancelEl: HTMLButtonElement | undefined;
+
+  onMount(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !props.busy) {
+        e.preventDefault();
+        props.onCancel();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+    queueMicrotask(() => cancelEl?.focus());
+  });
+
+  const trapFocus = (e: KeyboardEvent) => {
+    if (e.key !== "Tab" || !panelEl) return;
+    const focusables = Array.from(
+      panelEl.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  return (
+    <Show when={props.open}>
+      <Portal>
+        <div
+          class="pf-confirm-backdrop"
+          onPointerDown={() => {
+            if (!props.busy) props.onCancel();
+          }}
+        >
+          <div
+            ref={panelEl}
+            class="pf-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-label={props.title}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={trapFocus}
+          >
+            <MonoEyebrow text={props.eyebrow} tick={props.destructive} />
+            <h2 class="pf-confirm-title">{props.title}</h2>
+            <div class="pf-confirm-body">{props.children}</div>
+            <div class="pf-confirm-actions">
+              <button
+                ref={cancelEl}
+                type="button"
+                class="pf-confirm-cancel"
+                disabled={props.busy}
+                onClick={() => props.onCancel()}
+              >
+                {props.cancelLabel ?? "Cancel"}
+              </button>
+              <button
+                type="button"
+                class="pf-confirm-go"
+                classList={{ "pf-confirm-go--danger": props.destructive }}
+                disabled={props.confirmDisabled || props.busy}
+                onClick={() => props.onConfirm()}
+              >
+                {props.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Portal>
+    </Show>
+  );
+}

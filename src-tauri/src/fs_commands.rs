@@ -212,6 +212,32 @@ pub async fn pick_project_dir(app: AppHandle) -> Result<Option<String>, String> 
     Ok(Some(display_path(&canon)))
 }
 
+/// Open a native Save-As dialog and write `contents` to the chosen file. The
+/// destination is the user's explicit native pick, so no approved-root gate
+/// applies — the same user-mediated trust model as [`pick_project_dir`]. Used by
+/// the account data export. Returns the saved path, or `None` if cancelled.
+#[tauri::command]
+pub async fn save_text_file(
+    app: AppHandle,
+    default_name: String,
+    contents: String,
+) -> Result<Option<String>, String> {
+    // `blocking_save_file` must not run on the main thread; async commands run
+    // on a worker thread, so this is safe.
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(&default_name)
+        .add_filter("JSON", &["json"])
+        .blocking_save_file();
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let path = file_path.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+    Ok(Some(display_path(&path)))
+}
+
 /// Strip the Windows verbatim / verbatim-UNC prefix (`\\?\`, `\\?\UNC\`) that
 /// `std::fs::canonicalize` prepends, so a path RETURNED to the renderer is the
 /// normal form its callers expect. On non-Windows this is the identity. The

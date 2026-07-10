@@ -29,7 +29,10 @@ playwright-report/
 # Local AI session caches
 .superpowers/
 .codex/
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/run
 .codegraph/
 .worktrees/
 
@@ -39,3 +42,4 @@ playwright-report/
 
 # iOS run pipeline build output (xcodebuild SYMROOT)
 **/build/pickforge-ios/
+.lab.env

@@ -1,0 +1,158 @@
+# Privacy Policy
+
+**Effective date:** `<EFFECTIVE DATE>`
+
+PickForge is a local-first desktop developer tool. This policy explains, plainly,
+what stays on your machine, the narrow set of things that leave it, who processes
+them, and the rights you have under Brazil's LGPD (Lei nº 13.709/2018).
+
+Controller: [OWNER: legal entity name and CNPJ, or your full name and CPF if you
+operate as an individual]. Contact: **privacidade@pickforge.dev** [OWNER:
+activate this mailbox].
+
+## The short version
+
+- Your code, chats, voice, screenshots, and local settings stay on your machine.
+  PickForge does not upload them.
+- You only give us personal data if you create an account. Then we hold the
+  minimum needed to run your account and, if you buy Pro, your credits.
+- A few Pro features send a small, redacted payload to a hosted service — but
+  only when you opt in, per action.
+- You can export or delete your data from inside the app at any time.
+
+## What never leaves your machine
+
+By design, the following are processed only on your device and are never
+transmitted as part of normal use:
+
+- Source code and file contents.
+- Chat transcripts and agent run history.
+- Voice audio and its transcription — dictation is transcribed on-device by
+  whisper.cpp.
+- Screenshots and captured device screens.
+- File paths, device serials, hostnames, and tailnet IP addresses.
+- The raw command text you type into Operator.
+- Any bring-your-own (BYO) API keys and CLI configuration you use for local AI
+  routing.
+
+This local boundary is PickForge's headline privacy property. Everything below is
+a deliberate, narrow exception.
+
+## What we collect when you sign in
+
+You can use PickForge locally without an account. When you create one, we
+process — through our processor Supabase:
+
+- **Email and OAuth identity** from Google sign-in.
+- **Profile**: display name and avatar.
+- **Entitlements**: whether Pro is active for you.
+- **Credit ledger**: your prepaid credit purchases and usage — amounts,
+  timestamps, and Stripe references.
+- **Synced settings**: exactly four allowlisted groups — app settings, operator
+  config, keybindings, and remote bindings. Each is run through a
+  secret-scrubbing check before syncing, so tokens and keys cannot leave with
+  them.
+- **Rate-limit counters** and **security/audit signals** to keep the service
+  safe.
+
+## Pro features that send data (opt-in)
+
+These are off by default, available on Pro, and only ever run when you choose
+them:
+
+- **Hosted Operator routing.** When you deliberately select the "Hosted" router
+  for a command, we send the command text plus a minimal, allowlisted, redacted
+  context — the project's display name, visible chat titles, and widget labels —
+  to OpenAI to turn your natural-language command into one app action. Before
+  anything is sent, file paths, hostnames, domains, IP addresses, and serials are
+  stripped out; this redaction is enforced by automated tests. The command text
+  is used for that one routing step and is not retained in your ledger; the
+  ledger keeps only the action name, token counts, and cost. The default
+  routing path is local.
+- **Hosted voice** (currently behind a feature flag / future). When you use
+  hosted voice, audio is streamed to OpenAI's Realtime API for that session. The
+  default voice path stays on-device — see "What never leaves your machine."
+
+## Billing
+
+Payments are handled by Stripe. **Card data is handled entirely by Stripe;
+PickForge never sees or stores your card numbers.** Stripe holds the customer
+record and your payment and invoice history. On our side we store only a Stripe
+customer id linkage and the credit ledger described above.
+
+## Crash reports and update checks
+
+- **Crash and error reports.** Release builds send anonymous crash/error reports
+  by default, through Sentry, to help us fix stability and security issues. Server
+  name and breadcrumbs are cleared before reports leave the process, and we do
+  not intentionally add source, transcripts, prompts, screenshots, paths,
+  serials, or user ids. Native crash dumps can still contain fragments of process
+  memory from the moment of the crash, and an error message can occasionally
+  reference a path. You can turn this off in **Settings → Crash reports**.
+- **Update checks.** On startup PickForge asks GitHub Releases whether a newer
+  version exists. This carries version metadata only — no account data and no
+  source leaves your machine.
+
+## Who processes your data, and where
+
+All of our processors operate outside Brazil. International transfer relies on
+each provider's contractual safeguards and Data Processing Agreement, as
+permitted under Art. 33 of the LGPD.
+
+| Processor | What they process | Safeguard |
+| --- | --- | --- |
+| Supabase | Account, auth, entitlements, credits, synced settings, rate limits, audit | [OWNER: confirm Supabase DPA link] |
+| Stripe | Payments, cards, invoices, customer record | [OWNER: confirm Stripe DPA link] |
+| OpenAI | Hosted Operator routing; hosted voice (flagged) | [OWNER: confirm OpenAI DPA link] |
+| Sentry | Crash / error reports | [OWNER: confirm Sentry DPA link] |
+| GitHub | Anonymous update-check transport (version metadata only) | [OWNER: confirm GitHub privacy link] |
+
+## Legal bases (Art. 7)
+
+- **Contract execution.** Your account, billing, entitlements, credits, and
+  settings sync — the data needed to provide the service you signed up for.
+- **Legitimate interest.** Security, fraud prevention, rate-limiting, audit logs,
+  crash/error reporting, and delivering updates.
+- **Consent.** Hosted Operator routing and hosted voice are opt-in Pro features
+  you turn on. If we ever offer marketing communications, those would require
+  separate consent.
+
+## Your rights (Art. 18)
+
+Under the LGPD you can confirm whether we process your data, access it, correct
+it, request anonymization or deletion, request portability, and ask about how
+your data is shared. You can exercise these directly:
+
+- **Delete your account** from inside the app. This erases all PickForge-side
+  personal data — profile, entitlements, synced settings, and credit ledger — by
+  database cascade, and deletes your Stripe customer record. Any remaining
+  credits are forfeited. Note that Stripe, as payment processor, retains its own
+  transaction records to meet its legal and fiscal obligations.
+- **Export your data** from inside the app — a portable JSON file of your
+  profile, entitlements, credit ledger, and synced settings.
+- **Contact us** at **privacidade@pickforge.dev** for any other request, or to
+  reach our Data Protection Officer (encarregado): [OWNER: designate the
+  encarregado — name plus the privacidade@ contact].
+
+## Retention
+
+- Account data is kept until you delete your account.
+- Stripe retains your payment records for as long as its own legal and fiscal
+  obligations require.
+- Local data stays on your machine under your control; we set no retention over
+  it because we never receive it.
+
+## Children
+
+PickForge is a professional developer tool and is not directed at children.
+
+## Changes to this policy
+
+If we make material changes, we will update this page and its effective date, and
+where appropriate notify you in the app. The current version always lives at
+https://pickforge.dev/privacy.
+
+## Contact
+
+**privacidade@pickforge.dev** — Controller: [OWNER: legal entity / name].
+Encarregado (DPO): [OWNER: designate].

@@ -176,6 +176,7 @@ export function SettingsScreen() {
   const [deleteConfirm, setDeleteConfirm] = createSignal("");
   const [deleting, setDeleting] = createSignal(false);
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  const [accountNotice, setAccountNotice] = createSignal<string | null>(null);
 
   const runExport = async () => {
     if (exporting()) return;
@@ -196,6 +197,7 @@ export function SettingsScreen() {
   const openDeleteDialog = () => {
     setDeleteConfirm("");
     setDeleteError(null);
+    setAccountNotice(null);
     setDeleteOpen(true);
   };
 
@@ -210,7 +212,14 @@ export function SettingsScreen() {
     setDeleteError(null);
     try {
       const result = await performAccountDeletion();
-      if (result.ok || result.reason === "sessionExpired") {
+      if (result.ok) {
+        setDeleteOpen(false);
+        return;
+      }
+      if (result.reason === "sessionExpired") {
+        // performAccountDeletion already signed out; the signed-in view will
+        // unmount, so surface why on the section-level notice that survives it.
+        setAccountNotice("Your session expired — sign in again. Your account was not deleted.");
         setDeleteOpen(false);
         return;
       }
@@ -1113,10 +1122,22 @@ export function SettingsScreen() {
                         Sign-in is optional. PickForge works fully offline; an account only adds Pro features and settings sync.
                       </span>
                       <div class="pf-ql-row">
-                        <button class="pf-ql-add" onClick={() => void signIn("github")}>
+                        <button
+                          class="pf-ql-add"
+                          onClick={() => {
+                            setAccountNotice(null);
+                            void signIn("github");
+                          }}
+                        >
                           Continue with GitHub
                         </button>
-                        <button class="pf-ql-add" onClick={() => void signIn("google")}>
+                        <button
+                          class="pf-ql-add"
+                          onClick={() => {
+                            setAccountNotice(null);
+                            void signIn("google");
+                          }}
+                        >
                           Continue with Google
                         </button>
                       </div>
@@ -1334,6 +1355,9 @@ export function SettingsScreen() {
                 </span>
                 <button class="pf-text-btn" onClick={cancelSignIn}>Cancel</button>
               </div>
+            </Show>
+            <Show when={accountNotice()}>
+              <div class="pf-ql-warn">{accountNotice()}</div>
             </Show>
             <Show when={accountError()}>
               <div class="pf-ql-warn">{accountError()}</div>

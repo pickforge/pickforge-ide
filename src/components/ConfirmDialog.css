@@ -19,7 +19,7 @@
   border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
   border-radius: var(--pf-radius-lg);
   background: var(--pf-surface-1);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--pf-shadow-overlay);
   animation: pf-confirm-rise var(--pf-dur-fast) var(--pf-ease-forge) both;
 }
 

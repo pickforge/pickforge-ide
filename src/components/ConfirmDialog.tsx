@@ -1,4 +1,4 @@
-import { type JSX, Show, onCleanup, onMount } from "solid-js";
+import { type JSX, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import { MonoEyebrow } from "./ui";
 import "./ConfirmDialog.css";
@@ -31,7 +31,13 @@ export function ConfirmDialog(props: {
     };
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
-    queueMicrotask(() => cancelEl?.focus());
+  });
+
+  // Move focus into the dialog each time it opens. The Portal content only
+  // mounts while `open` is true, so wait a microtask for the ref to attach.
+  createEffect(() => {
+    if (!props.open) return;
+    queueMicrotask(() => (cancelEl ?? panelEl)?.focus());
   });
 
   const trapFocus = (e: KeyboardEvent) => {
@@ -68,6 +74,7 @@ export function ConfirmDialog(props: {
             role="dialog"
             aria-modal="true"
             aria-label={props.title}
+            tabindex="-1"
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={trapFocus}
           >

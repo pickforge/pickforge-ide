@@ -212,6 +212,61 @@ pub async fn pick_project_dir(app: AppHandle) -> Result<Option<String>, String> 
     Ok(Some(display_path(&canon)))
 }
 
+/// Open a native Save-As dialog and write `contents` to the chosen file. The
+/// destination is the user's explicit native pick, so no approved-root gate
+/// applies — the same user-mediated trust model as [`pick_project_dir`]. Used by
+/// the account data export. Returns the saved path, or `None` if cancelled.
+#[tauri::command]
+pub async fn save_text_file(
+    app: AppHandle,
+    default_name: String,
+    contents: String,
+) -> Result<Option<String>, String> {
+    // `blocking_save_file` must not run on the main thread; async commands run
+    // on a worker thread, so this is safe.
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(&default_name)
+        .add_filter("JSON", &["json"])
+        .blocking_save_file();
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let path = file_path.into_path().map_err(|e| e.to_string())?;
+    // The export carries personal data (email, credit ledger). Create it
+    // owner-only from the start on Unix (0600) so it never briefly exists as the
+    // umask default (world-readable 0644) with data already written.
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).map_err(|e| e.to_string())?;
+    // `.mode()` only applies when the file is created. If the path already
+    // existed, `open` truncated it to empty but kept its old (possibly 0644)
+    // perms — tighten to owner-only BEFORE writing any sensitive bytes, so the
+    // content is never present in a group/world-readable file even briefly.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    file.write_all(contents.as_bytes()).map_err(|e| e.to_string())?;
+    // Enforce owner-only after the write too, belt-and-suspenders.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(Some(display_path(&path)))
+}
+
 /// Strip the Windows verbatim / verbatim-UNC prefix (`\\?\`, `\\?\UNC\`) that
 /// `std::fs::canonicalize` prepends, so a path RETURNED to the renderer is the
 /// normal form its callers expect. On non-Windows this is the identity. The

@@ -1,0 +1,147 @@
+.pf-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--pf-space-xl);
+  background: color-mix(in srgb, var(--pf-surface) 62%, transparent);
+  animation: pf-confirm-fade var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+
+.pf-confirm {
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+  padding: var(--pf-space-xl);
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-lg);
+  background: var(--pf-surface-1);
+  box-shadow: var(--pf-shadow-overlay);
+  animation: pf-confirm-rise var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+
+.pf-confirm-title {
+  margin: 0;
+  font-size: var(--pf-size-title-sm);
+  font-weight: var(--pf-weight-semibold);
+  color: var(--pf-text-hi);
+}
+
+.pf-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-md);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-med);
+  line-height: 1.5;
+}
+
+.pf-confirm-para {
+  margin: 0;
+}
+
+.pf-confirm-para--warn {
+  color: var(--pf-text-hi);
+  font-weight: var(--pf-weight-semibold);
+}
+
+.pf-confirm-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.06em;
+  color: var(--pf-text-low);
+  text-transform: uppercase;
+}
+
+.pf-confirm-input {
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-md);
+  letter-spacing: 0.08em;
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  text-transform: none;
+}
+
+.pf-confirm-input:focus {
+  outline: var(--pf-hairline-width) solid color-mix(in srgb, var(--pf-error) 55%, transparent);
+  border-color: color-mix(in srgb, var(--pf-error) 55%, transparent);
+}
+
+.pf-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-xs);
+}
+
+.pf-confirm-cancel,
+.pf-confirm-go {
+  border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+  border-radius: var(--pf-radius-sm);
+  padding: var(--pf-space-sm) var(--pf-space-lg);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-md);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  background: var(--pf-surface-2);
+  color: var(--pf-text-med);
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+
+.pf-confirm-cancel:hover:not(:disabled) {
+  color: var(--pf-text-hi);
+}
+
+.pf-confirm-go--danger {
+  border-color: color-mix(in srgb, var(--pf-error) 45%, transparent);
+  color: var(--pf-error);
+}
+
+.pf-confirm-go--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pf-error) 14%, transparent);
+  border-color: color-mix(in srgb, var(--pf-error) 65%, transparent);
+}
+
+.pf-confirm-cancel:disabled,
+.pf-confirm-go:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@keyframes pf-confirm-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pf-confirm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-confirm-backdrop,
+  .pf-confirm {
+    animation: none;
+  }
+}

@@ -113,6 +113,12 @@ import {
   syncNow,
 } from "../stores/settingsSyncStore";
 import type { SyncFieldGroup } from "@pickforge/sync";
+import {
+  deleteConfirmMatches,
+  exportAccountData,
+  performAccountDeletion,
+} from "../lib/accountData";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -162,6 +168,87 @@ export function SettingsScreen() {
   const [remoteError, setRemoteError] = createSignal<string | null>(null);
   const [remoteNow, setRemoteNow] = createSignal(Date.now());
   const [voiceState, setVoiceState] = createSignal<VoiceStatus | null>(null);
+  const [exporting, setExporting] = createSignal(false);
+  const [exportStatus, setExportStatus] = createSignal<
+    { kind: "ok" | "error"; text: string } | null
+  >(null);
+  const [deleteOpen, setDeleteOpen] = createSignal(false);
+  const [deleteConfirm, setDeleteConfirm] = createSignal("");
+  const [deleting, setDeleting] = createSignal(false);
+  const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  const [accountNotice, setAccountNotice] = createSignal<string | null>(null);
+
+  // When the session changes or clears, reset export + delete state so a
+  // next/anonymous account sees a clean export control and never inherits the
+  // last account's export path or a half-typed/busy confirmation. An export
+  // still in flight is already guarded (it won't write or set status for the old
+  // account); clearing the busy flag just re-enables the control immediately.
+  let lastAccountUserId: string | null | undefined;
+  createEffect(() => {
+    const userId = accountSession()?.userId ?? null;
+    if (userId === lastAccountUserId) return;
+    lastAccountUserId = userId;
+    setExportStatus(null);
+    setExporting(false);
+    setDeleteOpen(false);
+    setDeleteConfirm("");
+    setDeleting(false);
+    setDeleteError(null);
+  });
+
+  const runExport = async () => {
+    if (exporting()) return;
+    const startedFor = accountSession()?.userId ?? null;
+    const stillCurrent = () => (accountSession()?.userId ?? null) === startedFor;
+    setExporting(true);
+    setExportStatus(null);
+    try {
+      const result = await exportAccountData(stillCurrent);
+      if (!stillCurrent()) return;
+      if (!result.ok) {
+        setExportStatus({ kind: "error", text: `Export failed — ${result.message}` });
+      } else if (result.saved) {
+        setExportStatus({ kind: "ok", text: `Exported to ${result.path}` });
+      }
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const openDeleteDialog = () => {
+    setDeleteConfirm("");
+    setDeleteError(null);
+    setAccountNotice(null);
+    setDeleteOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    if (deleting()) return;
+    setDeleteOpen(false);
+  };
+
+  const runDelete = async (email: string | null) => {
+    if (deleting() || !deleteConfirmMatches(deleteConfirm(), email)) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const result = await performAccountDeletion();
+      if (result.ok) {
+        setDeleteOpen(false);
+        return;
+      }
+      if (result.reason === "sessionExpired") {
+        // performAccountDeletion already signed out; the signed-in view will
+        // unmount, so surface why on the section-level notice that survives it.
+        setAccountNotice("Your session expired — sign in again. Your account was not deleted.");
+        setDeleteOpen(false);
+        return;
+      }
+      setDeleteError(result.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const reloadArchived = async () => {
     const all = await db.projectsList(true);
@@ -1056,10 +1143,22 @@ export function SettingsScreen() {
                         Sign-in is optional. PickForge works fully offline; an account only adds Pro features and settings sync.
                       </span>
                       <div class="pf-ql-row">
-                        <button class="pf-ql-add" onClick={() => void signIn("github")}>
+                        <button
+                          class="pf-ql-add"
+                          onClick={() => {
+                            setAccountNotice(null);
+                            void signIn("github");
+                          }}
+                        >
                           Continue with GitHub
                         </button>
-                        <button class="pf-ql-add" onClick={() => void signIn("google")}>
+                        <button
+                          class="pf-ql-add"
+                          onClick={() => {
+                            setAccountNotice(null);
+                            void signIn("google");
+                          }}
+                        >
                           Continue with Google
                         </button>
                       </div>
@@ -1186,11 +1285,85 @@ export function SettingsScreen() {
                           </Show>
                         </Show>
                       </Show>
+                      <div class="pf-account-tools">
+                        <MonoEyebrow text="Your data" />
+                        <span class="pf-settings-muted">
+                          A portable copy of your PickForge account data — profile, entitlements, credit ledger, and synced settings.
+                        </span>
+                        <div class="pf-ql-actions">
+                          <button
+                            class="pf-ql-add"
+                            disabled={exporting()}
+                            onClick={() => void runExport()}
+                          >
+                            {exporting() ? "Exporting…" : "Export my data"}
+                          </button>
+                          <Show when={exportStatus()}>
+                            {(status) => (
+                              <span
+                                class="pf-account-status"
+                                classList={{ "pf-account-status--error": status().kind === "error" }}
+                              >
+                                {status().text}
+                              </span>
+                            )}
+                          </Show>
+                        </div>
+                      </div>
                       <div class="pf-ql-actions">
                         <button class="pf-text-btn" onClick={() => void signOut()}>
                           Sign out
                         </button>
                       </div>
+                      <div class="pf-danger-zone">
+                        <MonoEyebrow text="Danger zone" />
+                        <div class="pf-settings-row">
+                          <span class="pf-settings-label">
+                            Delete account
+                            <span class="pf-settings-hint-inline">permanently remove your account and all associated data</span>
+                          </span>
+                          <button class="pf-danger-btn" onClick={openDeleteDialog}>
+                            Delete account
+                          </button>
+                        </div>
+                      </div>
+                      <ConfirmDialog
+                        open={deleteOpen()}
+                        eyebrow="Danger zone"
+                        title="Delete your account?"
+                        destructive
+                        confirmLabel={deleting() ? "Deleting…" : "Delete account"}
+                        confirmDisabled={!deleteConfirmMatches(deleteConfirm(), account().email)}
+                        busy={deleting()}
+                        onCancel={closeDeleteDialog}
+                        onConfirm={() => void runDelete(account().email)}
+                      >
+                        <p class="pf-confirm-para">
+                          This permanently deletes your PickForge account and all associated data — profile, entitlements, synced settings, and credit ledger.
+                        </p>
+                        <p class="pf-confirm-para pf-confirm-para--warn">
+                          Any remaining credits are forfeited and this cannot be undone.
+                        </p>
+                        <p class="pf-confirm-para">
+                          Local projects and code on this machine are not touched — they never left your device.
+                        </p>
+                        <label class="pf-confirm-field">
+                          <span>Type DELETE to confirm.</span>
+                          <input
+                            class="pf-confirm-input"
+                            type="text"
+                            autocomplete="off"
+                            spellcheck={false}
+                            placeholder="DELETE"
+                            value={deleteConfirm()}
+                            disabled={deleting()}
+                            onInput={(e) => setDeleteConfirm(e.currentTarget.value)}
+                          />
+                        </label>
+                        <Show when={deleteError()}>
+                          <span class="pf-account-status pf-account-status--error">{deleteError()}</span>
+                        </Show>
+                      </ConfirmDialog>
                     </>
                   )}
                 </Show>
@@ -1203,6 +1376,9 @@ export function SettingsScreen() {
                 </span>
                 <button class="pf-text-btn" onClick={cancelSignIn}>Cancel</button>
               </div>
+            </Show>
+            <Show when={accountNotice()}>
+              <div class="pf-ql-warn">{accountNotice()}</div>
             </Show>
             <Show when={accountError()}>
               <div class="pf-ql-warn">{accountError()}</div>

@@ -178,6 +178,16 @@ export function SettingsScreen() {
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [accountNotice, setAccountNotice] = createSignal<string | null>(null);
 
+  // Drop a previous user's export path when the session changes or clears, so a
+  // next/anonymous user never sees where the last account's data was written.
+  let lastAccountUserId: string | null | undefined;
+  createEffect(() => {
+    const userId = accountSession()?.userId ?? null;
+    if (userId === lastAccountUserId) return;
+    lastAccountUserId = userId;
+    setExportStatus(null);
+  });
+
   const runExport = async () => {
     if (exporting()) return;
     setExporting(true);

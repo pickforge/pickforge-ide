@@ -247,6 +247,15 @@ pub async fn save_text_file(
     }
     let mut file = options.open(&path).map_err(|e| e.to_string())?;
     file.write_all(contents.as_bytes()).map_err(|e| e.to_string())?;
+    // `.mode()` only applies when the file is created; an overwrite of a
+    // pre-existing (possibly 0644) file keeps its old perms. Enforce owner-only
+    // after the write too so a repeat export is private either way.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
     Ok(Some(display_path(&path)))
 }
 

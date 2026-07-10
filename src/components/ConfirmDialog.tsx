@@ -48,13 +48,26 @@ export function ConfirmDialog(props: {
         'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
       ),
     );
-    if (focusables.length === 0) return;
+    // While busy every control is disabled — keep focus pinned to the dialog
+    // itself rather than letting Tab fall through to the page behind it.
+    if (focusables.length === 0) {
+      e.preventDefault();
+      panelEl.focus();
+      return;
+    }
     const first = focusables[0];
     const last = focusables[focusables.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
+    const active = document.activeElement;
+    // Focus drifted off a just-disabled control — pull it back into the set.
+    if (!(active instanceof HTMLElement) || !focusables.includes(active)) {
+      e.preventDefault();
+      first.focus();
+      return;
+    }
+    if (e.shiftKey && active === first) {
       e.preventDefault();
       last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
+    } else if (!e.shiftKey && active === last) {
       e.preventDefault();
       first.focus();
     }

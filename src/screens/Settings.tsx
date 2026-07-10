@@ -178,22 +178,30 @@ export function SettingsScreen() {
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [accountNotice, setAccountNotice] = createSignal<string | null>(null);
 
-  // Drop a previous user's export path when the session changes or clears, so a
-  // next/anonymous user never sees where the last account's data was written.
+  // When the session changes or clears, drop the previous user's export path and
+  // reset the destructive delete dialog, so a next/anonymous user never sees the
+  // last account's export path or a half-typed/busy confirmation.
   let lastAccountUserId: string | null | undefined;
   createEffect(() => {
     const userId = accountSession()?.userId ?? null;
     if (userId === lastAccountUserId) return;
     lastAccountUserId = userId;
     setExportStatus(null);
+    setDeleteOpen(false);
+    setDeleteConfirm("");
+    setDeleting(false);
+    setDeleteError(null);
   });
 
   const runExport = async () => {
     if (exporting()) return;
+    const startedFor = accountSession()?.userId ?? null;
+    const stillCurrent = () => (accountSession()?.userId ?? null) === startedFor;
     setExporting(true);
     setExportStatus(null);
     try {
-      const result = await exportAccountData();
+      const result = await exportAccountData(stillCurrent);
+      if (!stillCurrent()) return;
       if (!result.ok) {
         setExportStatus({ kind: "error", text: `Export failed — ${result.message}` });
       } else if (result.saved) {

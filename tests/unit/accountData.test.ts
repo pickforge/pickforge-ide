@@ -101,6 +101,19 @@ describe("exportAccountData", () => {
     expect(result).toEqual({ ok: false, message: "boom" });
     expect(env.invoke).not.toHaveBeenCalled();
   });
+
+  it("aborts without writing when the account changed before the write", async () => {
+    // Fetch succeeds (user A) but the session switched to B by the time it lands.
+    env.functionsInvoke.mockResolvedValue({
+      data: { version: 1, profile: { id: "user-a" } },
+      error: null,
+    });
+
+    const result = await exportAccountData(() => false);
+
+    expect(result).toEqual({ ok: true, saved: false, path: null });
+    expect(env.invoke).not.toHaveBeenCalled();
+  });
 });
 
 describe("deleteAccount", () => {

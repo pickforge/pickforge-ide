@@ -246,10 +246,18 @@ pub async fn save_text_file(
         options.mode(0o600);
     }
     let mut file = options.open(&path).map_err(|e| e.to_string())?;
+    // `.mode()` only applies when the file is created. If the path already
+    // existed, `open` truncated it to empty but kept its old (possibly 0644)
+    // perms — tighten to owner-only BEFORE writing any sensitive bytes, so the
+    // content is never present in a group/world-readable file even briefly.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
     file.write_all(contents.as_bytes()).map_err(|e| e.to_string())?;
-    // `.mode()` only applies when the file is created; an overwrite of a
-    // pre-existing (possibly 0644) file keeps its old perms. Enforce owner-only
-    // after the write too so a repeat export is private either way.
+    // Enforce owner-only after the write too, belt-and-suspenders.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

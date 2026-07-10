@@ -57,8 +57,12 @@ async function errorBody(error: unknown): Promise<Record<string, unknown> | null
 
 /** Fetch a portable copy of the account data from the Edge Function and write it
  *  to a user-chosen file via the native Save-As dialog. `saved: false` means the
- *  user cancelled the dialog. */
-export async function exportAccountData(): Promise<ExportResult> {
+ *  user cancelled the dialog. `isStillCurrent` guards against a session change
+ *  that lands while the fetch is in flight — if it returns false after the data
+ *  arrives, the write is skipped so the previous user's data is never written. */
+export async function exportAccountData(
+  isStillCurrent: () => boolean = () => true,
+): Promise<ExportResult> {
   try {
     const { data, error } = await getProSupabaseClient().functions.invoke(
       "export-account-data",
@@ -68,6 +72,7 @@ export async function exportAccountData(): Promise<ExportResult> {
     if (!data || typeof data !== "object") {
       return { ok: false, message: "Export returned no data." };
     }
+    if (!isStillCurrent()) return { ok: true, saved: false, path: null };
     const contents = `${JSON.stringify(data, null, 2)}\n`;
     const path = await invoke<string | null>("save_text_file", {
       defaultName: exportFileName(),

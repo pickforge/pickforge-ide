@@ -76,6 +76,34 @@ impl From<RemotePtyInput> for RemotePty {
     }
 }
 
+fn remote_root_within_binding(requested: &str, bound: &str) -> bool {
+    fn components(path: &str) -> Option<Vec<&str>> {
+        if !path.starts_with('/') || path.contains('\0') {
+            return None;
+        }
+        let components = path
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect::<Vec<_>>();
+        if components.is_empty()
+            || components
+                .iter()
+                .any(|component| matches!(*component, "." | ".."))
+        {
+            return None;
+        }
+        Some(components)
+    }
+
+    let Some(requested) = components(requested) else {
+        return false;
+    };
+    let Some(bound) = components(bound) else {
+        return false;
+    };
+    requested.starts_with(&bound)
+}
+
 pub(crate) fn authorize_remote_pty_binding(
     project_root: Option<&str>,
     remote: &RemotePty,
@@ -88,7 +116,8 @@ pub(crate) fn authorize_remote_pty_binding(
     let matches_binding = matches!(
         binding,
         Some((Some(host), Some(remote_root)))
-            if host == remote.host && remote_root == remote.remote_root
+            if host == remote.host
+                && remote_root_within_binding(&remote.remote_root, remote_root)
     );
     if !matches_binding {
         return Err(format!(
@@ -620,6 +649,36 @@ mod spawn_cwd_tests {
         .expect("an exact remote binding with an online host must be allowed");
 
         assert_eq!(authorized_host.as_deref(), Some("mac-mini"));
+    }
+
+    #[test]
+    fn remote_spawn_authorizes_a_detected_app_below_the_bound_root() {
+        let remote = RemotePty {
+            host: "mac-mini".to_string(),
+            remote_root: "/srv/repo/apps/flutter_app".to_string(),
+        };
+
+        authorize_remote_pty_binding(
+            Some("/app"),
+            &remote,
+            Some((Some("mac-mini"), Some("/srv/repo"))),
+            |_| Ok(()),
+        )
+        .expect("a detected app below the binding must be allowed");
+
+        for escaped in ["/srv/repo/../secret", "/srv/repo-copy/app"] {
+            let escaped = RemotePty {
+                host: "mac-mini".to_string(),
+                remote_root: escaped.to_string(),
+            };
+            assert!(authorize_remote_pty_binding(
+                Some("/app"),
+                &escaped,
+                Some((Some("mac-mini"), Some("/srv/repo"))),
+                |_| Ok(()),
+            )
+            .is_err());
+        }
     }
 
     #[test]

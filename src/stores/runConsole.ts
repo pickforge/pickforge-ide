@@ -10,7 +10,15 @@ import { type RunTarget } from "../lib/runTargets";
 import { watchDartChanges, type WatchHandle } from "../lib/fsWatch";
 import { newSessionId, recordRunFinish, recordRunStart } from "../lib/runRecord";
 import { autoReloadEnabled } from "./autoReload";
-import { disarmVmAutoConnect } from "./vmService";
+import {
+  disarmVmAutoConnect,
+  hadVmTransport,
+  hasVmTransport,
+  reattachVm,
+} from "./vmService";
+import { remotePtyFor } from "../lib/remoteContext";
+import type { RemotePty } from "../lib/pty";
+import type { PtyExit } from "../lib/remoteTerminal";
 
 /** Device + connection context the run-history row captures at launch. The
  *  caller (launchActiveTarget) supplies what it resolved; everything is
@@ -22,11 +30,17 @@ export interface RunRecordContext {
   connectionMode?: string;
 }
 
-export type RunStatus = "idle" | "running" | "stopped";
+export type RunStatus = "idle" | "running" | "disconnected" | "stopped";
 
 /** The currently-mounted run. A fresh `key` each launch remounts the console
  *  pane (new pty) so output never bleeds between runs. */
-export type RunSession = { key: number; command: string; cwd: string | null };
+export type RunSession = {
+  key: number;
+  command: string;
+  cwd: string | null;
+  projectRoot: string | null;
+  remote: RemotePty | null;
+};
 
 const KEY = "pickforge.runConsole";
 const MIN_H = 120;
@@ -159,20 +173,35 @@ function finishRunRecord(exitReason: string) {
 
 /** Launch a target: open the console and mount a fresh pty that runs the
  *  command directly. Guards against stacking a run on top of a live one. */
-export function startRun(t: RunTarget, projectRoot: string | null, ctx: RunRecordContext = {}) {
-  if (status() === "running") return;
+export function startRun(
+  t: RunTarget,
+  projectRoot: string | null,
+  ctx: RunRecordContext = {},
+  remote = remotePtyFor(projectRoot),
+): RunSession | null {
+  if (status() === "running") return null;
   setTarget(t);
   // The target carries its own run dir (derived from its program's pubspec, or
   // an explicit launch.json cwd); fall back to the project root.
-  const base = t.cwd ?? projectRoot;
+  const base = t.cwd ?? remote?.remoteRoot ?? projectRoot;
+  const executionRemote = remote && t.cwd
+    ? { ...remote, remoteRoot: t.cwd }
+    : remote;
   setOpen(true);
   persist();
   setStatus("running");
   pendingStopKey = null; // a fresh run is never pre-stopped
   // A new key remounts the console pane, spawning a fresh pty that runs THIS
   // command in `base` — output never carries over from a previous run.
-  setCurrent({ key: ++runKey, command: t.command, cwd: base });
-  runBase = base; // watch THIS run's dir, not just the first console's cwd
+  const run = {
+    key: ++runKey,
+    command: t.command,
+    cwd: base,
+    projectRoot,
+    remote: executionRemote,
+  };
+  setCurrent(run);
+  runBase = executionRemote ? null : base; // watch THIS run's dir, not just the first console's cwd
   syncAutoReloadWatch();
   // Persist the launch as a run-history row (best effort — a write failure must
   // never block the run). A fresh session id per launch, finished on exit/stop.
@@ -200,11 +229,18 @@ export function startRun(t: RunTarget, projectRoot: string | null, ctx: RunRecor
       lastError: null,
     });
   }
+  return run;
 }
 
 /** The run process exited (finished, crashed, or stopped): mark stopped and
  *  stop the watcher, but KEEP the pane mounted so its output stays visible. */
-export function consoleExited() {
+export function consoleExited(exit?: PtyExit) {
+  if (exit?.code === 255 && current()?.remote && (hasVmTransport() || hadVmTransport())) {
+    setStatus("disconnected");
+    stopWatch();
+    finishRunRecord("ssh disconnected");
+    return;
+  }
   setStatus("stopped");
   stopWatch();
   // Process ended on its own (finished or crashed). If a stop already recorded
@@ -213,6 +249,11 @@ export function consoleExited() {
   // A run that ended before its VM URL printed must not let a later/unrelated
   // chunk of output auto-connect the inspector to a dead/wrong VM.
   disarmVmAutoConnect();
+}
+
+export async function reattachRun(): Promise<void> {
+  if (status() !== "disconnected") return;
+  await reattachVm();
 }
 
 /** Hot reload / restart are keystrokes the running tool reads from stdin. */
@@ -229,8 +270,10 @@ export function stopRun() {
   // Ctrl-C → SIGINT via the pty line discipline. If the pane hasn't attached its
   // handle yet, remember the request against this run's key so attachConsole can
   // deliver it the moment the pty exists (otherwise the stop is silently lost).
-  if (handle) handle.typeText("\x03");
-  else pendingStopKey = current()?.key ?? null;
+  if (status() === "running") {
+    if (handle) handle.typeText("\x03");
+    else pendingStopKey = current()?.key ?? null;
+  }
   setStatus("stopped");
   stopWatch();
   finishRunRecord("stopped"); // user-initiated SIGINT

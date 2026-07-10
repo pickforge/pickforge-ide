@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
-    PtyManager, VmServiceClient, VoiceSessionManager,
+    PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
 };
 use tauri::{path::BaseDirectory, Manager, RunEvent, WindowEvent};
 #[cfg(target_os = "linux")]
@@ -200,6 +200,7 @@ pub fn run() {
         .manage(logcat_commands::LogcatManager::new())
         .manage(ios_commands::OsLogManager::new())
         .manage(remote_commands::RemoteHostState::new())
+        .manage(TunnelManager::new())
         .manage(approved_roots)
         .manage(Arc::clone(&database))
         .manage(mcp_commands::McpState::new())
@@ -223,6 +224,9 @@ pub fn run() {
             remote_commands::remote_host_health,
             remote_commands::remote_nearest_pubspec,
             remote_commands::remote_detect_binaries,
+            remote_commands::remote_pubspec_uses_flutter,
+            remote_commands::remote_tunnel_open,
+            remote_commands::remote_tunnel_close,
             picklab_commands::picklab_status,
             fs_commands::list_dir,
             fs_commands::read_text_file,
@@ -352,6 +356,7 @@ pub fn run() {
                     }
             ) {
                 app.state::<Arc<VoiceSessionManager>>().shutdown();
+                app.state::<TunnelManager>().shutdown();
             }
         });
 }

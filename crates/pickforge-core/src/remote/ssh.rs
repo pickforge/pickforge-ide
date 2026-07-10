@@ -61,6 +61,24 @@ pub(crate) fn ssh_one_shot_args(target: &SshTarget, remote_command: String) -> V
     args
 }
 
+pub(crate) fn ssh_tunnel_args(
+    target: &SshTarget,
+    local_port: u16,
+    remote_port: u16,
+) -> Vec<String> {
+    let mut args = ssh_batch_args();
+    args.push("-o".into());
+    args.push("ExitOnForwardFailure=yes".into());
+    args.push("-N".into());
+    args.push("-L".into());
+    args.push(format!(
+        "127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
+    ));
+    args.push("--".into());
+    args.push(target.host.clone());
+    args
+}
+
 pub(crate) fn shell_quote_argv(argv: &[&str]) -> String {
     argv.iter()
         .map(|arg| posix_single_quote(arg))
@@ -138,6 +156,29 @@ mod tests {
         assert_eq!(
             shell_quote_argv(&["echo", "two words", "it's", "$HOME", "`uname`", ""]),
             "'echo' 'two words' 'it'\\''s' '$HOME' '`uname`' ''"
+        );
+    }
+
+    #[test]
+    fn tunnel_argv_keeps_batch_mode_and_binds_both_ends_to_loopback() {
+        let target = SshTarget::new("mac-mini").unwrap();
+        assert_eq!(
+            ssh_tunnel_args(&target, 43123, 8181),
+            vec![
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-N",
+                "-L",
+                "127.0.0.1:43123:127.0.0.1:8181",
+                "--",
+                "mac-mini",
+            ]
         );
     }
 

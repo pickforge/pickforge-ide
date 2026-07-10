@@ -4,6 +4,12 @@
 // stop are keystrokes the running tool reads from stdin — so no new runner.
 import { invoke } from "@tauri-apps/api/core";
 import { findNearestPubspec, targetDetect, type TargetDetection } from "./device";
+import type { RemotePty } from "./pty";
+import {
+  remoteDetectBinaries,
+  remoteNearestPubspec,
+  remotePubspecUsesFlutter,
+} from "./remoteHost";
 
 /** How the chosen device serial is applied to a target's command — decided once
  *  per adapter instead of re-sniffed from the command string at each call site.
@@ -475,4 +481,74 @@ export async function discoverRunTargets(root: string): Promise<RunTarget[]> {
   }
   out.push(...(await readLaunchJson(root)));
   return out;
+}
+
+export async function discoverRemoteRunTargets(remote: RemotePty): Promise<RunTarget[]> {
+  const pubspecRoot = await remoteNearestPubspec(remote.host, remote.remoteRoot);
+  if (!pubspecRoot) {
+    throw new Error(`No Flutter project found on ${remote.host} from ${remote.remoteRoot}`);
+  }
+  const [isFlutterApp, binaries] = await Promise.all([
+    remotePubspecUsesFlutter(remote.host, pubspecRoot),
+    remoteDetectBinaries(remote.host, ["flutter"]),
+  ]);
+  if (!isFlutterApp) {
+    throw new Error(`Remote project at ${pubspecRoot} is not a Flutter app`);
+  }
+  if (!binaries[0]) {
+    throw new Error(`Flutter is not available on remote host ${remote.host}`);
+  }
+  const profile = runProfile("flutter");
+  return [{
+    id: "remote-flutter",
+    label: "Flutter · remote",
+    command: defaultCommand({ targetId: "flutter" } as TargetDetection)!,
+    cwd: pubspecRoot,
+    capabilities: [
+      "detect", "launch", "stop", "hotReload", "hotRestart",
+      "streamLogs", "inspectSelection", "mapSelectionToSource", "exposeMcpTools",
+    ],
+    needsDevice: false,
+    deviceConvention: profile.deviceConvention,
+    inspectorKind: profile.inspectorKind,
+    logSource: profile.logSource,
+    source: "detected",
+  }];
+}
+
+export function discoverRunTargetsForProject(
+  root: string,
+  remote: RemotePty | null,
+): Promise<RunTarget[]> {
+  return remote ? discoverRemoteRunTargets(remote) : discoverRunTargets(root);
+}
+
+export interface RunTargetDiscoveryResult {
+  targets: RunTarget[];
+  error: string | null;
+}
+
+export class RunTargetDiscovery {
+  private generation = 0;
+
+  cancel(): void {
+    this.generation += 1;
+  }
+
+  async discover(
+    root: string,
+    remote: RemotePty | null,
+  ): Promise<RunTargetDiscoveryResult | null> {
+    const generation = ++this.generation;
+    try {
+      const targets = await discoverRunTargetsForProject(root, remote);
+      return generation === this.generation ? { targets, error: null } : null;
+    } catch (error) {
+      if (generation !== this.generation) return null;
+      return {
+        targets: [],
+        error: error instanceof Error ? error.message : "Remote run target detection failed",
+      };
+    }
+  }
 }

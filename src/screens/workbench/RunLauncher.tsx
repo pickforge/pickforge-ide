@@ -2,10 +2,11 @@
 // (play) action itself is the transport button in the console toolbar next to
 // reload/restart/stop (see DebugConsole); these are just the pickers. Neutral
 // chrome — the single ember stays on the focused terminal.
-import { createEffect, Show } from "solid-js";
+import { createEffect, onCleanup, Show } from "solid-js";
 import { Dropdown } from "../../components/Dropdown";
 import { StatusPill } from "../../components/ui";
-import { discoverRunTargets, supportTierMeta } from "../../lib/runTargets";
+import { RunTargetDiscovery, supportTierMeta } from "../../lib/runTargets";
+import { remotePtyFor } from "../../lib/remoteContext";
 import { workspace } from "../../stores/workspace";
 import { useDeviceList } from "../../stores/deviceList";
 import { setRunDevice } from "../../stores/runDevice";
@@ -14,6 +15,8 @@ import {
   activeTargetId,
   runTargets,
   setActiveTargetId,
+  runTargetDiscoveryError,
+  setRunTargetDiscoveryError,
   setRunTargets,
 } from "../../stores/runTargets";
 import { compatibleDevices, deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
@@ -24,18 +27,25 @@ export function RunLauncher() {
   // an Android run, or vice versa).
   useDeviceList();
   const devices = compatibleDevices;
+  const discovery = new RunTargetDiscovery();
+  onCleanup(() => discovery.cancel());
 
   // Reload run targets whenever the active project changes.
   createEffect(() => {
     const root = workspace.activeRoot;
     if (!root) {
+      discovery.cancel();
       setRunTargets([]);
+      setRunTargetDiscoveryError(null);
       return;
     }
-    void (async () => {
-      const found = await discoverRunTargets(root);
-      if (workspace.activeRoot === root) setRunTargets(found); // ignore stale switch
-    })();
+    const remote = remotePtyFor(root);
+    setRunTargetDiscoveryError(null);
+    void discovery.discover(root, remote).then((result) => {
+      if (!result) return;
+      setRunTargets(result.targets);
+      setRunTargetDiscoveryError(result.error);
+    });
   });
 
   const showDevices = () => !!activeTarget()?.needsDevice && devices().length > 0;
@@ -54,7 +64,7 @@ export function RunLauncher() {
     <div class="pf-run-launcher">
       <Show
         when={runTargets().length > 0}
-        fallback={<span class="pf-run-empty">No run target</span>}
+        fallback={<span class="pf-run-empty">{runTargetDiscoveryError() ?? "No run target"}</span>}
       >
         <Dropdown
           class="pf-run-dropdown"

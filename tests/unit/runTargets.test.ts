@@ -4,8 +4,21 @@ import { describe, expect, it, vi } from "vitest";
 // importing the pure command-builder functions never touches the Tauri runtime.
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
+const remote = vi.hoisted(() => ({
+  nearestPubspec: vi.fn(),
+  binaries: vi.fn(),
+  pubspecUsesFlutter: vi.fn(),
+}));
+
+vi.mock("../../src/lib/remoteHost", () => ({
+  remoteNearestPubspec: remote.nearestPubspec,
+  remoteDetectBinaries: remote.binaries,
+  remotePubspecUsesFlutter: remote.pubspecUsesFlutter,
+}));
+
 import {
   defaultCommand,
+  discoverRemoteRunTargets,
   expandVars,
   fromLaunchConfig,
   hasCapability,
@@ -15,6 +28,7 @@ import {
   isTestProgram,
   logSourceOf,
   runProfile,
+  RunTargetDiscovery,
   shquote,
   stripJsonc,
   supportTier,
@@ -44,6 +58,80 @@ describe("defaultCommand", () => {
     expect(cmd("native-ios")).toBe("xcodebuild build");
     expect(cmd("web")).toBe("npm run dev");
     expect(cmd("generic")).toBeNull();
+  });
+});
+
+describe("discoverRemoteRunTargets", () => {
+  it("uses the Flutter app found below a Dart workspace root and leaves device selection to the host", async () => {
+    remote.nearestPubspec.mockResolvedValue("/srv/repo/apps/app");
+    remote.binaries.mockResolvedValue([true]);
+    remote.pubspecUsesFlutter.mockResolvedValue(true);
+
+    await expect(
+      discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/repo" }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "remote-flutter",
+        command: "flutter --color run",
+        cwd: "/srv/repo/apps/app",
+        capabilities: expect.not.arrayContaining(["captureScreenshot"]),
+        needsDevice: false,
+        inspectorKind: "vmService",
+      }),
+    ]);
+
+    expect(remote.nearestPubspec).toHaveBeenCalledWith("mac-mini", "/srv/repo");
+    expect(remote.pubspecUsesFlutter).toHaveBeenCalledWith("mac-mini", "/srv/repo/apps/app");
+    expect(remote.binaries).toHaveBeenCalledWith("mac-mini", ["flutter"]);
+  });
+
+  it("surfaces an honest error when Flutter is unavailable on the host", async () => {
+    remote.nearestPubspec.mockResolvedValue("/srv/app");
+    remote.binaries.mockResolvedValue([false]);
+    remote.pubspecUsesFlutter.mockResolvedValue(true);
+
+    await expect(
+      discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/app" }),
+    ).rejects.toThrow("Flutter is not available on remote host mac-mini");
+  });
+
+  it("rejects a remote Dart package without the Flutter SDK dependency", async () => {
+    remote.nearestPubspec.mockResolvedValue("/srv/app");
+    remote.pubspecUsesFlutter.mockResolvedValue(false);
+    remote.binaries.mockResolvedValue([true]);
+
+    await expect(
+      discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/app" }),
+    ).rejects.toThrow("Remote project at /srv/app is not a Flutter app");
+  });
+
+  it("drops stale discovery results after the binding changes for the same project", async () => {
+    let resolveOld!: (value: string) => void;
+    let resolveFresh!: (value: string) => void;
+    const oldPubspec = new Promise<string>((resolve) => { resolveOld = resolve; });
+    const freshPubspec = new Promise<string>((resolve) => { resolveFresh = resolve; });
+    remote.nearestPubspec.mockImplementation((host: string) =>
+      host === "old-host" ? oldPubspec : freshPubspec);
+    remote.binaries.mockResolvedValue([true]);
+    remote.pubspecUsesFlutter.mockResolvedValue(true);
+    const discovery = new RunTargetDiscovery();
+
+    const stale = discovery.discover("/local/app", {
+      host: "old-host",
+      remoteRoot: "/srv/old",
+    });
+    const fresh = discovery.discover("/local/app", {
+      host: "new-host",
+      remoteRoot: "/srv/new",
+    });
+
+    resolveFresh("/srv/new/app");
+    await expect(fresh).resolves.toEqual({
+      targets: [expect.objectContaining({ cwd: "/srv/new/app" })],
+      error: null,
+    });
+    resolveOld("/srv/old/app");
+    await expect(stale).resolves.toBeNull();
   });
 });
 

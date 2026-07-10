@@ -28,6 +28,7 @@ import {
   consoleExited,
   detachConsole,
   reloadRun,
+  reattachRun,
   restartRun,
   runConsole,
   syncAutoReloadWatch,
@@ -46,6 +47,7 @@ import { pushMcpLogs } from "../../stores/mcp";
 const STATUS: Record<RunStatus, { label: string; intent: StatusIntent; pulse?: boolean }> = {
   idle: { label: "idle", intent: "neutral" },
   running: { label: "running", intent: "live", pulse: true },
+  disconnected: { label: "disconnected", intent: "warning" },
   stopped: { label: "stopped", intent: "warning" },
 };
 
@@ -55,6 +57,7 @@ export function DebugConsole() {
   const meta = () => STATUS[status()];
   const can = (c: string) => !!target()?.capabilities.includes(c);
   const isRunning = () => status() === "running";
+  const isDisconnected = () => status() === "disconnected";
   // Boot copy tracks what's actually booting (Android emulator vs iOS simulator).
   const bootNoun = () => bootingKind();
   const [askSel, setAskSel] = createSignal<{ text: string; x: number; y: number } | null>(null);
@@ -187,6 +190,16 @@ export function DebugConsole() {
             <IconRestart size={13} />
           </button>
         </Show>
+        <Show when={isDisconnected()}>
+          <button
+            class="pf-dc-btn pf-dc-btn--restart pf-dc-btn--labeled"
+            title="Reconnect the inspector through a fresh SSH tunnel; console streaming cannot reattach"
+            onClick={() => void reattachRun()}
+          >
+            <IconRefresh size={13} />
+            Reattach
+          </button>
+        </Show>
         <button class="pf-dc-btn pf-dc-btn--stop" title="Stop" disabled={!isRunning()} onClick={stopRun}>
           <IconStop size={12} />
         </button>
@@ -223,8 +236,11 @@ export function DebugConsole() {
               <TerminalPane
                 runCommand={run.command}
                 cwd={run.cwd ?? undefined}
+                projectRoot={run.projectRoot ?? undefined}
+                remote={run.remote}
+                fallbackToLocal={!run.remote}
                 onReady={attachConsole}
-                onExit={() => consoleExited()}
+                onExit={consoleExited}
                 onOutput={onRunOutput}
                 onSelectionChange={setAskSel}
                 readOnly

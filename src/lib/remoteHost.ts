@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type RemoteListener =
   | { kind: "disabled" }
@@ -92,3 +93,34 @@ export const remoteNearestPubspec = (host: string, start: string) =>
 
 export const remoteDetectBinaries = (host: string, names: string[]) =>
   invoke<boolean[]>("remote_detect_binaries", { host, names });
+
+export const remotePubspecUsesFlutter = (host: string, projectDir: string) =>
+  invoke<boolean>("remote_pubspec_uses_flutter", { host, projectDir });
+
+export interface RemoteTunnel {
+  tunnelId: string;
+  localPort: number;
+}
+
+export interface RemoteTunnelClosed {
+  tunnelId: string;
+  host: string;
+  localPort: number;
+  runId: string;
+  exitCode: number | null;
+}
+
+export const remoteTunnelOpen = (
+  projectRoot: string,
+  host: string,
+  remotePort: number,
+  runId: string,
+) => invoke<RemoteTunnel>("remote_tunnel_open", { projectRoot, host, remotePort, runId });
+
+export const remoteTunnelClose = (tunnelId: string) =>
+  invoke<void>("remote_tunnel_close", { tunnelId });
+
+export const onRemoteTunnelClosed = (callback: (tunnel: RemoteTunnelClosed) => void) =>
+  listen<RemoteTunnelClosed>("remote-tunnel-closed", (event) => callback(event.payload));
+
+export type RemoteTunnelUnlisten = UnlistenFn;

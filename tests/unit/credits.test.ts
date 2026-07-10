@@ -24,6 +24,8 @@ async function loadCredits() {
   return import("../../src/stores/credits");
 }
 
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 beforeEach(() => {
   env.session = { userId: "user-1" };
   env.rpc.mockReset();
@@ -78,19 +80,33 @@ describe("credits store", () => {
     env.rpc.mockResolvedValue({ data: 148, error: null });
     const credits = await loadCredits();
 
-    await credits.refreshCreditBalance();
-    expect(credits.creditBalanceCents()).toBe(148);
+    // The bootstrap subscribes this exact reconcile to the account session; drive
+    // it directly since Solid effects don't flush under the node (SSR) test build.
+    credits.reconcileCreditsForSession();
+    credits.setCreditBalanceCents(148);
 
-    // The bootstrap subscribes this exact clear to the account session; drive it
-    // directly since Solid effects don't flush under the node (SSR) test build.
     env.session = null;
-    credits.clearBalanceWhenSignedOut();
+    credits.reconcileCreditsForSession();
+    expect(credits.creditBalanceCents()).toBeNull();
+  });
+
+  it("resets then refreshes the balance when the user switches (A → B)", async () => {
+    const credits = await loadCredits();
+
+    env.session = { userId: "user-A" };
+    credits.reconcileCreditsForSession();
+    credits.setCreditBalanceCents(500);
+    expect(credits.creditBalanceCents()).toBe(500);
+
+    // Auth swaps A for B with no null in between; B must not see A's 500.
+    env.rpc.mockResolvedValue({ data: 20, error: null });
+    env.session = { userId: "user-B" };
+    credits.reconcileCreditsForSession();
     expect(credits.creditBalanceCents()).toBeNull();
 
-    env.session = { userId: "user-1" };
-    credits.setCreditBalanceCents(90);
-    credits.clearBalanceWhenSignedOut();
-    expect(credits.creditBalanceCents()).toBe(90);
+    await flushMicrotasks();
+    expect(credits.creditBalanceCents()).toBe(20);
+    expect(env.rpc).toHaveBeenCalled();
   });
 
   it("throws and does not open a URL when checkout omits one", async () => {

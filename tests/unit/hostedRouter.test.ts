@@ -174,14 +174,18 @@ describe("hostedRoute", () => {
     expect(result.kind).toBe("error");
   });
 
-  it("returns unclear when the hosted model cannot map the command", async () => {
+  it("returns unclear with the cost so a billed unclear answer is surfaced", async () => {
     env.invoke.mockResolvedValue({
       data: { proposalJson: JSON.stringify({ unclear: true, reason: "too vague" }), costCents: 1 },
       error: null,
     });
     const { hostedRoute } = await loadHosted();
 
-    await expect(hostedRoute("do the thing")).resolves.toEqual({ kind: "unclear", reason: "too vague" });
+    await expect(hostedRoute("do the thing")).resolves.toEqual({
+      kind: "unclear",
+      reason: "too vague",
+      costCents: 1,
+    });
   });
 
   it("only sends commandText plus allowlisted, redacted context (data boundary)", async () => {

@@ -220,13 +220,18 @@ export function OperatorDock() {
           <Switch>
             <Match when={asView("needsRouter")}>
               {(nr) => (
-                <div class="pf-op-note">
-                  <span class="pf-op-note-key">router</span>
-                  <span class="pf-op-note-body">
-                    needs a router model. Configure Operator router in Settings.
-                    <span class="pf-op-note-reason"> {nr().reason}</span>
-                  </span>
-                </div>
+                <>
+                  <div class="pf-op-note">
+                    <span class="pf-op-note-key">router</span>
+                    <span class="pf-op-note-body">
+                      needs a router model. Configure Operator router in Settings.
+                      <span class="pf-op-note-reason"> {nr().reason}</span>
+                    </span>
+                  </div>
+                  <Show when={routeMetaLabel()}>
+                    {(label) => <div class="pf-op-meta">{label()}</div>}
+                  </Show>
+                </>
               )}
             </Match>
 

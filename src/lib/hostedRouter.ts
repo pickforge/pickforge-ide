@@ -86,7 +86,8 @@ function errorMessage(error: unknown): string {
 
 function proposalToResult(proposal: RouterProposal, latencyMs: number, costCents: number): HostedRouteResult {
   if ("unclear" in proposal) {
-    return { kind: "unclear", reason: proposal.reason ?? "hosted router could not map this command" };
+    // The model still ran and billed, so an unclear answer carries its cost too.
+    return { kind: "unclear", reason: proposal.reason ?? "hosted router could not map this command", costCents };
   }
   return {
     kind: "proposal",

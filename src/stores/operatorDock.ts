@@ -3,7 +3,7 @@
 // this store drives the state machine so OperatorDock stays presentational.
 import { createSignal } from "solid-js";
 import { parseCommand } from "../lib/operatorParser";
-import { routeCommand } from "../lib/operatorRouter";
+import { routeCommand, type RouteOutcome } from "../lib/operatorRouter";
 import {
   discardWidgetSelection,
   dispatchIntent,
@@ -61,6 +61,10 @@ export const operatorRouteMeta = routeMeta;
 export function openBuyCredits() {
   closeOperatorDock();
   navigate("settings");
+}
+
+function billedCost(routed: RouteOutcome): number | undefined {
+  return routed.kind === "proposal" || routed.kind === "unclear" ? routed.costCents : undefined;
 }
 
 let requestEpoch = 0;
@@ -133,14 +137,17 @@ export async function submitOperatorCommand(): Promise<void> {
     setView({ kind: "needsRouter", reason: "routing…" });
     try {
       const routed = await routeCommand(text);
+      // Reconcile billing before the epoch guard: a hosted route that completed
+      // server-side already charged, so the balance must refresh even if the
+      // dock was closed mid-flight. Only the dropped UI is gated on the epoch.
+      const cost = billedCost(routed);
+      if (cost !== undefined) await refreshCreditBalance();
       if (epoch !== requestEpoch) return;
+      if (cost !== undefined) {
+        setRouteMeta({ costCents: cost, balanceCents: creditBalanceCents() });
+      }
       switch (routed.kind) {
         case "proposal":
-          if (routed.costCents !== undefined) {
-            await refreshCreditBalance();
-            if (epoch !== requestEpoch) return;
-            setRouteMeta({ costCents: routed.costCents, balanceCents: creditBalanceCents() });
-          }
           await submitIntent(
             routed.intent,
             text,

@@ -63,20 +63,32 @@ export async function startCreditCheckout(pack: CreditPack): Promise<void> {
 }
 
 let bootstrapDisposer: (() => void) | null = null;
+let reconciledUserId: string | null = null;
 
-/** Drop the cached balance the moment the session ends, independent of any
- *  refresh guard, so a signed-out (or switched) user never sees stale credits. */
-export function clearBalanceWhenSignedOut(): void {
-  if (!accountSession()) setBalanceCents(null);
+/** Keep the cached balance honest against whoever is signed in. On sign-out the
+ *  balance clears; on a user switch (userId A → B with no null between) the old
+ *  user's balance is dropped immediately and the new user's is fetched, so B
+ *  never sees A's stale credits. */
+export function reconcileCreditsForSession(): void {
+  const userId = accountSession()?.userId ?? null;
+  if (!userId) {
+    reconciledUserId = null;
+    setBalanceCents(null);
+    return;
+  }
+  if (userId === reconciledUserId) return;
+  reconciledUserId = userId;
+  setBalanceCents(null);
+  void refreshCreditBalance();
 }
 
-/** Wire the sign-out clear to the account session. Safe to call once at app start. */
+/** Wire the balance reconcile to the account session. Safe to call once at app start. */
 export function installCreditsBootstrap(): () => void {
   if (bootstrapDisposer) return bootstrapDisposer;
   let disposeRoot = () => {};
   createRoot((dispose) => {
     disposeRoot = dispose;
-    createEffect(clearBalanceWhenSignedOut);
+    createEffect(reconcileCreditsForSession);
   });
   bootstrapDisposer = () => {
     disposeRoot();

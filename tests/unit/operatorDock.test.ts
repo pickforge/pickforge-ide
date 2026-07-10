@@ -300,6 +300,56 @@ describe("operatorDock store", () => {
     expect(s.operatorView()).toMatchObject({ kind: "result" });
   });
 
+  it("surfaces the routing cost on an unclear hosted answer", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({ kind: "unclear", reason: "too vague", costCents: 1 });
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 148;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("make it better");
+    await s.submitOperatorCommand();
+
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "too vague" });
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 1, balanceCents: 148 });
+  });
+
+  it("still refreshes the balance when a hosted route settles after the dock closed", async () => {
+    const openProject = intent({ action: "openProject" });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    let resolveRoute!: (r: unknown) => void;
+    deps.routeCommand.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRoute = resolve;
+      }),
+    );
+    deps.refreshCreditBalance.mockResolvedValue(undefined);
+    const s = await loadStore();
+
+    s.openOperatorDock();
+    s.setOperatorInput("open App");
+    const pending = s.submitOperatorCommand();
+
+    s.closeOperatorDock();
+    resolveRoute({
+      kind: "proposal",
+      intent: openProject,
+      confidence: 0.9,
+      latencyMs: 900,
+      costCents: 2,
+    });
+    await pending;
+
+    // The money truth reconciles even though the dock is gone…
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    // …while the dropped UI stays cleared and nothing dispatches.
+    expect(s.operatorRouteMeta()).toBeNull();
+    expect(s.operatorView()).toEqual({ kind: "idle" });
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
   it("keeps the routing cost meta on a tier-1 hosted preview so the card can show it", async () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });

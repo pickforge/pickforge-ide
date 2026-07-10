@@ -42,3 +42,4 @@ playwright-report/
 
 # iOS run pipeline build output (xcodebuild SYMROOT)
 **/build/pickforge-ios/
+.lab.env

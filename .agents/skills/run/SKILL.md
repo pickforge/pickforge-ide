@@ -20,7 +20,8 @@ flavor is `bun run tauri:dev:performance` (PickForge Performance on port 1422).
 
 ## Isolated lab (Linux)
 
-Prepare a fresh, stateful lab shell:
+One lab per checkout: state lives in `$PWD/.lab.env`, so concurrent labs need
+separate worktrees. Prepare the lab:
 
 ```sh
 set -e
@@ -31,13 +32,13 @@ for candidate in {1421..1439}; do ! ss -ltnH "sport = :$candidate" | grep -q . &
 for n in $(seq 90 120); do [ ! -e "/tmp/.X11-unix/X$n" ] && DISPLAY_NUM=$n && break; done
 : "${DISPLAY_NUM:?No free X display in 90-120}"
 LAB_HOME="$(mktemp -d /tmp/pickforge-lab-home.XXXX)"
-printf 'PORT=%s\nDISPLAY_NUM=%s\nLAB_HOME=%s\n' "$PORT" "$DISPLAY_NUM" "$LAB_HOME" > /tmp/pickforge-lab.env
+printf 'PORT=%s\nDISPLAY_NUM=%s\nLAB_HOME=%s\n' "$PORT" "$DISPLAY_NUM" "$LAB_HOME" > "$PWD/.lab.env"
 ```
 
 Launch in a later shell:
 
 ```sh
-source /tmp/pickforge-lab.env
+source "$PWD/.lab.env"
 set -e
 bun run sidecar
 setsid Xvfb :$DISPLAY_NUM -screen 0 1280x820x24 > /tmp/pickforge-xvfb-$DISPLAY_NUM.log 2>&1 &
@@ -61,7 +62,7 @@ real for Cargo/rustup: anything outside these overrides may still touch real sta
 ## Verify and screenshot
 
 ```sh
-source /tmp/pickforge-lab.env
+source "$PWD/.lab.env"
 curl -fsS http://127.0.0.1:$PORT/ >/dev/null
 ls -l "$LAB_HOME/pickforge.db"
 find "$LAB_HOME/xdg-data" "$LAB_HOME/xdg-config" -maxdepth 2 \( -name '*handler.desktop' -o -name mimeapps.list \) -print
@@ -77,14 +78,14 @@ Only kill PIDs whose environment contains the lab home; this protects a normal
 dev app from the same checkout. The `[x]` pattern avoids matching the shell.
 
 ```sh
-source /tmp/pickforge-lab.env
+source "$PWD/.lab.env"
 export PORT DISPLAY_NUM LAB_HOME
 bash -c 'for pid in $(pgrep -f "[d]ev.pickforge.app.labtest$DISPLAY_NUM" || true); do grep -zqF "$LAB_HOME" "/proc/$pid/environ" 2>/dev/null && kill "$pid"; done'
 bash -c 'for pid in $(pgrep -f "[p]ickforge-tauri" || true); do grep -zqF "$LAB_HOME" "/proc/$pid/environ" 2>/dev/null && kill "$pid"; done'
-bash -c 'kill $(pgrep -f "[v]ite.*--port $PORT")'
-bash -c 'kill $(pgrep -f "[x]fwm4.*:$DISPLAY_NUM")'
-bash -c 'kill $(pgrep -f "[X]vfb :$DISPLAY_NUM")'
-rm -rf "$LAB_HOME" /tmp/pickforge-lab.env
+bash -c 'for pid in $(pgrep -f "[v]ite.*--port $PORT" || true); do kill "$pid" 2>/dev/null || true; done'
+bash -c 'for pid in $(pgrep -f "[x]fwm4.*:$DISPLAY_NUM" || true); do kill "$pid" 2>/dev/null || true; done'
+bash -c 'for pid in $(pgrep -f "[X]vfb :$DISPLAY_NUM" || true); do kill "$pid" 2>/dev/null || true; done'
+rm -rf "$LAB_HOME" "$PWD/.lab.env"
 ```
 
 Never put `pkill -f` in a compound command; it can match and kill its own shell.

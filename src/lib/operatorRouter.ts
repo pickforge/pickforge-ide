@@ -30,7 +30,7 @@ export type RouterProposal = z.infer<typeof routerProposalSchema>;
 export type RouteResult =
   | { kind: "proposal"; intent: OperatorIntent; confidence: number; latencyMs: number; costCents?: number }
   | { kind: "unclear"; reason: string; costCents?: number }
-  | { kind: "error"; message: string }
+  | { kind: "error"; message: string; costCents?: number }
   | { kind: "unconfigured" };
 
 export type RouteOutcome = RouteResult | { kind: "needsCredits"; balance: number };

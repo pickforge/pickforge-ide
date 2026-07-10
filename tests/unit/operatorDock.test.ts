@@ -316,6 +316,23 @@ describe("operatorDock store", () => {
     expect(s.operatorRouteMeta()).toEqual({ costCents: 1, balanceCents: 148 });
   });
 
+  it("refreshes the balance and shows the cost when a billed hosted route errors", async () => {
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({ kind: "error", message: "hosted router returned invalid JSON", costCents: 3 });
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 97;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("open App");
+    await s.submitOperatorCommand();
+
+    expect(deps.refreshCreditBalance).toHaveBeenCalled();
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 3, balanceCents: 97 });
+    expect(s.operatorView()).toEqual({ kind: "needsRouter", reason: "hosted router returned invalid JSON" });
+    expect(deps.dispatchIntent).not.toHaveBeenCalled();
+  });
+
   it("still refreshes the balance when a hosted route settles after the dock closed", async () => {
     const openProject = intent({ action: "openProject" });
     deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });

@@ -40,13 +40,18 @@ export async function getCreditBalanceCents(): Promise<number | null> {
 }
 
 export async function refreshCreditBalance(): Promise<void> {
-  if (!accountSession()) {
+  const userId = accountSession()?.userId ?? null;
+  if (!userId) {
     setBalanceCents(null);
     return;
   }
   try {
     const value = await getCreditBalanceCents();
-    if (value !== null) setBalanceCents(value);
+    if (value === null) return;
+    // Drop a response that resolved after the user signed out or switched, so
+    // one account's balance never lands on another's session.
+    if (accountSession()?.userId !== userId) return;
+    setBalanceCents(value);
   } catch {
     // Balance is advisory; keep the last known value when the read fails.
   }

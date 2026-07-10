@@ -90,6 +90,23 @@ describe("credits store", () => {
     expect(credits.creditBalanceCents()).toBeNull();
   });
 
+  it("drops an in-flight refresh whose account changed before it resolved", async () => {
+    let resolveRpc!: (value: { data: number; error: null }) => void;
+    env.rpc.mockReturnValue(new Promise((resolve) => { resolveRpc = resolve; }));
+    const credits = await loadCredits();
+
+    env.session = { userId: "user-A" };
+    const pending = credits.refreshCreditBalance();
+
+    // Auth switches to B while A's balance RPC is still in flight.
+    env.session = { userId: "user-B" };
+    resolveRpc({ data: 999, error: null });
+    await pending;
+
+    // A's 999 must not land on B's session.
+    expect(credits.creditBalanceCents()).toBeNull();
+  });
+
   it("resets then refreshes the balance when the user switches (A → B)", async () => {
     const credits = await loadCredits();
 

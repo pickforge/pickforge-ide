@@ -64,7 +64,9 @@ export function openBuyCredits() {
 }
 
 function billedCost(routed: RouteOutcome): number | undefined {
-  return routed.kind === "proposal" || routed.kind === "unclear" ? routed.costCents : undefined;
+  return routed.kind === "proposal" || routed.kind === "unclear" || routed.kind === "error"
+    ? routed.costCents
+    : undefined;
 }
 
 let requestEpoch = 0;

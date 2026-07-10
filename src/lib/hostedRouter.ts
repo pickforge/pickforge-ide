@@ -14,6 +14,27 @@ import { activeProject, chatsFor, workspace } from "../stores/workspace";
 export const HOSTED_ROUTER_FUNCTION = "operator-router";
 export const HOSTED_CONTEXT_MAX_CHATS = 12;
 export const HOSTED_CONTEXT_MAX_WIDGET_LABELS = 12;
+export const HOSTED_REQUEST_TIMEOUT_MS = 20_000;
+
+// The shared routing sanitizer strips paths, host:port, serials, and .local
+// hosts; the hosted lane additionally strips BARE public IPs and domains
+// (no scheme/port) so a display name like "deploy prod.example.com" never
+// leaves the machine and never trips the server's boundary check.
+const BARE_IPV4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const BARE_DOMAIN = /\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}\b/gi;
+
+function redactBareNetwork(value: string): string {
+  return value.replace(BARE_IPV4, "…").replace(BARE_DOMAIN, "…");
+}
+
+function sanitizeContextValue(value: string | null): string | null {
+  const base = sanitizeRoutedText(value);
+  if (!base) return null;
+  const redacted = redactBareNetwork(base).trim();
+  return redacted || null;
+}
+
+class HostedTimeoutError extends Error {}
 
 export type HostedRouteResult = RouteResult | { kind: "needsCredits"; balance: number };
 
@@ -38,7 +59,7 @@ function cappedLabels(values: readonly string[] | undefined, max: number): strin
   if (!values) return [];
   const out: string[] = [];
   for (const value of values) {
-    const clean = sanitizeRoutedText(value);
+    const clean = sanitizeContextValue(value);
     if (clean) out.push(clean);
     if (out.length >= max) break;
   }
@@ -52,7 +73,7 @@ export function buildHostedRoutingContext(
   input: HostedRoutingContextInput,
 ): HostedRoutingContext | undefined {
   const context: HostedRoutingContext = {};
-  const projectName = sanitizeRoutedText(input.projectName ?? null);
+  const projectName = sanitizeContextValue(input.projectName ?? null);
   if (projectName) context.projectName = projectName;
   const chatNames = cappedLabels(input.chatTitles, HOSTED_CONTEXT_MAX_CHATS);
   if (chatNames.length) context.chatNames = chatNames;
@@ -89,6 +110,12 @@ function proposalToResult(proposal: RouterProposal, latencyMs: number, costCents
     // The model still ran and billed, so an unclear answer carries its cost too.
     return { kind: "unclear", reason: proposal.reason ?? "hosted router could not map this command", costCents };
   }
+  // Defense in depth: widget selection has no hosted transport, so never accept a
+  // selectWidget proposal even if the model returns one. It was billed, so treat
+  // it as unclear-with-cost rather than dispatching it.
+  if ((proposal.action as { action?: unknown }).action === "selectWidget") {
+    return { kind: "unclear", reason: "hosted routing does not support widget selection", costCents };
+  }
   return {
     kind: "proposal",
     intent: composeIntent(proposal.action, proposal.confidence, proposal.projectRef),
@@ -120,10 +147,30 @@ async function readErrorRecord(error: unknown): Promise<Record<string, unknown> 
 }
 
 async function callHostedRouter(body: HostedRouteRequestBody, key: string): Promise<HostedCall> {
-  const { data, error } = await getProSupabaseClient().functions.invoke(HOSTED_ROUTER_FUNCTION, {
-    body,
-    headers: { "x-idempotency-key": key },
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new HostedTimeoutError());
+    }, HOSTED_REQUEST_TIMEOUT_MS);
   });
+
+  let data: unknown;
+  let error: unknown;
+  try {
+    ({ data, error } = await Promise.race([
+      getProSupabaseClient().functions.invoke(HOSTED_ROUTER_FUNCTION, {
+        body,
+        headers: { "x-idempotency-key": key },
+        signal: controller.signal,
+      }),
+      timeout,
+    ]));
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
   if (error) {
     const record = await readErrorRecord(error);
     return record ? { record, transportError: null } : { record: null, transportError: errorMessage(error) };
@@ -158,14 +205,17 @@ function interpretRecord(record: Record<string, unknown> | null, latencyMs: numb
     return { kind: "error", message: "hosted router response missing a valid cost" };
   }
 
+  // Past this point the reply is billed (costCents is valid), so a malformed or
+  // schema-invalid proposal still carries its cost — the dock refreshes the
+  // balance on any billed reply so the ledger reconciles.
   let value: unknown;
   try {
     value = JSON.parse(record.proposalJson);
   } catch (error) {
-    return { kind: "error", message: `hosted router returned invalid JSON: ${errorMessage(error)}` };
+    return { kind: "error", message: `hosted router returned invalid JSON: ${errorMessage(error)}`, costCents };
   }
   const parsed = routerProposalSchema.safeParse(value);
-  if (!parsed.success) return { kind: "error", message: parsed.error.message };
+  if (!parsed.success) return { kind: "error", message: parsed.error.message, costCents };
   return proposalToResult(parsed.data, latencyMs, costCents);
 }
 
@@ -182,6 +232,9 @@ export async function hostedRoute(commandText: string): Promise<HostedRouteResul
     if (call.transportError) return { kind: "error", message: call.transportError };
     return interpretRecord(call.record, Date.now() - start);
   } catch (error) {
+    if (error instanceof HostedTimeoutError) {
+      return { kind: "error", message: "routing timed out — try again" };
+    }
     return { kind: "error", message: errorMessage(error) };
   }
 }

@@ -188,6 +188,64 @@ describe("hostedRoute", () => {
     });
   });
 
+  it("never accepts a hosted selectWidget proposal, treating it as unclear-with-cost", async () => {
+    env.invoke.mockResolvedValue({
+      data: {
+        proposalJson: JSON.stringify({ action: { action: "selectWidget", description: "login" }, confidence: 0.9 }),
+        costCents: 1,
+      },
+      error: null,
+    });
+    const { hostedRoute } = await loadHosted();
+
+    const result = await hostedRoute("select the login button");
+    expect(result).toMatchObject({ kind: "unclear", costCents: 1 });
+    expect(result.kind).not.toBe("proposal");
+  });
+
+  it("refreshes reconcilation data on a billed-but-malformed reply", async () => {
+    env.invoke.mockResolvedValue({
+      data: { proposalJson: "{not json", costCents: 3 },
+      error: null,
+    });
+    const { hostedRoute } = await loadHosted();
+
+    const result = await hostedRoute("open Billing");
+    // The reply was billed, so the error carries the cost for the dock to reconcile.
+    expect(result).toMatchObject({ kind: "error", costCents: 3 });
+  });
+
+  it("times out a stalled request with a friendly error", async () => {
+    env.invoke.mockReturnValue(new Promise(() => {}));
+    const { hostedRoute, HOSTED_REQUEST_TIMEOUT_MS } = await loadHosted();
+    vi.useFakeTimers();
+    try {
+      const pending = hostedRoute("open Billing");
+      await vi.advanceTimersByTimeAsync(HOSTED_REQUEST_TIMEOUT_MS + 1);
+      await expect(pending).resolves.toEqual({ kind: "error", message: "routing timed out — try again" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("redacts bare hostnames, domains, and IPs from the context before sending", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
+    env.project = { displayName: "Billing" };
+    env.root = "/root";
+    env.chats = [
+      { chatId: "c1", title: "deploy prod.example.com", labelsJson: null },
+      { chatId: "c2", title: "ping 8.8.8.8 gateway", labelsJson: null },
+    ];
+    const { hostedRoute } = await loadHosted();
+
+    await hostedRoute("open");
+
+    const serialized = JSON.stringify(env.invoke.mock.calls[0][1].body);
+    expect(serialized).not.toContain("prod.example.com");
+    expect(serialized).not.toContain("example.com");
+    expect(serialized).not.toContain("8.8.8.8");
+  });
+
   it("only sends commandText plus allowlisted, redacted context (data boundary)", async () => {
     env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
     env.project = { displayName: "Billing" };
@@ -250,7 +308,7 @@ describe("buildHostedRoutingContext", () => {
     const { buildHostedRoutingContext } = await loadHosted();
 
     const context = buildHostedRoutingContext({
-      projectName: "Billing",
+      projectName: "acme.internal.io",
       chatTitles: ["ci logs", "ssh 100.101.102.103 box"],
       widgetLabels: ["Sign in", "/Users/me/secret/path"],
     });
@@ -259,6 +317,8 @@ describe("buildHostedRoutingContext", () => {
     const serialized = JSON.stringify(context);
     expect(serialized).not.toContain("100.101.102.103");
     expect(serialized).not.toContain("/Users/me");
+    // A bare domain in the project name is stripped, not shipped.
+    expect(serialized).not.toContain("acme.internal.io");
   });
 
   it("caps chat and widget label counts", async () => {

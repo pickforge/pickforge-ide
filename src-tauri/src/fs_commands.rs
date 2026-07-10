@@ -234,15 +234,19 @@ pub async fn save_text_file(
         return Ok(None);
     };
     let path = file_path.into_path().map_err(|e| e.to_string())?;
-    std::fs::write(&path, contents).map_err(|e| e.to_string())?;
-    // The export carries personal data (email, credit ledger); keep it
-    // owner-only rather than the umask default (world-readable 0644 on Unix).
+    // The export carries personal data (email, credit ledger). Create it
+    // owner-only from the start on Unix (0600) so it never briefly exists as the
+    // umask default (world-readable 0644) with data already written.
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| e.to_string())?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
+    let mut file = options.open(&path).map_err(|e| e.to_string())?;
+    file.write_all(contents.as_bytes()).map_err(|e| e.to_string())?;
     Ok(Some(display_path(&path)))
 }
 

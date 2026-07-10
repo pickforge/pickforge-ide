@@ -24,6 +24,7 @@ export function ConfirmDialog(props: {
 
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!props.open) return;
       if (e.key === "Escape" && !props.busy) {
         e.preventDefault();
         props.onCancel();

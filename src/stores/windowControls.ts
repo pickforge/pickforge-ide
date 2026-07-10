@@ -4,6 +4,7 @@
 // keep the traffic-light affordance where users expect it. Persisted locally.
 import { createSignal } from "solid-js";
 import { hostPlatform } from "../lib/platform";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 
 export type ControlsSide = "auto" | "left" | "right";
 
@@ -20,6 +21,7 @@ export const windowControlsSide = side;
 export function setWindowControlsSide(next: ControlsSide) {
   setSide(next);
   localStorage.setItem(KEY, next);
+  noteSettingsEdit("appSettings");
 }
 
 /** Resolve the configured side to the concrete edge for the current host.

@@ -94,6 +94,17 @@ import {
   signIn,
   signOut,
 } from "../stores/account";
+import {
+  lastSyncedRelative,
+  setSettingsSyncGroup,
+  setSettingsSyncOptIn,
+  settingsSyncErrorMessage,
+  settingsSyncing,
+  settingsSyncState,
+  SYNC_GROUPS,
+  syncNow,
+} from "../stores/settingsSyncStore";
+import type { SyncFieldGroup } from "@pickforge/sync";
 import * as db from "../lib/db";
 import "./screens.css";
 
@@ -116,6 +127,13 @@ function formatLatency(ms: number): string {
   if (ms >= 1_000) return `${(ms / 1_000).toFixed(ms >= 10_000 ? 0 : 1)}s`;
   return `${Math.round(ms)}ms`;
 }
+
+const SYNC_GROUP_LABELS: Record<SyncFieldGroup, { title: string; hint: string }> = {
+  appSettings: { title: "Appearance & workbench", hint: "theme, run buttons, window controls" },
+  operatorConfig: { title: "Operator & dictation", hint: "router backend, models, mic toggles" },
+  keybindings: { title: "Quick launch", hint: "chips, commands, and shortcuts" },
+  remoteBindings: { title: "Remote bindings", hint: "per-project remote host, matched by name" },
+};
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
@@ -1003,6 +1021,9 @@ export function SettingsScreen() {
                           Continue with Google
                         </button>
                       </div>
+                      <Show when={flagEnabled("settingsSync")}>
+                        <span class="pf-settings-muted">Sign in to sync settings.</span>
+                      </Show>
                     </>
                   }
                 >
@@ -1021,8 +1042,76 @@ export function SettingsScreen() {
                         <span class="pf-settings-muted">{hasProEntitlement() ? "Pro" : "Free"}</span>
                       </div>
                       <span class="pf-settings-muted">
-                        PickForge sends no project data to your account. Only profile and entitlement state sync.
+                        {flagEnabled("settingsSync")
+                          ? "PickForge sends no project data to your account beyond the settings groups you enable below. Only profile, entitlement state, and those groups sync."
+                          : "PickForge sends no project data to your account. Only profile and entitlement state sync."}
                       </span>
+                      <Show when={flagEnabled("settingsSync")}>
+                        <div class="pf-settings-row">
+                          <span class="pf-settings-label">
+                            Settings sync
+                            <span class="pf-settings-hint-inline">sync your preferences across signed-in machines</span>
+                          </span>
+                          <div class="pf-seg">
+                            <button
+                              classList={{ active: settingsSyncState().optedIn }}
+                              onClick={() => setSettingsSyncOptIn(true)}
+                            >
+                              On
+                            </button>
+                            <button
+                              classList={{ active: !settingsSyncState().optedIn }}
+                              onClick={() => setSettingsSyncOptIn(false)}
+                            >
+                              Off
+                            </button>
+                          </div>
+                        </div>
+                        <span class="pf-settings-muted">
+                          Synced groups hold UI preferences, operator router choices, quick-launch keybindings, and remote host bindings. Secrets and absolute local paths are blocked from syncing.
+                        </span>
+                        <Show when={settingsSyncState().optedIn}>
+                          <For each={SYNC_GROUPS}>
+                            {(group) => (
+                              <div class="pf-settings-row">
+                                <span class="pf-settings-label">
+                                  {SYNC_GROUP_LABELS[group].title}
+                                  <span class="pf-settings-hint-inline">{SYNC_GROUP_LABELS[group].hint}</span>
+                                </span>
+                                <div class="pf-seg">
+                                  <button
+                                    classList={{ active: settingsSyncState().groups[group] }}
+                                    onClick={() => setSettingsSyncGroup(group, true)}
+                                  >
+                                    On
+                                  </button>
+                                  <button
+                                    classList={{ active: !settingsSyncState().groups[group] }}
+                                    onClick={() => setSettingsSyncGroup(group, false)}
+                                  >
+                                    Off
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </For>
+                          <div class="pf-ql-actions">
+                            <button
+                              class="pf-ql-add"
+                              disabled={settingsSyncing()}
+                              onClick={() => syncNow()}
+                            >
+                              <IconRefresh size={13} /> {settingsSyncing() ? "Syncing…" : "Sync now"}
+                            </button>
+                            <span class="pf-settings-muted">
+                              {lastSyncedRelative() ? `Last synced ${lastSyncedRelative()}` : "Not synced yet"}
+                            </span>
+                          </div>
+                          <Show when={settingsSyncErrorMessage()}>
+                            <div class="pf-ql-warn">{settingsSyncErrorMessage()}</div>
+                          </Show>
+                        </Show>
+                      </Show>
                       <div class="pf-ql-actions">
                         <button class="pf-text-btn" onClick={() => void signOut()}>
                           Sign out

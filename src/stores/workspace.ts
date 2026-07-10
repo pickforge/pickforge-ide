@@ -7,6 +7,7 @@ import { createStore, produce } from "solid-js/store";
 import * as db from "../lib/db";
 import { isPrimaryChat } from "../lib/chatLabels";
 import { clearChatKillMark, markChatForKill, ptyDestroyChatSession } from "../lib/pty";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 import { isChatArchived } from "./chatArchive";
 import { setChatTmux } from "./chatSessions";
 
@@ -230,6 +231,7 @@ export function setProjectRemoteLocal(
   remoteRoot: string | null,
 ) {
   setState("projects", (p) => p.projectRoot === root, { remoteHost, remoteRoot });
+  noteSettingsEdit("remoteBindings");
 }
 
 export async function renameProject(root: string, displayName: string) {

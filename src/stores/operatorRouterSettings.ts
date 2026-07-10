@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 
 export type OperatorRouterBackend = "claudeCode" | "codex" | "ollama";
 export type OperatorRouterSettingBackend = "off" | OperatorRouterBackend;
@@ -91,6 +92,7 @@ export function setOperatorRouterBackend(backend: OperatorRouterSettingBackend) 
     persist(next);
     return next;
   });
+  noteSettingsEdit("operatorConfig");
 }
 
 export function setOperatorRouterModel(backend: OperatorRouterBackend, model: string) {
@@ -102,6 +104,7 @@ export function setOperatorRouterModel(backend: OperatorRouterBackend, model: st
     persist(next);
     return next;
   });
+  noteSettingsEdit("operatorConfig");
 }
 
 export function persistOperatorRouterLatency(

@@ -2,6 +2,7 @@
 // terminals — can re-theme when it changes (CSS tokens flip via the data-theme
 // attribute; the terminal reads tokens in JS, so it needs an explicit nudge).
 import { createSignal } from "solid-js";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 
 export type ThemeMode = "dark" | "light";
 
@@ -21,6 +22,7 @@ export function applyTheme(mode: ThemeMode) {
   document.documentElement.dataset.theme = mode === "light" ? "light" : "";
   localStorage.setItem(KEY, mode);
   setTheme(mode);
+  noteSettingsEdit("appSettings");
 }
 
 /** Apply the persisted theme to <html> at startup. */

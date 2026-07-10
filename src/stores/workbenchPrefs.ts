@@ -1,6 +1,7 @@
 // Misc workbench chrome preferences (localStorage). Layout/docking lives in its
 // own store; this holds the lightweight visibility toggles.
 import { createSignal } from "solid-js";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 
 const KEY = "pickforge.workbenchPrefs";
 
@@ -29,6 +30,7 @@ export const workbenchPrefs = prefs;
 function persist(next: Prefs) {
   setPrefs(next);
   localStorage.setItem(KEY, JSON.stringify(next));
+  noteSettingsEdit("appSettings");
 }
 
 export function setRunButtonLabels(show: boolean) {

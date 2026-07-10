@@ -3,6 +3,7 @@
 // or type a literal command. Persisted in localStorage like agentModels.
 import { createSignal } from "solid-js";
 import { launchBinary, launchCommand } from "../lib/agentModels";
+import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 
 export interface QuickLaunchItem {
   id: string;
@@ -37,6 +38,10 @@ function load(): QuickLaunchItem[] {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return clone(DEFAULT_QUICK_LAUNCH);
     const parsed = JSON.parse(raw);
+    // The version marker means persist() wrote this blob, so an empty items
+    // array is an explicit "no chips" state (e.g. synced from another machine)
+    // and must survive reloads instead of falling back to the defaults.
+    if (parsed?.version === 1 && Array.isArray(parsed.items)) return parsed.items;
     if (Array.isArray(parsed?.items) && parsed.items.length) return parsed.items;
     return clone(DEFAULT_QUICK_LAUNCH);
   } catch {
@@ -51,6 +56,7 @@ export const quickLaunchItems = items;
 function persist(next: QuickLaunchItem[]) {
   setItems(next);
   localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, items: next }));
+  noteSettingsEdit("keybindings");
 }
 
 export function setQuickLaunchItems(next: QuickLaunchItem[]) {
@@ -71,6 +77,7 @@ export function removeQuickLaunchItem(id: string) {
 export function resetQuickLaunchItems() {
   localStorage.removeItem(STORE_KEY);
   setItems(clone(DEFAULT_QUICK_LAUNCH));
+  noteSettingsEdit("keybindings");
 }
 
 /** The text to type for an item; agent items resolve the model-pinned command. */

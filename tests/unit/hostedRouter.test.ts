@@ -246,6 +246,28 @@ describe("hostedRoute", () => {
     expect(serialized).not.toContain("8.8.8.8");
   });
 
+  it("redacts a domain that straddles or sits past the label truncation point", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
+    env.project = { displayName: "Billing" };
+    env.root = "/root";
+    env.chats = [
+      // Domain straddling the 60-char cap: the truncated fragment (…secret.exa…) is still caught.
+      { chatId: "c1", title: `${"a".repeat(52)} secret.example.com` },
+      // Domain entirely past the cap: truncated off before it can ship.
+      { chatId: "c2", title: `${"b".repeat(70)} beyond.example.net` },
+    ];
+    const { hostedRoute } = await loadHosted();
+
+    await hostedRoute("open");
+
+    const serialized = JSON.stringify(env.invoke.mock.calls[0][1].body);
+    expect(serialized).not.toContain("secret.example.com");
+    expect(serialized).not.toContain("secret.exa");
+    expect(serialized).not.toContain("example.com");
+    expect(serialized).not.toContain("beyond.example.net");
+    expect(serialized).not.toContain("example.net");
+  });
+
   it("only sends commandText plus allowlisted, redacted context (data boundary)", async () => {
     env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
     env.project = { displayName: "Billing" };

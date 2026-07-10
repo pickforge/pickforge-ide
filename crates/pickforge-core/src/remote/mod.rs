@@ -12,6 +12,7 @@ mod protocol;
 mod server;
 mod ssh;
 mod tailscale;
+mod tunnel;
 
 pub use auth::{
     remote_auth_store_path, ClientTokenRecord, IssuedClientToken, PairingCode, RemoteAuthError,
@@ -36,3 +37,4 @@ pub use ssh::{ssh_run, SshError, SshTarget};
 pub use tailscale::{
     listener_from_parts, tailscale_ssh_set, tailscale_status, TailscaleStatus,
 };
+pub use tunnel::{RemoteTunnel, RemoteTunnelClosed, TunnelError, TunnelManager};

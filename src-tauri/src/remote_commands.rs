@@ -8,10 +8,13 @@ use pickforge_core::{
     remote_nearest_pubspec as core_remote_nearest_pubspec, remote_auth_store_path,
     spawn_remote_http_server, tailscale_ssh_set, tailscale_status, ClientTokenRecord,
     DaemonConfig, DaemonListener, Database, PairingCode, ProbeState, RemoteAuthStore,
-    RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo, SshTarget, TailscaleStatus,
+    RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo, RemotePty, RemoteTunnel,
+    SshTarget, TailscaleStatus, TunnelManager,
 };
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
+
+use crate::pty_commands::authorize_remote_pty;
 
 const DEFAULT_REMOTE_HOST: &str = "127.0.0.1";
 const DEFAULT_REMOTE_PORT: u16 = 4747;
@@ -202,6 +205,69 @@ pub async fn remote_detect_binaries(
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn remote_tunnel_open(
+    app: AppHandle,
+    manager: State<'_, TunnelManager>,
+    db: State<'_, Arc<Database>>,
+    project_root: String,
+    host: String,
+    remote_port: u16,
+    run_id: String,
+) -> Result<RemoteTunnel, String> {
+    let manager = (*manager).clone();
+    let db = Arc::clone(&db);
+    tauri::async_runtime::spawn_blocking(move || {
+        authorize_remote_tunnel(&db, &project_root, &host)?;
+        manager
+            .open(&host, remote_port, run_id, move |closed| {
+                let _ = app.emit("remote-tunnel-closed", closed);
+            })
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn remote_tunnel_close(
+    manager: State<'_, TunnelManager>,
+    db: State<'_, Arc<Database>>,
+    project_root: String,
+    host: String,
+    tunnel_id: String,
+) -> Result<(), String> {
+    let manager = (*manager).clone();
+    let db = Arc::clone(&db);
+    tauri::async_runtime::spawn_blocking(move || {
+        authorize_remote_tunnel(&db, &project_root, &host)?;
+        manager.close(&tunnel_id);
+        Ok(())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+fn authorize_remote_tunnel(db: &Database, project_root: &str, host: &str) -> Result<(), String> {
+    let project = db
+        .list_projects(false)
+        .map_err(|err| err.to_string())?
+        .into_iter()
+        .find(|project| project.project_root == project_root)
+        .ok_or_else(|| format!("remote tunnel is not authorized for project {project_root}"))?;
+    let remote_root = project
+        .remote_root
+        .ok_or_else(|| format!("remote tunnel is not authorized for project {project_root}"))?;
+    authorize_remote_pty(
+        db,
+        Some(project_root),
+        Some(&RemotePty {
+            host: host.to_string(),
+            remote_root,
+        }),
+    )
 }
 
 impl RemoteHostState {

@@ -58,7 +58,8 @@ pub use remote::{
     IssuedClientToken, PairingCode, ProbeState, RemoteAuthError, RemoteAuthStore,
     RemoteAuthStoreSnapshot, RemoteCapability, RemoteDetectError, RemoteFrame, RemoteFrameError,
     RemoteHostDaemon, RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo, RemoteRequest,
-    RemoteResponse, RemoteServerError, SshError, SshTarget, TailscaleStatus,
+    RemoteResponse, RemoteServerError, RemoteTunnel, RemoteTunnelClosed, SshError, SshTarget,
+    TailscaleStatus, TunnelError, TunnelManager,
     REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
 };
 pub use storage::{

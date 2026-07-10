@@ -1,20 +1,46 @@
-// Flutter VM service connection, shared between the Inspector (manual connect +
-// status) and the Debug Console (auto-connect from `flutter run` output). When a
-// run prints "A Dart VM Service … is available at: http://127.0.0.1:PORT/TOKEN/"
-// we convert it to the WebSocket endpoint and connect automatically, so the
-// inspector/widget tree works without the user pasting a URL.
 import { createSignal } from "solid-js";
+import type { RemotePty } from "../lib/pty";
+import {
+  onRemoteTunnelClosed,
+  remoteTunnelClose,
+  remoteTunnelOpen,
+  type RemoteTunnel,
+  type RemoteTunnelClosed,
+  type RemoteTunnelUnlisten,
+} from "../lib/remoteHost";
 import * as vm from "../lib/vm";
 
 const DEFAULT_URL = "ws://127.0.0.1:8181/ws";
+const VM_STATUS_POLL_MS = 1_000;
+const VM_RETRY_LIMIT = 3;
 
 const [url, setUrl] = createSignal(DEFAULT_URL);
 const [connected, setConnected] = createSignal(false);
 const [error, setError] = createSignal<string | null>(null);
 
-/** Reactive VM-service state for views. */
 export const vmService = { url, connected, error };
 export const setVmUrl = setUrl;
+
+interface RemoteRunContext {
+  remote: RemotePty;
+  projectRoot: string;
+  runId: string;
+}
+
+interface RemoteVmState extends RemoteRunContext {
+  remoteWs: string;
+  localWs: string;
+  tunnel: RemoteTunnel | null;
+  childReopenUsed: boolean;
+}
+
+let remoteVm: RemoteVmState | null = null;
+let armedRemote: RemoteRunContext | null = null;
+let watcher: ReturnType<typeof setInterval> | null = null;
+let retryingConnection = false;
+let connectionRetries = 0;
+let tunnelEvents: Promise<void> | null = null;
+let unlistenTunnelEvents: RemoteTunnelUnlisten | null = null;
 
 export async function connectVm(target?: string): Promise<void> {
   const u = (target ?? url()).trim();
@@ -32,49 +58,212 @@ export async function connectVm(target?: string): Promise<void> {
 }
 
 export async function disconnectVm(): Promise<void> {
+  stopConnectionWatch();
   await vm.vmDisconnect().catch(() => {});
   setConnected(false);
+  await closeRemoteTunnel(remoteVm);
+  remoteVm = null;
 }
 
-/** First http(s) URL with a real token path (not the DevTools `:9100?uri=` base,
- *  which has none). The embedded `uri=…` copy has the same token path, so even
- *  matching that yields the correct VM service URL. */
-const VM_URL_RE = /(https?:\/\/(?:127\.0\.0\.1|localhost):\d+\/[A-Za-z0-9_=-]+\/)/;
+const VM_URL_RE = /((?:https?|wss?):\/\/(?:127\.0\.0\.1|localhost):\d+\/[A-Za-z0-9_=-]+(?:\/ws)?(?:\?[^\s]*)?)/;
 
-/** Convert a Dart VM Service http URL to its WebSocket endpoint. */
-export function vmHttpToWs(httpUrl: string): string {
-  return httpUrl.trim().replace(/^http/, "ws") + "ws"; // URL already ends in "/"
+export function vmHttpToWs(serviceUrl: string): string {
+  const parsed = new URL(serviceUrl.trim());
+  if (parsed.protocol === "http:") parsed.protocol = "ws:";
+  if (parsed.protocol === "https:") parsed.protocol = "wss:";
+  if (!parsed.pathname.endsWith("/ws")) {
+    parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/ws`;
+  }
+  return parsed.toString();
 }
 
-/** The VM service WebSocket URL from a blob of run output, or null. */
 export function detectVmUrl(text: string): string | null {
-  const m = text.match(VM_URL_RE);
-  return m ? vmHttpToWs(m[1]) : null;
+  const match = text.match(VM_URL_RE);
+  return match ? vmHttpToWs(match[1]) : null;
+}
+
+export function rewriteVmServiceUrlForTunnel(remoteWs: string, localPort: number): string {
+  const parsed = new URL(remoteWs);
+  parsed.protocol = "ws:";
+  parsed.hostname = "127.0.0.1";
+  parsed.port = String(localPort);
+  return parsed.toString();
+}
+
+function remoteVmPort(remoteWs: string): number {
+  const port = Number(new URL(remoteWs).port);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("Remote VM service URL has no valid port");
+  }
+  return port;
 }
 
 let buf = "";
 let armed = false;
 
-/** Begin watching a fresh run's output for the VM service URL (call on launch). */
-export function armVmAutoConnect(): void {
+export function armVmAutoConnect(context?: RemoteRunContext): void {
   armed = true;
   buf = "";
+  armedRemote = context ?? null;
+  connectionRetries = 0;
+  if (context) void ensureTunnelEvents();
 }
 
-/** Stop watching (call when the run stops). */
 export function disarmVmAutoConnect(): void {
   armed = false;
   buf = "";
+  armedRemote = null;
+  if (remoteVm) void disconnectVm();
+  else stopConnectionWatch();
 }
 
-/** Feed a chunk of run output; auto-connect to the first VM service URL seen. */
 export function ingestRunOutput(chunk: string): void {
   if (!armed) return;
-  // Keep a rolling tail — the URL line can straddle two chunks.
   buf = (buf + chunk).slice(-4000);
   const ws = detectVmUrl(buf);
   if (!ws) return;
-  armed = false; // connect once per run
+  armed = false;
   buf = "";
-  void connectVm(ws).catch(() => {});
+  const context = armedRemote;
+  armedRemote = null;
+  if (context) void connectRemoteVm(ws, context).catch(() => {});
+  else void connectVm(ws).catch(() => {});
+}
+
+export function hasVmTransport(): boolean {
+  return !!remoteVm?.tunnel;
+}
+
+export async function reattachVm(): Promise<void> {
+  const state = remoteVm;
+  if (!state) {
+    setError("No remote VM service is available to reattach");
+    return;
+  }
+  stopConnectionWatch();
+  await vm.vmDisconnect().catch(() => {});
+  setConnected(false);
+  await closeRemoteTunnel(state);
+  try {
+    await connectRemoteVm(state.remoteWs, state);
+  } catch (e) {
+    setError(`Could not reattach to the remote VM service: ${String(e)}`);
+  }
+}
+
+async function connectRemoteVm(remoteWs: string, context: RemoteRunContext): Promise<void> {
+  await ensureTunnelEvents();
+  const state: RemoteVmState = remoteVm && remoteVm.projectRoot === context.projectRoot
+    ? remoteVm
+    : {
+      ...context,
+      remoteWs,
+      localWs: "",
+      tunnel: null,
+      childReopenUsed: false,
+    };
+  state.remoteWs = remoteWs;
+  const tunnel = await remoteTunnelOpen(
+    state.projectRoot,
+    state.remote.host,
+    remoteVmPort(remoteWs),
+    state.runId,
+  );
+  state.tunnel = tunnel;
+  state.localWs = rewriteVmServiceUrlForTunnel(remoteWs, tunnel.localPort);
+  remoteVm = state;
+  try {
+    await connectVm(state.localWs);
+    connectionRetries = 0;
+    startConnectionWatch();
+  } catch (e) {
+    await closeRemoteTunnel(state);
+    throw e;
+  }
+}
+
+async function closeRemoteTunnel(state: RemoteVmState | null): Promise<void> {
+  const tunnel = state?.tunnel;
+  if (!state || !tunnel) return;
+  state.tunnel = null;
+  await remoteTunnelClose(state.projectRoot, state.remote.host, tunnel.tunnelId).catch(() => {});
+}
+
+async function ensureTunnelEvents(): Promise<void> {
+  if (!tunnelEvents) {
+    tunnelEvents = onRemoteTunnelClosed((closed) => {
+      void handleTunnelClosed(closed);
+    }).then((unlisten) => {
+      unlistenTunnelEvents = unlisten;
+    });
+  }
+  await tunnelEvents;
+}
+
+async function handleTunnelClosed(closed: RemoteTunnelClosed): Promise<void> {
+  const state = remoteVm;
+  if (!state || state.tunnel?.tunnelId !== closed.tunnelId) return;
+  state.tunnel = null;
+  stopConnectionWatch();
+  await vm.vmDisconnect().catch(() => {});
+  setConnected(false);
+  if (state.childReopenUsed) {
+    setError("Remote VM tunnel closed again; reconnect it from the run console");
+    return;
+  }
+  state.childReopenUsed = true;
+  try {
+    await connectRemoteVm(state.remoteWs, state);
+  } catch (e) {
+    setError(`Remote VM tunnel closed and could not be reopened: ${String(e)}`);
+  }
+}
+
+function startConnectionWatch(): void {
+  stopConnectionWatch();
+  watcher = setInterval(() => {
+    void reconnectVmThroughTunnel();
+  }, VM_STATUS_POLL_MS);
+}
+
+function stopConnectionWatch(): void {
+  if (watcher !== null) clearInterval(watcher);
+  watcher = null;
+  retryingConnection = false;
+}
+
+async function reconnectVmThroughTunnel(): Promise<void> {
+  const state = remoteVm;
+  if (!state?.tunnel || retryingConnection) return;
+  const active = await vm.vmStatus().catch(() => null);
+  if (active) return;
+  retryingConnection = true;
+  try {
+    await connectVm(state.localWs);
+    connectionRetries = 0;
+  } catch (e) {
+    connectionRetries += 1;
+    if (connectionRetries >= VM_RETRY_LIMIT) {
+      stopConnectionWatch();
+      await closeRemoteTunnel(state);
+      setError(`Remote VM service connection was lost: ${String(e)}`);
+    }
+  } finally {
+    retryingConnection = false;
+  }
+}
+
+export function resetVmServiceForTest(): void {
+  stopConnectionWatch();
+  unlistenTunnelEvents?.();
+  unlistenTunnelEvents = null;
+  tunnelEvents = null;
+  remoteVm = null;
+  armedRemote = null;
+  armed = false;
+  buf = "";
+  connectionRetries = 0;
+  setUrl(DEFAULT_URL);
+  setConnected(false);
+  setError(null);
 }

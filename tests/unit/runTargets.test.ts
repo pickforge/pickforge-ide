@@ -4,8 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 // importing the pure command-builder functions never touches the Tauri runtime.
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
+const remote = vi.hoisted(() => ({
+  nearestPubspec: vi.fn(),
+  binaries: vi.fn(),
+}));
+
+vi.mock("../../src/lib/remoteHost", () => ({
+  remoteNearestPubspec: remote.nearestPubspec,
+  remoteDetectBinaries: remote.binaries,
+}));
+
 import {
   defaultCommand,
+  discoverRemoteRunTargets,
   expandVars,
   fromLaunchConfig,
   hasCapability,
@@ -44,6 +55,37 @@ describe("defaultCommand", () => {
     expect(cmd("native-ios")).toBe("xcodebuild build");
     expect(cmd("web")).toBe("npm run dev");
     expect(cmd("generic")).toBeNull();
+  });
+});
+
+describe("discoverRemoteRunTargets", () => {
+  it("uses host-only Flutter discovery and leaves device selection to the host", async () => {
+    remote.nearestPubspec.mockResolvedValue("/srv/app");
+    remote.binaries.mockResolvedValue([true]);
+
+    await expect(
+      discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/app" }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "remote-flutter",
+        command: "flutter --color run",
+        cwd: "/srv/app",
+        needsDevice: false,
+        inspectorKind: "vmService",
+      }),
+    ]);
+
+    expect(remote.nearestPubspec).toHaveBeenCalledWith("mac-mini", "/srv/app");
+    expect(remote.binaries).toHaveBeenCalledWith("mac-mini", ["flutter"]);
+  });
+
+  it("surfaces an honest error when Flutter is unavailable on the host", async () => {
+    remote.nearestPubspec.mockResolvedValue("/srv/app");
+    remote.binaries.mockResolvedValue([false]);
+
+    await expect(
+      discoverRemoteRunTargets({ host: "mac-mini", remoteRoot: "/srv/app" }),
+    ).rejects.toThrow("Flutter is not available on remote host mac-mini");
   });
 });
 

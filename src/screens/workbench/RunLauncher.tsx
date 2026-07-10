@@ -5,7 +5,8 @@
 import { createEffect, Show } from "solid-js";
 import { Dropdown } from "../../components/Dropdown";
 import { StatusPill } from "../../components/ui";
-import { discoverRunTargets, supportTierMeta } from "../../lib/runTargets";
+import { discoverRunTargetsForProject, supportTierMeta } from "../../lib/runTargets";
+import { remotePtyFor } from "../../lib/remoteContext";
 import { workspace } from "../../stores/workspace";
 import { useDeviceList } from "../../stores/deviceList";
 import { setRunDevice } from "../../stores/runDevice";
@@ -14,6 +15,8 @@ import {
   activeTargetId,
   runTargets,
   setActiveTargetId,
+  runTargetDiscoveryError,
+  setRunTargetDiscoveryError,
   setRunTargets,
 } from "../../stores/runTargets";
 import { compatibleDevices, deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
@@ -30,11 +33,22 @@ export function RunLauncher() {
     const root = workspace.activeRoot;
     if (!root) {
       setRunTargets([]);
+      setRunTargetDiscoveryError(null);
       return;
     }
+    const remote = remotePtyFor(root);
+    setRunTargetDiscoveryError(null);
     void (async () => {
-      const found = await discoverRunTargets(root);
-      if (workspace.activeRoot === root) setRunTargets(found); // ignore stale switch
+      try {
+        const found = await discoverRunTargetsForProject(root, remote);
+        if (workspace.activeRoot === root) setRunTargets(found);
+      } catch (error) {
+        if (workspace.activeRoot !== root) return;
+        setRunTargets([]);
+        setRunTargetDiscoveryError(
+          error instanceof Error ? error.message : "Remote run target detection failed",
+        );
+      }
     })();
   });
 
@@ -54,7 +68,7 @@ export function RunLauncher() {
     <div class="pf-run-launcher">
       <Show
         when={runTargets().length > 0}
-        fallback={<span class="pf-run-empty">No run target</span>}
+        fallback={<span class="pf-run-empty">{runTargetDiscoveryError() ?? "No run target"}</span>}
       >
         <Dropdown
           class="pf-run-dropdown"

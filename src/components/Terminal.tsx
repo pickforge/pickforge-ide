@@ -56,6 +56,7 @@ export function TerminalPane(props: {
   /** Extra `PICKFORGE_*` env for the spawned shell (MCP endpoint discovery). */
   env?: Record<string, string> | null;
   onSpawn?: (remote: RemotePty | null) => void;
+  fallbackToLocal?: boolean;
   onReady?: (handle: TerminalHandle) => void;
   onExit?: (exit: PtyExit) => void;
   /** Fires with each non-empty line the user types and submits (Enter).
@@ -302,11 +303,9 @@ export function TerminalPane(props: {
       if (disposed) return;
 
       const projectRoot = props.chat?.projectRoot ?? props.projectRoot ?? props.cwd;
-      const remote = props.runCommand
-        ? null
-        : props.remote === undefined
-          ? remotePtyFor(projectRoot)
-          : props.remote;
+      const remote = props.remote === undefined
+        ? remotePtyFor(projectRoot)
+        : props.remote;
       let activeRemote = remote;
 
       term.open(container);
@@ -383,12 +382,14 @@ export function TerminalPane(props: {
             onExit,
           });
 
-      const spawn = startPtyWithLocalFallback(remote, start, (failedRemote) => {
-        activeRemote = null;
-        term.write(
-          `\r\n\x1b[2mssh:${failedRemote.host} unavailable; started a local shell. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
-        );
-      });
+      const spawn = props.fallbackToLocal === false
+        ? start(remote).then((value) => ({ remote, value }))
+        : startPtyWithLocalFallback(remote, start, (failedRemote) => {
+          activeRemote = null;
+          term.write(
+            `\r\n\x1b[2mssh:${failedRemote.host} unavailable; started a local shell. Open the project's Remote panel and choose Test connection.\x1b[0m\r\n`,
+          );
+        });
 
       spawn
         .then(({ remote: effectiveRemote, value: id }) => {

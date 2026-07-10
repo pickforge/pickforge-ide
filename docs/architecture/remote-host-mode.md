@@ -85,6 +85,36 @@ the host side.
 - MCP remains a Unix-socket-only local sidecar.
 - Remote credentials, project secrets, and tool auth stay on the remote machine.
 
+## R3: Remote Flutter Run and VM Service
+
+For a bound project, target discovery runs on the host. PickForge finds the
+nearest remote `pubspec.yaml` and confirms that the host has `flutter`; it does
+not read the local project tree or local `launch.json` for this path. A missing
+remote project or Flutter binary is shown as a launch error instead of falling
+back to the local machine.
+
+The Debug Console starts `flutter run` through the project's existing SSH PTY.
+The command runs in the bound remote root, and reload, restart, and stop remain
+stdin bytes sent to that same PTY. R3 deliberately does not resolve or boot a
+local device: Flutter chooses the host's default device. Remote device selection
+is R4.
+
+Flutter reports a loopback VM-service URL that is valid on the host, not the
+client. PickForge opens a managed `ssh -N -L` forward from a chosen local
+loopback port to that remote loopback port, waits for it to accept TCP, and then
+rewrites only the URL host and port. The VM-service token path is preserved, so
+the existing loopback-only VM client and all inspector flows continue unchanged.
+Tunnels are scoped to the run, close when the run or connection ends, retry a
+transient VM WebSocket drop through the same tunnel, and make one fresh-tunnel
+attempt if the SSH child exits.
+
+An SSH PTY exit with status 255 while a tunnel is live marks the run console as
+disconnected and exposes Reattach. Reattach retries the last known remote
+VM-service port through a fresh tunnel and reconnects only the inspector; it
+cannot restore console streaming. `flutter run` is attached to that PTY, so an
+SSH disconnect normally kills the Flutter session and its app as well. R3 does
+not promise SSH reconnect or app-process survival.
+
 ## Next: Per-Project Attach
 
 Epic #144 R1 attaches a host to a project. That is the next step: persist the

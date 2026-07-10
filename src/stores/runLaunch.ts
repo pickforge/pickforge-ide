@@ -14,6 +14,7 @@ import { workspace } from "./workspace";
 import { androidLaunchAvd, iosBootDevice, type DeviceEntry } from "../lib/device";
 import { hasCapability, isCompatibleDevice, withDevice, type RunTarget } from "../lib/runTargets";
 import { BootEpoch } from "../lib/bootEpoch";
+import { remotePtyFor } from "../lib/remoteContext";
 
 const BOOT_TIMEOUT_MS = 120_000;
 const BOOT_POLL_MS = 2000;
@@ -171,10 +172,11 @@ export async function launchActiveTarget(): Promise<void> {
   if (booting() || runConsole.status() === "running") return; // never stack runs
   openConsole();
   setError(null);
+  const remote = remotePtyFor(workspace.activeRoot);
 
   let serial: string | null = null;
   let device: DeviceEntry | null = null;
-  if (t.needsDevice) {
+  if (t.needsDevice && !remote) {
     const entry = resolveSelectedDevice();
     device = entry;
     if (entry?.state === "offline") {
@@ -233,9 +235,8 @@ export async function launchActiveTarget(): Promise<void> {
   void ensureMcpRunning(workspace.activeRoot).then(mcpRunStarted);
   // Drop any stale VM connection and watch this run's output for the new VM
   // service URL so the Inspector auto-connects.
-  void disconnectVm();
-  armVmAutoConnect();
-  startRun({ ...t, command: withDevice(t, serial) }, workspace.activeRoot, {
+  await disconnectVm();
+  const run = startRun({ ...t, command: withDevice(t, serial) }, workspace.activeRoot, {
     serial,
     avdId: device?.avdId ?? null,
     // The friendly virtual-device name for the run-history row: emulators AND
@@ -246,5 +247,10 @@ export async function launchActiveTarget(): Promise<void> {
         ? device.displayName
         : null,
     connectionMode: t.inspectorKind === "vmService" ? "vmService" : "auto",
-  });
+  }, remote);
+  armVmAutoConnect(
+    remote && run && workspace.activeRoot
+      ? { remote, projectRoot: workspace.activeRoot, runId: `run-${run.key}` }
+      : undefined,
+  );
 }

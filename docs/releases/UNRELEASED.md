@@ -28,6 +28,7 @@ reset this file.
 - Core PTY can spawn over Tailscale SSH for remote projects; terminal and agent wiring follows.
 - Project terminals now run over SSH on their bound remote host; chat recovery stays local-only.
 - Agent chats now run V1 engines over SSH on the bound remote host.
+- Added managed SSH VM-service tunnels for remote Flutter runs and inspector reattach.
 - Dictation mic landed in the operator dock (live preview, push-to-command, model override) behind the `operator` flag.
 - Settings sync landed dark behind the `settingsSync` flag (opt-in, per-group).
 

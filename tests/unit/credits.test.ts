@@ -74,6 +74,25 @@ describe("credits store", () => {
     expect(env.openExternalUrl).toHaveBeenCalledWith("https://checkout.stripe.com/session");
   });
 
+  it("clears the cached balance when the session ends", async () => {
+    env.rpc.mockResolvedValue({ data: 148, error: null });
+    const credits = await loadCredits();
+
+    await credits.refreshCreditBalance();
+    expect(credits.creditBalanceCents()).toBe(148);
+
+    // The bootstrap subscribes this exact clear to the account session; drive it
+    // directly since Solid effects don't flush under the node (SSR) test build.
+    env.session = null;
+    credits.clearBalanceWhenSignedOut();
+    expect(credits.creditBalanceCents()).toBeNull();
+
+    env.session = { userId: "user-1" };
+    credits.setCreditBalanceCents(90);
+    credits.clearBalanceWhenSignedOut();
+    expect(credits.creditBalanceCents()).toBe(90);
+  });
+
   it("throws and does not open a URL when checkout omits one", async () => {
     env.invoke.mockResolvedValue({ data: {}, error: null });
     const credits = await loadCredits();

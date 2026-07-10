@@ -150,6 +150,12 @@ function interpretRecord(record: Record<string, unknown> | null, latencyMs: numb
   if (typeof record.proposalJson !== "string") {
     return { kind: "error", message: "hosted router response missing proposalJson" };
   }
+  // The function always bills a routed command, so a success without a real
+  // cost is malformed; never dispatch a "0¢" route from a suspicious response.
+  const costCents = record.costCents;
+  if (typeof costCents !== "number" || !Number.isFinite(costCents) || costCents < 0) {
+    return { kind: "error", message: "hosted router response missing a valid cost" };
+  }
 
   let value: unknown;
   try {
@@ -159,7 +165,7 @@ function interpretRecord(record: Record<string, unknown> | null, latencyMs: numb
   }
   const parsed = routerProposalSchema.safeParse(value);
   if (!parsed.success) return { kind: "error", message: parsed.error.message };
-  return proposalToResult(parsed.data, latencyMs, toNumber(record.costCents));
+  return proposalToResult(parsed.data, latencyMs, costCents);
 }
 
 export async function hostedRoute(commandText: string): Promise<HostedRouteResult> {

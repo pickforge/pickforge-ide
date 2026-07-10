@@ -117,6 +117,22 @@ describe("hostedRoute", () => {
     expect(keys[0]).not.toBe(keys[1]);
   });
 
+  it("rejects a success response with a missing or non-numeric cost", async () => {
+    const { hostedRoute } = await loadHosted();
+
+    env.invoke.mockResolvedValueOnce({ data: { proposalJson: PROPOSAL }, error: null });
+    const missing = await hostedRoute("open Billing");
+    expect(missing).toMatchObject({ kind: "error", message: expect.stringContaining("cost") });
+
+    env.invoke.mockResolvedValueOnce({ data: { proposalJson: PROPOSAL, costCents: "2" }, error: null });
+    const nonNumeric = await hostedRoute("open Billing");
+    expect(nonNumeric.kind).toBe("error");
+
+    env.invoke.mockResolvedValueOnce({ data: { proposalJson: PROPOSAL, costCents: -1 }, error: null });
+    const negative = await hostedRoute("open Billing");
+    expect(negative.kind).toBe("error");
+  });
+
   it("maps insufficient_credits to needsCredits with the balance", async () => {
     env.invoke.mockResolvedValue({
       data: { error: "insufficient_credits", balance: 12 },

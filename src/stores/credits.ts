@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createEffect, createRoot, createSignal } from "solid-js";
 import { openExternalUrl } from "../lib/opener";
 import { getProSupabaseClient } from "../lib/proAuth";
 import { accountSession } from "./account";
@@ -60,4 +60,27 @@ export async function startCreditCheckout(pack: CreditPack): Promise<void> {
   const url = data && typeof data === "object" ? (data as { url?: unknown }).url : null;
   if (typeof url !== "string" || !url) throw new Error("checkout url missing");
   await openExternalUrl(url);
+}
+
+let bootstrapDisposer: (() => void) | null = null;
+
+/** Drop the cached balance the moment the session ends, independent of any
+ *  refresh guard, so a signed-out (or switched) user never sees stale credits. */
+export function clearBalanceWhenSignedOut(): void {
+  if (!accountSession()) setBalanceCents(null);
+}
+
+/** Wire the sign-out clear to the account session. Safe to call once at app start. */
+export function installCreditsBootstrap(): () => void {
+  if (bootstrapDisposer) return bootstrapDisposer;
+  let disposeRoot = () => {};
+  createRoot((dispose) => {
+    disposeRoot = dispose;
+    createEffect(clearBalanceWhenSignedOut);
+  });
+  bootstrapDisposer = () => {
+    disposeRoot();
+    bootstrapDisposer = null;
+  };
+  return bootstrapDisposer;
 }

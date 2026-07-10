@@ -310,6 +310,11 @@ export function OperatorDock() {
                         </div>
                       )}
                     </Show>
+                    <Show when={routeMetaLabel()}>
+                      {(label) => (
+                        <div class="pf-op-meta">{label()} · charged for routing; confirm runs the action</div>
+                      )}
+                    </Show>
                     <div class="pf-op-actions">
                       <Show
                         when={!candidates()}

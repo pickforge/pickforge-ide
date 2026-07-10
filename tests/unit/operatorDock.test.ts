@@ -300,6 +300,33 @@ describe("operatorDock store", () => {
     expect(s.operatorView()).toMatchObject({ kind: "result" });
   });
 
+  it("keeps the routing cost meta on a tier-1 hosted preview so the card can show it", async () => {
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
+    deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });
+    deps.routeCommand.mockResolvedValue({
+      kind: "proposal",
+      intent: sendPrompt,
+      confidence: 0.74,
+      latencyMs: 1300,
+      costCents: 2,
+    });
+    deps.dispatchIntent.mockResolvedValue({
+      status: "needsConfirmation",
+      summary: "Send prompt to active chat",
+      auditId: "audit-routed",
+    } as DispatchResult);
+    deps.refreshCreditBalance.mockImplementation(async () => {
+      deps.creditBalance = 148;
+    });
+    const s = await loadStore();
+
+    s.setOperatorInput("tell it hi");
+    await s.submitOperatorCommand();
+
+    expect(s.operatorView()).toMatchObject({ kind: "preview", auditId: "audit-routed" });
+    expect(s.operatorRouteMeta()).toEqual({ costCents: 2, balanceCents: 148 });
+  });
+
   it("clears the stale hosted cost meta when a routed preview is cancelled", async () => {
     const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null });
     deps.parseCommand.mockReturnValue({ kind: "needsRouter", reason: "no deterministic match" });

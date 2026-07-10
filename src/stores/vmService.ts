@@ -169,7 +169,7 @@ async function connectRemoteVm(remoteWs: string, context: RemoteRunContext): Pro
   const generation = remoteConnectionGeneration;
   await ensureTunnelEvents();
   if (generation !== remoteConnectionGeneration) return;
-  const state: RemoteVmState = remoteVm && remoteVm.projectRoot === context.projectRoot
+  const state: RemoteVmState = remoteVm && remoteVm.runId === context.runId
     ? remoteVm
     : {
       ...context,

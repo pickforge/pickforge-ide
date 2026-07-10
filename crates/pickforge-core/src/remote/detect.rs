@@ -5,15 +5,23 @@ use crate::process::CommandOutcome;
 use super::ssh::{shell_quote_argv, ssh_run, SshError, SshTarget};
 
 const NEAREST_PUBSPEC_SCRIPT: &str = r#"dir=$1
-if [ -f "$dir/pubspec.yaml" ]; then
-  printf '%s\n' "$dir"
-  exit 0
-fi
+is_flutter() {
+  awk '
+    /^[[:space:]]*dependencies:[[:space:]]*(#.*)?$/ { dependencies = 1; next }
+    dependencies && /^[^[:space:]#]/ { exit }
+    dependencies && /^[[:space:]]+flutter:[[:space:]]*(#.*)?$/ { flutter = 1; next }
+    flutter && /^[[:space:]]+sdk:[[:space:]]*flutter([[:space:]#]|$)/ { found = 1; exit }
+    END { exit !found }
+  ' "$1"
+}
 find "$dir" \
   -type d \( -name .git -o -name .dart_tool -o -name build \) -prune -o \
-  -type f -name pubspec.yaml -print -quit |
+  -type f -name pubspec.yaml -print |
 while IFS= read -r pubspec; do
-  dirname "$pubspec"
+  if is_flutter "$pubspec"; then
+    dirname "$pubspec"
+    break
+  fi
 done"#;
 
 const DETECT_BINARIES_SCRIPT: &str = r#"for name do
@@ -198,7 +206,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn nearest_pubspec_script_finds_an_app_below_the_bound_root() {
+    fn nearest_pubspec_script_portably_finds_the_flutter_app_below_the_bound_root() {
         let root = std::env::temp_dir().join(format!(
             "pickforge-nearest-pubspec-{}-{}",
             std::process::id(),
@@ -209,7 +217,12 @@ mod tests {
         ));
         let app = root.join("apps/app");
         std::fs::create_dir_all(&app).unwrap();
-        std::fs::write(app.join("pubspec.yaml"), "name: app\n").unwrap();
+        std::fs::write(root.join("pubspec.yaml"), "name: workspace\n").unwrap();
+        std::fs::write(
+            app.join("pubspec.yaml"),
+            "name: app\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        )
+        .unwrap();
 
         let output = std::process::Command::new("sh")
             .arg("-c")
@@ -222,6 +235,13 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), app.display().to_string());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn nearest_pubspec_script_avoids_gnu_find_quit() {
+        assert!(NEAREST_PUBSPEC_SCRIPT.contains("find \"$dir\""));
+        assert!(NEAREST_PUBSPEC_SCRIPT.contains("is_flutter \"$pubspec\""));
+        assert!(!NEAREST_PUBSPEC_SCRIPT.contains("-quit"));
     }
 
     #[test]

@@ -160,7 +160,7 @@ describe("remote VM-service flow", () => {
     expect(vmService.error()).toContain("closed again");
   });
 
-  it("does not let an old tunnel-close handler disrupt a reopened connection", async () => {
+  it("does not let an old tunnel-close handler adopt a new run's VM connection", async () => {
     let resolveDisconnect!: () => void;
     mocks.vmDisconnect.mockImplementation(() => new Promise<void>((resolve) => {
       resolveDisconnect = resolve;
@@ -195,6 +195,7 @@ describe("remote VM-service flow", () => {
     await flush();
 
     expect(mocks.tunnelOpen).toHaveBeenCalledTimes(2);
+    expect(mocks.tunnelOpen).toHaveBeenLastCalledWith("/local/app", "mac-mini", 8181, "run-10");
     expect(vmService.connected()).toBe(true);
   });
 });

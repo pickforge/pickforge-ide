@@ -62,7 +62,7 @@ describe("defaultCommand", () => {
 });
 
 describe("discoverRemoteRunTargets", () => {
-  it("uses host-only Flutter discovery and leaves device selection to the host", async () => {
+  it("uses the Flutter app found below a Dart workspace root and leaves device selection to the host", async () => {
     remote.nearestPubspec.mockResolvedValue("/srv/repo/apps/app");
     remote.binaries.mockResolvedValue([true]);
     remote.pubspecUsesFlutter.mockResolvedValue(true);

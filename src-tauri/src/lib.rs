@@ -26,7 +26,7 @@ use pickforge_core::{
     PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
 };
 use tauri::{path::BaseDirectory, Manager, RunEvent, WindowEvent};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
 const SENTRY_DSN: &str =
@@ -174,7 +174,7 @@ pub fn run() {
 
     builder
         .setup(move |app| {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
             if let Err(error) = app.deep_link().register_all() {
                 eprintln!("failed to register deep link schemes: {error}");
             }

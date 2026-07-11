@@ -16,7 +16,9 @@ built on it is published. Refs: pickforge/pickforge#155.
   **Elberte Software**.
 - **Operadores** (processors): third parties that process data on the
   controller's instructions — Supabase, Stripe, OpenAI, and Sentry. GitHub is
-  contacted only for anonymous update checks (see below).
+  contacted as an OAuth identity provider when the user selects GitHub sign-in,
+  and for anonymous update checks (see below). [LAWYER: confirm GitHub's role for
+  each flow.]
 - **Privacy contact:** **privacidade@pickforge.dev** [OWNER: activate this
   mailbox]. [OWNER/LAWYER: confirm whether the small-processing-agent exemption
   applies under [ANPD Resolution CD/ANPD No. 2/2022](https://www.gov.br/anpd/pt-br/acesso-a-informacao/institucional/atos-normativos/regulamentacoes_anpd/resolucao-cd-anpd-no-2-de-27-de-janeiro-de-2022);
@@ -25,33 +27,36 @@ built on it is published. Refs: pickforge/pickforge#155.
 ## The privacy boundary (the marquee control)
 
 PickForge is a local-first desktop developer tool. Its defining property is that
-almost everything stays on the user's machine and is never transmitted. The
-following never leave the device as part of normal use:
+its own services do not receive the user's development content by default. The
+following stay on the device unless the user authorizes a configured
+bring-your-own (BYO) agent/provider to process them:
 
 Source code, chat transcripts, voice audio and its on-device transcription
-(whisper.cpp), screenshots, file paths, device serials, hostnames, tailnet IPs,
-the raw Operator command text the user types, and any bring-your-own (BYO) API
-keys or CLI configs used for local AI routing.
+(whisper.cpp), screenshots, local project paths, device serials, local hostnames
+and tailnet IPs. BYO API keys and CLI configs remain on the device; the selected
+provider may receive prompts, Operator command text, and project/tool context
+authorized through that provider's permission model, under its own terms.
 
-Everything in the inventory below is the deliberate, narrow set of exceptions —
-each one is either account-gated, Pro-gated and opt-in, or a scrubbed
-diagnostic/technical signal.
+Everything in the inventory below is the deliberate, narrow set of exceptions:
+user-directed BYO providers, account sync, opt-in hosted features, and scrubbed
+diagnostic/technical signals.
 
 ## Data inventory
 
 | Data element | Where stored | Processor | Legal basis (Art. 7) | Retention | Leaves the device? |
 | --- | --- | --- | --- | --- | --- |
-| Source code, transcripts, voice audio + local transcription, screenshots, file paths, device serials, hostnames, tailnet IPs, raw Operator command text, BYO keys/CLI configs | User's machine only | None | N/A (not processed by the controller) | Fully under the user's control locally | **No — never** |
-| Email + OAuth identity (Google sign-in) | Supabase | Supabase (auth) | Contract execution (Art. 7, V) | Until account deletion | Yes (only when the user creates an account) |
+| Source code, transcripts, voice audio + local transcription, screenshots, local project paths, device serials, local hostnames/tailnet IPs | User's machine unless a BYO agent/provider is authorized to process prompts or project/tool context | None by PickForge; the user's selected provider for authorized content | N/A for the local-only path [LAWYER: confirm role/basis for user-directed BYO flows] | Under the user's local control; any BYO provider retention follows that provider's terms | Not sent to PickForge-operated services by default; may leave through an authorized BYO provider |
+| BYO Operator routing payload — raw command text plus the routing prompt/schema | Sent directly from the device through the user's selected CLI/provider; not stored by PickForge's backend | User-selected provider (for example Claude Code, Codex, or a local Ollama instance) | [LAWYER: confirm role and legal basis for user-directed BYO routing] | Not retained by PickForge; provider retention follows the user's provider agreement | Yes for cloud-backed BYO providers; no for a local provider such as Ollama |
+| Email + OAuth identity (Google or GitHub sign-in) | Supabase; selected OAuth provider participates in sign-in | Supabase (auth) + Google or GitHub when selected | Contract execution (Art. 7, V) | PickForge account data until deletion; OAuth-provider retention follows its terms | Yes (only when the user creates an account) |
 | Profile (display name, avatar) | Supabase | Supabase | Contract execution | Until account deletion | Yes (account only) |
 | Entitlements (whether Pro is active) | Supabase | Supabase | Contract execution | Until account deletion | Yes (account only) |
 | Credit ledger (prepaid purchases and usage — amounts, timestamps, Stripe references) | Supabase | Supabase | Contract execution | Until account deletion | Yes (account only) |
-| Synced settings — four allowlisted groups: app settings, operator config, keybindings, remote bindings | Supabase | Supabase | Contract execution | Until account deletion | Yes (account only; secret-scrubbed before sync) |
+| Synced settings — four opt-in allowlisted groups: app settings, operator config, keybindings, and remote bindings. A remote binding contains project basename, tailnet hostname, and absolute remote project root | Supabase | Supabase | Contract execution | Until account deletion | Yes when sync is enabled; secret-scrubbed before sync |
 | Per-user rate-limit counters | Supabase | Supabase | Legitimate interest (Art. 7, IX) — abuse prevention | Short-lived / rolling | Yes (account only) |
 | Security and audit logs, fraud prevention signals | Supabase / server | Supabase | Legitimate interest | As needed for security | Yes (account only) |
 | Stripe customer id linkage | Supabase | Supabase + Stripe | Contract execution | Until account deletion | Yes (account only) |
 | Card data, payment and invoice history | Stripe only | Stripe | Contract execution | Per Stripe's legal/fiscal obligations | Yes — handled entirely by Stripe; PickForge never sees or stores card numbers |
-| Hosted Operator routing payload — typed command text + redacted allowlisted context (project display name, visible chat titles, widget labels; paths/hostnames/domains/IPs/serials stripped) | Sent to OpenAI for one action; not retained in the ledger | OpenAI | Consent (Art. 7, I) — opt-in, Pro-only, per command | Not retained by PickForge; ledger keeps only action name, token counts, cost | Yes — only when the user selects the Hosted router for that command |
+| Hosted Operator routing payload — command text as typed + redacted allowlisted attached context (project display name, visible chat titles, widget labels; identifiers stripped from attached context, not from user-authored command text) | Passes transiently through PickForge's Supabase Edge Function to OpenAI for one action | Supabase + OpenAI | Consent (Art. 7, I) — opt-in, Pro-only, per command | Not stored in the PickForge ledger; ledger keeps only action name, token counts, and cost. [LAWYER: confirm Supabase/OpenAI operational retention] | Yes — only when the user selects the Hosted router for that command |
 | Hosted voice audio stream (Pro-only; behind a feature flag / future) | Streamed to OpenAI Realtime | OpenAI | Consent — opt-in, Pro-only | Not retained by PickForge | Yes — only when the user uses hosted voice; the default voice path is local |
 | Crash / error reports (opt-out) | Sentry | Sentry | Legitimate interest — stability and security | Per Sentry retention | Yes by default in release builds; user can disable in Settings → Crash reports |
 | Update check | GitHub Releases | GitHub (transport only) | Legitimate interest — deliver updates | Not stored by PickForge | Yes — version metadata only; no personal data or source leaves the machine |
@@ -78,11 +83,11 @@ valid transfer mechanism is already in place.
 
 | Provider / recipient | Purpose | Vendor document for lawyer review |
 | --- | --- | --- |
-| Supabase | Account, auth, entitlements, credit ledger, settings sync, rate limits, audit | [Data Processing Addendum](https://supabase.com/downloads/docs/Supabase%2BDPA%2B260601.pdf) |
+| Supabase | Account, auth, entitlements, credit ledger, settings sync, rate limits, audit, and transient hosted-router Edge Function processing | [Data Processing Addendum](https://supabase.com/downloads/docs/Supabase%2BDPA%2B260601.pdf) |
 | Stripe | Payments, card handling, invoices, customer record | [Data Processing Agreement](https://stripe.com/legal/dpa) |
 | OpenAI | Hosted Operator routing; hosted voice (flagged) | [Data Processing Addendum](https://openai.com/policies/data-processing-addendum/) |
 | Sentry | Crash / error reporting | [Data Processing Addendum](https://sentry.io/legal/dpa/) |
-| GitHub | Anonymous update-check transport (version metadata only) | [GitHub General Privacy Statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) |
+| GitHub | OAuth identity provider when selected; anonymous update-check transport | [GitHub General Privacy Statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) |
 
 ## Legal bases summary (Art. 7)
 
@@ -97,15 +102,18 @@ valid transfer mechanism is already in place.
 
 ## Controls
 
-- **The boundary.** The local-only set above is never transmitted. This is the
-  "#118 privacy boundary" and the product's headline privacy property.
+- **The boundary.** PickForge-operated services do not receive development
+  content by default. User-directed BYO flows and every PickForge-operated
+  exception are disclosed separately. This is the "#118 privacy boundary" and
+  the product's headline privacy property.
 - **Sync allowlist + secret scrub.** Only four setting groups sync (app
   settings, operator config, keybindings, remote bindings), each passed through a
   secret-scrubbing check so tokens and keys cannot sync.
-- **Hosted-routing redaction (test-enforced).** Before any hosted Operator
-  request, file paths, hostnames, domains, IPs, and serials are stripped; only
-  display names, visible chat titles, and widget labels remain. Automated tests
-  enforce this redaction (see `docs/architecture/operator.md`).
+- **Hosted-routing redaction (test-enforced).** Attached local context is limited
+  to display names, visible chat titles, and widget labels, with paths,
+  hostnames, domains, IPs, and serials stripped. User-authored command text is
+  sent verbatim and is not covered by attached-context redaction. Automated
+  tests enforce this boundary (see `docs/architecture/operator.md`).
 - **Crash-report scrubbing.** `before_send` clears server name and breadcrumbs;
   no PII is added by PickForge; opt-out in Settings.
 - **Deletion.** In-app account deletion erases all PickForge-side personal data

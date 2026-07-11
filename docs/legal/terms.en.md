@@ -21,9 +21,10 @@ is also subject to our [Privacy Policy](./privacy.en.md).
 
 ## 2. Accounts
 
-Some features require an account created through Google sign-in. You are
-responsible for keeping access to your account secure and for activity under it.
-You must provide accurate information and be legally able to enter these terms.
+Some features require an account created through Google or GitHub sign-in. You
+are responsible for keeping access to your account secure and for activity under
+it. You must provide accurate information and be legally able to enter these
+terms.
 
 ## 3. Pro and credits
 
@@ -55,19 +56,20 @@ We may suspend or limit access that threatens the service or other users.
 
 ## 5. Your content and BYO providers
 
-Your source code, chats, prompts, and other local content are yours and stay on
-your machine. When you configure a bring-your-own provider or CLI (for local AI
-routing), your use of that provider is governed by that provider's own terms and
-your own credentials; PickForge is not responsible for third-party providers you
-choose to connect. The same applies to hosted features you opt into, which route
-a redacted payload to OpenAI as described in the Privacy Policy.
+Your source code, chats, prompts, and other local content are yours. PickForge
+does not upload them to its own services by default. A bring-your-own provider or
+CLI may process prompts, Operator command text, and project/tool context you
+authorize through its permission model, under its own terms and your
+credentials; PickForge is not responsible for third-party providers you choose
+to connect. Hosted features you opt into route a request through PickForge's
+Supabase Edge Function to OpenAI as described in the Privacy Policy.
 
 ## 6. Third-party services
 
 PickForge relies on third-party service providers — Supabase, Stripe, OpenAI,
 and Sentry — for accounts, billing, hosted features, and crash reporting. It
-also contacts GitHub for update checks. Their availability and terms are outside
-our control.
+also contacts GitHub for OAuth sign-in when selected and for update checks. Their
+availability and terms are outside our control.
 
 ## 7. Availability and no warranty
 

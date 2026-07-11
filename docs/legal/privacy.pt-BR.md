@@ -13,51 +13,68 @@ LTDA**, CNPJ **63.103.885/0001-74**, nome fantasia **Elberte Software**. Contato
 
 ## Resumo
 
-- Seu código, conversas, voz, capturas de tela e configurações locais permanecem
-  na sua máquina. O PickForge não faz upload disso.
-- Você só nos fornece dados pessoais se criar uma conta. Nesse caso, guardamos o
-  mínimo necessário para operar sua conta e, se você comprar o Pro, seus
-  créditos.
-- Alguns recursos Pro enviam um pequeno pacote redigido a um serviço hospedado —
-  mas somente quando você opta por isso, a cada ação.
+- O PickForge não envia seu código, conversas, voz, capturas de tela ou
+  configurações locais não sincronizadas aos próprios serviços. Um agente ou
+  provedor BYO pode receber prompts e contexto de projeto/ferramentas que você
+  autorizar pelo modelo de permissões desse provedor, sob os termos dele.
+- Se você criar uma conta, guardamos o mínimo necessário para operá-la e, se
+  comprar o Pro, seus créditos. Versões de release também podem enviar relatórios
+  de falha redigidos, salvo se você os desativar nas Configurações.
+- O roteamento hospedado envia o comando fornecido por você mais um pequeno
+  contexto anexado e redigido — somente quando você opta por isso, a cada ação.
 - Você pode exportar ou excluir seus dados dentro do aplicativo a qualquer
   momento.
 
-## O que nunca sai da sua máquina
+## O que o PickForge mantém local
 
-Por design, os itens a seguir são tratados apenas no seu dispositivo e nunca são
-transmitidos no uso normal:
+Por design, o PickForge não transmite os itens a seguir aos serviços operados
+pelo PickForge como parte do fluxo local principal:
 
 - Código-fonte e conteúdo de arquivos.
 - Transcrições de conversas e histórico de execuções dos agentes.
 - Áudio de voz e sua transcrição — o ditado é transcrito no próprio dispositivo
   pelo whisper.cpp.
 - Capturas de tela e telas de dispositivo capturadas.
-- Caminhos de arquivos, números de série de dispositivos, nomes de host e
-  endereços IP de tailnet.
-- O texto bruto do comando que você digita no Operator.
+- Caminhos locais de projetos, números de série de dispositivos, nomes de host
+  locais e endereços IP de tailnet.
 - Quaisquer chaves de API próprias (BYO) e configurações de CLI que você use para
   roteamento de IA local.
 
-Esse limite local é a principal propriedade de privacidade do PickForge. Tudo o
-que segue é uma exceção deliberada e restrita.
+Se você usar um agente ou roteador BYO, esse provedor poderá receber prompts,
+texto de comando do Operator e contexto de projeto/ferramentas que você autorizar
+pelo modelo de permissões dele, sob sua conta e os termos do provedor. O
+PickForge não recebe nem retém esse pacote BYO em seu backend. A sincronização de
+conta, os recursos hospedados, os relatórios de falha e a verificação de
+atualizações abaixo são as outras exceções restritas ao limite local.
 
 ## O que coletamos quando você entra na conta
 
 Você pode usar o PickForge localmente sem conta. Ao criar uma, tratamos — por
 meio do nosso operador Supabase:
 
-- **E-mail e identidade OAuth** do login com o Google.
+- **E-mail e identidade OAuth** do login com Google ou GitHub, conforme o
+  provedor escolhido.
 - **Perfil**: nome de exibição e avatar.
 - **Direitos de acesso (entitlements)**: se o Pro está ativo para você.
 - **Registro de créditos**: suas compras e usos de crédito pré-pago — valores,
   data/hora e referências do Stripe.
 - **Configurações sincronizadas**: exatamente quatro grupos permitidos —
   configurações do app, configuração do operator, atalhos de teclado e vínculos
-  remotos. Cada um passa por uma verificação de remoção de segredos antes de
-  sincronizar, de modo que tokens e chaves não saiam junto.
+  remotos. Um vínculo remoto inclui o nome-base do projeto, o nome de host na
+  tailnet e o caminho absoluto da raiz remota do projeto. A sincronização é
+  opcional, e cada grupo passa por uma verificação de remoção de segredos antes
+  de sincronizar, de modo que tokens e chaves não saiam junto.
 - **Contadores de limite de uso (rate limit)** e **sinais de segurança/auditoria**
   para manter o serviço protegido.
+
+## Roteamento BYO escolhido por você
+
+Quando o Operator não pode usar seu analisador determinístico local e você
+seleciona um roteador BYO, ele envia o texto do comando e o prompt/esquema de
+roteamento pelo CLI/provedor escolhido. Um provedor local, como o Ollama, pode
+manter essa solicitação no dispositivo; um provedor em nuvem a trata sob sua
+conta e os próprios termos. O PickForge não recebe nem armazena o pacote de
+roteamento BYO em seu backend.
 
 ## Recursos Pro que enviam dados (opcionais)
 
@@ -65,19 +82,21 @@ Estes vêm desativados por padrão, estão disponíveis no Pro e só são execut
 quando você os escolhe:
 
 - **Roteamento hospedado do Operator.** Quando você seleciona deliberadamente o
-  roteador "Hospedado" para um comando, enviamos o texto do comando mais um
-  contexto mínimo, permitido e redigido — o nome de exibição do projeto, títulos
-  de conversas visíveis e rótulos de widgets — para a OpenAI, para transformar seu
-  comando em linguagem natural em uma única ação do app. Antes de qualquer envio,
-  caminhos de arquivos, nomes de host, domínios, endereços IP e números de série
-  são removidos; essa remoção é garantida por testes automatizados. O texto do
-  comando é usado apenas para essa etapa de roteamento e não é retido no seu
-  registro de créditos; o registro guarda apenas o nome da ação, a contagem de
-  tokens e o custo. O caminho de roteamento padrão é local.
+  roteador "Hospedado" para um comando, a solicitação passa pela Edge Function do
+  Supabase operada pelo PickForge e segue para a OpenAI, que transforma seu
+  comando em linguagem natural em uma única ação do app. O próprio comando é
+  enviado como foi digitado. O contexto anexado limita-se ao nome de exibição do
+  projeto, títulos de conversas visíveis e rótulos de widgets; caminhos de
+  arquivos, nomes de host, domínios, endereços IP e números de série são removidos
+  desse contexto anexado por uma redação garantida por testes. O corpo da
+  solicitação não é armazenado no registro de créditos do PickForge; o registro
+  guarda apenas o nome da ação, a contagem de tokens e o custo. [OWNER/LAWYER:
+  confirmar a retenção operacional do Supabase e da OpenAI.] O caminho
+  determinístico padrão permanece local quando consegue compreender o comando.
 - **Voz hospedada** (atualmente atrás de um *feature flag* / futura). Quando você
   usa a voz hospedada, o áudio é transmitido para a API Realtime da OpenAI durante
   aquela sessão. O caminho de voz padrão permanece no dispositivo — veja "O que
-  nunca sai da sua máquina".
+  o PickForge mantém local".
 
 ## Cobrança
 
@@ -90,7 +109,7 @@ cliente da Stripe e o registro de créditos descrito acima.
 ## Relatórios de erro e verificação de atualizações
 
 - **Relatórios de erro e falha.** As versões de release enviam relatórios
-  anônimos de erro/falha por padrão, por meio do Sentry, para nos ajudar a
+  redigidos de erro/falha por padrão, por meio do Sentry, para nos ajudar a
   corrigir problemas de estabilidade e segurança. O nome do servidor e os
   *breadcrumbs* são apagados antes de os relatórios saírem do processo, e não
   adicionamos intencionalmente código-fonte, transcrições, prompts, capturas de
@@ -113,11 +132,11 @@ mecanismo válido de transferência.
 
 | Fornecedor / destinatário | O que trata | Documento do fornecedor |
 | --- | --- | --- |
-| Supabase | Conta, autenticação, direitos de acesso, créditos, configurações sincronizadas, limites de uso, auditoria | [Acordo de Tratamento de Dados](https://supabase.com/downloads/docs/Supabase%2BDPA%2B260601.pdf) |
+| Supabase | Conta, autenticação, direitos de acesso, créditos, configurações sincronizadas, limites de uso, auditoria e tratamento transitório pela Edge Function do roteador hospedado | [Acordo de Tratamento de Dados](https://supabase.com/downloads/docs/Supabase%2BDPA%2B260601.pdf) |
 | Stripe | Pagamentos, cartões, faturas, cadastro do cliente | [Acordo de Tratamento de Dados](https://stripe.com/legal/dpa) |
 | OpenAI | Roteamento hospedado do Operator; voz hospedada (com flag) | [Aditivo de Tratamento de Dados](https://openai.com/policies/data-processing-addendum/) |
 | Sentry | Relatórios de erro / falha | [Aditivo de Tratamento de Dados](https://sentry.io/legal/dpa/) |
-| GitHub | Transporte anônimo da verificação de atualização (apenas metadados de versão) | [Declaração Geral de Privacidade do GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) |
+| GitHub | Provedor de identidade OAuth quando escolhido; transporte anônimo da verificação de atualização | [Declaração Geral de Privacidade do GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) |
 
 ## Bases legais (Art. 7)
 

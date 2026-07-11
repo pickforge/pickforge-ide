@@ -21,10 +21,10 @@ também está sujeito à nossa [Política de Privacidade](./privacy.pt-BR.md).
 
 ## 2. Contas
 
-Alguns recursos exigem uma conta criada por meio do login com o Google. Você é
-responsável por manter o acesso à sua conta seguro e pela atividade realizada com
-ela. Você deve fornecer informações corretas e ter capacidade legal para aceitar
-estes termos.
+Alguns recursos exigem uma conta criada por meio do login com Google ou GitHub.
+Você é responsável por manter o acesso à sua conta seguro e pela atividade
+realizada com ela. Você deve fornecer informações corretas e ter capacidade
+legal para aceitar estes termos.
 
 ## 3. Pro e créditos
 
@@ -57,20 +57,22 @@ Podemos suspender ou limitar o acesso que ameace o serviço ou outros usuários.
 
 ## 5. Seu conteúdo e provedores próprios (BYO)
 
-Seu código-fonte, conversas, prompts e demais conteúdos locais são seus e
-permanecem na sua máquina. Ao configurar um provedor ou CLI próprio (para
-roteamento de IA local), seu uso desse provedor é regido pelos termos do próprio
-provedor e por suas próprias credenciais; o PickForge não é responsável por
-provedores de terceiros que você escolha conectar. O mesmo vale para recursos
-hospedados aos quais você opte por aderir, que enviam um pacote redigido à OpenAI
-conforme descrito na Política de Privacidade.
+Seu código-fonte, conversas, prompts e demais conteúdos locais são seus. Por
+padrão, o PickForge não os envia aos próprios serviços. Um provedor ou CLI
+próprio poderá tratar prompts, texto de comando do Operator e contexto de
+projeto/ferramentas que você autorizar pelo modelo de permissões dele, sob os
+próprios termos e suas credenciais; o PickForge não é responsável por provedores
+de terceiros que você escolha conectar. Recursos hospedados aos quais você opte
+por aderir enviam uma solicitação pela Edge Function do Supabase operada pelo
+PickForge para a OpenAI, conforme descrito na Política de Privacidade.
 
 ## 6. Serviços de terceiros
 
 O PickForge depende de prestadores de serviço terceiros — Supabase, Stripe,
 OpenAI e Sentry — para oferecer contas, cobrança, recursos hospedados e
-relatórios de erro. Também contata o GitHub para verificar atualizações. A
-disponibilidade e os termos deles estão fora do nosso controle.
+relatórios de erro. Também contata o GitHub para login OAuth, quando escolhido,
+e para verificar atualizações. A disponibilidade e os termos deles estão fora
+do nosso controle.
 
 ## 7. Disponibilidade e ausência de garantias
 

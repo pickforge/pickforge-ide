@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::process::CommandOutcome;
 
-use super::ssh::{ssh_run, SshTarget};
+use super::ssh::{login_shell_probe_argv, probe_output, ssh_run, SshTarget};
 use super::tailscale::tailscale_status_json;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,8 +63,10 @@ pub fn probe_host(host: &str, timeout_per_step: Duration) -> RemoteHostHealth {
         };
     }
 
-    let daemon = match ssh_run(&target, &["pickforged", "status"], timeout_per_step) {
-        Ok(outcome) if outcome.success() => daemon_state_from_status_output(&outcome.stdout),
+    let daemon_argv = daemon_status_argv();
+    let daemon_refs = daemon_argv.iter().map(String::as_str).collect::<Vec<_>>();
+    let daemon = match ssh_run(&target, &daemon_refs, timeout_per_step) {
+        Ok(outcome) if outcome.success() => daemon_state_from_probe_output(&outcome.stdout),
         Ok(_) | Err(_) => ProbeState::Failed("pickforged not reachable".into()),
     };
     RemoteHostHealth {
@@ -73,6 +75,10 @@ pub fn probe_host(host: &str, timeout_per_step: Duration) -> RemoteHostHealth {
         ssh,
         daemon,
     }
+}
+
+fn daemon_status_argv() -> Vec<String> {
+    login_shell_probe_argv(&["pickforged", "status"])
 }
 
 pub fn probe_tailnet_peer(host: &str, timeout: Duration) -> ProbeState {
@@ -99,6 +105,14 @@ fn daemon_state_from_status_output(stdout: &[u8]) -> ProbeState {
     } else {
         ProbeState::Failed("daemon not listening".into())
     }
+}
+
+fn daemon_state_from_probe_output(stdout: &[u8]) -> ProbeState {
+    let stdout = String::from_utf8_lossy(stdout);
+    let Ok(status) = probe_output(&stdout) else {
+        return ProbeState::Failed("daemon not listening".into());
+    };
+    daemon_state_from_status_output(status.as_bytes())
 }
 
 fn tailnet_state_from_status(host: &str, json: &Value) -> ProbeState {
@@ -243,7 +257,7 @@ mod tests {
     fn daemon_status_output_requires_enabled_and_running_listener() {
         assert_eq!(
             daemon_state_from_status_output(
-                br#"{"listenerEnabled":true,"listenerRunning":true}"#
+                b"{\"listenerEnabled\":true,\"listenerRunning\":true}\n",
             ),
             ProbeState::Ok
         );
@@ -258,5 +272,41 @@ mod tests {
                 ProbeState::Failed("daemon not listening".into())
             );
         }
+    }
+
+    #[test]
+    fn daemon_probe_output_ignores_login_profile_noise() {
+        assert_eq!(
+            daemon_state_from_probe_output(
+                b"profile banner\n__PF_REMOTE_PROBE_BEGIN__\n{\"listenerEnabled\":true,\"listenerRunning\":true}\n__PF_REMOTE_PROBE_END__\nlogout banner\n",
+            ),
+            ProbeState::Ok
+        );
+        assert_eq!(
+            daemon_state_from_probe_output(br#"{"listenerEnabled":true,"listenerRunning":true}"#,),
+            ProbeState::Failed("daemon not listening".into())
+        );
+    }
+
+    #[test]
+    fn daemon_status_ssh_argv_runs_in_the_remote_login_shell() {
+        let argv = daemon_status_argv();
+        let refs = argv.iter().map(String::as_str).collect::<Vec<_>>();
+        let remote_command = crate::remote::ssh::shell_quote_argv(&refs);
+
+        assert_eq!(
+            crate::remote::ssh::build_ssh_args("mac-mini", &refs).unwrap(),
+            vec![
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "--",
+                "mac-mini",
+                &remote_command,
+            ]
+        );
     }
 }

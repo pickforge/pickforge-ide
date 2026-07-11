@@ -279,6 +279,7 @@ function beginSigningIn() {
 }
 
 function setSignedOut(options: { clearCache?: boolean; clearPending?: boolean } = {}) {
+  refreshGeneration += 1;
   clearSignInTimer();
   releaseProAuthRedirectGuard();
   if (options.clearPending !== false) clearPendingSignIn();
@@ -327,7 +328,7 @@ async function refreshFromAuth(options: RefreshOptions = {}) {
     if (!options.refreshSession && status() === "signingIn") return;
     nextSession = sessionFromAuth(authSession);
     if (!nextSession) {
-      setSignedOut({ clearCache: false, clearPending: false });
+      setSignedOut({ clearPending: false });
       return;
     }
   } catch (value) {

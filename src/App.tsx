@@ -17,6 +17,7 @@ import { startSwarmBridge } from "./stores/swarm";
 import { installAccountStoreBootstrap } from "./stores/account";
 import { installCreditsBootstrap } from "./stores/credits";
 import { installSettingsSyncBootstrap } from "./stores/settingsSyncStore";
+import { handleTitlebarMouseDown } from "./lib/windowChrome";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
 import { SettingsScreen } from "./screens/Settings";
@@ -41,7 +42,7 @@ export function App() {
   const brandOnRight = () => hostPlatform() === "macos";
 
   const Brand = () => (
-    <div class="pf-brand" data-tauri-drag-region>
+    <div class="pf-brand">
       <span class="pf-mark" />
       <span class="pf-wordmark">PickForge</span>
       <MonoEyebrow text={`v${appVersion()}`} />
@@ -142,16 +143,16 @@ export function App() {
       <ResizeHandles />
       {/* Custom title bar: the whole bar is the drag region (decorations are off);
           interactive children opt out of dragging by simply not carrying the
-          attribute. Double-clicking the drag region toggles maximize natively. */}
+          attribute. */}
       <header
         class="pf-titlebar"
         classList={{
           "pf-titlebar--controls-left": resolvedControlsSide() === "left",
           "pf-titlebar--brand-right": brandOnRight(),
         }}
-        data-tauri-drag-region
+        onMouseDown={handleTitlebarMouseDown}
       >
-        <div class="pf-titlebar-left" data-tauri-drag-region>
+        <div class="pf-titlebar-left">
           <Show when={resolvedControlsSide() === "left"}>
             <WindowControls />
           </Show>
@@ -159,7 +160,7 @@ export function App() {
             <Brand />
           </Show>
         </div>
-        <nav class="pf-nav" data-tauri-drag-region>
+        <nav class="pf-nav">
           <For each={NAV}>
             {(n) => (
               <button
@@ -173,7 +174,7 @@ export function App() {
             )}
           </For>
         </nav>
-        <div class="pf-titlebar-right" data-tauri-drag-region>
+        <div class="pf-titlebar-right">
           <StatusPill
             compact
             label={workspace.activeRoot ? "shell · live" : "no project"}

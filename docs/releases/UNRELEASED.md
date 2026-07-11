@@ -6,6 +6,7 @@ reset this file.
 
 ## User-facing changes
 
+- Double-clicking empty titlebar space now maximizes or restores the window.
 - Added Remote Host settings for starting the local daemon listener, issuing
   pairing codes, and toggling Tailscale SSH.
 - Projects can now attach a remote host (over your tailnet) from the project
@@ -42,8 +43,8 @@ reset this file.
 - Workflow YAML parse check:
   `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 - `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.
-- `bun run test:unit` — 735 tests green, including account-session cache and
-  refresh-race regressions.
+- `bun run test:coverage` — 739 tests green, including account-session cache,
+  refresh-race, and titlebar double-click regressions.
 - `bun run build` — `tsc --noEmit` + vite production build clean.
 - `bunx playwright test` — VRT snapshots unchanged (remote UI is flag-gated
   and badge renders only for bound projects).

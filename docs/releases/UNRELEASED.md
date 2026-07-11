@@ -11,6 +11,8 @@ reset this file.
   pairing codes, and toggling Tailscale SSH.
 - Projects can now attach a remote host (over your tailnet) from the project
   menu, with a live health badge in the sidebar and a test-connection check.
+- Remote health checks now resolve `pickforged` through the remote login shell,
+  including macOS hosts where non-login SSH omits `/usr/local/bin` from PATH.
 - Launching PickForge again now focuses the running window.
 
 ## Internal/release changes
@@ -49,6 +51,9 @@ reset this file.
 - `bunx playwright test` — VRT snapshots unchanged (remote UI is flag-gated
   and badge renders only for bound projects).
 - `cargo check` — workspace check clean.
+- `cargo test -p pickforge-core --lib --locked` — 391 tests green, including
+  login-shell quoting, noisy-profile output, and daemon health regressions.
+- Live Acorns macOS probe — Tailnet, SSH, and daemon states all green.
 
 ### Not tested yet
 

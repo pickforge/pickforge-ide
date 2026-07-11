@@ -2,10 +2,9 @@ use std::time::Duration;
 
 use crate::process::CommandOutcome;
 
-use super::ssh::{shell_quote_argv, ssh_run, SshError, SshTarget};
-
-const PROBE_BEGIN: &str = "__PF_REMOTE_PROBE_BEGIN__";
-const PROBE_END: &str = "__PF_REMOTE_PROBE_END__";
+use super::ssh::{
+    login_shell_argv, probe_output as framed_probe_output, ssh_run, SshError, SshTarget,
+};
 
 const NEAREST_PUBSPEC_SCRIPT: &str = r#"printf '%s\n' '__PF_REMOTE_PROBE_BEGIN__'
 dir=$1
@@ -38,8 +37,6 @@ for name do
   fi
 done
 printf '%s\n' '__PF_REMOTE_PROBE_END__'"#;
-
-const LOGIN_SHELL_SCRIPT: &str = r#"exec "${SHELL:-/bin/sh}" -lc "$1""#;
 
 const FLUTTER_APP_SCRIPT: &str = r#"awk '
   /^[[:space:]]*dependencies:[[:space:]]*(#.*)?$/ { dependencies = 1; next }
@@ -153,13 +150,7 @@ fn detect_binaries_argv(names: &[&str]) -> Vec<String> {
         "pickforge-detect-binaries".into(),
     ];
     command.extend(names.iter().map(|name| (*name).to_string()));
-    vec![
-        "sh".into(),
-        "-c".into(),
-        LOGIN_SHELL_SCRIPT.into(),
-        "pickforge-login-shell".into(),
-        shell_quote_argv(&command.iter().map(String::as_str).collect::<Vec<_>>()),
-    ]
+    login_shell_argv(&command.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 fn flutter_app_argv(project_dir: &str) -> Vec<String> {
@@ -173,13 +164,7 @@ fn flutter_app_argv(project_dir: &str) -> Vec<String> {
 }
 
 fn probe_output(stdout: &str) -> Result<&str, RemoteDetectError> {
-    let (_, output) = stdout.split_once(PROBE_BEGIN).ok_or_else(|| {
-        RemoteDetectError::Command("remote probe output is missing its begin marker".into())
-    })?;
-    let (output, _) = output.split_once(PROBE_END).ok_or_else(|| {
-        RemoteDetectError::Command("remote probe output is missing its end marker".into())
-    })?;
-    Ok(output)
+    framed_probe_output(stdout).map_err(|message| RemoteDetectError::Command(message.to_string()))
 }
 
 fn command_summary(outcome: &CommandOutcome) -> String {
@@ -294,7 +279,7 @@ mod tests {
 
     #[test]
     fn detect_binaries_argv_runs_the_probe_in_the_login_shell() {
-        let command = shell_quote_argv(&[
+        let command = crate::remote::ssh::shell_quote_argv(&[
             "sh",
             "-c",
             DETECT_BINARIES_SCRIPT,
@@ -308,7 +293,7 @@ mod tests {
             vec![
                 "sh",
                 "-c",
-                LOGIN_SHELL_SCRIPT,
+                r#"exec "${SHELL:-/bin/sh}" -lc "$1""#,
                 "pickforge-login-shell",
                 &command,
             ]

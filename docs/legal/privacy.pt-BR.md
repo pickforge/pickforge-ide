@@ -7,9 +7,9 @@ O PickForge é uma ferramenta de desenvolvimento desktop com abordagem
 direta, o que permanece na sua máquina, o pequeno conjunto de coisas que sai
 dela, quem as trata e quais direitos você tem sob a LGPD (Lei nº 13.709/2018).
 
-Controlador: [OWNER: razão social e CNPJ, ou seu nome completo e CPF se você
-atuar como pessoa física]. Contato: **privacidade@pickforge.dev** [OWNER: ativar
-esta caixa de e-mail].
+Controlador: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE SOFTWARE
+LTDA**, CNPJ **63.103.885/0001-74**, nome fantasia **Elberte Software**. Contato:
+**privacidade@pickforge.dev** [OWNER: ativar esta caixa de e-mail].
 
 ## Resumo
 
@@ -104,17 +104,20 @@ cliente da Stripe e o registro de créditos descrito acima.
 
 ## Quem trata seus dados, e onde
 
-Todos os nossos operadores atuam fora do Brasil. A transferência internacional
-apoia-se nas salvaguardas contratuais e no Acordo de Tratamento de Dados de cada
-provedor, conforme permitido pelo Art. 33 da LGPD.
+Alguns fluxos de serviço podem envolver tratamento fora do Brasil.
+[OWNER/LAWYER: antes da publicação, verificar quais fluxos configuram
+transferência internacional e declarar o mecanismo válido do Art. 33 da LGPD
+para cada um.] Os documentos dos fornecedores abaixo são listados para
+transparência e análise jurídica; a mera listagem não estabelece, por si só, um
+mecanismo válido de transferência.
 
-| Operador | O que trata | Salvaguarda |
+| Fornecedor / destinatário | O que trata | Documento do fornecedor |
 | --- | --- | --- |
-| Supabase | Conta, autenticação, direitos de acesso, créditos, configurações sincronizadas, limites de uso, auditoria | [OWNER: confirmar link do DPA da Supabase] |
-| Stripe | Pagamentos, cartões, faturas, cadastro do cliente | [OWNER: confirmar link do DPA da Stripe] |
-| OpenAI | Roteamento hospedado do Operator; voz hospedada (com flag) | [OWNER: confirmar link do DPA da OpenAI] |
-| Sentry | Relatórios de erro / falha | [OWNER: confirmar link do DPA da Sentry] |
-| GitHub | Transporte anônimo da verificação de atualização (apenas metadados de versão) | [OWNER: confirmar link de privacidade do GitHub] |
+| Supabase | Conta, autenticação, direitos de acesso, créditos, configurações sincronizadas, limites de uso, auditoria | [Acordo de Tratamento de Dados](https://supabase.com/downloads/docs/Supabase%2BDPA%2B260601.pdf) |
+| Stripe | Pagamentos, cartões, faturas, cadastro do cliente | [Acordo de Tratamento de Dados](https://stripe.com/legal/dpa) |
+| OpenAI | Roteamento hospedado do Operator; voz hospedada (com flag) | [Aditivo de Tratamento de Dados](https://openai.com/policies/data-processing-addendum/) |
+| Sentry | Relatórios de erro / falha | [Aditivo de Tratamento de Dados](https://sentry.io/legal/dpa/) |
+| GitHub | Transporte anônimo da verificação de atualização (apenas metadados de versão) | [Declaração Geral de Privacidade do GitHub](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) |
 
 ## Bases legais (Art. 7)
 
@@ -142,8 +145,9 @@ como seus dados são compartilhados. Você pode exercer esses direitos diretamen
 - **Exportar seus dados** dentro do aplicativo — um arquivo JSON portátil com seu
   perfil, direitos de acesso, registro de créditos e configurações sincronizadas.
 - **Falar conosco** em **privacidade@pickforge.dev** para qualquer outra
-  solicitação, ou para contatar nosso encarregado (DPO): [OWNER: designar o
-  encarregado — nome e o contato privacidade@].
+  solicitação. Este é o nosso canal de privacidade. [OWNER/LAWYER: confirmar se
+  é necessária a nomeação formal de encarregado (DPO) ou se aplica a dispensa
+  para agentes de tratamento de pequeno porte.]
 
 ## Retenção
 
@@ -166,5 +170,6 @@ https://pickforge.dev/privacy.
 
 ## Contato
 
-**privacidade@pickforge.dev** — Controlador: [OWNER: razão social / nome].
-Encarregado (DPO): [OWNER: designar].
+**privacidade@pickforge.dev** — Controlador: **ELBERTE PLINIO GOIS VIEIRA FILHO
+DESENVOLVIMENTO DE SOFTWARE LTDA**, CNPJ **63.103.885/0001-74**.
+Encarregado (DPO): [OWNER/LAWYER: confirmar nomeação ou dispensa].

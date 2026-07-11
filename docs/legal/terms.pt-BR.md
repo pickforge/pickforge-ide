@@ -7,9 +7,10 @@ com abordagem *local-first*, e de seus recursos pagos opcionais do Pro. Ao
 instalar ou usar o PickForge, você concorda com eles. Se você usa o PickForge em
 nome de uma organização, aceita estes termos em nome dela.
 
-Fornecedor: [OWNER: razão social e CNPJ, ou seu nome completo e CPF se você atuar
-como pessoa física]. Contato: **contato@pickforge.dev** [OWNER: confirmar a caixa
-de contato]. Dúvidas sobre privacidade: **privacidade@pickforge.dev**.
+Fornecedor: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE SOFTWARE
+LTDA**, CNPJ **63.103.885/0001-74**, nome fantasia **Elberte Software**. Contato:
+**contato@pickforge.dev** [OWNER: confirmar a caixa de contato]. Dúvidas sobre
+privacidade: **privacidade@pickforge.dev**.
 
 ## 1. O software
 
@@ -66,10 +67,10 @@ conforme descrito na Política de Privacidade.
 
 ## 6. Serviços de terceiros
 
-O PickForge depende de operadores terceiros — Supabase, Stripe, OpenAI, Sentry e
-GitHub (para verificação de atualizações) — para oferecer contas, cobrança,
-recursos hospedados, relatórios de erro e atualizações. A disponibilidade e os
-termos deles estão fora do nosso controle.
+O PickForge depende de prestadores de serviço terceiros — Supabase, Stripe,
+OpenAI e Sentry — para oferecer contas, cobrança, recursos hospedados e
+relatórios de erro. Também contata o GitHub para verificar atualizações. A
+disponibilidade e os termos deles estão fora do nosso controle.
 
 ## 7. Disponibilidade e ausência de garantias
 

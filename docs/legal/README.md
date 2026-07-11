@@ -24,14 +24,15 @@ Once approved, they publish to:
 
 - [ ] Publish `privacy.*` and `terms.*` to https://pickforge.dev/privacy and
   https://pickforge.dev/terms.
-- [ ] Designate the encarregado (DPO): name + privacidade@pickforge.dev.
+- [ ] Have counsel confirm whether the small-processing-agent exemption applies;
+  otherwise designate and publish the encarregado (DPO).
 - [ ] Activate the **privacidade@pickforge.dev** mailbox (and confirm
   **contato@pickforge.dev** for the Terms).
-- [ ] Confirm and link each processor's DPA: Supabase, Stripe, OpenAI, Sentry,
-  and GitHub.
+- [ ] Have counsel classify each cross-border flow and confirm its valid LGPD
+  Art. 33 mechanism; use the linked vendor documents as review inputs.
 - [ ] Set `<EFFECTIVE DATE>` in all four policy files.
-- [ ] Fill every `[OWNER: ...]` placeholder — legal entity/CNPJ or CPF, address if
-  required, encarregado, and the governing-law comarca.
+- [ ] Fill the remaining owner/lawyer placeholders — mailboxes, refund stance,
+  liability cap, comarca, and encarregado status.
 - [ ] Have a Brazilian lawyer review before publishing.
 - [ ] Then update the Google OAuth consent screen with the two URLs, and link them
   from the app Settings and the README.

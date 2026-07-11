@@ -11,12 +11,16 @@ built on it is published. Refs: pickforge/pickforge#155.
 
 - **Titular** (data subject): the person using PickForge.
 - **Controlador** (controller): the entity that decides how and why personal
-  data is processed. [OWNER: legal entity name and CNPJ, or your full name and
-  CPF if operating as an individual.]
+  data is processed: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE
+  SOFTWARE LTDA**, CNPJ **63.103.885/0001-74**, operating under the trade name
+  **Elberte Software**.
 - **Operadores** (processors): third parties that process data on the
   controller's instructions — Supabase, Stripe, OpenAI, and Sentry. GitHub is
   contacted only for anonymous update checks (see below).
-- **Encarregado** (DPO): [OWNER: designate — name plus the privacidade@ contact.]
+- **Privacy contact:** **privacidade@pickforge.dev** [OWNER: activate this
+  mailbox]. [OWNER/LAWYER: confirm whether the small-processing-agent exemption
+  applies under [ANPD Resolution CD/ANPD No. 2/2022](https://www.gov.br/anpd/pt-br/acesso-a-informacao/institucional/atos-normativos/regulamentacoes_anpd/resolucao-cd-anpd-no-2-de-27-de-janeiro-de-2022);
+  if it does not, formally appoint and publish the encarregado.]
 
 ## The privacy boundary (the marquee control)
 
@@ -64,18 +68,21 @@ real build (see `docs/architecture/telemetry-and-crash-reports.md` and
 - **Update check** is an anonymous request to GitHub Releases for version
   metadata. No account or source data is attached.
 
-## Processors and international transfer (Art. 33)
+## Providers and international transfer review (Art. 33)
 
-All processors operate outside Brazil. Transfer relies on each provider's
-contractual safeguards / DPA. Owner to confirm the current links.
+Several service flows may involve processing outside Brazil. Counsel must verify
+which flows are international transfers under the LGPD and identify the valid
+Art. 33 mechanism for each one under [ANPD Resolution CD/ANPD No. 19/2024](https://www.gov.br/anpd/pt-br/acesso-a-informacao/institucional/atos-normativos/regulamentacoes_anpd/resolucao-cd-anpd-no-19-de-23-de-agosto-de-2024).
+The vendor documents below are inputs to that review, not conclusions that a
+valid transfer mechanism is already in place.
 
-| Processor | Purpose | Safeguard / DPA (owner to confirm) |
+| Provider / recipient | Purpose | Vendor document for lawyer review |
 | --- | --- | --- |
-| Supabase | Account, auth, entitlements, credit ledger, settings sync, rate limits, audit | [OWNER: confirm Supabase DPA / privacy link] |
-| Stripe | Payments, card handling, invoices, customer record | [OWNER: confirm Stripe DPA / privacy link] |
-| OpenAI | Hosted Operator routing; hosted voice (flagged) | [OWNER: confirm OpenAI DPA / privacy link] |
-| Sentry | Crash / error reporting | [OWNER: confirm Sentry DPA / privacy link] |
-| GitHub | Anonymous update-check transport (version metadata only) | [OWNER: confirm GitHub privacy link] |
+| Supabase | Account, auth, entitlements, credit ledger, settings sync, rate limits, audit | [Data Processing Addendum](https://supabase.com/downloads/docs/Supabase%2BDPA%2B260601.pdf) |
+| Stripe | Payments, card handling, invoices, customer record | [Data Processing Agreement](https://stripe.com/legal/dpa) |
+| OpenAI | Hosted Operator routing; hosted voice (flagged) | [Data Processing Addendum](https://openai.com/policies/data-processing-addendum/) |
+| Sentry | Crash / error reporting | [Data Processing Addendum](https://sentry.io/legal/dpa/) |
+| GitHub | Anonymous update-check transport (version metadata only) | [GitHub General Privacy Statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) |
 
 ## Legal bases summary (Art. 7)
 
@@ -118,7 +125,7 @@ exercise:
   plus Stripe customer deletion; remaining credits forfeited.
 - **Data export** (in-app) — portable JSON.
 - **Contact channel** — **privacidade@pickforge.dev** [OWNER: activate this
-  mailbox] for any other request, and to reach the encarregado.
+  mailbox] for any other privacy or data-subject request.
 
 ## Retention
 
@@ -131,13 +138,14 @@ exercise:
 
 - [ ] Publish `privacy.*` and `terms.*` to https://pickforge.dev/privacy and
   https://pickforge.dev/terms.
-- [ ] Designate the encarregado (name + privacidade@pickforge.dev).
+- [ ] Have counsel confirm whether the small-processing-agent exemption applies;
+  otherwise designate and publish the encarregado.
 - [ ] Activate the **privacidade@pickforge.dev** mailbox.
-- [ ] Confirm / link each processor's DPA (Supabase, Stripe, OpenAI, Sentry,
-  GitHub).
+- [ ] Have counsel classify each cross-border flow and confirm its valid Art. 33
+  mechanism; use the linked vendor documents as review inputs.
 - [ ] Set `<EFFECTIVE DATE>` across both policy languages.
-- [ ] Fill every `[OWNER: ...]` placeholder (legal entity/CNPJ or CPF, address
-  if required, encarregado, comarca).
+- [ ] Fill the remaining owner/lawyer placeholders (mailboxes, refund stance,
+  liability cap, comarca, and encarregado status).
 - [ ] Confirm whether crash reporting and the GitHub update check should be named
   in the published policy exactly as drafted (they are real, off-device flows).
 - [ ] Have a Brazilian lawyer review before publishing.

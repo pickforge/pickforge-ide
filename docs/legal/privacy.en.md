@@ -6,9 +6,10 @@ PickForge is a local-first desktop developer tool. This policy explains, plainly
 what stays on your machine, the narrow set of things that leave it, who processes
 them, and the rights you have under Brazil's LGPD (Lei nº 13.709/2018).
 
-Controller: [OWNER: legal entity name and CNPJ, or your full name and CPF if you
-operate as an individual]. Contact: **privacidade@pickforge.dev** [OWNER:
-activate this mailbox].
+Controller: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE SOFTWARE
+LTDA**, CNPJ **63.103.885/0001-74**, operating under the trade name **Elberte
+Software**. Contact: **privacidade@pickforge.dev** [OWNER: activate this
+mailbox].
 
 ## The short version
 
@@ -95,17 +96,19 @@ customer id linkage and the credit ledger described above.
 
 ## Who processes your data, and where
 
-All of our processors operate outside Brazil. International transfer relies on
-each provider's contractual safeguards and Data Processing Agreement, as
-permitted under Art. 33 of the LGPD.
+Some service flows may involve processing outside Brazil. [OWNER/LAWYER: before
+publication, verify which flows are international transfers and state the valid
+LGPD Art. 33 mechanism for each one.] The vendor documents below are listed for
+transparency and legal review; listing them does not by itself establish a valid
+transfer mechanism.
 
-| Processor | What they process | Safeguard |
+| Provider / recipient | What they process | Vendor document |
 | --- | --- | --- |
-| Supabase | Account, auth, entitlements, credits, synced settings, rate limits, audit | [OWNER: confirm Supabase DPA link] |
-| Stripe | Payments, cards, invoices, customer record | [OWNER: confirm Stripe DPA link] |
-| OpenAI | Hosted Operator routing; hosted voice (flagged) | [OWNER: confirm OpenAI DPA link] |
-| Sentry | Crash / error reports | [OWNER: confirm Sentry DPA link] |
-| GitHub | Anonymous update-check transport (version metadata only) | [OWNER: confirm GitHub privacy link] |
+| Supabase | Account, auth, entitlements, credits, synced settings, rate limits, audit | [Data Processing Addendum](https://supabase.com/downloads/docs/Supabase%2BDPA%2B260601.pdf) |
+| Stripe | Payments, cards, invoices, customer record | [Data Processing Agreement](https://stripe.com/legal/dpa) |
+| OpenAI | Hosted Operator routing; hosted voice (flagged) | [Data Processing Addendum](https://openai.com/policies/data-processing-addendum/) |
+| Sentry | Crash / error reports | [Data Processing Addendum](https://sentry.io/legal/dpa/) |
+| GitHub | Anonymous update-check transport (version metadata only) | [GitHub General Privacy Statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement) |
 
 ## Legal bases (Art. 7)
 
@@ -130,9 +133,10 @@ your data is shared. You can exercise these directly:
   transaction records to meet its legal and fiscal obligations.
 - **Export your data** from inside the app — a portable JSON file of your
   profile, entitlements, credit ledger, and synced settings.
-- **Contact us** at **privacidade@pickforge.dev** for any other request, or to
-  reach our Data Protection Officer (encarregado): [OWNER: designate the
-  encarregado — name plus the privacidade@ contact].
+- **Contact us** at **privacidade@pickforge.dev** for any other request. This is
+  our privacy contact. [OWNER/LAWYER: confirm whether a formal Data Protection
+  Officer (encarregado) appointment is required or the small-processing-agent
+  exemption applies.]
 
 ## Retention
 
@@ -154,5 +158,6 @@ https://pickforge.dev/privacy.
 
 ## Contact
 
-**privacidade@pickforge.dev** — Controller: [OWNER: legal entity / name].
-Encarregado (DPO): [OWNER: designate].
+**privacidade@pickforge.dev** — Controller: **ELBERTE PLINIO GOIS VIEIRA FILHO
+DESENVOLVIMENTO DE SOFTWARE LTDA**, CNPJ **63.103.885/0001-74**.
+Encarregado (DPO): [OWNER/LAWYER: confirm appointment or exemption].

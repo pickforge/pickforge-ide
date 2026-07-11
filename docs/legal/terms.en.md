@@ -7,9 +7,10 @@ and its optional paid Pro features. By installing or using PickForge, you agree
 to them. If you use PickForge on behalf of an organization, you accept these
 terms for that organization.
 
-Provider: [OWNER: legal entity name and CNPJ, or your full name and CPF if you
-operate as an individual]. Contact: **contato@pickforge.dev** [OWNER: confirm the
-contact mailbox]. Privacy questions: **privacidade@pickforge.dev**.
+Provider: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE SOFTWARE LTDA**,
+CNPJ **63.103.885/0001-74**, operating under the trade name **Elberte Software**.
+Contact: **contato@pickforge.dev** [OWNER: confirm the contact mailbox]. Privacy
+questions: **privacidade@pickforge.dev**.
 
 ## 1. The software
 
@@ -63,10 +64,10 @@ a redacted payload to OpenAI as described in the Privacy Policy.
 
 ## 6. Third-party services
 
-PickForge relies on third-party processors — Supabase, Stripe, OpenAI, Sentry,
-and GitHub for update checks — to provide accounts, billing, hosted features,
-crash reporting, and updates. Their availability and terms are outside our
-control.
+PickForge relies on third-party service providers — Supabase, Stripe, OpenAI,
+and Sentry — for accounts, billing, hosted features, and crash reporting. It
+also contacts GitHub for update checks. Their availability and terms are outside
+our control.
 
 ## 7. Availability and no warranty
 

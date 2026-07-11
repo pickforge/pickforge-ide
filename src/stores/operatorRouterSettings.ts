@@ -1,8 +1,9 @@
 import { createSignal } from "solid-js";
 import { noteSettingsEdit } from "../lib/settingsSyncEdits";
+import { accountSession } from "./account";
 
 export type OperatorRouterBackend = "claudeCode" | "codex" | "ollama";
-export type OperatorRouterSettingBackend = "off" | OperatorRouterBackend;
+export type OperatorRouterSettingBackend = "off" | "hosted" | OperatorRouterBackend;
 
 export interface OperatorRouterSettings {
   backend: OperatorRouterSettingBackend;
@@ -27,11 +28,11 @@ const DEFAULT_SETTINGS: OperatorRouterSettings = {
 };
 
 function isBackend(value: unknown): value is OperatorRouterSettingBackend {
-  return value === "off" || ROUTER_BACKENDS.includes(value as OperatorRouterBackend);
-}
-
-function isRouteBackend(value: OperatorRouterSettingBackend): value is OperatorRouterBackend {
-  return value !== "off";
+  return (
+    value === "off" ||
+    value === "hosted" ||
+    ROUTER_BACKENDS.includes(value as OperatorRouterBackend)
+  );
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -122,9 +123,10 @@ export function persistOperatorRouterLatency(
   });
 }
 
-export function configuredRouterBackend(): OperatorRouterBackend | null {
+export function configuredRouterBackend(): OperatorRouterSettingBackend | null {
   const backend = settings().backend;
-  if (!isRouteBackend(backend)) return null;
+  if (backend === "off") return null;
+  if (backend === "hosted") return accountSession() ? "hosted" : null;
   const model = settings().models[backend]?.trim();
   return model ? backend : null;
 }

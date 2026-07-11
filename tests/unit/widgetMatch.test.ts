@@ -4,11 +4,16 @@ import type { SemanticWidgetNode } from "../../src/lib/vm";
 const deps = vi.hoisted(() => ({
   routeRawPrompt: vi.fn(),
   extractRouterText: vi.fn(),
+  backend: null as string | null,
 }));
 
 vi.mock("../../src/lib/operatorRouter", () => ({
   routeRawPrompt: deps.routeRawPrompt,
   extractRouterText: deps.extractRouterText,
+}));
+
+vi.mock("../../src/stores/operatorRouterSettings", () => ({
+  configuredRouterBackend: () => deps.backend,
 }));
 
 async function loadMatcher() {
@@ -36,6 +41,7 @@ const tree = (): SemanticWidgetNode => ({
 beforeEach(() => {
   deps.routeRawPrompt.mockReset();
   deps.extractRouterText.mockReset().mockImplementation((_backend: string, output: string) => output);
+  deps.backend = null;
 });
 
 describe("widget tree serialization", () => {
@@ -290,6 +296,17 @@ describe("matchWidget", () => {
 
     deps.routeRawPrompt.mockResolvedValueOnce({ kind: "unconfigured" });
     await expect(matchWidget("anything", tree())).resolves.toEqual({ kind: "unconfigured" });
+  });
+
+  it("degrades honestly when the hosted backend is selected", async () => {
+    deps.backend = "hosted";
+    const { matchWidget } = await loadMatcher();
+
+    const result = await matchWidget("the login button", tree());
+
+    expect(result.kind).toBe("error");
+    expect(result).toMatchObject({ message: expect.stringContaining("BYO router") });
+    expect(deps.routeRawPrompt).not.toHaveBeenCalled();
   });
 
   it("reserves prompt budget for instructions and the user description", async () => {

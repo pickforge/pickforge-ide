@@ -409,6 +409,57 @@ describe("account store", () => {
     expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
   });
 
+  it("clears cached account state when getSession confirms no session", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+
+    await account.initAccountStore();
+
+    expect(account.accountStatus()).toBe("signedOut");
+    expect(account.accountSession()).toBeNull();
+    expect(account.accountEntitlements()).toEqual([]);
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+  });
+
+  it("clears cached account state when refreshSession confirms no session", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    testEnv.mem.set(
+      CACHE_KEY,
+      JSON.stringify({
+        version: 1,
+        session: { userId: "user-1", email: "cached@pickforge.dev", displayName: "Cached User" },
+        entitlements: [
+          { key: "pro", value: true, expiresAt: future, grantedAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      }),
+    );
+
+    const { flags, account } = await loadStores();
+    flags.setFlagOverride("accounts", true);
+    await account.initAccountStore({ refresh: false });
+
+    testEnv.authListener?.({ event: "TOKEN_REFRESHED", session: authSession() });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(account.accountStatus()).toBe("signedOut");
+    expect(account.accountSession()).toBeNull();
+    expect(account.accountEntitlements()).toEqual([]);
+    expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+  });
+
   it("keeps signingIn through INITIAL_SESSION null and completes on the callback auth event", async () => {
     testEnv.client.refreshSession.mockResolvedValue(authSession("callback@pickforge.dev"));
     testEnv.client.getEntitlements.mockResolvedValue([
@@ -508,6 +559,33 @@ describe("account store", () => {
     expect(testEnv.client.getEntitlements).not.toHaveBeenCalled();
     expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
   });
+
+  it.each(["INITIAL_SESSION", "SIGNED_OUT"])(
+    "does not let a stale refresh override a %s null session event",
+    async (event) => {
+      const pendingSession = deferred<ReturnType<typeof authSession>>();
+      testEnv.client.getSession.mockReturnValue(pendingSession.promise);
+      testEnv.client.getEntitlements.mockResolvedValue([
+        { key: "pro", value: true, expiresAt: null, grantedAt: "2026-01-02T00:00:00.000Z" },
+      ]);
+
+      const { flags, account } = await loadStores();
+      flags.setFlagOverride("accounts", true);
+      await account.initAccountStore({ refresh: false });
+
+      const refresh = account.initAccountStore();
+      testEnv.authListener?.({ event, session: null });
+
+      pendingSession.resolve(authSession("stale@pickforge.dev"));
+      await refresh;
+
+      expect(account.accountStatus()).toBe("signedOut");
+      expect(account.accountSession()).toBeNull();
+      expect(account.accountEntitlements()).toEqual([]);
+      expect(testEnv.client.getEntitlements).not.toHaveBeenCalled();
+      expect(testEnv.mem.has(CACHE_KEY)).toBe(false);
+    },
+  );
 
   it("clears local state and cache when remote sign out fails", async () => {
     const future = new Date(Date.now() + 60_000).toISOString();

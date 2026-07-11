@@ -15,6 +15,7 @@ import { layout, toggleDock } from "./stores/workbenchLayout";
 import { runConsole, toggleConsole } from "./stores/runConsole";
 import { startSwarmBridge } from "./stores/swarm";
 import { installAccountStoreBootstrap } from "./stores/account";
+import { installCreditsBootstrap } from "./stores/credits";
 import { installSettingsSyncBootstrap } from "./stores/settingsSyncStore";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
@@ -106,6 +107,7 @@ export function App() {
     void checkForUpdate(true);
     startSwarmBridge();
     onCleanup(installSettingsSyncBootstrap());
+    onCleanup(installCreditsBootstrap());
 
     // Dev + release share one DB (~/.pickforge/pickforge.db); re-read it whenever
     // this window regains focus so the other instance's chat/project edits don't

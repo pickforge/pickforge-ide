@@ -24,6 +24,7 @@ reset this file.
 - BYO operator routing (Claude Code / Codex / Ollama) landed dark behind the `operator` flag.
 - Semantic Flutter widget selection now routes only indexed class names and labels, with local disambiguation and selection.
 - Landed accounts/auth wiring dark behind the `accounts` flag.
+- Hardened account session invalidation, offline cache clearing, and desktop OAuth deep-link registration.
 - Local dictation pipeline (Rust + IPC) landed dark; composer UI follows.
 - Core PTY can spawn over Tailscale SSH for remote projects; terminal and agent wiring follows.
 - Project terminals now run over SSH on their bound remote host; chat recovery stays local-only.
@@ -31,6 +32,8 @@ reset this file.
 - Added managed SSH VM-service tunnels for remote Flutter runs and inspector reattach.
 - Dictation mic landed in the operator dock (live preview, push-to-command, model override) behind the `operator` flag.
 - Settings sync landed dark behind the `settingsSync` flag (opt-in, per-group).
+- Hosted Pro Operator routing and credit purchase landed dark behind the `operator` flag (requires sign-in): a hosted router backend closes the routing ladder, the dock surfaces cost/balance and a quiet buy-credits prompt, and Settings gains a credit-pack purchase flow. Local and BYO routing stay free.
+- In-app account deletion + data export (LGPD user rights), behind the `accounts` flag.
 
 ## Validation
 
@@ -39,15 +42,16 @@ reset this file.
 - Workflow YAML parse check:
   `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 - `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.
-- `bun run test:unit` — 535 tests green, including the remote attach panel
-  state machine, remote health poller (dedupe/backoff/startup prime), and the
-  operator parser/dispatch/dock suites.
+- `bun run test:unit` — 735 tests green, including account-session cache and
+  refresh-race regressions.
 - `bun run build` — `tsc --noEmit` + vite production build clean.
 - `bunx playwright test` — VRT snapshots unchanged (remote UI is flag-gated
   and badge renders only for bound projects).
+- `cargo check` — workspace check clean.
 
 ### Not tested yet
 
+- Windows development OAuth deep-link smoke (no Windows Rust target is installed).
 - Tauri app bundle build.
 - Installer or updater flow.
 - Platform smoke checks.

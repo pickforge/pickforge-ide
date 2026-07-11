@@ -43,6 +43,50 @@
   white-space: nowrap;
 }
 
+.pf-account-tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-md);
+}
+
+.pf-account-status {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.04em;
+  color: var(--pf-text-med);
+}
+.pf-account-status--error {
+  color: var(--pf-error);
+}
+
+.pf-danger-zone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-sm);
+  margin-top: var(--pf-space-lg);
+  padding-top: var(--pf-space-lg);
+  border-top: var(--pf-hairline-width) solid color-mix(in srgb, var(--pf-error) 24%, var(--pf-hairline));
+}
+
+.pf-danger-btn {
+  border: var(--pf-hairline-width) solid color-mix(in srgb, var(--pf-error) 45%, transparent);
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-error);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-label-md);
+  letter-spacing: 0.04em;
+  padding: var(--pf-space-xs) var(--pf-space-md);
+  cursor: pointer;
+  transition: background var(--pf-dur-fast) var(--pf-ease-forge),
+    border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-danger-btn:hover {
+  background: color-mix(in srgb, var(--pf-error) 14%, transparent);
+  border-color: color-mix(in srgb, var(--pf-error) 65%, transparent);
+}
+
 .pf-text-btn {
   border: none;
   background: transparent;

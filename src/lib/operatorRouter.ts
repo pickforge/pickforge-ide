@@ -28,10 +28,12 @@ export const routerProposalSchema = z.union([
 export type RouterProposal = z.infer<typeof routerProposalSchema>;
 
 export type RouteResult =
-  | { kind: "proposal"; intent: OperatorIntent; confidence: number; latencyMs: number }
-  | { kind: "unclear"; reason: string }
-  | { kind: "error"; message: string }
+  | { kind: "proposal"; intent: OperatorIntent; confidence: number; latencyMs: number; costCents?: number }
+  | { kind: "unclear"; reason: string; costCents?: number }
+  | { kind: "error"; message: string; costCents?: number }
   | { kind: "unconfigured" };
+
+export type RouteOutcome = RouteResult | { kind: "needsCredits"; balance: number };
 
 export interface RawRouteOutput {
   output: string;
@@ -148,7 +150,7 @@ export function extractRouterText(backend: OperatorRouterBackend, output: string
   }
 }
 
-function composeIntent(
+export function composeIntent(
   action: unknown,
   confidence: number,
   projectRef: string | null | undefined,
@@ -191,7 +193,12 @@ function persistLatencyBestEffort(backend: OperatorRouterBackend, latencyMs: num
   }
 }
 
-export async function routeCommand(text: string): Promise<RouteResult> {
+export async function routeCommand(text: string): Promise<RouteOutcome> {
+  if (configuredRouterBackend() === "hosted") {
+    const { hostedRoute } = await import("./hostedRouter");
+    return hostedRoute(text);
+  }
+
   const raw = await routeRawPrompt(buildRouterPrompt(text));
   if (raw.kind === "unconfigured") return raw;
   if (raw.kind === "error") return raw;
@@ -214,7 +221,7 @@ export async function routeCommand(text: string): Promise<RouteResult> {
 
 export async function routeRawPrompt(prompt: string): Promise<RawRouterResult> {
   const backend = configuredRouterBackend();
-  if (!backend) return { kind: "unconfigured" };
+  if (!backend || backend === "hosted" || backend === "off") return { kind: "unconfigured" };
   const model = operatorRouterSettings().models[backend].trim();
   if (!model) return { kind: "unconfigured" };
 

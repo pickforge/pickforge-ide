@@ -1,13 +1,22 @@
 import { createEffect, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
-import { AGENTS, loadAgentModels, setAgentModel } from "../lib/agentModels";
+import {
+  agentProfiles,
+  discoverAgentCli,
+  loadAgentModels,
+  setAgentModel,
+  type AgentCliDiagnostic,
+  type AgentProfile,
+} from "../lib/agentModels";
 import {
   addQuickLaunchItem,
+  addOptionalQuickLaunch,
   isAskAiItem,
   conflictingHotkeys,
   eventToHotkey,
   formatHotkey,
   quickLaunchItems,
   removeQuickLaunchItem,
+  optionalQuickLaunchChoices,
   resetQuickLaunchItems,
   updateQuickLaunchItem,
 } from "../stores/quickLaunch";
@@ -193,6 +202,7 @@ function rememberSettingsCategory(category: SettingsCategoryKey): void {
     // Settings navigation remains usable when storage is unavailable.
   }
 }
+const AGENT_DIAGNOSTIC_IDS = ["omp", "pi"] as const;
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
@@ -213,6 +223,11 @@ export function SettingsScreen() {
   const [remoteError, setRemoteError] = createSignal<string | null>(null);
   const [remoteNow, setRemoteNow] = createSignal(Date.now());
   const [voiceState, setVoiceState] = createSignal<VoiceStatus | null>(null);
+  const [agentDiagnostics, setAgentDiagnostics] =
+    createSignal<Record<string, AgentCliDiagnostic>>({});
+  const [agentDiagnosticErrors, setAgentDiagnosticErrors] =
+    createSignal<Record<string, string>>({});
+  const [agentDiagnosticsLoading, setAgentDiagnosticsLoading] = createSignal(false);
   const [exporting, setExporting] = createSignal(false);
   const [exportStatus, setExportStatus] = createSignal<
     { kind: "ok" | "error"; text: string } | null
@@ -477,18 +492,42 @@ export function SettingsScreen() {
       });
     }
   };
+  const reloadAgentDiagnostics = async () => {
+    if (!flagEnabled("ompPiAgents") || agentDiagnosticsLoading()) return;
+    setAgentDiagnosticsLoading(true);
+    const next: Record<string, AgentCliDiagnostic> = {};
+    const failures: Record<string, string> = {};
+    await Promise.all(AGENT_DIAGNOSTIC_IDS.map(async (agentId) => {
+      try {
+        next[agentId] = await discoverAgentCli(agentId);
+      } catch (error) {
+        failures[agentId] = error instanceof Error ? error.message : String(error);
+      }
+    }));
+    setAgentDiagnostics(next);
+    setAgentDiagnosticErrors(failures);
+    setAgentDiagnosticsLoading(false);
+  };
   onMount(() => {
     void reloadArchived();
     void reloadPickLab();
     void reloadTelemetry();
     void reloadRemoteHost();
     if (flagEnabled("operator")) void reloadVoice();
+    if (flagEnabled("ompPiAgents")) void reloadAgentDiagnostics();
   });
-  // Flipping the operator flag on while Settings is open must load the
-  // dictation status that onMount skipped.
+  // Flipping a rollout flag on while Settings is open loads status that
+  // onMount deliberately skipped while the feature was hidden.
   onCleanup(
     subscribeToFlagChanges(() => {
       if (flagEnabled("operator") && voiceState() === null) void reloadVoice();
+      if (
+        flagEnabled("ompPiAgents")
+        && Object.keys(agentDiagnostics()).length === 0
+        && Object.keys(agentDiagnosticErrors()).length === 0
+      ) {
+        void reloadAgentDiagnostics();
+      }
     }),
   );
   const pairingExpiryTimer = window.setInterval(() => setRemoteNow(Date.now()), 1_000);
@@ -547,7 +586,29 @@ export function SettingsScreen() {
 
   const conflicts = () => conflictingHotkeys(quickLaunchItems());
   const agentLabel = (id?: string) =>
-    AGENTS.find((a) => a.id === id)?.label ?? id ?? "";
+    agentProfiles().find((agent) => agent.id === id)?.label ?? id ?? "";
+  const agentModelsFor = (agent: AgentProfile) =>
+    agent.models.length > 0 ? agent.models : agentDiagnostics()[agent.id]?.models ?? [];
+  const agentStatusLabel = (agent: AgentProfile): string => {
+    const diagnostic = agentDiagnostics()[agent.id];
+    const failure = agentDiagnosticErrors()[agent.id];
+    if (failure) return "Diagnostic failed";
+    if (!diagnostic) return agentDiagnosticsLoading() ? "Checking installation…" : "Not checked";
+    if (!diagnostic.installed) return "Not installed";
+    return diagnostic.version ? `${agent.binary} ${diagnostic.version}` : "Installed";
+  };
+  const agentCapabilityLabel = (agent: AgentProfile): string => {
+    const diagnostic = agentDiagnostics()[agent.id];
+    const failure = agentDiagnosticErrors()[agent.id];
+    if (failure) return `Terminal-only status unavailable · ${failure}`;
+    if (!diagnostic?.installed) return `Terminal only · ${agent.binary} is required on PATH`;
+    const capabilities = ["terminal only"];
+    if (diagnostic.capabilities.dynamicModels) capabilities.push("offline model catalog");
+    if (diagnostic.capabilities.providerSelection) capabilities.push("provider selection");
+    if (diagnostic.capabilities.profiles) capabilities.push("named profiles");
+    if (diagnostic.errors.length > 0) capabilities.push(diagnostic.errors.join("; "));
+    return capabilities.join(" · ");
+  };
   const routerBackendOptions = [
     { value: "off", label: "Off" },
     { value: "claudeCode", label: "Claude Code", icon: () => <IconClaude size={13} /> },
@@ -736,36 +797,66 @@ export function SettingsScreen() {
           ? ` pf-settings--navigation pf-settings--category-${activeCategory()}`
           : ""}`}
       >
-        <AgentModelsSettingsSection><For each={AGENTS}>
-          {(agent) => (
-            <div class="pf-settings-row">
-              <span class="pf-settings-label">
-                <Show when={agent.id === "claudeCode"}>
-                  <span class="pf-settings-brand"><IconClaude size={14} /></span>
+        <AgentModelsSettingsSection>
+          <For each={agentProfiles()}>
+            {(agent) => (
+              <>
+                <div class="pf-settings-row">
+                  <span class="pf-settings-label">
+                    <Show when={agent.id === "claudeCode"}>
+                      <span class="pf-settings-brand"><IconClaude size={14} /></span>
+                    </Show>
+                    <Show when={agent.id === "codex"}>
+                      <span class="pf-settings-brand"><IconOpenAI size={14} /></span>
+                    </Show>
+                    {agent.label}
+                    <Show when={agent.terminalOnly}>
+                      <span class="pf-settings-hint-inline">{agentStatusLabel(agent)}</span>
+                    </Show>
+                  </span>
+                  <Show
+                    when={agentModelsFor(agent).length > 0}
+                    fallback={
+                      <span class="pf-settings-muted">
+                        {agent.terminalOnly ? "Models unavailable · CLI default" : "CLI default"}
+                      </span>
+                    }
+                  >
+                    <Dropdown
+                      class="pf-settings-dropdown"
+                      value={models()[agent.id] ?? ""}
+                      onChange={(v) => changeModel(agent.id, v)}
+                      options={agentModelsFor(agent).map((model) => ({
+                        value: model.id,
+                        label: model.label,
+                        icon: () => <IconIngot size={13} />,
+                      }))}
+                    />
+                  </Show>
+                </div>
+                <Show when={agent.terminalOnly}>
+                  <span class="pf-settings-muted">{agentCapabilityLabel(agent)}</span>
                 </Show>
-                <Show when={agent.id === "codex"}>
-                  <span class="pf-settings-brand"><IconOpenAI size={14} /></span>
-                </Show>
-                {agent.label}
-              </span>
-              <Show
-                when={agent.models.length > 0}
-                fallback={<span class="pf-settings-muted">CLI default</span>}
+              </>
+            )}
+          </For>
+          <Show when={flagEnabled("ompPiAgents")}>
+            <span class="pf-settings-muted">
+              Offline, read-only checks only. OMP model discovery and PickForge MCP wiring
+              are deferred until supported CLI integrations are available.
+            </span>
+            <div class="pf-ql-actions">
+              <button
+                class="pf-ql-add"
+                disabled={agentDiagnosticsLoading()}
+                onClick={() => void reloadAgentDiagnostics()}
               >
-                <Dropdown
-                  class="pf-settings-dropdown"
-                  value={models()[agent.id] ?? ""}
-                  onChange={(v) => changeModel(agent.id, v)}
-                  options={agent.models.map((m) => ({
-                    value: m.id,
-                    label: m.label,
-                    icon: () => <IconIngot size={13} />,
-                  }))}
-                />
-              </Show>
+                <IconRefresh size={13} />
+                {agentDiagnosticsLoading() ? "Checking…" : "Refresh agent status"}
+              </button>
             </div>
-          )}
-        </For></AgentModelsSettingsSection>
+          </Show>
+        </AgentModelsSettingsSection>
 
         <Show when={flagEnabled("operator")}>
           <OperatorRouterSettingsSection><div class="pf-settings-row">
@@ -1086,6 +1177,16 @@ export function SettingsScreen() {
           <button class="pf-ql-add" onClick={addQuickLaunchItem}>
             <IconPlus size={13} /> Add item
           </button>
+          <For each={optionalQuickLaunchChoices()}>
+            {(choice) => (
+              <button
+                class="pf-ql-add"
+                onClick={() => addOptionalQuickLaunch(choice.agentId === "omp" ? "omp" : "pi")}
+              >
+                <IconPlus size={13} /> Add {choice.label}
+              </button>
+            )}
+          </For>
           <button class="pf-text-btn" onClick={resetQuickLaunchItems}>
             Reset defaults
           </button>

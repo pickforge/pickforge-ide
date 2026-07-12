@@ -1,6 +1,8 @@
 // Agent profiles + per-agent model selection. Ports agent_model_settings.dart
 // (Claude→Haiku, Codex→GPT-5.3 Codex Spark defaults). Selection persists in
 // localStorage (global, like the Flutter SharedPreferences store).
+import { flagEnabled } from "../stores/flags";
+import { probeAgentCli, type AgentCliProbe } from "./process";
 
 export interface AgentModelOption {
   id: string;
@@ -22,6 +24,8 @@ export interface AgentProfile {
   binary: string;
   defaultModel: string | null;
   models: AgentModelOption[];
+  /** This profile launches in a terminal; it is not a native chat backend. */
+  terminalOnly?: boolean;
 }
 
 export interface AgentLaunchContext {
@@ -107,10 +111,138 @@ export const AGENTS: AgentProfile[] = [
   { id: "gemini", label: "Gemini", binary: "gemini", defaultModel: null, models: [] },
 ];
 
+const OMP_PI_AGENTS: AgentProfile[] = [
+  {
+    id: "omp",
+    label: "Oh My Pi (OMP)",
+    binary: "omp",
+    defaultModel: null,
+    models: [],
+    terminalOnly: true,
+  },
+  {
+    id: "pi",
+    label: "Pi",
+    binary: "pi",
+    defaultModel: null,
+    models: [],
+    terminalOnly: true,
+  },
+];
+
+/** Profiles exposed by the current build flags. The base AGENTS export remains
+ * stable for native-chat callers, which only support Claude and Codex. */
+export function agentProfiles(): AgentProfile[] {
+  return flagEnabled("ompPiAgents") ? [...AGENTS, ...OMP_PI_AGENTS] : AGENTS;
+}
+
+function profileForAgent(agentId: string): AgentProfile | undefined {
+  return agentProfiles().find((agent) => agent.id === agentId);
+}
+
+export interface AgentCliCapabilities {
+  terminal: boolean;
+  dynamicModels: boolean;
+  profiles: boolean;
+  providerSelection: boolean;
+}
+
+export interface AgentCliDiagnostic {
+  agentId: "omp" | "pi";
+  installed: boolean;
+  version: string | null;
+  models: AgentModelOption[];
+  capabilities: AgentCliCapabilities;
+  errors: string[];
+}
+
+
+function uniqueModels(models: AgentModelOption[]): AgentModelOption[] {
+  const seen = new Set<string>();
+  return models.filter((model) => {
+    if (seen.has(model.id)) return false;
+    seen.add(model.id);
+    return true;
+  });
+}
+
+
+/** Parse the stable whitespace table emitted by `pi --list-models`. */
+export function parsePiModelCatalog(raw: string): AgentModelOption[] {
+  const models: AgentModelOption[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim() || /^\s*provider\s+model\s+/i.test(line)) continue;
+    const match = line.match(/^\s*(\S+)\s{2,}(\S+)\s{2,}/);
+    if (!match) continue;
+    const provider = match[1];
+    const model = match[2];
+    models.push({
+      id: `${provider}/${model}`,
+      label: `${model} · ${provider}`,
+      terminalOnly: true,
+    });
+  }
+  if (models.length === 0 && raw.trim()) {
+    throw new Error("Pi returned an unsupported model catalog");
+  }
+  return uniqueModels(models);
+}
+
+function versionFromOutput(raw: string): string | null {
+  return raw.match(/\bv?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
+}
+
+/** Convert the native probe into UI-safe diagnostics. Exported as the pure test
+ * seam for malformed output and partial-command failures. */
+export function diagnosticFromProbe(
+  agentId: "omp" | "pi",
+  probe: AgentCliProbe,
+): AgentCliDiagnostic {
+  const errors = [...probe.errors];
+  const version = versionFromOutput(probe.versionOutput);
+  if (probe.installed && probe.versionOutput.trim() && !version) {
+    errors.push("Version output was not recognized");
+  }
+
+  let models: AgentModelOption[] = [];
+  if (agentId === "omp" && probe.installed) {
+    errors.push("OMP models unavailable: no enforced offline/cache-only catalog probe");
+  } else if (probe.installed && probe.modelsOutput.trim()) {
+    try {
+      models = parsePiModelCatalog(probe.modelsOutput);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const help = probe.helpOutput;
+  const installed = probe.installed;
+  return {
+    agentId,
+    installed,
+    version,
+    models,
+    capabilities: {
+      terminal: installed,
+      dynamicModels: installed && models.length > 0,
+      profiles: installed && /--profile(?:=|\s|<)/.test(help),
+      providerSelection: installed && /--provider(?:=|\s|<)/.test(help),
+    },
+    errors,
+  };
+}
+
+export async function discoverAgentCli(
+  agentId: "omp" | "pi",
+  probe: (id: "omp" | "pi") => Promise<AgentCliProbe> = probeAgentCli,
+): Promise<AgentCliDiagnostic> {
+  return diagnosticFromProbe(agentId, await probe(agentId));
+}
+
 const STORE_KEY = "pickforge.agentModels";
 
 function defaults(): Record<string, string | null> {
-  return Object.fromEntries(AGENTS.map((a) => [a.id, a.defaultModel]));
+  return Object.fromEntries(agentProfiles().map((a) => [a.id, a.defaultModel]));
 }
 
 export function loadAgentModels(): Record<string, string | null> {
@@ -137,7 +269,7 @@ export function modelOption(
   agentId: string,
   modelId: string | null,
 ): AgentModelOption | undefined {
-  const agent = AGENTS.find((a) => a.id === agentId);
+  const agent = profileForAgent(agentId);
   if (!agent) return undefined;
   const id = modelId ?? agent.defaultModel;
   return agent.models.find((m) => m.id === id);
@@ -166,16 +298,23 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+function shellArgument(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : shellQuote(value);
+}
+
 /** The shell command to launch an agent, pinned to its selected model. */
 export function launchCommand(agentId: string, context: AgentLaunchContext = {}): string {
-  const agent = AGENTS.find((a) => a.id === agentId);
+  const agent = profileForAgent(agentId);
   if (!agent) return "";
   const model = loadAgentModels()[agentId];
   const option = selectedModelOption(agentId);
   if (model && option?.launch) {
     return `${option.launch.binary} ${option.launch.argsBeforeModel.join(" ")} ${model} `;
   }
-  const modelArg = model ? `--model ${model} ` : "";
+  const safeModel = agent.id === "omp" || agent.id === "pi"
+    ? model && shellArgument(model)
+    : model;
+  const modelArg = safeModel ? `--model ${safeModel} ` : "";
   if (agent.id === "claudeCode") {
     const mcpArg = context.mcpConfigPath
       ? `--mcp-config ${shellQuote(context.mcpConfigPath)} `
@@ -191,16 +330,24 @@ export function launchCommand(agentId: string, context: AgentLaunchContext = {})
       : "";
     return `${agent.binary} ${mcpArgs}${modelArg}`;
   }
-  return model ? `${agent.binary} --model ${model} ` : `${agent.binary} `;
+  if (agent.id === "omp" || agent.id === "pi") {
+    const briefArg = context.agentBrief
+      ? `--append-system-prompt ${shellQuote(context.agentBrief)} `
+      : "";
+    return `${agent.binary} ${briefArg}${modelArg}`;
+  }
+  return `${agent.binary} ${modelArg}`;
 }
 
 export function launchBinary(agentId: string): string | null {
   const option = selectedModelOption(agentId);
   if (option?.launch) return option.launch.binary;
-  return AGENTS.find((a) => a.id === agentId)?.binary ?? null;
+  return profileForAgent(agentId)?.binary ?? null;
 }
 
 export function nativeChatModel(agentId: string, modelId: string | null): string | null {
+  const profile = profileForAgent(agentId);
+  if (profile?.terminalOnly) return null;
   const option = modelOption(agentId, modelId);
   return option?.terminalOnly ? null : modelId;
 }

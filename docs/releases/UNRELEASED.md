@@ -43,6 +43,11 @@ reset this file.
 - Dynamic semantic chat titles landed dark behind the `dynamicChatTitles` flag,
   with durable manual ownership, milestone refreshes, provider/OSC precedence,
   and a “Resume automatic titles” control.
+- OMP and Pi terminal profiles, bounded offline/read-only CLI diagnostics, Pi's
+  offline model catalog, optional quick-launch chips, and OMP activity/title
+  recognition landed dark behind the default-off `ompPiAgents` flag. OMP model
+  discovery and PickForge MCP wiring remain deferred until the CLIs expose
+  supported, offline-safe integration paths.
 
 ## Validation
 
@@ -76,6 +81,11 @@ reset this file.
   without updating snapshots.
 - Live Acorns macOS run — Tailnet attach, deterministic device launch, VM-service
   tunnel, widget tree, node selection, hot reload, and stop all passed.
+- `bunx vitest run tests/unit/flags.test.ts tests/unit/agentModels.test.ts tests/unit/chatAutoName.test.ts tests/unit/settingsSync.test.ts`
+  — 65 focused flag, command, discovery, failure, terminal, and sync tests green.
+- `bunx tsc --noEmit` — frontend type-check clean.
+- `cargo test -p pickforge-tauri agent_probe_is_strictly_allowlisted --lib` —
+  fixed diagnostic command allowlist test green.
 
 ### Not tested yet
 

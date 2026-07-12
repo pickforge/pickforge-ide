@@ -213,6 +213,7 @@ pub fn run() {
             pty_commands::pty_spawn_chat,
             pty_commands::pty_destroy_chat_session,
             process_commands::detect_binaries,
+            process_commands::probe_agent_cli,
             remote_commands::remote_host_status,
             remote_commands::remote_host_start,
             remote_commands::remote_host_stop,

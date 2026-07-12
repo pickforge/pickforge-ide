@@ -15,7 +15,7 @@ import { flagEnabled } from "./flags";
 import { creditBalanceCents, refreshCreditBalance } from "./credits";
 import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
 import type { OperatorIntent } from "../lib/operatorIntent";
-import { navigate, onRouteChange } from "../router";
+import { navigateSettingsSection, onRouteChange } from "../router";
 
 export interface HostedRouteMeta {
   costCents: number;
@@ -60,7 +60,7 @@ export const operatorRouteMeta = routeMeta;
 
 export function openBuyCredits() {
   closeOperatorDock();
-  navigate("settings");
+  navigateSettingsSection("account");
 }
 
 function billedCost(routed: RouteOutcome): number | undefined {

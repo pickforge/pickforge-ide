@@ -13,6 +13,7 @@ const deps = vi.hoisted(() => ({
   operatorAuditList: vi.fn(),
   operatorAuditUpdate: vi.fn(),
   refreshCreditBalance: vi.fn(),
+  navigateSettingsSection: vi.fn(),
   creditBalance: null as number | null,
 }));
 
@@ -47,6 +48,7 @@ vi.mock("../../src/router", () => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    navigateSettingsSection: deps.navigateSettingsSection,
     navigate: (r: string) => {
       const changed = r !== current;
       current = r;
@@ -91,6 +93,7 @@ beforeEach(() => {
   deps.operatorAuditList.mockReset().mockResolvedValue([]);
   deps.operatorAuditUpdate.mockReset().mockResolvedValue(undefined);
   deps.refreshCreditBalance.mockReset().mockResolvedValue(undefined);
+  deps.navigateSettingsSection.mockReset();
   deps.creditBalance = null;
 });
 
@@ -128,6 +131,16 @@ describe("operatorDock store", () => {
     expect(s.operatorDockOpen()).toBe(true);
     expect(s.toggleOperatorDock()).toBe(false);
     expect(s.operatorDockOpen()).toBe(false);
+  });
+
+  it("opens the account settings section when buying credits", async () => {
+    const s = await loadStore();
+    s.openOperatorDock();
+
+    s.openBuyCredits();
+
+    expect(s.operatorDockOpen()).toBe(false);
+    expect(deps.navigateSettingsSection).toHaveBeenCalledWith("account");
   });
 
   it("does nothing on an empty command", async () => {

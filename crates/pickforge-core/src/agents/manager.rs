@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::mem::ManuallyDrop;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1739,13 +1738,10 @@ impl AgentChatManager {
             .lock()
             .map(|mut inner| inner.drain().collect::<Vec<_>>())
             .unwrap_or_default();
+        let mut turn_stops = Vec::new();
         for (session_id, state) in drained {
-            let had_active_turn = if let Some(turn) = state.active_turn {
-                turn.shutdown();
-                true
-            } else {
-                false
-            };
+            let active_turn = state.active_turn;
+            let had_active_turn = active_turn.is_some();
             let was_running = self
                 .db
                 .agent_session_status(&session_id)
@@ -1755,6 +1751,25 @@ impl AgentChatManager {
             if had_active_turn || was_running {
                 let _ = self.db.agent_session_set_status(&session_id, "idle");
             }
+            if let Some(turn) = active_turn {
+                let worker = turn.clone();
+                match std::thread::Builder::new()
+                    .name("agent-turn-stop".to_string())
+                    .spawn(move || worker.shutdown())
+                {
+                    Ok(thread) => turn_stops.push(Some(thread)),
+                    Err(_) => turn.shutdown(),
+                }
+            }
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(17);
+        while turn_stops.iter().any(Option::is_some) && std::time::Instant::now() < deadline {
+            for thread in &mut turn_stops {
+                if thread.as_ref().is_some_and(|thread| thread.is_finished()) {
+                    let _ = thread.take().expect("finished turn stop thread").join();
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
         let clients = self
@@ -1940,6 +1955,25 @@ fn start_pi_prompt(
     Ok(())
 }
 
+fn drop_shared_once<T>(shared: Arc<Mutex<Option<T>>>) {
+    let value = shared.lock().ok().and_then(|mut value| value.take());
+    drop(value);
+}
+
+fn spawn_or_drop<T: Send + 'static>(
+    value: T,
+    spawn: impl FnOnce(Arc<Mutex<Option<T>>>) -> std::io::Result<std::thread::JoinHandle<()>>,
+) -> Option<std::thread::JoinHandle<()>> {
+    let shared = Arc::new(Mutex::new(Some(value)));
+    match spawn(Arc::clone(&shared)) {
+        Ok(thread) => Some(thread),
+        Err(_) => {
+            drop_shared_once(shared);
+            None
+        }
+    }
+}
+
 impl ActiveTurn {
     fn new(handle: ActiveTurnHandle) -> Self {
         Self {
@@ -2098,15 +2132,16 @@ impl ActiveTurn {
     fn reap(&self) {
         let handle = self.inner.lock().ok().and_then(|mut handle| handle.take());
         if let Some(handle) = handle {
-            let handle = ManuallyDrop::new(handle);
-            let _ = std::thread::Builder::new()
-                .name("agent-turn-reaper".to_string())
-                .spawn(move || drop(ManuallyDrop::into_inner(handle)));
+            let _ = spawn_or_drop(handle, |shared| {
+                std::thread::Builder::new()
+                    .name("agent-turn-reaper".to_string())
+                    .spawn(move || drop_shared_once(shared))
+            });
         }
     }
 
-    /// Interrupt V2 turns while their provider client is still alive, then drop
-    /// V1 handles synchronously so their reader threads join.
+    /// Interrupt V2 turns while their provider client is still alive; V1 turns
+    /// synchronously deliver their bounded remote stop before app exit.
     fn shutdown(&self) {
         let handle = self.inner.lock().ok().and_then(|mut slot| {
             if let Some(handle) = slot.as_ref() {
@@ -2137,7 +2172,11 @@ impl ActiveTurn {
             }
             slot.take()
         });
-        drop(handle);
+        match handle {
+            Some(ActiveTurnHandle::Codex(turn)) => turn.shutdown_bounded(),
+            Some(ActiveTurnHandle::Claude(turn)) => turn.shutdown_bounded(),
+            other => drop(other),
+        }
     }
 }
 
@@ -2607,6 +2646,24 @@ mod tests {
     use crate::db::AgentTimelineEntry;
 
     use super::*;
+
+    struct DropProbe(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn reaper_spawn_failure_drops_value_synchronously_once() {
+        let drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let thread = spawn_or_drop(DropProbe(Arc::clone(&drops)), |_| {
+            Err(std::io::Error::other("injected reaper spawn failure"))
+        });
+        assert!(thread.is_none());
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
 
     #[cfg(unix)]
     struct TestScript {

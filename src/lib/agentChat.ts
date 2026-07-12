@@ -13,6 +13,7 @@ import {
   piNativeChatAvailable,
 } from "./agentModels";
 import { ensureMcpRunning, mcpEnv } from "../stores/mcp";
+import type { RemotePty } from "./pty";
 
 export type { AgentEngine, AgentProvider } from "./agentBackends";
 export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
@@ -144,7 +145,7 @@ export interface AgentChatStartOptions {
   approvalPolicy?: string;
   permissionMode?: string;
   allowedTools?: string[];
-  remote?: { host: string; remoteRoot: string } | null;
+  remote?: RemotePty | null;
   mcpServers?: AgentMcpServer[];
   onEvent: (event: AgentEvent) => void;
 }

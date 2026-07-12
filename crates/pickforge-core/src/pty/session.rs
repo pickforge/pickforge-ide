@@ -16,7 +16,10 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use super::env::normalize_pty_env;
 use super::shell::{resolve_shell, ShellInvocation};
 use crate::process::{user_shell_environment, StartGate};
-use crate::remote::{shell_quote_argv, ssh_base_args, SshTarget};
+use crate::remote::{
+    remote_process_command, shell_quote_argv, ssh_base_args, stop_remote_leases_bounded,
+    RemoteLeaseHandle, RemoteLeasePayload, SshTarget,
+};
 
 const PTY_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -50,6 +53,7 @@ where
 pub struct RemotePty {
     pub host: String,
     pub remote_root: String,
+    pub remote_process_leases: bool,
 }
 
 /// Options for spawning a shell. `rows`/`cols` of 0 default to 24×80.
@@ -130,6 +134,7 @@ struct Session {
     /// detach (reap the client, leave the process group alone) so the recoverable
     /// session survives. A raw interactive shell is false → full group teardown.
     detach_on_drop: bool,
+    remote_lease: Option<RemoteLeaseHandle>,
 }
 
 /// Owns every live PTY session. Lives behind Tauri's managed `State`.
@@ -181,13 +186,11 @@ impl PtyManager {
             .filter(|c| !c.trim().is_empty())
             .cloned();
 
-        let (program, args) = if let Some(remote) = opts.remote.as_ref() {
-            (
-                "ssh".to_string(),
-                remote_pty_ssh_args(remote, one_shot.as_deref())?,
-            )
+        let (program, args, remote_lease) = if let Some(remote) = opts.remote.as_ref() {
+            let (args, lease) = remote_pty_ssh_args(remote, one_shot.as_deref())?;
+            ("ssh".to_string(), args, lease)
         } else {
-            match (&one_shot, opts.program_override.clone()) {
+            let (program, args) = match (&one_shot, opts.program_override.clone()) {
                 // Session-backed chat shell: spawn the dtach/tmux client verbatim.
                 (None, Some((prog, prog_args))) => (prog, prog_args),
                 // Raw shell (interactive, or one-shot `$SHELL -c <command>`).
@@ -199,10 +202,14 @@ impl PtyManager {
                     }
                     (program, args)
                 }
-            }
+            };
+            (program, args, None)
         };
         // A one-shot command can never run detached — it must reap normally.
         let detach_on_drop = opts.detach_on_drop && one_shot.is_none();
+        if let Some(lease) = remote_lease.as_ref() {
+            lease.prepare()?;
+        }
 
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
@@ -230,7 +237,7 @@ impl PtyManager {
             cmd.env(key, value);
         }
 
-        let child = pair.slave.spawn_command(cmd)?;
+        let mut child = pair.slave.spawn_command(cmd)?;
         #[cfg(test)]
         if let Some(hook) = self
             .after_child_spawn
@@ -239,6 +246,13 @@ impl PtyManager {
             .clone()
         {
             hook(child.process_id());
+        }
+        if let Some(lease) = remote_lease.as_ref() {
+            if let Err(error) = lease.start_heartbeat() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(PtyError::Io(error));
+            }
         }
         drop(pair.slave); // parent must close its slave handle
 
@@ -257,6 +271,7 @@ impl PtyManager {
             #[cfg(unix)]
             shell_pid,
             detach_on_drop,
+            remote_lease,
         };
 
         // Register before starting the reader so a shell that exits immediately
@@ -304,6 +319,9 @@ impl PtyManager {
                     .expect("pty registry poisoned")
                     .remove(&id);
                 if let Some(mut session) = removed {
+                    if let Some(lease) = session.remote_lease.take() {
+                        lease.stop();
+                    }
                     let _ = session.child.kill();
                     let _ = session.child.wait();
                 }
@@ -400,8 +418,12 @@ impl PtyManager {
             reader_thread,
             #[cfg(unix)]
             shell_pid,
+            remote_lease,
             ..
         } = session;
+        if let Some(lease) = remote_lease {
+            lease.stop();
+        }
         drop(writer);
         drop(master);
         #[cfg(unix)]
@@ -422,13 +444,18 @@ impl PtyManager {
         self.start_gate.close();
         self.shutting_down.store(true, Ordering::SeqCst);
         self.start_gate.wait();
-        let drained = {
+        let mut drained = {
             let mut sessions = self.sessions.lock().expect("pty registry poisoned");
             sessions
                 .drain()
                 .map(|(_, session)| session)
                 .collect::<Vec<_>>()
         };
+        let leases = drained
+            .iter_mut()
+            .filter_map(|session| session.remote_lease.take())
+            .collect();
+        stop_remote_leases_bounded(leases);
         teardown_sessions(drained, PTY_SHUTDOWN_TIMEOUT)
     }
 
@@ -493,6 +520,9 @@ fn teardown_sessions(sessions: Vec<Session>, timeout: std::time::Duration) -> us
 
 /// Must run outside the registry lock because the reader thread takes it on EOF.
 fn teardown_session(mut session: Session) {
+    if let Some(lease) = session.remote_lease.take() {
+        lease.stop();
+    }
     #[cfg(unix)]
     terminate_process_groups(session.shell_pid, session.master.process_group_leader());
     let _ = session.child.kill();
@@ -502,9 +532,27 @@ fn teardown_session(mut session: Session) {
     }
 }
 
-fn remote_pty_ssh_args(remote: &RemotePty, command: Option<&str>) -> Result<Vec<String>, PtyError> {
+fn remote_pty_ssh_args(
+    remote: &RemotePty,
+    command: Option<&str>,
+) -> Result<(Vec<String>, Option<RemoteLeaseHandle>), PtyError> {
     let target = SshTarget::new(remote.host.clone())?;
     validate_remote_root(&remote.remote_root)?;
+    let payload = match command {
+        Some(command) => RemoteLeasePayload::LoginCommand {
+            cwd: remote.remote_root.clone(),
+            command: command.to_string(),
+        },
+        None => RemoteLeasePayload::LoginShell {
+            cwd: remote.remote_root.clone(),
+        },
+    };
+    let (remote_command, lease) = remote_process_command(
+        &target,
+        remote.remote_process_leases,
+        payload,
+        remote_pty_command(&remote.remote_root, command),
+    );
 
     let mut args = ssh_base_args();
     args.push("-o".to_string());
@@ -512,8 +560,8 @@ fn remote_pty_ssh_args(remote: &RemotePty, command: Option<&str>) -> Result<Vec<
     args.push("-tt".to_string());
     args.push("--".to_string());
     args.push(target.host);
-    args.push(remote_pty_command(&remote.remote_root, command));
-    Ok(args)
+    args.push(remote_command);
+    Ok((args, lease))
 }
 
 fn remote_pty_command(remote_root: &str, command: Option<&str>) -> String {
@@ -550,6 +598,7 @@ fn read_loop<S: PtySink>(
     sessions: Arc<Mutex<HashMap<u32, Session>>>,
 ) {
     let mut buf = [0u8; 8192];
+    let mut reader_failed = false;
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
@@ -561,20 +610,39 @@ fn read_loop<S: PtySink>(
                 }))
                 .is_ok();
                 if !delivered {
+                    reader_failed = true;
                     break;
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(_) => {
+                reader_failed = true;
+                break;
+            }
         }
     }
 
     // Drop the session and reap the child so PTY/child handles don't leak after
-    // the shell exits on its own (the common case).
+    // the shell exits on its own (the common case). A reader/sink failure is
+    // different: stop the exact remote lease and local process immediately.
     let removed = sessions.lock().expect("pty registry poisoned").remove(&id);
-    let code = removed
-        .and_then(|mut session| session.child.wait().ok())
-        .map(|status| status.exit_code() as i32);
+    let code = removed.and_then(|mut session| {
+        if reader_failed {
+            if let Some(lease) = session.remote_lease.take() {
+                lease.stop();
+            }
+            #[cfg(unix)]
+            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
+            let _ = session.child.kill();
+        } else if let Some(lease) = session.remote_lease.take() {
+            lease.finish_natural();
+        }
+        session
+            .child
+            .wait()
+            .ok()
+            .map(|status| status.exit_code() as i32)
+    });
     let _ = std::panic::catch_unwind(AssertUnwindSafe(|| sink.emit(PtyEvent::Exit(code))));
 }
 
@@ -651,6 +719,7 @@ mod tests {
         RemotePty {
             host: host.to_string(),
             remote_root: remote_root.to_string(),
+            remote_process_leases: false,
         }
     }
 
@@ -706,7 +775,7 @@ mod tests {
     #[test]
     fn remote_pty_argv_without_command_starts_login_shell_under_root() {
         assert_eq!(
-            remote_pty_ssh_args(&remote("mac-mini", "/Users/dev/app"), None).unwrap(),
+            remote_pty_ssh_args(&remote("mac-mini", "/Users/dev/app"), None).unwrap().0,
             vec![
                 "-o",
                 "ConnectTimeout=5",
@@ -729,7 +798,7 @@ mod tests {
                 &remote("mac-mini", "/Users/dev/app"),
                 Some("bun run test:unit")
             )
-            .unwrap(),
+            .unwrap().0,
             vec![
                 "-o",
                 "ConnectTimeout=5",
@@ -747,16 +816,32 @@ mod tests {
 
     #[test]
     fn remote_pty_argv_quotes_root_and_command_as_data() {
-        let args = remote_pty_ssh_args(
+        let (args, lease) = remote_pty_ssh_args(
             &remote("mac-mini", "/Users/dev/it's $root`tick`"),
             Some("printf '%s' \"$SHELL\" \"$HOME\" `uname`"),
         )
         .unwrap();
+        assert!(lease.is_none());
 
         assert_eq!(
             args.last().unwrap(),
             r#"cd '/Users/dev/it'\''s $root`tick`' && exec "$SHELL" -lc 'printf '\''%s'\'' "$SHELL" "$HOME" `uname`'"#
         );
+    }
+
+    #[test]
+    fn remote_pty_lease_keeps_tt_and_encodes_bootstrap_data() {
+        let mut remote = remote("mac-mini", "/Users/dev/secret root");
+        remote.remote_process_leases = true;
+        let (args, lease) =
+            remote_pty_ssh_args(&remote, Some("printf 'hostile' $HOME")).unwrap();
+
+        assert!(args.iter().any(|arg| arg == "-tt"));
+        assert!(!args.last().unwrap().contains("/Users/dev/secret root"));
+        assert!(!args.last().unwrap().contains("hostile"));
+        lease
+            .expect("flag-on PTY owns a lease")
+            .finish_natural();
     }
 
     #[test]

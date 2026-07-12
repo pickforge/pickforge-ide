@@ -33,6 +33,7 @@ describe("flags", () => {
       "operator",
       "ompPiAgents",
       "remoteProjects",
+      "remoteProcessLeases",
       "accounts",
       "settingsSync",
       "settingsNavigation",
@@ -45,6 +46,7 @@ describe("flags", () => {
     expect(store.flagEnabled("operator")).toBe(false);
     expect(store.flagEnabled("ompPiAgents")).toBe(false);
     expect(store.flagEnabled("remoteProjects")).toBe(false);
+    expect(store.flagEnabled("remoteProcessLeases")).toBe(false);
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);
     expect(store.flagEnabled("settingsNavigation")).toBe(false);
@@ -58,6 +60,16 @@ describe("flags", () => {
 
     expect(store.flagEnabled("operator")).toBe(true);
     expect(JSON.parse(mem.get(KEY)!)).toEqual({ operator: true });
+  });
+
+  it("enables remote process leases only through its typed override", async () => {
+    const store = await loadStore();
+
+    expect(store.flagEnabled("remoteProcessLeases")).toBe(false);
+    store.setFlagOverride("remoteProcessLeases", true);
+
+    expect(store.flagEnabled("remoteProcessLeases")).toBe(true);
+    expect(JSON.parse(mem.get(KEY)!)).toEqual({ remoteProcessLeases: true });
   });
 
   it("ignores corrupt localStorage content", async () => {

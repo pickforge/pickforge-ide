@@ -242,6 +242,7 @@ pub async fn remote_flutter_devices(
         let remote = RemotePty {
             host: host.clone(),
             remote_root,
+            remote_process_leases: false,
         };
         authorize_remote_pty(&db, Some(&project_root), Some(&remote))?;
         core_remote_flutter_devices(&host, REMOTE_FLUTTER_DEVICE_TIMEOUT)
@@ -306,6 +307,7 @@ fn authorize_remote_tunnel(db: &Database, project_root: &str, host: &str) -> Res
         Some(&RemotePty {
             host: host.to_string(),
             remote_root,
+            remote_process_leases: false,
         }),
     )
 }

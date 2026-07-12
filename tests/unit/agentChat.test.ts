@@ -1177,7 +1177,11 @@ describe("ensureAgentChat", () => {
       expect.objectContaining({
         projectRoot: "/not/present/locally",
         engine: "v1",
-        remote: { host: "mac-mini", remoteRoot: "/srv/app" },
+        remote: {
+          host: "mac-mini",
+          remoteRoot: "/srv/app",
+          remoteProcessLeases: false,
+        },
       }),
     );
     expect(agentChat(chatId)?.remoteHost).toBe("mac-mini");
@@ -1512,7 +1516,11 @@ describe("sendAgentMessage", () => {
       expect.objectContaining({
         chatId,
         engine: "v1",
-        remote: { host: "mac-mini", remoteRoot: "/srv/project" },
+        remote: {
+          host: "mac-mini",
+          remoteRoot: "/srv/project",
+          remoteProcessLeases: false,
+        },
       }),
     );
     expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);

@@ -8,6 +8,7 @@ mod auth;
 mod daemon;
 mod detect;
 mod health;
+mod lease;
 mod protocol;
 mod server;
 mod ssh;
@@ -34,6 +35,9 @@ pub use protocol::{
 };
 pub use server::{
     spawn_remote_http_server, RemoteHttpServer, RemoteHttpServerInfo, RemoteServerError,
+};
+pub(crate) use lease::{
+    remote_process_command, stop_remote_leases_bounded, RemoteLeaseHandle, RemoteLeasePayload,
 };
 pub(crate) use ssh::{shell_quote_argv, ssh_base_args, ssh_one_shot_args};
 pub use ssh::{ssh_run, SshError, SshTarget};

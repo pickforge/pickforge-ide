@@ -82,6 +82,11 @@ reset this file.
   `LC_CTYPE`, `TERM`, `COLORTERM`, and `NO_COLOR`. Home/config roots let OMP
   discover its own auth without PickForge reading or copying provider tokens;
   inherited provider secrets and extension/config injection variables are absent.
+- Remote process leases (#208 PR 3) landed default-off behind
+  `remoteProcessLeases`: leased SSH PTYs and V1 Claude/Codex turns use secure
+  stdin bootstrap, 10-second heartbeats, a 45-second remote-clock TTL, verified
+  payload/foreground-group teardown, and an independent expiry watchdog.
+  Deliberate payload `setsid`/daemon escapes remain later guardian/platform scope.
 
 ## Validation
 

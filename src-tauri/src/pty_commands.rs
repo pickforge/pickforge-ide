@@ -70,6 +70,8 @@ fn resolve_spawn_cwd(cwd: Option<String>, roots: &ApprovedRoots) -> Result<Optio
 pub struct RemotePtyInput {
     host: String,
     remote_root: String,
+    #[serde(default)]
+    remote_process_leases: bool,
 }
 
 impl From<RemotePtyInput> for RemotePty {
@@ -77,6 +79,7 @@ impl From<RemotePtyInput> for RemotePty {
         Self {
             host: value.host,
             remote_root: value.remote_root,
+            remote_process_leases: value.remote_process_leases,
         }
     }
 }
@@ -739,6 +742,7 @@ mod spawn_cwd_tests {
         let remote = RemotePty {
             host: "mac-mini".to_string(),
             remote_root: "/Users/dev/app".to_string(),
+            remote_process_leases: false,
         };
         let opts = spawn_options(
             Some("/not/an/approved/local/path".to_string()),
@@ -760,6 +764,7 @@ mod spawn_cwd_tests {
         let remote = RemotePty {
             host: "mac-mini".to_string(),
             remote_root: "/Users/dev/app".to_string(),
+            remote_process_leases: false,
         };
 
         let missing_root = authorize_remote_pty_binding(
@@ -792,6 +797,7 @@ mod spawn_cwd_tests {
         let remote = RemotePty {
             host: "mac-mini".to_string(),
             remote_root: "/Users/dev/app".to_string(),
+            remote_process_leases: false,
         };
         let err = authorize_remote_pty_binding(
             Some("/app"),
@@ -810,6 +816,7 @@ mod spawn_cwd_tests {
         let remote = RemotePty {
             host: "mac-mini".to_string(),
             remote_root: "/Users/dev/app".to_string(),
+            remote_process_leases: false,
         };
         let mut authorized_host = None;
 
@@ -832,6 +839,7 @@ mod spawn_cwd_tests {
         let remote = RemotePty {
             host: "mac-mini".to_string(),
             remote_root: "/srv/repo/apps/flutter_app".to_string(),
+            remote_process_leases: false,
         };
 
         authorize_remote_pty_binding(
@@ -846,6 +854,7 @@ mod spawn_cwd_tests {
             let escaped = RemotePty {
                 host: "mac-mini".to_string(),
                 remote_root: escaped.to_string(),
+                remote_process_leases: false,
             };
             assert!(authorize_remote_pty_binding(
                 Some("/app"),
@@ -874,6 +883,7 @@ mod spawn_cwd_tests {
         let remote = RemotePty {
             host: "mac-mini".to_string(),
             remote_root: "/Users/dev/app".to_string(),
+            remote_process_leases: false,
         };
 
         authorize_remote_pty_with(&db, Some("/app"), Some(&remote), |_| Ok(()))
@@ -882,6 +892,7 @@ mod spawn_cwd_tests {
         let mismatch = RemotePty {
             host: "mac-mini".to_string(),
             remote_root: "/Users/dev/other".to_string(),
+            remote_process_leases: false,
         };
         let err =
             authorize_remote_pty_with(&db, Some("/app"), Some(&mismatch), |_| Ok(())).unwrap_err();
@@ -905,6 +916,7 @@ mod spawn_cwd_tests {
             Some(RemotePty {
                 host: "mac-mini".to_string(),
                 remote_root: "/Users/dev/app".to_string(),
+                remote_process_leases: false,
             }),
             &prepared,
             &ApprovedRoots::default(),

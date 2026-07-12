@@ -87,6 +87,23 @@ const OMP_OPTIONAL_VALUE_FLAGS: Record<string, true> = {
   "-r": true,
   "--session": true,
 };
+const OMP_BOOLEAN_FLAGS: Record<string, true> = {
+  "--allow-home": true,
+  "--print": true,
+  "--continue": true,
+  "--no-session": true,
+  "--no-tools": true,
+  "--no-lsp": true,
+  "--no-pty": true,
+  "--hide-thinking": true,
+  "--advisor": true,
+  "--no-extensions": true,
+  "--no-skills": true,
+  "--no-rules": true,
+  "--no-title": true,
+  "--print-thoughts": true,
+  "--auto-approve": true,
+};
 const PI_VALUE_FLAGS: Record<string, true> = {
   "--provider": true,
   "--model": true,
@@ -650,10 +667,25 @@ function matchAgentLaunch(line: string): { prompt: string } | null {
     if (token.startsWith("-")) {
       const equals = token.indexOf("=");
       const flag = equals === -1 ? token : token.slice(0, equals);
+      const isUnknownOmpLongFlag = base === "omp"
+        && flag.startsWith("--")
+        && valueFlags?.[flag] === undefined
+        && optionalValueFlags?.[flag] === undefined
+        && OMP_BOOLEAN_FLAGS[flag] === undefined;
       const consumesValue = valueFlags
         ? (valueFlags[flag] ?? false)
         : VALUE_FLAGS.test(flag);
-      if (equals === -1 && consumesValue) {
+      if (
+        equals === -1
+        && (
+          consumesValue
+          || (
+            isUnknownOmpLongFlag
+            && tokens[i + 1] !== undefined
+            && !tokens[i + 1].startsWith("-")
+          )
+        )
+      ) {
         i++;
       } else if (
         equals === -1

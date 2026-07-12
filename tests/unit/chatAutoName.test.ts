@@ -370,6 +370,19 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
     expect(store.chats.get(id)?.title).not.toMatch(/SECRET|private|work profile/i);
   });
 
+  it("never persists values from unknown OMP extension flags", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    maybeAutoNameChat(
+      id,
+      "omp --extension-toggle --jira-token 'jira_SECRET' fix extension auth",
+      "pane-omp",
+    );
+
+    expect(store.chats.get(id)?.title).toBe("Fix extension auth");
+    expect(store.chats.get(id)?.title).not.toMatch(/SECRET/i);
+  });
+
   it("never persists Pi credentials, prompts, sessions, templates, or MCP paths", () => {
     setFlagOverride("ompPiAgents", true);
     const id = mkChat();

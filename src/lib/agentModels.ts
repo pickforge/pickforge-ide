@@ -172,7 +172,7 @@ export function parsePiModelCatalog(raw: string): AgentModelOption[] {
   const models: AgentModelOption[] = [];
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim() || /^\s*provider\s+model\s+/i.test(line)) continue;
-    const match = line.match(/^\s*(\S+)\s{2,}(\S+)\s{2,}/);
+    const match = line.match(/^\s*(\S+)\s+(\S+)\s+/);
     if (!match) continue;
     const provider = match[1];
     const model = match[2];
@@ -329,12 +329,6 @@ export function launchCommand(agentId: string, context: AgentLaunchContext = {})
       ? `-c ${shellQuote(`mcp_servers.pickforge.command=${JSON.stringify(context.mcpCommand)}`)} -c 'mcp_servers.pickforge.args=[]' `
       : "";
     return `${agent.binary} ${mcpArgs}${modelArg}`;
-  }
-  if (agent.id === "omp" || agent.id === "pi") {
-    const briefArg = context.agentBrief
-      ? `--append-system-prompt ${shellQuote(context.agentBrief)} `
-      : "";
-    return `${agent.binary} ${briefArg}${modelArg}`;
   }
   return `${agent.binary} ${modelArg}`;
 }

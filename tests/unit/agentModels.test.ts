@@ -47,7 +47,7 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(quickLaunch.optionalQuickLaunchChoices()).toEqual([]);
   });
 
-  it("uses supported terminal flags and never emits Pi's unsupported MCP option", async () => {
+  it("uses supported terminal flags without implying deferred MCP wiring", async () => {
     const { flags, models } = await loadModules();
     flags.setFlagOverride("ompPiAgents", true);
 
@@ -61,7 +61,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
     models.setAgentModel("omp", "openai/model; echo unsafe");
     expect(models.launchCommand("omp", { agentBrief: "PickForge's context" })).toBe(
-      "omp --append-system-prompt 'PickForge'\\''s context' --model 'openai/model; echo unsafe' ",
+      "omp --model 'openai/model; echo unsafe' ",
     );
     expect(models.nativeChatModel("omp", "openai/model")).toBeNull();
 
@@ -70,7 +70,7 @@ describe("OMP/Pi rollout gating and commands", () => {
       mcpConfigPath: "/tmp/pick forge/mcp.json",
       agentBrief: "Use selected widget",
     })).toBe(
-      "pi --append-system-prompt 'Use selected widget' --model anthropic/claude-sonnet-4-6 ",
+      "pi --model anthropic/claude-sonnet-4-6 ",
     );
   });
 
@@ -107,7 +107,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
     const raw = [
       "provider      model                    context  max-out  thinking  images",
       "anthropic     claude-sonnet-4-6        200K     64K      yes       yes",
-      "openai-codex  gpt-5.5                  272K     128K     yes       yes",
+      "openai-codex gpt-5.5 272K 128K yes yes",
     ].join("\n");
 
     expect(models.parsePiModelCatalog(raw)).toEqual([

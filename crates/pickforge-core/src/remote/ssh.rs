@@ -2,6 +2,15 @@ use std::time::Duration;
 
 use crate::process::{run_timeout, CommandOutcome, RunError};
 
+const LOGIN_SHELL_SCRIPT: &str = r#"exec "${SHELL:-/bin/sh}" -lc "$1""#;
+const LOGIN_SHELL_PROBE_SCRIPT: &str = r#"printf '%s\n' '__PF_REMOTE_PROBE_BEGIN__'
+"$@"
+status=$?
+printf '%s\n' '__PF_REMOTE_PROBE_END__'
+exit "$status""#;
+const PROBE_BEGIN: &str = "__PF_REMOTE_PROBE_BEGIN__";
+const PROBE_END: &str = "__PF_REMOTE_PROBE_END__";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshTarget {
     pub host: String,
@@ -71,9 +80,7 @@ pub(crate) fn ssh_tunnel_args(
     args.push("ExitOnForwardFailure=yes".into());
     args.push("-N".into());
     args.push("-L".into());
-    args.push(format!(
-        "127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
-    ));
+    args.push(format!("127.0.0.1:{local_port}:127.0.0.1:{remote_port}"));
     args.push("--".into());
     args.push(target.host.clone());
     args
@@ -84,6 +91,37 @@ pub(crate) fn shell_quote_argv(argv: &[&str]) -> String {
         .map(|arg| posix_single_quote(arg))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub(crate) fn login_shell_argv(argv: &[&str]) -> Vec<String> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        LOGIN_SHELL_SCRIPT.into(),
+        "pickforge-login-shell".into(),
+        shell_quote_argv(argv),
+    ]
+}
+
+pub(crate) fn login_shell_probe_argv(argv: &[&str]) -> Vec<String> {
+    let mut command = vec![
+        "sh".into(),
+        "-c".into(),
+        LOGIN_SHELL_PROBE_SCRIPT.into(),
+        "pickforge-login-shell-probe".into(),
+    ];
+    command.extend(argv.iter().map(|arg| (*arg).to_string()));
+    login_shell_argv(&command.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+pub(crate) fn probe_output(stdout: &str) -> Result<&str, &'static str> {
+    let (_, output) = stdout
+        .split_once(PROBE_BEGIN)
+        .ok_or("remote probe output is missing its begin marker")?;
+    let (output, _) = output
+        .split_once(PROBE_END)
+        .ok_or("remote probe output is missing its end marker")?;
+    Ok(output)
 }
 
 fn validate_host(host: &str) -> Result<(), SshError> {
@@ -160,6 +198,73 @@ mod tests {
     }
 
     #[test]
+    fn login_shell_argv_quotes_the_nested_command_as_one_argument() {
+        assert_eq!(
+            login_shell_argv(&["pickforged", "status; touch /tmp/pwn", "$HOME"]),
+            vec![
+                "sh",
+                "-c",
+                LOGIN_SHELL_SCRIPT,
+                "pickforge-login-shell",
+                "'pickforged' 'status; touch /tmp/pwn' '$HOME'",
+            ]
+        );
+    }
+
+    #[test]
+    fn login_shell_probe_argv_passes_command_arguments_as_data() {
+        let argv = login_shell_probe_argv(&["pickforged", "status; touch /tmp/pwn", "$HOME"]);
+        let nested_command = shell_quote_argv(&[
+            "sh",
+            "-c",
+            LOGIN_SHELL_PROBE_SCRIPT,
+            "pickforge-login-shell-probe",
+            "pickforged",
+            "status; touch /tmp/pwn",
+            "$HOME",
+        ]);
+
+        assert_eq!(
+            argv,
+            vec![
+                "sh",
+                "-c",
+                LOGIN_SHELL_SCRIPT,
+                "pickforge-login-shell",
+                &nested_command,
+            ]
+        );
+    }
+
+    #[test]
+    fn probe_output_ignores_text_outside_fixed_markers() {
+        let stdout = "profile banner\n__PF_REMOTE_PROBE_BEGIN__\n{\"ok\":true}\n__PF_REMOTE_PROBE_END__\nlogout banner\n";
+        assert_eq!(probe_output(stdout).unwrap().trim(), r#"{"ok":true}"#);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn login_shell_probe_script_frames_stdout_and_preserves_exit_status() {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(LOGIN_SHELL_PROBE_SCRIPT)
+            .arg("pickforge-login-shell-probe")
+            .arg("sh")
+            .arg("-c")
+            .arg(r#"printf '%s' '{"ok":true}'; exit 7"#)
+            .output()
+            .unwrap();
+
+        assert_eq!(output.status.code(), Some(7));
+        assert_eq!(
+            probe_output(&String::from_utf8_lossy(&output.stdout))
+                .unwrap()
+                .trim(),
+            r#"{"ok":true}"#
+        );
+    }
+
+    #[test]
     fn tunnel_argv_keeps_batch_mode_and_binds_both_ends_to_loopback() {
         let target = SshTarget::new("mac-mini").unwrap();
         assert_eq!(
@@ -194,7 +299,10 @@ mod tests {
         ];
 
         for case in cases {
-            let command = format!("set -- {}; printf '<%s>\\n' \"$@\"", shell_quote_argv(&case));
+            let command = format!(
+                "set -- {}; printf '<%s>\\n' \"$@\"",
+                shell_quote_argv(&case)
+            );
             let output = std::process::Command::new("sh")
                 .arg("-c")
                 .arg(command)

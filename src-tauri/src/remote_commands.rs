@@ -5,12 +5,13 @@ use std::time::Duration;
 use pickforge_core::{
     listener_from_parts, pickforge_home, probe_host, probe_tailnet_peer,
     remote_detect_binaries as core_remote_detect_binaries,
+    remote_flutter_devices as core_remote_flutter_devices,
     remote_nearest_pubspec as core_remote_nearest_pubspec,
     remote_pubspec_uses_flutter as core_remote_pubspec_uses_flutter, remote_auth_store_path,
     spawn_remote_http_server, tailscale_ssh_set, tailscale_status, ClientTokenRecord,
     DaemonConfig, DaemonListener, Database, PairingCode, ProbeState, RemoteAuthStore,
-    RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo, RemotePty, RemoteTunnel,
-    SshTarget, TailscaleStatus, TunnelManager,
+    RemoteFlutterDevice, RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo, RemotePty,
+    RemoteTunnel, SshTarget, TailscaleStatus, TunnelManager,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -21,6 +22,7 @@ const DEFAULT_REMOTE_HOST: &str = "127.0.0.1";
 const DEFAULT_REMOTE_PORT: u16 = 4747;
 const DEFAULT_PAIRING_TTL_MS: i64 = 10 * 60 * 1000;
 const REMOTE_STEP_TIMEOUT: Duration = Duration::from_secs(5);
+const REMOTE_FLUTTER_DEVICE_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct RemoteHostState {
     server: Mutex<RemoteHostSlot>,
@@ -222,6 +224,27 @@ pub async fn remote_pubspec_uses_flutter(
     tauri::async_runtime::spawn_blocking(move || {
         ensure_remote_ssh_host_allowed(&host)?;
         core_remote_pubspec_uses_flutter(&host, &project_dir, REMOTE_STEP_TIMEOUT)
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub async fn remote_flutter_devices(
+    db: State<'_, Arc<Database>>,
+    project_root: String,
+    host: String,
+    remote_root: String,
+) -> Result<Vec<RemoteFlutterDevice>, String> {
+    let db = Arc::clone(&db);
+    tauri::async_runtime::spawn_blocking(move || {
+        let remote = RemotePty {
+            host: host.clone(),
+            remote_root,
+        };
+        authorize_remote_pty(&db, Some(&project_root), Some(&remote))?;
+        core_remote_flutter_devices(&host, REMOTE_FLUTTER_DEVICE_TIMEOUT)
             .map_err(|err| err.to_string())
     })
     .await

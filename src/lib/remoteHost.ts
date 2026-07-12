@@ -97,6 +97,19 @@ export const remoteDetectBinaries = (host: string, names: string[]) =>
 export const remotePubspecUsesFlutter = (host: string, projectDir: string) =>
   invoke<boolean>("remote_pubspec_uses_flutter", { host, projectDir });
 
+export interface RemoteFlutterDevice {
+  id: string;
+  name: string;
+  isSupported: boolean;
+  emulator: boolean;
+}
+
+export const remoteFlutterDevices = (
+  projectRoot: string,
+  host: string,
+  remoteRoot: string,
+) => invoke<RemoteFlutterDevice[]>("remote_flutter_devices", { projectRoot, host, remoteRoot });
+
 export interface RemoteTunnel {
   tunnelId: string;
   localPort: number;

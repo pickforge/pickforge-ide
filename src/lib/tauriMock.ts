@@ -5,6 +5,9 @@ import type { AgentEvent, AgentTimelineEntry } from "./agentChat";
 
 const now = 1_750_000_000_000;
 const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
+const VRT_REMOTE_DEVICE_FIXTURE_KEY = "pickforge.vrt.remoteDeviceFixture";
+const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
+const VRT_REMOTE_ROOT = "/Users/elberte/Projects/Personal/sample_flutter_app";
 
 const AGENT_CHAT_FIXTURE = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
 
@@ -12,6 +15,21 @@ const SAMPLE_PROJECTS = [
   { projectRoot: "/home/dev/acme-app", displayName: "acme-app", createdAt: now, lastOpenedAt: now, sortOrder: 0, archivedAt: null, remoteHost: null, remoteRoot: null },
   { projectRoot: "/home/dev/widgets", displayName: "widgets", createdAt: now, lastOpenedAt: now, sortOrder: 1, archivedAt: null, remoteHost: null, remoteRoot: null },
 ];
+
+function remoteDeviceFixture(): string | null {
+  try {
+    return localStorage.getItem(VRT_REMOTE_DEVICE_FIXTURE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function projectsForFixture() {
+  if (!remoteDeviceFixture()) return SAMPLE_PROJECTS;
+  return SAMPLE_PROJECTS.map((project, index) => index === 0
+    ? { ...project, remoteHost: VRT_REMOTE_HOST, remoteRoot: VRT_REMOTE_ROOT }
+    : project);
+}
 const SAMPLE_CHATS = [
   { chatId: "chat-1", projectRoot: "/home/dev/acme-app", title: "Login screen", kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
   { chatId: "chat-2", projectRoot: "/home/dev/acme-app", title: "Settings polish", kind: "terminal", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 1 },
@@ -168,7 +186,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   orchestra_tasks_list: (a) =>
     MOCK_ORCHESTRA_TASKS.filter((t) => t.projectRoot === a.projectRoot),
   agent_usage_summary: () => MOCK_USAGE_SUMMARY,
-  projects_list: () => SAMPLE_PROJECTS,
+  projects_list: () => projectsForFixture(),
   chats_list: (a) => chatsForProject(a.projectRoot),
   settings_get: () => null,
   telemetry_get: () => MOCK_TELEMETRY,
@@ -206,6 +224,26 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     ssh: { state: "ok" },
     daemon: { state: "failed", reason: "pickforged not reachable" },
   }),
+  remote_flutter_devices: () => {
+    const fixture = remoteDeviceFixture();
+    if (fixture === "loading") return new Promise(() => {});
+    if (fixture === "error") return Promise.reject(new Error("SSH unavailable"));
+    if (fixture === "empty") return [];
+    return [
+      {
+        id: "chrome",
+        name: "Chrome",
+        isSupported: true,
+        emulator: false,
+      },
+      {
+        id: "macos",
+        name: "macOS",
+        isSupported: true,
+        emulator: false,
+      },
+    ];
+  },
   remote_nearest_pubspec: () => "/home/dev/acme-app",
   remote_detect_binaries: (a) => (a.names as string[]).map(() => true),
   target_detect: () => ({ targetId: "flutter", displayName: "Flutter", confidence: "exact", priority: 100, capabilities: ["detect", "launch", "hotReload", "captureScreenshot", "streamLogs", "inspectSelection"] }),

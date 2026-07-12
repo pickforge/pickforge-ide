@@ -1,11 +1,13 @@
 // Device-mirror pane: live emulator/phone screen via scrcpy-server, decoded with
 // WebCodecs onto a canvas, with tap/swipe input. Rust owns the server + sockets
 // (mirror_commands.rs); this drives the decode + input (lib/scrcpy.ts).
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { EmberButton, MonoEyebrow } from "./ui";
 import { mirrorSupported, startMirror, type MirrorHandle, type MirrorStats } from "../lib/scrcpy";
+import { remotePtyFor } from "../lib/remoteContext";
 import { deviceLabel, resolveSelectedDevice } from "../stores/runLaunch";
+import { workspace } from "../stores/workspace";
 
 export function DeviceMirror() {
   let canvas!: HTMLCanvasElement;
@@ -16,8 +18,10 @@ export function DeviceMirror() {
   let handle: MirrorHandle | null = null;
   let unlisten: UnlistenFn | undefined;
   let poll: ReturnType<typeof setInterval> | undefined;
+  let epoch = 0;
   let down = false;
 
+  const remote = () => remotePtyFor(workspace.activeRoot);
   const device = () => resolveSelectedDevice();
   // Mirror only attaches to an online device (a stopped AVD has no screen).
   const serial = () => {
@@ -26,6 +30,7 @@ export function DeviceMirror() {
   };
 
   const stop = async () => {
+    epoch += 1;
     unlisten?.();
     unlisten = undefined;
     clearInterval(poll);
@@ -38,6 +43,7 @@ export function DeviceMirror() {
   };
 
   const start = async () => {
+    if (remote()) return;
     const s = serial();
     if (!s) {
       setError("Select a running device first.");
@@ -45,13 +51,25 @@ export function DeviceMirror() {
     }
     setError(null);
     setBusy(true);
+    const startEpoch = ++epoch;
     try {
-      handle = await startMirror(s, canvas);
+      const started = await startMirror(s, canvas);
+      if (startEpoch !== epoch || remote()) {
+        await started.stop();
+        return;
+      }
+      handle = started;
       setActive(true);
       poll = setInterval(() => setStats(handle?.stats() ?? null), 700);
-      unlisten = await listen<string>("mirror-disconnected", (e) => {
+      const nextUnlisten = await listen<string>("mirror-disconnected", (e) => {
         if (e.payload === s) void stop();
       });
+      if (startEpoch !== epoch || remote()) {
+        nextUnlisten();
+        if (handle === started) await stop();
+        return;
+      }
+      unlisten = nextUnlisten;
     } catch (e) {
       setError(String(e));
       await stop();
@@ -60,7 +78,14 @@ export function DeviceMirror() {
     }
   };
 
+  createEffect(() => {
+    if (!remote()) return;
+    setError(null);
+    void stop();
+  });
+
   onCleanup(() => {
+    epoch += 1;
     unlisten?.();
     clearInterval(poll);
     void handle?.stop();
@@ -93,51 +118,60 @@ export function DeviceMirror() {
     <div class="pf-mirror">
       <div class="pf-rail-head">
         <MonoEyebrow text="Device mirror" />
-        <Show
-          when={active()}
-          fallback={
-            <EmberButton
-              label={busy() ? "Starting…" : "Start"}
-              disabled={busy() || !serial()}
-              onClick={() => void start()}
-            />
-          }
-        >
-          <button class="pf-text-btn" onClick={() => void stop()}>
-            Stop
-          </button>
+        <Show when={!remote()}>
+          <Show
+            when={active()}
+            fallback={
+              <EmberButton
+                label={busy() ? "Starting…" : "Start"}
+                disabled={busy() || !serial()}
+                onClick={() => void start()}
+              />
+            }
+          >
+            <button class="pf-text-btn" onClick={() => void stop()}>
+              Stop
+            </button>
+          </Show>
         </Show>
       </div>
 
       <Show
-        when={mirrorSupported()}
+        when={!remote()}
         fallback={
-          <div class="pf-rail-empty">
-            WebCodecs (H.264 VideoDecoder) isn't available in this webview, so the mirror can't decode here.
-          </div>
+          <div class="pf-rail-empty">Remote device mirroring is not available yet.</div>
         }
       >
-        <div class="pf-mirror-stage">
-          <canvas
-            ref={canvas}
-            class="pf-mirror-canvas"
-            classList={{ "pf-mirror-canvas--live": active() }}
-            onpointerdown={onDown}
-            onpointermove={onMove}
-            onpointerup={onUp}
-            onpointercancel={onUp}
-          />
-          <Show when={!active() && !error()}>
-            <div class="pf-rail-empty pf-mirror-hint">
-              {serial() ? `Start to mirror ${deviceLabel(device()!)}` : "Select a running device"}
+        <Show
+          when={mirrorSupported()}
+          fallback={
+            <div class="pf-rail-empty">
+              WebCodecs (H.264 VideoDecoder) isn't available in this webview, so the mirror can't decode here.
             </div>
-          </Show>
-        </div>
+          }
+        >
+          <div class="pf-mirror-stage">
+            <canvas
+              ref={canvas}
+              class="pf-mirror-canvas"
+              classList={{ "pf-mirror-canvas--live": active() }}
+              onpointerdown={onDown}
+              onpointermove={onMove}
+              onpointerup={onUp}
+              onpointercancel={onUp}
+            />
+            <Show when={!active() && !error()}>
+              <div class="pf-rail-empty pf-mirror-hint">
+                {serial() ? `Start to mirror ${deviceLabel(device()!)}` : "Select a running device"}
+              </div>
+            </Show>
+          </div>
+        </Show>
       </Show>
       {/* The stats strip is reserved for the whole session (fixed-height, single
           line) so toggling a stat — e.g. "skipped N" — never reflows and resizes
           the mirror stage. */}
-      <Show when={active()}>
+      <Show when={!remote() && active()}>
         <div class="pf-mirror-stats">
           <Show when={stats()}>
             {(s) => (
@@ -159,7 +193,7 @@ export function DeviceMirror() {
           </Show>
         </div>
       </Show>
-      <Show when={error()}>
+      <Show when={!remote() && error()}>
         <div class="pf-vm-error">{error()}</div>
       </Show>
     </div>

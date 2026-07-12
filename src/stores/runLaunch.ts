@@ -15,6 +15,13 @@ import { androidLaunchAvd, iosBootDevice, type DeviceEntry } from "../lib/device
 import { hasCapability, isCompatibleDevice, withDevice, type RunTarget } from "../lib/runTargets";
 import { BootEpoch } from "../lib/bootEpoch";
 import { remotePtyFor } from "../lib/remoteContext";
+import {
+  refreshRemoteDevices,
+  remoteDeviceState,
+  resolveRemoteDevice,
+} from "./remoteDevices";
+import type { RemotePty } from "../lib/pty";
+import type { RemoteFlutterDevice } from "../lib/remoteHost";
 
 const BOOT_TIMEOUT_MS = 120_000;
 const BOOT_POLL_MS = 2000;
@@ -30,6 +37,26 @@ export const isBooting = booting;
 export const bootingKind = bootKind;
 /** Last launch error (boot failure / timeout / cancellation), or null. */
 export const launchError = error;
+
+export function remoteDeviceLaunchReason(): string | null {
+  const root = workspace.activeRoot;
+  const target = activeTarget();
+  const remote = remotePtyFor(root);
+  if (!root || !remote || !target?.needsDevice) return null;
+  const state = remoteDeviceState(root, remote);
+  if (state.status === "idle" || state.status === "loading") return "Finding remote devices…";
+  if (state.status === "error") return "Remote device check failed";
+  if (state.devices.length === 0) return "No remote Flutter devices";
+  const stored = selectedDevice(root, remote);
+  if (!stored) return state.devices.length > 1 ? "Choose a remote device" : null;
+  return state.devices.some((device) => device.id === stored)
+    ? null
+    : "Saved remote device unavailable";
+}
+
+export function canLaunchActiveTarget(): boolean {
+  return !!activeTarget() && remoteDeviceLaunchReason() === null;
+}
 
 // Bumped on every launch and on cancel, so a stale boot can't latch a later run:
 // `waitForBootedSerial` polls it to break promptly, and `launchActiveTarget`
@@ -169,24 +196,55 @@ function abortableSleep(ms: number, live: () => boolean): Promise<void> {
  *  visible), auto-boots a stopped AVD / simulator if one is selected, then runs. */
 export async function launchActiveTarget(): Promise<void> {
   const t = activeTarget();
-  if (!t) return;
+  const projectRoot = workspace.activeRoot;
+  if (!t || !projectRoot) return;
   if (launching || booting() || runConsole.status() === "running") return;
   launching = true;
   try {
-    await launchTarget(t);
+    await launchTarget(t, projectRoot);
   } finally {
     launching = false;
   }
 }
 
-async function launchTarget(t: RunTarget): Promise<void> {
+function sameRemote(left: RemotePty | null, right: RemotePty | null): boolean {
+  return left === right
+    || (!!left && !!right && left.host === right.host && left.remoteRoot === right.remoteRoot);
+}
+
+function launchContextIsCurrent(projectRoot: string, remote: RemotePty | null): boolean {
+  return workspace.activeRoot === projectRoot && sameRemote(remotePtyFor(projectRoot), remote);
+}
+
+async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
   openConsole();
   setError(null);
-  const remote = remotePtyFor(workspace.activeRoot);
+  const remote = remotePtyFor(projectRoot);
 
   let serial: string | null = null;
   let device: DeviceEntry | null = null;
-  if (t.needsDevice && !remote) {
+  let remoteDevice: RemoteFlutterDevice | null = null;
+  if (t.needsDevice && remote) {
+    const state = await refreshRemoteDevices(projectRoot, remote);
+    if (!launchContextIsCurrent(projectRoot, remote)) return;
+    if (state.status === "error") {
+      setError(state.error ? `Remote device check failed: ${state.error}` : "Remote device check failed");
+      return;
+    }
+    remoteDevice = resolveRemoteDevice(state.devices, selectedDevice(projectRoot, remote));
+    if (!remoteDevice) {
+      const stored = selectedDevice(projectRoot, remote);
+      setError(
+        state.devices.length === 0
+          ? "No supported Flutter devices found on the remote host"
+          : stored
+            ? "Saved remote device is unavailable — choose another device"
+            : "Choose a remote device before running",
+      );
+      return;
+    }
+    serial = remoteDevice.id;
+  } else if (t.needsDevice && !remote) {
     const entry = resolveSelectedDevice();
     device = entry;
     if (entry?.state === "offline") {
@@ -236,31 +294,34 @@ async function launchTarget(t: RunTarget): Promise<void> {
     }
   }
 
-  if (serial && workspace.activeRoot) setRunDevice(workspace.activeRoot, serial);
+  if (!launchContextIsCurrent(projectRoot, remote)) return;
+  if (serial) setRunDevice(projectRoot, serial, remote);
   // Bring up the local MCP endpoint for this project so an embedded agent can
   // re-query live context (selection / screenshot / logs) mid-run. Opt-in and
   // best-effort: it never blocks the run. Reset the run-log ring for THIS run so
   // a previous run's lines never bleed into the new run's `get_run_logs` (clears
   // once the endpoint is up — a no-op on the very first run, whose ring is empty).
-  void ensureMcpRunning(workspace.activeRoot).then(mcpRunStarted);
+  void ensureMcpRunning(projectRoot).then(mcpRunStarted);
   // Drop any stale VM connection and watch this run's output for the new VM
   // service URL so the Inspector auto-connects.
   await disconnectVm();
-  const run = startRun({ ...t, command: withDevice(t, serial) }, workspace.activeRoot, {
+  if (!launchContextIsCurrent(projectRoot, remote)) return;
+  const run = startRun({ ...t, command: withDevice(t, serial) }, projectRoot, {
     serial,
     avdId: device?.avdId ?? null,
     // The friendly virtual-device name for the run-history row: emulators AND
     // simulators are named virtual devices, so record either (physical devices
     // have only a serial, so they stay null). Same column, no schema change.
-    avdName:
-      device?.kind === "emulator" || device?.kind === "simulator"
+    avdName: remoteDevice?.emulator
+      ? remoteDevice.name
+      : device?.kind === "emulator" || device?.kind === "simulator"
         ? device.displayName
         : null,
     connectionMode: t.inspectorKind === "vmService" ? "vmService" : "auto",
   }, remote);
   armVmAutoConnect(
-    remote && run && workspace.activeRoot
-      ? { remote, projectRoot: workspace.activeRoot, runId: `run-${run.key}` }
+    remote && run
+      ? { remote, projectRoot, runId: `run-${run.key}` }
       : undefined,
   );
 }

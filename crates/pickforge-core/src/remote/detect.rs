@@ -1,11 +1,12 @@
 use std::time::Duration;
 
 use crate::process::CommandOutcome;
+use serde::{Deserialize, Serialize};
 
-use super::ssh::{shell_quote_argv, ssh_run, SshError, SshTarget};
-
-const PROBE_BEGIN: &str = "__PF_REMOTE_PROBE_BEGIN__";
-const PROBE_END: &str = "__PF_REMOTE_PROBE_END__";
+use super::ssh::{
+    login_shell_argv, login_shell_probe_argv, probe_output as framed_probe_output, ssh_run,
+    SshError, SshTarget,
+};
 
 const NEAREST_PUBSPEC_SCRIPT: &str = r#"printf '%s\n' '__PF_REMOTE_PROBE_BEGIN__'
 dir=$1
@@ -39,8 +40,6 @@ for name do
 done
 printf '%s\n' '__PF_REMOTE_PROBE_END__'"#;
 
-const LOGIN_SHELL_SCRIPT: &str = r#"exec "${SHELL:-/bin/sh}" -lc "$1""#;
-
 const FLUTTER_APP_SCRIPT: &str = r#"awk '
   /^[[:space:]]*dependencies:[[:space:]]*(#.*)?$/ { dependencies = 1; next }
   dependencies && /^[^[:space:]#]/ { exit }
@@ -55,6 +54,17 @@ pub enum RemoteDetectError {
     Ssh(#[from] SshError),
     #[error("{0}")]
     Command(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteFlutterDevice {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_supported: bool,
+    #[serde(default)]
+    pub emulator: bool,
 }
 
 pub fn remote_nearest_pubspec(
@@ -135,6 +145,38 @@ pub fn remote_pubspec_uses_flutter(
     }
 }
 
+pub fn remote_flutter_devices(
+    host: &str,
+    timeout: Duration,
+) -> Result<Vec<RemoteFlutterDevice>, RemoteDetectError> {
+    let target = SshTarget::new(host)?;
+    let argv = flutter_devices_argv();
+    let refs = argv.iter().map(String::as_str).collect::<Vec<_>>();
+    let outcome = ssh_run(&target, &refs, timeout)?;
+    if !outcome.success() {
+        return Err(RemoteDetectError::Command(command_summary(&outcome)));
+    }
+
+    let stdout = outcome.stdout_utf8();
+    let payload = probe_output(&stdout)?.trim();
+    parse_flutter_devices(payload)
+}
+
+fn parse_flutter_devices(payload: &str) -> Result<Vec<RemoteFlutterDevice>, RemoteDetectError> {
+    let devices = serde_json::from_str::<Vec<RemoteFlutterDevice>>(payload).map_err(|err| {
+        RemoteDetectError::Command(format!("invalid remote Flutter device list: {err}"))
+    })?;
+    if devices
+        .iter()
+        .any(|device| device.id.trim().is_empty() || device.name.trim().is_empty())
+    {
+        return Err(RemoteDetectError::Command(
+            "remote Flutter device list contains an empty id or name".into(),
+        ));
+    }
+    Ok(devices)
+}
+
 fn nearest_pubspec_argv(start_dir: &str) -> Vec<String> {
     vec![
         "sh".into(),
@@ -153,13 +195,7 @@ fn detect_binaries_argv(names: &[&str]) -> Vec<String> {
         "pickforge-detect-binaries".into(),
     ];
     command.extend(names.iter().map(|name| (*name).to_string()));
-    vec![
-        "sh".into(),
-        "-c".into(),
-        LOGIN_SHELL_SCRIPT.into(),
-        "pickforge-login-shell".into(),
-        shell_quote_argv(&command.iter().map(String::as_str).collect::<Vec<_>>()),
-    ]
+    login_shell_argv(&command.iter().map(String::as_str).collect::<Vec<_>>())
 }
 
 fn flutter_app_argv(project_dir: &str) -> Vec<String> {
@@ -172,14 +208,12 @@ fn flutter_app_argv(project_dir: &str) -> Vec<String> {
     ]
 }
 
+fn flutter_devices_argv() -> Vec<String> {
+    login_shell_probe_argv(&["flutter", "devices", "--machine", "--device-timeout=10"])
+}
+
 fn probe_output(stdout: &str) -> Result<&str, RemoteDetectError> {
-    let (_, output) = stdout.split_once(PROBE_BEGIN).ok_or_else(|| {
-        RemoteDetectError::Command("remote probe output is missing its begin marker".into())
-    })?;
-    let (output, _) = output.split_once(PROBE_END).ok_or_else(|| {
-        RemoteDetectError::Command("remote probe output is missing its end marker".into())
-    })?;
-    Ok(output)
+    framed_probe_output(stdout).map_err(|message| RemoteDetectError::Command(message.to_string()))
 }
 
 fn command_summary(outcome: &CommandOutcome) -> String {
@@ -294,7 +328,7 @@ mod tests {
 
     #[test]
     fn detect_binaries_argv_runs_the_probe_in_the_login_shell() {
-        let command = shell_quote_argv(&[
+        let command = crate::remote::ssh::shell_quote_argv(&[
             "sh",
             "-c",
             DETECT_BINARIES_SCRIPT,
@@ -308,7 +342,7 @@ mod tests {
             vec![
                 "sh",
                 "-c",
-                LOGIN_SHELL_SCRIPT,
+                r#"exec "${SHELL:-/bin/sh}" -lc "$1""#,
                 "pickforge-login-shell",
                 &command,
             ]
@@ -347,5 +381,56 @@ mod tests {
                 &crate::remote::ssh::shell_quote_argv(&refs),
             ]
         );
+    }
+
+    #[test]
+    fn flutter_devices_argv_runs_machine_discovery_in_a_framed_login_shell() {
+        let argv = flutter_devices_argv();
+        assert_eq!(
+            &argv[..4],
+            [
+                "sh",
+                "-c",
+                r#"exec "${SHELL:-/bin/sh}" -lc "$1""#,
+                "pickforge-login-shell",
+            ]
+        );
+        assert!(argv[4].ends_with("'flutter' 'devices' '--machine' '--device-timeout=10'"));
+    }
+
+    #[test]
+    fn parses_current_flutter_device_json_and_ignores_unknown_fields() {
+        let payload = r#"[
+          {
+            "name": "macOS",
+            "id": "macos",
+            "isSupported": true,
+            "targetPlatform": "darwin",
+            "emulator": false,
+            "sdk": "macOS 26.5.1",
+            "capabilities": { "hotReload": true },
+            "futureField": "ignored"
+          },
+          {
+            "name": "Chrome",
+            "id": "chrome",
+            "isSupported": true,
+            "targetPlatform": "web-javascript",
+            "emulator": false,
+            "sdk": "Chrome 149"
+          }
+        ]"#;
+        let devices = parse_flutter_devices(payload).unwrap();
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].id, "macos");
+        assert!(devices[0].is_supported);
+        assert_eq!(devices[1].name, "Chrome");
+    }
+
+    #[test]
+    fn rejects_malformed_or_unsafe_flutter_device_payloads() {
+        assert!(parse_flutter_devices(r#"{"id":"macos"}"#).is_err());
+        assert!(parse_flutter_devices(r#"[{"id":7,"name":"macOS"}]"#).is_err());
+        assert!(parse_flutter_devices(r#"[{"id":"","name":"macOS","isSupported":true}]"#).is_err());
     }
 }

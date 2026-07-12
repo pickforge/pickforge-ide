@@ -6,10 +6,15 @@ reset this file.
 
 ## User-facing changes
 
+- Double-clicking empty titlebar space now maximizes or restores the window.
 - Added Remote Host settings for starting the local daemon listener, issuing
   pairing codes, and toggling Tailscale SSH.
 - Projects can now attach a remote host (over your tailnet) from the project
   menu, with a live health badge in the sidebar and a test-connection check.
+- Remote health checks now resolve `pickforged` through the remote login shell,
+  including macOS hosts where non-login SSH omits `/usr/local/bin` from PATH.
+- Remote Flutter runs now discover devices on the bound host and require an
+  explicit device choice before launch when more than one is available.
 - Launching PickForge again now focuses the running window.
 
 ## Internal/release changes
@@ -42,12 +47,16 @@ reset this file.
 - Workflow YAML parse check:
   `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 - `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.
-- `bun run test:unit` — 735 tests green, including account-session cache and
-  refresh-race regressions.
+- `bun run test:coverage` — 750 tests green, including remote-device discovery,
+  persistence, launch-race, and keyboard regressions.
 - `bun run build` — `tsc --noEmit` + vite production build clean.
-- `bunx playwright test` — VRT snapshots unchanged (remote UI is flag-gated
-  and badge renders only for bound projects).
+- `bunx playwright test` — 12 tests green, including remote-device loading,
+  empty, error, stale, and keyboard-focus baselines at 1024px.
 - `cargo check` — workspace check clean.
+- `cargo test -p pickforge-core --lib --locked` — 391 tests green, including
+  login-shell quoting, noisy-profile output, and daemon health regressions.
+- Live Acorns macOS run — Tailnet attach, deterministic device launch, VM-service
+  tunnel, widget tree, node selection, hot reload, and stop all passed.
 
 ### Not tested yet
 
@@ -55,8 +64,6 @@ reset this file.
 - Tauri app bundle build.
 - Installer or updater flow.
 - Platform smoke checks.
-- Live second-machine remote attach smoke (real tailnet host: attach, probe
-  states, badge, detach).
 
 ### Release blockers
 

@@ -9,7 +9,7 @@ dela, quem as trata e quais direitos você tem sob a LGPD (Lei nº 13.709/2018).
 
 Controlador: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE SOFTWARE
 LTDA**, CNPJ **63.103.885/0001-74**, nome fantasia **Elberte Software**. Contato:
-**privacidade@pickforge.dev** [OWNER: ativar esta caixa de e-mail].
+**legal@pickforge.dev** (privacidade/LGPD).
 
 ## Resumo
 
@@ -163,7 +163,7 @@ como seus dados são compartilhados. Você pode exercer esses direitos diretamen
   transação para cumprir suas obrigações legais e fiscais.
 - **Exportar seus dados** dentro do aplicativo — um arquivo JSON portátil com seu
   perfil, direitos de acesso, registro de créditos e configurações sincronizadas.
-- **Falar conosco** em **privacidade@pickforge.dev** para qualquer outra
+- **Falar conosco** em **legal@pickforge.dev** para qualquer outra
   solicitação. Este é o nosso canal de privacidade. [OWNER/LAWYER: confirmar se
   é necessária a nomeação formal de encarregado (DPO) ou se aplica a dispensa
   para agentes de tratamento de pequeno porte.]
@@ -189,6 +189,6 @@ https://pickforge.dev/privacy.
 
 ## Contato
 
-**privacidade@pickforge.dev** — Controlador: **ELBERTE PLINIO GOIS VIEIRA FILHO
+**legal@pickforge.dev** — Controlador: **ELBERTE PLINIO GOIS VIEIRA FILHO
 DESENVOLVIMENTO DE SOFTWARE LTDA**, CNPJ **63.103.885/0001-74**.
 Encarregado (DPO): [OWNER/LAWYER: confirmar nomeação ou dispensa].

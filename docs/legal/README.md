@@ -26,13 +26,13 @@ Once approved, they publish to:
   https://pickforge.dev/terms.
 - [ ] Have counsel confirm whether the small-processing-agent exemption applies;
   otherwise designate and publish the encarregado (DPO).
-- [ ] Activate the **privacidade@pickforge.dev** mailbox (and confirm
-  **contato@pickforge.dev** for the Terms).
+- [x] Use the active **legal@pickforge.dev** mailbox for privacy/LGPD requests
+  and **hello@pickforge.dev** for general contact.
 - [ ] Have counsel classify each cross-border flow and confirm its valid LGPD
   Art. 33 mechanism; use the linked vendor documents as review inputs.
 - [ ] Set `<EFFECTIVE DATE>` in all four policy files.
-- [ ] Fill the remaining owner/lawyer placeholders — mailboxes, refund stance,
-  liability cap, comarca, and encarregado status.
+- [ ] Fill the remaining owner/lawyer placeholders — refund stance, liability
+  cap, comarca, and encarregado status.
 - [ ] Have a Brazilian lawyer review before publishing.
 - [ ] Then update the Google OAuth consent screen with the two URLs, and link them
   from the app Settings and the README.

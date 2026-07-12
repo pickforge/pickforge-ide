@@ -8,8 +8,7 @@ them, and the rights you have under Brazil's LGPD (Lei nº 13.709/2018).
 
 Controller: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE SOFTWARE
 LTDA**, CNPJ **63.103.885/0001-74**, operating under the trade name **Elberte
-Software**. Contact: **privacidade@pickforge.dev** [OWNER: activate this
-mailbox].
+Software**. Privacy/LGPD contact: **legal@pickforge.dev**.
 
 ## The short version
 
@@ -150,7 +149,7 @@ your data is shared. You can exercise these directly:
   transaction records to meet its legal and fiscal obligations.
 - **Export your data** from inside the app — a portable JSON file of your
   profile, entitlements, credit ledger, and synced settings.
-- **Contact us** at **privacidade@pickforge.dev** for any other request. This is
+- **Contact us** at **legal@pickforge.dev** for any other request. This is
   our privacy contact. [OWNER/LAWYER: confirm whether a formal Data Protection
   Officer (encarregado) appointment is required or the small-processing-agent
   exemption applies.]
@@ -175,6 +174,6 @@ https://pickforge.dev/privacy.
 
 ## Contact
 
-**privacidade@pickforge.dev** — Controller: **ELBERTE PLINIO GOIS VIEIRA FILHO
+**legal@pickforge.dev** — Controller: **ELBERTE PLINIO GOIS VIEIRA FILHO
 DESENVOLVIMENTO DE SOFTWARE LTDA**, CNPJ **63.103.885/0001-74**.
 Encarregado (DPO): [OWNER/LAWYER: confirm appointment or exemption].

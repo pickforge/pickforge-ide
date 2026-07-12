@@ -30,13 +30,16 @@ use std::time::Duration;
 use super::shell::{resolve_shell, ShellInvocation};
 use crate::process::{is_binary_on_path, run_timeout, user_shell_environment};
 
-static TMUX_SERVER_NAME: LazyLock<String> = LazyLock::new(|| {
+static PROCESS_INSTANCE_ID: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "pickforge-{}-{:016x}",
+        "{:x}-{:016x}",
         std::process::id(),
         rand::random::<u64>()
     )
 });
+
+static TMUX_SERVER_NAME: LazyLock<String> =
+    LazyLock::new(|| format!("pickforge-{}", &*PROCESS_INSTANCE_ID));
 
 fn tmux_server_name() -> &'static str {
     &TMUX_SERVER_NAME
@@ -128,13 +131,19 @@ pub fn session_name(project_root: &str, chat_id: &str) -> String {
     format!("pf-{:032x}", hasher.finish())
 }
 
-/// The directory holding dtach sockets: `<runtime_base>/pickforge/sessions/`.
-/// `runtime_base` is `$XDG_RUNTIME_DIR` (a user-private dir per the XDG spec),
-/// falling back to the system temp dir; the caller is responsible for creating
-/// + tightening it to `0700` before binding a socket inside (mirrors the MCP
-/// runtime dir handling).
+/// The directory holding this process's dtach sockets:
+/// `<runtime_base>/pickforge/s-<instance-id>/`.
+///
+/// A per-process namespace prevents one concurrently running PickForge instance
+/// from attaching to or sweeping another instance's sessions.
 pub fn sessions_dir(runtime_base: &Path) -> PathBuf {
-    runtime_base.join("pickforge").join("sessions")
+    sessions_dir_for_instance(runtime_base, &PROCESS_INSTANCE_ID)
+}
+
+fn sessions_dir_for_instance(runtime_base: &Path, instance_id: &str) -> PathBuf {
+    runtime_base
+        .join("pickforge")
+        .join(format!("s-{instance_id}"))
 }
 
 /// The dtach socket path for a session: `<sessions_dir>/<name>.dtach`.
@@ -856,8 +865,8 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let app_dir = base.join("pickforge");
-        let dir = app_dir.join("sessions");
+        let dir = sessions_dir(&base);
+        let app_dir = dir.parent().expect("sessions parent").to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::set_permissions(&app_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1002,12 +1011,16 @@ mod tests {
     }
 
     #[test]
-    fn socket_path_is_under_the_sessions_dir() {
+    fn socket_path_is_under_this_process_sessions_dir() {
         let base = PathBuf::from("/run/user/1000");
         let p = dtach_socket_path(&base, "pf-abc");
         assert_eq!(
             p,
-            PathBuf::from("/run/user/1000/pickforge/sessions/pf-abc.dtach")
+            sessions_dir(&base).join("pf-abc.dtach")
+        );
+        assert_ne!(
+            sessions_dir_for_instance(&base, "first"),
+            sessions_dir_for_instance(&base, "second")
         );
     }
 

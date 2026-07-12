@@ -38,8 +38,7 @@ use crate::remote_commands::ensure_remote_ssh_host_allowed;
 const TMUX_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The runtime base for PickForge session sockets: `$XDG_RUNTIME_DIR` (a
-/// user-private dir per the XDG spec) or the system temp dir as a fallback —
-/// the per-app `sessions/` subdir below is created + verified `0700` regardless.
+/// user-private dir per the XDG spec) or the system temp dir as a fallback.
 pub(crate) fn runtime_base() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -275,16 +274,14 @@ pub struct ChatSpawnResult {
     pub degraded: bool,
 }
 
-/// Ensure the dtach sockets dir (`<runtime>/pickforge/sessions/`) exists and is a
-/// user-PRIVATE (`0700`), current-user-owned real directory — the same hardening
-/// the MCP socket dir gets. Creates the `pickforge` parent and the `sessions`
-/// child, both `0700`. Rejects a pre-existing path that's a symlink, foreign
-/// owner, or group/other-accessible.
+/// Ensure this process's dtach socket directory is user-private (`0700`),
+/// current-user-owned, and not a symlink. Its `pickforge` parent receives the
+/// same hardening. Reject foreign or group/other-accessible paths.
 #[cfg(unix)]
 fn ensure_sessions_dir(dir: &Path) -> Result<(), String> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 
-    // Create the `pickforge` parent first (0700), then the `sessions` child.
+    // Create the `pickforge` parent first, then this process's private child.
     for d in [dir.parent(), Some(dir)].into_iter().flatten() {
         match std::fs::symlink_metadata(d) {
             Ok(meta) => {

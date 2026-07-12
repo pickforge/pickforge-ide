@@ -508,7 +508,7 @@ export async function discoverRemoteRunTargets(remote: RemotePty): Promise<RunTa
       "detect", "launch", "stop", "hotReload", "hotRestart",
       "streamLogs", "inspectSelection", "mapSelectionToSource", "exposeMcpTools",
     ],
-    needsDevice: false,
+    needsDevice: true,
     deviceConvention: profile.deviceConvention,
     inspectorKind: profile.inspectorKind,
     logSource: profile.logSource,

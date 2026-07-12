@@ -39,7 +39,15 @@ import {
 import { activeTarget, hasRunTargets } from "../../stores/runTargets";
 import { logSourceOf } from "../../lib/runTargets";
 import { autoReloadEnabled, toggleAutoReload } from "../../stores/autoReload";
-import { bootingKind, cancelBoot, isBooting, launchActiveTarget, launchError } from "../../stores/runLaunch";
+import {
+  bootingKind,
+  cancelBoot,
+  canLaunchActiveTarget,
+  isBooting,
+  launchActiveTarget,
+  launchError,
+  remoteDeviceLaunchReason,
+} from "../../stores/runLaunch";
 import { workbenchPrefs } from "../../stores/workbenchPrefs";
 import { ingestRunOutput } from "../../stores/vmService";
 import { pushMcpLogs } from "../../stores/mcp";
@@ -158,8 +166,15 @@ export function DebugConsole() {
         <button
           class="pf-dc-btn pf-dc-btn--run"
           classList={{ "pf-dc-btn--labeled": workbenchPrefs().runButtonLabels }}
-          title={isBooting() ? `Booting ${bootNoun()}…` : isRunning() ? "A run is active — stop it first" : "Run"}
-          disabled={!hasRunTargets() || isRunning() || isBooting()}
+          title={
+            isBooting()
+              ? `Booting ${bootNoun()}…`
+              : isRunning()
+                ? "A run is active — stop it first"
+                : remoteDeviceLaunchReason() ?? "Run"
+          }
+          aria-label={remoteDeviceLaunchReason() ?? "Run"}
+          disabled={!hasRunTargets() || !canLaunchActiveTarget() || isRunning() || isBooting()}
           onClick={() => void launchActiveTarget()}
         >
           <IconPlay size={12} />

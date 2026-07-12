@@ -20,13 +20,36 @@ import {
   setRunTargets,
 } from "../../stores/runTargets";
 import { compatibleDevices, deviceKey, deviceLabel, resolveSelectedDevice } from "../../stores/runLaunch";
+import { runConsole } from "../../stores/runConsole";
+import { RemoteDevicePicker } from "./RemoteDevicePicker";
 
-export function RunLauncher() {
-  // Subscribe to the shared poller for this view's lifetime, but show only the
-  // devices compatible with the active target's platform (never a simulator for
-  // an Android run, or vice versa).
+function LocalDevicePicker() {
   useDeviceList();
   const devices = compatibleDevices;
+  const selectedKey = () => {
+    const entry = resolveSelectedDevice();
+    return entry ? deviceKey(entry) : "";
+  };
+  const deviceSuffix = (state: string) =>
+    state === "stopped" ? " — start" : state === "offline" ? " (offline)" : "";
+
+  return (
+    <Show when={devices().length > 0}>
+      <Dropdown
+        class="pf-run-dropdown"
+        title="Device"
+        value={selectedKey()}
+        onChange={(value) => workspace.activeRoot && setRunDevice(workspace.activeRoot, value)}
+        options={devices().map((device) => ({
+          value: deviceKey(device),
+          label: deviceLabel(device) + deviceSuffix(device.state),
+        }))}
+      />
+    </Show>
+  );
+}
+
+export function RunLauncher() {
   const discovery = new RunTargetDiscovery();
   onCleanup(() => discovery.cancel());
 
@@ -48,18 +71,12 @@ export function RunLauncher() {
     });
   });
 
-  const showDevices = () => !!activeTarget()?.needsDevice && devices().length > 0;
+  const remote = () => remotePtyFor(workspace.activeRoot);
+  const showDevices = () => !!activeTarget()?.needsDevice;
   // Honest support tier for the active target — a quiet, neutral badge so a user
   // on an RN/Android/web project sees how deep PickForge actually goes, instead of
   // a bare dropdown that overstates support. Never the ember (Run keeps that).
   const tier = () => supportTierMeta(activeTarget());
-  const selectedKey = () => {
-    const e = resolveSelectedDevice();
-    return e ? deviceKey(e) : "";
-  };
-  const deviceSuffix = (state: string) =>
-    state === "stopped" ? " — start" : state === "offline" ? " (offline)" : "";
-
   return (
     <div class="pf-run-launcher">
       <Show
@@ -82,16 +99,20 @@ export function RunLauncher() {
           </span>
         </Show>
         <Show when={showDevices()}>
-          <Dropdown
-            class="pf-run-dropdown"
-            title="Device"
-            value={selectedKey()}
-            onChange={(v) => workspace.activeRoot && setRunDevice(workspace.activeRoot, v)}
-            options={devices().map((d) => ({
-              value: deviceKey(d),
-              label: deviceLabel(d) + deviceSuffix(d.state),
-            }))}
-          />
+          <Show when={remote()} fallback={<LocalDevicePicker />} keyed>
+            {(binding) => (
+              <Show when={workspace.activeRoot} keyed>
+                {(root) => (
+                  <RemoteDevicePicker
+                    class="pf-run-dropdown"
+                    projectRoot={root}
+                    remote={binding}
+                    disabled={runConsole.status() === "running"}
+                  />
+                )}
+              </Show>
+            )}
+          </Show>
         </Show>
       </Show>
     </div>

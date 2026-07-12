@@ -3,6 +3,7 @@
 // localStorage. An empty string means "no explicit choice" (use the first
 // connected device).
 import { createSignal } from "solid-js";
+import type { RemotePty } from "../lib/pty";
 
 const KEY = "pickforge.runDevice";
 
@@ -23,11 +24,17 @@ function persist(next: Record<string, string>) {
   localStorage.setItem(KEY, JSON.stringify(next));
 }
 
-/** The selected device serial for a project, or "" if none chosen yet. */
-export function selectedDevice(root: string | null): string {
-  return (root && state()[root]) || "";
+function selectionKey(root: string, remote?: RemotePty | null): string {
+  return remote
+    ? JSON.stringify(["remote", root, remote.host, remote.remoteRoot])
+    : root;
 }
 
-export function setRunDevice(root: string, serial: string) {
-  persist({ ...state(), [root]: serial });
+/** The selected device id for a local project or exact remote binding. */
+export function selectedDevice(root: string | null, remote?: RemotePty | null): string {
+  return root ? state()[selectionKey(root, remote)] || "" : "";
+}
+
+export function setRunDevice(root: string, serial: string, remote?: RemotePty | null) {
+  persist({ ...state(), [selectionKey(root, remote)]: serial });
 }

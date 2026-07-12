@@ -24,9 +24,10 @@
 //! unit-testable without a live dtach/tmux.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::shell::{resolve_shell, ShellInvocation};
-use crate::process::{is_binary_on_path, user_shell_environment};
+use crate::process::{is_binary_on_path, run_timeout, user_shell_environment};
 
 /// Which session backend a chat shell is run under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +86,9 @@ pub fn select_backend_with(
     requested: SessionBackend,
     present: impl Fn(&str) -> bool,
 ) -> SessionBackend {
+    if requested == SessionBackend::Dtach && !cfg!(target_os = "linux") {
+        return SessionBackend::Raw;
+    }
     match requested.binary() {
         Some(bin) if present(bin) => requested,
         Some(_) => SessionBackend::Raw, // requested backend missing — degrade
@@ -129,8 +133,7 @@ pub fn dtach_socket_path(runtime_base: &Path, name: &str) -> PathBuf {
 /// argv: a master we spawned is `dtach -A <socket> …`, so the exact socket path
 /// appears as one of its arguments. Matching the FULL socket path (a unique
 /// `pf-<128bit-hex>.dtach` under our private sessions dir) means we never touch
-/// an unrelated dtach the user is running. Linux-only (reads `/proc/<pid>/cmdline`);
-/// returns empty on other platforms, where the socket-unlink fallback stands.
+/// an unrelated dtach the user is running. Linux-only (reads `/proc/<pid>/cmdline`).
 ///
 /// dtach has no kill verb, so destroying a dtach session whose client pane is
 /// already closed means signalling this master — otherwise the shell/agent inside
@@ -178,36 +181,105 @@ pub fn dtach_master_pids(_socket: &Path) -> Vec<i32> {
     Vec::new()
 }
 
-/// Terminate the dtach master process(es) bound to `socket` (TERM, then KILL).
-/// Only the process group leader is left alone — we signal the single master pid
-/// so we don't reach into anything we didn't match. No-op when no master is found
-/// (the common case: the client pane was open, so the master already exited with
-/// it, or the socket was never a dtach we spawned).
-#[cfg(unix)]
-pub fn kill_dtach_master(socket: &Path) {
-    let pids = dtach_master_pids(socket);
-    if pids.is_empty() {
-        return;
-    }
-    for &pid in &pids {
-        // SAFETY: kill() with a valid pid is well-defined; ESRCH (already gone)
-        // is harmless and ignored.
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum DtachKillError {
+    #[error("exact dtach ownership discovery is unsupported on this platform")]
+    Unsupported,
+    #[error("no owned dtach master was found for {0}")]
+    MasterNotFound(String),
+    #[error("failed to signal owned dtach process {pid}: {error}")]
+    SignalFailed { pid: i32, error: String },
+    #[error("owned dtach master is still running for {0}")]
+    StillRunning(String),
+}
+
+#[cfg(target_os = "linux")]
+fn proc_parent_pid(pid: i32) -> Option<i32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, fields) = stat.rsplit_once(") ")?;
+    fields.split_whitespace().nth(1)?.parse().ok()
+}
+
+#[cfg(target_os = "linux")]
+fn descendant_pids(roots: &[i32]) -> Vec<i32> {
+    let mut children: std::collections::HashMap<i32, Vec<i32>> =
+        std::collections::HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if let Some(parent) = proc_parent_pid(pid) {
+            children.entry(parent).or_default().push(pid);
         }
     }
-    // Brief grace so the shell + agent can clean up, then force any survivor.
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    for &pid in &pids {
-        // SAFETY: as above; SIGKILL is unconditionally fatal.
-        unsafe {
-            libc::kill(pid, libc::SIGKILL);
+
+    let mut descendants = Vec::new();
+    let mut pending = roots.to_vec();
+    while let Some(parent) = pending.pop() {
+        if let Some(found) = children.get(&parent) {
+            for &pid in found {
+                if !roots.contains(&pid) && !descendants.contains(&pid) {
+                    descendants.push(pid);
+                    pending.push(pid);
+                }
+            }
         }
+    }
+    descendants
+}
+
+#[cfg(target_os = "linux")]
+fn signal_dtach_pid(pid: i32, signal: libc::c_int) -> Result<(), DtachKillError> {
+    if unsafe { libc::kill(pid, signal) } == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(DtachKillError::SignalFailed {
+            pid,
+            error: error.to_string(),
+        })
     }
 }
 
-#[cfg(not(unix))]
-pub fn kill_dtach_master(_socket: &Path) {}
+#[cfg(target_os = "linux")]
+pub fn kill_dtach_master(socket: &Path) -> Result<usize, DtachKillError> {
+    let masters = dtach_master_pids(socket);
+    if masters.is_empty() {
+        return Err(DtachKillError::MasterNotFound(socket.display().to_string()));
+    }
+    let mut targets = descendant_pids(&masters);
+    targets.extend(masters);
+    for &pid in &targets {
+        signal_dtach_pid(pid, libc::SIGTERM)?;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    for &pid in &targets {
+        signal_dtach_pid(pid, libc::SIGKILL)?;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while !dtach_master_pids(socket).is_empty() {
+        if std::time::Instant::now() >= deadline {
+            return Err(DtachKillError::StillRunning(socket.display().to_string()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Ok(targets.len())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn kill_dtach_master(_socket: &Path) -> Result<usize, DtachKillError> {
+    Err(DtachKillError::Unsupported)
+}
 
 /// A resolved program + args ready to hand to `portable-pty`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -341,6 +413,107 @@ pub fn tmux_kill_session_args(name: &str) -> Vec<String> {
         "-t".to_string(),
         format!("={name}"),
     ]
+}
+
+/// `tmux -L pickforge kill-server` — tear down PickForge's PRIVATE tmux server
+/// (and with it every `pf-*` session on it). `-L pickforge` scopes the kill to
+/// our dedicated server socket, so the user's own tmux server (default or any
+/// other `-L`) is never touched.
+fn tmux_kill_server_args() -> Vec<String> {
+    vec![
+        "-L".to_string(),
+        "pickforge".to_string(),
+        "kill-server".to_string(),
+    ]
+}
+
+/// The dtach sockets WE own inside `dir`: regular (non-symlink) `pf-*.dtach`
+/// entries only. The sessions dir is already user-private (`0700`), but the
+/// prefix + symlink checks keep the sweep from ever following a planted link
+/// or touching a file we didn't create.
+fn owned_dtach_sockets(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut sockets = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let owned_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.starts_with("pf-") && name.ends_with(".dtach"))
+            .unwrap_or(false);
+        let is_symlink = std::fs::symlink_metadata(&path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(true);
+        if owned_name && !is_symlink {
+            sockets.push(path);
+        }
+    }
+    sockets
+}
+
+/// Bound the tmux kill-server call so app exit can never hang on a wedged tmux.
+const TMUX_KILL_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Clean up exact dtach sessions and PickForge's private tmux server on exit.
+#[cfg(unix)]
+fn validated_sessions_dir(runtime_base: &Path) -> Result<PathBuf, String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let dir = sessions_dir(runtime_base);
+    for path in [dir.parent(), Some(dir.as_path())].into_iter().flatten() {
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(dir.clone()),
+            Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+        };
+        if !metadata.file_type().is_dir()
+            || metadata.uid() != unsafe { libc::getuid() }
+            || metadata.permissions().mode() & 0o077 != 0
+        {
+            return Err(format!("unsafe recoverable-session directory: {}", path.display()));
+        }
+    }
+    Ok(dir)
+}
+
+#[cfg(not(unix))]
+fn validated_sessions_dir(runtime_base: &Path) -> Result<PathBuf, String> {
+    Ok(sessions_dir(runtime_base))
+}
+
+fn cleanup_owned_dtach_sockets(
+    dir: &Path,
+    mut kill: impl FnMut(&Path) -> Result<usize, DtachKillError>,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for socket in owned_dtach_sockets(dir) {
+        match kill(&socket) {
+            Ok(_) => {
+                if let Err(error) = std::fs::remove_file(&socket) {
+                    errors.push(format!("cannot remove {}: {error}", socket.display()));
+                }
+            }
+            Err(error) => errors.push(error.to_string()),
+        }
+    }
+    errors
+}
+
+pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), String> {
+    let errors = match validated_sessions_dir(runtime_base) {
+        Ok(dir) => cleanup_owned_dtach_sockets(&dir, kill_dtach_master),
+        Err(error) => vec![error],
+    };
+    let args = tmux_kill_server_args();
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let _ = run_timeout("tmux", &refs, None, None, TMUX_KILL_TIMEOUT);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// The "created" vs "attached" hint returned to the UI. Best-effort: it reflects
@@ -610,11 +783,105 @@ mod tests {
     }
 
     #[test]
+    fn tmux_kill_server_targets_only_the_private_server() {
+        assert_eq!(
+            tmux_kill_server_args(),
+            // `-L pickforge` scopes the kill to OUR server socket — the user's
+            // default tmux server must never be reachable from this argv.
+            vec!["-L", "pickforge", "kill-server"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_dtach_socket_sweep_matches_only_our_regular_files() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "pickforge-dtach-sweep-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create sweep dir");
+
+        // Ours: a regular pf-*.dtach file.
+        let ours = dir.join("pf-abc123.dtach");
+        std::fs::write(&ours, b"").expect("write owned socket");
+        // Not ours: wrong prefix, wrong suffix, and a planted symlink that
+        // resolves to a pf-named path — the sweep must skip all three.
+        std::fs::write(dir.join("other.dtach"), b"").expect("write foreign socket");
+        std::fs::write(dir.join("pf-abc123.sock"), b"").expect("write wrong suffix");
+        symlink(&ours, dir.join("pf-planted.dtach")).expect("plant symlink");
+
+        assert_eq!(owned_dtach_sockets(&dir), vec![ours]);
+
+        // A missing dir is an empty (not panicking) sweep.
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(owned_dtach_sockets(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_cleanup_rejects_an_insecure_sessions_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!(
+            "pickforge-dtach-dir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let app_dir = base.join("pickforge");
+        let dir = app_dir.join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&app_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(validated_sessions_dir(&base).is_err());
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn exit_cleanup_preserves_socket_when_master_is_not_identifiable() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "pickforge-dtach-unmatched-{}-{nonce}",
+            std::process::id()
+        ));
+        let dir = sessions_dir(&base);
+        std::fs::create_dir_all(&dir).expect("create sessions dir");
+        let socket = dir.join("pf-unmatched.dtach");
+        std::fs::write(&socket, b"").expect("write fake socket");
+
+        let errors = cleanup_owned_dtach_sockets(&dir, |path| {
+            Err(DtachKillError::MasterNotFound(path.display().to_string()))
+        });
+
+        assert!(errors.join("; ").contains("no owned dtach master"));
+        assert!(socket.exists(), "unmatched socket must not be unlinked");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn backend_selection_falls_back_to_raw_when_absent() {
-        // dtach present → dtach.
+        // dtach is selected only where exact owned-process discovery is supported.
         assert_eq!(
             select_backend_with(SessionBackend::Dtach, |b| b == "dtach"),
-            SessionBackend::Dtach
+            if cfg!(target_os = "linux") {
+                SessionBackend::Dtach
+            } else {
+                SessionBackend::Raw
+            }
         );
         // dtach requested but only tmux present → degrade to raw.
         assert_eq!(

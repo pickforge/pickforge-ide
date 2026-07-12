@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use pickforge_core::android::{A11yNode, DeviceEntry, DeviceKind, DeviceState};
@@ -28,15 +28,41 @@ struct OsLogSession {
 }
 
 #[derive(Default, Clone)]
-pub struct OsLogManager(Arc<Mutex<HashMap<String, OsLogSession>>>);
+pub struct OsLogManager(
+    Arc<Mutex<HashMap<String, OsLogSession>>>,
+    Arc<AtomicBool>,
+);
 
 impl OsLogManager {
     pub fn new() -> Self {
         Self::default()
     }
 
-    async fn replace_session(&self, udid: &str, session: OsLogSession) -> Option<OsLogSession> {
-        self.0.lock().await.insert(udid.to_string(), session)
+    fn is_shutting_down(&self) -> bool {
+        self.1.load(Ordering::SeqCst)
+    }
+
+    async fn replace_session(
+        &self,
+        udid: &str,
+        session: OsLogSession,
+    ) -> Result<Option<OsLogSession>, OsLogSession> {
+        let mut sessions = self.0.lock().await;
+        if self.is_shutting_down() {
+            return Err(session);
+        }
+        Ok(sessions.insert(udid.to_string(), session))
+    }
+
+    pub async fn shutdown(&self) {
+        self.1.store(true, Ordering::SeqCst);
+        let sessions = {
+            let mut reg = self.0.lock().await;
+            reg.drain().map(|(_, session)| session).collect::<Vec<_>>()
+        };
+        for session in sessions {
+            stop_child(session).await;
+        }
     }
 }
 
@@ -105,6 +131,9 @@ pub async fn oslog_start(
     udid: String,
     on_line: Channel<OsLogEvent>,
 ) -> Result<(), String> {
+    if manager.is_shutting_down() {
+        return Err("os_log manager is shutting down".to_string());
+    }
     let mut cmd = Command::new("xcrun");
     cmd.args([
         "simctl", "spawn", &udid, "log", "stream", "--style", "compact", "--level", "info",
@@ -121,11 +150,16 @@ pub async fn oslog_start(
     let stdout = child.stdout.take().ok_or("no os_log stdout")?;
     let epoch = next_epoch();
 
-    if let Some(old) = manager
+    match manager
         .replace_session(&udid, OsLogSession { child, epoch })
         .await
     {
-        stop_child(old).await;
+        Ok(Some(old)) => stop_child(old).await,
+        Ok(None) => {}
+        Err(session) => {
+            stop_child(session).await;
+            return Err("os_log manager is shutting down".to_string());
+        }
     }
 
     let registry = manager.0.clone();
@@ -250,4 +284,73 @@ pub(crate) fn capture_ios_screenshot(
     let path = Path::new(output_dir).join(output_name);
     std::fs::write(&path, bytes).ok()?;
     Some(path.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spawn_sleeper() -> Child {
+        Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn sleep")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shutdown_kills_all_streams_and_is_idempotent() {
+        let manager = OsLogManager::new();
+        let first = spawn_sleeper();
+        let second = spawn_sleeper();
+        let first_pid = first.id().expect("first pid");
+        let second_pid = second.id().expect("second pid");
+        let _ = manager
+            .replace_session(
+                "udid-1",
+                OsLogSession {
+                    child: first,
+                    epoch: next_epoch(),
+                },
+            )
+            .await;
+        let _ = manager
+            .replace_session(
+                "udid-2",
+                OsLogSession {
+                    child: second,
+                    epoch: next_epoch(),
+                },
+            )
+            .await;
+
+        manager.shutdown().await;
+
+        assert!(manager.0.lock().await.is_empty(), "registry must drain");
+        for pid in [first_pid, second_pid] {
+            assert_ne!(
+                unsafe { libc::kill(pid as i32, 0) },
+                0,
+                "child {pid} must be dead after shutdown",
+            );
+        }
+
+        manager.shutdown().await;
+        assert!(manager.0.lock().await.is_empty());
+
+        let raced = OsLogSession {
+            child: spawn_sleeper(),
+            epoch: next_epoch(),
+        };
+        let raced_pid = raced.child.id().expect("raced pid");
+        let raced = match manager.replace_session("udid-3", raced).await {
+            Err(raced) => raced,
+            Ok(_) => panic!("shutdown gate must reject raced session"),
+        };
+        stop_child(raced).await;
+        assert_ne!(unsafe { libc::kill(raced_pid as i32, 0) }, 0);
+    }
 }

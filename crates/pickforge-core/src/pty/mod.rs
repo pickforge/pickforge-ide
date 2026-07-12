@@ -13,8 +13,9 @@ mod shell;
 pub use env::normalize_pty_env;
 pub use session::{PtyError, PtyEvent, PtyManager, PtySink, RemotePty, SpawnOptions};
 pub use sessions::{
-    dtach_master_pids, dtach_socket_path, kill_dtach_master, prepare_chat_session, select_backend,
-    session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
-    PreparedSession, SessionBackend, SessionStatus,
+    dtach_master_pids, dtach_socket_path, kill_dtach_master, kill_recoverable_sessions_on_exit,
+    prepare_chat_session, select_backend, session_name, sessions_dir, tmux_has_session_args,
+    tmux_kill_session_args, tmux_set_titles_args, DtachKillError, PreparedSession, SessionBackend,
+    SessionStatus,
 };
 pub use shell::{resolve_shell, ShellInvocation};

@@ -40,7 +40,7 @@ const TMUX_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// The runtime base for PickForge session sockets: `$XDG_RUNTIME_DIR` (a
 /// user-private dir per the XDG spec) or the system temp dir as a fallback —
 /// the per-app `sessions/` subdir below is created + verified `0700` regardless.
-fn runtime_base() -> PathBuf {
+pub(crate) fn runtime_base() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -461,12 +461,12 @@ pub fn pty_destroy_chat_session(session_id: String) -> Result<(), String> {
             // Terminate the dtach master holding this socket FIRST — otherwise the
             // shell/agent inside it keeps running after we unlink the socket. Only
             // matches a dtach whose argv carries this exact (unique) socket path.
-            kill_dtach_master(&sock);
+            kill_dtach_master(&sock).map_err(|error| error.to_string())?;
             // Only remove a real socket/file — never follow a symlink someone
             // swapped in for the path.
             if let Ok(meta) = std::fs::symlink_metadata(&sock) {
                 if !meta.file_type().is_symlink() {
-                    let _ = std::fs::remove_file(&sock);
+                    std::fs::remove_file(&sock).map_err(|error| error.to_string())?;
                 }
             }
             Ok(())

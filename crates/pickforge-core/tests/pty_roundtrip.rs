@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use pickforge_core::{PtyEvent, PtyManager, RemotePty, SpawnOptions};
+use pickforge_core::{PtyError, PtyEvent, PtyManager, RemotePty, SpawnOptions};
 
 #[test]
 fn shell_echo_round_trips_through_the_sink() {
@@ -245,6 +245,78 @@ fn detach_of_a_session_backed_pane_completes_without_hanging() {
         .expect("detach hung — the reader thread fd kept the client from detaching");
     worker.join().expect("detach worker panicked");
     assert!(manager.is_empty(), "registry must drain after detach");
+}
+
+#[cfg(unix)]
+#[test]
+fn shutdown_terminates_children_and_grandchildren_and_rejects_spawns() {
+    let marker = std::env::temp_dir().join(format!(
+        "pickforge-pty-shutdown-{}-{:?}",
+        std::process::id(),
+        Instant::now()
+    ));
+    let _ = std::fs::remove_file(&marker);
+
+    let manager = PtyManager::new();
+    let id = manager
+        .spawn(SpawnOptions::default(), |_event| {})
+        .expect("spawn shell");
+    sleep(Duration::from_millis(400));
+    let cmd = format!("sh -c 'sleep 3; : > {}'\n", marker.display());
+    manager.write(id, cmd.as_bytes()).expect("write job");
+    sleep(Duration::from_millis(500));
+
+    manager.shutdown();
+    assert!(manager.is_empty(), "registry must drain on shutdown");
+
+    assert!(
+        matches!(
+            manager.spawn(SpawnOptions::default(), |_event| {}),
+            Err(PtyError::ShuttingDown)
+        ),
+        "spawn after shutdown must be rejected"
+    );
+    manager.shutdown();
+
+    sleep(Duration::from_secs(4));
+    assert!(
+        !marker.exists(),
+        "descendant survived shutdown (marker was written)"
+    );
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn shutdown_tears_down_detachable_clients_too() {
+    let manager = std::sync::Arc::new(PtyManager::new());
+    let _id = manager
+        .spawn(
+            SpawnOptions {
+                detach_on_drop: true,
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            },
+            |_event| {},
+        )
+        .expect("spawn detachable shell");
+    assert_eq!(manager.len(), 1);
+    sleep(Duration::from_millis(300));
+
+    let (tx, rx) = mpsc::channel::<()>();
+    let m = std::sync::Arc::clone(&manager);
+    let worker = std::thread::spawn(move || {
+        m.shutdown();
+        let _ = tx.send(());
+    });
+    rx.recv_timeout(Duration::from_secs(8))
+        .expect("shutdown hung on a detachable client");
+    worker.join().expect("shutdown worker panicked");
+    assert!(
+        manager.is_empty(),
+        "detachable client must be torn down on shutdown"
+    );
 }
 
 #[test]

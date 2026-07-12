@@ -4,8 +4,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use pickforge_core::android::{self, A11yNode, AdbDevice, DeviceEntry};
+use pickforge_core::android::{self, A11yNode, AdbDevice, DeviceEntry, EmulatorManager};
 use pickforge_core::{detect_target, nearest_pubspec_dir, TargetDetection};
+use tauri::State;
 
 #[tauri::command]
 pub fn target_detect(project_root: String) -> TargetDetection {
@@ -46,10 +47,15 @@ pub async fn android_device_list() -> Result<Vec<DeviceEntry>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Boot a stopped AVD (detached). Returns once spawned, not once booted.
+/// Boot a stopped AVD as a PickForge-owned child (it dies with the app).
+/// Returns once spawned, not once booted.
 #[tauri::command]
-pub async fn android_launch_avd(avd_id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || android::launch_avd(&avd_id))
+pub async fn android_launch_avd(
+    manager: State<'_, EmulatorManager>,
+    avd_id: String,
+) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.launch_avd(&avd_id))
         .await
         .map_err(|e| e.to_string())?
 }

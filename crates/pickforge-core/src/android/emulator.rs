@@ -1,11 +1,14 @@
 //! Android emulator (AVD) support: discover installed AVDs with friendly names,
-//! launch a stopped AVD as a detached process, and merge running devices with
-//! stopped AVDs into one list for the UI. The `emulator` binary is usually NOT
-//! on PATH, so it's resolved against the SDK location.
+//! launch a stopped AVD as an OWNED child of [`EmulatorManager`], and merge
+//! running devices with stopped AVDs into one list for the UI. The `emulator`
+//! binary is usually NOT on PATH, so it's resolved against the SDK location.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -153,34 +156,171 @@ fn parse_avd_config(text: &str, stem: &str) -> AvdInfo {
     AvdInfo { avd_id, display_name }
 }
 
-/// Launch a stopped AVD as a detached background process. `Ok(())` means it was
-/// spawned, not that it finished booting.
-pub fn launch_avd(avd_id: &str) -> Result<(), String> {
-    let bin = resolve_emulator_binary().ok_or_else(|| "emulator binary not found".to_string())?;
-    let mut cmd = Command::new(&bin);
-    cmd.arg("-avd").arg(avd_id);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    // Same enriched login-shell env the process runner uses, so the emulator
-    // finds the JDK / SDK side-tools it needs.
-    cmd.env_clear();
-    for (k, v) in user_shell_environment() {
-        cmd.env(k, v);
+const EXIT_POLL: Duration = Duration::from_millis(100);
+#[cfg(unix)]
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
+/// Owns emulator children launched through PickForge.
+#[derive(Clone)]
+pub struct EmulatorManager {
+    state: Arc<EmulatorState>,
+}
+
+struct EmulatorState {
+    children: Mutex<HashMap<u64, Arc<Mutex<Child>>>>,
+    next_id: AtomicU64,
+    shutting_down: AtomicBool,
+}
+
+impl Default for EmulatorManager {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(EmulatorState {
+                children: Mutex::new(HashMap::new()),
+                next_id: AtomicU64::new(1),
+                shutting_down: AtomicBool::new(false),
+            }),
+        }
     }
+}
+
+impl EmulatorManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Launch a stopped AVD. `Ok(())` means spawned, not booted.
+    pub fn launch_avd(&self, avd_id: &str) -> Result<(), String> {
+        let bin =
+            resolve_emulator_binary().ok_or_else(|| "emulator binary not found".to_string())?;
+        let mut cmd = Command::new(&bin);
+        cmd.arg("-avd").arg(avd_id);
+        // Same enriched login-shell env the process runner uses, so the emulator
+        // finds the JDK / SDK side-tools it needs.
+        cmd.env_clear();
+        for (k, v) in user_shell_environment() {
+            cmd.env(k, v);
+        }
+        self.spawn_owned(cmd)
+    }
+
+    fn spawn_owned(&self, mut cmd: Command) -> Result<(), String> {
+        if self.state.shutting_down.load(Ordering::SeqCst) {
+            return Err("emulator manager is shutting down".to_string());
+        }
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // The pgid is the exact ownership boundary used at shutdown.
+            cmd.process_group(0);
+        }
+        let child = Arc::new(Mutex::new(cmd.spawn().map_err(|e| e.to_string())?));
+
+        let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut children = self
+                .state
+                .children
+                .lock()
+                .expect("emulator registry poisoned");
+            // Re-check under the lock so insertion cannot race behind the drain.
+            if self.state.shutting_down.load(Ordering::SeqCst) {
+                drop(children);
+                kill_owned_child_now(&child);
+                return Err("emulator manager is shutting down".to_string());
+            }
+            children.insert(id, Arc::clone(&child));
+        }
+        self.watch_child(id, child);
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.state
+            .children
+            .lock()
+            .expect("emulator registry poisoned")
+            .len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn shutdown(&self) {
+        self.state.shutting_down.store(true, Ordering::SeqCst);
+        let drained = {
+            let mut children = self
+                .state
+                .children
+                .lock()
+                .expect("emulator registry poisoned");
+            children.drain().map(|(_, child)| child).collect::<Vec<_>>()
+        };
+        if drained.is_empty() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            for child in &drained {
+                signal_owned_group(child, libc::SIGTERM);
+            }
+            std::thread::sleep(SHUTDOWN_GRACE);
+        }
+        for child in drained {
+            kill_owned_child_now(&child);
+        }
+    }
+
+    fn watch_child(&self, id: u64, child: Arc<Mutex<Child>>) {
+        let state = Arc::downgrade(&self.state);
+        std::thread::spawn(move || loop {
+            let Some(state) = Weak::upgrade(&state) else {
+                return;
+            };
+            let mut children = state.children.lock().expect("emulator registry poisoned");
+            if !children.contains_key(&id) {
+                return;
+            }
+            let result = child.lock().expect("emulator child poisoned").try_wait();
+            match result {
+                Ok(Some(_)) => {
+                    children.remove(&id);
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => {
+                    children.remove(&id);
+                    drop(children);
+                    kill_owned_child_now(&child);
+                    return;
+                }
+            }
+            drop(children);
+            drop(state);
+            std::thread::sleep(EXIT_POLL);
+        });
+    }
+}
+
+#[cfg(unix)]
+fn signal_owned_group(child: &Arc<Mutex<Child>>, signal: libc::c_int) {
+    let child = child.lock().expect("emulator child poisoned");
+    unsafe {
+        libc::killpg(child.id() as libc::pid_t, signal);
+    }
+}
+
+fn kill_owned_child_now(child: &Arc<Mutex<Child>>) {
     #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // Own process group so the emulator survives PickForge exit / Ctrl-C.
-        cmd.process_group(0);
-    }
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-    // Reap on exit so an emulator that quits mid-session doesn't linger as a
-    // zombie until PickForge itself exits (Drop on Child doesn't wait).
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    signal_owned_group(child, libc::SIGKILL);
+    let mut child = child.lock().expect("emulator child poisoned");
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// The merged, deduped device list: running adb devices first, then any
@@ -258,6 +398,111 @@ pub fn device_list() -> Vec<DeviceEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn wait_until(mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for condition"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(unix)]
+    fn process_alive(pid: i32) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    fn sleeper_command(marker: &Path) -> Command {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(format!("sleep 30 & sleep 3; : > {}", marker.display()));
+        cmd
+    }
+
+    #[cfg(unix)]
+    fn temp_marker(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "pickforge-emulator-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_kills_owned_children_and_rejects_new_launches() {
+        let marker = temp_marker("shutdown");
+        let _ = std::fs::remove_file(&marker);
+        let manager = EmulatorManager::new();
+        manager
+            .spawn_owned(sleeper_command(&marker))
+            .expect("spawn fake emulator");
+        assert_eq!(manager.len(), 1);
+        std::thread::sleep(Duration::from_millis(200)); // let the grandchild fork
+
+        manager.shutdown();
+        assert!(manager.is_empty(), "registry must drain on shutdown");
+        assert!(manager.spawn_owned(sleeper_command(&marker)).is_err());
+        manager.shutdown();
+
+        std::thread::sleep(Duration::from_secs(4));
+        assert!(
+            !marker.exists(),
+            "fake emulator survived shutdown (marker was written)"
+        );
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_uses_one_global_grace_for_all_children() {
+        let manager = EmulatorManager::new();
+        for _ in 0..2 {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "trap '' TERM; exec sleep 30"]);
+            manager.spawn_owned(cmd).expect("spawn fake emulator");
+        }
+
+        let started = std::time::Instant::now();
+        manager.shutdown();
+        let elapsed = started.elapsed();
+
+        assert!(elapsed >= Duration::from_millis(1800), "grace was skipped");
+        assert!(
+            elapsed < Duration::from_millis(3500),
+            "grace was applied serially: {elapsed:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn natural_exit_is_reaped_and_leaves_no_registry_entry() {
+        let manager = EmulatorManager::new();
+        let mut cmd = Command::new("sleep");
+        cmd.arg("0.2");
+        manager.spawn_owned(cmd).expect("spawn short-lived child");
+
+        let pid = manager
+            .state
+            .children
+            .lock()
+            .expect("emulator registry poisoned")
+            .values()
+            .map(|child| child.lock().expect("emulator child poisoned").id() as i32)
+            .next()
+            .expect("child is registered");
+
+        wait_until(|| manager.is_empty());
+        wait_until(|| !process_alive(pid));
+    }
 
     #[test]
     fn parses_displayname_from_exact_key() {

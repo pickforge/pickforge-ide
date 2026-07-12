@@ -13,8 +13,8 @@ pub use adb::{
 };
 pub use mirror::{start_session, stop_session, MirrorError, MirrorSession, SERVER_VERSION};
 pub use emulator::{
-    device_list, launch_avd, list_avds, resolve_emulator_binary, AvdInfo, DeviceEntry, DeviceKind,
-    DeviceState,
+    device_list, list_avds, resolve_emulator_binary, AvdInfo, DeviceEntry, DeviceKind, DeviceState,
+    EmulatorManager,
 };
 pub use logcat::{logcat_event, LogEvent, LogLevel};
 pub use uiautomator::{

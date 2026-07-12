@@ -15,7 +15,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::process::{run, user_shell_environment};
+use crate::process::{run, run_timeout, user_shell_environment};
 
 /// scrcpy-server version — MUST match the bundled jar and what
 /// `@yume-chan/scrcpy` understands (its `latest` == 3.3.3).
@@ -120,7 +120,7 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
         Ok(Ok(pair)) => pair,
         _ => {
             let _ = child.kill().await;
-            let _ = adb(&["-s", serial, "reverse", "--remove", &socket_name]);
+            remove_reverse(serial.to_string(), socket_name).await;
             return Err(MirrorError::ConnectTimeout);
         }
     };
@@ -136,9 +136,23 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
     })
 }
 
-/// Tear down a session: remove the tunnel and kill the server process.
+const REVERSE_REMOVE_TIMEOUT: Duration = Duration::from_secs(1);
+
+async fn remove_reverse(serial: String, socket_name: String) {
+    let _ = tokio::task::spawn_blocking(move || {
+        let args = ["-s", serial.as_str(), "reverse", "--remove", socket_name.as_str()];
+        let _ = run_timeout("adb", &args, None, None, REVERSE_REMOVE_TIMEOUT);
+    })
+    .await;
+}
+
+/// Tear down a session. Reap the owned child first; reverse-tunnel cleanup is
+/// best-effort and bounded so a wedged adb cannot stall app shutdown.
 pub async fn stop_session(mut session: MirrorSession) {
-    let socket_name = format!("localabstract:scrcpy_{}", session.scid);
-    let _ = adb(&["-s", &session.serial, "reverse", "--remove", &socket_name]);
     let _ = session.child.kill().await;
+    remove_reverse(
+        session.serial,
+        format!("localabstract:scrcpy_{}", session.scid),
+    )
+    .await;
 }

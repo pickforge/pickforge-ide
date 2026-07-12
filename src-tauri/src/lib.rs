@@ -13,6 +13,7 @@ mod picklab_commands;
 mod process_commands;
 mod pty_commands;
 mod remote_commands;
+mod shutdown;
 mod telemetry_commands;
 mod voice_commands;
 mod vm_commands;
@@ -25,7 +26,7 @@ use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
     PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
 };
-use tauri::{path::BaseDirectory, Manager, RunEvent, WindowEvent};
+use tauri::{path::BaseDirectory, Manager, RunEvent};
 #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -214,6 +215,7 @@ pub fn run() {
             Ok(())
         })
         .manage(PtyManager::new())
+        .manage(pickforge_core::android::EmulatorManager::new())
         .manage(Arc::new(VoiceSessionManager::new()))
         .manage(VmServiceClient::new())
         .manage(CdpClient::new())
@@ -374,17 +376,8 @@ pub fn run() {
         .build(context)
         .expect("error while building pickforge")
         .run(|app, event| {
-            if matches!(
-                event,
-                RunEvent::ExitRequested { .. }
-                    | RunEvent::Exit
-                    | RunEvent::WindowEvent {
-                        event: WindowEvent::Destroyed,
-                        ..
-                    }
-            ) {
-                app.state::<Arc<VoiceSessionManager>>().shutdown();
-                app.state::<TunnelManager>().shutdown();
+            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+                shutdown::run_once(app);
             }
         });
 }

@@ -16,6 +16,9 @@ reset this file.
 - Remote Flutter runs now discover devices on the bound host and require an
   explicit device choice before launch when more than one is available.
 - Launching PickForge again now focuses the running window.
+- On normal app exit, PickForge now gracefully stops its supported owned agent,
+  terminal, emulator, mirror, and device-log managers. Private tmux sessions and
+  Linux dtach sessions still survive pane closure, but are cleaned up on app exit.
 
 ## Internal/release changes
 
@@ -39,6 +42,11 @@ reset this file.
 - Settings sync landed dark behind the `settingsSync` flag (opt-in, per-group).
 - Hosted Pro Operator routing and credit purchase landed dark behind the `operator` flag (requires sign-in): a hosted router backend closes the routing ladder, the dock surfaces cost/balance and a quiet buy-credits prompt, and Settings gains a credit-pack purchase flow. Local and BYO routing stay free.
 - In-app account deletion + data export (LGPD user rights), behind the `accounts` flag.
+- Graceful owned-manager teardown (#208 PR 1): one exactly-once orchestrator
+  drains local managers on confirmed app-exit events, with bounded async stops
+  and Unix process-group cleanup where available. Windows Job Objects, escaped
+  descendants, and crash/SIGKILL containment remain PR 2; remote leases remain
+  PR 3.
 - Section-based Settings navigation landed dark behind the default-off `settingsNavigation` flag, with remembered/direct categories and wide/narrow preference layouts.
 - Dynamic semantic chat titles landed dark behind the `dynamicChatTitles` flag,
   with durable manual ownership, milestone refreshes, provider/OSC precedence,

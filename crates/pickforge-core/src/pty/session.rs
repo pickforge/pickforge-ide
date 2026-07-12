@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -88,6 +88,8 @@ pub struct SpawnOptions {
 pub enum PtyError {
     #[error("pty session {0} not found")]
     NotFound(u32),
+    #[error("pty manager is shutting down")]
+    ShuttingDown,
     #[error("invalid remote PTY root")]
     InvalidRemoteRoot,
     #[error(transparent)]
@@ -130,6 +132,7 @@ struct Session {
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<u32, Session>>>,
     next_id: AtomicU32,
+    shutting_down: AtomicBool,
 }
 
 impl Default for PtyManager {
@@ -137,6 +140,7 @@ impl Default for PtyManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU32::new(1),
+            shutting_down: AtomicBool::new(false),
         }
     }
 }
@@ -150,6 +154,9 @@ impl PtyManager {
     /// is the user's interactive `$SHELL`; with it, a one-shot `$SHELL -c
     /// <command>` that exits when the command does. Returns the session id.
     pub fn spawn<S: PtySink>(&self, opts: SpawnOptions, sink: S) -> Result<u32, PtyError> {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(PtyError::ShuttingDown);
+        }
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
 
@@ -222,24 +229,31 @@ impl PtyManager {
         let writer = pair.master.take_writer()?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
+        let session = Session {
+            master: pair.master,
+            writer,
+            child,
+            reader_thread: None,
+            #[cfg(unix)]
+            shell_pid,
+            detach_on_drop,
+        };
+
         // Register before starting the reader so a shell that exits immediately
         // can't try to remove its session before it has been inserted. The reader
         // thread handle is attached just below, once the thread is spawned.
-        self.sessions
-            .lock()
-            .expect("pty registry poisoned")
-            .insert(
-                id,
-                Session {
-                    master: pair.master,
-                    writer,
-                    child,
-                    reader_thread: None,
-                    #[cfg(unix)]
-                    shell_pid,
-                    detach_on_drop,
-                },
-            );
+        // Re-check the shutdown gate UNDER the registry lock: shutdown() sets the
+        // flag before draining under this same lock, so a spawn that raced past
+        // the entry check can't insert a session behind the drain.
+        {
+            let mut sessions = self.sessions.lock().expect("pty registry poisoned");
+            if self.shutting_down.load(Ordering::SeqCst) {
+                drop(sessions);
+                teardown_session(session);
+                return Err(PtyError::ShuttingDown);
+            }
+            sessions.insert(id, session);
+        }
 
         let sink = Arc::new(sink);
         let sessions = Arc::clone(&self.sessions);
@@ -310,14 +324,8 @@ impl PtyManager {
         // lock is never held across a blocking wait. Once removed, the reader
         // thread's own EOF path can't reap the child, so we must wait here.
         let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
-        if let Some(mut session) = removed {
-            // On Unix, take down the shell's whole process group (and the
-            // current foreground job's group) so a `flutter run`/`gradle`/`adb`
-            // child can't outlive the shell. Then reap the shell itself.
-            #[cfg(unix)]
-            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
-            let _ = session.child.kill();
-            let _ = session.child.wait();
+        if let Some(session) = removed {
+            teardown_session(session);
         }
         Ok(())
     }
@@ -332,18 +340,12 @@ impl PtyManager {
     /// still tears it down cleanly rather than leaking it.
     pub fn detach(&self, id: u32) -> Result<(), PtyError> {
         let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
-        let Some(mut session) = removed else {
+        let Some(session) = removed else {
             return Ok(()); // already gone (e.g. the reader hit EOF first)
         };
         if !session.detach_on_drop {
             // Not a recoverable session — tear it down like kill() would.
-            #[cfg(unix)]
-            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
-            let _ = session.child.kill();
-            let _ = session.child.wait();
-            if let Some(t) = session.reader_thread.take() {
-                let _ = t.join();
-            }
+            teardown_session(session);
             return Ok(());
         }
         // Detach the dtach/tmux CLIENT so the session (and the agent shell inside
@@ -382,6 +384,22 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Idempotently drain and tear down every PTY session.
+    pub fn shutdown(&self) {
+        // spawn re-checks this gate under the registry lock before insertion.
+        self.shutting_down.store(true, Ordering::SeqCst);
+        let drained = {
+            let mut sessions = self.sessions.lock().expect("pty registry poisoned");
+            sessions
+                .drain()
+                .map(|(_, session)| session)
+                .collect::<Vec<_>>()
+        };
+        for session in drained {
+            teardown_session(session);
+        }
+    }
+
     /// Number of live sessions (handy for tests / diagnostics).
     pub fn len(&self) -> usize {
         self.sessions.lock().expect("pty registry poisoned").len()
@@ -389,6 +407,17 @@ impl PtyManager {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// Must run outside the registry lock because the reader thread takes it on EOF.
+fn teardown_session(mut session: Session) {
+    #[cfg(unix)]
+    terminate_process_groups(session.shell_pid, session.master.process_group_leader());
+    let _ = session.child.kill();
+    let _ = session.child.wait();
+    if let Some(t) = session.reader_thread.take() {
+        let _ = t.join();
     }
 }
 

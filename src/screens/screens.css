@@ -156,6 +156,179 @@
   gap: var(--pf-space-lg);
   padding: var(--pf-space-lg);
 }
+
+/* Flagged desktop preference shell. The rail remains stationary while only the
+ * active category pane scrolls; the legacy grid above is untouched when the
+ * settingsNavigation flag is off. */
+.pf-screen--settings-navigation {
+  overflow: hidden;
+  container: settings-screen / inline-size;
+}
+.pf-settings-shell {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  flex: 1 1 0;
+  min-height: 0;
+}
+.pf-settings-rail {
+  min-width: 0;
+  padding: var(--pf-space-md) var(--pf-space-sm);
+  border-right: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-1);
+}
+.pf-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
+.pf-settings-nav-item {
+  position: relative;
+  width: 100%;
+  border: 0;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-text-med);
+  padding: var(--pf-space-sm) var(--pf-space-md);
+  font-family: var(--pf-font-sans);
+  font-size: var(--pf-size-body-sm);
+  font-weight: var(--pf-weight-medium);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--pf-dur-fast) var(--pf-ease-forge),
+    color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-settings-nav-item:hover {
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+}
+.pf-settings-nav-item--active {
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+}
+.pf-settings-nav-item--active::before {
+  content: "";
+  position: absolute;
+  inset-block: var(--pf-space-sm);
+  left: 0;
+  width: var(--pf-hairline-width);
+  background: var(--pf-ember);
+}
+.pf-settings-category-picker {
+  display: none;
+}
+.pf-settings-pane {
+  min-width: 0;
+  overflow-y: auto;
+}
+.pf-settings-pane-head {
+  padding: var(--pf-space-lg);
+  border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+}
+.pf-settings-pane-head h1 {
+  margin: 0;
+  color: var(--pf-text-hi);
+  font-size: var(--pf-size-title-lg);
+  font-weight: var(--pf-weight-semibold);
+  letter-spacing: -0.01em;
+}
+.pf-settings-pane-head p {
+  margin: var(--pf-space-xs) 0 0;
+  color: var(--pf-text-low);
+  font-size: var(--pf-size-body-sm);
+}
+.pf-settings--navigation {
+  display: block;
+}
+.pf-settings--navigation .pf-settings-section {
+  display: none;
+  margin-bottom: var(--pf-space-md);
+}
+.pf-settings--category-general [data-settings-category="general"],
+.pf-settings--category-agents [data-settings-category="agents"],
+.pf-settings--category-operator [data-settings-category="operator"],
+.pf-settings--category-remote [data-settings-category="remote"],
+.pf-settings--category-projects [data-settings-category="projects"],
+.pf-settings--category-account [data-settings-category="account"],
+.pf-settings--category-developer [data-settings-category="developer"] {
+  display: block;
+}
+/* Navigation is the shell's one ember focal point. Existing control states stay
+ * explicit but become neutral inside the new composition. */
+.pf-settings--navigation .pf-eyebrow-tick {
+  background: var(--pf-hairline-strong);
+}
+.pf-settings--navigation .pf-seg button.active {
+  background: var(--pf-surface-3);
+  color: var(--pf-text-hi);
+}
+.pf-settings--navigation .pf-text-btn {
+  color: var(--pf-text-med);
+}
+.pf-settings--navigation .pf-text-btn:hover {
+  color: var(--pf-text-hi);
+}
+
+@media (max-width: 700px) {
+  .pf-settings-shell {
+    display: flex;
+    flex-direction: column;
+  }
+  .pf-settings-rail {
+    display: none;
+  }
+  .pf-settings-category-picker {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--pf-space-md);
+    padding: var(--pf-space-sm) var(--pf-space-lg);
+    border-bottom: var(--pf-hairline-width) solid var(--pf-hairline);
+    background: var(--pf-surface-1);
+  }
+  .pf-settings-category-picker-label {
+    color: var(--pf-text-med);
+    font-family: var(--pf-font-mono);
+    font-size: var(--pf-size-eyebrow);
+    letter-spacing: var(--pf-tracking-eyebrow);
+    text-transform: uppercase;
+  }
+  .pf-settings-category-picker select {
+    min-width: 0;
+    max-width: 100%;
+    border: var(--pf-hairline-width) solid var(--pf-hairline-strong);
+    border-radius: var(--pf-radius-sm);
+    background: var(--pf-surface-2);
+    color: var(--pf-text-hi);
+    padding: var(--pf-space-xs) var(--pf-space-sm);
+    font: inherit;
+  }
+  .pf-settings--navigation {
+    padding: var(--pf-space-md);
+  }
+  .pf-settings--navigation .pf-settings-section {
+    padding: var(--pf-space-md);
+  }
+  .pf-settings--navigation .pf-settings-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .pf-settings--navigation .pf-settings-dropdown {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+  .pf-settings--navigation .pf-ql-row {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-settings-nav-item {
+    transition: none;
+  }
+}
 .pf-settings-section {
   padding: var(--pf-space-lg);
 }

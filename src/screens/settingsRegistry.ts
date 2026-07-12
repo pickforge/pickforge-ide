@@ -1,11 +1,39 @@
 export const SETTINGS_CATEGORIES = [
-  { key: "general", label: "General" },
-  { key: "agents", label: "Agents" },
-  { key: "operator", label: "Operator" },
-  { key: "remote", label: "Remote" },
-  { key: "projects", label: "Projects" },
-  { key: "account", label: "Account & sync" },
-  { key: "developer", label: "Developer" },
+  {
+    key: "general",
+    label: "General",
+    description: "Appearance, workspace behavior, file opening, and updates.",
+  },
+  {
+    key: "agents",
+    label: "Agents",
+    description: "Models, chat defaults, quick launch, and PickLab.",
+  },
+  {
+    key: "operator",
+    label: "Operator",
+    description: "Command routing and local dictation.",
+  },
+  {
+    key: "remote",
+    label: "Remote",
+    description: "Host access, pairing, and Tailscale SSH.",
+  },
+  {
+    key: "projects",
+    label: "Projects",
+    description: "Archived projects and restoration.",
+  },
+  {
+    key: "account",
+    label: "Account & sync",
+    description: "Identity, entitlements, data, and settings sync.",
+  },
+  {
+    key: "developer",
+    label: "Developer",
+    description: "Local feature gates and diagnostics.",
+  },
 ] as const;
 
 export type SettingsCategoryKey = (typeof SETTINGS_CATEGORIES)[number]["key"];
@@ -52,4 +80,49 @@ export function isSettingsSectionAvailable(
 ): boolean {
   if (section.availability === "always") return true;
   return context[section.availability];
+}
+
+export function availableSettingsCategories(
+  context: SettingsSectionAvailabilityContext,
+): readonly (typeof SETTINGS_CATEGORIES)[number][] {
+  return SETTINGS_CATEGORIES.filter((category) =>
+    SETTINGS_SECTIONS.some(
+      (section) =>
+        section.category === category.key && isSettingsSectionAvailable(section, context),
+    ),
+  );
+}
+
+export function settingsCategoryForSection(
+  sectionKey: string | null | undefined,
+  context: SettingsSectionAvailabilityContext,
+): SettingsCategoryKey | null {
+  if (!sectionKey || !(sectionKey in SETTINGS_SECTION_BY_KEY)) return null;
+  const section = SETTINGS_SECTION_BY_KEY[sectionKey as SettingsSectionKey];
+  return isSettingsSectionAvailable(section, context) ? section.category : null;
+}
+
+export function resolveSettingsCategory(
+  requested: string | null | undefined,
+  context: SettingsSectionAvailabilityContext,
+): SettingsCategoryKey {
+  const available = availableSettingsCategories(context);
+  return (
+    available.find((category) => category.key === requested)?.key ??
+    available.find((category) => category.key === "general")?.key ??
+    available[0]?.key ??
+    "general"
+  );
+}
+
+export function firstSettingsSectionForCategory(
+  category: SettingsCategoryKey,
+  context: SettingsSectionAvailabilityContext,
+): SettingsSectionKey | null {
+  return (
+    SETTINGS_SECTIONS.find(
+      (section) =>
+        section.category === category && isSettingsSectionAvailable(section, context),
+    )?.key ?? null
+  );
 }

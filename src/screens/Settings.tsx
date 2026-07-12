@@ -31,7 +31,7 @@ import {
 import { hostPlatform } from "../lib/platform";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
 import { startTour } from "../stores/tour";
-import { navigate } from "../router";
+import { navigate, navigateSettingsSection, settingsSection } from "../router";
 import { recoverChatSessions, setRecoverChatSessions } from "../stores/chatSessions";
 import {
   fileOpenSettings,
@@ -136,6 +136,15 @@ import {
   UpdatesSettingsSection,
   WorkbenchSettingsSection,
 } from "./settingsSections";
+import { SettingsNavigation } from "./SettingsNavigation";
+import {
+  availableSettingsCategories,
+  firstSettingsSectionForCategory,
+  resolveSettingsCategory,
+  settingsCategoryForSection,
+  type SettingsCategoryKey,
+  type SettingsSectionAvailabilityContext,
+} from "./settingsRegistry";
 import "./screens.css";
 
 
@@ -156,6 +165,34 @@ const SYNC_GROUP_LABELS: Record<SyncFieldGroup, { title: string; hint: string }>
   keybindings: { title: "Quick launch", hint: "chips, commands, and shortcuts" },
   remoteBindings: { title: "Remote bindings", hint: "per-project remote host, matched by name" },
 };
+
+const SETTINGS_CATEGORY_STORAGE_KEY = "pickforge.settings.category";
+const SETTINGS_SCROLL_SETTLE_MS = 2_000;
+const SETTINGS_SCROLL_KEYS: Record<string, true> = {
+  ArrowDown: true,
+  ArrowUp: true,
+  End: true,
+  Home: true,
+  PageDown: true,
+  PageUp: true,
+  " ": true,
+};
+
+function loadRememberedSettingsCategory(): string | null {
+  try {
+    return localStorage.getItem(SETTINGS_CATEGORY_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberSettingsCategory(category: SettingsCategoryKey): void {
+  try {
+    localStorage.setItem(SETTINGS_CATEGORY_STORAGE_KEY, category);
+  } catch {
+    // Settings navigation remains usable when storage is unavailable.
+  }
+}
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
@@ -185,6 +222,124 @@ export function SettingsScreen() {
   const [deleting, setDeleting] = createSignal(false);
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [accountNotice, setAccountNotice] = createSignal<string | null>(null);
+  const [activeCategory, setActiveCategory] = createSignal<SettingsCategoryKey>(
+    loadRememberedSettingsCategory() as SettingsCategoryKey ?? "general",
+  );
+  const [settingsPane, setSettingsPane] = createSignal<HTMLElement | null>(null);
+
+  const settingsAvailability = (): SettingsSectionAvailabilityContext => ({
+    operator: flagEnabled("operator"),
+    accounts: flagEnabled("accounts"),
+    development: import.meta.env.DEV,
+  });
+  const availableCategories = () => availableSettingsCategories(settingsAvailability());
+
+  const selectCategory = (
+    requested: SettingsCategoryKey,
+    options: { replace?: boolean; updateRoute?: boolean } = {},
+  ) => {
+    const category = resolveSettingsCategory(requested, settingsAvailability());
+    setActiveCategory(category);
+    rememberSettingsCategory(category);
+    if (options.updateRoute === false) return;
+    const section = firstSettingsSectionForCategory(category, settingsAvailability());
+    if (section) navigateSettingsSection(section, { replace: options.replace });
+  };
+
+  createEffect(() => {
+    if (!flagEnabled("settingsNavigation")) return;
+    const context = settingsAvailability();
+    const requestedSection = settingsSection();
+    const directCategory = settingsCategoryForSection(requestedSection, context);
+    if (directCategory && requestedSection) {
+      if (directCategory !== activeCategory()) {
+        setActiveCategory(directCategory);
+        rememberSettingsCategory(directCategory);
+      }
+
+      const pane = settingsPane();
+      if (!pane || activeCategory() !== directCategory) return;
+
+      const firstSection = firstSettingsSectionForCategory(directCategory, context);
+      let cancelled = false;
+      let alignmentFrame: number | null = null;
+      let settleTimer: number | undefined;
+      let layoutObserver: ResizeObserver | null = null;
+
+      const cancelAlignment = () => {
+        if (cancelled) return;
+        cancelled = true;
+        if (alignmentFrame !== null) cancelAnimationFrame(alignmentFrame);
+        clearTimeout(settleTimer);
+        layoutObserver?.disconnect();
+        pane.removeEventListener("wheel", cancelAlignment);
+        pane.removeEventListener("touchstart", cancelAlignment);
+        pane.removeEventListener("pointerdown", cancelAlignment);
+        window.removeEventListener("keydown", cancelForScrollKey, true);
+      };
+      const cancelForScrollKey = (event: KeyboardEvent) => {
+        if (SETTINGS_SCROLL_KEYS[event.key]) cancelAlignment();
+      };
+      const alignRequestedSection = () => {
+        alignmentFrame = null;
+        if (
+          cancelled
+          || settingsPane() !== pane
+          || settingsSection() !== requestedSection
+          || activeCategory() !== directCategory
+        ) {
+          cancelAlignment();
+          return;
+        }
+
+        const scrollTail = pane.querySelector<HTMLElement>(".pf-settings-pane-tail");
+        if (requestedSection === firstSection) {
+          scrollTail?.style.removeProperty("height");
+          pane.scrollTop = 0;
+          return;
+        }
+
+        const target = document.getElementById(`settings-${requestedSection}`);
+        if (!target || !pane.contains(target)) return;
+        const offset = target.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+        if (scrollTail) {
+          const targetScrollTop = pane.scrollTop + offset;
+          const contentHeight = pane.scrollHeight - scrollTail.offsetHeight;
+          const tailHeight = Math.max(
+            0,
+            Math.ceil(targetScrollTop + pane.clientHeight - contentHeight),
+          );
+          scrollTail.style.height = `${tailHeight}px`;
+        }
+        if (Math.abs(offset) > 0.5) pane.scrollTop += offset;
+      };
+      const scheduleAlignment = () => {
+        if (cancelled || alignmentFrame !== null) return;
+        alignmentFrame = requestAnimationFrame(alignRequestedSection);
+      };
+
+      pane.addEventListener("wheel", cancelAlignment, { passive: true });
+      pane.addEventListener("touchstart", cancelAlignment, { passive: true });
+      pane.addEventListener("pointerdown", cancelAlignment, { passive: true });
+      window.addEventListener("keydown", cancelForScrollKey, true);
+
+      layoutObserver = new ResizeObserver(scheduleAlignment);
+      const content = pane.querySelector<HTMLElement>(".pf-settings--navigation");
+      if (content) layoutObserver.observe(content);
+      scheduleAlignment();
+      settleTimer = window.setTimeout(cancelAlignment, SETTINGS_SCROLL_SETTLE_MS);
+      onCleanup(cancelAlignment);
+      return;
+    }
+
+    if (requestedSection !== null) {
+      selectCategory("general", { replace: true });
+      return;
+    }
+
+    const fallback = resolveSettingsCategory(activeCategory(), context);
+    if (fallback !== activeCategory()) selectCategory(fallback, { replace: true });
+  });
 
   // When the session changes or clears, reset export + delete state so a
   // next/anonymous account sees a clean export control and never inherits the
@@ -568,13 +723,12 @@ export function SettingsScreen() {
     onCleanup(() => window.removeEventListener("keydown", handler, true));
   });
 
-  return (
-    <div class="pf-screen pf-screen--scroll">
-      <header class="pf-screen-head">
-        <MonoEyebrow text="Settings" tick />
-      </header>
-
-      <div class="pf-settings">
+  const renderSettings = (navigation: boolean) => (
+      <div
+        class={`pf-settings${navigation
+          ? ` pf-settings--navigation pf-settings--category-${activeCategory()}`
+          : ""}`}
+      >
         <AgentModelsSettingsSection><For each={AGENTS}>
           {(agent) => (
             <div class="pf-settings-row">
@@ -1401,6 +1555,30 @@ export function SettingsScreen() {
           </For></FeatureFlagsSettingsSection>
         </Show>
       </div>
+  );
+
+  return (
+    <div
+      class="pf-screen pf-screen--scroll"
+      classList={{ "pf-screen--settings-navigation": flagEnabled("settingsNavigation") }}
+    >
+      <header class="pf-screen-head">
+        <MonoEyebrow text="Settings" tick />
+      </header>
+
+      <Show
+        when={flagEnabled("settingsNavigation")}
+        fallback={renderSettings(false)}
+      >
+        <SettingsNavigation
+          categories={availableCategories()}
+          active={activeCategory()}
+          onSelect={selectCategory}
+          paneRef={(element) => setSettingsPane(element)}
+        >
+          {renderSettings(true)}
+        </SettingsNavigation>
+      </Show>
     </div>
   );
 }

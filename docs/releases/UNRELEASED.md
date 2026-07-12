@@ -39,6 +39,7 @@ reset this file.
 - Settings sync landed dark behind the `settingsSync` flag (opt-in, per-group).
 - Hosted Pro Operator routing and credit purchase landed dark behind the `operator` flag (requires sign-in): a hosted router backend closes the routing ladder, the dock surfaces cost/balance and a quiet buy-credits prompt, and Settings gains a credit-pack purchase flow. Local and BYO routing stay free.
 - In-app account deletion + data export (LGPD user rights), behind the `accounts` flag.
+- Section-based Settings navigation landed dark behind the default-off `settingsNavigation` flag, with remembered/direct categories and wide/narrow preference layouts.
 
 ## Validation
 
@@ -52,6 +53,7 @@ reset this file.
 - `bun run build` — `tsc --noEmit` + vite production build clean.
 - `bunx playwright test` — 12 tests green, including remote-device loading,
   empty, error, stale, and keyboard-focus baselines at 1024px.
+- Settings navigation focused checks: 11 registry/flag unit tests and 10 legacy/flagged wide/narrow Playwright cases passed.
 - `cargo check` — workspace check clean.
 - `cargo test -p pickforge-core --lib --locked` — 391 tests green, including
   login-shell quoting, noisy-profile output, and daemon health regressions.

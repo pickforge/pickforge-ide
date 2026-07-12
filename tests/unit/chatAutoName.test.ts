@@ -399,12 +399,39 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
       id,
       "pi --api-key=pi_sk_live_SUPER_SECRET --append-system-prompt 'PRIVATE PI INSTRUCTIONS' "
         + "--session '/tmp/private session.jsonl' --prompt-template '/tmp/private template.md' "
-        + "--mcp-config '/tmp/unsupported secret mcp.json' review title privacy",
+        + "--mcp-config '/tmp/unsupported secret mcp.json' --jira-token 'JIRA SECRET' "
+        + "review title privacy",
       "pane-pi",
     );
 
     expect(store.chats.get(id)?.title).toBe("Review title privacy");
     expect(store.chats.get(id)?.title).not.toMatch(/SECRET|private|INSTRUCTIONS/i);
+  });
+
+  it.each(["omp", "pi"])("skips %s file attachments before deriving a title", (binary) => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+
+    maybeAutoNameChat(id, `${binary} @/Users/me/PRIVATE.md fix attachments`, `pane-${binary}`);
+
+    expect(store.chats.get(id)?.title).toBe("Fix attachments");
+    expect(store.chats.get(id)?.title).not.toMatch(/PRIVATE/i);
+  });
+
+  it.each([
+    ["omp", "config set api-key CONFIG_SECRET"],
+    ["omp", "--export session.jsonl /tmp/PRIVATE.html"],
+    ["pi", "install PRIVATE_PACKAGE"],
+    ["pi", "--export session.jsonl /tmp/PRIVATE.html"],
+  ])("does not treat %s utility invocation as an agent prompt", (binary, args) => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    const paneId = `pane-${binary}`;
+
+    maybeAutoNameChat(id, `${binary} ${args}`, paneId);
+
+    expect(isAgentPane(id, paneId)).toBe(false);
+    expect(store.chats.get(id)?.title).toBe(DEFAULT_CHAT_TITLE);
   });
 
   it("never persists Pi secrets while the OMP/Pi rollout flag is off", () => {
@@ -473,7 +500,6 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
       "--models",
       "--tools",
       "--thinking",
-      "--export",
       "--hook",
       "--extension",
       "-e",
@@ -481,7 +507,6 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
       "--skills",
       "--approval-mode",
       "--profile",
-      "--alias",
       "--mcp-config",
     ];
     const args = flags

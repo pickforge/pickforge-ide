@@ -137,6 +137,76 @@ const PI_VALUE_FLAGS: Record<string, true> = {
   "--export": true,
   "--list-models": true,
 };
+const PI_BOOLEAN_FLAGS: Record<string, true> = {
+  "--print": true,
+  "--continue": true,
+  "--resume": true,
+  "--no-session": true,
+  "--no-tools": true,
+  "--no-builtin-tools": true,
+  "--no-extensions": true,
+  "--no-skills": true,
+  "--no-prompt-templates": true,
+  "--no-themes": true,
+  "--no-context-files": true,
+  "--verbose": true,
+  "--approve": true,
+  "--no-approve": true,
+  "--offline": true,
+  "--plan": true,
+};
+const OMP_NON_PROMPT_FLAGS: Record<string, true> = {
+  "--alias": true,
+  "--export": true,
+  "--help": true,
+  "--version": true,
+};
+const PI_NON_PROMPT_FLAGS: Record<string, true> = {
+  "--export": true,
+  "--list-models": true,
+  "--help": true,
+  "--version": true,
+};
+const OMP_UTILITY_SUBCOMMANDS: Record<string, true> = {
+  acp: true,
+  agents: true,
+  "auth-broker": true,
+  "auth-gateway": true,
+  bench: true,
+  commit: true,
+  completions: true,
+  config: true,
+  "dry-balance": true,
+  gallery: true,
+  gc: true,
+  grep: true,
+  grievances: true,
+  install: true,
+  join: true,
+  models: true,
+  plugin: true,
+  read: true,
+  say: true,
+  search: true,
+  setup: true,
+  shell: true,
+  ssh: true,
+  stats: true,
+  "tiny-models": true,
+  token: true,
+  ttsr: true,
+  update: true,
+  usage: true,
+  worktree: true,
+};
+const PI_UTILITY_SUBCOMMANDS: Record<string, true> = {
+  install: true,
+  remove: true,
+  uninstall: true,
+  update: true,
+  list: true,
+  config: true,
+};
 
 const MAX_TITLE = 48;
 const AGENT_CHAT_MAX_TITLE = 42;
@@ -651,6 +721,7 @@ function matchAgentLaunch(line: string): { prompt: string } | null {
   if (!isAgentBinary(base)) return null;
 
   const rest: string[] = [];
+  const isTerminalAgent = base === "omp" || base === "pi";
   const valueFlags =
     base === "omp"
       ? OMP_VALUE_FLAGS
@@ -658,20 +729,42 @@ function matchAgentLaunch(line: string): { prompt: string } | null {
         ? PI_VALUE_FLAGS
         : null;
   const optionalValueFlags = base === "omp" ? OMP_OPTIONAL_VALUE_FLAGS : null;
+  const booleanFlags =
+    base === "omp"
+      ? OMP_BOOLEAN_FLAGS
+      : base === "pi"
+        ? PI_BOOLEAN_FLAGS
+        : null;
+  const nonPromptFlags =
+    base === "omp"
+      ? OMP_NON_PROMPT_FLAGS
+      : base === "pi"
+        ? PI_NON_PROMPT_FLAGS
+        : null;
+  const utilitySubcommands =
+    base === "omp"
+      ? OMP_UTILITY_SUBCOMMANDS
+      : base === "pi"
+        ? PI_UTILITY_SUBCOMMANDS
+        : null;
   for (let i = 1; i < tokens.length; i++) {
     const token = tokens[i];
     if (token === "--") {
-      rest.push(...tokens.slice(i + 1));
+      for (const positional of tokens.slice(i + 1)) {
+        if (isTerminalAgent && positional.startsWith("@")) continue;
+        rest.push(positional);
+      }
       break;
     }
     if (token.startsWith("-")) {
       const equals = token.indexOf("=");
       const flag = equals === -1 ? token : token.slice(0, equals);
-      const isUnknownOmpLongFlag = base === "omp"
+      if (nonPromptFlags?.[flag]) return null;
+      const isUnknownLongFlag = isTerminalAgent
         && flag.startsWith("--")
         && valueFlags?.[flag] === undefined
         && optionalValueFlags?.[flag] === undefined
-        && OMP_BOOLEAN_FLAGS[flag] === undefined;
+        && booleanFlags?.[flag] === undefined;
       const consumesValue = valueFlags
         ? (valueFlags[flag] ?? false)
         : VALUE_FLAGS.test(flag);
@@ -680,7 +773,7 @@ function matchAgentLaunch(line: string): { prompt: string } | null {
         && (
           consumesValue
           || (
-            isUnknownOmpLongFlag
+            isUnknownLongFlag
             && tokens[i + 1] !== undefined
             && !tokens[i + 1].startsWith("-")
           )
@@ -697,6 +790,8 @@ function matchAgentLaunch(line: string): { prompt: string } | null {
       }
       continue;
     }
+    if (isTerminalAgent && token.startsWith("@")) continue;
+    if (rest.length === 0 && utilitySubcommands?.[token]) return null;
     rest.push(token);
   }
   return { prompt: rest.join(" ") };

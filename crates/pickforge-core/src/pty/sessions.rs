@@ -1,5 +1,5 @@
 //! Per-chat session recovery: back a chat's shell with a detachable session so a
-//! running agent survives the pane closing and the app restarting.
+//! running agent survives pane closure while this PickForge process remains alive.
 //!
 //! Two backends sit in front of the same interactive `$SHELL`:
 //!
@@ -10,10 +10,10 @@
 //!   live, else create-and-attach* — one command covers both open paths and
 //!   sidesteps a check-then-create race when two panes open the same chat at
 //!   once.
-//! * **tmux** (per-chat option) — a named session on a PickForge-OWNED tmux
-//!   server (`-L pickforge`, never the user's default server). `new-session -A`
-//!   is likewise attach-or-create. We turn on `set-titles` so the agent's OSC 2
-//!   title still propagates out for the chat-title flow.
+//! * **tmux** (per-chat option) — a named session on a server unique to this
+//!   PickForge process, never the user's default server or another app instance.
+//!   `new-session -A` is likewise attach-or-create. We turn on `set-titles` so
+//!   the agent's OSC 2 title still propagates out for the chat-title flow.
 //!
 //! When the chosen backend isn't on `PATH` we fall back to a RAW shell (today's
 //! behaviour) so the terminal always works — only the recovery is lost.
@@ -115,11 +115,11 @@ pub fn select_backend_with(
 /// glob chars/whitespace), and short enough to keep the socket path within the
 /// ~108-byte `sockaddr_un` limit.
 ///
-/// Stability: the same (project_root, chat_id) always yields the same name, so
-/// reopening a chat re-attaches to its own session across restarts. Callers pass
-/// the CANONICAL project root (the spawn-gate already canonicalizes the cwd), so
-/// `~/app`, `app/`, and a symlinked path don't fork separate sessions. 128 bits
-/// makes a collision within a user's chats astronomically unlikely.
+/// Stability: the same (project_root, chat_id) always yields the same name within
+/// an app process. Callers pass the CANONICAL project root (the spawn-gate already
+/// canonicalizes the cwd), so `~/app`, `app/`, and a symlinked path don't fork
+/// separate sessions. 128 bits makes a collision within a user's chats
+/// astronomically unlikely.
 pub fn session_name(project_root: &str, chat_id: &str) -> String {
     let mut hasher = Fnv1a128::new();
     hasher.write(project_root.as_bytes());

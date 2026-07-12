@@ -105,6 +105,7 @@ import {
   setAgentChatMode,
   setAgentChatModel,
   switchAgentChatProvider,
+  steerAgentChat,
   type AgentTimelineItem,
 } from "../../src/stores/agentChat";
 import {
@@ -1657,6 +1658,28 @@ describe("dynamic native chat titles", () => {
       "Rework settings navigation",
     );
   });
+  it("ties a completed title milestone to the prompt that started the turn", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+
+    await sendAgentMessage(chatId, "fix the login redirect race");
+    await steerAgentChat(chatId, "also run tests");
+    startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
+
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(1);
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(
+      chatId,
+      "Fix the login redirect race",
+    );
+  });
+
 
   it("counts only successful turns when failures come first or intervene", async () => {
     flags.dynamicChatTitles = true;

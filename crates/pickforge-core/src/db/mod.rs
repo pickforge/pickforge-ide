@@ -864,7 +864,8 @@ impl Database {
             self.lock().execute(
                 "UPDATE chats
                     SET title = ?2, title_source = ?3, title_updated_at = ?4
-                  WHERE chat_id = ?1",
+                  WHERE chat_id = ?1
+                    AND title_updated_at < ?4",
                 params![chat_id, title, title_source, title_updated_at],
             )?
         };
@@ -872,20 +873,23 @@ impl Database {
     }
 
     /// Change automatic/manual ownership without rewriting the visible title.
+    /// The timestamp guard prevents an older ownership request from unlocking a
+    /// newer manual title. Returns whether the row was updated.
     pub fn update_chat_title_ownership(
         &self,
         chat_id: &str,
         title_source: &str,
         title_updated_at: i64,
-    ) -> Result<(), DbError> {
+    ) -> Result<bool, DbError> {
         validate_title_source(title_source)?;
-        self.lock().execute(
+        let changed = self.lock().execute(
             "UPDATE chats
                 SET title_source = ?2, title_updated_at = ?3
-              WHERE chat_id = ?1",
+              WHERE chat_id = ?1
+                AND title_updated_at < ?3",
             params![chat_id, title_source, title_updated_at],
         )?;
-        Ok(())
+        Ok(changed > 0)
     }
 
     /// Update only the provider identity fields. Provider switches use this
@@ -1833,14 +1837,29 @@ mod tests {
         assert_eq!(c.title, "Newest provider title");
         assert_eq!(c.title_updated_at, 6);
 
-        // Ownership can be resumed without rewriting the visible title.
-        db.update_chat_title_with_metadata("c1", "My deliberate title", "user", 7)
-            .unwrap();
-        db.update_chat_title_ownership("c1", "user", 8).unwrap();
+        // Manual title writes are monotonic too: stale/equal requests cannot
+        // replace a newer automatic title merely because they arrive later.
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Stale manual title", "user", 6)
+            .unwrap());
+        assert!(db
+            .update_chat_title_with_metadata("c1", "My deliberate title", "user", 7)
+            .unwrap());
+
+        // Ownership can be resumed without rewriting the visible title, but an
+        // older/equal resume request cannot unlock a newer manual title.
+        assert!(!db.update_chat_title_ownership("c1", "auto", 6).unwrap());
+        assert!(!db.update_chat_title_ownership("c1", "auto", 7).unwrap());
+        assert!(db.update_chat_title_ownership("c1", "auto", 8).unwrap());
         let c = &db.list_chats("/p").unwrap()[0];
         assert_eq!(c.title, "My deliberate title");
-        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_source, "auto");
         assert_eq!(c.title_updated_at, 8);
+
+        // A later manual rename takes ownership back.
+        assert!(db
+            .update_chat_title_with_metadata("c1", "Newest deliberate title", "user", 9)
+            .unwrap());
 
         // A provider switch is a narrow write: title/provenance from a newer
         // manual update survive even if the switch began from an older snapshot.
@@ -1848,23 +1867,23 @@ mod tests {
         let c = &db.list_chats("/p").unwrap()[0];
         assert_eq!(c.agent_id, "codex");
         assert_eq!(c.kind, "agent");
-        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title, "Newest deliberate title");
         assert_eq!(c.title_source, "user");
-        assert_eq!(c.title_updated_at, 8);
+        assert_eq!(c.title_updated_at, 9);
 
         // A stale automatic write cannot clobber manual ownership that won the race.
         assert!(!db
-            .update_chat_title_with_metadata("c1", "Stale provider title", "auto", 9)
+            .update_chat_title_with_metadata("c1", "Stale provider title", "auto", 10)
             .unwrap());
         let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title, "Newest deliberate title");
         assert_eq!(c.title_source, "user");
-        assert_eq!(c.title_updated_at, 8);
+        assert_eq!(c.title_updated_at, 9);
 
         // session_id update leaves the title alone; None clears it.
         db.update_chat_session_id("c1", None).unwrap();
         let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title, "Newest deliberate title");
         assert!(c.session_id.is_none());
 
         // sort_order update leaves a live session_id (and title) alone — the
@@ -1874,16 +1893,29 @@ mod tests {
         let c = &db.list_chats("/p").unwrap()[0];
         assert_eq!(c.sort_order, 7);
         assert_eq!(c.session_id.as_deref(), Some("tmux:pf-keepme"));
-        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title, "Newest deliberate title");
 
-        // A pre-flag untouched sentinel (user/0/exact default) is adoptable,
-        // while a non-default legacy user title remains locked.
-        db.update_chat_title_with_metadata("c1", "New chat", "user", 0)
+        // Simulate pre-flag rows written before monotonic metadata existed. The
+        // untouched sentinel (user/0/exact default) is adoptable, while a
+        // non-default legacy user title remains locked.
+        db.lock()
+            .execute(
+                "UPDATE chats
+                    SET title = 'New chat', title_source = 'user', title_updated_at = 0
+                  WHERE chat_id = 'c1'",
+                [],
+            )
             .unwrap();
         assert!(db
             .update_chat_title_with_metadata("c1", "Adopted automatic title", "auto", 10)
             .unwrap());
-        db.update_chat_title_with_metadata("c1", "Legacy custom title", "user", 0)
+        db.lock()
+            .execute(
+                "UPDATE chats
+                    SET title = 'Legacy custom title', title_source = 'user', title_updated_at = 0
+                  WHERE chat_id = 'c1'",
+                [],
+            )
             .unwrap();
         assert!(!db
             .update_chat_title_with_metadata("c1", "Must not replace custom", "auto", 11)
@@ -1894,9 +1926,10 @@ mod tests {
         assert_eq!(c.title_updated_at, 0);
 
         // All narrow writes are silent no-ops for an unknown chat.
-        db.update_chat_title_with_metadata("nope", "x", "user", 9)
-            .unwrap();
-        db.update_chat_title_ownership("nope", "auto", 10).unwrap();
+        assert!(!db
+            .update_chat_title_with_metadata("nope", "x", "user", 9)
+            .unwrap());
+        assert!(!db.update_chat_title_ownership("nope", "auto", 10).unwrap());
         db.update_chat_session_id("nope", Some("y")).unwrap();
         db.update_chat_agent("nope", "codex", "agent").unwrap();
         db.update_chat_sort_order("nope", 3).unwrap();

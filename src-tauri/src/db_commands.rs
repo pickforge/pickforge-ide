@@ -142,14 +142,15 @@ pub fn update_chat_title(
     .map_err(|e| e.to_string())
 }
 
-/// Narrow ownership-only write used by “Resume automatic titles”.
+/// Narrow ownership-only write used by “Resume automatic titles”. The returned
+/// boolean reports whether the monotonic compare-and-set applied.
 #[tauri::command]
 pub fn update_chat_title_ownership(
     db: State<'_, Arc<Database>>,
     chat_id: String,
     title_source: String,
     title_updated_at: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     db.update_chat_title_ownership(&chat_id, &title_source, title_updated_at)
         .map_err(|e| e.to_string())
 }

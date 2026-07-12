@@ -139,6 +139,12 @@ const pendingProviderTitleByChat = new Map<string, string>();
 // Successful, visible user turns only. Timeline messages include failed turns,
 // so title cadence must use this completion ledger rather than recounting them.
 const completedTitleTurnsByChat = new Map<string, { seq: number; text: string }[]>();
+// The visible prompt that started the active backend turn. Steering messages
+// are timeline entries too, but must not replace the turn's title milestone.
+const activeTitleTurnByChat = new Map<
+  string,
+  { seq: number; text: string; hidden: boolean }
+>();
 const DELTA_FLUSH_INTERVAL_MS = 16;
 
 export interface SendAgentMessageOptions {
@@ -722,13 +728,11 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   const chat = chats[chatId];
   if (!chat) return;
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
+  const activeTitleTurn = activeTitleTurnByChat.get(chatId);
   if (flagEnabled("dynamicChatTitles") && event.kind === "planUpdate") {
-    const latestUser = [...(chats[chatId]?.timeline ?? [])]
-      .reverse()
-      .find((item) => item.type === "userMessage");
     const candidate =
       event.items.find((item) => !item.completed)?.text ?? event.items[0]?.text ?? "";
-    if (latestUser?.type === "userMessage" && !latestUser.hidden && candidate) {
+    if (activeTitleTurn && !activeTitleTurn.hidden && candidate) {
       pendingProviderTitleByChat.set(chatId, candidate);
     }
   }
@@ -736,17 +740,15 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     interruptedByUser.delete(chatId);
     if (activityEligible(chatId)) agentTurnStarted(chatId);
   } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
+    activeTitleTurnByChat.delete(chatId);
     const titleEligible = event.kind === "turnDone" && event.status === "completed";
     if (titleEligible) {
-      const latestUser = [...(chats[chatId]?.timeline ?? [])]
-        .reverse()
-        .find((item) => item.type === "userMessage");
-      if (latestUser?.type === "userMessage" && !latestUser.hidden) {
+      if (activeTitleTurn && !activeTitleTurn.hidden) {
         const completed = completedTitleTurnsByChat.get(chatId) ?? [];
-        if (!completed.some((turn) => turn.seq === latestUser.seq)) {
+        if (!completed.some((turn) => turn.seq === activeTitleTurn.seq)) {
           completedTitleTurnsByChat.set(chatId, [
             ...completed,
-            { seq: latestUser.seq, text: latestUser.text },
+            { seq: activeTitleTurn.seq, text: activeTitleTurn.text },
           ]);
         }
       }
@@ -1193,6 +1195,11 @@ export async function sendAgentMessage(
   let optimisticSeq = takeSeq(chatId);
   const imageList = [...images];
   appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
+  activeTitleTurnByChat.set(chatId, {
+    seq: optimisticSeq,
+    text,
+    hidden: options.hidden === true,
+  });
   if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
     if (!sessionId) {
@@ -1210,6 +1217,11 @@ export async function sendAgentMessage(
       if (!hasOptimisticMessage) {
         optimisticSeq = takeSeq(chatId);
         appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
+        activeTitleTurnByChat.set(chatId, {
+          seq: optimisticSeq,
+          text,
+          hidden: options.hidden === true,
+        });
       } else {
         setChats(chatId, { error: null });
       }
@@ -1244,6 +1256,9 @@ export async function sendAgentMessage(
     if (stale()) throw error;
     if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
       nextSeqByChat.set(chatId, optimisticSeq);
+    }
+    if (activeTitleTurnByChat.get(chatId)?.seq === optimisticSeq) {
+      activeTitleTurnByChat.delete(chatId);
     }
     setChats(chatId, {
       turnActive: false,
@@ -1336,6 +1351,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   interruptedByUser.delete(chatId);
   pendingProviderTitleByChat.delete(chatId);
   completedTitleTurnsByChat.delete(chatId);
+  activeTitleTurnByChat.delete(chatId);
   nextSeqByChat.delete(chatId);
   ensurePromises.delete(chatId);
   hydratePromises.delete(chatId);

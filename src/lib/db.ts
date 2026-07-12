@@ -158,12 +158,12 @@ export const updateChatTitle = (
     titleSource: metadata?.titleSource,
     titleUpdatedAt: metadata?.titleUpdatedAt,
   });
-/** Narrow ownership-only write; leaves the visible title untouched. */
+/** Narrow ownership-only write; returns whether the monotonic write applied. */
 export const updateChatTitleOwnership = (
   chatId: string,
   titleSource: ChatTitleSource,
   titleUpdatedAt: number,
-) => invoke<void>("update_chat_title_ownership", { chatId, titleSource, titleUpdatedAt });
+) => invoke<boolean>("update_chat_title_ownership", { chatId, titleSource, titleUpdatedAt });
 /** Narrow agent/kind write; leaves title ownership and every other field untouched. */
 export const updateChatAgent = (chatId: string, agentId: string, kind: string) =>
   invoke<void>("update_chat_agent", { chatId, agentId, kind });

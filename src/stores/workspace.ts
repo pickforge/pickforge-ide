@@ -420,20 +420,24 @@ export async function renameChat(chatId: string, title: string) {
   const c = findChat(chatId);
   if (!c || !t || t === c.title) return;
   const dynamic = flagEnabled("dynamicChatTitles");
-  beginTitleRequest(chatId);
+  // A durable automatic owner from a previous flag-on run must still become
+  // manual while the flag is off, or re-enabling the flag could overwrite it.
+  const persistOwnership = dynamic || c.titleSource === "auto";
+  const request = beginTitleRequest(chatId);
   const titleUpdatedAt = nextTitleTimestamp(chatId, c.titleUpdatedAt);
-  await db.updateChatTitle(
+  const applied = await db.updateChatTitle(
     chatId,
     t,
-    dynamic ? { titleSource: "user", titleUpdatedAt } : undefined,
+    persistOwnership ? { titleSource: "user", titleUpdatedAt } : undefined,
   );
+  if (!applied || latestTitleRequestByChat.get(chatId) !== request) return;
   setState("chatsByRoot", c.projectRoot, (list) =>
     list.map((x) =>
       x.chatId === chatId
         ? {
             ...x,
             title: t,
-            ...(dynamic ? { titleSource: "user" as const, titleUpdatedAt } : {}),
+            ...(persistOwnership ? { titleSource: "user" as const, titleUpdatedAt } : {}),
           }
         : x,
     ),
@@ -480,10 +484,14 @@ export async function setChatTitle(chatId: string, title: string): Promise<boole
 export async function resumeAutomaticChatTitles(chatId: string) {
   if (!flagEnabled("dynamicChatTitles")) return;
   const c = findChat(chatId);
-  if (!c || c.titleSource !== "user") return;
-  beginTitleRequest(chatId);
+  const resumeEligible =
+    c?.titleSource === "user" ||
+    (c?.titleSource === "default" && c.title !== "New chat");
+  if (!c || !resumeEligible) return;
+  const request = beginTitleRequest(chatId);
   const titleUpdatedAt = nextTitleTimestamp(chatId, c.titleUpdatedAt);
-  await db.updateChatTitleOwnership(chatId, "auto", titleUpdatedAt);
+  const applied = await db.updateChatTitleOwnership(chatId, "auto", titleUpdatedAt);
+  if (!applied || latestTitleRequestByChat.get(chatId) !== request) return;
   setState("chatsByRoot", c.projectRoot, (list) =>
     list.map((x) =>
       x.chatId === chatId ? { ...x, titleSource: "auto", titleUpdatedAt } : x,

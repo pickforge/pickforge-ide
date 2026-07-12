@@ -46,6 +46,7 @@ import {
   findChat,
   loadWorkspace,
   renameChat,
+  resumeAutomaticChatTitles,
   setChatAgent,
   setChatTitle,
 } from "../../src/stores/workspace";
@@ -56,6 +57,7 @@ beforeEach(async () => {
   mocks.updateChatAgent.mockReset();
   mocks.chatUpsert.mockReset();
   mocks.dynamicChatTitles = true;
+  mocks.updateChatTitleOwnership.mockResolvedValue(true);
   mocks.updateChatAgent.mockResolvedValue(undefined);
   mocks.chatUpsert.mockImplementation(async (chat: Record<string, unknown>) => {
     const index = mocks.chats.findIndex((item) => item.chatId === chat.chatId);
@@ -177,6 +179,71 @@ describe("automatic chat title persistence", () => {
       titleSource: "user",
       agentId: "claudeCode",
       kind: "agent",
+    });
+  });
+
+  it("projects only the newest concurrent manual rename", async () => {
+    let finishFirst: ((applied: boolean) => void) | undefined;
+    mocks.updateChatTitle
+      .mockImplementationOnce(
+        () => new Promise<boolean>((resolve) => {
+          finishFirst = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(true);
+
+    const first = renameChat("chat-1", "Older manual title");
+    const second = renameChat("chat-1", "Newest manual title");
+    const firstMetadata = mocks.updateChatTitle.mock.calls[0][2];
+    const secondMetadata = mocks.updateChatTitle.mock.calls[1][2];
+    expect(secondMetadata.titleUpdatedAt).toBeGreaterThan(firstMetadata.titleUpdatedAt);
+
+    await second;
+    finishFirst?.(false);
+    await first;
+    expect(findChat("chat-1")).toMatchObject({
+      title: "Newest manual title",
+      titleSource: "user",
+      titleUpdatedAt: secondMetadata.titleUpdatedAt,
+    });
+  });
+
+  it("persists manual ownership for a previously automatic chat while the flag is off", async () => {
+    mocks.dynamicChatTitles = false;
+    mocks.updateChatTitle.mockResolvedValueOnce(true);
+
+    await renameChat("chat-1", "Manual while disabled");
+
+    expect(mocks.updateChatTitle).toHaveBeenCalledWith(
+      "chat-1",
+      "Manual while disabled",
+      expect.objectContaining({ titleSource: "user" }),
+    );
+    expect(findChat("chat-1")).toMatchObject({
+      title: "Manual while disabled",
+      titleSource: "user",
+    });
+  });
+
+  it("resumes automatic ownership for a legacy default/non-default title", async () => {
+    mocks.chats[0] = {
+      ...mocks.chats[0],
+      title: "Legacy automatic title",
+      titleSource: "default",
+      titleUpdatedAt: 0,
+    };
+    await loadWorkspace();
+
+    await resumeAutomaticChatTitles("chat-1");
+
+    expect(mocks.updateChatTitleOwnership).toHaveBeenCalledWith(
+      "chat-1",
+      "auto",
+      expect.any(Number),
+    );
+    expect(findChat("chat-1")).toMatchObject({
+      title: "Legacy automatic title",
+      titleSource: "auto",
     });
   });
 

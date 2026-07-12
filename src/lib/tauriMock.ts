@@ -211,18 +211,16 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     ) {
       throw new Error("titleSource and titleUpdatedAt must be supplied together");
     }
+    if (updatedAt <= chat.titleUpdatedAt) return false;
     if (
       source === "auto" &&
       !(
-        updatedAt > chat.titleUpdatedAt &&
+        chat.titleSource === "auto" ||
+        (chat.titleSource === "default" && chat.title === "New chat") ||
         (
-          chat.titleSource === "auto" ||
-          (chat.titleSource === "default" && chat.title === "New chat") ||
-          (
-            chat.titleSource === "user" &&
-            chat.titleUpdatedAt === 0 &&
-            chat.title === "New chat"
-          )
+          chat.titleSource === "user" &&
+          chat.titleUpdatedAt === 0 &&
+          chat.title === "New chat"
         )
       )
     ) {
@@ -235,10 +233,12 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   },
   update_chat_title_ownership: (a) => {
     const chat = SAMPLE_CHATS.find((item) => item.chatId === a.chatId);
-    if (!chat) return null;
+    if (!chat) return false;
+    const updatedAt = Number(a.titleUpdatedAt);
+    if (updatedAt <= chat.titleUpdatedAt) return false;
     chat.titleSource = a.titleSource as Chat["titleSource"];
-    chat.titleUpdatedAt = Number(a.titleUpdatedAt);
-    return null;
+    chat.titleUpdatedAt = updatedAt;
+    return true;
   },
   update_chat_agent: (a) => {
     const chat = SAMPLE_CHATS.find((item) => item.chatId === a.chatId);

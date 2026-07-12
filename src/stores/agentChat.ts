@@ -18,13 +18,20 @@ import {
 import { modeOverrides } from "../lib/agentModes";
 import { nativeChatModel } from "../lib/agentModels";
 import { isSwarmWorkerChat } from "../lib/chatLabels";
-import { deriveAgentChatTitle, isDefaultChatTitle } from "../lib/chatAutoName";
+import {
+  canAutoOwn,
+  chatTitleSourceForPolicy,
+  deriveAgentChatTitle,
+  isDefaultChatTitle,
+  selectDynamicAgentTitle,
+} from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
 import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
+import { flagEnabled } from "./flags";
 import { remotePtyFor } from "../lib/remoteContext";
 
 export type AgentTimelineItem =
@@ -128,6 +135,16 @@ const setModelRequestSeqByChat = new Map<string, number>();
 // Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
 const ensureGenerations = new Map<string, number>();
 const autoRenameChecked = new Set<string>();
+const pendingProviderTitleByChat = new Map<string, string>();
+// Successful, visible user turns only. Timeline messages include failed turns,
+// so title cadence must use this completion ledger rather than recounting them.
+const completedTitleTurnsByChat = new Map<string, { seq: number; text: string }[]>();
+// The visible prompt that started the active backend turn. Steering messages
+// are timeline entries too, but must not replace the turn's title milestone.
+const activeTitleTurnByChat = new Map<
+  string,
+  { seq: number; text: string; hidden: boolean }
+>();
 const DELTA_FLUSH_INTERVAL_MS = 16;
 
 export interface SendAgentMessageOptions {
@@ -711,11 +728,35 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   const chat = chats[chatId];
   if (!chat) return;
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
+  const activeTitleTurn = activeTitleTurnByChat.get(chatId);
+  if (flagEnabled("dynamicChatTitles") && event.kind === "planUpdate") {
+    const candidate =
+      event.items.find((item) => !item.completed)?.text ?? event.items[0]?.text ?? "";
+    if (activeTitleTurn && !activeTitleTurn.hidden && candidate) {
+      pendingProviderTitleByChat.set(chatId, candidate);
+    }
+  }
   if (event.kind === "turnStarted") {
     interruptedByUser.delete(chatId);
     if (activityEligible(chatId)) agentTurnStarted(chatId);
   } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
-    if (event.kind === "turnDone") maybeAutoRenameAfterFirstTurn(chatId);
+    activeTitleTurnByChat.delete(chatId);
+    const titleEligible = event.kind === "turnDone" && event.status === "completed";
+    if (titleEligible) {
+      if (activeTitleTurn && !activeTitleTurn.hidden) {
+        const completed = completedTitleTurnsByChat.get(chatId) ?? [];
+        if (!completed.some((turn) => turn.seq === activeTitleTurn.seq)) {
+          completedTitleTurnsByChat.set(chatId, [
+            ...completed,
+            { seq: activeTitleTurn.seq, text: activeTitleTurn.text },
+          ]);
+        }
+      }
+      if (flagEnabled("dynamicChatTitles")) maybeRefreshDynamicTitle(chatId);
+      else maybeAutoRenameAfterFirstTurn(chatId);
+    } else {
+      pendingProviderTitleByChat.delete(chatId);
+    }
     const wasInterrupted = interruptedByUser.delete(chatId);
     if (!activityEligible(chatId)) return;
     if (wasInterrupted) agentTurnCleared(chatId);
@@ -767,6 +808,25 @@ function maybeAutoRenameAfterFirstTurn(chatId: string) {
   void setChatTitle(chatId, title).catch(() => undefined);
 }
 
+function maybeRefreshDynamicTitle(chatId: string) {
+  const row = findChat(chatId);
+  const chat = chats[chatId];
+  const providerTitle = pendingProviderTitleByChat.get(chatId);
+  pendingProviderTitleByChat.delete(chatId);
+  if (!row || !chat || !canAutoOwn(chatId)) return;
+
+  const completedUserTexts = (completedTitleTurnsByChat.get(chatId) ?? []).map(
+    (turn) => turn.text,
+  );
+  const title = selectDynamicAgentTitle({
+    currentTitle: row.title,
+    titleSource: chatTitleSourceForPolicy(row),
+    completedUserTexts,
+    providerTitle,
+  });
+  if (title) void setChatTitle(chatId, title).catch(() => undefined);
+}
+
 function parseAgentEvent(payload: string): AgentEvent | null {
   try {
     return JSON.parse(payload) as AgentEvent;
@@ -794,6 +854,7 @@ function stateFromHistory(
 ): AgentChatState {
   let chat = { ...emptyState(provider, model), historyLoaded: true };
   let maxSeq = 0;
+  completedTitleTurnsByChat.delete(chatId);
   for (const entry of [...entries].sort((a, b) => a.seq - b.seq)) {
     maxSeq = Math.max(maxSeq, entry.seq);
     if (entry.entryType === "message") {
@@ -837,6 +898,20 @@ function stateFromHistory(
     if (!event) continue;
     if (event.kind === "thinkingFinal" && isBlankText(event.text)) continue;
     chat = reduceAgentEvent(chat, event, () => entry.seq);
+    if (event.kind === "turnDone" && event.status === "completed") {
+      const latestUser = [...chat.timeline]
+        .reverse()
+        .find((item) => item.type === "userMessage");
+      if (latestUser?.type === "userMessage" && !latestUser.hidden) {
+        const completed = completedTitleTurnsByChat.get(chatId) ?? [];
+        if (!completed.some((turn) => turn.seq === latestUser.seq)) {
+          completedTitleTurnsByChat.set(chatId, [
+            ...completed,
+            { seq: latestUser.seq, text: latestUser.text },
+          ]);
+        }
+      }
+    }
     if (event.kind === "turnDone") chat = { ...chat, error: null };
   }
   nextSeqByChat.set(chatId, maxSeq + 1);
@@ -1120,6 +1195,11 @@ export async function sendAgentMessage(
   let optimisticSeq = takeSeq(chatId);
   const imageList = [...images];
   appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
+  activeTitleTurnByChat.set(chatId, {
+    seq: optimisticSeq,
+    text,
+    hidden: options.hidden === true,
+  });
   if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
     if (!sessionId) {
@@ -1137,6 +1217,11 @@ export async function sendAgentMessage(
       if (!hasOptimisticMessage) {
         optimisticSeq = takeSeq(chatId);
         appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
+        activeTitleTurnByChat.set(chatId, {
+          seq: optimisticSeq,
+          text,
+          hidden: options.hidden === true,
+        });
       } else {
         setChats(chatId, { error: null });
       }
@@ -1171,6 +1256,9 @@ export async function sendAgentMessage(
     if (stale()) throw error;
     if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
       nextSeqByChat.set(chatId, optimisticSeq);
+    }
+    if (activeTitleTurnByChat.get(chatId)?.seq === optimisticSeq) {
+      activeTitleTurnByChat.delete(chatId);
     }
     setChats(chatId, {
       turnActive: false,
@@ -1261,6 +1349,9 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   // stale session state into a disposed (or re-created) chat entry.
   ensureGenerations.set(chatId, (ensureGenerations.get(chatId) ?? 0) + 1);
   interruptedByUser.delete(chatId);
+  pendingProviderTitleByChat.delete(chatId);
+  completedTitleTurnsByChat.delete(chatId);
+  activeTitleTurnByChat.delete(chatId);
   nextSeqByChat.delete(chatId);
   ensurePromises.delete(chatId);
   hydratePromises.delete(chatId);

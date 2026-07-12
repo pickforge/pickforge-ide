@@ -263,6 +263,8 @@ pub fn run() {
             db_commands::chat_upsert,
             db_commands::chat_delete,
             db_commands::update_chat_title,
+            db_commands::update_chat_title_ownership,
+            db_commands::update_chat_agent,
             db_commands::update_chat_session_id,
             db_commands::update_chat_sort_order,
             db_commands::orchestra_task_upsert,

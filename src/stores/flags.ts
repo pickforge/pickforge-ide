@@ -47,6 +47,7 @@ const definitions = {
   accounts: { description: "Accounts and Pro entitlements (#132)" },
   settingsSync: { description: "Settings sync for signed-in users (#151)" },
   settingsNavigation: { description: "Section-based Settings navigation (#211)" },
+  dynamicChatTitles: { description: "Persisted milestone-based chat titles (#210)" },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

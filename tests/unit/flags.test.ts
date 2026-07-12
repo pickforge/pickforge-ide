@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("flags", () => {
-  it("registers every flag default-off", async () => {
+  it("registers all feature flags, default-off", async () => {
     const store = await loadStore();
 
     const states = store.flagStates();
@@ -35,6 +35,7 @@ describe("flags", () => {
       "accounts",
       "settingsSync",
       "settingsNavigation",
+      "dynamicChatTitles",
     ]);
     for (const s of states) {
       expect(s.defaultValue).toBe(false);
@@ -45,6 +46,7 @@ describe("flags", () => {
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);
     expect(store.flagEnabled("settingsNavigation")).toBe(false);
+    expect(store.flagEnabled("dynamicChatTitles")).toBe(false);
   });
 
   it("persists an override to localStorage and reflects it", async () => {

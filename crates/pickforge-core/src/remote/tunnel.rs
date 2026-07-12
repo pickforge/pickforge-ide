@@ -37,6 +37,8 @@ pub enum TunnelError {
     Ssh(#[from] SshError),
     #[error("remote tunnel port must be non-zero")]
     InvalidRemotePort,
+    #[error("remote tunnel manager is shutting down")]
+    ShuttingDown,
     #[error("failed to reserve a local loopback port: {0}")]
     ReservePort(#[source] std::io::Error),
     #[error("failed to start SSH tunnel: {0}")]
@@ -60,6 +62,7 @@ struct ManagedTunnel {
 
 struct TunnelState {
     entries: Mutex<HashMap<String, ManagedTunnel>>,
+    shutting_down: AtomicBool,
     next_id: AtomicU64,
     ssh_program: PathBuf,
     readiness_probe: ReadinessProbe,
@@ -99,6 +102,9 @@ impl TunnelManager {
         run_id: impl Into<String>,
         on_closed: impl Fn(RemoteTunnelClosed) + Send + Sync + 'static,
     ) -> Result<RemoteTunnel, TunnelError> {
+        if self.state.shutting_down.load(Ordering::SeqCst) {
+            return Err(TunnelError::ShuttingDown);
+        }
         if remote_port == 0 {
             return Err(TunnelError::InvalidRemotePort);
         }
@@ -126,11 +132,18 @@ impl TunnelManager {
                         self.state.next_id.fetch_add(1, Ordering::Relaxed) + 1
                     );
                     let manually_closed = Arc::new(AtomicBool::new(false));
-                    self.state
-                        .entries
-                        .lock()
-                        .expect("remote tunnel registry poisoned")
-                        .insert(
+                    {
+                        let mut entries = self
+                            .state
+                            .entries
+                            .lock()
+                            .expect("remote tunnel registry poisoned");
+                        if self.state.shutting_down.load(Ordering::SeqCst) {
+                            drop(entries);
+                            terminate_child(&child);
+                            return Err(TunnelError::ShuttingDown);
+                        }
+                        entries.insert(
                             tunnel_id.clone(),
                             ManagedTunnel {
                                 run_id: run_id.clone(),
@@ -138,6 +151,7 @@ impl TunnelManager {
                                 manually_closed: Arc::clone(&manually_closed),
                             },
                         );
+                    }
                     self.watch_child(
                         tunnel_id.clone(),
                         target.host.clone(),
@@ -195,6 +209,7 @@ impl TunnelManager {
     }
 
     pub fn shutdown(&self) {
+        self.state.shutting_down.store(true, Ordering::SeqCst);
         let entries = {
             let mut entries = self
                 .state
@@ -218,6 +233,7 @@ impl TunnelManager {
         Self {
             state: Arc::new(TunnelState {
                 entries: Mutex::new(HashMap::new()),
+                shutting_down: AtomicBool::new(false),
                 next_id: AtomicU64::new(0),
                 ssh_program,
                 readiness_probe,
@@ -396,6 +412,47 @@ mod tests {
         let error = manager.open("mac-mini", 8181, "run-1", |_| {}).unwrap_err();
         assert!(matches!(error, TunnelError::ReadinessTimeout));
         assert_eq!(manager.len(), 0);
+        let _ = fs::remove_file(fake);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_rejects_a_tunnel_that_finishes_readiness_late() {
+        let fake = fake_ssh("#!/bin/sh\nexec sleep 30\n");
+        let (probe_started_tx, probe_started_rx) = mpsc::channel();
+        let (release_probe_tx, release_probe_rx) = mpsc::channel();
+        let release_probe_rx = Arc::new(Mutex::new(release_probe_rx));
+        let manager = TunnelManager::with_parts(
+            fake.clone(),
+            Arc::new(move |_, _| {
+                probe_started_tx.send(()).expect("signal readiness probe");
+                release_probe_rx
+                    .lock()
+                    .expect("release receiver")
+                    .recv()
+                    .expect("release readiness probe");
+                Ok(())
+            }),
+        );
+        let opener = manager.clone();
+        let open_thread =
+            thread::spawn(move || opener.open("mac-mini", 8181, "run-1", |_| {}));
+
+        probe_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("readiness probe started");
+        manager.shutdown();
+        release_probe_tx.send(()).expect("release readiness probe");
+
+        assert!(matches!(
+            open_thread.join().expect("join open thread"),
+            Err(TunnelError::ShuttingDown)
+        ));
+        assert_eq!(manager.len(), 0);
+        assert!(matches!(
+            manager.open("mac-mini", 8181, "run-2", |_| {}),
+            Err(TunnelError::ShuttingDown)
+        ));
         let _ = fs::remove_file(fake);
     }
 

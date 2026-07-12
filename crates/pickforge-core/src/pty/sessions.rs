@@ -535,14 +535,33 @@ fn cleanup_owned_dtach_sockets(
     errors
 }
 
+fn tmux_server_is_absent(stderr: &[u8]) -> bool {
+    let stderr = String::from_utf8_lossy(stderr);
+    stderr.contains("no server running") || stderr.contains("failed to connect to server")
+}
+
 pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), String> {
-    let errors = match validated_sessions_dir(runtime_base) {
+    let mut errors = match validated_sessions_dir(runtime_base) {
         Ok(dir) => cleanup_owned_dtach_sockets(&dir, kill_dtach_master),
         Err(error) => vec![error],
     };
     let args = tmux_kill_server_args();
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let _ = run_timeout("tmux", &refs, None, None, TMUX_KILL_TIMEOUT);
+    let environment = user_shell_environment();
+    match run_timeout(
+        "tmux",
+        &refs,
+        None,
+        Some(&environment),
+        TMUX_KILL_TIMEOUT,
+    ) {
+        Ok(outcome) if outcome.success() || tmux_server_is_absent(&outcome.stderr) => {}
+        Ok(outcome) => errors.push(format!(
+            "tmux cleanup failed: {}",
+            String::from_utf8_lossy(&outcome.stderr).trim()
+        )),
+        Err(error) => errors.push(format!("cannot run tmux cleanup: {error}")),
+    }
     if errors.is_empty() {
         Ok(())
     } else {
@@ -819,6 +838,15 @@ mod tests {
         let args = tmux_kill_server_args();
         assert_eq!(args, vec!["-L", tmux_server_name(), "kill-server"]);
         assert!(tmux_server_name().starts_with("pickforge-"));
+    }
+
+    #[test]
+    fn tmux_missing_server_errors_are_idempotent() {
+        assert!(tmux_server_is_absent(b"no server running on /tmp/tmux.sock"));
+        assert!(tmux_server_is_absent(
+            b"failed to connect to server: Connection refused"
+        ));
+        assert!(!tmux_server_is_absent(b"permission denied"));
     }
 
     #[cfg(unix)]

@@ -17,7 +17,8 @@
 // clobber a name the user typed.
 import { createSignal } from "solid-js";
 import { AGENTS } from "./agentModels";
-import { findChat, setChatTitle } from "../stores/workspace";
+import { findChat, resumeAutomaticChatTitles, setChatTitle } from "../stores/workspace";
+import { flagEnabled } from "../stores/flags";
 
 /** Title a freshly-created chat carries until it earns a real name. */
 export const DEFAULT_CHAT_TITLE = "New chat";
@@ -56,6 +57,16 @@ const GENERIC_AGENT_CHAT_TEXT = new Set([
   "please help",
   "can you help",
   "can you help me",
+  "plan",
+  "planning",
+  "working",
+  "thinking",
+  "processing",
+  "done",
+  "completed",
+  "ready",
+  "task",
+  "new chat",
 ]);
 
 // chatId -> the pane id armed for auto-naming. Scoped to a pane so that, in a
@@ -135,13 +146,23 @@ export function hasAgentPane(chatId: string): boolean {
   return (agentPanes.get(chatId)?.size ?? 0) > 0;
 }
 
-/** A pane's shell was killed (pane closed / survivor swapped out): drop every
- *  claim it held so a dead pane can't gate activity or supply titles. */
+/** A pane left the split tree: drop its in-memory claims. Closing a detached
+ *  session pane does not prove the recoverable process ended, so its persisted
+ *  session marker is intentionally retained here. */
 export function revokeAgentPane(chatId: string, paneId: string) {
   const panes = agentPanes.get(chatId);
   if (panes?.delete(paneId) && panes.size === 0) agentPanes.delete(chatId);
   if (armed.get(chatId) === paneId) armed.delete(chatId);
-  if (titleAuthority.get(chatId) === paneId) titleAuthority.delete(chatId);
+  revokeTitleAuthority(chatId, paneId);
+}
+
+/** A PTY/session process emitted its lifecycle exit. This is authoritative even
+ *  when no shell OSC title was emitted, and clears durable reattach ownership. */
+export function handleAgentPaneExited(chatId: string, paneId: string) {
+  revokeAgentPane(chatId, paneId);
+  if (sessionPane.get(chatId) !== paneId) return;
+  sessionPane.delete(chatId);
+  clearChatAgentSession(chatId);
 }
 
 /** The chat was deleted: drop all of its naming/ownership state, including the
@@ -153,6 +174,7 @@ export function forgetChatAutoName(chatId: string) {
   armed.delete(chatId);
   manual.delete(chatId);
   autoNamed.delete(chatId);
+  dynamicMeaningfulTurns.delete(chatId);
   const pending = oscPending.get(chatId);
   if (pending) {
     clearTimeout(pending.timer);
@@ -185,6 +207,10 @@ const manual = new Set<string>();
 // (via OSC or the first message) we may keep refining it from the SAME owner,
 // even though it's no longer the default — but only until a manual rename.
 const autoNamed = new Set<string>();
+// Terminal chats have no durable structured turn history to recount. While the
+// feature is enabled, track meaningful completed submissions for this run so
+// local refreshes happen at 1, 4, 7, …; provider OSC signals remain independent.
+const dynamicMeaningfulTurns = new Map<string, number>();
 
 /** Mark a chat's title as user-owned so the OSC/first-message auto-namers leave
  *  it alone. The rename field calls this on a real manual rename. */
@@ -194,13 +220,46 @@ export function markChatTitleManual(chatId: string) {
   autoNamed.delete(chatId);
 }
 
-/** True when an auto source may (re)write this chat's title: never once the user
- *  has renamed it, and otherwise only while it's the default or a name we set. */
-function canAutoOwn(chatId: string): boolean {
+export function chatTitleSourceForPolicy(chat: {
+  title: string;
+  titleSource?: "default" | "auto" | "user";
+  titleUpdatedAt?: number;
+}): "default" | "auto" | "user" {
+  if (chat.titleSource === "auto") return "auto";
+  if (chat.titleSource === "default") {
+    return chat.title === DEFAULT_CHAT_TITLE ? "default" : "user";
+  }
+  // Older pre-flag rows can carry legacy user/0 metadata. Only the exact
+  // untouched sentinel is adoptable; non-default (including whitespace-altered)
+  // legacy titles remain conservatively locked.
+  if (
+    chat.title === DEFAULT_CHAT_TITLE &&
+    (chat.titleSource == null || chat.titleUpdatedAt === 0)
+  ) {
+    return "default";
+  }
+  return "user";
+}
+
+/** True when an auto source may (re)write this chat's title. The flagged path
+ * reads durable ownership; the legacy path keeps the existing session-local
+ * behavior exactly as before. */
+export function canAutoOwn(chatId: string): boolean {
   if (manual.has(chatId)) return false;
   const chat = findChat(chatId);
   if (!chat) return false;
+  if (flagEnabled("dynamicChatTitles")) {
+    return chatTitleSourceForPolicy(chat) !== "user";
+  }
   return isDefaultChatTitle(chat.title) || autoNamed.has(chatId);
+}
+
+/** Unlock a persisted manual title without changing its current text. */
+export async function resumeChatTitleAuto(chatId: string) {
+  if (!flagEnabled("dynamicChatTitles")) return;
+  await resumeAutomaticChatTitles(chatId);
+  manual.delete(chatId);
+  autoNamed.add(chatId);
 }
 
 // ---- OSC 2 terminal-title pipeline ----
@@ -213,10 +272,34 @@ interface OscPending {
 const oscPending = new Map<string, OscPending>();
 const OSC_DEBOUNCE_MS = 1200;
 
+function revokeTitleAuthority(chatId: string, paneId: string) {
+  if (titleAuthority.get(chatId) !== paneId) return;
+  titleAuthority.delete(chatId);
+  if (armed.get(chatId) === paneId) armed.delete(chatId);
+  const pending = oscPending.get(chatId);
+  if (pending) {
+    clearTimeout(pending.timer);
+    oscPending.delete(chatId);
+  }
+}
+
+function isShellLifecycleTitle(rawTitle: string): boolean {
+  const title = rawTitle.trim().toLowerCase();
+  return (
+    SHELL_BINARIES.has(title) ||
+    /[$%#>]\s*$/.test(title) ||
+    /^[\w.-]+@[\w.-]+(?::.*)?$/.test(title)
+  );
+}
+
 /** Feed an OSC 2 title emitted by a chat pane's terminal. Filters noise, lets
  *  the first usable pane own the title, debounces, and commits on quiet — but
  *  only while the chat is still auto-owned (never over a manual rename). */
 export function handleOscTitle(chatId: string, paneId: string, rawTitle: string) {
+  if (titleAuthority.get(chatId) === paneId && isShellLifecycleTitle(rawTitle)) {
+    revokeTitleAuthority(chatId, paneId);
+    return;
+  }
   if (!canAutoOwn(chatId)) return;
 
   // Only the most recent agent launch's pane may name the chat (last launch
@@ -226,7 +309,7 @@ export function handleOscTitle(chatId: string, paneId: string, rawTitle: string)
   if (titleAuthority.get(chatId) !== paneId) return;
 
   const title = cleanOscTitle(rawTitle);
-  if (!title) return; // noise — empty, a prompt/cwd banner, the shell name, …
+  if (!title || (flagEnabled("dynamicChatTitles") && isTrivialAgentChatTitle(title))) return;
 
   const existing = oscPending.get(chatId);
   if (existing) clearTimeout(existing.timer);
@@ -263,6 +346,11 @@ export function maybeAutoNameChat(chatId: string, rawLine: string, paneId: strin
   const line = rawLine.trim();
   if (!line) return; // ignore blank submits; stay armed
 
+  if (flagEnabled("dynamicChatTitles")) {
+    maybeRefreshDynamicTerminalTitle(chatId, line, paneId);
+    return;
+  }
+
   if (!isDefaultChatTitle(chat.title)) {
     armed.delete(chatId);
     if (matchAgentLaunch(line)) markAgentPane(chatId, paneId);
@@ -291,6 +379,38 @@ export function maybeAutoNameChat(chatId: string, rawLine: string, paneId: strin
   markAgentPane(chatId, paneId);
   if (launch.prompt) commit(chatId, launch.prompt); // `claude fix the bug`
   else armed.set(chatId, paneId); // bare `claude` — wait for the in-TUI prompt
+}
+
+function maybeRefreshDynamicTerminalTitle(chatId: string, line: string, paneId: string) {
+  const launch = matchAgentLaunch(line);
+  const armedPane = armed.get(chatId);
+  let taskText = "";
+
+  if (armedPane !== undefined) {
+    if (armedPane !== paneId) {
+      if (launch) markAgentPane(chatId, paneId);
+      return;
+    }
+    armed.delete(chatId);
+    taskText = line;
+  } else if (launch) {
+    markAgentPane(chatId, paneId);
+    if (!launch.prompt) {
+      armed.set(chatId, paneId);
+      return;
+    }
+    taskText = launch.prompt;
+  } else if (titleAuthority.get(chatId) === paneId) {
+    taskText = line;
+  } else {
+    return;
+  }
+
+  const title = deriveMeaningfulUserTitle(taskText);
+  if (!title || !canAutoOwn(chatId)) return;
+  const completed = (dynamicMeaningfulTurns.get(chatId) ?? 0) + 1;
+  dynamicMeaningfulTurns.set(chatId, completed);
+  if (completed === 1 || (completed - 1) % 3 === 0) commit(chatId, title);
 }
 
 // Transient display title per chat while the auto-name types itself in. The
@@ -348,13 +468,23 @@ function commit(chatId: string, message: string) {
   const title = toTitle(message);
   if (!title) return;
   const from = findChat(chatId)?.title ?? "";
-  autoNamed.add(chatId); // this module now owns the title (until a manual rename)
+  if (
+    flagEnabled("dynamicChatTitles") &&
+    (isTrivialAgentChatTitle(title) || normalizeTitle(title) === normalizeTitle(from))
+  ) {
+    return;
+  }
+  const dynamic = flagEnabled("dynamicChatTitles");
+  if (!dynamic) autoNamed.add(chatId); // preserve legacy immediate session ownership
   // Persist via the narrow title update so a live `session_id` write (chat
   // recovery) the full-row `chat_upsert` would carry can't be clobbered.
-  void setChatTitle(chatId, title);
-  if (prefersReducedMotion() || from === title) return;
-  setOverride(chatId, from); // mask the instant swap before the first frame
-  animateRename(chatId, from, title);
+  void setChatTitle(chatId, title).then((applied) => {
+    if (!applied) return;
+    autoNamed.add(chatId);
+    if (prefersReducedMotion() || from === title) return;
+    setOverride(chatId, from);
+    animateRename(chatId, from, title);
+  });
 }
 
 /** If `line` starts with a known agent binary, return the prompt text after the
@@ -440,6 +570,42 @@ export function deriveAgentChatTitle(firstUserText: string, firstAssistantText?:
   const assistantTitle = cleanAgentChatTitleSource(firstAssistantText ?? "");
   const source = isTrivialAgentChatTitle(userTitle) && assistantTitle ? assistantTitle : userTitle;
   return formatAgentChatTitle(source);
+}
+
+/** User-owned text only: greetings/filler never become titles and assistant
+ * output is deliberately excluded from the flagged policy. */
+export function deriveMeaningfulUserTitle(userText: string): string {
+  const source = cleanAgentChatTitleSource(userText);
+  return isTrivialAgentChatTitle(source) ? "" : formatAgentChatTitle(source);
+}
+
+export interface DynamicAgentTitleInput {
+  currentTitle: string;
+  titleSource: "default" | "auto" | "user";
+  completedUserTexts: readonly string[];
+  providerTitle?: string | null;
+}
+
+/** Decide a native-chat refresh at a stable completed-turn boundary. Provider
+ * plan/title metadata wins; local text refreshes on meaningful turns 1, 4, 7… */
+export function selectDynamicAgentTitle(input: DynamicAgentTitleInput): string {
+  if (input.titleSource === "user") return "";
+
+  const current = normalizeTitle(input.currentTitle);
+  const provider = deriveMeaningfulUserTitle(input.providerTitle ?? "");
+  if (provider && normalizeTitle(provider) !== current) return provider;
+
+  const meaningful = input.completedUserTexts
+    .map(deriveMeaningfulUserTitle)
+    .filter((title) => title.length > 0);
+  const count = meaningful.length;
+  if (count === 0 || (count !== 1 && (count - 1) % 3 !== 0)) return "";
+  const candidate = meaningful[count - 1];
+  return normalizeTitle(candidate) === current ? "" : candidate;
+}
+
+function normalizeTitle(title: string): string {
+  return title.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
 }
 
 function cleanAgentChatTitleSource(raw: string): string {

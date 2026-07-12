@@ -13,10 +13,14 @@ export interface Project {
   remoteRoot: string | null;
 }
 
+export type ChatTitleSource = "default" | "auto" | "user";
+
 export interface Chat {
   chatId: string;
   projectRoot: string;
   title: string;
+  titleSource: ChatTitleSource;
+  titleUpdatedAt: number;
   kind: string;
   agentId: string;
   skillId: string | null;
@@ -142,9 +146,27 @@ export const chatsList = (projectRoot: string) =>
 export const chatUpsert = (chat: Chat) => invoke<void>("chat_upsert", { chat });
 export const chatDelete = (chatId: string) =>
   invoke<void>("chat_delete", { chatId });
-/** Narrow title write (OSC/auto-name) — won't clobber a live session_id. */
-export const updateChatTitle = (chatId: string, title: string) =>
-  invoke<void>("update_chat_title", { chatId, title });
+/** Narrow title write; returns whether the durable write was applied. */
+export const updateChatTitle = (
+  chatId: string,
+  title: string,
+  metadata?: { titleSource: ChatTitleSource; titleUpdatedAt: number },
+) =>
+  invoke<boolean>("update_chat_title", {
+    chatId,
+    title,
+    titleSource: metadata?.titleSource,
+    titleUpdatedAt: metadata?.titleUpdatedAt,
+  });
+/** Narrow ownership-only write; returns whether the monotonic write applied. */
+export const updateChatTitleOwnership = (
+  chatId: string,
+  titleSource: ChatTitleSource,
+  titleUpdatedAt: number,
+) => invoke<boolean>("update_chat_title_ownership", { chatId, titleSource, titleUpdatedAt });
+/** Narrow agent/kind write; leaves title ownership and every other field untouched. */
+export const updateChatAgent = (chatId: string, agentId: string, kind: string) =>
+  invoke<void>("update_chat_agent", { chatId, agentId, kind });
 /** Narrow session_id write (chat recovery) — pass null to clear. */
 export const updateChatSessionId = (chatId: string, sessionId: string | null) =>
   invoke<void>("update_chat_session_id", { chatId, sessionId });

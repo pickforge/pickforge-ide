@@ -8,6 +8,10 @@ fn default_chat_kind() -> String {
     "terminal".to_string()
 }
 
+fn default_chat_title_source() -> String {
+    "user".to_string()
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -30,6 +34,10 @@ pub struct Chat {
     pub chat_id: String,
     pub project_root: String,
     pub title: String,
+    #[serde(default = "default_chat_title_source")]
+    pub title_source: String,
+    #[serde(default)]
+    pub title_updated_at: i64,
     pub agent_id: String,
     #[serde(default = "default_chat_kind")]
     pub kind: String,

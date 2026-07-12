@@ -15,3 +15,18 @@ test("title-less dropdown labels and keyboard dismissal", async ({ page }) => {
   await page.keyboard.press("Tab");
   await expect(page.getByRole("listbox")).toBeHidden();
 });
+
+test("manual chat title menu offers automatic-title resume", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "pickforge.flags",
+      JSON.stringify({ dynamicChatTitles: true }),
+    );
+  });
+  await page.goto("/#/workbench");
+
+  const row = page.locator(".pf-chat-row").filter({ hasText: "Login screen" });
+  await row.getByTitle("Chat options").click();
+  const menu = page.locator(".pf-floating-menu");
+  await expect(menu.getByRole("button", { name: "Resume automatic titles" })).toBeVisible();
+});

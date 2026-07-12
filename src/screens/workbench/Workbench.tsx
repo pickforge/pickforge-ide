@@ -47,6 +47,7 @@ import {
   clearChatAgentSession,
   forgetChatAutoName,
   handleOscTitle,
+  handleAgentPaneExited,
   markChatSessionPane,
   maybeAutoNameChat,
   revokeAgentPane,
@@ -397,6 +398,7 @@ export function WorkbenchScreen() {
                     if (!isChatArchived(h.chatId)) recordChatAttention(h.chatId, paneId);
                   }}
                   onPrimaryPaneRemount={(fromPaneId, toPaneId) => transferAgentPaneOwnership(h.chatId, fromPaneId, toPaneId)}
+                  onPaneExited={(paneId) => handleAgentPaneExited(h.chatId, paneId)}
                   onPaneClosed={(paneId) => {
                     revokeAgentPane(h.chatId, paneId);
                     handlePaneClosed(h.chatId, paneId);

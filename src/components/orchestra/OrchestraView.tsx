@@ -79,9 +79,10 @@ import {
   chatsFor,
   ensureChatsLoaded,
   findChat,
-  setChatTitle,
+  renameChat,
   workspace,
 } from "../../stores/workspace";
+import { markChatTitleManual } from "../../lib/chatAutoName";
 import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
@@ -718,7 +719,11 @@ export function OrchestraView(props: {
             onBlur={() => setRenamingLane(null)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
-                void setChatTitle(p.chatId, e.currentTarget.value);
+                const title = e.currentTarget.value.trim();
+                if (title && title !== laneTitle(p.chatId)) {
+                  markChatTitleManual(p.chatId);
+                  void renameChat(p.chatId, title);
+                }
                 setRenamingLane(null);
               } else if (e.key === "Escape") {
                 setRenamingLane(null);

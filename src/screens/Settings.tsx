@@ -11,7 +11,7 @@ import {
   resetQuickLaunchItems,
   updateQuickLaunchItem,
 } from "../stores/quickLaunch";
-import { HairlinePanel, MonoEyebrow } from "../components/ui";
+import { MonoEyebrow } from "../components/ui";
 import { Dropdown } from "../components/Dropdown";
 import {
   IconClaude,
@@ -120,16 +120,24 @@ import {
 } from "../lib/accountData";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import * as db from "../lib/db";
+import {
+  AccountSettingsSection,
+  AgentModelsSettingsSection,
+  AppearanceSettingsSection,
+  ArchivedProjectsSettingsSection,
+  ChatsSettingsSection,
+  DictationSettingsSection,
+  FeatureFlagsSettingsSection,
+  FileOpeningSettingsSection,
+  OperatorRouterSettingsSection,
+  PickLabSettingsSection,
+  QuickLaunchSettingsSection,
+  RemoteHostSettingsSection,
+  UpdatesSettingsSection,
+  WorkbenchSettingsSection,
+} from "./settingsSections";
 import "./screens.css";
 
-function Section(props: { title: string; children: any }) {
-  return (
-    <HairlinePanel class="pf-settings-section">
-      <MonoEyebrow text={props.title} tick />
-      <div class="pf-settings-body">{props.children}</div>
-    </HairlinePanel>
-  );
-}
 
 function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -567,858 +575,830 @@ export function SettingsScreen() {
       </header>
 
       <div class="pf-settings">
-        <Section title="Agent models">
-          <For each={AGENTS}>
-            {(agent) => (
-              <div class="pf-settings-row">
-                <span class="pf-settings-label">
-                  <Show when={agent.id === "claudeCode"}>
-                    <span class="pf-settings-brand"><IconClaude size={14} /></span>
-                  </Show>
-                  <Show when={agent.id === "codex"}>
-                    <span class="pf-settings-brand"><IconOpenAI size={14} /></span>
-                  </Show>
-                  {agent.label}
-                </span>
-                <Show
-                  when={agent.models.length > 0}
-                  fallback={<span class="pf-settings-muted">CLI default</span>}
-                >
-                  <Dropdown
-                    class="pf-settings-dropdown"
-                    value={models()[agent.id] ?? ""}
-                    onChange={(v) => changeModel(agent.id, v)}
-                    options={agent.models.map((m) => ({
-                      value: m.id,
-                      label: m.label,
-                      icon: () => <IconIngot size={13} />,
-                    }))}
-                  />
+        <AgentModelsSettingsSection><For each={AGENTS}>
+          {(agent) => (
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">
+                <Show when={agent.id === "claudeCode"}>
+                  <span class="pf-settings-brand"><IconClaude size={14} /></span>
                 </Show>
-              </div>
-            )}
-          </For>
-        </Section>
+                <Show when={agent.id === "codex"}>
+                  <span class="pf-settings-brand"><IconOpenAI size={14} /></span>
+                </Show>
+                {agent.label}
+              </span>
+              <Show
+                when={agent.models.length > 0}
+                fallback={<span class="pf-settings-muted">CLI default</span>}
+              >
+                <Dropdown
+                  class="pf-settings-dropdown"
+                  value={models()[agent.id] ?? ""}
+                  onChange={(v) => changeModel(agent.id, v)}
+                  options={agent.models.map((m) => ({
+                    value: m.id,
+                    label: m.label,
+                    icon: () => <IconIngot size={13} />,
+                  }))}
+                />
+              </Show>
+            </div>
+          )}
+        </For></AgentModelsSettingsSection>
 
         <Show when={flagEnabled("operator")}>
-          <Section title="Operator router">
-            <div class="pf-settings-row">
-              <span class="pf-settings-label">Backend</span>
-              <Dropdown
-                class="pf-settings-dropdown"
-                value={routerBackend()}
-                onChange={changeRouterBackend}
-                options={routerBackendOptions}
-              />
-            </div>
-            <Show when={!accountSession()}>
-              <span class="pf-settings-muted">Sign in to use hosted routing.</span>
-            </Show>
-            <Show when={routerBackend() === "hosted" && accountSession()}>
-              <span class="pf-settings-muted">
-                Hosted routing uses PickForge credits. Local and BYO routing stay free.
-              </span>
-            </Show>
-            <Show when={activeRouterBackend()}>
-              {(backend) => (
-                <>
-                  <div class="pf-settings-row">
-                    <span class="pf-settings-label">Model</span>
-                    <input
-                      class="pf-input pf-router-model"
-                      value={operatorRouterSettings().models[backend()]}
-                      spellcheck={false}
-                      onInput={(e) => changeRouterModel(backend(), e.currentTarget.value)}
-                    />
-                  </div>
-                  <Show when={routerLatencyHint()}>
-                    {(hint) => <span class="pf-settings-muted">{hint()}</span>}
-                  </Show>
-                </>
-              )}
-            </Show>
-          </Section>
-        </Show>
-
-        <Show when={flagEnabled("operator")}>
-          <Section title="Dictation">
-            <div class="pf-settings-row">
-              <span class="pf-settings-label">
-                Microphone
-                <span class="pf-settings-hint-inline">show the mic in the operator dock</span>
-              </span>
-              <div class="pf-seg">
-                <button
-                  classList={{ active: voiceDictationSettings().micEnabled }}
-                  onClick={() => setVoiceMicEnabled(true)}
-                >
-                  On
-                </button>
-                <button
-                  classList={{ active: !voiceDictationSettings().micEnabled }}
-                  onClick={() => setVoiceMicEnabled(false)}
-                >
-                  Off
-                </button>
-              </div>
-            </div>
-            <div class="pf-settings-row">
-              <span class="pf-settings-label">
-                Push to command
-                <span class="pf-settings-hint-inline">run the command automatically once dictation finishes</span>
-              </span>
-              <div class="pf-seg">
-                <button
-                  classList={{ active: voiceDictationSettings().pushToCommand }}
-                  onClick={() => setVoicePushToCommand(true)}
-                >
-                  On
-                </button>
-                <button
-                  classList={{ active: !voiceDictationSettings().pushToCommand }}
-                  onClick={() => setVoicePushToCommand(false)}
-                >
-                  Off
-                </button>
-              </div>
-            </div>
-            <div class="pf-settings-row">
-              <span class="pf-settings-label">
-                Whisper model
-                <span class="pf-settings-hint-inline">absolute path to a ggml model (no ~ expansion); empty uses the default</span>
-              </span>
-              <input
-                class="pf-input"
-                value={voiceDictationSettings().modelPath}
-                placeholder={voiceState()?.modelPath ?? "/absolute/path/to/ggml-base.bin"}
-                spellcheck={false}
-                onInput={(e) => changeVoiceModelPath(e.currentTarget.value)}
-                onChange={() => void reloadVoice()}
-              />
-            </div>
-            <div class="pf-settings-row">
-              <span class="pf-settings-label">Status</span>
-              <span class="pf-settings-muted">{voiceStatusLabel()}</span>
-            </div>
-          </Section>
-        </Show>
-
-        <Section title="Chats">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">New chat creates</span>
+          <OperatorRouterSettingsSection><div class="pf-settings-row">
+            <span class="pf-settings-label">Backend</span>
             <Dropdown
               class="pf-settings-dropdown"
-              value={defaultChatKind()}
-              onChange={changeDefaultChatKind}
-              options={[
-                { value: "ask", label: "Ask each time" },
-                { value: "terminal", label: "Terminal" },
-                { value: "agent", label: "Agent chat" },
-              ]}
+              value={routerBackend()}
+              onChange={changeRouterBackend}
+              options={routerBackendOptions}
             />
           </div>
-          <div class="pf-settings-row">
+          <Show when={!accountSession()}>
+            <span class="pf-settings-muted">Sign in to use hosted routing.</span>
+          </Show>
+          <Show when={routerBackend() === "hosted" && accountSession()}>
+            <span class="pf-settings-muted">
+              Hosted routing uses PickForge credits. Local and BYO routing stay free.
+            </span>
+          </Show>
+          <Show when={activeRouterBackend()}>
+            {(backend) => (
+              <>
+                <div class="pf-settings-row">
+                  <span class="pf-settings-label">Model</span>
+                  <input
+                    class="pf-input pf-router-model"
+                    value={operatorRouterSettings().models[backend()]}
+                    spellcheck={false}
+                    onInput={(e) => changeRouterModel(backend(), e.currentTarget.value)}
+                  />
+                </div>
+                <Show when={routerLatencyHint()}>
+                  {(hint) => <span class="pf-settings-muted">{hint()}</span>}
+                </Show>
+              </>
+            )}
+          </Show></OperatorRouterSettingsSection>
+        </Show>
+
+        <Show when={flagEnabled("operator")}>
+          <DictationSettingsSection><div class="pf-settings-row">
             <span class="pf-settings-label">
-              Ask for a chat title
-              <span class="pf-settings-hint-inline">a name field in the new-chat menu; empty keeps auto-naming</span>
+              Microphone
+              <span class="pf-settings-hint-inline">show the mic in the operator dock</span>
             </span>
             <div class="pf-seg">
-              <button classList={{ active: askChatTitle() }} onClick={() => changeAskChatTitle(true)}>On</button>
-              <button classList={{ active: !askChatTitle() }} onClick={() => changeAskChatTitle(false)}>Off</button>
+              <button
+                classList={{ active: voiceDictationSettings().micEnabled }}
+                onClick={() => setVoiceMicEnabled(true)}
+              >
+                On
+              </button>
+              <button
+                classList={{ active: !voiceDictationSettings().micEnabled }}
+                onClick={() => setVoiceMicEnabled(false)}
+              >
+                Off
+              </button>
             </div>
           </div>
           <div class="pf-settings-row">
             <span class="pf-settings-label">
-              Agent chat engine
-              <span class="pf-settings-hint-inline">interactive approvals + steering, or one-shot CLI</span>
+              Push to command
+              <span class="pf-settings-hint-inline">run the command automatically once dictation finishes</span>
             </span>
-            <Dropdown
-              class="pf-settings-dropdown"
-              value={agentEngine()}
-              onChange={changeAgentEngine}
-              options={[
-                { value: "v2", label: "v2 (interactive)" },
-                { value: "v1", label: "v1 (one-shot CLI)" },
-              ]}
+            <div class="pf-seg">
+              <button
+                classList={{ active: voiceDictationSettings().pushToCommand }}
+                onClick={() => setVoicePushToCommand(true)}
+              >
+                On
+              </button>
+              <button
+                classList={{ active: !voiceDictationSettings().pushToCommand }}
+                onClick={() => setVoicePushToCommand(false)}
+              >
+                Off
+              </button>
+            </div>
+          </div>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Whisper model
+              <span class="pf-settings-hint-inline">absolute path to a ggml model (no ~ expansion); empty uses the default</span>
+            </span>
+            <input
+              class="pf-input"
+              value={voiceDictationSettings().modelPath}
+              placeholder={voiceState()?.modelPath ?? "/absolute/path/to/ggml-base.bin"}
+              spellcheck={false}
+              onInput={(e) => changeVoiceModelPath(e.currentTarget.value)}
+              onChange={() => void reloadVoice()}
             />
           </div>
-        </Section>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Status</span>
+            <span class="pf-settings-muted">{voiceStatusLabel()}</span>
+          </div></DictationSettingsSection>
+        </Show>
 
-        <Section title="PickLab companion">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">CLI</span>
-            <span class="pf-settings-muted">
-              {pickLab()?.cliAvailable ? `picklab ${pickLab()?.version ?? ""}` : "Not found"}
-            </span>
+        <ChatsSettingsSection><div class="pf-settings-row">
+          <span class="pf-settings-label">New chat creates</span>
+          <Dropdown
+            class="pf-settings-dropdown"
+            value={defaultChatKind()}
+            onChange={changeDefaultChatKind}
+            options={[
+              { value: "ask", label: "Ask each time" },
+              { value: "terminal", label: "Terminal" },
+              { value: "agent", label: "Agent chat" },
+            ]}
+          />
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Ask for a chat title
+            <span class="pf-settings-hint-inline">a name field in the new-chat menu; empty keeps auto-naming</span>
+          </span>
+          <div class="pf-seg">
+            <button classList={{ active: askChatTitle() }} onClick={() => changeAskChatTitle(true)}>On</button>
+            <button classList={{ active: !askChatTitle() }} onClick={() => changeAskChatTitle(false)}>Off</button>
           </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">MCP server</span>
-            <span class="pf-settings-muted">
-              {pickLab()?.mcpAvailable ? "picklab-mcp available" : "Not found"}
-            </span>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Doctor</span>
-            <span class="pf-settings-muted">{pickLabDoctorLabel()}</span>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Agent configs</span>
-            <span class="pf-settings-muted">{pickLabAgentsLabel()}</span>
-          </div>
-          <Show when={pickLab()?.error}>
-            <div class="pf-ql-warn">{pickLab()?.error}</div>
-          </Show>
-          <div class="pf-ql-actions">
-            <button
-              class="pf-ql-add"
-              disabled={pickLabLoading()}
-              onClick={() => void reloadPickLab()}
-            >
-              <IconRefresh size={13} /> {pickLabLoading() ? "Checking..." : "Refresh"}
-            </button>
-            <span class="pf-settings-muted">Managed as an external Pickforge tool</span>
-          </div>
-        </Section>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Agent chat engine
+            <span class="pf-settings-hint-inline">interactive approvals + steering, or one-shot CLI</span>
+          </span>
+          <Dropdown
+            class="pf-settings-dropdown"
+            value={agentEngine()}
+            onChange={changeAgentEngine}
+            options={[
+              { value: "v2", label: "v2 (interactive)" },
+              { value: "v1", label: "v1 (one-shot CLI)" },
+            ]}
+          />
+        </div></ChatsSettingsSection>
 
-        <Section title="Remote host">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">
-              Listener
-              <Show when={remoteHost()?.localUrl}>
-                <span class="pf-settings-hint-inline">{remoteHost()?.localUrl}</span>
-              </Show>
-            </span>
-            <div class="pf-remote-controls">
-              <input
-                class="pf-input pf-remote-port"
-                value={remotePort()}
-                disabled={remoteHost()?.running || remoteLoading()}
-                onInput={(e) => setRemotePort(e.currentTarget.value)}
-              />
-              <button
-                class="pf-ql-add"
-                disabled={remoteLoading()}
-                onClick={() => void (remoteHost()?.running ? stopRemote() : startRemote())}
-              >
-                {remoteHost()?.running ? "Stop" : "Start"}
-              </button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Pairing code</span>
-            <div class="pf-remote-code-actions">
-              <button
-                class="pf-text-btn pf-remote-code"
-                disabled={remoteLoading()}
-                title={activePairingCode() ? "Copy pairing code" : "Issue pairing code"}
-                onClick={() => void copyPairing()}
-              >
-                {activePairingCode()?.code ?? "Issue code"}
-              </button>
-              <button
-                class="pf-ql-add pf-remote-code-refresh"
-                disabled={remoteLoading() || !activePairingCode()}
-                title="Refresh pairing code"
-                aria-label="Refresh pairing code"
-                onClick={() => void issuePairing()}
-              >
-                <IconRefresh size={13} />
-              </button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Paired clients</span>
-            <span class="pf-settings-muted">{remoteHost()?.clients.length ?? 0}</span>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Tailscale</span>
-            <span class="pf-settings-muted">{tailscaleLabel()}</span>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Tailscale SSH</span>
-            <button
-              class="pf-text-btn"
-              disabled={remoteLoading() || !remoteHost()?.tailscale.available}
-              onClick={() => void toggleSsh()}
-            >
-              {remoteHost()?.tailscale.sshEnabled ? "Disable" : `Enable · ${sshLabel()}`}
-            </button>
-          </div>
-          <Show when={remoteError() ?? remoteHost()?.tailscale.error}>
-            <div class="pf-ql-warn">{remoteError() ?? remoteHost()?.tailscale.error}</div>
-          </Show>
-          <div class="pf-ql-actions">
+        <PickLabSettingsSection><div class="pf-settings-row">
+          <span class="pf-settings-label">CLI</span>
+          <span class="pf-settings-muted">
+            {pickLab()?.cliAvailable ? `picklab ${pickLab()?.version ?? ""}` : "Not found"}
+          </span>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">MCP server</span>
+          <span class="pf-settings-muted">
+            {pickLab()?.mcpAvailable ? "picklab-mcp available" : "Not found"}
+          </span>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Doctor</span>
+          <span class="pf-settings-muted">{pickLabDoctorLabel()}</span>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Agent configs</span>
+          <span class="pf-settings-muted">{pickLabAgentsLabel()}</span>
+        </div>
+        <Show when={pickLab()?.error}>
+          <div class="pf-ql-warn">{pickLab()?.error}</div>
+        </Show>
+        <div class="pf-ql-actions">
+          <button
+            class="pf-ql-add"
+            disabled={pickLabLoading()}
+            onClick={() => void reloadPickLab()}
+          >
+            <IconRefresh size={13} /> {pickLabLoading() ? "Checking..." : "Refresh"}
+          </button>
+          <span class="pf-settings-muted">Managed as an external Pickforge tool</span>
+        </div></PickLabSettingsSection>
+
+        <RemoteHostSettingsSection><div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Listener
+            <Show when={remoteHost()?.localUrl}>
+              <span class="pf-settings-hint-inline">{remoteHost()?.localUrl}</span>
+            </Show>
+          </span>
+          <div class="pf-remote-controls">
+            <input
+              class="pf-input pf-remote-port"
+              value={remotePort()}
+              disabled={remoteHost()?.running || remoteLoading()}
+              onInput={(e) => setRemotePort(e.currentTarget.value)}
+            />
             <button
               class="pf-ql-add"
               disabled={remoteLoading()}
-              onClick={() => void reloadRemoteHost()}
+              onClick={() => void (remoteHost()?.running ? stopRemote() : startRemote())}
             >
-              <IconRefresh size={13} /> {remoteLoading() ? "Checking..." : "Refresh"}
-            </button>
-            <span class="pf-settings-muted">{remoteHost()?.authPath ?? ""}</span>
-          </div>
-        </Section>
-
-        <Section title="Quick launch">
-          <div class="pf-ql-head">
-            <span class="pf-settings-muted">
-              Chips above the terminal. Shortcuts fire into the focused pane.
-            </span>
-          </div>
-          <div class="pf-ql-list">
-            {/* Index (not For): rows are keyed by position so editing a field
-                never re-creates its <input> — the text box keeps focus. */}
-            <Index each={quickLaunchItems()}>
-              {(item) => (
-                <div
-                  class="pf-ql-row"
-                  classList={{ "pf-ql-row--conflict": conflicts().has(item().id) }}
-                >
-                  <input
-                    class="pf-input pf-ql-label"
-                    value={item().label}
-                    onInput={(e) =>
-                      updateQuickLaunchItem(item().id, { label: e.currentTarget.value })
-                    }
-                  />
-                  <Show
-                    when={item().agentId}
-                    fallback={
-                      <input
-                        class="pf-input pf-ql-cmd"
-                        value={item().command ?? ""}
-                        placeholder="command to type…"
-                        onInput={(e) =>
-                          updateQuickLaunchItem(item().id, { command: e.currentTarget.value })
-                        }
-                      />
-                    }
-                  >
-                    <span class="pf-ql-agent">agent · {agentLabel(item().agentId)}</span>
-                  </Show>
-                  <button
-                    class="pf-ql-hotkey"
-                    classList={{ "pf-ql-hotkey--capturing": capturingId() === item().id }}
-                    title="Click, then press a shortcut (Esc cancels, Backspace clears)"
-                    onClick={() => setCapturingId(item().id)}
-                  >
-                    {capturingId() === item().id ? "press shortcut…" : formatHotkey(item().hotkey)}
-                  </button>
-                  <button
-                    class="pf-ql-ai"
-                    classList={{ "pf-ql-ai--on": isAskAiItem(item()) }}
-                    title="Show in the Inspector's Ask AI — the selected widget's context is appended to this command"
-                    onClick={() => updateQuickLaunchItem(item().id, { ai: !isAskAiItem(item()) })}
-                  >
-                    AI
-                  </button>
-                  <button
-                    class="pf-icon-btn"
-                    title="Remove"
-                    onClick={() => removeQuickLaunchItem(item().id)}
-                  >
-                    <IconClose size={14} />
-                  </button>
-                </div>
-              )}
-            </Index>
-          </div>
-          <Show when={conflicts().size > 0}>
-            <div class="pf-ql-warn">Two items share a shortcut — only one will fire.</div>
-          </Show>
-          <div class="pf-ql-actions">
-            <button class="pf-ql-add" onClick={addQuickLaunchItem}>
-              <IconPlus size={13} /> Add item
-            </button>
-            <button class="pf-text-btn" onClick={resetQuickLaunchItems}>
-              Reset defaults
+              {remoteHost()?.running ? "Stop" : "Start"}
             </button>
           </div>
-        </Section>
-
-        <Section title="Appearance">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Theme</span>
-            <div class="pf-seg">
-              <button
-                classList={{ active: appTheme() === "dark" }}
-                onClick={() => applyTheme("dark")}
-              >
-                Dark
-              </button>
-              <button
-                classList={{ active: appTheme() === "light" }}
-                onClick={() => applyTheme("light")}
-              >
-                Light
-              </button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">
-              Interface zoom
-              <span class="pf-settings-hint-inline">Ctrl/⌘ + − 0</span>
-            </span>
-            <div class="pf-zoom">
-              <button class="pf-zoom-btn" title="Zoom out" onClick={zoomOut}>−</button>
-              <span class="pf-zoom-val">{Math.round(currentZoom() * 100)}%</span>
-              <button class="pf-zoom-btn" title="Zoom in" onClick={zoomIn}>+</button>
-              <button class="pf-text-btn" onClick={zoomReset}>Reset</button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">
-              Window controls
-              <Show when={hostPlatform() === "macos"}>
-                <span class="pf-settings-hint-inline">macOS · always left</span>
-              </Show>
-            </span>
-            <div class="pf-seg" classList={{ "pf-seg--disabled": hostPlatform() === "macos" }}>
-              <For each={["auto", "left", "right"] as ControlsSide[]}>
-                {(s) => (
-                  <button
-                    classList={{ active: windowControlsSide() === s }}
-                    disabled={hostPlatform() === "macos"}
-                    onClick={() => setWindowControlsSide(s)}
-                  >
-                    {s === "auto" ? "Auto" : s === "left" ? "Left" : "Right"}
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-        </Section>
-
-        <Section title="Workbench">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Left panel</span>
-            <div class="pf-seg">
-              <button classList={{ active: layout().leftVisible }} onClick={() => setDockVisible("left", true)}>Shown</button>
-              <button classList={{ active: !layout().leftVisible }} onClick={() => setDockVisible("left", false)}>Hidden</button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Right panel</span>
-            <div class="pf-seg">
-              <button classList={{ active: layout().rightVisible }} onClick={() => setDockVisible("right", true)}>Shown</button>
-              <button classList={{ active: !layout().rightVisible }} onClick={() => setDockVisible("right", false)}>Hidden</button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Run buttons</span>
-            <div class="pf-seg">
-              <button classList={{ active: !workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(false)}>Icons</button>
-              <button classList={{ active: workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(true)}>Labels</button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">
-              Recover chat sessions
-              <span class="pf-settings-hint-inline">keep a chat's agent running across restarts (dtach/tmux)</span>
-            </span>
-            <div class="pf-seg">
-              <button classList={{ active: recoverChatSessions() }} onClick={() => setRecoverChatSessions(true)}>On</button>
-              <button classList={{ active: !recoverChatSessions() }} onClick={() => setRecoverChatSessions(false)}>Off</button>
-            </div>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">
-              Crash reports
-              <span class="pf-settings-hint-inline">send anonymous crash reports to help fix problems (applies after restart)</span>
-            </span>
-            <div class="pf-seg">
-              <button classList={{ active: crashReports() }} onClick={() => void changeCrashReports(true)}>On</button>
-              <button classList={{ active: !crashReports() }} onClick={() => void changeCrashReports(false)}>Off</button>
-            </div>
-          </div>
-          <Show when={crashReportsError()}>
-            <div class="pf-ql-warn">{crashReportsError()}</div>
-          </Show>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Panel layout</span>
-            <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">
-              Product tour
-              <span class="pf-settings-hint-inline">a quick guided walkthrough</span>
-            </span>
-            <button class="pf-text-btn" onClick={() => { navigate("workbench"); startTour(); }}>Replay tour</button>
-          </div>
-        </Section>
-
-        <Section title="File opening">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Open files with</span>
-            <Dropdown
-              class="pf-settings-dropdown"
-              value={fileOpenSettings().mode}
-              onChange={(v) => setFileOpenMode(v as FileOpenMode)}
-              options={[
-                { value: "nvim-pane", label: "Neovim (new pane)" },
-                { value: "system", label: "System default editor" },
-                { value: "custom", label: "Custom command…" },
-              ]}
-            />
-          </div>
-          <Show when={fileOpenSettings().mode === "custom"}>
-            <div class="pf-settings-row">
-              <span class="pf-settings-label">Command</span>
-              <input
-                class="pf-input"
-                value={fileOpenSettings().customCommand}
-                placeholder="code -g {path}"
-                onInput={(e) => setFileOpenCustom(e.currentTarget.value)}
-              />
-            </div>
-          </Show>
-          <span class="pf-settings-muted">
-            Editor modes open in a new terminal pane; {"{path}"} is the file path.
-          </span>
-        </Section>
-
-        <Section title="Updates">
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">Current version</span>
-            <span class="pf-settings-muted">v{appVersion()}</span>
-          </div>
-          <div class="pf-settings-row">
-            <span class="pf-settings-label">{updateLabel()}</span>
-            <Show
-              when={updateAvailable()}
-              fallback={
-                <button
-                  class="pf-ql-add"
-                  disabled={updateStatus() === "checking"}
-                  onClick={() => void checkForUpdate(false)}
-                >
-                  Check for updates
-                </button>
-              }
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Pairing code</span>
+          <div class="pf-remote-code-actions">
+            <button
+              class="pf-text-btn pf-remote-code"
+              disabled={remoteLoading()}
+              title={activePairingCode() ? "Copy pairing code" : "Issue pairing code"}
+              onClick={() => void copyPairing()}
             >
-              <button
-                class="pf-text-btn"
-                disabled={updateStatus() === "downloading"}
-                onClick={() => void installUpdate()}
-              >
-                {updateStatus() === "downloading"
-                  ? "Installing…"
-                  : `Install v${updateAvailable()!.version}`}
-              </button>
-            </Show>
+              {activePairingCode()?.code ?? "Issue code"}
+            </button>
+            <button
+              class="pf-ql-add pf-remote-code-refresh"
+              disabled={remoteLoading() || !activePairingCode()}
+              title="Refresh pairing code"
+              aria-label="Refresh pairing code"
+              onClick={() => void issuePairing()}
+            >
+              <IconRefresh size={13} />
+            </button>
           </div>
-          <Show when={updateError()}>
-            <div class="pf-vm-error">{updateError()}</div>
-          </Show>
-        </Section>
-
-        <Section title="Archived projects">
-          <Show
-            when={archived().length > 0}
-            fallback={<span class="pf-settings-muted">No archived projects</span>}
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Paired clients</span>
+          <span class="pf-settings-muted">{remoteHost()?.clients.length ?? 0}</span>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Tailscale</span>
+          <span class="pf-settings-muted">{tailscaleLabel()}</span>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Tailscale SSH</span>
+          <button
+            class="pf-text-btn"
+            disabled={remoteLoading() || !remoteHost()?.tailscale.available}
+            onClick={() => void toggleSsh()}
           >
-            <For each={archived()}>
-              {(p) => (
-                <div class="pf-settings-row">
-                  <span class="pf-settings-label">{p.displayName}</span>
-                  <button class="pf-text-btn" onClick={() => restore(p.projectRoot)}>
-                    Restore
-                  </button>
-                </div>
-              )}
-            </For>
-          </Show>
-        </Section>
+            {remoteHost()?.tailscale.sshEnabled ? "Disable" : `Enable · ${sshLabel()}`}
+          </button>
+        </div>
+        <Show when={remoteError() ?? remoteHost()?.tailscale.error}>
+          <div class="pf-ql-warn">{remoteError() ?? remoteHost()?.tailscale.error}</div>
+        </Show>
+        <div class="pf-ql-actions">
+          <button
+            class="pf-ql-add"
+            disabled={remoteLoading()}
+            onClick={() => void reloadRemoteHost()}
+          >
+            <IconRefresh size={13} /> {remoteLoading() ? "Checking..." : "Refresh"}
+          </button>
+          <span class="pf-settings-muted">{remoteHost()?.authPath ?? ""}</span>
+        </div></RemoteHostSettingsSection>
 
-        <Show when={flagEnabled("accounts")}>
-          <Section title="Account">
-            <Show
-              when={accountStatus() === "signingIn"}
-              fallback={
+        <QuickLaunchSettingsSection><div class="pf-ql-head">
+          <span class="pf-settings-muted">
+            Chips above the terminal. Shortcuts fire into the focused pane.
+          </span>
+        </div>
+        <div class="pf-ql-list">
+          {/* Index (not For): rows are keyed by position so editing a field
+              never re-creates its <input> — the text box keeps focus. */}
+          <Index each={quickLaunchItems()}>
+            {(item) => (
+              <div
+                class="pf-ql-row"
+                classList={{ "pf-ql-row--conflict": conflicts().has(item().id) }}
+              >
+                <input
+                  class="pf-input pf-ql-label"
+                  value={item().label}
+                  onInput={(e) =>
+                    updateQuickLaunchItem(item().id, { label: e.currentTarget.value })
+                  }
+                />
                 <Show
-                  when={accountSession()}
+                  when={item().agentId}
                   fallback={
-                    <>
-                      <span class="pf-settings-muted">
-                        Sign-in is optional. PickForge works fully offline; an account only adds Pro features and settings sync.
-                      </span>
-                      <div class="pf-ql-row">
-                        <button
-                          class="pf-ql-add"
-                          onClick={() => {
-                            setAccountNotice(null);
-                            void signIn("github");
-                          }}
-                        >
-                          Continue with GitHub
-                        </button>
-                        <button
-                          class="pf-ql-add"
-                          onClick={() => {
-                            setAccountNotice(null);
-                            void signIn("google");
-                          }}
-                        >
-                          Continue with Google
-                        </button>
-                      </div>
-                      <Show when={flagEnabled("settingsSync")}>
-                        <span class="pf-settings-muted">Sign in to sync settings.</span>
-                      </Show>
-                    </>
+                    <input
+                      class="pf-input pf-ql-cmd"
+                      value={item().command ?? ""}
+                      placeholder="command to type…"
+                      onInput={(e) =>
+                        updateQuickLaunchItem(item().id, { command: e.currentTarget.value })
+                      }
+                    />
                   }
                 >
-                  {(account) => (
-                    <>
+                  <span class="pf-ql-agent">agent · {agentLabel(item().agentId)}</span>
+                </Show>
+                <button
+                  class="pf-ql-hotkey"
+                  classList={{ "pf-ql-hotkey--capturing": capturingId() === item().id }}
+                  title="Click, then press a shortcut (Esc cancels, Backspace clears)"
+                  onClick={() => setCapturingId(item().id)}
+                >
+                  {capturingId() === item().id ? "press shortcut…" : formatHotkey(item().hotkey)}
+                </button>
+                <button
+                  class="pf-ql-ai"
+                  classList={{ "pf-ql-ai--on": isAskAiItem(item()) }}
+                  title="Show in the Inspector's Ask AI — the selected widget's context is appended to this command"
+                  onClick={() => updateQuickLaunchItem(item().id, { ai: !isAskAiItem(item()) })}
+                >
+                  AI
+                </button>
+                <button
+                  class="pf-icon-btn"
+                  title="Remove"
+                  onClick={() => removeQuickLaunchItem(item().id)}
+                >
+                  <IconClose size={14} />
+                </button>
+              </div>
+            )}
+          </Index>
+        </div>
+        <Show when={conflicts().size > 0}>
+          <div class="pf-ql-warn">Two items share a shortcut — only one will fire.</div>
+        </Show>
+        <div class="pf-ql-actions">
+          <button class="pf-ql-add" onClick={addQuickLaunchItem}>
+            <IconPlus size={13} /> Add item
+          </button>
+          <button class="pf-text-btn" onClick={resetQuickLaunchItems}>
+            Reset defaults
+          </button>
+        </div></QuickLaunchSettingsSection>
+
+        <AppearanceSettingsSection><div class="pf-settings-row">
+          <span class="pf-settings-label">Theme</span>
+          <div class="pf-seg">
+            <button
+              classList={{ active: appTheme() === "dark" }}
+              onClick={() => applyTheme("dark")}
+            >
+              Dark
+            </button>
+            <button
+              classList={{ active: appTheme() === "light" }}
+              onClick={() => applyTheme("light")}
+            >
+              Light
+            </button>
+          </div>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Interface zoom
+            <span class="pf-settings-hint-inline">Ctrl/⌘ + − 0</span>
+          </span>
+          <div class="pf-zoom">
+            <button class="pf-zoom-btn" title="Zoom out" onClick={zoomOut}>−</button>
+            <span class="pf-zoom-val">{Math.round(currentZoom() * 100)}%</span>
+            <button class="pf-zoom-btn" title="Zoom in" onClick={zoomIn}>+</button>
+            <button class="pf-text-btn" onClick={zoomReset}>Reset</button>
+          </div>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Window controls
+            <Show when={hostPlatform() === "macos"}>
+              <span class="pf-settings-hint-inline">macOS · always left</span>
+            </Show>
+          </span>
+          <div class="pf-seg" classList={{ "pf-seg--disabled": hostPlatform() === "macos" }}>
+            <For each={["auto", "left", "right"] as ControlsSide[]}>
+              {(s) => (
+                <button
+                  classList={{ active: windowControlsSide() === s }}
+                  disabled={hostPlatform() === "macos"}
+                  onClick={() => setWindowControlsSide(s)}
+                >
+                  {s === "auto" ? "Auto" : s === "left" ? "Left" : "Right"}
+                </button>
+              )}
+            </For>
+          </div>
+        </div></AppearanceSettingsSection>
+
+        <WorkbenchSettingsSection><div class="pf-settings-row">
+          <span class="pf-settings-label">Left panel</span>
+          <div class="pf-seg">
+            <button classList={{ active: layout().leftVisible }} onClick={() => setDockVisible("left", true)}>Shown</button>
+            <button classList={{ active: !layout().leftVisible }} onClick={() => setDockVisible("left", false)}>Hidden</button>
+          </div>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Right panel</span>
+          <div class="pf-seg">
+            <button classList={{ active: layout().rightVisible }} onClick={() => setDockVisible("right", true)}>Shown</button>
+            <button classList={{ active: !layout().rightVisible }} onClick={() => setDockVisible("right", false)}>Hidden</button>
+          </div>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Run buttons</span>
+          <div class="pf-seg">
+            <button classList={{ active: !workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(false)}>Icons</button>
+            <button classList={{ active: workbenchPrefs().runButtonLabels }} onClick={() => setRunButtonLabels(true)}>Labels</button>
+          </div>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Recover chat sessions
+            <span class="pf-settings-hint-inline">keep a chat's agent running across restarts (dtach/tmux)</span>
+          </span>
+          <div class="pf-seg">
+            <button classList={{ active: recoverChatSessions() }} onClick={() => setRecoverChatSessions(true)}>On</button>
+            <button classList={{ active: !recoverChatSessions() }} onClick={() => setRecoverChatSessions(false)}>Off</button>
+          </div>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Crash reports
+            <span class="pf-settings-hint-inline">send anonymous crash reports to help fix problems (applies after restart)</span>
+          </span>
+          <div class="pf-seg">
+            <button classList={{ active: crashReports() }} onClick={() => void changeCrashReports(true)}>On</button>
+            <button classList={{ active: !crashReports() }} onClick={() => void changeCrashReports(false)}>Off</button>
+          </div>
+        </div>
+        <Show when={crashReportsError()}>
+          <div class="pf-ql-warn">{crashReportsError()}</div>
+        </Show>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">Panel layout</span>
+          <button class="pf-text-btn" onClick={resetLayout}>Reset to default</button>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">
+            Product tour
+            <span class="pf-settings-hint-inline">a quick guided walkthrough</span>
+          </span>
+          <button class="pf-text-btn" onClick={() => { navigate("workbench"); startTour(); }}>Replay tour</button>
+        </div></WorkbenchSettingsSection>
+
+        <FileOpeningSettingsSection><div class="pf-settings-row">
+          <span class="pf-settings-label">Open files with</span>
+          <Dropdown
+            class="pf-settings-dropdown"
+            value={fileOpenSettings().mode}
+            onChange={(v) => setFileOpenMode(v as FileOpenMode)}
+            options={[
+              { value: "nvim-pane", label: "Neovim (new pane)" },
+              { value: "system", label: "System default editor" },
+              { value: "custom", label: "Custom command…" },
+            ]}
+          />
+        </div>
+        <Show when={fileOpenSettings().mode === "custom"}>
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">Command</span>
+            <input
+              class="pf-input"
+              value={fileOpenSettings().customCommand}
+              placeholder="code -g {path}"
+              onInput={(e) => setFileOpenCustom(e.currentTarget.value)}
+            />
+          </div>
+        </Show>
+        <span class="pf-settings-muted">
+          Editor modes open in a new terminal pane; {"{path}"} is the file path.
+        </span></FileOpeningSettingsSection>
+
+        <UpdatesSettingsSection><div class="pf-settings-row">
+          <span class="pf-settings-label">Current version</span>
+          <span class="pf-settings-muted">v{appVersion()}</span>
+        </div>
+        <div class="pf-settings-row">
+          <span class="pf-settings-label">{updateLabel()}</span>
+          <Show
+            when={updateAvailable()}
+            fallback={
+              <button
+                class="pf-ql-add"
+                disabled={updateStatus() === "checking"}
+                onClick={() => void checkForUpdate(false)}
+              >
+                Check for updates
+              </button>
+            }
+          >
+            <button
+              class="pf-text-btn"
+              disabled={updateStatus() === "downloading"}
+              onClick={() => void installUpdate()}
+            >
+              {updateStatus() === "downloading"
+                ? "Installing…"
+                : `Install v${updateAvailable()!.version}`}
+            </button>
+          </Show>
+        </div>
+        <Show when={updateError()}>
+          <div class="pf-vm-error">{updateError()}</div>
+        </Show></UpdatesSettingsSection>
+
+        <ArchivedProjectsSettingsSection><Show
+          when={archived().length > 0}
+          fallback={<span class="pf-settings-muted">No archived projects</span>}
+        >
+          <For each={archived()}>
+            {(p) => (
+              <div class="pf-settings-row">
+                <span class="pf-settings-label">{p.displayName}</span>
+                <button class="pf-text-btn" onClick={() => restore(p.projectRoot)}>
+                  Restore
+                </button>
+              </div>
+            )}
+          </For>
+        </Show></ArchivedProjectsSettingsSection>
+
+        <Show when={flagEnabled("accounts")}>
+          <AccountSettingsSection><Show
+            when={accountStatus() === "signingIn"}
+            fallback={
+              <Show
+                when={accountSession()}
+                fallback={
+                  <>
+                    <span class="pf-settings-muted">
+                      Sign-in is optional. PickForge works fully offline; an account only adds Pro features and settings sync.
+                    </span>
+                    <div class="pf-ql-row">
+                      <button
+                        class="pf-ql-add"
+                        onClick={() => {
+                          setAccountNotice(null);
+                          void signIn("github");
+                        }}
+                      >
+                        Continue with GitHub
+                      </button>
+                      <button
+                        class="pf-ql-add"
+                        onClick={() => {
+                          setAccountNotice(null);
+                          void signIn("google");
+                        }}
+                      >
+                        Continue with Google
+                      </button>
+                    </div>
+                    <Show when={flagEnabled("settingsSync")}>
+                      <span class="pf-settings-muted">Sign in to sync settings.</span>
+                    </Show>
+                  </>
+                }
+              >
+                {(account) => (
+                  <>
+                    <div class="pf-settings-row">
+                      <span class="pf-settings-label">
+                        {account().displayName ?? account().email ?? "Signed in"}
+                        <Show when={account().email && account().email !== (account().displayName ?? account().email)}>
+                          <span class="pf-settings-hint-inline">{account().email}</span>
+                        </Show>
+                      </span>
+                    </div>
+                    <div class="pf-settings-row">
+                      <span class="pf-settings-label">Plan</span>
+                      <span class="pf-settings-muted">{hasProEntitlement() ? "Pro" : "Free"}</span>
+                    </div>
+                    <Show when={flagEnabled("operator")}>
                       <div class="pf-settings-row">
                         <span class="pf-settings-label">
-                          {account().displayName ?? account().email ?? "Signed in"}
-                          <Show when={account().email && account().email !== (account().displayName ?? account().email)}>
-                            <span class="pf-settings-hint-inline">{account().email}</span>
-                          </Show>
+                          Operator credits
+                          <span class="pf-settings-hint-inline">prepaid balance for hosted routing</span>
+                        </span>
+                        <span class="pf-settings-muted">
+                          {creditBalanceCents() === null
+                            ? "—"
+                            : formatCreditBalance(creditBalanceCents()!)}
                         </span>
                       </div>
-                      <div class="pf-settings-row">
-                        <span class="pf-settings-label">Plan</span>
-                        <span class="pf-settings-muted">{hasProEntitlement() ? "Pro" : "Free"}</span>
-                      </div>
-                      <Show when={flagEnabled("operator")}>
-                        <div class="pf-settings-row">
-                          <span class="pf-settings-label">
-                            Operator credits
-                            <span class="pf-settings-hint-inline">prepaid balance for hosted routing</span>
-                          </span>
-                          <span class="pf-settings-muted">
-                            {creditBalanceCents() === null
-                              ? "—"
-                              : formatCreditBalance(creditBalanceCents()!)}
-                          </span>
-                        </div>
-                        <div class="pf-ql-row">
-                          <For each={CREDIT_PACKS}>
-                            {(option) => (
-                              <button
-                                class="pf-ql-add"
-                                disabled={creditCheckoutBusy()}
-                                onClick={() => void buyCredits(option.pack)}
-                              >
-                                {option.priceLabel}
-                              </button>
-                            )}
-                          </For>
-                        </div>
-                        <span class="pf-settings-muted">
-                          Credits pay for hosted Operator routing (and later hosted voice). Local and BYO routing stay free.
-                        </span>
-                        <Show when={creditCheckoutError()}>
-                          <div class="pf-ql-warn">{creditCheckoutError()}</div>
-                        </Show>
-                      </Show>
-                      <span class="pf-settings-muted">
-                        {flagEnabled("settingsSync")
-                          ? "PickForge sends no project data to your account beyond the settings groups you enable below. Only profile, entitlement state, and those groups sync."
-                          : "PickForge sends no project data to your account. Only profile and entitlement state sync."}
-                      </span>
-                      <Show when={flagEnabled("settingsSync")}>
-                        <div class="pf-settings-row">
-                          <span class="pf-settings-label">
-                            Settings sync
-                            <span class="pf-settings-hint-inline">sync your preferences across signed-in machines</span>
-                          </span>
-                          <div class="pf-seg">
-                            <button
-                              classList={{ active: settingsSyncState().optedIn }}
-                              onClick={() => setSettingsSyncOptIn(true)}
-                            >
-                              On
-                            </button>
-                            <button
-                              classList={{ active: !settingsSyncState().optedIn }}
-                              onClick={() => setSettingsSyncOptIn(false)}
-                            >
-                              Off
-                            </button>
-                          </div>
-                        </div>
-                        <span class="pf-settings-muted">
-                          Synced groups hold UI preferences, operator router choices, quick-launch keybindings, and remote host bindings. Secrets and absolute local paths are blocked from syncing.
-                        </span>
-                        <Show when={settingsSyncState().optedIn}>
-                          <For each={SYNC_GROUPS}>
-                            {(group) => (
-                              <div class="pf-settings-row">
-                                <span class="pf-settings-label">
-                                  {SYNC_GROUP_LABELS[group].title}
-                                  <span class="pf-settings-hint-inline">{SYNC_GROUP_LABELS[group].hint}</span>
-                                </span>
-                                <div class="pf-seg">
-                                  <button
-                                    classList={{ active: settingsSyncState().groups[group] }}
-                                    onClick={() => setSettingsSyncGroup(group, true)}
-                                  >
-                                    On
-                                  </button>
-                                  <button
-                                    classList={{ active: !settingsSyncState().groups[group] }}
-                                    onClick={() => setSettingsSyncGroup(group, false)}
-                                  >
-                                    Off
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </For>
-                          <div class="pf-ql-actions">
+                      <div class="pf-ql-row">
+                        <For each={CREDIT_PACKS}>
+                          {(option) => (
                             <button
                               class="pf-ql-add"
-                              disabled={settingsSyncing()}
-                              onClick={() => syncNow()}
+                              disabled={creditCheckoutBusy()}
+                              onClick={() => void buyCredits(option.pack)}
                             >
-                              <IconRefresh size={13} /> {settingsSyncing() ? "Syncing…" : "Sync now"}
+                              {option.priceLabel}
                             </button>
-                            <span class="pf-settings-muted">
-                              {lastSyncedRelative() ? `Last synced ${lastSyncedRelative()}` : "Not synced yet"}
-                            </span>
-                          </div>
-                          <Show when={settingsSyncErrorMessage()}>
-                            <div class="pf-ql-warn">{settingsSyncErrorMessage()}</div>
-                          </Show>
-                        </Show>
+                          )}
+                        </For>
+                      </div>
+                      <span class="pf-settings-muted">
+                        Credits pay for hosted Operator routing (and later hosted voice). Local and BYO routing stay free.
+                      </span>
+                      <Show when={creditCheckoutError()}>
+                        <div class="pf-ql-warn">{creditCheckoutError()}</div>
                       </Show>
-                      <div class="pf-account-tools">
-                        <MonoEyebrow text="Your data" />
-                        <span class="pf-settings-muted">
-                          A portable copy of your PickForge account data — profile, entitlements, credit ledger, and synced settings.
+                    </Show>
+                    <span class="pf-settings-muted">
+                      {flagEnabled("settingsSync")
+                        ? "PickForge sends no project data to your account beyond the settings groups you enable below. Only profile, entitlement state, and those groups sync."
+                        : "PickForge sends no project data to your account. Only profile and entitlement state sync."}
+                    </span>
+                    <Show when={flagEnabled("settingsSync")}>
+                      <div class="pf-settings-row">
+                        <span class="pf-settings-label">
+                          Settings sync
+                          <span class="pf-settings-hint-inline">sync your preferences across signed-in machines</span>
                         </span>
+                        <div class="pf-seg">
+                          <button
+                            classList={{ active: settingsSyncState().optedIn }}
+                            onClick={() => setSettingsSyncOptIn(true)}
+                          >
+                            On
+                          </button>
+                          <button
+                            classList={{ active: !settingsSyncState().optedIn }}
+                            onClick={() => setSettingsSyncOptIn(false)}
+                          >
+                            Off
+                          </button>
+                        </div>
+                      </div>
+                      <span class="pf-settings-muted">
+                        Synced groups hold UI preferences, operator router choices, quick-launch keybindings, and remote host bindings. Secrets and absolute local paths are blocked from syncing.
+                      </span>
+                      <Show when={settingsSyncState().optedIn}>
+                        <For each={SYNC_GROUPS}>
+                          {(group) => (
+                            <div class="pf-settings-row">
+                              <span class="pf-settings-label">
+                                {SYNC_GROUP_LABELS[group].title}
+                                <span class="pf-settings-hint-inline">{SYNC_GROUP_LABELS[group].hint}</span>
+                              </span>
+                              <div class="pf-seg">
+                                <button
+                                  classList={{ active: settingsSyncState().groups[group] }}
+                                  onClick={() => setSettingsSyncGroup(group, true)}
+                                >
+                                  On
+                                </button>
+                                <button
+                                  classList={{ active: !settingsSyncState().groups[group] }}
+                                  onClick={() => setSettingsSyncGroup(group, false)}
+                                >
+                                  Off
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </For>
                         <div class="pf-ql-actions">
                           <button
                             class="pf-ql-add"
-                            disabled={exporting()}
-                            onClick={() => void runExport()}
+                            disabled={settingsSyncing()}
+                            onClick={() => syncNow()}
                           >
-                            {exporting() ? "Exporting…" : "Export my data"}
+                            <IconRefresh size={13} /> {settingsSyncing() ? "Syncing…" : "Sync now"}
                           </button>
-                          <Show when={exportStatus()}>
-                            {(status) => (
-                              <span
-                                class="pf-account-status"
-                                classList={{ "pf-account-status--error": status().kind === "error" }}
-                              >
-                                {status().text}
-                              </span>
-                            )}
-                          </Show>
+                          <span class="pf-settings-muted">
+                            {lastSyncedRelative() ? `Last synced ${lastSyncedRelative()}` : "Not synced yet"}
+                          </span>
                         </div>
-                      </div>
+                        <Show when={settingsSyncErrorMessage()}>
+                          <div class="pf-ql-warn">{settingsSyncErrorMessage()}</div>
+                        </Show>
+                      </Show>
+                    </Show>
+                    <div class="pf-account-tools">
+                      <MonoEyebrow text="Your data" />
+                      <span class="pf-settings-muted">
+                        A portable copy of your PickForge account data — profile, entitlements, credit ledger, and synced settings.
+                      </span>
                       <div class="pf-ql-actions">
-                        <button class="pf-text-btn" onClick={() => void signOut()}>
-                          Sign out
+                        <button
+                          class="pf-ql-add"
+                          disabled={exporting()}
+                          onClick={() => void runExport()}
+                        >
+                          {exporting() ? "Exporting…" : "Export my data"}
+                        </button>
+                        <Show when={exportStatus()}>
+                          {(status) => (
+                            <span
+                              class="pf-account-status"
+                              classList={{ "pf-account-status--error": status().kind === "error" }}
+                            >
+                              {status().text}
+                            </span>
+                          )}
+                        </Show>
+                      </div>
+                    </div>
+                    <div class="pf-ql-actions">
+                      <button class="pf-text-btn" onClick={() => void signOut()}>
+                        Sign out
+                      </button>
+                    </div>
+                    <div class="pf-danger-zone">
+                      <MonoEyebrow text="Danger zone" />
+                      <div class="pf-settings-row">
+                        <span class="pf-settings-label">
+                          Delete account
+                          <span class="pf-settings-hint-inline">permanently remove your account and all associated data</span>
+                        </span>
+                        <button class="pf-danger-btn" onClick={openDeleteDialog}>
+                          Delete account
                         </button>
                       </div>
-                      <div class="pf-danger-zone">
-                        <MonoEyebrow text="Danger zone" />
-                        <div class="pf-settings-row">
-                          <span class="pf-settings-label">
-                            Delete account
-                            <span class="pf-settings-hint-inline">permanently remove your account and all associated data</span>
-                          </span>
-                          <button class="pf-danger-btn" onClick={openDeleteDialog}>
-                            Delete account
-                          </button>
-                        </div>
-                      </div>
-                      <ConfirmDialog
-                        open={deleteOpen()}
-                        eyebrow="Danger zone"
-                        title="Delete your account?"
-                        destructive
-                        confirmLabel={deleting() ? "Deleting…" : "Delete account"}
-                        confirmDisabled={!deleteConfirmMatches(deleteConfirm(), account().email)}
-                        busy={deleting()}
-                        onCancel={closeDeleteDialog}
-                        onConfirm={() => void runDelete(account().email)}
-                      >
-                        <p class="pf-confirm-para">
-                          This permanently deletes your PickForge account and all associated data — profile, entitlements, synced settings, and credit ledger.
-                        </p>
-                        <p class="pf-confirm-para pf-confirm-para--warn">
-                          Any remaining credits are forfeited and this cannot be undone.
-                        </p>
-                        <p class="pf-confirm-para">
-                          Local projects and code on this machine are not touched — they never left your device.
-                        </p>
-                        <label class="pf-confirm-field">
-                          <span>Type DELETE to confirm.</span>
-                          <input
-                            class="pf-confirm-input"
-                            type="text"
-                            autocomplete="off"
-                            spellcheck={false}
-                            placeholder="DELETE"
-                            value={deleteConfirm()}
-                            disabled={deleting()}
-                            onInput={(e) => setDeleteConfirm(e.currentTarget.value)}
-                          />
-                        </label>
-                        <Show when={deleteError()}>
-                          <span class="pf-account-status pf-account-status--error">{deleteError()}</span>
-                        </Show>
-                      </ConfirmDialog>
-                    </>
-                  )}
-                </Show>
-              }
-            >
-              <div class="pf-settings-row">
-                <span class="pf-settings-label">
-                  Waiting for browser sign-in…
-                  <span class="pf-settings-hint-inline">complete the OAuth flow in your browser</span>
-                </span>
-                <button class="pf-text-btn" onClick={cancelSignIn}>Cancel</button>
-              </div>
-            </Show>
-            <Show when={accountNotice()}>
-              <div class="pf-ql-warn">{accountNotice()}</div>
-            </Show>
-            <Show when={accountError()}>
-              <div class="pf-ql-warn">{accountError()}</div>
-            </Show>
-          </Section>
+                    </div>
+                    <ConfirmDialog
+                      open={deleteOpen()}
+                      eyebrow="Danger zone"
+                      title="Delete your account?"
+                      destructive
+                      confirmLabel={deleting() ? "Deleting…" : "Delete account"}
+                      confirmDisabled={!deleteConfirmMatches(deleteConfirm(), account().email)}
+                      busy={deleting()}
+                      onCancel={closeDeleteDialog}
+                      onConfirm={() => void runDelete(account().email)}
+                    >
+                      <p class="pf-confirm-para">
+                        This permanently deletes your PickForge account and all associated data — profile, entitlements, synced settings, and credit ledger.
+                      </p>
+                      <p class="pf-confirm-para pf-confirm-para--warn">
+                        Any remaining credits are forfeited and this cannot be undone.
+                      </p>
+                      <p class="pf-confirm-para">
+                        Local projects and code on this machine are not touched — they never left your device.
+                      </p>
+                      <label class="pf-confirm-field">
+                        <span>Type DELETE to confirm.</span>
+                        <input
+                          class="pf-confirm-input"
+                          type="text"
+                          autocomplete="off"
+                          spellcheck={false}
+                          placeholder="DELETE"
+                          value={deleteConfirm()}
+                          disabled={deleting()}
+                          onInput={(e) => setDeleteConfirm(e.currentTarget.value)}
+                        />
+                      </label>
+                      <Show when={deleteError()}>
+                        <span class="pf-account-status pf-account-status--error">{deleteError()}</span>
+                      </Show>
+                    </ConfirmDialog>
+                  </>
+                )}
+              </Show>
+            }
+          >
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">
+                Waiting for browser sign-in…
+                <span class="pf-settings-hint-inline">complete the OAuth flow in your browser</span>
+              </span>
+              <button class="pf-text-btn" onClick={cancelSignIn}>Cancel</button>
+            </div>
+          </Show>
+          <Show when={accountNotice()}>
+            <div class="pf-ql-warn">{accountNotice()}</div>
+          </Show>
+          <Show when={accountError()}>
+            <div class="pf-ql-warn">{accountError()}</div>
+          </Show></AccountSettingsSection>
         </Show>
 
         <Show when={import.meta.env.DEV}>
-          <Section title="Feature flags">
-            <For each={flagStates()}>
-              {(f) => (
-                <div class="pf-settings-row">
-                  <span class="pf-settings-label">
-                    {f.key}
-                    <span class="pf-settings-hint-inline">{f.description}</span>
-                  </span>
-                  <div class="pf-seg">
-                    <button
-                      classList={{ active: f.override === true }}
-                      onClick={() => setFlagOverride(f.key as FlagKey, true)}
-                    >
-                      On
-                    </button>
-                    <button
-                      classList={{ active: f.override === false }}
-                      onClick={() => setFlagOverride(f.key as FlagKey, false)}
-                    >
-                      Off
-                    </button>
-                    <button
-                      classList={{ active: f.override === undefined }}
-                      onClick={() => setFlagOverride(f.key as FlagKey, undefined)}
-                    >
-                      Default ({f.defaultValue ? "on" : "off"})
-                    </button>
-                  </div>
+          <FeatureFlagsSettingsSection><For each={flagStates()}>
+            {(f) => (
+              <div class="pf-settings-row">
+                <span class="pf-settings-label">
+                  {f.key}
+                  <span class="pf-settings-hint-inline">{f.description}</span>
+                </span>
+                <div class="pf-seg">
+                  <button
+                    classList={{ active: f.override === true }}
+                    onClick={() => setFlagOverride(f.key as FlagKey, true)}
+                  >
+                    On
+                  </button>
+                  <button
+                    classList={{ active: f.override === false }}
+                    onClick={() => setFlagOverride(f.key as FlagKey, false)}
+                  >
+                    Off
+                  </button>
+                  <button
+                    classList={{ active: f.override === undefined }}
+                    onClick={() => setFlagOverride(f.key as FlagKey, undefined)}
+                  >
+                    Default ({f.defaultValue ? "on" : "off"})
+                  </button>
                 </div>
-              )}
-            </For>
-          </Section>
+              </div>
+            )}
+          </For></FeatureFlagsSettingsSection>
         </Show>
       </div>
     </div>

@@ -3,9 +3,15 @@ import { HairlinePanel, MonoEyebrow } from "../components/ui";
 import { SETTINGS_SECTION_BY_KEY, type SettingsSectionKey } from "./settingsRegistry";
 
 function createSettingsSection(key: SettingsSectionKey): Component<ParentProps> {
-  const title = SETTINGS_SECTION_BY_KEY[key].title;
+  const section = SETTINGS_SECTION_BY_KEY[key];
+  const title = section.title;
   return (props) => (
-    <HairlinePanel class="pf-settings-section">
+    <HairlinePanel
+      id={`settings-${key}`}
+      class="pf-settings-section"
+      data-settings-section={key}
+      data-settings-category={section.category}
+    >
       <MonoEyebrow text={title} tick />
       <div class="pf-settings-body">{props.children}</div>
     </HairlinePanel>

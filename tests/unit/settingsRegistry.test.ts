@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  availableSettingsCategories,
+  firstSettingsSectionForCategory,
   isSettingsSectionAvailable,
+  resolveSettingsCategory,
   SETTINGS_CATEGORIES,
   SETTINGS_SECTION_BY_KEY,
   SETTINGS_SECTIONS,
+  settingsCategoryForSection,
 } from "../../src/screens/settingsRegistry";
 
 const CURRENT_SETTINGS_ORDER = [
@@ -85,5 +89,29 @@ describe("settings section registry", () => {
     );
     expect(visible(false, true, false)).toContain("account");
     expect(visible(false, false, true)).toContain("featureFlags");
+  });
+
+  it("resolves direct section keys and rejects hidden sections", () => {
+    const all = { operator: true, accounts: true, development: true };
+    const limited = { operator: false, accounts: false, development: false };
+
+    expect(settingsCategoryForSection("quickLaunch", all)).toBe("agents");
+    expect(settingsCategoryForSection("account", all)).toBe("account");
+    expect(settingsCategoryForSection("account", limited)).toBeNull();
+    expect(settingsCategoryForSection("missing", all)).toBeNull();
+  });
+
+  it("falls back from unavailable remembered categories", () => {
+    const limited = { operator: false, accounts: false, development: false };
+
+    expect(availableSettingsCategories(limited).map(({ key }) => key)).toEqual([
+      "general",
+      "agents",
+      "remote",
+      "projects",
+    ]);
+    expect(resolveSettingsCategory("operator", limited)).toBe("general");
+    expect(resolveSettingsCategory("agents", limited)).toBe("agents");
+    expect(firstSettingsSectionForCategory("agents", limited)).toBe("agentModels");
   });
 });

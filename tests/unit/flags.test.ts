@@ -34,6 +34,7 @@ describe("flags", () => {
       "remoteProjects",
       "accounts",
       "settingsSync",
+      "settingsNavigation",
       "dynamicChatTitles",
     ]);
     for (const s of states) {
@@ -44,6 +45,7 @@ describe("flags", () => {
     expect(store.flagEnabled("remoteProjects")).toBe(false);
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);
+    expect(store.flagEnabled("settingsNavigation")).toBe(false);
     expect(store.flagEnabled("dynamicChatTitles")).toBe(false);
   });
 

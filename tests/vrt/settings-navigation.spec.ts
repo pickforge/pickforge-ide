@@ -1,0 +1,270 @@
+import { expect, test, type Page } from "@playwright/test";
+
+const ALL_SETTINGS_FLAGS = {
+  settingsNavigation: true,
+  operator: true,
+  accounts: true,
+};
+
+async function openSettings(
+  page: Page,
+  section = "appearance",
+  flags: Record<string, boolean> = ALL_SETTINGS_FLAGS,
+) {
+  await page.addInitScript((enabledFlags) => {
+    localStorage.setItem("pickforge.flags", JSON.stringify(enabledFlags));
+  }, flags);
+  await page.goto(`/#/settings/${section}`);
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+}
+
+async function expectSectionAtPaneTop(page: Page, section: string) {
+  await expect.poll(async () =>
+    page.locator(`[data-settings-section=${section}]`).evaluate((element) => {
+      const pane = element.closest(".pf-settings-pane");
+      if (!pane) return Number.POSITIVE_INFINITY;
+      return Math.abs(element.getBoundingClientRect().top - pane.getBoundingClientRect().top);
+    }),
+  ).toBeLessThanOrEqual(2);
+}
+async function expectPaneAtScrollTop(page: Page) {
+  await expect.poll(() =>
+    page.locator(".pf-settings-pane").evaluate((pane) => pane.scrollTop),
+  ).toBeLessThanOrEqual(0.5);
+}
+
+async function makeNextPickLabRefreshAddError(page: Page) {
+  await page.evaluate(() => {
+    const internals: unknown = Reflect.get(window, "__TAURI_INTERNALS__");
+    if (
+      !internals
+      || typeof internals !== "object"
+      || !("invoke" in internals)
+      || typeof internals.invoke !== "function"
+    ) {
+      throw new Error("Missing Tauri VRT invoke mock");
+    }
+
+    const originalInvoke = internals.invoke;
+    Reflect.set(
+      internals,
+      "invoke",
+      (command: string, args: Record<string, unknown> = {}) => {
+        if (command === "picklab_status") {
+          return Promise.resolve({
+            cliAvailable: true,
+            mcpAvailable: true,
+            cliPath: "/usr/bin/picklab",
+            mcpPath: "/usr/bin/picklab-mcp",
+            version: "0.1.3",
+            doctor: { ok: false, checks: [] },
+            agents: { ok: true, agents: [] },
+            error: "PickLab status finished with a representative delayed layout warning.",
+          });
+        }
+        return Reflect.apply(originalInvoke, internals, [command, args]);
+      },
+    );
+  });
+}
+
+async function refreshPickLab(page: Page) {
+  await page
+    .locator("[data-settings-section=pickLab]")
+    .getByRole("button", { name: "Refresh" })
+    .evaluate((button: HTMLButtonElement) => button.click());
+}
+
+test.describe("flagged settings navigation", () => {
+  test.describe.configure({ mode: "serial" });
+  test("selects, links, remembers, and keyboard-navigates categories", async ({ page }) => {
+    await openSettings(page);
+
+    const general = page.getByRole("button", { name: "General", exact: true });
+    const agents = page.getByRole("button", { name: "Agents", exact: true });
+    await expect(general).toHaveAttribute("aria-current", "page");
+
+    await agents.click();
+    await expect(page.getByRole("heading", { level: 1, name: "Agents" })).toBeVisible();
+    await expect(agents).toHaveAttribute("aria-current", "page");
+    await expect(page).toHaveURL(/#\/settings\/agentModels$/);
+
+    await page.goto("/#/workbench");
+    await page.goto("/#/settings");
+    await expect(page.getByRole("heading", { level: 1, name: "Agents" })).toBeVisible();
+
+    await agents.focus();
+    await agents.press("ArrowDown");
+    const operator = page.getByRole("button", { name: "Operator", exact: true });
+    await expect(operator).toBeFocused();
+    await expect(operator).toHaveAttribute("aria-current", "page");
+    await expect(page.getByRole("heading", { level: 1, name: "Operator" })).toBeVisible();
+
+    await page.goto("/#/settings/quickLaunch");
+    await expect(page.getByRole("heading", { level: 1, name: "Agents" })).toBeVisible();
+    await expect(page.locator("[data-settings-section=quickLaunch]")).toBeVisible();
+  });
+
+  test("ignores remembered categories for an explicitly unavailable section", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("pickforge.settings.category", "agents");
+    });
+    await openSettings(page, "account", { settingsNavigation: true });
+
+    await expect(page.getByRole("heading", { level: 1, name: "General" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Account & sync" })).toHaveCount(0);
+    await expect(page.locator("[data-settings-section=account]")).toHaveCount(0);
+    await expect(page).toHaveURL(/#\/settings\/appearance$/);
+  });
+
+  test("handles malformed Settings hashes and preserves suffixed route fallback", async ({ page }) => {
+    await openSettings(page, "%E0%A4%A", { settingsNavigation: true });
+
+    await expect(page.getByRole("heading", { level: 1, name: "General" })).toBeVisible();
+    await expect(page).toHaveURL(/#\/settings\/appearance$/);
+
+    await page.goto("/#/history/trailing");
+    await expect(page.locator(".pf-workbench")).toBeVisible();
+    await expect(page).toHaveURL(/#\/history\/trailing$/);
+
+    await page.goto("/#/settings/appearance/trailing");
+    await expect(page.locator(".pf-workbench")).toBeVisible();
+    await expect(page).toHaveURL(/#\/settings\/appearance\/trailing$/);
+  });
+
+  test("positions linked sections through same-category history without moving focus", async ({
+    page,
+  }) => {
+    await openSettings(page, "chats");
+    await expectSectionAtPaneTop(page, "chats");
+
+    const agents = page.getByRole("button", { name: "Agents", exact: true });
+    await agents.focus();
+    await page.evaluate(() => {
+      window.location.hash = "/settings/agentModels";
+    });
+    await expect(page).toHaveURL(/#\/settings\/agentModels$/);
+    await expectPaneAtScrollTop(page);
+    await expect(agents).toBeFocused();
+
+    await page.evaluate(() => {
+      window.location.hash = "/settings/chats";
+    });
+    await expectSectionAtPaneTop(page, "chats");
+
+    await page.goBack();
+    await expect(page).toHaveURL(/#\/settings\/agentModels$/);
+    await expectPaneAtScrollTop(page);
+    await expect(agents).toBeFocused();
+
+    await page.goForward();
+    await expect(page).toHaveURL(/#\/settings\/chats$/);
+    await expectSectionAtPaneTop(page, "chats");
+    await expect(agents).toBeFocused();
+  });
+
+  test("resets the remembered category pane when its section hash is cleared", async ({ page }) => {
+    await openSettings(page, "quickLaunch");
+    await expectSectionAtPaneTop(page, "quickLaunch");
+
+    const tail = page.locator(".pf-settings-pane-tail");
+    await expect.poll(() => tail.evaluate((element) => element.style.height)).not.toBe("");
+
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+    await expect(page).toHaveURL(/#\/settings$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Agents" })).toBeVisible();
+    await expectPaneAtScrollTop(page);
+    await expect.poll(() => tail.evaluate((element) => element.style.height)).toBe("");
+  });
+  test("keeps a later deep link aligned after PickLab finishes loading", async ({ page }) => {
+    await openSettings(page, "quickLaunch");
+    await expectSectionAtPaneTop(page, "quickLaunch");
+
+    await makeNextPickLabRefreshAddError(page);
+    await refreshPickLab(page);
+    await expect(page.getByText("PickLab status finished with a representative delayed layout warning."))
+      .toBeVisible();
+    await expectSectionAtPaneTop(page, "quickLaunch");
+  });
+
+  test("stops repositioning a deep link after user scroll intent", async ({ page }) => {
+    await openSettings(page, "quickLaunch");
+    await expectSectionAtPaneTop(page, "quickLaunch");
+    await makeNextPickLabRefreshAddError(page);
+
+    const pane = page.locator(".pf-settings-pane");
+    await pane.dispatchEvent("wheel", { deltaY: -120 });
+    await pane.evaluate((element) => {
+      element.scrollTop -= 120;
+    });
+    await refreshPickLab(page);
+    await expect(page.getByText("PickLab status finished with a representative delayed layout warning."))
+      .toBeVisible();
+    await expect.poll(() =>
+      page.locator("[data-settings-section=quickLaunch]").evaluate((element) => {
+        const settingsPane = element.closest(".pf-settings-pane");
+        if (!settingsPane) return 0;
+        return element.getBoundingClientRect().top - settingsPane.getBoundingClientRect().top;
+      }),
+    ).toBeGreaterThan(40);
+  });
+
+  for (const state of [
+    { name: "wide", width: 1280, height: 820 },
+    { name: "narrow", width: 600, height: 760 },
+  ]) {
+    test(`keeps the category heading visible at scroll top in ${state.name} layout`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: state.width, height: state.height });
+      await openSettings(page, "quickLaunch");
+      await expectSectionAtPaneTop(page, "quickLaunch");
+
+      if (state.name === "wide") {
+        await page.getByRole("button", { name: "General", exact: true }).click();
+      } else {
+        await page.getByLabel("Category").selectOption("general");
+      }
+
+      await expect(page).toHaveURL(/#\/settings\/appearance$/);
+      await expect(page.getByRole("heading", { level: 1, name: "General" })).toBeVisible();
+      await expectPaneAtScrollTop(page);
+    });
+  }
+
+  test("switches to the compact selector without clipping", async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 760 });
+    await openSettings(page, "agentModels");
+
+    await expect(page.getByRole("navigation", { name: "Settings categories" })).toBeHidden();
+    const selector = page.getByLabel("Category");
+    await expect(selector).toBeVisible();
+    await selector.selectOption("operator");
+    await expect(page.getByRole("heading", { level: 1, name: "Operator" })).toBeVisible();
+    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 600);
+  });
+
+  for (const state of [
+    { name: "general", section: "appearance" },
+    { name: "agents", section: "agentModels" },
+    { name: "operator", section: "operatorRouter" },
+    { name: "account", section: "account" },
+    { name: "developer", section: "featureFlags" },
+  ]) {
+    test(`visual: ${state.name}`, async ({ page }) => {
+      await openSettings(page, state.section);
+      await expect(page).toHaveScreenshot(`settings-navigation-${state.name}.png`, {
+        animations: "disabled",
+      });
+    });
+  }
+
+  test("visual: narrow agents", async ({ page }) => {
+    await page.setViewportSize({ width: 600, height: 760 });
+    await openSettings(page, "agentModels");
+    await expect(page).toHaveScreenshot("settings-navigation-narrow-agents.png", {
+      animations: "disabled",
+    });
+  });
+});

@@ -1,5 +1,5 @@
 import { createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
-import { navigate, route, type Route } from "./router";
+import { navigate, navigateSettingsSection, route, type Route } from "./router";
 import { loadWorkspace, refreshFromDb, workspace } from "./stores/workspace";
 import { applyPersistedZoom, currentZoom, handleZoomKey, zoomReset } from "./lib/zoom";
 import { appVersion, loadAppVersion } from "./lib/appInfo";
@@ -55,7 +55,7 @@ export function App() {
         <button
           class="pf-update-badge"
           title={`Update available: v${updateAvailable()!.version}`}
-          onClick={() => navigate("settings")}
+          onClick={() => navigateSettingsSection("updates")}
         >
           <span class="pf-update-dot" /> Update
         </button>

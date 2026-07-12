@@ -38,9 +38,175 @@ const AGENT_BINARIES = new Set<string>([
   "amp",
 ]);
 
-// Flags that consume the following token as their value (so it isn't mistaken
-// for the prompt when stripping a typed launch command).
+function isAgentBinary(binary: string): boolean {
+  return AGENT_BINARIES.has(binary)
+    || (binary === "omp" && flagEnabled("ompPiAgents"));
+}
+
+// OMP's string-valued launch flags come from its installed primary source
+// (`src/cli/flag-tables.ts`). Profile/bootstrap and installed extension flags
+// are included too: their values can contain credentials, session identities,
+// cache keys, or private paths and must never become persisted chat titles.
+// `--flag=value` is discarded as one token by the parser below.
 const VALUE_FLAGS = /^(-m|--model|--cwd|-C|--profile|--config|-c)$/;
+const OMP_VALUE_FLAGS: Record<string, true> = {
+  "--cwd": true,
+  "-C": true,
+  "--config": true,
+  "--mode": true,
+  "--fork": true,
+  "--provider": true,
+  "--model": true,
+  "-m": true,
+  "--smol": true,
+  "--slow": true,
+  "--plan": true,
+  "--max-time": true,
+  "--api-key": true,
+  "--system-prompt": true,
+  "--append-system-prompt": true,
+  "--provider-session-id": true,
+  "--prompt-cache-key": true,
+  "--session-dir": true,
+  "--models": true,
+  "--tools": true,
+  "--thinking": true,
+  "--export": true,
+  "--hook": true,
+  "--extension": true,
+  "-e": true,
+  "--plugin-dir": true,
+  "--skills": true,
+  "--approval-mode": true,
+  "--profile": true,
+  "--alias": true,
+  "--mcp-config": true,
+};
+const OMP_OPTIONAL_VALUE_FLAGS: Record<string, true> = {
+  "--resume": true,
+  "-r": true,
+  "--session": true,
+};
+const OMP_BOOLEAN_FLAGS: Record<string, true> = {
+  "--allow-home": true,
+  "--print": true,
+  "--continue": true,
+  "--no-session": true,
+  "--no-tools": true,
+  "--no-lsp": true,
+  "--no-pty": true,
+  "--hide-thinking": true,
+  "--advisor": true,
+  "--no-extensions": true,
+  "--no-skills": true,
+  "--no-rules": true,
+  "--no-title": true,
+  "--print-thoughts": true,
+  "--auto-approve": true,
+};
+const PI_VALUE_FLAGS: Record<string, true> = {
+  "--provider": true,
+  "--model": true,
+  "-m": true,
+  "--api-key": true,
+  "--system-prompt": true,
+  "--append-system-prompt": true,
+  "--profile": true,
+  "--config": true,
+  "--mcp-config": true,
+  "--cwd": true,
+  "-C": true,
+  "--mode": true,
+  "--session": true,
+  "--session-id": true,
+  "--fork": true,
+  "--session-dir": true,
+  "--name": true,
+  "-n": true,
+  "--models": true,
+  "--tools": true,
+  "-t": true,
+  "--exclude-tools": true,
+  "-xt": true,
+  "--thinking": true,
+  "--extension": true,
+  "-e": true,
+  "--skill": true,
+  "--prompt-template": true,
+  "--theme": true,
+  "--export": true,
+  "--list-models": true,
+};
+const PI_BOOLEAN_FLAGS: Record<string, true> = {
+  "--print": true,
+  "--continue": true,
+  "--resume": true,
+  "--no-session": true,
+  "--no-tools": true,
+  "--no-builtin-tools": true,
+  "--no-extensions": true,
+  "--no-skills": true,
+  "--no-prompt-templates": true,
+  "--no-themes": true,
+  "--no-context-files": true,
+  "--verbose": true,
+  "--approve": true,
+  "--no-approve": true,
+  "--offline": true,
+  "--plan": true,
+};
+const OMP_NON_PROMPT_FLAGS: Record<string, true> = {
+  "--alias": true,
+  "--export": true,
+  "--help": true,
+  "--version": true,
+};
+const PI_NON_PROMPT_FLAGS: Record<string, true> = {
+  "--export": true,
+  "--list-models": true,
+  "--help": true,
+  "--version": true,
+};
+const OMP_UTILITY_SUBCOMMANDS: Record<string, true> = {
+  acp: true,
+  agents: true,
+  "auth-broker": true,
+  "auth-gateway": true,
+  bench: true,
+  commit: true,
+  completions: true,
+  config: true,
+  "dry-balance": true,
+  gallery: true,
+  gc: true,
+  grep: true,
+  grievances: true,
+  install: true,
+  join: true,
+  models: true,
+  plugin: true,
+  read: true,
+  say: true,
+  search: true,
+  setup: true,
+  shell: true,
+  ssh: true,
+  stats: true,
+  "tiny-models": true,
+  token: true,
+  ttsr: true,
+  update: true,
+  usage: true,
+  worktree: true,
+};
+const PI_UTILITY_SUBCOMMANDS: Record<string, true> = {
+  install: true,
+  remove: true,
+  uninstall: true,
+  update: true,
+  list: true,
+  config: true,
+};
 
 const MAX_TITLE = 48;
 const AGENT_CHAT_MAX_TITLE = 42;
@@ -487,21 +653,146 @@ function commit(chatId: string, message: string) {
   });
 }
 
+function shellWords(line: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let quote: "'" | "\"" | null = null;
+  let escaped = false;
+  let started = false;
+
+  const finish = () => {
+    if (started) words.push(word);
+    word = "";
+    started = false;
+  };
+
+  for (const char of line) {
+    if (escaped) {
+      word += char;
+      escaped = false;
+      started = true;
+    } else if (quote) {
+      if (char === quote) quote = null;
+      else if (quote === "\"" && char === "\\") escaped = true;
+      else word += char;
+      started = true;
+    } else if (char === "'" || char === "\"") {
+      quote = char;
+      started = true;
+    } else if (char === "\\") {
+      escaped = true;
+      started = true;
+    } else if (char === "\n" || char === "\r") {
+      finish();
+      break;
+    } else if (char === "#" && !started) {
+      break;
+    } else if (char === "<" || char === ">") {
+      // An adjacent decimal prefix is the shell's IO number (`2>`, `10<`),
+      // not prompt text.
+      if (/^\d+$/.test(word)) {
+        word = "";
+        started = false;
+      }
+      finish();
+      break;
+    } else if (";&|()".includes(char)) {
+      finish();
+      break;
+    } else if (/\s/.test(char)) {
+      finish();
+    } else {
+      word += char;
+      started = true;
+    }
+  }
+  if (escaped) word += "\\";
+  finish();
+  return words;
+}
+
 /** If `line` starts with a known agent binary, return the prompt text after the
  *  command and its flags (empty string = bare launch). null if not an agent. */
 function matchAgentLaunch(line: string): { prompt: string } | null {
-  const tokens = line.split(/\s+/);
-  const base = tokens[0].split(/[\\/]/).pop() ?? tokens[0];
-  if (!AGENT_BINARIES.has(base)) return null;
+  const tokens = shellWords(line);
+  const first = tokens[0];
+  if (!first) return null;
+  const base = first.split(/[\\/]/).pop() ?? first;
+  if (!isAgentBinary(base)) return null;
 
   const rest: string[] = [];
+  const isTerminalAgent = base === "omp" || base === "pi";
+  const valueFlags =
+    base === "omp"
+      ? OMP_VALUE_FLAGS
+      : base === "pi"
+        ? PI_VALUE_FLAGS
+        : null;
+  const optionalValueFlags = base === "omp" ? OMP_OPTIONAL_VALUE_FLAGS : null;
+  const booleanFlags =
+    base === "omp"
+      ? OMP_BOOLEAN_FLAGS
+      : base === "pi"
+        ? PI_BOOLEAN_FLAGS
+        : null;
+  const nonPromptFlags =
+    base === "omp"
+      ? OMP_NON_PROMPT_FLAGS
+      : base === "pi"
+        ? PI_NON_PROMPT_FLAGS
+        : null;
+  const utilitySubcommands =
+    base === "omp"
+      ? OMP_UTILITY_SUBCOMMANDS
+      : base === "pi"
+        ? PI_UTILITY_SUBCOMMANDS
+        : null;
   for (let i = 1; i < tokens.length; i++) {
-    const t = tokens[i];
-    if (t.startsWith("-")) {
-      if (!t.includes("=") && VALUE_FLAGS.test(t)) i++; // skip the flag's value
+    const token = tokens[i];
+    if (token === "--") {
+      for (const positional of tokens.slice(i + 1)) {
+        if (isTerminalAgent && positional.startsWith("@")) continue;
+        rest.push(positional);
+      }
+      break;
+    }
+    if (token.startsWith("-")) {
+      const equals = token.indexOf("=");
+      const flag = equals === -1 ? token : token.slice(0, equals);
+      if (nonPromptFlags?.[flag]) return null;
+      const isUnknownLongFlag = isTerminalAgent
+        && flag.startsWith("--")
+        && valueFlags?.[flag] === undefined
+        && optionalValueFlags?.[flag] === undefined
+        && booleanFlags?.[flag] === undefined;
+      const consumesValue = valueFlags
+        ? (valueFlags[flag] ?? false)
+        : VALUE_FLAGS.test(flag);
+      if (
+        equals === -1
+        && (
+          consumesValue
+          || (
+            isUnknownLongFlag
+            && tokens[i + 1] !== undefined
+            && !tokens[i + 1].startsWith("-")
+          )
+        )
+      ) {
+        i++;
+      } else if (
+        equals === -1
+        && optionalValueFlags?.[flag]
+        && tokens[i + 1] !== undefined
+        && !tokens[i + 1].startsWith("-")
+      ) {
+        i++;
+      }
       continue;
     }
-    rest.push(t);
+    if (isTerminalAgent && token.startsWith("@")) continue;
+    if (rest.length === 0 && utilitySubcommands?.[token]) return null;
+    rest.push(token);
   }
   return { prompt: rest.join(" ") };
 }
@@ -541,7 +832,7 @@ export function cleanOscTitle(raw: string): string {
 
   // The bare name of the shell or an agent binary (`zsh`, `claude`, `codex`).
   const lone = s.toLowerCase();
-  if (!s.includes(" ") && (SHELL_BINARIES.has(lone) || AGENT_BINARIES.has(lone))) {
+  if (!s.includes(" ") && (SHELL_BINARIES.has(lone) || isAgentBinary(lone))) {
     return "";
   }
 

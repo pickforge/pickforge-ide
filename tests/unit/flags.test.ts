@@ -31,17 +31,19 @@ describe("flags", () => {
     const states = store.flagStates();
     expect(states.map((s) => s.key)).toEqual([
       "operator",
+      "ompPiAgents",
       "remoteProjects",
       "accounts",
       "settingsSync",
       "settingsNavigation",
       "dynamicChatTitles",
     ]);
-    for (const s of states) {
-      expect(s.defaultValue).toBe(false);
-      expect(s.enabled).toBe(false);
+    for (const state of states) {
+      expect(state.defaultValue).toBe(false);
+      expect(state.enabled).toBe(false);
     }
     expect(store.flagEnabled("operator")).toBe(false);
+    expect(store.flagEnabled("ompPiAgents")).toBe(false);
     expect(store.flagEnabled("remoteProjects")).toBe(false);
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);

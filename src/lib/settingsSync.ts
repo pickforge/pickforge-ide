@@ -25,7 +25,7 @@ import {
   voiceDictationSettings,
 } from "../stores/voiceSettings";
 import {
-  quickLaunchItems,
+  allQuickLaunchItems,
   setQuickLaunchItems,
   type QuickLaunchItem,
 } from "../stores/quickLaunch";
@@ -157,7 +157,7 @@ interface KeybindingItem {
 }
 
 export function collectKeybindings(): Json {
-  const items: KeybindingItem[] = quickLaunchItems().map((item) => {
+  const items: KeybindingItem[] = allQuickLaunchItems().map((item) => {
     const out: KeybindingItem = { id: item.id, label: item.label, keybinding: item.hotkey };
     if (item.command !== undefined) out.command = item.command;
     if (item.agentId !== undefined) out.agentId = item.agentId;

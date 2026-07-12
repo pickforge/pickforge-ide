@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // pulls in the Tauri db + a SolidJS store). Stub the store with an in-memory
 // chat map so the title logic can be exercised with no runtime. solid-js's
 // createSignal is used for the typing-animation overrides; it works under node.
-const flags = vi.hoisted(() => ({ dynamicChatTitles: false }));
+const flags = vi.hoisted(() => ({
+  dynamicChatTitles: false,
+  ompPiAgents: undefined as boolean | undefined,
+}));
 
 const store = vi.hoisted(() => {
   const chats = new Map<
@@ -34,8 +37,15 @@ vi.mock("../../src/stores/workspace", () => ({
   resumeAutomaticChatTitles: store.resumeAutomaticChatTitles,
 }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) => key === "dynamicChatTitles" && flags.dynamicChatTitles,
+  flagEnabled: (key: string) =>
+    key === "dynamicChatTitles"
+      ? flags.dynamicChatTitles
+      : key === "ompPiAgents" && (flags.ompPiAgents ?? false),
+  setFlagOverride: (key: string, enabled: boolean | undefined) => {
+    if (key === "ompPiAgents") flags.ompPiAgents = enabled;
+  },
 }));
+import { setFlagOverride } from "../../src/stores/flags";
 
 import {
   armChatAutoName,
@@ -58,15 +68,26 @@ import {
 } from "../../src/lib/chatAutoName";
 
 const isDefaultTitleForTest = (title: string) => title.trim() === DEFAULT_CHAT_TITLE;
+const flagValues = new Map<string, string>();
 
 beforeEach(() => {
   vi.useFakeTimers();
   store.chats.clear();
+  flagValues.clear();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => flagValues.get(key) ?? null,
+    setItem: (key: string, value: string) => void flagValues.set(key, value),
+    removeItem: (key: string) => void flagValues.delete(key),
+    clear: () => flagValues.clear(),
+    key: () => null,
+    length: 0,
+  } satisfies Storage);
   store.setChatTitle.mockClear();
   store.resumeAutomaticChatTitles.mockClear();
   flags.dynamicChatTitles = false;
   // Force the non-animated path (commit persists synchronously, no timers).
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  setFlagOverride("ompPiAgents", undefined);
 });
 
 afterEach(() => {
@@ -307,6 +328,216 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
     // Typing `claude …` does.
     maybeAutoNameChat(id, "claude fix the bug", "pane-0");
     expect(isAgentPane(id, "pane-0")).toBe(true);
+  });
+
+  it("preserves Pi detection and hides OMP detection while the flag is off", () => {
+    const piChat = mkChat();
+    maybeAutoNameChat(piChat, "pi fix the terminal title", "pane-pi");
+    expect(isAgentPane(piChat, "pane-pi")).toBe(true);
+
+    const ompChat = mkChat();
+    maybeAutoNameChat(ompChat, "omp fix the terminal title", "pane-omp");
+    expect(isAgentPane(ompChat, "pane-omp")).toBe(false);
+    expect(store.chats.get(ompChat)?.title).toBe(DEFAULT_CHAT_TITLE);
+    expect(cleanOscTitle("omp")).toBe("Omp");
+  });
+
+  it("recognises OMP activity and strips its value flags only when enabled", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    maybeAutoNameChat(
+      id,
+      "omp --provider anthropic --model claude-sonnet-4-6 fix the terminal title",
+      "pane-omp",
+    );
+
+    expect(isAgentPane(id, "pane-omp")).toBe(true);
+    expect(store.chats.get(id)?.title).toBe("Fix the terminal title");
+    expect(cleanOscTitle("omp")).toBe("");
+  });
+
+  it("keeps OMP continuation boolean when deriving the prompt title", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+
+    maybeAutoNameChat(id, "omp -c fix parser", "pane-omp");
+
+    expect(store.chats.get(id)?.title).toBe("Fix parser");
+  });
+
+  it("never persists quoted OMP credentials, prompts, profiles, or config paths", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    maybeAutoNameChat(
+      id,
+      "omp --api-key 'omp_sk_live_SUPER SECRET' --system-prompt \"SYSTEM SECRET WORDS\" "
+        + "--config '/tmp/private config.yml' --profile 'work profile' fix quoted titles",
+      "pane-omp",
+    );
+
+    expect(store.chats.get(id)?.title).toBe("Fix quoted titles");
+    expect(store.chats.get(id)?.title).not.toMatch(/SECRET|private|work profile/i);
+  });
+
+  it("never persists values from unknown OMP extension flags", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    maybeAutoNameChat(
+      id,
+      "omp --extension-toggle --jira-token 'jira_SECRET' fix extension auth",
+      "pane-omp",
+    );
+
+    expect(store.chats.get(id)?.title).toBe("Fix extension auth");
+    expect(store.chats.get(id)?.title).not.toMatch(/SECRET/i);
+  });
+
+  it("never persists Pi credentials, prompts, sessions, templates, or MCP paths", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    maybeAutoNameChat(
+      id,
+      "pi --api-key=pi_sk_live_SUPER_SECRET --append-system-prompt 'PRIVATE PI INSTRUCTIONS' "
+        + "--session '/tmp/private session.jsonl' --prompt-template '/tmp/private template.md' "
+        + "--mcp-config '/tmp/unsupported secret mcp.json' --jira-token 'JIRA SECRET' "
+        + "review title privacy",
+      "pane-pi",
+    );
+
+    expect(store.chats.get(id)?.title).toBe("Review title privacy");
+    expect(store.chats.get(id)?.title).not.toMatch(/SECRET|private|INSTRUCTIONS/i);
+  });
+
+  it.each(["omp", "pi"])("skips %s file attachments before deriving a title", (binary) => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+
+    maybeAutoNameChat(id, `${binary} @/Users/me/PRIVATE.md fix attachments`, `pane-${binary}`);
+
+    expect(store.chats.get(id)?.title).toBe("Fix attachments");
+    expect(store.chats.get(id)?.title).not.toMatch(/PRIVATE/i);
+  });
+
+  it.each([
+    ["omp", "config set api-key CONFIG_SECRET"],
+    ["omp", "--export session.jsonl /tmp/PRIVATE.html"],
+    ["pi", "install PRIVATE_PACKAGE"],
+    ["pi", "--export session.jsonl /tmp/PRIVATE.html"],
+  ])("does not treat %s utility invocation as an agent prompt", (binary, args) => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    const paneId = `pane-${binary}`;
+
+    maybeAutoNameChat(id, `${binary} ${args}`, paneId);
+
+    expect(isAgentPane(id, paneId)).toBe(false);
+    expect(store.chats.get(id)?.title).toBe(DEFAULT_CHAT_TITLE);
+  });
+
+  it("never persists Pi secrets while the OMP/Pi rollout flag is off", () => {
+    const id = mkChat();
+    maybeAutoNameChat(
+      id,
+      "pi --api-key 'pi_sk_live_SUPER SECRET' --system-prompt 'PRIVATE INSTRUCTIONS' "
+        + "--session '/tmp/private session.jsonl' --config '/tmp/private config.json' safe title",
+      "pane-pi",
+    );
+
+    expect(store.chats.get(id)?.title).toBe("Safe title");
+    expect(store.chats.get(id)?.title).not.toMatch(/SECRET|PRIVATE|INSTRUCTIONS/i);
+  });
+
+  it.each([
+    ["omp fix parser; echo SHELL_TAIL", "Fix parser"],
+    ["omp fix parser && echo SHELL_TAIL", "Fix parser"],
+    ["omp fix parser || echo SHELL_TAIL", "Fix parser"],
+    ["omp fix parser | tee SHELL_TAIL", "Fix parser"],
+    ["omp fix parser > /tmp/PRIVATE_REDIRECT", "Fix parser"],
+    ["omp fix parser 2>/tmp/PRIVATE_REDIRECT", "Fix parser"],
+    ["omp fix parser\nprintf SHELL_TAIL", "Fix parser"],
+    ["omp fix parser # PRIVATE_COMMENT", "Fix parser"],
+  ])("stops OMP title extraction before shell syntax in %s", (command, expected) => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+
+    maybeAutoNameChat(id, command, "pane-omp");
+
+    expect(store.chats.get(id)?.title).toBe(expected);
+    expect(store.chats.get(id)?.title).not.toMatch(/SHELL_TAIL|PRIVATE/i);
+  });
+
+  it("preserves shell syntax that is quoted as prompt text", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+
+    maybeAutoNameChat(id, "omp 'fix ; # > | parser' && echo SHELL_TAIL", "pane-omp");
+
+    expect(store.chats.get(id)?.title).toBe("Fix ; # > | parser");
+  });
+
+  it("consumes every current OMP string flag in separated and equals forms", () => {
+    setFlagOverride("ompPiAgents", true);
+    const id = mkChat();
+    const flags = [
+      "--cwd",
+      "-C",
+      "--config",
+      "--mode",
+      "--fork",
+      "--provider",
+      "--model",
+      "-m",
+      "--smol",
+      "--slow",
+      "--plan",
+      "--max-time",
+      "--api-key",
+      "--system-prompt",
+      "--append-system-prompt",
+      "--provider-session-id",
+      "--prompt-cache-key",
+      "--session-dir",
+      "--models",
+      "--tools",
+      "--thinking",
+      "--hook",
+      "--extension",
+      "-e",
+      "--plugin-dir",
+      "--skills",
+      "--approval-mode",
+      "--profile",
+      "--mcp-config",
+    ];
+    const args = flags
+      .map((flag, index) =>
+        flag.startsWith("--") && index % 2 === 0
+          ? `${flag}=SECRET_${index}`
+          : `${flag} 'SECRET ${index}'`,
+      )
+      .join(" ");
+
+    maybeAutoNameChat(id, `omp ${args} keep safe title`, "pane-omp");
+
+    expect(store.chats.get(id)?.title).toBe("Keep safe title");
+    expect(store.chats.get(id)?.title).not.toMatch(/SECRET/i);
+  });
+
+  it("consumes OMP optional session values without swallowing a following flag", () => {
+    setFlagOverride("ompPiAgents", true);
+    const valued = mkChat();
+    const bare = mkChat();
+
+    maybeAutoNameChat(
+      valued,
+      "omp --resume=RESUME_SECRET -r 'SESSION SECRET' --session 'CACHE SECRET' safe session title",
+      "pane-valued",
+    );
+    maybeAutoNameChat(bare, "omp --session --print safe bare session title", "pane-bare");
+
+    expect(store.chats.get(valued)?.title).toBe("Safe session title");
+    expect(store.chats.get(valued)?.title).not.toMatch(/SECRET/i);
+    expect(store.chats.get(bare)?.title).toBe("Safe bare session title");
   });
 
   it("marks hand-typed agent commands in non-default titled chats", () => {

@@ -25,6 +25,45 @@ pub enum RunError {
     Timeout(Duration),
 }
 
+/// Whether a capped command discarded bytes after reaching its per-stream
+/// capture limit. The child pipes are still drained to prevent deadlock.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutputTruncation {
+    pub stdout: bool,
+    pub stderr: bool,
+}
+
+#[derive(Default)]
+struct CapturedStream {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+fn capture_stream(mut stream: impl Read, limit: Option<usize>) -> CapturedStream {
+    let mut captured = CapturedStream {
+        bytes: Vec::with_capacity(limit.unwrap_or_default().min(8 * 1024)),
+        truncated: false,
+    };
+    let mut chunk = [0_u8; 8 * 1024];
+    loop {
+        let Ok(read) = stream.read(&mut chunk) else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        match limit {
+            Some(limit) => {
+                let stored = read.min(limit.saturating_sub(captured.bytes.len()));
+                captured.bytes.extend_from_slice(&chunk[..stored]);
+                captured.truncated |= stored < read;
+            }
+            None => captured.bytes.extend_from_slice(&chunk[..read]),
+        }
+    }
+    captured
+}
+
 impl CommandOutcome {
     pub fn success(&self) -> bool {
         self.code == Some(0)
@@ -89,6 +128,38 @@ pub fn run_timeout(
     env: Option<&HashMap<String, String>>,
     timeout: Duration,
 ) -> Result<CommandOutcome, RunError> {
+    run_timeout_inner(program, args, cwd, env, timeout, None).map(|(outcome, _)| outcome)
+}
+
+/// Like [`run_timeout`], but stores at most `max_output_bytes` from each of
+/// stdout and stderr. Additional bytes are discarded while the pipes continue
+/// to be drained, and the returned flags report which streams were truncated.
+pub fn run_timeout_capped(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&str>,
+    env: Option<&HashMap<String, String>>,
+    timeout: Duration,
+    max_output_bytes: usize,
+) -> Result<(CommandOutcome, OutputTruncation), RunError> {
+    run_timeout_inner(
+        program,
+        args,
+        cwd,
+        env,
+        timeout,
+        Some(max_output_bytes),
+    )
+}
+
+fn run_timeout_inner(
+    program: &str,
+    args: &[&str],
+    cwd: Option<&str>,
+    env: Option<&HashMap<String, String>>,
+    timeout: Duration,
+    output_limit: Option<usize>,
+) -> Result<(CommandOutcome, OutputTruncation), RunError> {
     let mut cmd = Command::new(program);
     configure(&mut cmd, args, cwd, env);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -104,21 +175,16 @@ pub fn run_timeout(
     let mut child = cmd.spawn()?;
 
     // Drain stdout/stderr on their own threads so a child that fills a pipe
-    // buffer can't deadlock against us while we poll for the deadline.
-    let out_handle = child.stdout.take().map(|mut s| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = s.read_to_end(&mut buf);
-            buf
-        })
-    });
-    let err_handle = child.stderr.take().map(|mut s| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = s.read_to_end(&mut buf);
-            buf
-        })
-    });
+    // buffer can't deadlock against us while we poll for the deadline. Capped
+    // runs discard bytes beyond the limit here, before buffering or IPC.
+    let out_handle = child
+        .stdout
+        .take()
+        .map(|stream| std::thread::spawn(move || capture_stream(stream, output_limit)));
+    let err_handle = child
+        .stderr
+        .take()
+        .map(|stream| std::thread::spawn(move || capture_stream(stream, output_limit)));
 
     // SIGKILL the child's process group (created via `process_group(0)`, so
     // PGID == child PID), taking down any descendants too. SIGKILL is
@@ -135,15 +201,14 @@ pub fn run_timeout(
     };
 
     // Join a drain thread, but no longer than the deadline allows. Returns the
-    // buffer if it finished in time, or `None` if it's still blocked (a
-    // descendant is holding the pipe open past the deadline) — the caller must
-    // then kill the group so the pipe closes before joining for real.
+    // buffer if it finished in time, or the handle if it's still blocked (a
+    // descendant is holding the pipe open past the deadline).
     fn join_by_deadline(
-        handle: Option<std::thread::JoinHandle<Vec<u8>>>,
+        handle: Option<std::thread::JoinHandle<CapturedStream>>,
         deadline: Instant,
-    ) -> Result<Vec<u8>, std::thread::JoinHandle<Vec<u8>>> {
+    ) -> Result<CapturedStream, std::thread::JoinHandle<CapturedStream>> {
         let Some(handle) = handle else {
-            return Ok(Vec::new());
+            return Ok(CapturedStream::default());
         };
         loop {
             if handle.is_finished() {
@@ -161,34 +226,38 @@ pub fn run_timeout(
         match child.try_wait()? {
             Some(status) => {
                 // The child is gone, but a backgrounded DESCENDANT may still
-                // hold the stdout/stderr pipe open, so `read_to_end` never hits
-                // EOF. Bound the drain join by the same deadline: if it overruns,
-                // kill the process group (closing the pipes), then join for real
-                // — otherwise the runner would block PAST its timeout.
+                // hold a pipe open. Bound the drain join by the same deadline.
                 let stdout = match join_by_deadline(out_handle, deadline) {
-                    Ok(buf) => buf,
+                    Ok(captured) => captured,
                     Err(handle) => {
                         kill_group(&mut child);
                         let _ = handle.join();
-                        if let Some(h) = err_handle {
-                            let _ = h.join();
+                        if let Some(handle) = err_handle {
+                            let _ = handle.join();
                         }
                         return Err(RunError::Timeout(timeout));
                     }
                 };
                 let stderr = match join_by_deadline(err_handle, deadline) {
-                    Ok(buf) => buf,
+                    Ok(captured) => captured,
                     Err(handle) => {
                         kill_group(&mut child);
                         let _ = handle.join();
                         return Err(RunError::Timeout(timeout));
                     }
                 };
-                return Ok(CommandOutcome {
-                    code: status.code(),
-                    stdout,
-                    stderr,
-                });
+                let truncation = OutputTruncation {
+                    stdout: stdout.truncated,
+                    stderr: stderr.truncated,
+                };
+                return Ok((
+                    CommandOutcome {
+                        code: status.code(),
+                        stdout: stdout.bytes,
+                        stderr: stderr.bytes,
+                    },
+                    truncation,
+                ));
             }
             None => {
                 if Instant::now() >= deadline {
@@ -196,11 +265,11 @@ pub fn run_timeout(
                     // threads unblock on the closed pipes; join them so their
                     // handles don't dangle (output is discarded on timeout).
                     kill_group(&mut child);
-                    if let Some(h) = out_handle {
-                        let _ = h.join();
+                    if let Some(handle) = out_handle {
+                        let _ = handle.join();
                     }
-                    if let Some(h) = err_handle {
-                        let _ = h.join();
+                    if let Some(handle) = err_handle {
+                        let _ = handle.join();
                     }
                     return Err(RunError::Timeout(timeout));
                 }
@@ -237,6 +306,78 @@ mod tests {
         assert_eq!(outcome.stdout_utf8().trim(), "pickforge");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn run_timeout_capped_bounds_success_output_and_reports_each_stream() {
+        let (outcome, truncation) = run_timeout_capped(
+            "/bin/sh",
+            &[
+                "-c",
+                "printf '0123456789abcdefghijklmnopqrstuvwxyz'; printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZ9876543210' >&2",
+            ],
+            None,
+            None,
+            Duration::from_secs(5),
+            16,
+        )
+        .expect("run capped command");
+
+        assert!(outcome.success());
+        assert_eq!(outcome.stdout, b"0123456789abcdef");
+        assert_eq!(outcome.stderr, b"ABCDEFGHIJKLMNOP");
+        assert_eq!(
+            truncation,
+            OutputTruncation {
+                stdout: true,
+                stderr: true,
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_timeout_capped_bounds_failure_output() {
+        let (outcome, truncation) = run_timeout_capped(
+            "/bin/sh",
+            &[
+                "-c",
+                "printf 'PRIVATE_FAILURE_DETAIL_THAT_MUST_BE_CAPPED' >&2; exit 7",
+            ],
+            None,
+            None,
+            Duration::from_secs(5),
+            12,
+        )
+        .expect("run capped failing command");
+
+        assert_eq!(outcome.code, Some(7));
+        assert_eq!(outcome.stderr, b"PRIVATE_FAIL");
+        assert!(truncation.stderr);
+        assert!(!truncation.stdout);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_timeout_capped_bounds_output_until_timeout() {
+        let started = Instant::now();
+        let result = run_timeout_capped(
+            "/bin/sh",
+            &["-c", "while :; do printf '0123456789'; printf 'abcdefghij' >&2; done"],
+            None,
+            None,
+            Duration::from_millis(200),
+            32,
+        );
+
+        assert!(
+            matches!(result, Err(RunError::Timeout(_))),
+            "expected a timeout error, got {result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "capped timeout should return promptly"
+        );
+    }
     #[cfg(unix)]
     #[test]
     fn run_timeout_kills_a_stuck_command_and_leaves_no_child() {

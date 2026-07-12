@@ -41,8 +41,8 @@ pub use db::{
 };
 
 pub use process::{
-    is_binary_on_path, is_on_user_path, run, run_timeout, user_shell_environment, which_in,
-    CommandOutcome,
+    is_binary_on_path, is_on_user_path, run, run_timeout, run_timeout_capped,
+    user_shell_environment, which_in, CommandOutcome, OutputTruncation,
 };
 pub use pty::{
     dtach_socket_path, kill_dtach_master, prepare_chat_session, select_backend, session_name,

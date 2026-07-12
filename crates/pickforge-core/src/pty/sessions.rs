@@ -24,10 +24,23 @@
 //! unit-testable without a live dtach/tmux.
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use super::shell::{resolve_shell, ShellInvocation};
 use crate::process::{is_binary_on_path, run_timeout, user_shell_environment};
+
+static TMUX_SERVER_NAME: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "pickforge-{}-{:016x}",
+        std::process::id(),
+        rand::random::<u64>()
+    )
+});
+
+fn tmux_server_name() -> &'static str {
+    &TMUX_SERVER_NAME
+}
 
 /// Which session backend a chat shell is run under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,10 +265,34 @@ fn signal_dtach_pid(pid: i32, signal: libc::c_int) -> Result<(), DtachKillError>
 }
 
 #[cfg(target_os = "linux")]
+fn dtach_socket_is_stale(socket: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    let Ok(metadata) = std::fs::symlink_metadata(socket) else {
+        return true;
+    };
+    if !metadata.file_type().is_socket() {
+        return false;
+    }
+    matches!(
+        std::os::unix::net::UnixStream::connect(socket),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+            )
+    )
+}
+
+#[cfg(target_os = "linux")]
 pub fn kill_dtach_master(socket: &Path) -> Result<usize, DtachKillError> {
     let masters = dtach_master_pids(socket);
     if masters.is_empty() {
-        return Err(DtachKillError::MasterNotFound(socket.display().to_string()));
+        return if dtach_socket_is_stale(socket) {
+            Ok(0)
+        } else {
+            Err(DtachKillError::MasterNotFound(socket.display().to_string()))
+        };
     }
     let mut targets = descendant_pids(&masters);
     targets.extend(masters);
@@ -321,9 +358,8 @@ pub fn dtach_invocation(socket: &Path, shell: &ShellInvocation) -> SessionInvoca
 /// Build the tmux invocation that attaches-or-creates a named session on
 /// PickForge's private server and runs `$SHELL` inside it.
 ///
-/// `tmux -L pickforge new-session -A -s <name> [-c <cwd>] <shell> [args…]`:
-/// * `-L pickforge` uses a dedicated server socket, never the user's default
-///   tmux server — so PickForge sessions never collide with the user's own.
+/// Each app process uses a distinct private tmux server, so closing one
+/// PickForge instance cannot terminate another instance's chats.
 /// * `new-session -A` attaches to `<name>` if it exists, else creates it.
 /// * `-c <cwd>` sets the new session's working directory (ignored on attach).
 ///
@@ -337,7 +373,7 @@ pub fn tmux_invocation(
 ) -> SessionInvocation {
     let mut args = vec![
         "-L".to_string(),
-        "pickforge".to_string(),
+        tmux_server_name().to_string(),
         "new-session".to_string(),
         "-A".to_string(),
         "-s".to_string(),
@@ -355,10 +391,7 @@ pub fn tmux_invocation(
     }
 }
 
-/// The `tmux -L pickforge set-option …` args that turn ON window-title
-/// reporting for the private server, so an OSC 2 title set inside a pane
-/// propagates out (Feature A reads it). Run once after the server is up; it's a
-/// global server option, so it applies to every session on it.
+/// Configure title propagation on this PickForge process's private tmux server.
 ///
 /// `set-titles on` enables emitting the terminal title; `set-titles-string '#T'`
 /// makes the emitted title the active pane's own title (`#T`), i.e. exactly what
@@ -370,7 +403,7 @@ pub fn tmux_set_titles_args() -> Vec<Vec<String>> {
     vec![
         vec![
             "-L".to_string(),
-            "pickforge".to_string(),
+            tmux_server_name().to_string(),
             "set-option".to_string(),
             "-gq".to_string(),
             "set-titles".to_string(),
@@ -378,7 +411,7 @@ pub fn tmux_set_titles_args() -> Vec<Vec<String>> {
         ],
         vec![
             "-L".to_string(),
-            "pickforge".to_string(),
+            tmux_server_name().to_string(),
             "set-option".to_string(),
             "-gq".to_string(),
             "set-titles-string".to_string(),
@@ -387,42 +420,34 @@ pub fn tmux_set_titles_args() -> Vec<Vec<String>> {
     ]
 }
 
-/// `tmux -L pickforge has-session -t =<name>` — probe whether the named session
-/// already exists on the private server (exit 0 = yes). Exact-match target.
+/// Probe an exact session on this PickForge process's private tmux server.
 pub fn tmux_has_session_args(name: &str) -> Vec<String> {
     vec![
         "-L".to_string(),
-        "pickforge".to_string(),
+        tmux_server_name().to_string(),
         "has-session".to_string(),
         "-t".to_string(),
         format!("={name}"),
     ]
 }
 
-/// Declaratively destroy a tmux session: `tmux -L pickforge kill-session -t
-/// =<name>`. The `=` prefix forces an EXACT-match target — tmux otherwise treats
-/// `-t <name>` as a prefix/glob, so without it a destroy could match (and kill)
-/// the wrong session. dtach has no kill verb (it's socket-only), so a dtach
-/// session is destroyed by signalling its shell + removing the socket in the
-/// caller, not here.
+/// Destroy an exact session on this PickForge process's private tmux server.
+/// The `=` prefix prevents tmux from treating the target as a prefix or glob.
 pub fn tmux_kill_session_args(name: &str) -> Vec<String> {
     vec![
         "-L".to_string(),
-        "pickforge".to_string(),
+        tmux_server_name().to_string(),
         "kill-session".to_string(),
         "-t".to_string(),
         format!("={name}"),
     ]
 }
 
-/// `tmux -L pickforge kill-server` — tear down PickForge's PRIVATE tmux server
-/// (and with it every `pf-*` session on it). `-L pickforge` scopes the kill to
-/// our dedicated server socket, so the user's own tmux server (default or any
-/// other `-L`) is never touched.
+/// Tear down only this PickForge process's private tmux server.
 fn tmux_kill_server_args() -> Vec<String> {
     vec![
         "-L".to_string(),
-        "pickforge".to_string(),
+        tmux_server_name().to_string(),
         "kill-server".to_string(),
     ]
 }
@@ -732,11 +757,11 @@ mod tests {
     fn tmux_invocation_uses_private_server_and_attach_or_create() {
         let inv = tmux_invocation("pf-abc", Some("/home/dev/app"), &shell());
         assert_eq!(inv.program, "tmux");
+        assert_eq!(inv.args[0], "-L");
+        assert_eq!(inv.args[1], tmux_server_name());
         assert_eq!(
-            inv.args,
-            vec![
-                "-L",
-                "pickforge",
+            &inv.args[2..],
+            [
                 "new-session",
                 "-A",
                 "-s",
@@ -762,7 +787,7 @@ mod tests {
         assert_eq!(cmds.len(), 2);
         for c in &cmds {
             assert_eq!(&c[0], "-L");
-            assert_eq!(&c[1], "pickforge");
+            assert_eq!(&c[1], tmux_server_name());
             assert_eq!(&c[2], "set-option");
             assert_eq!(&c[3], "-gq"); // global + quiet → idempotent re-runs
         }
@@ -774,22 +799,17 @@ mod tests {
 
     #[test]
     fn tmux_kill_targets_the_named_session_exactly_on_the_private_server() {
-        assert_eq!(
-            tmux_kill_session_args("pf-abc"),
-            // `=pf-abc` forces an EXACT-match target so we never kill a session
-            // whose name merely shares the prefix.
-            vec!["-L", "pickforge", "kill-session", "-t", "=pf-abc"]
-        );
+        let args = tmux_kill_session_args("pf-abc");
+        assert_eq!(args[0], "-L");
+        assert_eq!(args[1], tmux_server_name());
+        assert_eq!(&args[2..], ["kill-session", "-t", "=pf-abc"]);
     }
 
     #[test]
     fn tmux_kill_server_targets_only_the_private_server() {
-        assert_eq!(
-            tmux_kill_server_args(),
-            // `-L pickforge` scopes the kill to OUR server socket — the user's
-            // default tmux server must never be reachable from this argv.
-            vec!["-L", "pickforge", "kill-server"]
-        );
+        let args = tmux_kill_server_args();
+        assert_eq!(args, vec!["-L", tmux_server_name(), "kill-server"]);
+        assert!(tmux_server_name().starts_with("pickforge-"));
     }
 
     #[cfg(unix)]
@@ -869,6 +889,31 @@ mod tests {
 
         assert!(errors.join("; ").contains("no owned dtach master"));
         assert!(socket.exists(), "unmatched socket must not be unlinked");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn exit_cleanup_removes_a_stale_owned_socket() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "pickforge-dtach-stale-{}-{nonce}",
+            std::process::id()
+        ));
+        let dir = sessions_dir(&base);
+        std::fs::create_dir_all(&dir).expect("create sessions dir");
+        let socket = dir.join("pf-stale.dtach");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&socket).expect("bind stale socket");
+        drop(listener);
+
+        let errors = cleanup_owned_dtach_sockets(&dir, kill_dtach_master);
+
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(!socket.exists(), "stale socket must be removed");
         let _ = std::fs::remove_dir_all(base);
     }
 

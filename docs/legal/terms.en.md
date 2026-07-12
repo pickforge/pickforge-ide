@@ -9,8 +9,8 @@ terms for that organization.
 
 Provider: **ELBERTE PLINIO GOIS VIEIRA FILHO DESENVOLVIMENTO DE SOFTWARE LTDA**,
 CNPJ **63.103.885/0001-74**, operating under the trade name **Elberte Software**.
-Contact: **contato@pickforge.dev** [OWNER: confirm the contact mailbox]. Privacy
-questions: **privacidade@pickforge.dev**.
+Contact: **hello@pickforge.dev**. Privacy/LGPD questions:
+**legal@pickforge.dev**.
 
 ## 1. The software
 
@@ -111,5 +111,5 @@ always lives at https://pickforge.dev/terms.
 
 ## 12. Contact
 
-**contato@pickforge.dev** — [OWNER: confirm the contact mailbox]. Privacy
-questions: **privacidade@pickforge.dev**.
+**hello@pickforge.dev** — General questions. Privacy/LGPD questions:
+**legal@pickforge.dev**.

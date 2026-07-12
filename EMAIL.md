@@ -4,21 +4,22 @@ Reference doc for the brand's email setup. Kept in the project root alongside `S
 
 ## Goals
 
-1. **Clean separation between public inbound mail and account-recovery noise** so real user messages don't drown in "new login from Chrome" notifications.
+1. **Clean separation between public inbound mail, automation, and account-recovery noise** so real user messages don't drown in "new login from Chrome" notifications.
 2. **Credibility signals** — dedicated `security@` and `legal@` addresses mark the project as a serious OSS effort, not a side-project.
 3. **Zero cost in MVP** — free forwarding stack covers 100% of MVP needs. Upgrade only when volume justifies it.
 4. **Future-proof** for the Pro tier's transactional email needs (password resets, receipts) without rework.
 
 ## Addresses — day-one set
 
-Four aliases live from launch day. All forward to a single personal inbox initially.
+Five aliases live from launch day. All forward to a single personal inbox initially.
 
 | Address | Purpose | Visible where |
 |---|---|---|
 | `hello@pickforge.dev` | Primary public contact. General inbound from users, press, partnerships. | Landing page, GitHub README, pub.dev publisher page. |
 | `accounts@pickforge.dev` | **Registration address for every third-party service** — X, YouTube, Product Hunt, Stripe, Supabase, GitHub org owner, Cloudflare, domain registrar, Plausible/GoatCounter, Resend, anywhere that sends "new login" / "verify your email" mail. | Nowhere public. Internal use only. |
+| `bot@pickforge.dev` | Automation and bot service identity. Not a human support channel. | Nowhere public. Internal use only. |
 | `security@pickforge.dev` | Vulnerability reports. | `SECURITY.md`, `/.well-known/security.txt`, GitHub repo sidebar. |
-| `legal@pickforge.dev` | DMCA / copyright / trademark inquiries. | Landing page footer, LICENSE file footer if desired. |
+| `legal@pickforge.dev` | Privacy/LGPD requests plus DMCA, copyright, and trademark inquiries. | Privacy Policy, Terms, landing page footer, LICENSE footer if desired. |
 
 ## Why separate `hello@` from `accounts@`
 
@@ -34,7 +35,6 @@ Don't create these preemptively. Add when the need appears.
 |---|---|
 | `support@` | `hello@` volume makes triage painful and you want a separate queue. |
 | `press@` | First journalist asks for a press contact. |
-| `privacy@` | You start processing user data (Pro tier, Supabase-backed auth). GDPR best practice. |
 | `noreply@` | You send transactional mail (receipts, password resets, account confirmations). Required for any From header on system-sent mail. |
 | `billing@` | Pro tier active, subscription invoices or disputes incoming. |
 | `partnerships@` | First real inbound partnership request, not before. |
@@ -52,7 +52,7 @@ Don't create these preemptively. Add when the need appears.
 2. Point nameservers at Cloudflare DNS (free, fast, low-latency).
 3. In Cloudflare → Email → Email Routing:
    - Add destination address: your personal Gmail (confirm via email).
-   - Add custom addresses: `hello@`, `accounts@`, `security@`, `legal@` — all routing to the personal Gmail destination.
+   - Add custom addresses: `hello@`, `accounts@`, `bot@`, `security@`, `legal@` — all routing to the personal Gmail destination.
    - Optional catch-all: forward `*@pickforge.dev` → personal Gmail so typos don't bounce.
 4. Cloudflare auto-adds MX + SPF records.
 5. Done. ~10 minutes of work.
@@ -87,7 +87,7 @@ When `hello@` volume makes "replies coming from personal Gmail" look unprofessio
 If you want real mailboxes (inbox, folders, filters) per alias rather than one merged forwarded inbox:
 
 - **Zoho Mail Free** — up to 5 users, 5GB each, on custom domain. No credit card.
-- Set up `hello@`, `accounts@`, `security@`, `legal@` as separate mailboxes.
+- Set up `hello@`, `accounts@`, `bot@`, `security@`, `legal@` as separate mailboxes.
 - Cost: $0.
 
 ### 3. Gold standard — Fastmail or Google Workspace
@@ -111,6 +111,7 @@ When the Pro tier ships:
 ## Security operational notes
 
 - **`security@pickforge.dev` is a commitment**, not decoration. Check it at least weekly. Respond within 48 hours even if just to acknowledge.
+- **`legal@pickforge.dev` is the public privacy/LGPD channel.** Monitor it and route data-subject or ANPD requests promptly.
 - Publish a coordinated vulnerability disclosure policy in `SECURITY.md` on day one:
   - How to report (this address).
   - Expected acknowledgement time (48 hours).

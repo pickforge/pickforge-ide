@@ -9,6 +9,7 @@ import { isPrimaryChat } from "../lib/chatLabels";
 import { clearChatKillMark, markChatForKill, ptyDestroyChatSession } from "../lib/pty";
 import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 import { isChatArchived } from "./chatArchive";
+import { flagEnabled } from "./flags";
 import { setChatTmux } from "./chatSessions";
 
 /** First non-archived chat id in a list, or null. The projects tree hides
@@ -32,6 +33,28 @@ const [state, setState] = createStore<WorkspaceState>({
   activeChatId: null,
   loaded: false,
 });
+
+// Title writes can overlap (provider signals, local cadence, and manual rename).
+// Sequence guards keep the store on the newest request while the durable CAS
+// uses a strictly increasing timestamp per chat to enforce the same order.
+const latestTitleRequestByChat = new Map<string, number>();
+const latestTitleTimestampByChat = new Map<string, number>();
+
+function beginTitleRequest(chatId: string): number {
+  const request = (latestTitleRequestByChat.get(chatId) ?? 0) + 1;
+  latestTitleRequestByChat.set(chatId, request);
+  return request;
+}
+
+function nextTitleTimestamp(chatId: string, persistedTimestamp: number): number {
+  const timestamp = Math.max(
+    Date.now(),
+    persistedTimestamp + 1,
+    (latestTitleTimestampByChat.get(chatId) ?? 0) + 1,
+  );
+  latestTitleTimestampByChat.set(chatId, timestamp);
+  return timestamp;
+}
 
 export const workspace = state;
 
@@ -316,6 +339,8 @@ export async function addChat(
     chatId,
     projectRoot: root,
     title,
+    titleSource: title.trim() === "New chat" ? "default" : "user",
+    titleUpdatedAt: flagEnabled("dynamicChatTitles") ? now : 0,
     kind,
     agentId,
     skillId: null,
@@ -394,33 +419,84 @@ export async function renameChat(chatId: string, title: string) {
   const t = title.trim();
   const c = findChat(chatId);
   if (!c || !t || t === c.title) return;
-  // Narrow title write — same reason as reorder: never clobber a live session_id.
-  await db.updateChatTitle(chatId, t);
+  const dynamic = flagEnabled("dynamicChatTitles");
+  beginTitleRequest(chatId);
+  const titleUpdatedAt = nextTitleTimestamp(chatId, c.titleUpdatedAt);
+  await db.updateChatTitle(
+    chatId,
+    t,
+    dynamic ? { titleSource: "user", titleUpdatedAt } : undefined,
+  );
   setState("chatsByRoot", c.projectRoot, (list) =>
-    list.map((x) => (x.chatId === chatId ? { ...x, title: t } : x)),
+    list.map((x) =>
+      x.chatId === chatId
+        ? {
+            ...x,
+            title: t,
+            ...(dynamic ? { titleSource: "user" as const, titleUpdatedAt } : {}),
+          }
+        : x,
+    ),
   );
 }
 
-/** Set a chat's title via the NARROW title write (won't clobber a live
- *  session_id), updating the store in place. The auto-name flow uses this — it
- *  can fire while a session_id is being persisted, so the two must not race. */
-export async function setChatTitle(chatId: string, title: string) {
+/** Persist an automatic title via a narrow write. With the release flag off,
+ * this intentionally uses the legacy title-only call and state shape. Returns
+ * false when a concurrent durable manual owner rejects the automatic CAS. */
+export async function setChatTitle(chatId: string, title: string): Promise<boolean> {
   const t = title.trim();
   const c = findChat(chatId);
-  if (!c || !t || t === c.title) return;
-  await db.updateChatTitle(chatId, t);
+  if (!c || !t || t === c.title) return false;
+  const dynamic = flagEnabled("dynamicChatTitles");
+  const request = beginTitleRequest(chatId);
+  const titleUpdatedAt = nextTitleTimestamp(chatId, c.titleUpdatedAt);
+  const applied = await db.updateChatTitle(
+    chatId,
+    t,
+    dynamic ? { titleSource: "auto", titleUpdatedAt } : undefined,
+  );
+  const current = findChat(chatId);
+  if (
+    !applied ||
+    latestTitleRequestByChat.get(chatId) !== request ||
+    (dynamic && current?.titleSource === "user")
+  ) {
+    return false;
+  }
   setState("chatsByRoot", c.projectRoot, (list) =>
-    list.map((x) => (x.chatId === chatId ? { ...x, title: t } : x)),
+    list.map((x) =>
+      x.chatId === chatId
+        ? {
+            ...x,
+            title: t,
+            ...(dynamic ? { titleSource: "auto" as const, titleUpdatedAt } : {}),
+          }
+        : x,
+    ),
+  );
+  return true;
+}
+
+export async function resumeAutomaticChatTitles(chatId: string) {
+  if (!flagEnabled("dynamicChatTitles")) return;
+  const c = findChat(chatId);
+  if (!c || c.titleSource !== "user") return;
+  beginTitleRequest(chatId);
+  const titleUpdatedAt = nextTitleTimestamp(chatId, c.titleUpdatedAt);
+  await db.updateChatTitleOwnership(chatId, "auto", titleUpdatedAt);
+  setState("chatsByRoot", c.projectRoot, (list) =>
+    list.map((x) =>
+      x.chatId === chatId ? { ...x, titleSource: "auto", titleUpdatedAt } : x,
+    ),
   );
 }
 
 export async function setChatAgent(chatId: string, agentId: string, kind = "agent") {
   const c = findChat(chatId);
   if (!c || (c.agentId === agentId && c.kind === kind)) return;
-  const next = { ...c, agentId, kind };
-  await db.chatUpsert(next);
+  await db.updateChatAgent(chatId, agentId, kind);
   setState("chatsByRoot", c.projectRoot, (list) =>
-    list.map((x) => (x.chatId === chatId ? next : x)),
+    list.map((x) => (x.chatId === chatId ? { ...x, agentId, kind } : x)),
   );
 }
 
@@ -467,6 +543,8 @@ export async function deleteChat(chatId: string) {
   // nothing lingers orphaned. Never detach on a delete.
   await destroyChat(chatId, chat?.sessionId ?? null);
   await db.chatDelete(chatId);
+  latestTitleRequestByChat.delete(chatId);
+  latestTitleTimestampByChat.delete(chatId);
   let remaining: db.Chat[] = [];
   if (root) remaining = await fetchChats(root);
   if (state.activeChatId === chatId) {

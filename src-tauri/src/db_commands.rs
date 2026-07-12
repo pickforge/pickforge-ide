@@ -118,15 +118,52 @@ pub fn chat_delete(db: State<'_, Arc<Database>>, chat_id: String) -> Result<(), 
     db.delete_chat(&chat_id).map_err(|e| e.to_string())
 }
 
-/// Narrow title write for the OSC/auto-name flow — touches only `title`, so it
-/// can't race the full-row `chat_upsert` and clobber a live `session_id`.
+/// Narrow title write. Omitted metadata preserves the pre-feature title-only
+/// storage semantics; supplying both fields atomically persists provenance.
+/// The returned boolean tells automatic callers whether durable ownership still
+/// allowed their compare-and-set write.
 #[tauri::command]
 pub fn update_chat_title(
     db: State<'_, Arc<Database>>,
     chat_id: String,
     title: String,
+    title_source: Option<String>,
+    title_updated_at: Option<i64>,
+) -> Result<bool, String> {
+    match (title_source.as_deref(), title_updated_at) {
+        (None, None) => db.update_chat_title(&chat_id, &title).map(|_| true),
+        (Some(source), Some(updated_at)) => {
+            db.update_chat_title_with_metadata(&chat_id, &title, source, updated_at)
+        }
+        _ => Err(pickforge_core::db::DbError::Other(
+            "title_source and title_updated_at must be supplied together".into(),
+        )),
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// Narrow ownership-only write used by “Resume automatic titles”.
+#[tauri::command]
+pub fn update_chat_title_ownership(
+    db: State<'_, Arc<Database>>,
+    chat_id: String,
+    title_source: String,
+    title_updated_at: i64,
 ) -> Result<(), String> {
-    db.update_chat_title(&chat_id, &title)
+    db.update_chat_title_ownership(&chat_id, &title_source, title_updated_at)
+        .map_err(|e| e.to_string())
+}
+
+/// Narrow provider identity write used by agent switches. It must not carry a
+/// stale title/provenance snapshot from the frontend.
+#[tauri::command]
+pub fn update_chat_agent(
+    db: State<'_, Arc<Database>>,
+    chat_id: String,
+    agent_id: String,
+    kind: String,
+) -> Result<(), String> {
+    db.update_chat_agent(&chat_id, &agent_id, &kind)
         .map_err(|e| e.to_string())
 }
 

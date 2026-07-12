@@ -63,7 +63,13 @@ import {
 } from "../../lib/chatDefaults";
 import { type AgentProvider } from "../../lib/agentChat";
 import { isPrimaryChat } from "../../lib/chatLabels";
-import { chatTitleOverride, DEFAULT_CHAT_TITLE, markChatTitleManual } from "../../lib/chatAutoName";
+import {
+  chatTitleOverride,
+  chatTitleSourceForPolicy,
+  DEFAULT_CHAT_TITLE,
+  markChatTitleManual,
+  resumeChatTitleAuto,
+} from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
 import { removeChatFromOrchestra } from "../../stores/orchestra";
 import { isChatStaged } from "../../stores/orchestraStage";
@@ -662,6 +668,23 @@ export function ProjectsPane() {
     <>
       <button class="pf-menu-item" onClick={() => { selectChat(p.id); closeMenu(); }}>Open</button>
       <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
+      <Show
+        when={
+          flagEnabled("dynamicChatTitles") &&
+          !!findChat(p.id) &&
+          chatTitleSourceForPolicy(findChat(p.id)!) === "user"
+        }
+      >
+        <button
+          class="pf-menu-item"
+          onClick={() => {
+            void resumeChatTitleAuto(p.id);
+            closeMenu();
+          }}
+        >
+          Resume automatic titles
+        </button>
+      </Show>
       <button
         class="pf-menu-item"
         onClick={() =>

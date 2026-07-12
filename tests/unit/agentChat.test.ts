@@ -22,12 +22,14 @@ const activity = vi.hoisted(() => ({
   agentTurnDone: vi.fn(),
   agentTurnCleared: vi.fn(),
 }));
-const flags = vi.hoisted(() => ({ remoteProjects: false }));
+const flags = vi.hoisted(() => ({ remoteProjects: false, dynamicChatTitles: false }));
 const workspace = vi.hoisted(() => ({
   chats: new Map<string, {
     chatId: string;
     projectRoot: string;
     title: string;
+    titleSource: "default" | "auto" | "user";
+    titleUpdatedAt: number;
     kind: string;
     agentId: string;
   }>(),
@@ -35,6 +37,8 @@ const workspace = vi.hoisted(() => ({
     chatId: id,
     projectRoot: "/project",
     title: "Existing chat",
+    titleSource: "user" as const,
+    titleUpdatedAt: 1,
     kind: "agent",
     agentId: "codex",
     skillId: null,
@@ -50,7 +54,10 @@ const workspace = vi.hoisted(() => ({
   findChat: vi.fn(),
   setChatTitle: vi.fn(async (id: string, title: string) => {
     const chat = workspace.chats.get(id);
-    if (chat) chat.title = title;
+    if (chat) {
+      chat.title = title;
+      if (flags.dynamicChatTitles) chat.titleSource = "auto";
+    }
   }),
   setChatAgent: vi.fn(async (id: string, agentId: string, kind = "agent") => {
     const chat = workspace.chats.get(id);
@@ -80,7 +87,9 @@ vi.mock("../../src/stores/workspace", () => ({
 }));
 vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isChatArchived }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) => key === "remoteProjects" && flags.remoteProjects,
+  flagEnabled: (key: string) =>
+    (key === "remoteProjects" && flags.remoteProjects) ||
+    (key === "dynamicChatTitles" && flags.dynamicChatTitles),
 }));
 
 import {
@@ -104,6 +113,7 @@ import {
   type AgentEvent,
   type AgentTimelineEntry,
 } from "../../src/lib/agentChat";
+import { markChatTitleManual } from "../../src/lib/chatAutoName";
 
 let counter = 0;
 
@@ -222,6 +232,7 @@ beforeEach(() => {
   workspace.isChatArchived.mockReset().mockReturnValue(false);
   workspace.projects = [];
   flags.remoteProjects = false;
+  flags.dynamicChatTitles = false;
 });
 
 describe("agentChat IPC wrappers", () => {
@@ -1584,4 +1595,351 @@ describe("agentChat → chatActivity wiring", () => {
     expect(activity.agentTurnDone).not.toHaveBeenCalled();
     expect(activity.agentTurnStarted).not.toHaveBeenCalled();
   });
+});
+
+describe("dynamic native chat titles", () => {
+  it("ignores greetings and names from the first meaningful completed task", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    await sendAgentMessage(chatId, "hi");
+    emit({ kind: "textFinal", itemId: null, text: "How can I help?" });
+    emit({ kind: "turnDone", status: "completed" });
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+
+    await sendAgentMessage(chatId, "fix the login redirect race");
+    emit({ kind: "turnDone", status: "completed" });
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(
+      chatId,
+      "Fix the login redirect race",
+    );
+  });
+
+  it("refreshes from the fourth meaningful completed user turn", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    for (const text of [
+      "fix the login redirect",
+      "add regression coverage",
+      "verify the database migration",
+      "rework settings navigation",
+    ]) {
+      await sendAgentMessage(chatId, text);
+      emit({ kind: "turnDone", status: "completed" });
+    }
+
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(2);
+    expect(workspace.setChatTitle).toHaveBeenNthCalledWith(
+      1,
+      chatId,
+      "Fix the login redirect",
+    );
+    expect(workspace.setChatTitle).toHaveBeenNthCalledWith(
+      2,
+      chatId,
+      "Rework settings navigation",
+    );
+  });
+
+  it("counts only successful turns when failures come first or intervene", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    await sendAgentMessage(chatId, "failed first task");
+    emit({ kind: "turnFailed", error: "boom" });
+    await sendAgentMessage(chatId, "first successful task");
+    emit({ kind: "turnDone", status: "completed" });
+    await sendAgentMessage(chatId, "failed intervening task");
+    emit({ kind: "turnFailed", error: "boom again" });
+    for (const text of ["second successful task", "third successful task", "fourth successful task"]) {
+      await sendAgentMessage(chatId, text);
+      emit({ kind: "turnDone", status: "completed" });
+    }
+
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(2);
+    expect(workspace.setChatTitle).toHaveBeenNthCalledWith(
+      1,
+      chatId,
+      "First successful task",
+    );
+    expect(workspace.setChatTitle).toHaveBeenNthCalledWith(
+      2,
+      chatId,
+      "Fourth successful task",
+    );
+  });
+
+  it("stages provider plans during streaming and gives them precedence at turn end", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, {
+        title: "Fix the login redirect",
+        titleSource: "auto",
+      }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    await sendAgentMessage(chatId, "add regression coverage");
+    emit({
+      kind: "planUpdate",
+      items: [
+        { text: "Rework OAuth session recovery", completed: false },
+        { text: "Run focused tests", completed: false },
+      ],
+    });
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+    emit({ kind: "turnDone", status: "completed" });
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(
+      chatId,
+      "Rework OAuth session recovery",
+    );
+  });
+
+  it("discards a staged provider title when its turn fails", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    await sendAgentMessage(chatId, "first task will fail");
+    emit({
+      kind: "planUpdate",
+      items: [{ text: "Stale provider plan title", completed: false }],
+    });
+    emit({ kind: "turnFailed", error: "provider failed" });
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+
+    await sendAgentMessage(chatId, "complete the later visible task");
+    emit({ kind: "turnDone", status: "completed" });
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(1);
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(
+      chatId,
+      "Complete the later visible task",
+    );
+    expect(workspace.setChatTitle).not.toHaveBeenCalledWith(
+      chatId,
+      "Stale provider plan title",
+    );
+  });
+
+  it("does not let interrupted turns rename or advance title milestones", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    const interruptWithPlan = async (task: string, plan: string) => {
+      await sendAgentMessage(chatId, task);
+      emit({ kind: "planUpdate", items: [{ text: plan, completed: false }] });
+      emit({ kind: "turnDone", status: "interrupted" });
+    };
+    const complete = async (task: string) => {
+      await sendAgentMessage(chatId, task);
+      emit({ kind: "turnDone", status: "completed" });
+    };
+
+    await interruptWithPlan("interrupted before first", "Stale first provider plan");
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+    await complete("first successful milestone");
+    expect(workspace.setChatTitle).toHaveBeenNthCalledWith(
+      1,
+      chatId,
+      "First successful milestone",
+    );
+
+    await complete("second successful task");
+    await complete("third successful task");
+    await interruptWithPlan("interrupted before fourth", "Stale fourth provider plan");
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(1);
+    await complete("fourth successful milestone");
+    expect(workspace.setChatTitle).toHaveBeenNthCalledWith(
+      2,
+      chatId,
+      "Fourth successful milestone",
+    );
+
+    await complete("fifth successful task");
+    await complete("sixth successful task");
+    await interruptWithPlan("interrupted before seventh", "Stale seventh provider plan");
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(2);
+    await complete("seventh successful milestone");
+    expect(workspace.setChatTitle).toHaveBeenNthCalledWith(
+      3,
+      chatId,
+      "Seventh successful milestone",
+    );
+  });
+
+  it("does not hydrate interrupted turns into the successful title cadence", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "message",
+        seq: 1,
+        role: "user",
+        content: "interrupted persisted task",
+        createdAt: 1,
+      },
+      {
+        entryType: "item",
+        seq: 2,
+        kind: "planUpdate",
+        payload: JSON.stringify({
+          kind: "planUpdate",
+          items: [{ text: "Stale persisted provider plan", completed: false }],
+        }),
+        createdAt: 2,
+      },
+      {
+        entryType: "item",
+        seq: 3,
+        kind: "turnDone",
+        payload: JSON.stringify({ kind: "turnDone", status: "interrupted" }),
+        createdAt: 3,
+      },
+    ];
+    mockInvoke(history);
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    await sendAgentMessage(chatId, "first successful task after hydration");
+    startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
+
+    expect(workspace.setChatTitle).toHaveBeenCalledTimes(1);
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(
+      chatId,
+      "First successful task after hydration",
+    );
+    expect(workspace.setChatTitle).not.toHaveBeenCalledWith(
+      chatId,
+      "Stale persisted provider plan",
+    );
+  });
+
+  it("never stages or commits provider plans from hidden internal turns", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    const emit = (event: AgentEvent) => startCall?.[1].onEvent.onmessage(event);
+
+    await sendAgentMessage(chatId, "Pickforge swarm finished for this chat.", [], {
+      hidden: true,
+    });
+    emit({
+      kind: "planUpdate",
+      items: [{ text: "Sensitive internal synthesis plan", completed: false }],
+    });
+    emit({ kind: "turnDone", status: "completed" });
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+
+    await sendAgentMessage(chatId, "fix the visible settings flow");
+    emit({ kind: "turnDone", status: "completed" });
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(
+      chatId,
+      "Fix the visible settings flow",
+    );
+  });
+
+  it("never refreshes a persisted user-owned title", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, {
+        title: "My deliberate title",
+        titleSource: "user",
+      }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+
+    await sendAgentMessage(chatId, "replace the title from this task");
+    startCall?.[1].onEvent.onmessage({
+      kind: "planUpdate",
+      items: [{ text: "Provider title suggestion", completed: false }],
+    });
+    startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
+
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+  });
+  it("locks immediately when a manual rename races an active turn", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, {
+        title: "Current automatic title",
+        titleSource: "auto",
+      }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+
+    await sendAgentMessage(chatId, "replace the task");
+    startCall?.[1].onEvent.onmessage({
+      kind: "planUpdate",
+      items: [{ text: "Provider replacement title", completed: false }],
+    });
+    markChatTitleManual(chatId);
+    startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
+
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+  });
+
 });

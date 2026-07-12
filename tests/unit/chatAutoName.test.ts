@@ -4,41 +4,67 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // pulls in the Tauri db + a SolidJS store). Stub the store with an in-memory
 // chat map so the title logic can be exercised with no runtime. solid-js's
 // createSignal is used for the typing-animation overrides; it works under node.
+const flags = vi.hoisted(() => ({ dynamicChatTitles: false }));
+
 const store = vi.hoisted(() => {
-  const chats = new Map<string, { chatId: string; title: string }>();
+  const chats = new Map<
+    string,
+    { chatId: string; title: string; titleSource: "default" | "auto" | "user" }
+  >();
   return {
     chats,
     findChat: vi.fn((id: string) => chats.get(id)),
     setChatTitle: vi.fn(async (id: string, title: string) => {
       const c = chats.get(id);
-      if (c) c.title = title;
+      if (c) {
+        c.title = title;
+        if (flags.dynamicChatTitles) c.titleSource = "auto";
+      }
+      return true;
+    }),
+    resumeAutomaticChatTitles: vi.fn(async (id: string) => {
+      const c = chats.get(id);
+      if (c) c.titleSource = "auto";
     }),
   };
 });
 vi.mock("../../src/stores/workspace", () => ({
   findChat: store.findChat,
   setChatTitle: store.setChatTitle,
+  resumeAutomaticChatTitles: store.resumeAutomaticChatTitles,
+}));
+vi.mock("../../src/stores/flags", () => ({
+  flagEnabled: (key: string) => key === "dynamicChatTitles" && flags.dynamicChatTitles,
 }));
 
 import {
   armChatAutoName,
+  chatTitleSourceForPolicy,
   cleanOscTitle,
   deriveAgentChatTitle,
+  deriveMeaningfulUserTitle,
   forgetChatAutoName,
+  handleAgentPaneExited,
   handleOscTitle,
   hasAgentPane,
   isAgentPane,
   markChatTitleManual,
   maybeAutoNameChat,
+  resumeChatTitleAuto,
+  selectDynamicAgentTitle,
   revokeAgentPane,
   transferAgentPaneOwnership,
   DEFAULT_CHAT_TITLE,
 } from "../../src/lib/chatAutoName";
 
+const isDefaultTitleForTest = (title: string) => title.trim() === DEFAULT_CHAT_TITLE;
+
 beforeEach(() => {
   vi.useFakeTimers();
   store.chats.clear();
   store.setChatTitle.mockClear();
+  store.resumeAutomaticChatTitles.mockClear();
+  flags.dynamicChatTitles = false;
   // Force the non-animated path (commit persists synchronously, no timers).
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
 });
@@ -133,7 +159,11 @@ describe("handleOscTitle — debounce + ownership", () => {
   // `agentPane: null` to seed a chat with NO agent pane (for the gating test).
   const seed = (title = DEFAULT_CHAT_TITLE, agentPane: string | null = "pane-0"): string => {
     const id = `chat-${++counter}`;
-    store.chats.set(id, { chatId: id, title });
+    store.chats.set(id, {
+      chatId: id,
+      title,
+      titleSource: isDefaultTitleForTest(title) ? "default" : "user",
+    });
     if (agentPane) armChatAutoName(id, agentPane);
     return id;
   };
@@ -146,6 +176,17 @@ describe("handleOscTitle — debounce + ownership", () => {
     expect(store.setChatTitle).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(store.setChatTitle).toHaveBeenCalledWith(id, "Working on auth");
+  });
+
+  it("keeps legacy provenance untouched while the feature flag is off", () => {
+    const id = seed();
+    handleOscTitle(id, "pane-0", "Legacy automatic title");
+    vi.advanceTimersByTime(1200);
+
+    expect(store.chats.get(id)).toMatchObject({
+      title: "Legacy automatic title",
+      titleSource: "default",
+    });
   });
 
   it("debounces rapid rewrites, committing only the last", () => {
@@ -236,7 +277,11 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   let counter = 1000;
   const mkChat = (title = DEFAULT_CHAT_TITLE): string => {
     const id = `agent-chat-${++counter}`;
-    store.chats.set(id, { chatId: id, title });
+    store.chats.set(id, {
+      chatId: id,
+      title,
+      titleSource: isDefaultTitleForTest(title) ? "default" : "user",
+    });
     return id;
   };
 
@@ -324,7 +369,11 @@ describe("title authority — the newest agent launch names the chat", () => {
   let counter = 3000;
   const mkChat = (title = DEFAULT_CHAT_TITLE): string => {
     const id = `authority-chat-${++counter}`;
-    store.chats.set(id, { chatId: id, title });
+    store.chats.set(id, {
+      chatId: id,
+      title,
+      titleSource: isDefaultTitleForTest(title) ? "default" : "user",
+    });
     return id;
   };
 
@@ -343,5 +392,195 @@ describe("title authority — the newest agent launch names the chat", () => {
     handleOscTitle(id, "pane-0", "Codex task summary");
     vi.advanceTimersByTime(1200);
     expect(store.chats.get(id)!.title).toBe("Codex task summary");
+  });
+});
+
+describe("dynamic title policy", () => {
+  it("uses only meaningful user-owned task text", () => {
+    expect(deriveMeaningfulUserTitle("hi")).toBe("");
+    expect(deriveMeaningfulUserTitle("thanks")).toBe("");
+    expect(deriveMeaningfulUserTitle("fix the OAuth callback race")).toBe(
+      "Fix the OAuth callback race",
+    );
+  });
+
+  it("refreshes locally on meaningful turns 1, 4, 7 and ignores filler", () => {
+    const base = {
+      currentTitle: DEFAULT_CHAT_TITLE,
+      titleSource: "default" as const,
+    };
+    expect(
+      selectDynamicAgentTitle({
+        ...base,
+        completedUserTexts: ["hi", "fix the login redirect"],
+      }),
+
+    ).toBe("Fix the login redirect");
+    expect(
+      selectDynamicAgentTitle({
+        currentTitle: "Fix the login redirect",
+        titleSource: "auto",
+        completedUserTexts: [
+          "fix the login redirect",
+          "add coverage",
+          "check the migration",
+        ],
+      }),
+    ).toBe("");
+    expect(
+      selectDynamicAgentTitle({
+        currentTitle: "Fix the login redirect",
+        titleSource: "auto",
+        completedUserTexts: [
+          "fix the login redirect",
+          "add coverage",
+          "check the migration",
+          "update the settings navigation",
+        ],
+      }),
+    ).toBe("Update the settings navigation");
+  });
+
+  it("adopts untouched default chats created while the flag was off", () => {
+    expect(
+      chatTitleSourceForPolicy({
+        title: DEFAULT_CHAT_TITLE,
+        titleSource: "user",
+        titleUpdatedAt: 0,
+      }),
+    ).toBe("default");
+    expect(
+      chatTitleSourceForPolicy({
+        title: DEFAULT_CHAT_TITLE,
+        titleSource: "user",
+        titleUpdatedAt: 10,
+      }),
+    ).toBe("user");
+    expect(
+      chatTitleSourceForPolicy({
+        title: " New chat ",
+        titleSource: "user",
+        titleUpdatedAt: 0,
+      }),
+    ).toBe("user");
+    expect(
+      chatTitleSourceForPolicy({
+        title: "Legacy non-default title",
+        titleSource: "default",
+        titleUpdatedAt: 0,
+      }),
+    ).toBe("user");
+  });
+
+  it("gives provider plan/title signals precedence without waiting for cadence", () => {
+    expect(
+      selectDynamicAgentTitle({
+        currentTitle: "Fix the login redirect",
+        titleSource: "auto",
+        completedUserTexts: ["fix login", "add coverage"],
+        providerTitle: "Rework OAuth session recovery",
+      }),
+    ).toBe("Rework OAuth session recovery");
+  });
+
+  it("does not rewrite normalized-equal candidates or persisted manual titles", () => {
+    expect(
+      selectDynamicAgentTitle({
+        currentTitle: "Fix OAuth callback",
+        titleSource: "auto",
+        completedUserTexts: ["fix oauth callback"],
+        providerTitle: "  FIX   OAUTH CALLBACK ",
+      }),
+    ).toBe("");
+    expect(
+      selectDynamicAgentTitle({
+        currentTitle: "My deliberate title",
+        titleSource: "user",
+        completedUserTexts: ["replace the entire task"],
+        providerTitle: "Provider wants another title",
+      }),
+    ).toBe("");
+  });
+
+  it("applies terminal milestones and lets debounced OSC override local fallback", () => {
+    flags.dynamicChatTitles = true;
+    const id = "dynamic-terminal";
+    store.chats.set(id, {
+      chatId: id,
+      title: DEFAULT_CHAT_TITLE,
+      titleSource: "default",
+    });
+    armChatAutoName(id, "pane-0");
+
+    maybeAutoNameChat(id, "hi", "pane-0");
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+    maybeAutoNameChat(id, "fix the login redirect", "pane-0");
+    expect(store.setChatTitle).toHaveBeenLastCalledWith(id, "Fix the login redirect");
+    maybeAutoNameChat(id, "add unit coverage", "pane-0");
+    maybeAutoNameChat(id, "check the migration", "pane-0");
+    expect(store.setChatTitle).toHaveBeenCalledTimes(1);
+    maybeAutoNameChat(id, "update the settings navigation", "pane-0");
+    expect(store.setChatTitle).toHaveBeenLastCalledWith(
+      id,
+      "Update the settings navigation",
+    );
+
+    handleOscTitle(id, "pane-0", "Provider plan: verify restart persistence");
+    vi.advanceTimersByTime(1200);
+    expect(store.setChatTitle).toHaveBeenLastCalledWith(
+      id,
+      "Provider plan: verify restart persistence",
+    );
+  });
+
+  it("revokes title authority on the PTY lifecycle exit without relying on OSC", () => {
+    flags.dynamicChatTitles = true;
+    const id = "dynamic-post-agent-shell";
+    store.chats.set(id, {
+      chatId: id,
+      title: DEFAULT_CHAT_TITLE,
+      titleSource: "default",
+    });
+
+    maybeAutoNameChat(id, "claude fix the login redirect", "pane-0");
+    expect(store.setChatTitle).toHaveBeenCalledWith(id, "Fix the login redirect");
+    store.setChatTitle.mockClear();
+
+    // Even a provider title already waiting in the debounce queue loses
+    // authority when the PTY/session process reports its lifecycle exit.
+    handleOscTitle(id, "pane-0", "Provider title that must be cancelled");
+    handleAgentPaneExited(id, "pane-0");
+    vi.advanceTimersByTime(2000);
+    for (const line of [
+      "run the project tests",
+      "check the database migration",
+      "update the settings navigation",
+      "verify the release build",
+    ]) {
+      maybeAutoNameChat(id, line, "pane-0");
+    }
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+    expect(isAgentPane(id, "pane-0")).toBe(false);
+  });
+
+  it("honors a persisted manual lock after restart and can resume automatic titles", async () => {
+    flags.dynamicChatTitles = true;
+    const id = "dynamic-restart";
+    store.chats.set(id, {
+      chatId: id,
+      title: "My deliberate title",
+      titleSource: "user",
+    });
+    armChatAutoName(id, "pane-0");
+
+    handleOscTitle(id, "pane-0", "Provider tries to replace it");
+    vi.advanceTimersByTime(2000);
+    expect(store.setChatTitle).not.toHaveBeenCalled();
+
+    await resumeChatTitleAuto(id);
+    expect(store.resumeAutomaticChatTitles).toHaveBeenCalledWith(id);
+    handleOscTitle(id, "pane-0", "Provider may update it now");
+    vi.advanceTimersByTime(1200);
+    expect(store.setChatTitle).toHaveBeenCalledWith(id, "Provider may update it now");
   });
 });

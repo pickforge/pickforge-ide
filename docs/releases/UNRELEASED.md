@@ -39,6 +39,9 @@ reset this file.
 - Settings sync landed dark behind the `settingsSync` flag (opt-in, per-group).
 - Hosted Pro Operator routing and credit purchase landed dark behind the `operator` flag (requires sign-in): a hosted router backend closes the routing ladder, the dock surfaces cost/balance and a quiet buy-credits prompt, and Settings gains a credit-pack purchase flow. Local and BYO routing stay free.
 - In-app account deletion + data export (LGPD user rights), behind the `accounts` flag.
+- Dynamic semantic chat titles landed dark behind the `dynamicChatTitles` flag,
+  with durable manual ownership, milestone refreshes, provider/OSC precedence,
+  and a “Resume automatic titles” control.
 
 ## Validation
 
@@ -55,6 +58,20 @@ reset this file.
 - `cargo check` — workspace check clean.
 - `cargo test -p pickforge-core --lib --locked` — 391 tests green, including
   login-shell quoting, noisy-profile output, and daemon health regressions.
+- `bun run test:unit -- chatAutoName flags agentChat` — 111 focused title,
+  precedence, cadence, restart-lock, manual-race, and flag-registry tests green.
+- `cargo test -p pickforge-core db::tests::` — 35 database migration and narrow
+  write tests green.
+- `cargo check -p pickforge-tauri` — title metadata IPC commands compile clean
+  (one pre-existing unused-function warning).
+- `bun run vrt -- tests/vrt/dropdown.spec.ts` — 2 focused menu tests green,
+  including automatic-title resume visibility.
+- `bunx vitest run` — 121 focused title ownership, ordering, lifecycle,
+  failed-turn, browser-mock, privacy, and default-off flag tests green.
+- `cargo test -p pickforge-core narrow_chat_updates_touch_only_their_column` —
+  monotonic title CAS, legacy sentinel adoption, and narrow provider writes green.
+- `bun run vrt -- tests/vrt/screens.spec.ts` — 5 existing browser baselines green
+  without updating snapshots.
 - Live Acorns macOS run — Tailnet attach, deterministic device launch, VM-service
   tunnel, widget tree, node selection, hot reload, and stop all passed.
 

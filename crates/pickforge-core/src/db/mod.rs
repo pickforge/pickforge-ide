@@ -34,7 +34,7 @@ const RUST_BASELINE: u32 = 11;
 
 /// Latest schema version this build understands. Bump (and add a numbered Rust
 /// migration in `apply_rust_migrations`) whenever the schema changes from here.
-const LATEST_VERSION: u32 = 15;
+const LATEST_VERSION: u32 = 16;
 
 /// The full, current desired schema. Every statement is `IF NOT EXISTS`, so
 /// running it against a database that already holds some tables only fills the
@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS chats (
   chat_id          TEXT NOT NULL PRIMARY KEY,
   project_root     TEXT NOT NULL REFERENCES projects(project_root) ON DELETE CASCADE,
   title            TEXT NOT NULL,
+  title_source     TEXT NOT NULL DEFAULT 'user'
+                   CHECK (title_source IN ('default', 'auto', 'user')),
+  title_updated_at INTEGER NOT NULL DEFAULT 0,
   agent_id         TEXT NOT NULL,
   kind             TEXT NOT NULL DEFAULT 'terminal',
   skill_id         TEXT,
@@ -263,6 +266,8 @@ const RECONCILABLE_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "status", "ALTER TABLE chats ADD COLUMN status TEXT"), // Drift v7
     ("chats", "task_brief_text", "ALTER TABLE chats ADD COLUMN task_brief_text TEXT"), // Drift v7
     ("chats", "kind", "ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'terminal'"),
+    ("chats", "title_source", "ALTER TABLE chats ADD COLUMN title_source TEXT NOT NULL DEFAULT 'user' CHECK (title_source IN ('default', 'auto', 'user'))"),
+    ("chats", "title_updated_at", "ALTER TABLE chats ADD COLUMN title_updated_at INTEGER NOT NULL DEFAULT 0"),
     // projects — archived_at backfilled for databases that came through v2.
     ("projects", "archived_at", "ALTER TABLE projects ADD COLUMN archived_at INTEGER"), // Drift v9
     ("projects", "remote_host", "ALTER TABLE projects ADD COLUMN remote_host TEXT"),
@@ -365,6 +370,18 @@ fn reconcile_data(
         )?;
     }
 
+    // Rust v16: rows reconciled from Drift/unversioned schemas skip the numbered
+    // migration path, so initialize their title metadata here too. A zero
+    // timestamp is the sentinel written by the added-column default.
+    tx.execute_batch(
+        "UPDATE chats
+            SET title_source = CASE
+                WHEN trim(title) = 'New chat' THEN 'default'
+                ELSE 'user'
+              END,
+                title_updated_at = created_at
+          WHERE title_updated_at = 0;",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -502,6 +519,29 @@ fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Resul
             }
             Ok(())
         }
+        16 => {
+            if !has_column(tx, "chats", "title_source")? {
+                tx.execute_batch(
+                    "ALTER TABLE chats ADD COLUMN title_source TEXT NOT NULL DEFAULT 'user'
+                     CHECK (title_source IN ('default', 'auto', 'user'));",
+                )?;
+            }
+            if !has_column(tx, "chats", "title_updated_at")? {
+                tx.execute_batch(
+                    "ALTER TABLE chats ADD COLUMN title_updated_at INTEGER NOT NULL DEFAULT 0;",
+                )?;
+            }
+            tx.execute_batch(
+                "UPDATE chats
+                    SET title_source = CASE
+                        WHEN trim(title) = 'New chat' THEN 'default'
+                        ELSE 'user'
+                      END,
+                        title_updated_at = created_at
+                  WHERE title_updated_at = 0;",
+            )?;
+            Ok(())
+        }
         _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
     }
 }
@@ -541,6 +581,16 @@ fn migrate(conn: &mut Connection) -> Result<(), DbError> {
         apply_rust_migrations(conn, uv)?;
     }
     Ok(())
+}
+
+fn validate_title_source(title_source: &str) -> Result<(), DbError> {
+    if matches!(title_source, "default" | "auto" | "user") {
+        Ok(())
+    } else {
+        Err(DbError::Other(format!(
+            "invalid chat title source: {title_source}"
+        )))
+    }
 }
 
 /// The SQLite-backed store. Lives behind Tauri's managed `State`.
@@ -705,18 +755,32 @@ impl Database {
     pub fn upsert_chat(&self, c: &Chat) -> Result<(), DbError> {
         self.lock().execute(
             "INSERT INTO chats \
-               (chat_id, project_root, title, agent_id, kind, skill_id, session_id, labels_json, \
-                status, task_brief_text, created_at, last_activity_at, sort_order) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) \
+               (chat_id, project_root, title, title_source, title_updated_at, agent_id, kind, \
+                skill_id, session_id, labels_json, status, task_brief_text, created_at, \
+                last_activity_at, sort_order) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) \
              ON CONFLICT(chat_id) DO UPDATE SET \
-               title = excluded.title, agent_id = excluded.agent_id, kind = excluded.kind, \
-               skill_id = excluded.skill_id, session_id = excluded.session_id, \
-               labels_json = excluded.labels_json, status = excluded.status, \
-               task_brief_text = excluded.task_brief_text, \
+               title = excluded.title, title_source = excluded.title_source, \
+               title_updated_at = excluded.title_updated_at, agent_id = excluded.agent_id, \
+               kind = excluded.kind, skill_id = excluded.skill_id, \
+               session_id = excluded.session_id, labels_json = excluded.labels_json, \
+               status = excluded.status, task_brief_text = excluded.task_brief_text, \
                last_activity_at = excluded.last_activity_at, sort_order = excluded.sort_order",
             params![
-                c.chat_id, c.project_root, c.title, c.agent_id, c.kind, c.skill_id, c.session_id,
-                c.labels_json, c.status, c.task_brief_text, c.created_at, c.last_activity_at,
+                c.chat_id,
+                c.project_root,
+                c.title,
+                c.title_source,
+                c.title_updated_at,
+                c.agent_id,
+                c.kind,
+                c.skill_id,
+                c.session_id,
+                c.labels_json,
+                c.status,
+                c.task_brief_text,
+                c.created_at,
+                c.last_activity_at,
                 c.sort_order
             ],
         )?;
@@ -754,14 +818,88 @@ impl Database {
         Ok(())
     }
 
-    /// Update only a chat's `title`, leaving every other column untouched. The
-    /// OSC/auto-name title flow uses this so it can't race the full-row
-    /// `upsert_chat` (which would otherwise clobber a concurrently-written
-    /// `session_id`). A no-op for a chat_id that doesn't exist.
+    /// Update only a chat's title, preserving the legacy storage semantics used
+    /// while dynamic titles are disabled.
     pub fn update_chat_title(&self, chat_id: &str, title: &str) -> Result<(), DbError> {
         self.lock().execute(
             "UPDATE chats SET title = ?2 WHERE chat_id = ?1",
             params![chat_id, title],
+        )?;
+        Ok(())
+    }
+
+    /// Atomically update a chat's title and provenance, leaving every unrelated
+    /// column untouched so a concurrent recovery-handle write cannot be lost.
+    /// Automatic writes are compare-and-set: a manual owner that lands between
+    /// title selection and persistence wins. Returns whether the row was updated.
+    pub fn update_chat_title_with_metadata(
+        &self,
+        chat_id: &str,
+        title: &str,
+        title_source: &str,
+        title_updated_at: i64,
+    ) -> Result<bool, DbError> {
+        validate_title_source(title_source)?;
+        let changed = if title_source == "auto" {
+            self.lock().execute(
+                "UPDATE chats
+                    SET title = ?2, title_source = ?3, title_updated_at = ?4
+                  WHERE chat_id = ?1
+                    AND title_updated_at < ?4
+                    AND (
+                      title_source = 'auto'
+                      OR (
+                        title_source = 'default'
+                        AND title = 'New chat'
+                      )
+                      OR (
+                        title_source = 'user'
+                        AND title_updated_at = 0
+                        AND title = 'New chat'
+                      )
+                    )",
+                params![chat_id, title, title_source, title_updated_at],
+            )?
+        } else {
+            self.lock().execute(
+                "UPDATE chats
+                    SET title = ?2, title_source = ?3, title_updated_at = ?4
+                  WHERE chat_id = ?1",
+                params![chat_id, title, title_source, title_updated_at],
+            )?
+        };
+        Ok(changed > 0)
+    }
+
+    /// Change automatic/manual ownership without rewriting the visible title.
+    pub fn update_chat_title_ownership(
+        &self,
+        chat_id: &str,
+        title_source: &str,
+        title_updated_at: i64,
+    ) -> Result<(), DbError> {
+        validate_title_source(title_source)?;
+        self.lock().execute(
+            "UPDATE chats
+                SET title_source = ?2, title_updated_at = ?3
+              WHERE chat_id = ?1",
+            params![chat_id, title_source, title_updated_at],
+        )?;
+        Ok(())
+    }
+
+    /// Update only the provider identity fields. Provider switches use this
+    /// instead of a full-row upsert so a stale store snapshot cannot overwrite a
+    /// concurrent manual title/provenance or recovery-handle write.
+    pub fn update_chat_agent(
+        &self,
+        chat_id: &str,
+        agent_id: &str,
+        kind: &str,
+    ) -> Result<(), DbError> {
+        self.lock().execute(
+            "UPDATE chats SET agent_id = ?2, kind = ?3 WHERE chat_id = ?1",
+            params![chat_id, agent_id, kind],
         )?;
         Ok(())
     }
@@ -1296,6 +1434,8 @@ fn chat_from_row(row: &Row) -> rusqlite::Result<Chat> {
         chat_id: row.get("chat_id")?,
         project_root: row.get("project_root")?,
         title: row.get("title")?,
+        title_source: row.get("title_source")?,
+        title_updated_at: row.get("title_updated_at")?,
         agent_id: row.get("agent_id")?,
         kind: row.get("kind")?,
         skill_id: row.get("skill_id")?,
@@ -1592,6 +1732,8 @@ mod tests {
             chat_id: "c1".into(),
             project_root: "/p".into(),
             title: "Chat".into(),
+            title_source: "user".into(),
+            title_updated_at: 1,
             agent_id: "claude".into(),
             kind: "agent".into(),
             skill_id: None,
@@ -1638,6 +1780,8 @@ mod tests {
             chat_id: "c1".into(),
             project_root: "/p".into(),
             title: "New chat".into(),
+            title_source: "default".into(),
+            title_updated_at: 1,
             agent_id: "claude".into(),
             kind: "terminal".into(),
             skill_id: None,
@@ -1651,18 +1795,76 @@ mod tests {
         })
         .unwrap();
 
-        // Title update leaves session_id (and everything else) alone.
+        // Legacy title-only writes preserve provenance/timestamp exactly.
+        db.update_chat_title("c1", "Legacy auto title").unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title_source, "default");
+        assert_eq!(c.title_updated_at, 1);
+        // A non-default legacy title with default provenance is ambiguous and
+        // therefore locked; only the exact untouched sentinel may be adopted.
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Must not reclassify legacy", "auto", 4)
+            .unwrap());
+        db.update_chat_title("c1", "New chat").unwrap();
+
+        // Flagged title metadata update leaves session_id (and everything else) alone.
         db.update_chat_session_id("c1", Some("dtach:pf-abc123")).unwrap();
-        db.update_chat_title("c1", "Fix the login bug").unwrap();
+        db.update_chat_title_with_metadata("c1", "Fix the login bug", "auto", 4)
+            .unwrap();
         let c = &db.list_chats("/p").unwrap()[0];
         assert_eq!(c.title, "Fix the login bug");
+        assert_eq!(c.title_source, "auto");
+        assert_eq!(c.title_updated_at, 4);
         assert_eq!(c.session_id.as_deref(), Some("dtach:pf-abc123"));
         assert_eq!(c.last_activity_at, 3); // untouched
+
+        // Automatic writes are monotonic: an older/equal request cannot replace
+        // a newer provider title even when it reaches SQLite later.
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Older provider title", "auto", 3)
+            .unwrap());
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Equal-time provider title", "auto", 4)
+            .unwrap());
+        assert!(db
+            .update_chat_title_with_metadata("c1", "Newest provider title", "auto", 6)
+            .unwrap());
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Newest provider title");
+        assert_eq!(c.title_updated_at, 6);
+
+        // Ownership can be resumed without rewriting the visible title.
+        db.update_chat_title_with_metadata("c1", "My deliberate title", "user", 7)
+            .unwrap();
+        db.update_chat_title_ownership("c1", "user", 8).unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_updated_at, 8);
+
+        // A provider switch is a narrow write: title/provenance from a newer
+        // manual update survive even if the switch began from an older snapshot.
+        db.update_chat_agent("c1", "codex", "agent").unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.agent_id, "codex");
+        assert_eq!(c.kind, "agent");
+        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_updated_at, 8);
+
+        // A stale automatic write cannot clobber manual ownership that won the race.
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Stale provider title", "auto", 9)
+            .unwrap());
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_updated_at, 8);
 
         // session_id update leaves the title alone; None clears it.
         db.update_chat_session_id("c1", None).unwrap();
         let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "Fix the login bug");
+        assert_eq!(c.title, "My deliberate title");
         assert!(c.session_id.is_none());
 
         // sort_order update leaves a live session_id (and title) alone — the
@@ -1672,11 +1874,31 @@ mod tests {
         let c = &db.list_chats("/p").unwrap()[0];
         assert_eq!(c.sort_order, 7);
         assert_eq!(c.session_id.as_deref(), Some("tmux:pf-keepme"));
-        assert_eq!(c.title, "Fix the login bug");
+        assert_eq!(c.title, "My deliberate title");
+
+        // A pre-flag untouched sentinel (user/0/exact default) is adoptable,
+        // while a non-default legacy user title remains locked.
+        db.update_chat_title_with_metadata("c1", "New chat", "user", 0)
+            .unwrap();
+        assert!(db
+            .update_chat_title_with_metadata("c1", "Adopted automatic title", "auto", 10)
+            .unwrap());
+        db.update_chat_title_with_metadata("c1", "Legacy custom title", "user", 0)
+            .unwrap();
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Must not replace custom", "auto", 11)
+            .unwrap());
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Legacy custom title");
+        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_updated_at, 0);
 
         // All narrow writes are silent no-ops for an unknown chat.
-        db.update_chat_title("nope", "x").unwrap();
+        db.update_chat_title_with_metadata("nope", "x", "user", 9)
+            .unwrap();
+        db.update_chat_title_ownership("nope", "auto", 10).unwrap();
         db.update_chat_session_id("nope", Some("y")).unwrap();
+        db.update_chat_agent("nope", "codex", "agent").unwrap();
         db.update_chat_sort_order("nope", 3).unwrap();
         assert_eq!(db.list_chats("/p").unwrap().len(), 1);
     }
@@ -2042,6 +2264,17 @@ mod tests {
                    last_opened_at INTEGER NOT NULL,
                    sort_order     INTEGER NOT NULL DEFAULT 0
                  );
+                 CREATE TABLE chats (
+                   chat_id          TEXT NOT NULL PRIMARY KEY,
+                   project_root     TEXT NOT NULL,
+                   title            TEXT NOT NULL,
+                   agent_id         TEXT NOT NULL,
+                   skill_id         TEXT,
+                   session_id       TEXT,
+                   created_at       INTEGER NOT NULL,
+                   last_activity_at INTEGER NOT NULL,
+                   sort_order       INTEGER NOT NULL DEFAULT 0
+                 );
                  CREATE TABLE project_settings (
                    project_root  TEXT NOT NULL PRIMARY KEY,
                    vm_service_url TEXT,
@@ -2053,6 +2286,9 @@ mod tests {
                  INSERT INTO projects
                    (project_root, display_name, created_at, last_opened_at)
                    VALUES ('/p', 'Proj', 1, 2);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, created_at, last_activity_at)
+                   VALUES ('c1', '/p', 'New chat', 'claude', 10, 11);
                  INSERT INTO project_settings (project_root) VALUES ('/p');
                  PRAGMA user_version = 2;",
             )
@@ -2077,6 +2313,9 @@ mod tests {
             assert_eq!(db.list_projects(false).unwrap().len(), 1);
             let loaded = db.get_settings("/p").unwrap().unwrap();
             assert_eq!(loaded.connection_mode, "auto"); // DEFAULT backfilled.
+            let chat = db.list_chats("/p").unwrap().remove(0);
+            assert_eq!(chat.title_source, "default");
+            assert_eq!(chat.title_updated_at, 10);
 
             // Missing tables were created — their DAOs are usable.
             db.insert_run(&RunSessionLog {
@@ -2426,6 +2665,68 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[test]
+    fn rust_v15_chat_titles_migrate_with_conservative_provenance() {
+        let path = temp_db_path("rust-v15-chat-title-metadata");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE projects (
+                   project_root   TEXT NOT NULL PRIMARY KEY,
+                   display_name   TEXT NOT NULL,
+                   created_at     INTEGER NOT NULL,
+                   last_opened_at INTEGER NOT NULL,
+                   sort_order     INTEGER NOT NULL DEFAULT 0,
+                   archived_at    INTEGER,
+                   remote_host    TEXT,
+                   remote_root    TEXT
+                 );
+                 CREATE TABLE chats (
+                   chat_id          TEXT NOT NULL PRIMARY KEY,
+                   project_root     TEXT NOT NULL REFERENCES projects(project_root) ON DELETE CASCADE,
+                   title            TEXT NOT NULL,
+                   agent_id         TEXT NOT NULL,
+                   kind             TEXT NOT NULL DEFAULT 'terminal',
+                   skill_id         TEXT,
+                   session_id       TEXT,
+                   labels_json      TEXT,
+                   status           TEXT,
+                   task_brief_text  TEXT,
+                   created_at       INTEGER NOT NULL,
+                   last_activity_at INTEGER NOT NULL,
+                   sort_order       INTEGER NOT NULL DEFAULT 0
+                 );
+                 INSERT INTO projects
+                   (project_root, display_name, created_at, last_opened_at)
+                   VALUES ('/p', 'Proj', 1, 2);
+                 INSERT INTO chats
+                   (chat_id, project_root, title, agent_id, created_at, last_activity_at)
+                   VALUES
+                     ('default', '/p', 'New chat', 'claude', 100, 101),
+                     ('named', '/p', 'Deliberate title', 'codex', 200, 201);
+                 PRAGMA user_version = 15;",
+            )
+            .unwrap();
+            assert!(!has_column(&conn, "chats", "title_source").unwrap());
+            assert!(!has_column(&conn, "chats", "title_updated_at").unwrap());
+        }
+
+        {
+            let db = Database::open(&path).unwrap();
+            assert_eq!(user_version(&db.lock()), LATEST_VERSION);
+            let chats = db.list_chats("/p").unwrap();
+            let default = chats.iter().find(|chat| chat.chat_id == "default").unwrap();
+            assert_eq!(default.title_source, "default");
+            assert_eq!(default.title_updated_at, 100);
+            let named = chats.iter().find(|chat| chat.chat_id == "named").unwrap();
+            assert_eq!(named.title_source, "user");
+            assert_eq!(named.title_updated_at, 200);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn seed_agent_chat(db: &Database, project_root: &str, chat_id: &str) {
         db.upsert_project(&Project {
             project_root: project_root.into(),
@@ -2442,6 +2743,8 @@ mod tests {
             chat_id: chat_id.into(),
             project_root: project_root.into(),
             title: chat_id.into(),
+            title_source: "user".into(),
+            title_updated_at: 1,
             agent_id: "agent".into(),
             kind: "agent".into(),
             skill_id: None,

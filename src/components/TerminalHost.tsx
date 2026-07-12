@@ -203,6 +203,10 @@ export function TerminalHost(props: {
    *  user closed it, or it was the survivor swapped out by a primary
    *  promotion. Lets the host drop per-pane state (agent ownership, activity). */
   onPaneClosed?: (paneId: string) => void;
+  /** Called for the PTY/session lifecycle exit even when its pane remains mounted
+   *  to preserve output. Unlike OSC title restoration, this boundary is emitted
+   *  by the process lifecycle and always revokes terminal title authority. */
+  onPaneExited?: (paneId: string) => void;
   /** Forwarded from every pane: the shell/agent's OSC 2 terminal title, tagged
    *  with the pane id — the host maps it to this chat's name. */
   onTitle?: (title: string, paneId: string) => void;
@@ -646,9 +650,11 @@ export function TerminalHost(props: {
                       // agent launch queued before its handle existed.
                       if (leaf.id === primaryId()) flushPrimaryCmd();
                     }}
-                    onExit={(exit) =>
-                      exit.preserveBuffer ? markPtyDead(leaf.id) : requestClose(leaf.id)
-                    }
+                    onExit={(exit) => {
+                      props.onPaneExited?.(leaf.id);
+                      if (exit.preserveBuffer) markPtyDead(leaf.id);
+                      else requestClose(leaf.id);
+                    }}
                   />
                 </div>
               </div>

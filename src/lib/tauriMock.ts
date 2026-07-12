@@ -2,6 +2,7 @@
 // window.__TAURI_INTERNALS__ so the app renders with sample data in a plain
 // browser (Playwright), with no Tauri runtime.
 import type { AgentEvent, AgentTimelineEntry } from "./agentChat";
+import type { Chat } from "./db";
 
 const now = 1_750_000_000_000;
 const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
@@ -9,7 +10,7 @@ const VRT_REMOTE_DEVICE_FIXTURE_KEY = "pickforge.vrt.remoteDeviceFixture";
 const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
 const VRT_REMOTE_ROOT = "/Users/elberte/Projects/Personal/sample_flutter_app";
 
-const AGENT_CHAT_FIXTURE = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
+const AGENT_CHAT_FIXTURE: Chat = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
 
 const SAMPLE_PROJECTS = [
   { projectRoot: "/home/dev/acme-app", displayName: "acme-app", createdAt: now, lastOpenedAt: now, sortOrder: 0, archivedAt: null, remoteHost: null, remoteRoot: null },
@@ -30,10 +31,10 @@ function projectsForFixture() {
     ? { ...project, remoteHost: VRT_REMOTE_HOST, remoteRoot: VRT_REMOTE_ROOT }
     : project);
 }
-const SAMPLE_CHATS = [
-  { chatId: "chat-1", projectRoot: "/home/dev/acme-app", title: "Login screen", kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
-  { chatId: "chat-2", projectRoot: "/home/dev/acme-app", title: "Settings polish", kind: "terminal", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 1 },
-  { chatId: "chat-3", projectRoot: "/home/dev/widgets", title: "Slider refactor", kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
+const SAMPLE_CHATS: Chat[] = [
+  { chatId: "chat-1", projectRoot: "/home/dev/acme-app", title: "Login screen", titleSource: "user", titleUpdatedAt: now, kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
+  { chatId: "chat-2", projectRoot: "/home/dev/acme-app", title: "Settings polish", titleSource: "user", titleUpdatedAt: now, kind: "terminal", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 1 },
+  { chatId: "chat-3", projectRoot: "/home/dev/widgets", title: "Slider refactor", titleSource: "user", titleUpdatedAt: now, kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
 ];
 const SAMPLE_PICKS = [
   { id: 1, projectRoot: "/home/dev/acme-app", widgetClass: "LoginButton", creationFile: "lib/login.dart", creationLine: 42, skillId: "s", agentId: "claudeCode", terminalId: "t", chatId: null, pickedAt: now, widgetContextJson: "{}" },
@@ -188,6 +189,64 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   agent_usage_summary: () => MOCK_USAGE_SUMMARY,
   projects_list: () => projectsForFixture(),
   chats_list: (a) => chatsForProject(a.projectRoot),
+  chat_upsert: (a) => {
+    const chat = a.chat as Chat;
+    const index = SAMPLE_CHATS.findIndex((item) => item.chatId === chat.chatId);
+    if (index >= 0) SAMPLE_CHATS[index] = { ...chat };
+    else SAMPLE_CHATS.push({ ...chat });
+    return null;
+  },
+  update_chat_title: (a) => {
+    const chat = SAMPLE_CHATS.find((item) => item.chatId === a.chatId);
+    if (!chat) return false;
+    const source = a.titleSource;
+    const updatedAt = a.titleUpdatedAt;
+    if (source === undefined && updatedAt === undefined) {
+      chat.title = String(a.title);
+      return true;
+    }
+    if (
+      (source !== "default" && source !== "auto" && source !== "user") ||
+      typeof updatedAt !== "number"
+    ) {
+      throw new Error("titleSource and titleUpdatedAt must be supplied together");
+    }
+    if (
+      source === "auto" &&
+      !(
+        updatedAt > chat.titleUpdatedAt &&
+        (
+          chat.titleSource === "auto" ||
+          (chat.titleSource === "default" && chat.title === "New chat") ||
+          (
+            chat.titleSource === "user" &&
+            chat.titleUpdatedAt === 0 &&
+            chat.title === "New chat"
+          )
+        )
+      )
+    ) {
+      return false;
+    }
+    chat.title = String(a.title);
+    chat.titleSource = source;
+    chat.titleUpdatedAt = updatedAt;
+    return true;
+  },
+  update_chat_title_ownership: (a) => {
+    const chat = SAMPLE_CHATS.find((item) => item.chatId === a.chatId);
+    if (!chat) return null;
+    chat.titleSource = a.titleSource as Chat["titleSource"];
+    chat.titleUpdatedAt = Number(a.titleUpdatedAt);
+    return null;
+  },
+  update_chat_agent: (a) => {
+    const chat = SAMPLE_CHATS.find((item) => item.chatId === a.chatId);
+    if (!chat) return null;
+    chat.agentId = String(a.agentId);
+    chat.kind = String(a.kind);
+    return null;
+  },
   settings_get: () => null,
   telemetry_get: () => MOCK_TELEMETRY,
   telemetry_set: (a) => {

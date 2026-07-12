@@ -23,7 +23,8 @@ pub use daemon::{
     DaemonStatus, RemoteHostDaemon,
 };
 pub use detect::{
-    remote_detect_binaries, remote_nearest_pubspec, remote_pubspec_uses_flutter, RemoteDetectError,
+    remote_detect_binaries, remote_flutter_devices, remote_nearest_pubspec,
+    remote_pubspec_uses_flutter, RemoteDetectError, RemoteFlutterDevice,
 };
 pub use health::{probe_host, probe_tailnet_peer, ProbeState, RemoteHostHealth};
 pub use protocol::{

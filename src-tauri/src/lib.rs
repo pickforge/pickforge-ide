@@ -225,6 +225,7 @@ pub fn run() {
             remote_commands::remote_nearest_pubspec,
             remote_commands::remote_detect_binaries,
             remote_commands::remote_pubspec_uses_flutter,
+            remote_commands::remote_flutter_devices,
             remote_commands::remote_tunnel_open,
             remote_commands::remote_tunnel_close,
             picklab_commands::picklab_status,

@@ -62,7 +62,7 @@ describe("defaultCommand", () => {
 });
 
 describe("discoverRemoteRunTargets", () => {
-  it("uses the Flutter app found below a Dart workspace root and leaves device selection to the host", async () => {
+  it("uses the Flutter app found below a Dart workspace root and requires deterministic device selection", async () => {
     remote.nearestPubspec.mockResolvedValue("/srv/repo/apps/app");
     remote.binaries.mockResolvedValue([true]);
     remote.pubspecUsesFlutter.mockResolvedValue(true);
@@ -75,7 +75,7 @@ describe("discoverRemoteRunTargets", () => {
         command: "flutter --color run",
         cwd: "/srv/repo/apps/app",
         capabilities: expect.not.arrayContaining(["captureScreenshot"]),
-        needsDevice: false,
+        needsDevice: true,
         inspectorKind: "vmService",
       }),
     ]);

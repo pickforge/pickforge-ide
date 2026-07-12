@@ -1428,6 +1428,41 @@ body.pf-resizing .pf-dock-panel {
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
 }
+.pf-remote-device-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  min-width: 0;
+}
+.pf-run-device-state {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--pf-warning);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.pf-run-device-retry {
+  flex: none;
+  border: 0;
+  border-radius: var(--pf-radius-sm);
+  background: transparent;
+  color: var(--pf-text-med);
+  cursor: pointer;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: var(--pf-tracking-eyebrow);
+  text-transform: uppercase;
+  transition: color var(--pf-dur-fast) var(--pf-ease-forge),
+    background var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-run-device-retry:hover {
+  background: var(--pf-surface-3);
+  color: var(--pf-text-hi);
+}
 /* Quiet, neutral support-tier badge on the active target. Reuses StatusPill;
    the wrapper just carries the tooltip and keeps the pill from shrinking. */
 .pf-run-tier {
@@ -1674,6 +1709,10 @@ body.pf-window-resizing .pf-workbench-terminal::after {
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   box-shadow: var(--pf-shadow-overlay);
   animation: pf-menu-in var(--pf-dur-fast) var(--pf-ease-forge) both;
+}
+.pf-remote-device-picker .pf-dropdown-menu {
+  right: auto;
+  min-width: max(100%, 12rem);
 }
 /* Bottom-anchored pickers (the chat composer) open upward. */
 .pf-dropdown-menu--up {

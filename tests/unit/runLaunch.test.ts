@@ -1,8 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
+  root: "/local/app",
   remote: { host: "mac-mini", remoteRoot: "/srv/app" } as { host: string; remoteRoot: string } | null,
   status: "idle",
+  selected: "macos",
+  remoteDevices: {
+    status: "ready",
+    devices: [{ id: "macos", name: "macOS", isSupported: true, emulator: false }],
+    error: null,
+  } as {
+    status: "ready" | "error";
+    devices: Array<{ id: string; name: string; isSupported: boolean; emulator: boolean }>;
+    error: string | null;
+  },
 }));
 
 const deps = vi.hoisted(() => ({
@@ -14,6 +25,7 @@ const deps = vi.hoisted(() => ({
   ensureMcp: vi.fn(),
   mcpStarted: vi.fn(),
   setRunDevice: vi.fn(),
+  refreshRemoteDevices: vi.fn(),
 }));
 
 const target = {
@@ -38,8 +50,19 @@ vi.mock("../../src/stores/deviceList", () => ({
 }));
 
 vi.mock("../../src/stores/runDevice", () => ({
-  selectedDevice: () => null,
+  selectedDevice: () => state.selected,
   setRunDevice: deps.setRunDevice,
+}));
+
+vi.mock("../../src/stores/remoteDevices", () => ({
+  remoteDeviceState: () => state.remoteDevices,
+  refreshRemoteDevices: deps.refreshRemoteDevices,
+  resolveRemoteDevice: (
+    devices: typeof state.remoteDevices.devices,
+    storedId: string,
+  ) => storedId
+    ? devices.find((device) => device.id === storedId) ?? null
+    : devices.length === 1 ? devices[0] : null,
 }));
 
 vi.mock("../../src/stores/runConsole", () => ({
@@ -59,7 +82,7 @@ vi.mock("../../src/stores/mcp", () => ({
 }));
 
 vi.mock("../../src/stores/workspace", () => ({
-  workspace: { activeRoot: "/local/app" },
+  workspace: { get activeRoot() { return state.root; } },
 }));
 
 vi.mock("../../src/lib/device", () => ({
@@ -70,19 +93,27 @@ vi.mock("../../src/lib/device", () => ({
 vi.mock("../../src/lib/runTargets", () => ({
   hasCapability: () => false,
   isCompatibleDevice: () => true,
-  withDevice: (value: typeof target) => value.command,
+  withDevice: (value: typeof target, serial: string | null) =>
+    serial ? `${value.command} -d '${serial}'` : value.command,
 }));
 
 vi.mock("../../src/lib/remoteContext", () => ({
-  remotePtyFor: () => state.remote,
+  remotePtyFor: (root: string) => root === "/local/app" ? state.remote : null,
 }));
 
 import { launchActiveTarget } from "../../src/stores/runLaunch";
 
 describe("launchActiveTarget remote routing", () => {
   beforeEach(() => {
+    state.root = "/local/app";
     state.remote = { host: "mac-mini", remoteRoot: "/srv/app" };
     state.status = "idle";
+    state.selected = "macos";
+    state.remoteDevices = {
+      status: "ready",
+      devices: [{ id: "macos", name: "macOS", isSupported: true, emulator: false }],
+      error: null,
+    };
     deps.openConsole.mockReset();
     deps.startRun.mockReset().mockReturnValue({ key: 9 });
     deps.refreshDevices.mockReset();
@@ -91,17 +122,19 @@ describe("launchActiveTarget remote routing", () => {
     deps.ensureMcp.mockReset().mockResolvedValue(undefined);
     deps.mcpStarted.mockReset();
     deps.setRunDevice.mockReset();
+    deps.refreshRemoteDevices.mockReset().mockImplementation(async () => state.remoteDevices);
   });
 
-  it("uses the captured remote PTY and skips local device resolution", async () => {
+  it("launches the selected remote device with a deterministic -d argument", async () => {
     await launchActiveTarget();
 
     expect(deps.refreshDevices).not.toHaveBeenCalled();
-    expect(deps.setRunDevice).not.toHaveBeenCalled();
+    expect(deps.refreshRemoteDevices).toHaveBeenCalledWith("/local/app", state.remote);
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/local/app", "macos", state.remote);
     expect(deps.startRun).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "flutter --color run" }),
+      expect.objectContaining({ command: "flutter --color run -d 'macos'" }),
       "/local/app",
-      expect.objectContaining({ serial: null }),
+      expect.objectContaining({ serial: "macos" }),
       state.remote,
     );
     expect(deps.armVm).toHaveBeenCalledWith({
@@ -109,6 +142,62 @@ describe("launchActiveTarget remote routing", () => {
       projectRoot: "/local/app",
       runId: "run-9",
     });
+  });
+
+  it("auto-selects the only supported remote device", async () => {
+    state.selected = "";
+
+    await launchActiveTarget();
+
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/local/app", "macos", state.remote);
+    expect(deps.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "flutter --color run -d 'macos'" }),
+      expect.anything(),
+      expect.anything(),
+      state.remote,
+    );
+  });
+
+  it("blocks multiple devices until the user makes an explicit choice", async () => {
+    state.selected = "";
+    state.remoteDevices.devices.push({ id: "chrome", name: "Chrome", isSupported: true, emulator: false });
+
+    await launchActiveTarget();
+
+    expect(deps.startRun).not.toHaveBeenCalled();
+  });
+
+  it("blocks a stale saved device instead of silently switching", async () => {
+    state.selected = "chrome";
+
+    await launchActiveTarget();
+
+    expect(deps.startRun).not.toHaveBeenCalled();
+  });
+
+  it("surfaces discovery failures without launching bare flutter run", async () => {
+    state.remoteDevices = { status: "error", devices: [], error: "SSH unavailable" };
+
+    await launchActiveTarget();
+
+    expect(deps.startRun).not.toHaveBeenCalled();
+  });
+
+  it("cancels when the active project changes during remote discovery", async () => {
+    let resolveDiscovery!: (value: typeof state.remoteDevices) => void;
+    deps.refreshRemoteDevices.mockImplementation(() => new Promise((resolve) => {
+      resolveDiscovery = resolve;
+    }));
+
+    const launch = launchActiveTarget();
+    await vi.waitFor(() => expect(deps.refreshRemoteDevices).toHaveBeenCalledTimes(1));
+    state.root = "/other/app";
+    resolveDiscovery(state.remoteDevices);
+    await launch;
+
+    expect(deps.setRunDevice).not.toHaveBeenCalled();
+    expect(deps.disconnectVm).not.toHaveBeenCalled();
+    expect(deps.startRun).not.toHaveBeenCalled();
   });
 
   it("ignores a second Run click while disconnecting the previous inspector", async () => {
@@ -120,7 +209,7 @@ describe("launchActiveTarget remote routing", () => {
     const first = launchActiveTarget();
     const second = launchActiveTarget();
 
-    expect(deps.disconnectVm).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(deps.disconnectVm).toHaveBeenCalledTimes(1));
     expect(deps.startRun).not.toHaveBeenCalled();
     resolveDisconnect();
     await Promise.all([first, second]);

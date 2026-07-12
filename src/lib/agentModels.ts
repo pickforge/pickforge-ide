@@ -170,8 +170,14 @@ function uniqueModels(models: AgentModelOption[]): AgentModelOption[] {
 /** Parse the stable whitespace table emitted by `pi --list-models`. */
 export function parsePiModelCatalog(raw: string): AgentModelOption[] {
   const models: AgentModelOption[] = [];
+  let sawHeader = false;
   for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim() || /^\s*provider\s+model\s+/i.test(line)) continue;
+    if (!line.trim()) continue;
+    if (/^\s*provider\s+model\s+/i.test(line)) {
+      sawHeader = true;
+      continue;
+    }
+    if (!sawHeader) continue;
     const match = line.match(/^\s*(\S+)\s+(\S+)\s+/);
     if (!match) continue;
     const provider = match[1];

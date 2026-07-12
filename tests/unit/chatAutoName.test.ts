@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // pulls in the Tauri db + a SolidJS store). Stub the store with an in-memory
 // chat map so the title logic can be exercised with no runtime. solid-js's
 // createSignal is used for the typing-animation overrides; it works under node.
-const flags = vi.hoisted(() => ({ dynamicChatTitles: false }));
+const flags = vi.hoisted(() => ({
+  dynamicChatTitles: false,
+  ompPiAgents: undefined as boolean | undefined,
+}));
 
 const store = vi.hoisted(() => {
   const chats = new Map<
@@ -34,7 +37,13 @@ vi.mock("../../src/stores/workspace", () => ({
   resumeAutomaticChatTitles: store.resumeAutomaticChatTitles,
 }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) => key === "dynamicChatTitles" && flags.dynamicChatTitles,
+  flagEnabled: (key: string) =>
+    key === "dynamicChatTitles"
+      ? flags.dynamicChatTitles
+      : key === "ompPiAgents" && (flags.ompPiAgents ?? false),
+  setFlagOverride: (key: string, enabled: boolean | undefined) => {
+    if (key === "ompPiAgents") flags.ompPiAgents = enabled;
+  },
 }));
 import { setFlagOverride } from "../../src/stores/flags";
 

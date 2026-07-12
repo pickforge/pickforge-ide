@@ -116,6 +116,21 @@ describe("OMP/Pi discovery parsing and failures", () => {
     ]);
   });
 
+  it("rejects Pi diagnostics that omit the catalog header", async () => {
+    const { models } = await loadModules();
+    const diagnostic = models.diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi v0.51.3",
+      helpOutput: "--provider <provider> --model <model>",
+      modelsOutput: "No models available. Configure authentication first.",
+      errors: [],
+    });
+
+    expect(diagnostic.models).toEqual([]);
+    expect(diagnostic.capabilities.dynamicModels).toBe(false);
+    expect(diagnostic.errors).toContain("Pi returned an unsupported model catalog");
+  });
+
   it("reports missing binaries without claiming terminal support", async () => {
     const { models } = await loadModules();
     const diagnostic = models.diagnosticFromProbe("pi", {

@@ -19,8 +19,8 @@ built on it is published. Refs: pickforge/pickforge#155.
   contacted as an OAuth identity provider when the user selects GitHub sign-in,
   and for anonymous update checks (see below). [LAWYER: confirm GitHub's role for
   each flow.]
-- **Privacy contact:** **privacidade@pickforge.dev** [OWNER: activate this
-  mailbox]. [OWNER/LAWYER: confirm whether the small-processing-agent exemption
+- **Privacy/LGPD contact:** **legal@pickforge.dev**. [OWNER/LAWYER: confirm
+  whether the small-processing-agent exemption
   applies under [ANPD Resolution CD/ANPD No. 2/2022](https://www.gov.br/anpd/pt-br/acesso-a-informacao/institucional/atos-normativos/regulamentacoes_anpd/resolucao-cd-anpd-no-2-de-27-de-janeiro-de-2022);
   if it does not, formally appoint and publish the encarregado.]
 
@@ -132,8 +132,8 @@ exercise:
 - **Account deletion** (in-app) — cascade erase of PickForge-side personal data
   plus Stripe customer deletion; remaining credits forfeited.
 - **Data export** (in-app) — portable JSON.
-- **Contact channel** — **privacidade@pickforge.dev** [OWNER: activate this
-  mailbox] for any other privacy or data-subject request.
+- **Contact channel** — **legal@pickforge.dev** for any other privacy, LGPD, or
+  data-subject request.
 
 ## Retention
 
@@ -148,12 +148,12 @@ exercise:
   https://pickforge.dev/terms.
 - [ ] Have counsel confirm whether the small-processing-agent exemption applies;
   otherwise designate and publish the encarregado.
-- [ ] Activate the **privacidade@pickforge.dev** mailbox.
+- [x] Use the active **legal@pickforge.dev** mailbox for privacy/LGPD requests.
 - [ ] Have counsel classify each cross-border flow and confirm its valid Art. 33
   mechanism; use the linked vendor documents as review inputs.
 - [ ] Set `<EFFECTIVE DATE>` across both policy languages.
-- [ ] Fill the remaining owner/lawyer placeholders (mailboxes, refund stance,
-  liability cap, comarca, and encarregado status).
+- [ ] Fill the remaining owner/lawyer placeholders (refund stance, liability
+  cap, comarca, and encarregado status).
 - [ ] Confirm whether crash reporting and the GitHub update check should be named
   in the published policy exactly as drafted (they are real, off-device flows).
 - [ ] Have a Brazilian lawyer review before publishing.

@@ -162,6 +162,21 @@ test.describe("flagged settings navigation", () => {
     await expectSectionAtPaneTop(page, "chats");
     await expect(agents).toBeFocused();
   });
+
+  test("resets the remembered category pane when its section hash is cleared", async ({ page }) => {
+    await openSettings(page, "quickLaunch");
+    await expectSectionAtPaneTop(page, "quickLaunch");
+
+    const tail = page.locator(".pf-settings-pane-tail");
+    await expect.poll(() => tail.evaluate((element) => element.style.height)).not.toBe("");
+
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+    await expect(page).toHaveURL(/#\/settings$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Agents" })).toBeVisible();
+    await expectPaneAtScrollTop(page);
+    await expect.poll(() => tail.evaluate((element) => element.style.height)).toBe("");
+  });
   test("keeps a later deep link aligned after PickLab finishes loading", async ({ page }) => {
     await openSettings(page, "quickLaunch");
     await expectSectionAtPaneTop(page, "quickLaunch");

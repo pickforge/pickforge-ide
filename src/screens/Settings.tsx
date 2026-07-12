@@ -338,7 +338,14 @@ export function SettingsScreen() {
     }
 
     const fallback = resolveSettingsCategory(activeCategory(), context);
-    if (fallback !== activeCategory()) selectCategory(fallback, { replace: true });
+    if (fallback !== activeCategory()) {
+      selectCategory(fallback, { replace: true });
+      return;
+    }
+
+    const pane = settingsPane();
+    pane?.querySelector<HTMLElement>(".pf-settings-pane-tail")?.style.removeProperty("height");
+    if (pane) pane.scrollTop = 0;
   });
 
   // When the session changes or clears, reset export + delete state so a

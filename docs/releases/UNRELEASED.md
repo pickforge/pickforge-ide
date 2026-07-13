@@ -91,8 +91,10 @@ reset this file.
 - `cargo test -p pickforge-tauri agent_probe_is_strictly_allowlisted --lib` —
   fixed diagnostic command allowlist test green.
 - `bunx vitest run tests/unit/agentBackends.test.ts tests/unit/agentChat.test.ts tests/unit/agentModels.test.ts tests/unit/agentModes.test.ts tests/unit/chatDefaults.test.ts tests/unit/swarm.test.ts tests/unit/operatorDispatch.test.ts tests/unit/orchestraView.test.ts tests/unit/settingsRegistry.test.ts`
-  — 199 focused capability-matrix, flag-off, native-chat parity, control,
-  provider, composer-store, swarm, operator, and Settings tests green.
+  — 210 focused capability-matrix, native-chat parity, control, provider,
+  composer-store, swarm, operator, and Settings tests green.
+- `cargo test -p pickforge-core --lib agents::manager::tests:: --locked` — 27
+  focused session lifecycle, capability-gate, approval replay, and dispatch tests green.
 - `bun run build` — frontend type-check and Vite production build clean;
   dynamic-import and chunk-size warnings remain.
 

@@ -260,6 +260,47 @@ describe("swarm dispatch", () => {
     expect(last?.error).toContain("mystery-9");
   });
 
+  it.each([
+    ["omp", "OMP"],
+    ["pi", "Pi"],
+  ])("fails terminal-only %s origin synthesis without a native send", async (agentId, label) => {
+    const originChatId = `chat-${agentId}`;
+    deps.chats.set(originChatId, {
+      chatId: originChatId,
+      projectRoot: "/project",
+      title: `${label} terminal chat`,
+      kind: "agent",
+      agentId,
+      labelsJson: null,
+    });
+    const { startSwarm, dispatchSynthesis, swarmRuns } = await loadSwarmStore();
+    await startSwarm("/project", "summarize terminal results", {
+      count: 1,
+      providerPreference: "codex",
+      originChatId,
+    });
+    const running = swarmRuns()[0];
+    const completed: SwarmRunSnapshot = {
+      ...running,
+      status: "completed",
+      lanes: running.lanes.map((lane) => ({
+        ...lane,
+        status: "completed",
+        summary: "Worker result.",
+      })),
+    };
+    deps.sendAgentMessage.mockClear();
+
+    await dispatchSynthesis(completed);
+
+    expect(deps.sendAgentMessage).not.toHaveBeenCalled();
+    expect(updatedRuns().at(-1)).toMatchObject({
+      runId: completed.runId,
+      synthesisStatus: "failed",
+      synthesisError: expect.stringContaining(`${label} native chat is not integrated yet`),
+    });
+  });
+
   it("synthesizes completed swarms for persisted legacy Claude origins", async () => {
     const timestamp = Date.now();
     deps.chats.set("chat-legacy-claude", {
@@ -287,7 +328,7 @@ describe("swarm dispatch", () => {
       lanes: [{
         id: "lane-1",
         chatId: "worker-1",
-        provider: "claudeCode",
+        provider: "future-backend",
         model: "claude-opus-4-8",
         title: "Review",
         status: "completed",
@@ -308,6 +349,9 @@ describe("swarm dispatch", () => {
       expect.stringContaining("The review passed."),
       [],
       { hidden: true },
+    );
+    expect(deps.sendAgentMessage.mock.calls[0][1]).toContain(
+      "future-backend / claude-opus-4-8",
     );
     expect(deps.ensureAgentChat).toHaveBeenCalledWith(
       "chat-legacy-claude",

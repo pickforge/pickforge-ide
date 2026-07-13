@@ -1,4 +1,3 @@
-import { flagEnabled } from "../stores/flags";
 
 export type AgentEngine = "v1" | "v2";
 export type AgentBackendId = "claudeCode" | "codex" | "omp" | "pi";
@@ -145,6 +144,7 @@ function unknown(reason: string): AgentBackendCapability {
 const NO_NATIVE_OMP = "OMP native chat is not integrated yet; use its terminal profile";
 const NO_NATIVE_PI = "Pi native chat is not integrated yet; use its terminal profile";
 const NO_CLAUDE_STEER = "Claude Code steering is unavailable until the Agent SDK exposes it";
+const NO_CLAUDE_EFFORT_SWITCH = "Changing Claude effort requires starting a new session";
 const NO_SESSION_MCP = "PickForge does not pass per-session MCP configuration to this native backend";
 const NO_TITLE_EVENTS = "This backend does not emit session title events";
 const NO_AUTH_DISCOVERY = "Authentication discovery is not exposed through this backend";
@@ -198,7 +198,7 @@ const CLAUDE_CAPABILITIES = Object.freeze({
   modelSelection: BOTH,
   modelSwitching: NATIVE,
   effortSelection: NATIVE,
-  effortSwitching: NATIVE,
+  effortSwitching: unsupported(NO_CLAUDE_EFFORT_SWITCH),
   modeSelection: NATIVE,
   modeSwitching: NATIVE,
   planEvents: NATIVE,
@@ -391,12 +391,6 @@ export const AGENT_BACKENDS = Object.freeze({
 
 const AGENT_BACKEND_IDS = new Set<string>(Object.keys(AGENT_BACKENDS));
 export const NATIVE_AGENT_BACKENDS = Object.freeze([CLAUDE_BACKEND, CODEX_BACKEND]);
-const FLAGGED_AGENT_BACKENDS = Object.freeze([
-  CLAUDE_BACKEND,
-  CODEX_BACKEND,
-  OMP_BACKEND,
-  PI_BACKEND,
-]);
 
 export function isAgentBackendId(value: string): value is AgentBackendId {
   return AGENT_BACKEND_IDS.has(value);
@@ -417,9 +411,6 @@ export function agentBackendDescriptor(id: string): AgentBackendDescriptor | und
   return isAgentBackendId(id) ? AGENT_BACKENDS[id] : undefined;
 }
 
-export function visibleAgentBackendDescriptors(): readonly AgentBackendDescriptor[] {
-  return flagEnabled("ompPiAgents") ? FLAGGED_AGENT_BACKENDS : NATIVE_AGENT_BACKENDS;
-}
 
 export function supportsBackendCapability(
   id: AgentBackendId,

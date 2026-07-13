@@ -426,6 +426,11 @@ impl AgentChatManager {
             if state.active_turn.is_some() {
                 return Err(AgentChatError::TurnActive);
             }
+            if state.engine == Engine::V1 && !images.is_empty() {
+                return Err(AgentChatError::Unsupported(
+                    "v1 agent engine cannot accept image input".to_string(),
+                ));
+            }
             state.last_turn_model = match state.provider {
                 AgentProvider::Codex => turn_model.clone().or_else(|| state.model.clone()),
                 AgentProvider::ClaudeCode => state.model.clone(),
@@ -1883,7 +1888,7 @@ mod tests {
     use std::sync::{Barrier, Mutex};
     use std::time::{Duration, Instant};
 
-    use crate::agents::event::TurnStatus;
+    use crate::agents::event::{ApprovalKind, TurnStatus};
     use crate::db::AgentTimelineEntry;
 
     use super::*;
@@ -2072,6 +2077,103 @@ mod tests {
         let states = manager.inner.lock().unwrap();
         assert_eq!(states[&session_id].engine, Engine::V1);
         assert!(manager.codex_app_clients.lock().unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn v1_send_rejects_images_before_persistence_or_process_dispatch() {
+        let script = test_script(
+            "v1-image-rejection",
+            r#"#!/bin/sh
+printf invoked > "$0.invoked"
+"#,
+        );
+        let marker = script.path.with_file_name("fake-agent.invoked");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-v1-images",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        let error = manager
+            .send(
+                &session_id,
+                "inspect this",
+                None,
+                None,
+                Some(vec!["/tmp/pickforge-shot.png".to_string()]),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AgentChatError::Unsupported(message)
+                if message == "v1 agent engine cannot accept image input"
+        ));
+        assert!(!marker.exists(), "v1 process must not be dispatched");
+        assert!(db
+            .agent_timeline_for_chat("chat-v1-images")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.latest_agent_session_for_chat("chat-v1-images")
+                .unwrap()
+                .unwrap()
+                .status,
+            "idle"
+        );
+    }
+
+    #[test]
+    fn reattaching_replays_unanswered_approvals_to_the_new_sink() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = AgentChatManager::new(db, PathBuf::new());
+        let (_initial_events, initial_sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-approval-replay",
+                PathBuf::from("/project"),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                initial_sink,
+            )
+            .unwrap();
+        let approval = AgentEvent::ApprovalRequest {
+            approval_id: "approval-1".to_string(),
+            kind: ApprovalKind::Command,
+            detail: "cargo check".to_string(),
+        };
+        (manager.wrapping_sink(
+            session_id.clone(),
+            "chat-approval-replay".to_string(),
+        ))(approval.clone());
+
+        let (reattached_events, reattached_sink) = event_sink();
+        let reattached_id = manager
+            .start(
+                "chat-approval-replay",
+                PathBuf::from("/project"),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                reattached_sink,
+            )
+            .unwrap();
+
+        assert_eq!(reattached_id, session_id);
+        assert_eq!(*reattached_events.lock().unwrap(), vec![approval]);
     }
 
     #[test]

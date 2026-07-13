@@ -1192,6 +1192,18 @@ function sendOptions(chat: AgentChatState, images: string[]) {
   };
 }
 
+function assertImageInputSupported(chat: AgentChatState, images: string[]) {
+  if (
+    images.some((image) => image.trim().length > 0) &&
+    !supportsBackendCapability(chat.provider, "imageInput", "nativeChat", chat.engine)
+  ) {
+    throw new Error(
+      backendCapabilityReason(chat.provider, "imageInput", "nativeChat", chat.engine) ??
+        "This backend cannot accept image input",
+    );
+  }
+}
+
 export async function switchAgentChatProvider(
   chatId: string,
   provider: AgentProvider,
@@ -1240,15 +1252,7 @@ export async function sendAgentMessage(
   let sessionId = chat.sessionId;
   const projectRoot = chat.projectRoot;
   if (!sessionId && !projectRoot) throw new Error("Agent chat is not started");
-  if (
-    images.some((image) => image.trim().length > 0) &&
-    !supportsBackendCapability(chat.provider, "imageInput", "nativeChat", chat.engine)
-  ) {
-    throw new Error(
-      backendCapabilityReason(chat.provider, "imageInput", "nativeChat", chat.engine) ??
-        "This backend cannot accept image input",
-    );
-  }
+  assertImageInputSupported(chat, images);
   flushPendingDeltas(chatId);
   let optimisticSeq = takeSeq(chatId);
   const imageList = [...images];
@@ -1309,6 +1313,9 @@ export async function sendAgentMessage(
       target = sendTarget();
       if (!target) return;
     }
+    // ensureAgentChat can force a remote session onto v1 after the first
+    // capability check. Gate the live state that will actually dispatch.
+    assertImageInputSupported(target.chat, imageList);
     await agentChatSend(target.sessionId, text, sendOptions(target.chat, imageList));
   } catch (error) {
     if (stale()) throw error;

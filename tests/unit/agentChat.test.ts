@@ -1288,6 +1288,49 @@ describe("sendAgentMessage", () => {
     expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
   });
 
+  it("rechecks images after ensure transitions a live remote chat from v2 to v1", async () => {
+    const chatId = nextChatId();
+    let starts = 0;
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") {
+        starts += 1;
+        return starts === 1
+          ? Promise.reject(new Error("bridge down"))
+          : Promise.resolve("session-remote");
+      }
+      if (cmd === "agent_chat_send") return Promise.resolve();
+      return Promise.resolve(null);
+    });
+    await expect(
+      ensureAgentChat(chatId, "/project", "codex", null, { engine: "v2" }),
+    ).rejects.toThrow("bridge down");
+
+    flags.remoteProjects = true;
+    workspace.projects = [{
+      projectRoot: "/project",
+      remoteHost: "mac-mini",
+      remoteRoot: "/srv/project",
+    }];
+
+    await expect(
+      sendAgentMessage(chatId, "inspect this", ["/tmp/remote-image.png"]),
+    ).rejects.toThrow("v2 agent engine");
+
+    expect(agentChat(chatId)?.engine).toBe("v1");
+    expect(timeline(chatId)).toEqual([]);
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(2);
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_start",
+      expect.objectContaining({
+        chatId,
+        engine: "v1",
+        remote: { host: "mac-mini", remoteRoot: "/srv/project" },
+      }),
+    );
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
+  });
+
   it("accepts Claude v2 images and rejects them for a live Claude v1 session", async () => {
     const v2ChatId = nextChatId();
     mockInvoke();

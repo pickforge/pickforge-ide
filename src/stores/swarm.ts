@@ -228,8 +228,8 @@ function readOnlyOptions(provider: AgentProvider) {
   };
 }
 
-function providerLabel(provider: AgentProvider): string {
-  return agentBackendDescriptor(provider).label;
+function providerLabel(provider: string): string {
+  return agentBackendDescriptor(provider)?.label ?? provider;
 }
 
 function workerPrompt(
@@ -439,7 +439,7 @@ function synthesisPrompt(run: SwarmRunSnapshot): string {
     return [
       `${index + 1}. ${lane.title}`,
       `   Status: ${lane.status}`,
-      `   Provider/model: ${providerLabel(lane.provider as AgentProvider)} / ${lane.model ?? "default"}`,
+      `   Provider/model: ${providerLabel(lane.provider)} / ${lane.model ?? "default"}`,
       `   Result: ${clipped(result, 2200)}`,
     ].join("\n");
   });

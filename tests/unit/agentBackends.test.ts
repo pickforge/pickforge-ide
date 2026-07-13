@@ -1,28 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-const memory = vi.hoisted(() => {
-  const values = new Map<string, string>();
-  globalThis.localStorage = {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
-    clear: () => values.clear(),
-    key: () => null,
-    length: 0,
-  } as unknown as Storage;
-  return values;
-});
 
 async function loadBackends() {
   vi.resetModules();
-  const flags = await import("../../src/stores/flags");
   const backends = await import("../../src/lib/agentBackends");
-  return { flags, backends };
+  return { backends };
 }
 
-beforeEach(() => {
-  memory.clear();
-});
 
 describe("agent backend capability registry", () => {
   it("is exhaustive and deeply immutable", async () => {
@@ -52,29 +36,6 @@ describe("agent backend capability registry", () => {
     }
   });
 
-  it("keeps OMP and Pi descriptors hidden while the rollout flag is off", async () => {
-    const { flags, backends } = await loadBackends();
-
-    expect(backends.visibleAgentBackendDescriptors().map((backend) => backend.id)).toEqual([
-      "claudeCode",
-      "codex",
-    ]);
-    expect(backends.NATIVE_AGENT_BACKENDS.map((backend) => backend.id)).toEqual([
-      "claudeCode",
-      "codex",
-    ]);
-
-    flags.setFlagOverride("ompPiAgents", true);
-    expect(backends.visibleAgentBackendDescriptors().map((backend) => backend.id)).toEqual([
-      "claudeCode",
-      "codex",
-      "omp",
-      "pi",
-    ]);
-
-    flags.setFlagOverride("ompPiAgents", false);
-    expect(backends.visibleAgentBackendDescriptors()).toBe(backends.NATIVE_AGENT_BACKENDS);
-  });
 
   it("characterizes shared Claude and Codex native-chat parity", async () => {
     const { backends } = await loadBackends();
@@ -90,7 +51,6 @@ describe("agent backend capability registry", () => {
       "modelSelection",
       "modelSwitching",
       "effortSelection",
-      "effortSwitching",
       "modeSelection",
       "modeSwitching",
       "planEvents",
@@ -116,6 +76,10 @@ describe("agent backend capability registry", () => {
       expect(backends.supportsBackendCapability("codex", capability, "nativeChat", "v2"))
         .toBe(true);
     }
+    expect(backends.supportsBackendCapability("claudeCode", "effortSwitching")).toBe(false);
+    expect(backends.backendCapabilityReason("claudeCode", "effortSwitching"))
+      .toContain("new session");
+    expect(backends.supportsBackendCapability("codex", "effortSwitching")).toBe(true);
   });
 
   it("limits native remote execution to v1 and agrees with lifecycle metadata", async () => {

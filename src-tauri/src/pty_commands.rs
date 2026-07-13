@@ -18,14 +18,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pickforge_core::{
-    begin_recoverable_session_spawn, kill_dtach_master, mark_tmux_server_may_exist,
-    parse_recoverable_session_id, prepare_chat_session, run_timeout, select_backend, sessions_dir,
-    tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
-    validated_dtach_socket_path, Database, PreparedSession, PtyError, PtyEvent, PtyManager,
-    RemotePty, SessionBackend, SpawnOptions,
+    begin_recoverable_session_spawn, dtach_master_pids, kill_dtach_master,
+    mark_tmux_server_may_exist, parse_recoverable_session_id, prepare_chat_session, run_timeout,
+    select_backend, sessions_dir, tmux_has_session_args, tmux_kill_session_args,
+    tmux_set_titles_args, validated_dtach_socket_path, Database, PreparedSession, PtyError,
+    PtyEvent, PtyManager, RemotePty, SessionBackend, SpawnOptions,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
@@ -37,6 +37,7 @@ use crate::remote_commands::ensure_remote_ssh_host_allowed;
 /// Side-commands (tmux has-session / set-titles / kill-session) must never hang
 /// the IPC call; bound them tightly.
 const TMUX_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+const RECOVERABLE_OWNER_READY_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The runtime base for PickForge session sockets: `$XDG_RUNTIME_DIR` (a
 /// user-private dir per the XDG spec) or the system temp dir as a fallback.
@@ -397,6 +398,50 @@ fn destroy_target_now(target: DestroyTarget) -> Result<(), String> {
     }
 }
 
+fn wait_for_owner_probe(timeout: Duration, mut ready: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if ready() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_recoverable_owner(prepared: &PreparedSession) -> Result<(), String> {
+    if prepared.backend == SessionBackend::Raw {
+        return Ok(());
+    }
+    let ready = wait_for_owner_probe(RECOVERABLE_OWNER_READY_TIMEOUT, || match prepared.backend {
+        SessionBackend::Dtach => prepared
+            .dtach_socket
+            .as_deref()
+            .is_some_and(|socket| socket.exists() && !dtach_master_pids(socket).is_empty()),
+        SessionBackend::Tmux => prepared
+            .session_id
+            .as_deref()
+            .and_then(|id| parse_recoverable_session_id(id).ok())
+            .is_some_and(|(_, name)| {
+                let args = tmux_has_session_args(name);
+                let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                run_timeout("tmux", &refs, None, None, Duration::from_millis(200))
+                    .is_ok_and(|outcome| outcome.success())
+            }),
+        SessionBackend::Raw => true,
+    });
+    if ready {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} recoverable owner did not become ready before the spawn deadline",
+            prepared.backend.tag()
+        ))
+    }
+}
+
 /// Spawn (attach-or-create) a chat's shell under its recovery backend so a
 /// running agent survives the pane closing and the app restarting. Falls back to
 /// a RAW interactive shell when the requested backend isn't installed. NEVER the
@@ -472,12 +517,6 @@ pub fn pty_spawn_chat(
 
     let opts = chat_spawn_options(cwd, rows, cols, env, remote, &prepared, &roots)?;
 
-    if selected == SessionBackend::Tmux {
-        // From this point the attach-or-create command may bring the private
-        // server up. A later missing binary is therefore a real cleanup error.
-        mark_tmux_server_may_exist();
-    }
-
     let spawn_result = manager.spawn(opts, move |event: PtyEvent| match event {
         PtyEvent::Output(bytes) => {
             let _ = on_output.send(Response::new(bytes));
@@ -490,7 +529,14 @@ pub fn pty_spawn_chat(
         Ok(id) => id,
         Err(error) => {
             let mut message = error.to_string();
-            if matches!(error, PtyError::ShuttingDown) {
+            let spawned_late = matches!(&error, PtyError::ShuttingDownAfterSpawn);
+            if spawned_late && selected == SessionBackend::Tmux {
+                mark_tmux_server_may_exist();
+            }
+            if matches!(
+                &error,
+                PtyError::ShuttingDown | PtyError::ShuttingDownAfterSpawn
+            ) {
                 if let Some(session_id) = prepared.session_id.as_deref() {
                     match destroy_target(session_id, &base).and_then(destroy_target_now) {
                         Ok(()) => {}
@@ -504,6 +550,23 @@ pub fn pty_spawn_chat(
             return Err(message);
         }
     };
+
+    if selected == SessionBackend::Tmux {
+        // The tmux client was successfully spawned, so a private server can now
+        // exist even if readiness or later IPC work fails.
+        mark_tmux_server_may_exist();
+    }
+
+    if let Err(mut error) = wait_for_recoverable_owner(&prepared) {
+        let _ = manager.kill(pty_id);
+        if let Some(session_id) = prepared.session_id.as_deref() {
+            if let Err(cleanup) = destroy_target(session_id, &base).and_then(destroy_target_now) {
+                error.push_str("; recoverable owner rollback failed: ");
+                error.push_str(&cleanup);
+            }
+        }
+        return Err(error);
+    }
 
     // tmux: enable window-title reporting AFTER the spawn — `new-session -A`
     // above is what brings the private `-L pickforge` server up, so a set-option
@@ -578,6 +641,19 @@ mod spawn_cwd_tests {
         ] {
             assert!(destroy_target(malicious, base).is_err(), "{malicious:?}");
         }
+    }
+
+    #[test]
+    fn recoverable_spawn_waits_until_the_exact_owner_is_ready() {
+        let probes = std::cell::Cell::new(0);
+        let ready = wait_for_owner_probe(Duration::from_millis(100), || {
+            let next = probes.get() + 1;
+            probes.set(next);
+            next == 3
+        });
+
+        assert!(ready);
+        assert_eq!(probes.get(), 3);
     }
 
     #[test]

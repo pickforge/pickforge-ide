@@ -45,12 +45,13 @@ pub use process::{
     user_shell_environment, which_in, CommandOutcome, OutputTruncation,
 };
 pub use pty::{
-    begin_recoverable_session_spawn, close_recoverable_session_spawn_gate, dtach_socket_path,
-    kill_dtach_master, kill_recoverable_sessions_on_exit, mark_tmux_server_may_exist,
-    parse_recoverable_session_id, prepare_chat_session, select_backend, session_name, sessions_dir,
-    tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args, validate_session_name,
-    validated_dtach_socket_path, DtachKillError, PreparedSession, PtyError, PtyEvent, PtyManager,
-    PtySink, RecoverableSpawnPermit, RemotePty, SessionBackend, SessionStatus, SpawnOptions,
+    begin_recoverable_session_spawn, close_recoverable_session_spawn_gate, dtach_master_pids,
+    dtach_socket_path, kill_dtach_master, kill_recoverable_sessions_on_exit,
+    mark_tmux_server_may_exist, parse_recoverable_session_id, prepare_chat_session, select_backend,
+    session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args,
+    tmux_set_titles_args, validate_session_name, validated_dtach_socket_path, DtachKillError,
+    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, RecoverableSpawnPermit, RemotePty,
+    SessionBackend, SessionStatus, SpawnOptions,
 };
 pub use remote::{
     decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener, probe_host,

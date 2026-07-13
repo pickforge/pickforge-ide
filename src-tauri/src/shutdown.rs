@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pickforge_core::{
     agents::AgentChatManager, close_recoverable_session_spawn_gate,
@@ -25,12 +25,16 @@ pub fn run_once(app: &tauri::AppHandle) {
     }
 
     app.state::<AgentChatManager>().shutdown();
-    close_recoverable_session_spawn_gate();
+    let recoverable_deadline = Instant::now() + ASYNC_STOP_TIMEOUT;
+    let incomplete_spawns = close_recoverable_session_spawn_gate(recoverable_deadline);
+    if incomplete_spawns != 0 {
+        eprintln!("recoverable spawn quiescence incomplete: {incomplete_spawns} owner(s)");
+    }
     let incomplete_ptys = app.state::<PtyManager>().shutdown();
     if incomplete_ptys != 0 {
         eprintln!("PTY cleanup incomplete: {incomplete_ptys} session(s)");
     }
-    if let Err(error) = kill_recoverable_sessions_on_exit(&runtime_base()) {
+    if let Err(error) = kill_recoverable_sessions_on_exit(&runtime_base(), recoverable_deadline) {
         eprintln!("recoverable session cleanup incomplete: {error}");
     }
     app.state::<pickforge_core::android::EmulatorManager>()

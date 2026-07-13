@@ -122,7 +122,9 @@ pub struct VoiceAvailability {
 pub enum VoiceError {
     #[error("local dictation is supported on Linux only")]
     UnsupportedPlatform,
-    #[error("PipeWire is required for local dictation: install pw-record and make sure it is on PATH")]
+    #[error(
+        "PipeWire is required for local dictation: install pw-record and make sure it is on PATH"
+    )]
     MissingPwRecord,
     #[error("pw-record exited immediately; check that PipeWire and the default microphone are available")]
     RecorderExited,
@@ -132,6 +134,8 @@ pub enum VoiceError {
     MissingModel { expected: String },
     #[error("HOME is not set; cannot resolve the default whisper.cpp model path")]
     MissingHome,
+    #[error("voice session manager is shutting down")]
+    ShuttingDown,
     #[error("voice session {0} not found")]
     SessionNotFound(String),
     #[error("voice session {0} did not finish before the timeout")]
@@ -213,7 +217,11 @@ pub fn voice_availability(model_path_override: Option<&Path>) -> VoiceAvailabili
         let model_path = model_path_override
             .map(Path::to_path_buf)
             .or_else(|| default_model_path().ok());
-        if model_path.as_ref().map(|path| !path.is_file()).unwrap_or(true) {
+        if model_path
+            .as_ref()
+            .map(|path| !path.is_file())
+            .unwrap_or(true)
+        {
             missing.push(VoiceDependency::Model.as_str().to_string());
         }
 

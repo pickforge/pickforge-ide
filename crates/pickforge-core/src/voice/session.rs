@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -83,6 +84,7 @@ pub struct VoiceSessionManager<R = PwRecordBackend, T = WhisperCliTranscriber> {
     recorder: Arc<R>,
     transcriber: Arc<T>,
     sessions: Arc<Mutex<HashMap<String, SessionHandle>>>,
+    shutting_down: AtomicBool,
     config: VoiceRuntimeConfig,
 }
 
@@ -98,6 +100,7 @@ impl VoiceSessionManager<PwRecordBackend, WhisperCliTranscriber> {
             recorder: Arc::new(PwRecordBackend::default()),
             transcriber: Arc::new(WhisperCliTranscriber),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            shutting_down: AtomicBool::new(false),
             config: VoiceRuntimeConfig::from_env(),
         };
         let _ = manager.sweep_stale_sessions();
@@ -132,6 +135,7 @@ where
             recorder: Arc::new(recorder),
             transcriber: Arc::new(transcriber),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            shutting_down: AtomicBool::new(false),
             config,
         };
         let _ = manager.sweep_stale_sessions();
@@ -142,6 +146,9 @@ where
     where
         S: VoiceSink,
     {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(VoiceError::ShuttingDown);
+        }
         #[cfg(not(target_os = "linux"))]
         {
             let _ = request;
@@ -207,10 +214,17 @@ where
                 }
             };
             *join.lock().expect("voice join poisoned") = Some(thread);
-            self.sessions
-                .lock()
-                .expect("voice registry poisoned")
-                .insert(session_id.clone(), handle);
+            let mut sessions = self.sessions.lock().expect("voice registry poisoned");
+            if self.shutting_down.load(Ordering::SeqCst) {
+                drop(sessions);
+                let _ = handle.control_tx.send(Control::Cancel);
+                kill_active_transcription(&handle);
+                if handle.completion.wait(Duration::from_secs(5)).is_some() {
+                    join_runner(&handle);
+                }
+                return Err(VoiceError::ShuttingDown);
+            }
+            sessions.insert(session_id.clone(), handle);
             Ok(session_id)
         }
     }
@@ -288,6 +302,7 @@ where
     /// Cancel every owned voice session under one shared deadline. Returns the
     /// number that did not acknowledge cancellation before the deadline.
     pub fn shutdown(&self) -> usize {
+        self.shutting_down.store(true, Ordering::SeqCst);
         shutdown_sessions(&self.sessions, Duration::from_secs(5)).1
     }
 
@@ -796,6 +811,37 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Condvar;
 
+    #[derive(Default)]
+    struct RecorderGate {
+        started: AtomicBool,
+        released: AtomicBool,
+    }
+
+    #[derive(Clone)]
+    struct BlockingRecorder {
+        gate: Arc<RecorderGate>,
+        stopped: Arc<AtomicBool>,
+    }
+
+    impl RecorderBackend for BlockingRecorder {
+        fn start(&self, capture_path: &Path) -> Result<Box<dyn ActiveRecording>, VoiceError> {
+            if let Some(parent) = capture_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            crate::voice::write_private_file(
+                capture_path,
+                &encode_wav_pcm16_mono(&samples(1.0), TARGET_SAMPLE_RATE),
+            )?;
+            self.gate.started.store(true, Ordering::SeqCst);
+            while !self.gate.released.load(Ordering::SeqCst) {
+                thread::yield_now();
+            }
+            Ok(Box::new(MockActiveRecording {
+                stopped: Arc::clone(&self.stopped),
+            }))
+        }
+    }
+
     #[derive(Clone)]
     struct MockRecorder {
         samples: Vec<i16>,
@@ -1266,6 +1312,40 @@ mod tests {
         assert!(stopped.load(Ordering::SeqCst));
         assert_eq!(manager.active_session_count(), 0);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn shutdown_rejects_a_voice_start_that_finishes_recording_setup_late() {
+        let home = TempHome::new("shutdown-start-race");
+        let gate = Arc::new(RecorderGate::default());
+        let stopped = Arc::new(AtomicBool::new(false));
+        let manager = Arc::new(VoiceSessionManager::with_config(
+            home.0.clone(),
+            BlockingRecorder {
+                gate: Arc::clone(&gate),
+                stopped: Arc::clone(&stopped),
+            },
+            MockTranscriber::new(&["unused"]),
+            test_config(true),
+        ));
+        let manager_for_start = Arc::clone(&manager);
+        let start = thread::spawn(move || {
+            manager_for_start.start(
+                VoiceStartRequest::new(None, Some(PathBuf::from("/tmp/model.bin"))),
+                |_| {},
+            )
+        });
+        wait_until(Duration::from_secs(1), || {
+            gate.started.load(Ordering::SeqCst)
+        });
+
+        assert_eq!(manager.shutdown(), 0);
+        gate.released.store(true, Ordering::SeqCst);
+        let result = start.join().unwrap();
+
+        assert!(matches!(result, Err(VoiceError::ShuttingDown)));
+        assert!(stopped.load(Ordering::SeqCst));
+        assert_eq!(manager.active_session_count(), 0);
     }
 
     #[test]

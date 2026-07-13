@@ -83,17 +83,24 @@ pub fn begin_recoverable_session_spawn() -> Result<RecoverableSpawnPermit, Strin
     begin_recoverable_session_spawn_on(&RECOVERABLE_SPAWN_GATE)
 }
 
-fn close_recoverable_session_spawn_gate_on(gate: &RecoverableSpawnGate) {
+fn close_recoverable_session_spawn_gate_on(
+    gate: &RecoverableSpawnGate,
+    deadline: std::time::Instant,
+) -> usize {
     gate.closed.store(true, Ordering::SeqCst);
-    while gate.active.load(Ordering::SeqCst) != 0 {
-        std::thread::yield_now();
+    loop {
+        let active = gate.active.load(Ordering::SeqCst);
+        if active == 0 || std::time::Instant::now() >= deadline {
+            return active;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
-/// Permanently reject new recoverable owners. This waits for any in-flight
-/// permit, providing the happens-before edge required by the following sweep.
-pub fn close_recoverable_session_spawn_gate() {
-    close_recoverable_session_spawn_gate_on(&RECOVERABLE_SPAWN_GATE);
+/// Permanently reject new recoverable owners and wait only until `deadline` for
+/// in-flight creation to quiesce. The returned count must be reported by exit.
+pub fn close_recoverable_session_spawn_gate(deadline: std::time::Instant) -> usize {
+    close_recoverable_session_spawn_gate_on(&RECOVERABLE_SPAWN_GATE, deadline)
 }
 
 pub fn mark_tmux_server_may_exist() {
@@ -271,6 +278,7 @@ struct ProcessIdentity {
 struct ProcessRecord {
     identity: ProcessIdentity,
     parent_pid: i32,
+    parent_identity: Option<ProcessIdentity>,
     session_id: i32,
     zombie: bool,
 }
@@ -287,6 +295,7 @@ fn parse_proc_stat(pid: i32, stat: &str) -> Option<ProcessRecord> {
     Some(ProcessRecord {
         identity: ProcessIdentity { pid, start_time },
         parent_pid,
+        parent_identity: None,
         session_id,
         zombie,
     })
@@ -299,6 +308,23 @@ fn read_process_record(pid: i32) -> Option<ProcessRecord> {
 }
 
 #[cfg(target_os = "linux")]
+fn read_stable_process_record(pid: i32) -> Option<ProcessRecord> {
+    let before = read_process_record(pid)?;
+    let parent_identity = read_process_record(before.parent_pid).map(|parent| parent.identity);
+    let after = read_process_record(pid)?;
+    if before.identity != after.identity
+        || before.parent_pid != after.parent_pid
+        || before.session_id != after.session_id
+    {
+        return None;
+    }
+    Some(ProcessRecord {
+        parent_identity,
+        ..after
+    })
+}
+
+#[cfg(target_os = "linux")]
 fn process_snapshot() -> Vec<ProcessRecord> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
@@ -307,7 +333,7 @@ fn process_snapshot() -> Vec<ProcessRecord> {
         .flatten()
         .filter_map(|entry| {
             let pid = entry.file_name().to_str()?.parse::<i32>().ok()?;
-            read_process_record(pid)
+            read_stable_process_record(pid)
         })
         .collect()
 }
@@ -392,9 +418,9 @@ fn expand_owned_processes(
     loop {
         let mut changed = false;
         for record in records {
-            let parent_owned = by_pid
-                .get(&record.parent_pid)
-                .is_some_and(|parent| owned.contains(parent));
+            let parent_owned = record
+                .parent_identity
+                .is_some_and(|parent| owned.contains(&parent));
             let session_owned = owned_sessions.contains_key(&record.session_id);
             if (owned.contains(&record.identity) || parent_owned || session_owned)
                 && owned.insert(record.identity)
@@ -811,12 +837,22 @@ fn validate_tmux_cleanup_result(
     }
 }
 
-pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), String> {
-    close_recoverable_session_spawn_gate();
-    let mut errors = match validated_sessions_dir(runtime_base) {
+pub fn kill_recoverable_sessions_on_exit(
+    runtime_base: &Path,
+    spawn_deadline: std::time::Instant,
+) -> Result<(), String> {
+    let still_spawning = close_recoverable_session_spawn_gate(spawn_deadline);
+    let mut errors = if still_spawning == 0 {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{still_spawning} recoverable owner(s) still spawning at the shared deadline"
+        )]
+    };
+    errors.extend(match validated_sessions_dir(runtime_base) {
         Ok(dir) => cleanup_owned_dtach_sockets(&dir, kill_dtach_master),
         Err(error) => vec![error],
-    };
+    });
     let args = tmux_kill_server_args();
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let environment = user_shell_environment();
@@ -1057,7 +1093,11 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let shutdown = std::thread::spawn(move || {
-            close_recoverable_session_spawn_gate_on(&gate_for_shutdown);
+            let active = close_recoverable_session_spawn_gate_on(
+                &gate_for_shutdown,
+                std::time::Instant::now() + Duration::from_secs(1),
+            );
+            assert_eq!(active, 0);
             owner_for_shutdown.store(false, Ordering::SeqCst);
             done_tx.send(()).unwrap();
         });
@@ -1073,6 +1113,21 @@ mod tests {
 
         assert!(!owner.load(Ordering::SeqCst), "late owner must be swept");
         assert!(begin_recoverable_session_spawn_on(&gate).is_err());
+    }
+
+    #[test]
+    fn recoverable_spawn_gate_reports_incomplete_work_at_shared_deadline() {
+        let gate = Arc::new(RecoverableSpawnGate::default());
+        let permit = begin_recoverable_session_spawn_on(&gate).unwrap();
+        let started = std::time::Instant::now();
+
+        let active =
+            close_recoverable_session_spawn_gate_on(&gate, started + Duration::from_millis(30));
+
+        assert_eq!(active, 1);
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(begin_recoverable_session_spawn_on(&gate).is_err());
+        drop(permit);
     }
 
     #[test]
@@ -1397,13 +1452,43 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn process(pid: i32, start_time: u64, parent_pid: i32, session_id: i32) -> ProcessRecord {
+    fn process(
+        pid: i32,
+        start_time: u64,
+        parent_identity: Option<ProcessIdentity>,
+        session_id: i32,
+    ) -> ProcessRecord {
         ProcessRecord {
             identity: ProcessIdentity { pid, start_time },
-            parent_pid,
+            parent_pid: parent_identity.map_or(1, |parent| parent.pid),
+            parent_identity,
             session_id,
             zombie: false,
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ownership_expansion_does_not_bind_a_child_to_a_reused_numeric_parent_pid() {
+        let owned_parent = ProcessIdentity {
+            pid: 30,
+            start_time: 1,
+        };
+        let reused_parent = ProcessIdentity {
+            pid: 30,
+            start_time: 99,
+        };
+        let unrelated_child = process(31, 100, Some(reused_parent), 31);
+        let records = vec![process(30, 99, None, 30), unrelated_child];
+        let mut owned = std::collections::HashSet::from([owned_parent]);
+        let mut owned_sessions = std::collections::HashMap::new();
+
+        expand_owned_processes(&records, &mut owned, &mut owned_sessions);
+
+        assert!(
+            !owned.contains(&unrelated_child.identity),
+            "a stale numeric PPID must not transfer ownership after PID reuse"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1434,9 +1519,9 @@ mod tests {
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        let master = process(10, 1, 1, 10);
-        let handler = process(11, 2, 10, 11);
-        let resistant = process(12, 3, 1, 11);
+        let master = process(10, 1, None, 10);
+        let handler = process(11, 2, Some(master.identity), 11);
+        let resistant = process(12, 3, None, 11);
         let state = Rc::new(RefCell::new(vec![master, handler]));
         let signalled = Rc::new(RefCell::new(Vec::new()));
         let state_for_scan = Rc::clone(&state);
@@ -1539,9 +1624,9 @@ mod tests {
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        let master = process(20, 10, 1, 20);
-        let child = process(21, 11, 20, 21);
-        let reused = process(21, 99, 1, 21);
+        let master = process(20, 10, None, 20);
+        let child = process(21, 11, Some(master.identity), 21);
+        let reused = process(21, 99, None, 21);
         let state = Rc::new(RefCell::new(vec![master, child]));
         let signalled = Rc::new(RefCell::new(Vec::new()));
         let state_for_scan = Rc::clone(&state);

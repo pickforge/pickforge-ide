@@ -92,6 +92,8 @@ pub enum PtyError {
     NotFound(u32),
     #[error("pty manager is shutting down")]
     ShuttingDown,
+    #[error("pty manager began shutting down after the child was spawned")]
+    ShuttingDownAfterSpawn,
     #[error("invalid remote PTY root")]
     InvalidRemoteRoot,
     #[error(transparent)]
@@ -252,7 +254,7 @@ impl PtyManager {
             if self.shutting_down.load(Ordering::SeqCst) {
                 drop(sessions);
                 teardown_session(session);
-                return Err(PtyError::ShuttingDown);
+                return Err(PtyError::ShuttingDownAfterSpawn);
             }
             sessions.insert(id, session);
         }

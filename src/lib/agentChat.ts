@@ -7,6 +7,7 @@ import {
 } from "./agentBackends";
 import { flagEnabled } from "../stores/flags";
 import { ensureOmpNativeCompatibility, ompNativeChatAvailable } from "./agentModels";
+import { ensureMcpRunning, mcpEnv } from "../stores/mcp";
 
 export type { AgentEngine, AgentProvider } from "./agentBackends";
 export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
@@ -109,13 +110,13 @@ export type AgentMcpServer =
       type?: "stdio";
       command: string;
       args?: string[];
-      env?: Record<string, string>;
+      env?: { name: string; value: string }[];
     }
   | {
       name: string;
       type: "http" | "sse";
       url: string;
-      headers?: Record<string, string>;
+      headers?: { name: string; value: string }[];
     };
 
 export interface AgentChatStartOptions {
@@ -140,6 +141,30 @@ export interface AgentChatSendOptions {
   images?: string[];
 }
 
+function pickforgeMcpGrant(projectRoot: string): AgentMcpServer | null {
+  const env = mcpEnv(projectRoot);
+  const command = env.PICKFORGE_MCP_COMMAND?.trim();
+  const endpoint = env.PICKFORGE_IPC_ENDPOINT?.trim();
+  if (!command || !endpoint) return null;
+  return {
+    name: "pickforge",
+    type: "stdio",
+    command,
+    args: [],
+    env: Object.entries(env)
+      .filter(([, value]) => value.trim().length > 0)
+      .map(([name, value]) => ({ name, value })),
+  };
+}
+
+async function ompMcpServers(opts: AgentChatStartOptions): Promise<AgentMcpServer[]> {
+  const configured = opts.mcpServers ?? [];
+  await ensureMcpRunning(opts.projectRoot);
+  const grant = pickforgeMcpGrant(opts.projectRoot);
+  if (!grant || configured.some((server) => server.name === grant.name)) return configured;
+  return [...configured, grant];
+}
+
 
 export async function agentChatStart(opts: AgentChatStartOptions): Promise<string> {
   const provider = normalizeAgentProvider(opts.provider);
@@ -159,6 +184,7 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
             "Agent backend does not support native chat"),
     );
   }
+  const mcpServers = provider === "omp" ? await ompMcpServers(opts) : (opts.mcpServers ?? []);
   const onEvent = new Channel<AgentEvent>();
   onEvent.onmessage = opts.onEvent;
 
@@ -173,8 +199,8 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
     approvalPolicy: opts.approvalPolicy ?? null,
     permissionMode: opts.permissionMode ?? null,
     allowedTools: opts.allowedTools ?? null,
+    mcpServers,
     remote: opts.remote ?? null,
-    mcpServers: opts.mcpServers ?? [],
     onEvent,
   });
 }

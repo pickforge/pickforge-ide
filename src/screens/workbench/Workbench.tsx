@@ -15,7 +15,11 @@ import { TerminalHost } from "../../components/TerminalHost";
 import { AgentChatView } from "../../components/chat/AgentChatView";
 import { OrchestraView } from "../../components/orchestra/OrchestraView";
 import { disposeAgentChat } from "../../stores/agentChat";
-import { loadAgentModels } from "../../lib/agentModels";
+import {
+  ensureOmpNativeCompatibility,
+  loadAgentModels,
+  ompNativeChatAvailable,
+} from "../../lib/agentModels";
 import {
   normalizeAgentProvider,
   nativeChatUnavailableReason,
@@ -76,6 +80,20 @@ export function WorkbenchScreen() {
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
   const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
   const [pendingOrchestraCleanup, setPendingOrchestraCleanup] = createSignal<MountedHost[]>([]);
+  const [ompNativeReady, setOmpNativeReady] = createSignal(ompNativeChatAvailable());
+
+  // A persisted OMP chat must not mount a native surface merely because its
+  // saved provider id says "omp": both the default-off flag and this build's
+  // exact compatibility probe are required on every Workbench entry.
+  createEffect(() => {
+    if (!flagEnabled("ompPiAgents")) {
+      setOmpNativeReady(false);
+      return;
+    }
+    void ensureOmpNativeCompatibility().then((compatible) => {
+      setOmpNativeReady(compatible && ompNativeChatAvailable());
+    });
+  });
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
   // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
@@ -414,7 +432,7 @@ export function WorkbenchScreen() {
                   }
                 >
                   <Show
-                    when={provider}
+                    when={provider && (provider !== "omp" || ompNativeReady()) ? provider : null}
                     fallback={
                       <div class="pf-chat-error" role="alert">
                         {nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable"}

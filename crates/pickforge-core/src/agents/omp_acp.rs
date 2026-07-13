@@ -613,15 +613,25 @@ impl OmpAcpClient {
             .state
             .writer
             .lock()
-            .map_err(|_| OmpAcpError::Closed("writer state poisoned".to_string()))?;
+            .map_err(|_| OmpAcpError::Closed("writer state poisoned".to_string()))?
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| OmpAcpError::Closed("writer is closed".to_string()))?;
         if self.state.closed.load(Ordering::SeqCst) {
             return Err(OmpAcpError::Closed("client is closed".to_string()));
         }
-        writer
-            .as_ref()
-            .ok_or_else(|| OmpAcpError::Closed("writer is closed".to_string()))?
-            .send(WriterMessage::Json(value))
-            .map_err(|_| OmpAcpError::Closed("writer thread stopped".to_string()))
+        match writer.try_send(WriterMessage::Json(value)) {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(_)) => Err(OmpAcpError::Protocol(
+                "OMP ACP writer queue is full".to_string(),
+            )),
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                transport_failed(&self.state, "OMP ACP writer thread stopped".to_string());
+                Err(OmpAcpError::Closed(
+                    "OMP ACP writer thread stopped".to_string(),
+                ))
+            }
+        }
     }
 
     fn replay_queued_updates(&self) {
@@ -759,18 +769,41 @@ pub fn validate_omp_mcp_servers(servers: &[Value]) -> Result<(), OmpAcpError> {
                 "nested ACP MCP transports are unsupported".to_string(),
             ));
         }
-        if object.get("name").and_then(Value::as_str).is_none() {
+        if object
+            .get("name")
+            .and_then(Value::as_str)
+            .is_none_or(|name| name.trim().is_empty())
+        {
             return Err(OmpAcpError::Protocol(
-                "ACP MCP grant must have a name".to_string(),
+                "ACP MCP grant must have a non-empty name".to_string(),
             ));
         }
         let transport = object.get("type").and_then(Value::as_str).unwrap_or("stdio");
         match transport {
-            "stdio" if object.get("command").and_then(Value::as_str).is_some() => {}
-            "http" | "sse" if object.get("url").and_then(Value::as_str).is_some() => {}
+            "stdio"
+                if object
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty()) =>
+            {
+                validate_named_values(object.get("env"), "env")?;
+            }
+            "http" | "sse"
+                if object
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty()) =>
+            {
+                validate_named_values(object.get("headers"), "headers")?;
+            }
             "stdio" => {
                 return Err(OmpAcpError::Protocol(
                     "stdio MCP grant must have a command".to_string(),
+                ))
+            }
+            "http" | "sse" => {
+                return Err(OmpAcpError::Protocol(
+                    "HTTP MCP grant must have a URL".to_string(),
                 ))
             }
             other => {
@@ -778,6 +811,31 @@ pub fn validate_omp_mcp_servers(servers: &[Value]) -> Result<(), OmpAcpError> {
                     "unsupported MCP transport {other}"
                 )))
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_named_values(value: Option<&Value>, field: &str) -> Result<(), OmpAcpError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let values = value.as_array().ok_or_else(|| {
+        OmpAcpError::Protocol(format!("ACP MCP {field} must be an array of name/value objects"))
+    })?;
+    for value in values {
+        let object = value.as_object().ok_or_else(|| {
+            OmpAcpError::Protocol(format!("ACP MCP {field} entry must be an object"))
+        })?;
+        if object
+            .get("name")
+            .and_then(Value::as_str)
+            .is_none_or(|name| name.trim().is_empty())
+            || object.get("value").and_then(Value::as_str).is_none()
+        {
+            return Err(OmpAcpError::Protocol(format!(
+                "ACP MCP {field} entries require string name and value"
+            )));
         }
     }
     Ok(())
@@ -1385,15 +1443,22 @@ fn send_from_state(state: &Arc<ClientState>, value: Value) -> Result<(), String>
     let writer = state
         .writer
         .lock()
-        .map_err(|_| "writer state poisoned".to_string())?;
+        .map_err(|_| "writer state poisoned".to_string())?
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "writer is closed".to_string())?;
     if state.closed.load(Ordering::SeqCst) {
         return Err("client is closed".to_string());
     }
-    writer
-        .as_ref()
-        .ok_or_else(|| "writer is closed".to_string())?
-        .send(WriterMessage::Json(value))
-        .map_err(|_| "writer thread stopped".to_string())
+    match writer.try_send(WriterMessage::Json(value)) {
+        Ok(()) => Ok(()),
+        Err(mpsc::TrySendError::Full(_)) => Err("OMP ACP writer queue is full".to_string()),
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            let message = "OMP ACP writer thread stopped".to_string();
+            transport_failed(state, message.clone());
+            Err(message)
+        }
+    }
 }
 
 fn emit(state: &Arc<ClientState>, event: AgentEvent) {
@@ -1918,6 +1983,20 @@ done"#,
             validate_omp_mcp_servers(&[json!({"name":"nested","type":"acp","url":"x"})]),
             Err(OmpAcpError::Unsupported(_))
         ));
+        assert!(matches!(
+            validate_omp_mcp_servers(&[json!({
+                "name": "pickforge",
+                "command": "pickforge-mcp",
+                "env": {"PICKFORGE_IPC_ENDPOINT": "/tmp/socket"}
+            })]),
+            Err(OmpAcpError::Protocol(_))
+        ));
+        validate_omp_mcp_servers(&[json!({
+            "name": "pickforge",
+            "command": "pickforge-mcp",
+            "env": [{"name": "PICKFORGE_IPC_ENDPOINT", "value": "/tmp/socket"}]
+        })])
+        .unwrap();
     }
 
     #[cfg(unix)]

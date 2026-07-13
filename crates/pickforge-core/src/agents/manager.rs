@@ -470,7 +470,7 @@ impl AgentChatManager {
                         state.omp_client = Some(client);
                     }
                 } else {
-                    let client = OmpAcpClient::spawn(OmpAcpOptions {
+                    let mut options = OmpAcpOptions {
                         binary: self
                             .omp_binary()
                             .map(PathBuf::from)
@@ -482,7 +482,20 @@ impl AgentChatManager {
                         model,
                         mcp_servers: overrides.mcp_servers,
                         sink: self.wrapping_sink(session_id.clone(), chat_id.to_string()),
-                    })
+                    };
+                    let resume_requested = matches!(options.session, OmpAcpSessionOpen::Resume(_));
+                    let client = match OmpAcpClient::spawn(options.clone()) {
+                        Ok(client) => Ok(client),
+                        // Provider session ids are opaque and may expire outside
+                        // PickForge. A failed resume gets exactly one isolated
+                        // fresh-session attempt; its SessionStarted event and the
+                        // assignment below replace the stale persisted id.
+                        Err(_) if resume_requested => {
+                            options.session = OmpAcpSessionOpen::New;
+                            OmpAcpClient::spawn(options)
+                        }
+                        Err(error) => Err(error),
+                    }
                     .map(Arc::new)
                     .map_err(|err| {
                         if let Ok(mut inner) = self.inner.lock() {
@@ -1831,7 +1844,11 @@ fn handle_runner_event(
                 errors.push(err);
             }
         }
-        AgentEvent::SessionTitle { .. } | AgentEvent::ProviderPayload { .. } => {
+        // Raw provider frames are live diagnostic events. They may contain
+        // high-volume chunks and provider-specific data, so never turn them
+        // into durable timeline rows.
+        AgentEvent::ProviderPayload { .. } => {}
+        AgentEvent::SessionTitle { .. } => {
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
                 errors.push(err);
             }
@@ -2464,6 +2481,18 @@ done
             }
         )));
         wait_for_status(&db, "omp-chat", "idle");
+        let persisted_provider_payloads = db
+            .agent_timeline_for_chat("omp-chat")
+            .unwrap()
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    AgentTimelineEntry::Item { kind, .. } if kind == "providerPayload"
+                )
+            })
+            .count();
+        assert_eq!(persisted_provider_payloads, 0);
         manager.dispose(&session_id);
 
         let (_, sink3) = event_sink();
@@ -2531,13 +2560,13 @@ done"#
                 "name": "stdio",
                 "command": "pickforge-mcp",
                 "args": ["--scope", "project"],
-                "env": {"PICKFORGE_TEST_TOKEN": "first"}
+                "env": [{"name": "PICKFORGE_TEST_TOKEN", "value": "first"}]
             }),
             serde_json::json!({
                 "name": "remote",
                 "type": "http",
                 "url": "https://mcp.invalid",
-                "headers": {"Authorization": "Bearer test"}
+                "headers": [{"name": "Authorization", "value": "Bearer test"}]
             }),
         ];
         let overrides = |mcp_servers| AgentStartOverrides {
@@ -2577,8 +2606,7 @@ done"#
         );
 
         let mut changed_grants = grants.clone();
-        changed_grants[0]["env"]["PICKFORGE_TEST_TOKEN"] =
-            serde_json::Value::String("second".to_string());
+        changed_grants[0]["env"][0]["value"] = serde_json::Value::String("second".to_string());
         let (_, changed_sink) = event_sink();
         manager
             .start(
@@ -2621,7 +2649,7 @@ done"#
             real_root.canonicalize().unwrap().to_string_lossy().as_ref()
         );
         assert_eq!(
-            opened[1]["params"]["mcpServers"][0]["env"]["PICKFORGE_TEST_TOKEN"],
+            opened[1]["params"]["mcpServers"][0]["env"][0]["value"],
             "second"
         );
         assert_eq!(
@@ -2757,6 +2785,73 @@ done"#
         wait_for_status(&db, "omp-dead-chat", "idle");
         manager.dispose(&session_id);
         let _ = std::fs::remove_file(format!("{}.recover", log.display()));
+        let _ = std::fs::remove_file(log);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_stale_resume_falls_back_once_and_replaces_persisted_provider_id() {
+        let log = std::env::temp_dir().join(format!(
+            "pickforge-omp-stale-resume-{}-{}.log",
+            std::process::id(),
+            now_millis()
+        ));
+        let body = r#"#!/bin/sh
+log='__LOG__'
+marker="$log.fresh"
+if [ -f "$marker" ]; then fresh=1; else fresh=0; : > "$marker"; fi
+printf 'launch\n' >> "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"session expired"}}'
+      ;;
+    *'"method":"session/new"'*)
+      [ "$fresh" -eq 1 ] || exit 12
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fresh-provider-session"}}'
+      ;;
+  esac
+done"#
+            .replace("__LOG__", &log.to_string_lossy());
+        let script = test_script("omp-stale-resume", &body);
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.agent_session_create(&AgentSessionRow {
+            id: "persisted-omp-session".to_string(),
+            chat_id: "omp-stale-chat".to_string(),
+            provider: "omp".to_string(),
+            provider_session_id: Some("expired-provider-session".to_string()),
+            model: None,
+            status: "idle".to_string(),
+            created_at: 1,
+        })
+        .unwrap();
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let (_, sink) = event_sink();
+        assert_eq!(
+            manager
+                .start(
+                    "omp-stale-chat",
+                    script.dir.clone(),
+                    AgentProvider::Omp,
+                    Engine::V2,
+                    None,
+                    AgentStartOverrides::default(),
+                    sink,
+                )
+                .unwrap(),
+            "persisted-omp-session"
+        );
+        let row = db.latest_agent_session_for_chat("omp-stale-chat").unwrap().unwrap();
+        assert_eq!(row.provider_session_id.as_deref(), Some("fresh-provider-session"));
+        let contents = wait_for_file(&log, |value| value.matches("launch\n").count() == 2);
+        assert_eq!(contents.matches("\"method\":\"session/resume\"").count(), 1);
+        assert_eq!(contents.matches("\"method\":\"session/new\"").count(), 1);
+        manager.dispose("persisted-omp-session");
+        let _ = std::fs::remove_file(format!("{}.fresh", log.display()));
         let _ = std::fs::remove_file(log);
     }
 

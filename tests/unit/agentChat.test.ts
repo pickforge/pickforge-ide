@@ -313,7 +313,7 @@ describe("agentChat IPC wrappers", () => {
     expect(tauri.channels).toHaveLength(0);
   });
 
-  it("passes only explicit session-scoped MCP grants to flag-enabled OMP", async () => {
+  it("creates a session-scoped PickForge MCP grant for compatible OMP", async () => {
     flags.ompPiAgents = true;
     recordAgentCliDiagnostic(diagnosticFromProbe("omp", {
       installed: true,
@@ -322,17 +322,25 @@ describe("agentChat IPC wrappers", () => {
       modelsOutput: "",
       errors: [],
     }));
-    tauri.invoke.mockResolvedValue("session-omp");
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "mcp_start") {
+        return Promise.resolve({
+          endpoint: "/tmp/pickforge.sock",
+          contextDir: "/tmp/context",
+          runsDir: "/tmp/runs",
+          chatsDir: "/tmp/chats",
+          mcpConfigPath: "/tmp/context/mcp.json",
+          mcpCommand: "/tmp/pickforge-mcp",
+        });
+      }
+      if (cmd === "agent_chat_start") return Promise.resolve("session-omp");
+      return Promise.resolve(null);
+    });
 
     await expect(agentChatStart({
       chatId: "chat-omp",
       projectRoot: "/project",
       provider: "omp",
-      mcpServers: [{
-        name: "pickforge",
-        command: "pickforge-mcp",
-        args: [],
-      }],
       onEvent: () => undefined,
     })).resolves.toBe("session-omp");
 
@@ -341,7 +349,14 @@ describe("agentChat IPC wrappers", () => {
       expect.objectContaining({
         provider: "omp",
         engine: null,
-        mcpServers: [{ name: "pickforge", command: "pickforge-mcp", args: [] }],
+        mcpServers: [expect.objectContaining({
+          name: "pickforge",
+          command: "/tmp/pickforge-mcp",
+          env: expect.arrayContaining([
+            { name: "PICKFORGE_IPC_ENDPOINT", value: "/tmp/pickforge.sock" },
+            { name: "PICKFORGE_CONTEXT_DIR", value: "/tmp/context" },
+          ]),
+        })],
       }),
     );
     const startPayload = tauri.invoke.mock.calls.find(

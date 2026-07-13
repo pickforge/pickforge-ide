@@ -1340,6 +1340,10 @@ export async function sendAgentMessage(
       activeTitleTurnByChat.delete(chatId);
     }
     setChats(chatId, {
+      // ACP transports can die between turns. Forget the dead native handle so
+      // the next user send re-enters ensureAgentChat, which resumes (or creates)
+      // the persisted provider session instead of repeatedly dispatching into it.
+      ...(chat.provider === "omp" ? { sessionId: null } : {}),
       turnActive: false,
       error: errorText(error),
       timeline: (chats[chatId]?.timeline ?? []).filter(

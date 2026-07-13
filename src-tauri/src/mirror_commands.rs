@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use pickforge_core::android::{
     start_session_cancellable, stop_session, MirrorSession, SERVER_VERSION,
@@ -61,10 +60,8 @@ impl MirrorManager {
         for session in sessions {
             stop_session(session).await;
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while self.2.active() != 0 && Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+        let gate = Arc::clone(&self.2);
+        let _ = tokio::task::spawn_blocking(move || gate.wait()).await;
     }
 }
 

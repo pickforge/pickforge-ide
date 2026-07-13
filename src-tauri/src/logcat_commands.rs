@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use pickforge_core::android::{logcat_event, LogEvent};
 use pickforge_core::{user_shell_environment, StartGate};
@@ -64,10 +63,8 @@ impl LogcatManager {
         for session in sessions {
             stop_child(session).await;
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while self.2.active() != 0 && Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+        let gate = Arc::clone(&self.2);
+        let _ = tokio::task::spawn_blocking(move || gate.wait()).await;
     }
 }
 

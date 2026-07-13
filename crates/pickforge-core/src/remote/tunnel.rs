@@ -259,10 +259,7 @@ impl TunnelManager {
             std::mem::take(&mut *entries)
         };
         shutdown_entries(entries);
-        let _ = self
-            .state
-            .start_gate
-            .wait_until(Instant::now() + Duration::from_secs(5));
+        self.state.start_gate.wait();
     }
 
     pub fn len(&self) -> usize {
@@ -490,8 +487,23 @@ mod tests {
         probe_started_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("readiness probe started");
-        manager.shutdown();
+        let shutdown_manager = manager.clone();
+        let (shutdown_done_tx, shutdown_done_rx) = mpsc::channel();
+        let shutdown_thread = thread::spawn(move || {
+            shutdown_manager.shutdown();
+            shutdown_done_tx.send(()).unwrap();
+        });
+        assert!(
+            shutdown_done_rx
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "shutdown returned while readiness work was still active"
+        );
         release_probe_tx.send(()).expect("release readiness probe");
+        shutdown_done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("shutdown completed");
+        shutdown_thread.join().expect("join shutdown thread");
 
         assert!(matches!(
             open_thread.join().expect("join open thread"),

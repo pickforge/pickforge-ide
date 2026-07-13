@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -1713,9 +1713,7 @@ impl AgentChatManager {
     pub fn shutdown(&self) {
         self.start_gate.close();
         self.shutting_down.store(true, Ordering::SeqCst);
-        let _ = self
-            .start_gate
-            .wait_until(Instant::now() + Duration::from_secs(5));
+        self.start_gate.wait();
 
         let drained = self
             .inner

@@ -24,83 +24,50 @@
 //! unit-testable without a live dtach/tmux.
 
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use super::shell::{resolve_shell, ShellInvocation};
-use crate::process::{is_binary_on_path, run_timeout, user_shell_environment, RunError};
+use crate::process::{
+    is_binary_on_path, run_timeout, user_shell_environment, RunError, StartGate, StartPermit,
+};
 
 static PROCESS_INSTANCE_ID: LazyLock<String> =
     LazyLock::new(|| format!("{:x}-{:016x}", std::process::id(), rand::random::<u64>()));
 
 static TMUX_SERVER_NAME: LazyLock<String> =
     LazyLock::new(|| format!("pickforge-{}", &*PROCESS_INSTANCE_ID));
-static RECOVERABLE_SPAWN_GATE: LazyLock<Arc<RecoverableSpawnGate>> =
-    LazyLock::new(|| Arc::new(RecoverableSpawnGate::default()));
+static RECOVERABLE_SPAWN_GATE: LazyLock<Arc<StartGate>> =
+    LazyLock::new(|| Arc::new(StartGate::default()));
 static TMUX_SERVER_MAY_EXIST: AtomicBool = AtomicBool::new(false);
 
 fn tmux_server_name() -> &'static str {
     &TMUX_SERVER_NAME
 }
 
-#[derive(Default)]
-struct RecoverableSpawnGate {
-    closed: AtomicBool,
-    active: AtomicUsize,
-}
-
-/// Holds the recoverable-session gate across attach-or-create and PTY
-/// registration. Exit closes the same gate before sweeping owners, so an
-/// in-flight dtach/tmux creation either finishes before the sweep or is rejected.
-pub struct RecoverableSpawnPermit {
-    gate: Arc<RecoverableSpawnGate>,
-}
-
-impl Drop for RecoverableSpawnPermit {
-    fn drop(&mut self) {
-        self.gate.active.fetch_sub(1, Ordering::SeqCst);
-    }
-}
+type RecoverableSpawnGate = StartGate;
+pub type RecoverableSpawnPermit = StartPermit;
 
 fn begin_recoverable_session_spawn_on(
     gate: &Arc<RecoverableSpawnGate>,
 ) -> Result<RecoverableSpawnPermit, String> {
-    if gate.closed.load(Ordering::SeqCst) {
-        return Err("recoverable-session manager is shutting down".to_string());
-    }
-    gate.active.fetch_add(1, Ordering::SeqCst);
-    if gate.closed.load(Ordering::SeqCst) {
-        gate.active.fetch_sub(1, Ordering::SeqCst);
-        return Err("recoverable-session manager is shutting down".to_string());
-    }
-    Ok(RecoverableSpawnPermit {
-        gate: Arc::clone(gate),
-    })
+    gate.begin()
+        .map_err(|_| "recoverable-session manager is shutting down".to_string())
 }
 
 pub fn begin_recoverable_session_spawn() -> Result<RecoverableSpawnPermit, String> {
     begin_recoverable_session_spawn_on(&RECOVERABLE_SPAWN_GATE)
 }
 
-fn close_recoverable_session_spawn_gate_on(
-    gate: &RecoverableSpawnGate,
-    deadline: std::time::Instant,
-) -> usize {
-    gate.closed.store(true, Ordering::SeqCst);
-    loop {
-        let active = gate.active.load(Ordering::SeqCst);
-        if active == 0 || std::time::Instant::now() >= deadline {
-            return active;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
+fn close_recoverable_session_spawn_gate_on(gate: &RecoverableSpawnGate) {
+    gate.close_and_wait();
 }
 
-/// Permanently reject new recoverable owners and wait only until `deadline` for
-/// in-flight creation to quiesce. The returned count must be reported by exit.
-pub fn close_recoverable_session_spawn_gate(deadline: std::time::Instant) -> usize {
-    close_recoverable_session_spawn_gate_on(&RECOVERABLE_SPAWN_GATE, deadline)
+/// Permanently reject new recoverable owners and wait for every in-flight
+/// attach-or-create path to register or roll back before the owner sweep.
+pub fn close_recoverable_session_spawn_gate() {
+    close_recoverable_session_spawn_gate_on(&RECOVERABLE_SPAWN_GATE);
 }
 
 pub fn mark_tmux_server_may_exist() {
@@ -837,18 +804,9 @@ fn validate_tmux_cleanup_result(
     }
 }
 
-pub fn kill_recoverable_sessions_on_exit(
-    runtime_base: &Path,
-    spawn_deadline: std::time::Instant,
-) -> Result<(), String> {
-    let still_spawning = close_recoverable_session_spawn_gate(spawn_deadline);
-    let mut errors = if still_spawning == 0 {
-        Vec::new()
-    } else {
-        vec![format!(
-            "{still_spawning} recoverable owner(s) still spawning at the shared deadline"
-        )]
-    };
+pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), String> {
+    close_recoverable_session_spawn_gate();
+    let mut errors = Vec::new();
     errors.extend(match validated_sessions_dir(runtime_base) {
         Ok(dir) => cleanup_owned_dtach_sockets(&dir, kill_dtach_master),
         Err(error) => vec![error],
@@ -1093,11 +1051,7 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let shutdown = std::thread::spawn(move || {
-            let active = close_recoverable_session_spawn_gate_on(
-                &gate_for_shutdown,
-                std::time::Instant::now() + Duration::from_secs(1),
-            );
-            assert_eq!(active, 0);
+            close_recoverable_session_spawn_gate_on(&gate_for_shutdown);
             owner_for_shutdown.store(false, Ordering::SeqCst);
             done_tx.send(()).unwrap();
         });
@@ -1113,21 +1067,6 @@ mod tests {
 
         assert!(!owner.load(Ordering::SeqCst), "late owner must be swept");
         assert!(begin_recoverable_session_spawn_on(&gate).is_err());
-    }
-
-    #[test]
-    fn recoverable_spawn_gate_reports_incomplete_work_at_shared_deadline() {
-        let gate = Arc::new(RecoverableSpawnGate::default());
-        let permit = begin_recoverable_session_spawn_on(&gate).unwrap();
-        let started = std::time::Instant::now();
-
-        let active =
-            close_recoverable_session_spawn_gate_on(&gate, started + Duration::from_millis(30));
-
-        assert_eq!(active, 1);
-        assert!(started.elapsed() < Duration::from_millis(100));
-        assert!(begin_recoverable_session_spawn_on(&gate).is_err());
-        drop(permit);
     }
 
     #[test]

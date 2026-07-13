@@ -1,16 +1,21 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// Quiescence gate for process-producing start paths.
 ///
 /// A permit spans the whole provisional interval: before the child/provider is
 /// created until it is registered or fully rolled back. Shutdown closes the
-/// gate first, then waits under one deadline before draining registered owners.
+/// gate, cancels provisional owners, then waits for strict quiescence before it
+/// drains registered owners and returns.
 #[derive(Debug, Default)]
 pub struct StartGate {
-    closed: AtomicBool,
-    active: AtomicUsize,
+    state: Mutex<StartGateState>,
+    quiescent: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct StartGateState {
+    closed: bool,
+    active: usize,
 }
 
 #[derive(Debug)]
@@ -20,41 +25,53 @@ pub struct StartPermit {
 
 impl StartGate {
     pub fn begin(self: &Arc<Self>) -> Result<StartPermit, ()> {
-        if self.closed.load(Ordering::SeqCst) {
+        let mut state = self.state.lock().expect("start gate poisoned");
+        if state.closed {
             return Err(());
         }
-        self.active.fetch_add(1, Ordering::SeqCst);
-        if self.closed.load(Ordering::SeqCst) {
-            self.active.fetch_sub(1, Ordering::SeqCst);
-            return Err(());
-        }
+        state.active += 1;
         Ok(StartPermit {
             gate: Arc::clone(self),
         })
     }
 
     pub fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
+        self.state.lock().expect("start gate poisoned").closed = true;
     }
 
     pub fn active(&self) -> usize {
-        self.active.load(Ordering::SeqCst)
+        self.state.lock().expect("start gate poisoned").active
     }
 
-    pub fn wait_until(&self, deadline: Instant) -> usize {
-        loop {
-            let active = self.active();
-            if active == 0 || Instant::now() >= deadline {
-                return active;
-            }
-            std::thread::sleep(Duration::from_millis(1));
+    pub fn wait(&self) {
+        let mut state = self.state.lock().expect("start gate poisoned");
+        while state.active != 0 {
+            state = self
+                .quiescent
+                .wait(state)
+                .expect("start gate poisoned while waiting");
+        }
+    }
+
+    pub fn close_and_wait(&self) {
+        let mut state = self.state.lock().expect("start gate poisoned");
+        state.closed = true;
+        while state.active != 0 {
+            state = self
+                .quiescent
+                .wait(state)
+                .expect("start gate poisoned while waiting");
         }
     }
 }
 
 impl Drop for StartPermit {
     fn drop(&mut self) {
-        self.gate.active.fetch_sub(1, Ordering::SeqCst);
+        let mut state = self.gate.state.lock().expect("start gate poisoned");
+        state.active -= 1;
+        if state.active == 0 {
+            self.gate.quiescent.notify_all();
+        }
     }
 }
 
@@ -63,19 +80,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn close_rejects_new_starts_and_wait_is_bounded() {
+    fn close_rejects_new_starts_and_waits_for_strict_quiescence() {
         let gate = Arc::new(StartGate::default());
         let permit = gate.begin().unwrap();
         gate.close();
         assert!(gate.begin().is_err());
-        assert_eq!(
-            gate.wait_until(Instant::now() + Duration::from_millis(20)),
-            1
-        );
+        let waiter_gate = Arc::clone(&gate);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            waiter_gate.wait();
+            done_tx.send(()).unwrap();
+        });
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_millis(20))
+            .is_err());
         drop(permit);
-        assert_eq!(
-            gate.wait_until(Instant::now() + Duration::from_millis(20)),
-            0
-        );
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        waiter.join().unwrap();
     }
 }

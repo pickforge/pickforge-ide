@@ -3,7 +3,6 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use pickforge_core::{
     agents::AgentChatManager, close_recoverable_session_spawn_gate,
@@ -16,8 +15,6 @@ use crate::logcat_commands::LogcatManager;
 use crate::mirror_commands::MirrorManager;
 use crate::pty_commands::runtime_base;
 
-const ASYNC_STOP_TIMEOUT: Duration = Duration::from_secs(5);
-
 pub fn run_once(app: &tauri::AppHandle) {
     static DONE: AtomicBool = AtomicBool::new(false);
     if DONE.swap(true, Ordering::SeqCst) {
@@ -25,16 +22,12 @@ pub fn run_once(app: &tauri::AppHandle) {
     }
 
     app.state::<AgentChatManager>().shutdown();
-    let recoverable_deadline = Instant::now() + ASYNC_STOP_TIMEOUT;
-    let incomplete_spawns = close_recoverable_session_spawn_gate(recoverable_deadline);
-    if incomplete_spawns != 0 {
-        eprintln!("recoverable spawn quiescence incomplete: {incomplete_spawns} owner(s)");
-    }
+    close_recoverable_session_spawn_gate();
     let incomplete_ptys = app.state::<PtyManager>().shutdown();
     if incomplete_ptys != 0 {
         eprintln!("PTY cleanup incomplete: {incomplete_ptys} session(s)");
     }
-    if let Err(error) = kill_recoverable_sessions_on_exit(&runtime_base(), recoverable_deadline) {
+    if let Err(error) = kill_recoverable_sessions_on_exit(&runtime_base()) {
         eprintln!("recoverable session cleanup incomplete: {error}");
     }
     app.state::<pickforge_core::android::EmulatorManager>()
@@ -49,15 +42,6 @@ pub fn run_once(app: &tauri::AppHandle) {
     let logcats = app.state::<LogcatManager>().inner().clone();
     let oslogs = app.state::<OsLogManager>().inner().clone();
     tauri::async_runtime::block_on(async {
-        let (mirror, logcat, oslog) = tokio::join!(
-            tokio::time::timeout(ASYNC_STOP_TIMEOUT, mirrors.shutdown()),
-            tokio::time::timeout(ASYNC_STOP_TIMEOUT, logcats.shutdown()),
-            tokio::time::timeout(ASYNC_STOP_TIMEOUT, oslogs.shutdown()),
-        );
-        for (name, result) in [("mirror", mirror), ("logcat", logcat), ("oslog", oslog)] {
-            if result.is_err() {
-                eprintln!("{name} cleanup incomplete after {ASYNC_STOP_TIMEOUT:?}");
-            }
-        }
+        tokio::join!(mirrors.shutdown(), logcats.shutdown(), oslogs.shutdown());
     });
 }

@@ -183,9 +183,12 @@ pub struct EmulatorManager {
 
 struct EmulatorState {
     children: Mutex<HashMap<u64, Arc<Mutex<Child>>>>,
+    provisional: Mutex<HashMap<u64, Arc<Mutex<Child>>>>,
     next_id: AtomicU64,
     shutting_down: AtomicBool,
     start_gate: Arc<StartGate>,
+    #[cfg(test)]
+    after_spawn: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
 impl Default for EmulatorManager {
@@ -193,9 +196,12 @@ impl Default for EmulatorManager {
         Self {
             state: Arc::new(EmulatorState {
                 children: Mutex::new(HashMap::new()),
+                provisional: Mutex::new(HashMap::new()),
                 next_id: AtomicU64::new(1),
                 shutting_down: AtomicBool::new(false),
                 start_gate: Arc::new(StartGate::default()),
+                #[cfg(test)]
+                after_spawn: Mutex::new(None),
             }),
         }
     }
@@ -236,9 +242,30 @@ impl EmulatorManager {
             // The pgid is the exact ownership boundary used at shutdown.
             cmd.process_group(0);
         }
-        let child = Arc::new(Mutex::new(cmd.spawn().map_err(|e| e.to_string())?));
-
         let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
+        let child = {
+            let mut provisional = self
+                .state
+                .provisional
+                .lock()
+                .expect("emulator provisional registry poisoned");
+            if self.state.shutting_down.load(Ordering::SeqCst) {
+                return Err("emulator manager is shutting down".to_string());
+            }
+            let child = Arc::new(Mutex::new(cmd.spawn().map_err(|e| e.to_string())?));
+            provisional.insert(id, Arc::clone(&child));
+            child
+        };
+        #[cfg(test)]
+        if let Some(hook) = self
+            .state
+            .after_spawn
+            .lock()
+            .expect("emulator spawn hook poisoned")
+            .clone()
+        {
+            hook();
+        }
         {
             let mut children = self
                 .state
@@ -248,11 +275,21 @@ impl EmulatorManager {
             // Re-check under the lock so insertion cannot race behind the drain.
             if self.state.shutting_down.load(Ordering::SeqCst) {
                 drop(children);
+                self.state
+                    .provisional
+                    .lock()
+                    .expect("emulator provisional registry poisoned")
+                    .remove(&id);
                 kill_owned_child_now(&child);
                 return Err("emulator manager is shutting down".to_string());
             }
             children.insert(id, Arc::clone(&child));
         }
+        self.state
+            .provisional
+            .lock()
+            .expect("emulator provisional registry poisoned")
+            .remove(&id);
         self.watch_child(id, child);
         Ok(())
     }
@@ -271,11 +308,20 @@ impl EmulatorManager {
 
     pub fn shutdown(&self) {
         self.state.start_gate.close();
-        let _ = self
-            .state
-            .start_gate
-            .wait_until(Instant::now() + Duration::from_secs(5));
         self.state.shutting_down.store(true, Ordering::SeqCst);
+        let provisional = {
+            let mut provisional = self
+                .state
+                .provisional
+                .lock()
+                .expect("emulator provisional registry poisoned");
+            provisional.drain().map(|(_, child)| child).collect::<Vec<_>>()
+        };
+        for child in provisional {
+            kill_owned_child_now(&child);
+        }
+        self.state.start_gate.wait();
+
         let drained = {
             let mut children = self
                 .state
@@ -284,11 +330,8 @@ impl EmulatorManager {
                 .expect("emulator registry poisoned");
             children.drain().map(|(_, child)| child).collect::<Vec<_>>()
         };
-        if drained.is_empty() {
-            return;
-        }
         #[cfg(unix)]
-        {
+        if !drained.is_empty() {
             for child in &drained {
                 signal_owned_group(child, libc::SIGTERM);
             }
@@ -483,6 +526,48 @@ mod tests {
             "fake emulator survived shutdown (marker was written)"
         );
         let _ = std::fs::remove_file(&marker);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_kills_a_child_paused_after_spawn_before_registration() {
+        let manager = Arc::new(EmulatorManager::new());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let hook_state = Arc::clone(&manager.state);
+        *manager
+            .state
+            .after_spawn
+            .lock()
+            .expect("spawn hook poisoned") = Some(Arc::new(move || {
+            started_tx.send(()).unwrap();
+            while !hook_state.shutting_down.load(Ordering::SeqCst) {
+                std::thread::yield_now();
+            }
+        }));
+        let worker_manager = Arc::clone(&manager);
+        let worker = std::thread::spawn(move || {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "exec sleep 30"]);
+            worker_manager.spawn_owned(cmd)
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let pid = {
+            let provisional = manager.state.provisional.lock().unwrap();
+            let pid = provisional
+                .values()
+                .next()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .id() as i32;
+            pid
+        };
+
+        let begun = Instant::now();
+        manager.shutdown();
+        assert!(begun.elapsed() < Duration::from_secs(2));
+        assert!(!process_alive(pid), "provisional emulator child survived");
+        assert!(worker.join().unwrap().is_err());
     }
 
     #[cfg(unix)]

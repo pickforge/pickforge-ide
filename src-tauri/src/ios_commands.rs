@@ -7,7 +7,6 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use pickforge_core::android::{A11yNode, DeviceEntry, DeviceKind, DeviceState};
 use pickforge_core::ios::{
@@ -66,10 +65,8 @@ impl OsLogManager {
         for session in sessions {
             stop_child(session).await;
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while self.2.active() != 0 && Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+        let gate = Arc::clone(&self.2);
+        let _ = tokio::task::spawn_blocking(move || gate.wait()).await;
     }
 }
 

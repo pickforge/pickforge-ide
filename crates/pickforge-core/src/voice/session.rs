@@ -325,10 +325,8 @@ where
         self.shutting_down.store(true, Ordering::SeqCst);
         let (_, incomplete_sessions) =
             shutdown_session_registries(&self.sessions, &self.provisional, Duration::from_secs(5));
-        let incomplete_starts = self
-            .start_gate
-            .wait_until(Instant::now() + Duration::from_secs(5));
-        incomplete_sessions + incomplete_starts
+        self.start_gate.wait();
+        incomplete_sessions
     }
 
     fn home_dir(&self) -> Result<PathBuf, VoiceError> {
@@ -361,9 +359,7 @@ impl<R, T> Drop for VoiceSessionManager<R, T> {
         self.start_gate.close();
         self.shutting_down.store(true, Ordering::SeqCst);
         shutdown_session_registries(&self.sessions, &self.provisional, Duration::from_secs(5));
-        let _ = self
-            .start_gate
-            .wait_until(Instant::now() + Duration::from_secs(5));
+        self.start_gate.wait();
     }
 }
 

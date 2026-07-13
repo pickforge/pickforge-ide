@@ -15,7 +15,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 use super::env::normalize_pty_env;
 use super::shell::{resolve_shell, ShellInvocation};
-use crate::process::user_shell_environment;
+use crate::process::{user_shell_environment, StartGate};
 use crate::remote::{shell_quote_argv, ssh_base_args, SshTarget};
 
 const PTY_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
@@ -137,6 +137,9 @@ pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<u32, Session>>>,
     next_id: AtomicU32,
     shutting_down: AtomicBool,
+    start_gate: Arc<StartGate>,
+    #[cfg(test)]
+    after_child_spawn: Mutex<Option<Arc<dyn Fn(Option<u32>) + Send + Sync>>>,
 }
 
 impl Default for PtyManager {
@@ -145,6 +148,9 @@ impl Default for PtyManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU32::new(1),
             shutting_down: AtomicBool::new(false),
+            start_gate: Arc::new(StartGate::default()),
+            #[cfg(test)]
+            after_child_spawn: Mutex::new(None),
         }
     }
 }
@@ -158,9 +164,10 @@ impl PtyManager {
     /// is the user's interactive `$SHELL`; with it, a one-shot `$SHELL -c
     /// <command>` that exits when the command does. Returns the session id.
     pub fn spawn<S: PtySink>(&self, opts: SpawnOptions, sink: S) -> Result<u32, PtyError> {
-        if self.shutting_down.load(Ordering::SeqCst) {
-            return Err(PtyError::ShuttingDown);
-        }
+        let _start_permit = self
+            .start_gate
+            .begin()
+            .map_err(|_| PtyError::ShuttingDown)?;
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
 
@@ -224,6 +231,15 @@ impl PtyManager {
         }
 
         let child = pair.slave.spawn_command(cmd)?;
+        #[cfg(test)]
+        if let Some(hook) = self
+            .after_child_spawn
+            .lock()
+            .expect("pty spawn hook poisoned")
+            .clone()
+        {
+            hook(child.process_id());
+        }
         drop(pair.slave); // parent must close its slave handle
 
         #[cfg(unix)]
@@ -403,8 +419,9 @@ impl PtyManager {
     /// Idempotently drain and tear down every PTY session. Returns the number
     /// whose reap did not complete before the shared shutdown deadline.
     pub fn shutdown(&self) -> usize {
-        // spawn re-checks this gate under the registry lock before insertion.
+        self.start_gate.close();
         self.shutting_down.store(true, Ordering::SeqCst);
+        self.start_gate.wait();
         let drained = {
             let mut sessions = self.sessions.lock().expect("pty registry poisoned");
             sessions
@@ -635,6 +652,55 @@ mod tests {
             host: host.to_string(),
             remote_root: remote_root.to_string(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_waits_for_post_spawn_rollback_and_child_death() {
+        let manager = Arc::new(PtyManager::new());
+        let (spawned_tx, spawned_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        *manager
+            .after_child_spawn
+            .lock()
+            .expect("pty spawn hook poisoned") = Some(Arc::new(move |pid| {
+            spawned_tx.send(pid).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        }));
+        let spawning_manager = Arc::clone(&manager);
+        let spawn =
+            std::thread::spawn(move || spawning_manager.spawn(SpawnOptions::default(), |_| {}));
+        let pid = spawned_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+            .unwrap() as i32;
+        let shutdown_manager = Arc::clone(&manager);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            shutdown_manager.shutdown();
+            done_tx.send(()).unwrap();
+        });
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "shutdown returned while a post-spawn permit was still active"
+        );
+
+        release_tx.send(()).unwrap();
+        assert!(matches!(
+            spawn.join().unwrap(),
+            Err(PtyError::ShuttingDownAfterSpawn)
+        ));
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        shutdown.join().unwrap();
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "post-spawn PTY child survived shutdown"
+        );
     }
 
     #[test]

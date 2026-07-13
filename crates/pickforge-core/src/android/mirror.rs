@@ -16,12 +16,13 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::process::{run, run_timeout, user_shell_environment};
+use crate::process::{run_timeout, user_shell_environment};
 
 /// scrcpy-server version — MUST match the bundled jar and what
 /// `@yume-chan/scrcpy` understands (its `latest` == 3.3.3).
 pub const SERVER_VERSION: &str = "3.3.3";
 const REMOTE_JAR: &str = "/data/local/tmp/scrcpy-server.jar";
+const ADB_SETUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum MirrorError {
@@ -47,7 +48,7 @@ pub struct MirrorSession {
 }
 
 fn adb(args: &[&str]) -> Result<(), MirrorError> {
-    let ok = run("adb", args, None, None)
+    let ok = run_timeout("adb", args, None, None, ADB_SETUP_TIMEOUT)
         .map(|o| o.success())
         .unwrap_or(false);
     if ok {

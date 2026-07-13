@@ -7,6 +7,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -30,6 +31,8 @@ pub enum MirrorError {
     Io(#[from] std::io::Error),
     #[error("timed out waiting for the scrcpy server to connect")]
     ConnectTimeout,
+    #[error("mirror startup was cancelled")]
+    Cancelled,
 }
 
 /// A live mirror: the server process, the (owned) sockets, and the tunnel id.
@@ -44,19 +47,28 @@ pub struct MirrorSession {
 }
 
 fn adb(args: &[&str]) -> Result<(), MirrorError> {
-    let ok = run("adb", args, None, None).map(|o| o.success()).unwrap_or(false);
+    let ok = run("adb", args, None, None)
+        .map(|o| o.success())
+        .unwrap_or(false);
     if ok {
         Ok(())
     } else {
-        Err(MirrorError::Adb(args.get(2).copied().unwrap_or("adb").to_string()))
+        Err(MirrorError::Adb(
+            args.get(2).copied().unwrap_or("adb").to_string(),
+        ))
     }
 }
 
 /// A 31-bit hex socket id (matches scrcpy's `scid`), seeded by the clock + serial
 /// so concurrent mirrors on the same host don't collide.
 fn gen_scid(serial: &str) -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let salt = serial.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let salt = serial
+        .bytes()
+        .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
     let v = ((nanos as u32) ^ salt) & 0x7fff_ffff;
     format!("{v:08x}")
 }
@@ -65,6 +77,14 @@ fn gen_scid(serial: &str) -> String {
 /// accept its two sockets (video, then control). The caller keeps the returned
 /// session alive and must call [`stop_session`] to tear it down.
 pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSession, MirrorError> {
+    start_session_cancellable(serial, jar_path, Arc::new(AtomicBool::new(false))).await
+}
+
+pub async fn start_session_cancellable(
+    serial: &str,
+    jar_path: &Path,
+    cancelled: Arc<AtomicBool>,
+) -> Result<MirrorSession, MirrorError> {
     let jar = jar_path.to_string_lossy();
     adb(&["-s", serial, "push", &jar, REMOTE_JAR])?;
 
@@ -72,7 +92,13 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
     let socket_name = format!("localabstract:scrcpy_{scid}");
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    adb(&["-s", serial, "reverse", &socket_name, &format!("tcp:{port}")])?;
+    adb(&[
+        "-s",
+        serial,
+        "reverse",
+        &socket_name,
+        &format!("tcp:{port}"),
+    ])?;
 
     // app_process runs the server jar's main. Reverse tunnel ⇒ no dummy byte.
     let scid_arg = format!("scid={scid}");
@@ -116,12 +142,24 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
         let (control, _) = listener.accept().await?;
         Ok::<_, std::io::Error>((video, control))
     };
-    let (video, control) = match timeout(Duration::from_secs(15), accept).await {
-        Ok(Ok(pair)) => pair,
-        _ => {
+    let cancelled_wait = async {
+        while !cancelled.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    let (video, control) = tokio::select! {
+        result = timeout(Duration::from_secs(15), accept) => match result {
+            Ok(Ok(pair)) => pair,
+            _ => {
+                let _ = child.kill().await;
+                remove_reverse(serial.to_string(), socket_name).await;
+                return Err(MirrorError::ConnectTimeout);
+            }
+        },
+        _ = cancelled_wait => {
             let _ = child.kill().await;
             remove_reverse(serial.to_string(), socket_name).await;
-            return Err(MirrorError::ConnectTimeout);
+            return Err(MirrorError::Cancelled);
         }
     };
     let _ = video.set_nodelay(true);
@@ -140,7 +178,13 @@ const REVERSE_REMOVE_TIMEOUT: Duration = Duration::from_secs(1);
 
 async fn remove_reverse(serial: String, socket_name: String) {
     let _ = tokio::task::spawn_blocking(move || {
-        let args = ["-s", serial.as_str(), "reverse", "--remove", socket_name.as_str()];
+        let args = [
+            "-s",
+            serial.as_str(),
+            "reverse",
+            "--remove",
+            socket_name.as_str(),
+        ];
         let _ = run_timeout("adb", &args, None, None, REVERSE_REMOVE_TIMEOUT);
     })
     .await;

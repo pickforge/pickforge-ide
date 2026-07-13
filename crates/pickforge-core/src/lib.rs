@@ -42,7 +42,7 @@ pub use db::{
 
 pub use process::{
     is_binary_on_path, is_on_user_path, run, run_timeout, run_timeout_capped,
-    user_shell_environment, which_in, CommandOutcome, OutputTruncation,
+    user_shell_environment, which_in, CommandOutcome, OutputTruncation, StartGate, StartPermit,
 };
 pub use pty::{
     begin_recoverable_session_spawn, close_recoverable_session_spawn_gate, dtach_master_pids,

@@ -9,9 +9,10 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use pickforge_core::android::{logcat_event, LogEvent};
-use pickforge_core::user_shell_environment;
+use pickforge_core::{user_shell_environment, StartGate};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -29,6 +30,7 @@ struct LogcatSession {
 pub struct LogcatManager(
     Arc<Mutex<HashMap<String, LogcatSession>>>,
     Arc<AtomicBool>,
+    Arc<StartGate>,
 );
 
 impl LogcatManager {
@@ -53,6 +55,7 @@ impl LogcatManager {
     }
 
     pub async fn shutdown(&self) {
+        self.2.close();
         self.1.store(true, Ordering::SeqCst);
         let sessions = {
             let mut reg = self.0.lock().await;
@@ -60,6 +63,10 @@ impl LogcatManager {
         };
         for session in sessions {
             stop_child(session).await;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.2.active() != 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
 }
@@ -84,6 +91,10 @@ pub async fn logcat_start(
     serial: String,
     on_line: Channel<LogEvent>,
 ) -> Result<(), String> {
+    let _start_permit = manager
+        .2
+        .begin()
+        .map_err(|_| "logcat manager is shutting down".to_string())?;
     if manager.is_shutting_down() {
         return Err("logcat manager is shutting down".to_string());
     }
@@ -210,11 +221,20 @@ mod tests {
         let serial = "emulator-5554";
 
         let epoch1 = next_epoch();
-        let first = LogcatSession { child: spawn_sleeper(), epoch: epoch1 };
-        assert!(matches!(manager.replace_session(serial, first).await, Ok(None)));
+        let first = LogcatSession {
+            child: spawn_sleeper(),
+            epoch: epoch1,
+        };
+        assert!(matches!(
+            manager.replace_session(serial, first).await,
+            Ok(None)
+        ));
 
         let epoch2 = next_epoch();
-        let second = LogcatSession { child: spawn_sleeper(), epoch: epoch2 };
+        let second = LogcatSession {
+            child: spawn_sleeper(),
+            epoch: epoch2,
+        };
         let displaced = match manager.replace_session(serial, second).await {
             Ok(Some(displaced)) => displaced,
             _ => panic!("first session is displaced"),
@@ -239,7 +259,10 @@ mod tests {
         // A stale reader for the OLD epoch must no-op against the current session.
         let reg = manager.0.lock().await;
         let stale_matches = reg.get(serial).map(|s| s.epoch == epoch1).unwrap_or(false);
-        assert!(!stale_matches, "stale (older) epoch must not match the live session");
+        assert!(
+            !stale_matches,
+            "stale (older) epoch must not match the live session"
+        );
     }
 
     async fn stop_child_for_test(session: &mut LogcatSession) {

@@ -8,9 +8,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use pickforge_core::android::{start_session, stop_session, MirrorSession, SERVER_VERSION};
-use pickforge_core::pickforge_home;
+use pickforge_core::android::{
+    start_session_cancellable, stop_session, MirrorSession, SERVER_VERSION,
+};
+use pickforge_core::{pickforge_home, StartGate};
 use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -24,6 +27,7 @@ const SERVER_JAR: &[u8] = include_bytes!("../resources/scrcpy-server-v3.3.3");
 pub struct MirrorManager(
     Arc<Mutex<HashMap<String, MirrorSession>>>,
     Arc<AtomicBool>,
+    Arc<StartGate>,
 );
 
 impl MirrorManager {
@@ -48,6 +52,7 @@ impl MirrorManager {
     }
 
     pub async fn shutdown(&self) {
+        self.2.close();
         self.1.store(true, Ordering::SeqCst);
         let sessions = {
             let mut reg = self.0.lock().await;
@@ -55,6 +60,10 @@ impl MirrorManager {
         };
         for session in sessions {
             stop_session(session).await;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.2.active() != 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
 }
@@ -77,6 +86,10 @@ pub async fn mirror_start(
     serial: String,
     on_video: Channel<Response>,
 ) -> Result<(), String> {
+    let _start_permit = manager
+        .2
+        .begin()
+        .map_err(|_| "mirror manager is shutting down".to_string())?;
     if manager.is_shutting_down() {
         return Err("mirror manager is shutting down".to_string());
     }
@@ -84,7 +97,9 @@ pub async fn mirror_start(
         stop_session(old).await;
     }
     let jar = ensure_jar()?;
-    let mut session = start_session(&serial, &jar).await.map_err(|e| e.to_string())?;
+    let mut session = start_session_cancellable(&serial, &jar, Arc::clone(&manager.1))
+        .await
+        .map_err(|e| e.to_string())?;
     let Some(video) = session.video.take() else {
         stop_session(session).await;
         return Err("no video socket".to_string());
@@ -156,7 +171,11 @@ enum ControlLen {
     /// `header` fixed bytes, then a length-prefixed body. `prefix_at` is the byte
     /// offset of the big-endian length field, `prefix_width` its size (1/2/4),
     /// and the total must be exactly `header + <decoded prefix>`.
-    Prefixed { header: usize, prefix_at: usize, prefix_width: usize },
+    Prefixed {
+        header: usize,
+        prefix_at: usize,
+        prefix_width: usize,
+    },
     /// Two length-prefixed bodies back to back (only `UHidCreate`): a u8-prefixed
     /// name then a u16-prefixed descriptor. `header` covers the bytes up to and
     /// including the first prefix; the second prefix sits right after the name.
@@ -171,25 +190,44 @@ enum ControlLen {
 fn control_len(type_byte: u8) -> Option<ControlLen> {
     use ControlLen::*;
     Some(match type_byte {
-        0 => Fixed(14),  // InjectKeyCode: action1 + keyCode4 + repeat4 + metaState4
-        1 => Prefixed { header: 5, prefix_at: 1, prefix_width: 4 }, // InjectText: u32 text
-        2 => Fixed(32),  // InjectTouch
-        3 => Fixed(21),  // InjectScroll
-        4 => Fixed(2),   // BackOrScreenOn: action1
-        5 => Fixed(1),   // ExpandNotificationPanel
-        6 => Fixed(1),   // ExpandSettingsPanel
-        7 => Fixed(1),   // CollapsePanels
-        8 => Fixed(2),   // GetClipboard: copyKey1
-        9 => Prefixed { header: 14, prefix_at: 10, prefix_width: 4 }, // SetClipboard: seq8+paste1+u32 text
-        10 => Fixed(2),  // SetDisplayPower: on1
-        11 => Fixed(1),  // RotateDevice
+        0 => Fixed(14), // InjectKeyCode: action1 + keyCode4 + repeat4 + metaState4
+        1 => Prefixed {
+            header: 5,
+            prefix_at: 1,
+            prefix_width: 4,
+        }, // InjectText: u32 text
+        2 => Fixed(32), // InjectTouch
+        3 => Fixed(21), // InjectScroll
+        4 => Fixed(2),  // BackOrScreenOn: action1
+        5 => Fixed(1),  // ExpandNotificationPanel
+        6 => Fixed(1),  // ExpandSettingsPanel
+        7 => Fixed(1),  // CollapsePanels
+        8 => Fixed(2),  // GetClipboard: copyKey1
+        9 => Prefixed {
+            header: 14,
+            prefix_at: 10,
+            prefix_width: 4,
+        }, // SetClipboard: seq8+paste1+u32 text
+        10 => Fixed(2), // SetDisplayPower: on1
+        11 => Fixed(1), // RotateDevice
         // UHidCreate: id2 + vendorId2 + productId2 + u8 name + u16 descriptor
-        12 => UHidCreate { header: 8, first_at: 7 },
-        13 => Prefixed { header: 5, prefix_at: 3, prefix_width: 2 }, // UHidInput: id2 + u16 data
-        14 => Fixed(3),  // UHidDestroy: id2
-        15 => Fixed(1),  // OpenHardKeyboardSettings
-        16 => Prefixed { header: 2, prefix_at: 1, prefix_width: 1 }, // StartApp: u8 name
-        17 => Fixed(1),  // ResetVideo
+        12 => UHidCreate {
+            header: 8,
+            first_at: 7,
+        },
+        13 => Prefixed {
+            header: 5,
+            prefix_at: 3,
+            prefix_width: 2,
+        }, // UHidInput: id2 + u16 data
+        14 => Fixed(3), // UHidDestroy: id2
+        15 => Fixed(1), // OpenHardKeyboardSettings
+        16 => Prefixed {
+            header: 2,
+            prefix_at: 1,
+            prefix_width: 1,
+        }, // StartApp: u8 name
+        17 => Fixed(1), // ResetVideo
         _ => return None,
     })
 }
@@ -219,7 +257,11 @@ fn validate_control_payload(bytes: &[u8]) -> Result<(), String> {
     };
     let expected = match spec {
         ControlLen::Fixed(n) => n,
-        ControlLen::Prefixed { header, prefix_at, prefix_width } => {
+        ControlLen::Prefixed {
+            header,
+            prefix_at,
+            prefix_width,
+        } => {
             if bytes.len() < header {
                 return Err("truncated control message header".into());
             }
@@ -236,9 +278,11 @@ fn validate_control_payload(bytes: &[u8]) -> Result<(), String> {
             // u8 name length, then a u16 descriptor length right after the name.
             let name = read_prefix(&bytes, first_at, 1)
                 .ok_or("truncated control message length prefix")?;
-            let desc_at = header.checked_add(name).ok_or("control message length overflow")?;
-            let desc = read_prefix(&bytes, desc_at, 2)
-                .ok_or("truncated control message length prefix")?;
+            let desc_at = header
+                .checked_add(name)
+                .ok_or("control message length overflow")?;
+            let desc =
+                read_prefix(&bytes, desc_at, 2).ok_or("truncated control message length prefix")?;
             desc_at
                 .checked_add(2)
                 .and_then(|n| n.checked_add(desc))
@@ -267,9 +311,17 @@ pub async fn mirror_send_control(
     // mirror_start/mirror_stop/relay cleanup for every device.
     let control = {
         let reg = manager.0.lock().await;
-        reg.get(&serial).ok_or("no active mirror for device")?.control.clone()
+        reg.get(&serial)
+            .ok_or("no active mirror for device")?
+            .control
+            .clone()
     };
-    control.lock().await.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    control
+        .lock()
+        .await
+        .write_all(&bytes)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

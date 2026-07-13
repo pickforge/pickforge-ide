@@ -5,9 +5,11 @@
 mod binary_detector;
 mod runner;
 mod shell_env;
+mod start_gate;
 
 pub use binary_detector::{is_binary_on_path, is_on_user_path, which_in};
 pub use runner::{
     run, run_timeout, run_timeout_capped, CommandOutcome, OutputTruncation, RunError,
 };
 pub use shell_env::user_shell_environment;
+pub use start_gate::{StartGate, StartPermit};

@@ -4,11 +4,12 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::db::{AgentSessionRow, Database, DbError};
+use crate::process::StartGate;
 
 use super::claude_bridge::{spawn as spawn_claude_bridge, ClaudeBridgeClient, ClaudeBridgeOptions};
 use super::claude_stream::{spawn_claude_turn, ClaudeStreamTurn, ClaudeTurnOptions};
@@ -105,6 +106,7 @@ pub struct AgentChatManager {
     remote_sessions: Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     starting_chats: Arc<Mutex<HashSet<String>>>,
     shutting_down: Arc<AtomicBool>,
+    start_gate: Arc<StartGate>,
     #[cfg(test)]
     test_binaries: TestBinaries,
 }
@@ -235,6 +237,7 @@ impl AgentChatManager {
             remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
             shutting_down: Arc::new(AtomicBool::new(false)),
+            start_gate: Arc::new(StartGate::default()),
             #[cfg(test)]
             test_binaries: TestBinaries::default(),
         }
@@ -252,9 +255,10 @@ impl AgentChatManager {
         overrides: AgentStartOverrides,
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     ) -> Result<String, AgentChatError> {
-        if self.shutting_down.load(Ordering::SeqCst) {
-            return Err(AgentChatError::ShuttingDown);
-        }
+        let _start_permit = self
+            .start_gate
+            .begin()
+            .map_err(|_| AgentChatError::ShuttingDown)?;
         let _start_guard = self.acquire_start_guard(chat_id)?;
         let remote = overrides.remote.clone();
         let engine = engine_for_start(engine, remote.as_ref());
@@ -447,7 +451,12 @@ impl AgentChatManager {
                     if state.active_turn.is_some() {
                         events.push(AgentEvent::TurnStarted);
                     }
-                    events.extend(state.pending_approvals.iter().map(|(_, event)| event.clone()));
+                    events.extend(
+                        state
+                            .pending_approvals
+                            .iter()
+                            .map(|(_, event)| event.clone()),
+                    );
                     events
                 })
                 .unwrap_or_default()
@@ -701,7 +710,8 @@ impl AgentChatManager {
         // disposed mid-flight, rolls these rows back so no phantom prompt (or
         // orphan of a deleted chat) survives.
         let persist_prompt = |db: &Database| -> Result<Vec<i64>, AgentChatError> {
-            let mut seqs = vec![db.agent_message_append(&session_id_owned, &chat_id, "user", text)?];
+            let mut seqs =
+                vec![db.agent_message_append(&session_id_owned, &chat_id, "user", text)?];
             if !images.is_empty() {
                 let payload =
                     serde_json::json!({ "kind": "attachments", "paths": images }).to_string();
@@ -1165,7 +1175,9 @@ impl AgentChatManager {
                     .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
                 // Record the steer as a user message so reloaded history keeps
                 // the instruction that shaped the running turn.
-                let _ = self.db.agent_message_append(session_id, &chat_id, "user", text);
+                let _ = self
+                    .db
+                    .agent_message_append(session_id, &chat_id, "user", text);
                 Ok(())
             }
             (Engine::V2, AgentProvider::ClaudeCode) => Err(AgentChatError::Unsupported(
@@ -1340,7 +1352,10 @@ impl AgentChatManager {
             let client = match self.cached_claude_bridge_client() {
                 Ok(client) => Some(client),
                 Err(AgentChatError::Spawn(message))
-                    if message == "claude bridge client is not running" => None,
+                    if message == "claude bridge client is not running" =>
+                {
+                    None
+                }
                 Err(err) => return Err(err),
             };
             if let Some(client) = client {
@@ -1414,19 +1429,16 @@ impl AgentChatManager {
         host: &str,
         remote_root: &str,
     ) -> Option<String> {
-        self.remote_sessions
-            .lock()
-            .ok()
-            .and_then(|sessions| {
-                sessions
-                    .get(&RemoteSessionKey {
-                        chat_id: chat_id.to_string(),
-                        provider,
-                        host: host.to_string(),
-                        remote_root: remote_root.to_string(),
-                    })
-                    .cloned()
-            })
+        self.remote_sessions.lock().ok().and_then(|sessions| {
+            sessions
+                .get(&RemoteSessionKey {
+                    chat_id: chat_id.to_string(),
+                    provider,
+                    host: host.to_string(),
+                    remote_root: remote_root.to_string(),
+                })
+                .cloned()
+        })
     }
 
     fn codex_app_client(
@@ -1699,7 +1711,11 @@ impl AgentChatManager {
 
     /// Idempotently stop all owned agent sessions and provider clients.
     pub fn shutdown(&self) {
+        self.start_gate.close();
         self.shutting_down.store(true, Ordering::SeqCst);
+        let _ = self
+            .start_gate
+            .wait_until(Instant::now() + Duration::from_secs(5));
 
         let drained = self
             .inner
@@ -1770,6 +1786,7 @@ impl AgentChatManager {
             remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
             shutting_down: Arc::new(AtomicBool::new(false)),
+            start_gate: Arc::new(StartGate::default()),
             test_binaries: TestBinaries {
                 codex: codex_binary,
                 claude: claude_binary,
@@ -1962,9 +1979,7 @@ impl ActiveTurn {
                     pending_interrupt.store(true, Ordering::SeqCst);
                     let turn_id = turn_id
                         .lock()
-                        .map_err(|_| {
-                            AgentChatError::Spawn("agent turn lock poisoned".to_string())
-                        })?
+                        .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?
                         .clone();
                     let interrupt = match turn_id {
                         Some(turn_id) if pending_interrupt.swap(false, Ordering::SeqCst) => {
@@ -2093,9 +2108,15 @@ fn handle_runner_event(
     let (session_present, has_turn, is_v2) = inner
         .lock()
         .map(|states| {
-            states.get(session_id).map_or((false, false, false), |state| {
-                (true, state.active_turn.is_some(), state.engine == Engine::V2)
-            })
+            states
+                .get(session_id)
+                .map_or((false, false, false), |state| {
+                    (
+                        true,
+                        state.active_turn.is_some(),
+                        state.engine == Engine::V2,
+                    )
+                })
         })
         .unwrap_or((false, false, false));
     let turn_scoped = !matches!(
@@ -2188,7 +2209,10 @@ fn handle_runner_event(
         AgentEvent::Usage { .. } => {
             let model = inner.lock().ok().and_then(|states| {
                 states.get(session_id).and_then(|state| {
-                    state.last_turn_model.clone().or_else(|| state.model.clone())
+                    state
+                        .last_turn_model
+                        .clone()
+                        .or_else(|| state.model.clone())
                 })
             });
             if let Err(err) = append_usage_item(db, session_id, chat_id, &event, model) {
@@ -2339,10 +2363,7 @@ fn terminal_should_skip(
     false
 }
 
-fn clear_pending_approvals(
-    inner: &Arc<Mutex<HashMap<String, SessionState>>>,
-    session_id: &str,
-) {
+fn clear_pending_approvals(inner: &Arc<Mutex<HashMap<String, SessionState>>>, session_id: &str) {
     if let Ok(mut states) = inner.lock() {
         if let Some(state) = states.get_mut(session_id) {
             state.pending_approvals.clear();
@@ -4900,7 +4921,10 @@ exec sleep 5
             .unwrap()
             .is_none()
         {
-            assert!(Instant::now() < deadline, "start did not reach registration");
+            assert!(
+                Instant::now() < deadline,
+                "start did not reach registration"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         manager.shutting_down.store(true, Ordering::SeqCst);

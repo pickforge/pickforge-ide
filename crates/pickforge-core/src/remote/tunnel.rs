@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::ssh::{ssh_tunnel_args, SshError, SshTarget};
+use crate::process::StartGate;
 
 const OPEN_ATTEMPTS: usize = 3;
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -50,9 +51,8 @@ pub enum TunnelError {
 }
 
 type TunnelClosedCallback = Arc<dyn Fn(RemoteTunnelClosed) + Send + Sync + 'static>;
-type ReadinessProbe = Arc<
-    dyn Fn(u16, &Arc<Mutex<Child>>) -> Result<(), TunnelError> + Send + Sync + 'static,
->;
+type ReadinessProbe =
+    Arc<dyn Fn(u16, &Arc<Mutex<Child>>) -> Result<(), TunnelError> + Send + Sync + 'static>;
 
 struct ManagedTunnel {
     run_id: String,
@@ -62,14 +62,24 @@ struct ManagedTunnel {
 
 struct TunnelState {
     entries: Mutex<HashMap<String, ManagedTunnel>>,
+    provisional: Mutex<HashMap<u32, Arc<Mutex<Child>>>>,
     shutting_down: AtomicBool,
     next_id: AtomicU64,
     ssh_program: PathBuf,
     readiness_probe: ReadinessProbe,
+    start_gate: Arc<StartGate>,
 }
 
 impl Drop for TunnelState {
     fn drop(&mut self) {
+        let provisional = self
+            .provisional
+            .get_mut()
+            .map(std::mem::take)
+            .unwrap_or_default();
+        for child in provisional.into_values() {
+            terminate_child(&child);
+        }
         let entries = self
             .entries
             .get_mut()
@@ -102,9 +112,11 @@ impl TunnelManager {
         run_id: impl Into<String>,
         on_closed: impl Fn(RemoteTunnelClosed) + Send + Sync + 'static,
     ) -> Result<RemoteTunnel, TunnelError> {
-        if self.state.shutting_down.load(Ordering::SeqCst) {
-            return Err(TunnelError::ShuttingDown);
-        }
+        let _start_permit = self
+            .state
+            .start_gate
+            .begin()
+            .map_err(|_| TunnelError::ShuttingDown)?;
         if remote_port == 0 {
             return Err(TunnelError::InvalidRemotePort);
         }
@@ -114,6 +126,9 @@ impl TunnelManager {
         let mut last_error = None;
 
         for _ in 0..OPEN_ATTEMPTS {
+            if self.state.shutting_down.load(Ordering::SeqCst) {
+                return Err(TunnelError::ShuttingDown);
+            }
             let local_port = reserve_loopback_port()?;
             let args = ssh_tunnel_args(&target, local_port, remote_port);
             let child = Command::new(&self.state.ssh_program)
@@ -124,8 +139,21 @@ impl TunnelManager {
                 .spawn()
                 .map_err(TunnelError::Spawn)?;
             let child = Arc::new(Mutex::new(child));
+            let provisional_pid = child.lock().expect("remote tunnel child poisoned").id();
+            self.state
+                .provisional
+                .lock()
+                .expect("remote tunnel provisional registry poisoned")
+                .insert(provisional_pid, Arc::clone(&child));
 
-            match (self.state.readiness_probe)(local_port, &child) {
+            let ready = (self.state.readiness_probe)(local_port, &child);
+            self.state
+                .provisional
+                .lock()
+                .expect("remote tunnel provisional registry poisoned")
+                .remove(&provisional_pid);
+
+            match ready {
                 Ok(()) => {
                     let tunnel_id = format!(
                         "remote-tunnel-{}",
@@ -209,7 +237,19 @@ impl TunnelManager {
     }
 
     pub fn shutdown(&self) {
+        self.state.start_gate.close();
         self.state.shutting_down.store(true, Ordering::SeqCst);
+        let provisional = {
+            let mut provisional = self
+                .state
+                .provisional
+                .lock()
+                .expect("remote tunnel provisional registry poisoned");
+            std::mem::take(&mut *provisional)
+        };
+        for child in provisional.into_values() {
+            terminate_child(&child);
+        }
         let entries = {
             let mut entries = self
                 .state
@@ -219,6 +259,10 @@ impl TunnelManager {
             std::mem::take(&mut *entries)
         };
         shutdown_entries(entries);
+        let _ = self
+            .state
+            .start_gate
+            .wait_until(Instant::now() + Duration::from_secs(5));
     }
 
     pub fn len(&self) -> usize {
@@ -233,10 +277,12 @@ impl TunnelManager {
         Self {
             state: Arc::new(TunnelState {
                 entries: Mutex::new(HashMap::new()),
+                provisional: Mutex::new(HashMap::new()),
                 shutting_down: AtomicBool::new(false),
                 next_id: AtomicU64::new(0),
                 ssh_program,
                 readiness_probe,
+                start_gate: Arc::new(StartGate::default()),
             }),
         }
     }
@@ -392,9 +438,13 @@ mod tests {
         let manager = TunnelManager::with_parts(fake.clone(), Arc::new(|_, _| Ok(())));
         let (tx, rx) = mpsc::channel();
         let tunnel = manager
-            .open("mac-mini", 8181, "run-1", move |closed| tx.send(closed).unwrap())
+            .open("mac-mini", 8181, "run-1", move |closed| {
+                tx.send(closed).unwrap()
+            })
             .expect("open tunnel");
-        let closed = rx.recv_timeout(Duration::from_secs(2)).expect("child exit event");
+        let closed = rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("child exit event");
         assert_eq!(closed.tunnel_id, tunnel.tunnel_id);
         assert_eq!(closed.exit_code, Some(7));
         assert_eq!(manager.len(), 0);
@@ -435,8 +485,7 @@ mod tests {
             }),
         );
         let opener = manager.clone();
-        let open_thread =
-            thread::spawn(move || opener.open("mac-mini", 8181, "run-1", |_| {}));
+        let open_thread = thread::spawn(move || opener.open("mac-mini", 8181, "run-1", |_| {}));
 
         probe_started_rx
             .recv_timeout(Duration::from_secs(2))

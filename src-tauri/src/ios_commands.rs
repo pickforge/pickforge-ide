@@ -7,13 +7,14 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use pickforge_core::android::{A11yNode, DeviceEntry, DeviceKind, DeviceState};
 use pickforge_core::ios::{
     oslog::{parse_oslog_line, OsLogEvent},
     simctl::{self, SimDevice, SimState},
 };
-use pickforge_core::user_shell_environment;
+use pickforge_core::{user_shell_environment, StartGate};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -31,6 +32,7 @@ struct OsLogSession {
 pub struct OsLogManager(
     Arc<Mutex<HashMap<String, OsLogSession>>>,
     Arc<AtomicBool>,
+    Arc<StartGate>,
 );
 
 impl OsLogManager {
@@ -55,6 +57,7 @@ impl OsLogManager {
     }
 
     pub async fn shutdown(&self) {
+        self.2.close();
         self.1.store(true, Ordering::SeqCst);
         let sessions = {
             let mut reg = self.0.lock().await;
@@ -62,6 +65,10 @@ impl OsLogManager {
         };
         for session in sessions {
             stop_child(session).await;
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.2.active() != 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
 }
@@ -131,6 +138,10 @@ pub async fn oslog_start(
     udid: String,
     on_line: Channel<OsLogEvent>,
 ) -> Result<(), String> {
+    let _start_permit = manager
+        .2
+        .begin()
+        .map_err(|_| "os_log manager is shutting down".to_string())?;
     if manager.is_shutting_down() {
         return Err("os_log manager is shutting down".to_string());
     }

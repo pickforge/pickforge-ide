@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::process::{user_shell_environment, which_in};
+use crate::process::{user_shell_environment, which_in, StartGate};
 
 use super::adb;
 
@@ -83,7 +83,11 @@ pub fn resolve_emulator_binary() -> Option<PathBuf> {
     if let Some(p) = which_in("emulator", env) {
         return Some(p);
     }
-    let exe = if cfg!(windows) { "emulator.exe" } else { "emulator" };
+    let exe = if cfg!(windows) {
+        "emulator.exe"
+    } else {
+        "emulator"
+    };
     let mut candidates: Vec<PathBuf> = Vec::new();
     for key in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
         if let Some(sdk) = env.get(key).filter(|s| !s.is_empty()) {
@@ -92,7 +96,11 @@ pub fn resolve_emulator_binary() -> Option<PathBuf> {
     }
     if let Some(home) = home_dir(env) {
         candidates.push(Path::new(&home).join("Android/Sdk/emulator").join(exe));
-        candidates.push(Path::new(&home).join("Library/Android/sdk/emulator").join(exe));
+        candidates.push(
+            Path::new(&home)
+                .join("Library/Android/sdk/emulator")
+                .join(exe),
+        );
     }
     // Android Studio's default Windows SDK location.
     if let Some(local) = env.get("LOCALAPPDATA").filter(|s| !s.is_empty()) {
@@ -128,7 +136,11 @@ pub fn list_avds() -> Vec<AvdInfo> {
         };
         out.push(parse_avd_config(&text, stem));
     }
-    out.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+    out.sort_by(|a, b| {
+        a.display_name
+            .to_lowercase()
+            .cmp(&b.display_name.to_lowercase())
+    });
     out
 }
 
@@ -153,7 +165,10 @@ fn parse_avd_config(text: &str, stem: &str) -> AvdInfo {
     }
     let avd_id = avd_id.unwrap_or_else(|| stem.to_string());
     let display_name = display_name.unwrap_or_else(|| avd_id.clone());
-    AvdInfo { avd_id, display_name }
+    AvdInfo {
+        avd_id,
+        display_name,
+    }
 }
 
 const EXIT_POLL: Duration = Duration::from_millis(100);
@@ -170,6 +185,7 @@ struct EmulatorState {
     children: Mutex<HashMap<u64, Arc<Mutex<Child>>>>,
     next_id: AtomicU64,
     shutting_down: AtomicBool,
+    start_gate: Arc<StartGate>,
 }
 
 impl Default for EmulatorManager {
@@ -179,6 +195,7 @@ impl Default for EmulatorManager {
                 children: Mutex::new(HashMap::new()),
                 next_id: AtomicU64::new(1),
                 shutting_down: AtomicBool::new(false),
+                start_gate: Arc::new(StartGate::default()),
             }),
         }
     }
@@ -205,9 +222,11 @@ impl EmulatorManager {
     }
 
     fn spawn_owned(&self, mut cmd: Command) -> Result<(), String> {
-        if self.state.shutting_down.load(Ordering::SeqCst) {
-            return Err("emulator manager is shutting down".to_string());
-        }
+        let _start_permit = self
+            .state
+            .start_gate
+            .begin()
+            .map_err(|_| "emulator manager is shutting down".to_string())?;
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -251,6 +270,11 @@ impl EmulatorManager {
     }
 
     pub fn shutdown(&self) {
+        self.state.start_gate.close();
+        let _ = self
+            .state
+            .start_gate
+            .wait_until(Instant::now() + Duration::from_secs(5));
         self.state.shutting_down.store(true, Ordering::SeqCst);
         let drained = {
             let mut children = self

@@ -1,9 +1,11 @@
 import { defineConfig } from "vitest/config";
+import solid from "vite-plugin-solid";
 
-// Pure-logic unit tests (run-command builder, launch.json parser). No DOM and no
-// Tauri runtime — the suite mocks `@tauri-apps/api/core`. Playwright VRT lives
-// separately under tests/vrt and is run with `bun run vrt`.
+// Unit tests default to the node environment and mock Tauri IPC. Focused Solid
+// component tests opt into jsdom per file; Playwright VRT lives separately
+// under tests/vrt and is run with `bun run vrt`.
 export default defineConfig({
+  plugins: [solid()],
   test: {
     environment: "node",
     include: ["tests/unit/**/*.test.ts"],

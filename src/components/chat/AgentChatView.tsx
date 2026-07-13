@@ -13,6 +13,7 @@ import {
   clearProviderSwitched,
   ensureAgentChat,
   interruptAgentChat,
+  retryAgentChatConnection,
   sendAgentMessage,
   setAgentChatEffort,
   setAgentChatMode,
@@ -99,15 +100,64 @@ export function AgentChatView(props: {
       engine: configuredEngine,
       effort: loadAgentEfforts()[provider()] ?? null,
       mode: loadAgentModes()[provider()] ?? null,
-    });
+    }).catch(() => undefined);
   });
 
+  const [retryingConnection, setRetryingConnection] = createSignal(false);
+  const [connectionRecovered, setConnectionRecovered] = createSignal(false);
+  let recoveryStatusEl: HTMLDivElement | undefined;
+  let recoveryAttempt = 0;
+  let recoveryIdentity = `${props.chatId}:${provider()}`;
+  createEffect(() => {
+    const identity = `${props.chatId}:${provider()}`;
+    if (identity !== recoveryIdentity) {
+      recoveryIdentity = identity;
+      recoveryAttempt += 1;
+      setRetryingConnection(false);
+      setConnectionRecovered(false);
+    }
+    if (!state()?.sessionId || state()?.error) setConnectionRecovered(false);
+  });
+  const canRetryConnection = () => {
+    const chat = state();
+    return !!chat?.error && (chat.provider === "omp" || chat.provider === "pi");
+  };
+  const retryConnection = async () => {
+    const chat = state();
+    if (!chat || retryingConnection() || !canRetryConnection()) return;
+    const attempt = ++recoveryAttempt;
+    const retryProvider = chat.provider;
+    const retryChatId = props.chatId;
+    setConnectionRecovered(false);
+    setRetryingConnection(true);
+    try {
+      await retryAgentChatConnection(retryChatId);
+      const current = state();
+      if (
+        attempt === recoveryAttempt
+        && props.chatId === retryChatId
+        && current?.provider === retryProvider
+        && current.sessionId
+        && !current.error
+      ) {
+        setConnectionRecovered(true);
+        queueMicrotask(() => recoveryStatusEl?.focus());
+      }
+    } catch {
+      // retryAgentChatConnection records the actionable connection error in the store.
+    } finally {
+      if (attempt === recoveryAttempt) setRetryingConnection(false);
+    }
+  };
   // Switching providers abandons the session's context, so a chat that already
   // has content asks first instead of switching on a stray select change.
   const [pendingProvider, setPendingProvider] = createSignal<AgentProvider | null>(null);
   const providerLabel = (id: AgentProvider) => agentBackendDescriptor(id).label;
 
   const doSwitch = (next: AgentProvider) => {
+    recoveryAttempt += 1;
+    setRetryingConnection(false);
+    setConnectionRecovered(false);
     const nextModel = nativeChatModel(next, loadAgentModels()[next] ?? null);
     const nextEffort = loadAgentEfforts()[next] ?? null;
     const nextMode = loadAgentModes()[next] ?? null;
@@ -255,8 +305,29 @@ export function AgentChatView(props: {
               !
             </span>
             <span class="pf-chat-error-text">{message()}</span>
+            <Show when={canRetryConnection()}>
+              <button
+                type="button"
+                class="pf-approval-btn pf-approval-btn--quiet"
+                disabled={retryingConnection()}
+                aria-busy={retryingConnection()}
+                onClick={() => void retryConnection()}
+              >
+                {retryingConnection() ? "Retrying…" : "Retry connection"}
+              </button>
+            </Show>
           </div>
         )}
+      </Show>
+      <Show when={connectionRecovered() && !!state()?.sessionId && !state()?.error}>
+        <div
+          class="pf-chat-switch-notice"
+          role="status"
+          tabIndex={-1}
+          ref={(el) => (recoveryStatusEl = el)}
+        >
+          <span class="pf-chat-switch-notice-text">Connection restored</span>
+        </div>
       </Show>
       <Show when={hasApprovals()}>
         <ApprovalPrompt

@@ -399,6 +399,28 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     agents: { ok: true, agents: [] },
     error: null,
   }),
+  probe_agent_cli: (args) => {
+    if (args.agentId === "omp") {
+      return {
+        installed: true,
+        versionOutput: "omp 16.4.8",
+        helpOutput: "omp [--profile <name>] [--provider <id>] acp --no-extensions",
+        modelsOutput: "",
+        errors: [],
+      };
+    }
+    return {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "pi [--profile <name>] [--provider <id>]",
+      modelsOutput: [
+        "Provider Model Context",
+        "anthropic claude-sonnet-4-6 200k",
+        "openai gpt-5.4 128k",
+      ].join("\n"),
+      errors: [],
+    };
+  },
   agent_chat_history: (a) => a.chatId === AGENT_CHAT_FIXTURE.chatId ? AGENT_CHAT_HISTORY : [],
   agent_chat_start: (a) => `vrt-session-${a.chatId}`,
   agent_chat_send: () => null,
@@ -421,9 +443,17 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
 };
 
 export function installTauriMock() {
-  (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
-    invoke: (cmd: string, args: Record<string, unknown> = {}) =>
-      Promise.resolve(HANDLERS[cmd] ? HANDLERS[cmd](args) : null),
+  const globals = window as unknown as Record<string, unknown>;
+  globals.__TAURI_INTERNALS__ = {
+    invoke: (cmd: string, args: Record<string, unknown> = {}) => {
+      const run = () => Promise.resolve(HANDLERS[cmd] ? HANDLERS[cmd](args) : null);
+      if (cmd !== "probe_agent_cli") return run();
+      if (globals.__PICKFORGE_VRT_FAIL_OMP_PROBE__ === true && args.agentId === "omp") {
+        globals.__PICKFORGE_VRT_FAIL_OMP_PROBE__ = false;
+        return Promise.reject(new Error("OMP compatibility probe unavailable"));
+      }
+      return run();
+    },
     transformCallback: (cb: unknown) => cb,
     convertFileSrc: (p: string) => p,
   };

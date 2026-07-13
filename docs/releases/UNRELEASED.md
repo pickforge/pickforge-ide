@@ -61,6 +61,10 @@ reset this file.
   PickForge does not inject per-session MCP grants or native approvals. Platform
   CI runs the OMP Unix fixture on macOS and both OMP/Pi executable Job Object
   cleanup regressions on Windows.
+- Added flag-gated OMP/Pi connector diagnostics to the section-based Settings UI,
+  neutral persisted-chat compatibility checks, and actionable native-chat retry
+  recovery that safely replaces dead connector sessions without stale provider
+  completions winning. Both `settingsNavigation` and `ompPiAgents` remain default off.
 - OMP ACP launches as `omp acp --no-extensions --approval-mode=always-ask`,
   with no config/yolo overlay. Its cleared child environment restores exactly
   `PATH`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `XDG_CONFIG_HOME`,
@@ -121,6 +125,11 @@ reset this file.
   Pi 0.79.10 also completed an isolated `get_state` startup smoke with
   `--offline --no-extensions`; no model turn ran and the temporary root was
   removed.
+- PR5 Settings/workbench integration: all 875 frontend unit tests, all 20
+  Settings navigation/connector Playwright cases, `bun run build`, and
+  `git diff --check` passed. An isolated Tauri lab confirmed both rollout flags
+  default off, live connector refresh pending states, and accurate OMP ACP
+  incompatibility messaging without the offline-catalog advisory masking it.
 
 - `cargo test -p pickforge-core agents:: --locked` — 97 core-agent tests green,
   including 18 OMP ACP environment, handshake, immutable-identity, trusted

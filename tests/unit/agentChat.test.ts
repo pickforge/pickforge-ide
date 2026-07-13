@@ -119,6 +119,7 @@ import {
   hydrateAgentChatHistory,
   interruptAgentChat,
   latestPlanForChat,
+  retryAgentChatConnection,
   sendAgentMessage,
   setAgentChatEffort,
   setAgentChatMode,
@@ -1610,6 +1611,169 @@ describe("sendAgentMessage", () => {
     expect(agentChat(chatId)?.turnActive).toBe(false);
     expect(agentChat(chatId)?.error).toBe("send failed");
   });
+
+  it.each(["omp", "pi"] as const)(
+    "clears a dead %s session and restarts before the next send",
+    async (provider) => {
+      flags.ompPiAgents = true;
+      const chatId = nextChatId();
+      let startCount = 0;
+      let sendCount = 0;
+      tauri.invoke.mockImplementation((cmd: string, args?: { sessionId?: string }) => {
+        if (cmd === "agent_chat_history") return Promise.resolve([]);
+        if (cmd === "agent_chat_start") {
+          startCount += 1;
+          return Promise.resolve(`session-${startCount}`);
+        }
+        if (cmd === "agent_chat_send") {
+          sendCount += 1;
+          if (sendCount === 1) return Promise.reject(new Error(`${provider} transport failed`));
+          expect(args?.sessionId).toBe("session-2");
+          return Promise.resolve();
+        }
+        return Promise.resolve(null);
+      });
+
+      await ensureAgentChat(chatId, "/project", provider, null, { engine: "v2" });
+      await expect(sendAgentMessage(chatId, "first")).rejects.toThrow("transport failed");
+
+      expect(agentChat(chatId)?.sessionId).toBeNull();
+      expect(timeline(chatId)).toEqual([]);
+
+      await sendAgentMessage(chatId, "second");
+
+      expect(startCount).toBe(2);
+      expect(sendCount).toBe(2);
+      expect(agentChat(chatId)?.sessionId).toBe("session-2");
+      expect(agentChat(chatId)?.error).toBeNull();
+      expect(timeline(chatId)).toEqual([
+        { type: "userMessage", seq: 1, text: "second", optimistic: true },
+      ]);
+    },
+  );
+
+  it.each(["omp", "pi"] as const)(
+    "replaces a failed live %s session on explicit retry",
+    async (provider) => {
+      flags.ompPiAgents = true;
+      const chatId = nextChatId();
+      let startCount = 0;
+      let emit: ((event: AgentEvent) => void) | undefined;
+      tauri.invoke.mockImplementation((cmd: string, args?: {
+        sessionId?: string;
+        onEvent?: { onmessage?: (event: AgentEvent) => void };
+      }) => {
+        if (cmd === "agent_chat_history") return Promise.resolve([]);
+        if (cmd === "agent_chat_start") {
+          startCount += 1;
+          emit = args?.onEvent?.onmessage;
+          return Promise.resolve(`session-${startCount}`);
+        }
+        return Promise.resolve(null);
+      });
+
+      await ensureAgentChat(chatId, "/project", provider, null, { engine: "v2" });
+      emit?.({ kind: "turnFailed", error: "connection lost" });
+      expect(agentChat(chatId)?.sessionId).toBe("session-1");
+      expect(agentChat(chatId)?.error).toBe("connection lost");
+
+      await retryAgentChatConnection(chatId);
+
+      expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_dispose", {
+        sessionId: "session-1",
+      });
+      expect(startCount).toBe(2);
+      expect(agentChat(chatId)?.sessionId).toBe("session-2");
+      expect(agentChat(chatId)?.error).toBeNull();
+    },
+  );
+
+  it("keeps the recovery error visible while a dead live session is being replaced", async () => {
+    flags.ompPiAgents = true;
+    const chatId = nextChatId();
+    const dispose = deferred<void>();
+    let startCount = 0;
+    let emit: ((event: AgentEvent) => void) | undefined;
+    tauri.invoke.mockImplementation((cmd: string, args?: {
+      onEvent?: { onmessage?: (event: AgentEvent) => void };
+    }) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") {
+        startCount += 1;
+        emit = args?.onEvent?.onmessage;
+        return Promise.resolve(`session-${startCount}`);
+      }
+      if (cmd === "agent_chat_dispose") return dispose.promise;
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "omp", null, { engine: "v2" });
+    emit?.({ kind: "turnFailed", error: "connection lost" });
+    const retry = retryAgentChatConnection(chatId);
+
+    expect(agentChat(chatId)?.sessionId).toBeNull();
+    expect(agentChat(chatId)?.error).toBe("connection lost");
+
+    dispose.resolve(undefined);
+    await retry;
+    expect(agentChat(chatId)?.sessionId).toBe("session-2");
+    expect(agentChat(chatId)?.error).toBeNull();
+  });
+
+  it("does not let an OMP retry completion overwrite a provider switch", async () => {
+    flags.ompPiAgents = true;
+    const chatId = nextChatId();
+    workspace.chats.set(chatId, workspace.makeChat(chatId, { agentId: "omp" }));
+    const dispose = deferred<void>();
+    let startCount = 0;
+    let emit: ((event: AgentEvent) => void) | undefined;
+    tauri.invoke.mockImplementation((cmd: string, args?: {
+      onEvent?: { onmessage?: (event: AgentEvent) => void };
+    }) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") {
+        startCount += 1;
+        emit = args?.onEvent?.onmessage;
+        return Promise.resolve(`session-${startCount}`);
+      }
+      if (cmd === "agent_chat_dispose") return dispose.promise;
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "omp", null, { engine: "v2" });
+    emit?.({ kind: "turnFailed", error: "connection lost" });
+    const retry = retryAgentChatConnection(chatId);
+    const switching = switchAgentChatProvider(chatId, "codex", null);
+    dispose.resolve(undefined);
+    await Promise.all([retry, switching]);
+
+    expect(startCount).toBe(2);
+    expect(agentChat(chatId)?.provider).toBe("codex");
+    expect(agentChat(chatId)?.sessionId).toBe("session-2");
+  });
+
+  it.each(["claudeCode", "codex"] as const)(
+    "keeps the live %s session after a send failure",
+    async (provider) => {
+      const chatId = nextChatId();
+      let startCount = 0;
+      tauri.invoke.mockImplementation((cmd: string) => {
+        if (cmd === "agent_chat_history") return Promise.resolve([]);
+        if (cmd === "agent_chat_start") {
+          startCount += 1;
+          return Promise.resolve("session-1");
+        }
+        if (cmd === "agent_chat_send") return Promise.reject(new Error("send failed"));
+        return Promise.resolve(null);
+      });
+
+      await ensureAgentChat(chatId, "/project", provider, null, { engine: "v2" });
+      await expect(sendAgentMessage(chatId, "hello")).rejects.toThrow("send failed");
+
+      expect(agentChat(chatId)?.sessionId).toBe("session-1");
+      expect(startCount).toBe(1);
+    },
+  );
 
   it("does not recreate a disposed chat when an in-flight send fails", async () => {
     const { chatId } = await startChat();

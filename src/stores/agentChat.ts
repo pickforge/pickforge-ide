@@ -1439,10 +1439,10 @@ export async function sendAgentMessage(
       activeTitleTurnByChat.delete(chatId);
     }
     setChats(chatId, {
-      // ACP transports can die between turns. Forget the dead native handle so
-      // the next user send re-enters ensureAgentChat, which resumes (or creates)
-      // the persisted provider session instead of repeatedly dispatching into it.
-      ...(chat.provider === "omp" ? { sessionId: null } : {}),
+      // OMP/Pi transports can die between turns. Forget the dead native handle
+      // so the next user send re-enters ensureAgentChat, which resumes (or
+      // creates) the persisted provider session instead of dispatching into it.
+      ...((chat.provider === "omp" || chat.provider === "pi") ? { sessionId: null } : {}),
       turnActive: false,
       error: errorText(error),
       timeline: (chats[chatId]?.timeline ?? []).filter(
@@ -1531,6 +1531,43 @@ export async function interruptAgentChat(chatId: string): Promise<void> {
     interruptedByUser.delete(chatId);
     throw error;
   }
+}
+
+export async function retryAgentChatConnection(chatId: string): Promise<void> {
+  const chat = chats[chatId];
+  if (!chat || (chat.provider !== "omp" && chat.provider !== "pi")) {
+    throw new Error("This chat does not support connection retry");
+  }
+  if (!chat.projectRoot) throw new Error("Agent chat is not started");
+
+  const generation = (ensureGenerations.get(chatId) ?? 0) + 1;
+  ensureGenerations.set(chatId, generation);
+  const sessionId = chat.sessionId;
+  ensurePromises.delete(chatId);
+  hydratePromises.delete(chatId);
+  pendingSetModelByChat.delete(chatId);
+  pendingSetModeByChat.delete(chatId);
+  setModelRequestSeqByChat.delete(chatId);
+  dropPendingDeltas(chatId);
+  setChats(chatId, {
+    sessionId: null,
+    turnActive: false,
+    approvals: [],
+  });
+
+  if (sessionId) await agentChatDispose(sessionId).catch(() => undefined);
+  const current = chats[chatId];
+  if (
+    (ensureGenerations.get(chatId) ?? 0) !== generation
+    || !current
+    || current.provider !== chat.provider
+  ) return;
+
+  await ensureAgentChat(chatId, chat.projectRoot, chat.provider, chat.model, {
+    engine: chat.engine,
+    effort: chat.effort,
+    mode: chat.mode,
+  });
 }
 
 /** The chat was deleted or is switching provider: release the backend session

@@ -5,6 +5,10 @@ const ALL_SETTINGS_FLAGS = {
   operator: true,
   accounts: true,
 };
+const CONNECTOR_SETTINGS_FLAGS = {
+  ...ALL_SETTINGS_FLAGS,
+  ompPiAgents: true,
+};
 
 async function openSettings(
   page: Page,
@@ -73,6 +77,12 @@ async function refreshPickLab(page: Page) {
     .locator("[data-settings-section=pickLab]")
     .getByRole("button", { name: "Refresh" })
     .evaluate((button: HTMLButtonElement) => button.click());
+}
+
+async function makeOmpProbeFail(page: Page) {
+  await page.evaluate(() => {
+    Reflect.set(window, "__PICKFORGE_VRT_FAIL_OMP_PROBE__", true);
+  });
 }
 
 test.describe("flagged settings navigation", () => {
@@ -245,6 +255,75 @@ test.describe("flagged settings navigation", () => {
     await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 600);
   });
 
+
+  test("shows compatible OMP and Pi connector diagnostics", async ({ page }) => {
+    await openSettings(page, "agentModels", CONNECTOR_SETTINGS_FLAGS);
+
+    const omp = page.locator("[data-agent-connector=omp]");
+    const pi = page.locator("[data-agent-connector=pi]");
+    await expect(omp).toContainText("Installed · omp 16.4.8");
+    await expect(omp).toContainText("Native chat ready");
+    await expect(omp).toContainText("Not queried · offline safety");
+    await expect(omp).toContainText("ACP integration is available");
+
+    await expect(pi).toContainText("Installed · pi 0.79.10");
+    await expect(pi).toContainText("Native chat ready");
+    await expect(pi).toContainText("2 discovered offline");
+    const modelPicker = pi.getByRole("button", { name: /Pi model: 2 discovered/ });
+    await expect(modelPicker).toBeVisible();
+    await modelPicker.click();
+    await expect(pi.getByRole("option", { name: "claude-sonnet-4-6 · anthropic" }))
+      .toBeVisible();
+    await expect(pi.getByRole("option", { name: "gpt-5.4 · openai" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(pi).toContainText("Pi RPC loads installed extensions and tools");
+
+    const refresh = page.getByRole("button", { name: "Refresh connector status" });
+    await refresh.focus();
+    await refresh.click();
+    await expect(refresh).toBeFocused();
+    await expect(omp).toHaveAttribute("aria-busy", "false");
+    await expect(pi).toHaveAttribute("aria-busy", "false");
+
+    await makeOmpProbeFail(page);
+    await refresh.click();
+    await expect(refresh).toBeFocused();
+    await expect(omp).toContainText("Native status unavailable");
+    await expect(omp).toContainText("Capabilities unavailable because the local probe failed.");
+    await expect(omp).not.toContainText("until the CLI is installed");
+  });
+
+  test("honors reduced motion in connector controls", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openSettings(page, "agentModels", CONNECTOR_SETTINGS_FLAGS);
+    const refresh = page.getByRole("button", { name: "Refresh connector status" });
+    await expect(refresh).toBeVisible();
+    expect(
+      await refresh.evaluate((element) =>
+        getComputedStyle(element).transitionDuration
+          .split(",")
+          .every((duration) => Number.parseFloat(duration) === 0),
+      ),
+    ).toBe(true);
+  });
+
+  for (const state of [
+    { name: "wide", width: 1280, height: 820 },
+    { name: "narrow", width: 600, height: 760 },
+  ]) {
+    test(`visual: ${state.name} connector diagnostics`, async ({ page }) => {
+      await page.setViewportSize({ width: state.width, height: state.height });
+      await openSettings(page, "agentModels", CONNECTOR_SETTINGS_FLAGS);
+      await expect(page.getByText("Native chat ready")).toHaveCount(2);
+      await page.locator(".pf-agent-diagnostics-head").evaluate((element) => {
+        element.scrollIntoView({ block: "start" });
+      });
+      await expect(page).toHaveScreenshot(
+        `settings-navigation-connectors-${state.name}.png`,
+        { animations: "disabled" },
+      );
+    });
+  }
   for (const state of [
     { name: "general", section: "appearance" },
     { name: "agents", section: "agentModels" },

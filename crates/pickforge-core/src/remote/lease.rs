@@ -456,7 +456,7 @@ for sig in (signal.SIGTERM,signal.SIGHUP,signal.SIGINT): signal.signal(sig,inter
 payload=sys.stdin.buffer.read(16*1024*1024+1)
 if len(payload)>16*1024*1024: raise SystemExit(126)
 print("__PF_REMOTE_LEASE_READY_V1__",flush=True)
-deadline=time.monotonic()+10.0
+deadline=time.monotonic()+30.0
 while True:
  try:
   writer=os.open(fifo,os.O_WRONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
@@ -530,7 +530,7 @@ def fail(message, code=1):
 
 def read_bootstrap(fifo):
     fd=os.open(fifo,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
-    deadline=time.monotonic()+10.0
+    deadline=time.monotonic()+30.0
     data=bytearray()
     saw_data=False
     try:
@@ -1503,7 +1503,10 @@ assert not m.establish_payload_group(42)"#;
             std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let script = base.join(SUPERVISOR_FILE);
-        std::fs::write(&script, SUPERVISOR).unwrap();
+        assert!(SUPERVISOR.contains("deadline=time.monotonic()+30.0"));
+        let short_supervisor =
+            SUPERVISOR.replace("deadline=time.monotonic()+30.0", "deadline=time.monotonic()+0.2");
+        std::fs::write(&script, short_supervisor).unwrap();
         let lease_id = random_hex();
         let nonce = random_hex();
         let lease = base.join(&lease_id);
@@ -1522,7 +1525,7 @@ assert not m.establish_payload_group(42)"#;
             .status()
             .unwrap();
         assert_eq!(status.code(), Some(124));
-        assert!(started.elapsed() < Duration::from_secs(12));
+        assert!(started.elapsed() < Duration::from_secs(2));
         assert!(!lease.exists());
         let _ = std::fs::remove_dir_all(root);
     }

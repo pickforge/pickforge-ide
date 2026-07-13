@@ -92,11 +92,12 @@ reset this file.
 
 ### Tested
 
-- Graceful shutdown: 635 Rust workspace tests, 875 frontend unit tests,
-  workspace `cargo check`, and frontend production build passed. An isolated live
-  Codex V2 turn running `sleep 120` terminated with PickForge and returned its
-  persisted session status to idle; mirror cancellation has focused regression
-  coverage but was not driven against the available physical Android device.
+- Graceful shutdown and remote leases: 653 Rust workspace tests, 877 frontend
+  unit tests, workspace `cargo check`, and frontend production build passed. An
+  isolated live Codex V2 turn running `sleep 120` terminated with PickForge and
+  returned its persisted session status to idle. Remote lease supervisor,
+  heartbeat, expiry, identity, and bounded-stop fixtures passed; real Tailnet
+  lease-expiry smoke remains outstanding while the feature stays default-off.
 - Workflow YAML parse check:
   `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 - `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.

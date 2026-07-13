@@ -223,12 +223,12 @@ where
 
 impl CodexExecTurn {
     pub fn kill(&self) -> Result<(), AgentSpawnError> {
+        stop_state_lease(&self.state);
         if self.state.terminal_sent.load(Ordering::SeqCst) {
             signal_state_child(&self.state);
             return Ok(());
         }
         self.state.killed.store(true, Ordering::SeqCst);
-        stop_state_lease(&self.state);
         signal_state_child(&self.state);
         Ok(())
     }
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn shutdown_after_terminal_stops_remaining_lease_once() {
+    fn kill_after_terminal_stops_remaining_lease_once() {
         let script = write_script(
             "clean",
             r#"#!/bin/sh
@@ -1154,7 +1154,7 @@ sleep 5
         );
         assert_eq!(terminal_event_count(&snapshot), 1);
         let started = std::time::Instant::now();
-        turn.shutdown_bounded();
+        turn.kill().unwrap();
         assert!(turn.state.lease.lock().is_ok_and(|lease| lease.is_none()));
         drop(turn);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));

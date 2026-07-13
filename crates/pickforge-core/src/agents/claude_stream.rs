@@ -455,6 +455,7 @@ pub struct ClaudeStreamTurn {
 
 impl ClaudeStreamTurn {
     pub fn kill(&self) -> Result<(), AgentSpawnError> {
+        stop_state_lease(&self.state);
         if self.state.terminal_emitted.load(Ordering::SeqCst) {
             let mut child = self
                 .state
@@ -467,7 +468,6 @@ impl ClaudeStreamTurn {
             return Ok(());
         }
         self.state.interrupted.store(true, Ordering::SeqCst);
-        stop_state_lease(&self.state);
         let mut child = self
             .state
             .child
@@ -1382,7 +1382,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn shutdown_after_terminal_stops_remaining_lease_once() {
+    fn kill_after_terminal_stops_remaining_lease_once() {
         let script = test_script(
             r#"#!/bin/sh
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"runner-clean"}'
@@ -1405,7 +1405,7 @@ sleep 5
         ));
         drop(lease);
         let started = std::time::Instant::now();
-        turn.shutdown_bounded();
+        turn.kill().unwrap();
         assert!(turn.state.lease.lock().is_ok_and(|lease| lease.is_none()));
         drop(turn);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));

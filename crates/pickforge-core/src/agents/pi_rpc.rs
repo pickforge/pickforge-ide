@@ -668,7 +668,17 @@ fn controlled_environment_from(
     const BASE_ENVIRONMENT: &[&str] = &[
         "PATH",
         "Path",
+        "PATHEXT",
+        "Pathext",
         "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "SystemRoot",
+        "COMSPEC",
         "USER",
         "LOGNAME",
         "SHELL",
@@ -1659,6 +1669,31 @@ mod tests {
         ] {
             assert!(!environment.contains_key(unrelated));
         }
+    }
+
+    #[test]
+    fn controlled_environment_preserves_windows_runtime_contract_by_name() {
+        let expected = [
+            "APPDATA",
+            "COMSPEC",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "LOCALAPPDATA",
+            "PATHEXT",
+            "Pathext",
+            "SYSTEMROOT",
+            "SystemRoot",
+            "USERPROFILE",
+        ];
+        let source = expected
+            .iter()
+            .map(|name| ((*name).to_string(), "present".to_string()))
+            .collect::<HashMap<_, _>>();
+
+        let environment = controlled_environment_from(&source, &HashMap::new());
+        let mut actual = environment.keys().map(String::as_str).collect::<Vec<_>>();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
     }
 
     #[test]

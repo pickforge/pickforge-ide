@@ -98,6 +98,7 @@ pub struct AgentStartOverrides {
 pub struct AgentChatManager {
     db: Arc<Database>,
     app_root: PathBuf,
+    pi_session_root: PathBuf,
     inner: Arc<Mutex<HashMap<String, SessionState>>>,
     codex_app_clients: Arc<Mutex<HashMap<PathBuf, Arc<CodexAppClient>>>>,
     claude_bridge: Arc<Mutex<Option<Arc<ClaudeBridgeClient>>>>,
@@ -219,10 +220,11 @@ pub enum AgentChatError {
 }
 
 impl AgentChatManager {
-    pub fn new(db: Arc<Database>, app_root: PathBuf) -> Self {
+    pub fn new(db: Arc<Database>, app_root: PathBuf, pi_session_root: PathBuf) -> Self {
         Self {
             db,
             app_root,
+            pi_session_root,
             inner: Arc::new(Mutex::new(HashMap::new())),
             codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
             claude_bridge: Arc::new(Mutex::new(None)),
@@ -543,7 +545,7 @@ impl AgentChatManager {
                     .and_then(|state| state.pi_client.clone())
                     .filter(|client| !client.is_closed());
                 if existing_client.is_none() {
-                    let session_root = self.app_root.clone();
+                    let session_root = self.pi_session_root.clone();
                     let session_dir = session_root.join("agent-sessions").join("pi");
                     let persisted_path = provider_session_id
                         .as_deref()
@@ -1684,6 +1686,7 @@ impl AgentChatManager {
     fn with_test_binaries(
         db: Arc<Database>,
         app_root: PathBuf,
+        pi_session_root: PathBuf,
         codex_binary: Option<String>,
         claude_binary: Option<String>,
         omp_binary: Option<String>,
@@ -1691,6 +1694,7 @@ impl AgentChatManager {
         Self {
             db,
             app_root,
+            pi_session_root,
             inner: Arc::new(Mutex::new(HashMap::new())),
             codex_app_clients: Arc::new(Mutex::new(HashMap::new())),
             claude_bridge: Arc::new(Mutex::new(None)),
@@ -2487,6 +2491,7 @@ mod tests {
         AgentChatManager::with_test_binaries(
             db,
             script.dir.clone(),
+            script.dir.join("user-data"),
             Some(script.path.to_string_lossy().to_string()),
             None,
             None,
@@ -2498,6 +2503,7 @@ mod tests {
         AgentChatManager::with_test_binaries(
             db,
             script.dir.clone(),
+            script.dir.join("user-data"),
             None,
             Some(script.path.to_string_lossy().to_string()),
             None,
@@ -2517,9 +2523,29 @@ mod tests {
 
     #[cfg(unix)]
     fn pi_manager(db: Arc<Database>, script: &TestScript) -> AgentChatManager {
-        let mut manager = AgentChatManager::new(db, script.dir.clone());
+        let pi_session_root = script.dir.join("user-data");
+        std::fs::create_dir_all(&pi_session_root).expect("create Pi user-data root");
+        let mut manager = AgentChatManager::new(
+            db,
+            script.dir.clone(),
+            pi_session_root,
+        );
         manager.test_binaries.pi = Some(script.path.to_string_lossy().to_string());
         manager
+    }
+
+    #[test]
+    fn manager_keeps_bridge_resources_separate_from_pi_sessions() {
+        let app_root = PathBuf::from("/pickforge/repo-or-resources");
+        let pi_session_root = PathBuf::from("/pickforge/user-data");
+        let manager = AgentChatManager::new(
+            Arc::new(Database::open_in_memory().unwrap()),
+            app_root.clone(),
+            pi_session_root.clone(),
+        );
+
+        assert_eq!(manager.app_root, app_root);
+        assert_eq!(manager.pi_session_root, pi_session_root);
     }
 
     #[cfg(unix)]
@@ -3289,10 +3315,7 @@ done"#
 
     #[test]
     fn pi_rejects_unexposed_thinking_effort_instead_of_ignoring_it() {
-        let manager = AgentChatManager::new(
-            Arc::new(Database::open_in_memory().unwrap()),
-            PathBuf::new(),
-        );
+        let manager = AgentChatManager::new(Arc::new(Database::open_in_memory().unwrap()), PathBuf::new(), PathBuf::new());
         let (_events, sink) = event_sink();
 
         let error = manager
@@ -3328,10 +3351,7 @@ done"#
 
     #[test]
     fn remote_start_never_initializes_a_v2_client() {
-        let manager = AgentChatManager::new(
-            Arc::new(Database::open_in_memory().unwrap()),
-            PathBuf::new(),
-        );
+        let manager = AgentChatManager::new(Arc::new(Database::open_in_memory().unwrap()), PathBuf::new(), PathBuf::new());
         let (_events, sink) = event_sink();
         let session_id = manager
             .start(
@@ -3410,7 +3430,7 @@ printf invoked > "$0.invoked"
     #[test]
     fn reattaching_replays_unanswered_approvals_to_the_new_sink() {
         let db = Arc::new(Database::open_in_memory().unwrap());
-        let manager = AgentChatManager::new(db, PathBuf::new());
+        let manager = AgentChatManager::new(db, PathBuf::new(), PathBuf::new());
         let (_initial_events, initial_sink) = event_sink();
         let session_id = manager
             .start(
@@ -3452,10 +3472,7 @@ printf invoked > "$0.invoked"
 
     #[test]
     fn remote_start_rejects_unrepresentable_claude_restrictions() {
-        let manager = AgentChatManager::new(
-            Arc::new(Database::open_in_memory().unwrap()),
-            PathBuf::new(),
-        );
+        let manager = AgentChatManager::new(Arc::new(Database::open_in_memory().unwrap()), PathBuf::new(), PathBuf::new());
         let (_events, sink) = event_sink();
 
         let error = manager
@@ -3482,10 +3499,7 @@ printf invoked > "$0.invoked"
 
     #[test]
     fn remote_session_cache_is_scoped_to_the_host_and_root() {
-        let manager = AgentChatManager::new(
-            Arc::new(Database::open_in_memory().unwrap()),
-            PathBuf::new(),
-        );
+        let manager = AgentChatManager::new(Arc::new(Database::open_in_memory().unwrap()), PathBuf::new(), PathBuf::new());
         manager.remote_sessions.lock().unwrap().insert(
             RemoteSessionKey {
                 chat_id: "chat-1".to_string(),
@@ -3622,7 +3636,7 @@ printf invoked > "$0.invoked"
         })
         .unwrap();
 
-        let local_manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new());
+        let local_manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new(), PathBuf::new());
         let (_events, sink) = event_sink();
         let local_session = local_manager
             .start(
@@ -3640,7 +3654,7 @@ printf invoked > "$0.invoked"
             None
         );
 
-        let same_binding_manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new());
+        let same_binding_manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new(), PathBuf::new());
         let (_events, sink) = event_sink();
         let same_binding_session = same_binding_manager
             .start(
@@ -3661,7 +3675,7 @@ printf invoked > "$0.invoked"
             Some("thread-a".to_string())
         );
 
-        let other_binding_manager = AgentChatManager::new(db, PathBuf::new());
+        let other_binding_manager = AgentChatManager::new(db, PathBuf::new(), PathBuf::new());
         let (_events, sink) = event_sink();
         let other_binding_session = other_binding_manager
             .start(
@@ -3686,7 +3700,7 @@ printf invoked > "$0.invoked"
     #[test]
     fn remote_session_started_persists_a_scoped_provider_id() {
         let db = Arc::new(Database::open_in_memory().unwrap());
-        let manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new());
+        let manager = AgentChatManager::new(Arc::clone(&db), PathBuf::new(), PathBuf::new());
         let remote = RemoteExec::new("mac-mini", "/srv/app").unwrap();
         let (_events, sink) = event_sink();
         let session_id = manager
@@ -4742,7 +4756,7 @@ printf '%s\n' \
         });
         wait_for_status(&db, "chat-restart", "idle");
 
-        let restarted = AgentChatManager::new(Arc::clone(&db), script.dir.clone());
+        let restarted = AgentChatManager::new(Arc::clone(&db), script.dir.clone(), script.dir.clone());
         let (_events2, sink2) = event_sink();
         let reused_id = restarted
             .start(
@@ -4821,6 +4835,24 @@ printf '%s\n' \
                 sink,
             )
             .unwrap();
+        let persisted_path = db
+            .latest_agent_session_for_chat("chat-pi-prompt-race")
+            .unwrap()
+            .and_then(|row| row.provider_session_id)
+            .map(PathBuf::from)
+            .expect("persisted Pi session path");
+        assert!(
+            persisted_path.starts_with(
+                script
+                    .dir
+                    .join("user-data")
+                    .join("agent-sessions")
+                    .join("pi")
+            ),
+            "Pi session must use durable user data: {}",
+            persisted_path.display()
+        );
+        assert!(!persisted_path.starts_with(script.dir.join("agent-sessions")));
         let client = {
             let Ok(states) = manager.inner.lock() else {
                 panic!("manager state lock");
@@ -4979,13 +5011,15 @@ printf '%s\n' \
 
     #[cfg(unix)]
     #[test]
-    fn pi_start_rejects_a_symlinked_session_ancestor_beneath_the_app_root() {
+    fn pi_start_rejects_a_symlinked_session_ancestor_beneath_user_data() {
         use std::os::unix::fs::symlink;
 
         let script = pi_rpc_test_script("pi-symlinked-session-ancestor");
         let outside = script.dir.with_extension("outside");
         std::fs::create_dir_all(&outside).expect("create outside directory");
-        symlink(&outside, script.dir.join("agent-sessions")).expect("symlink session ancestor");
+        let user_data = script.dir.join("user-data");
+        std::fs::create_dir_all(&user_data).expect("create Pi user-data root");
+        symlink(&outside, user_data.join("agent-sessions")).expect("symlink session ancestor");
         let db = Arc::new(Database::open_in_memory().unwrap());
         let manager = pi_manager(db, &script);
         let error = manager

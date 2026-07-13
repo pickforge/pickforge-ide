@@ -18,14 +18,14 @@ mod voice_commands;
 mod vm_commands;
 mod watch_commands;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
     PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
 };
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{path::BaseDirectory, Manager, RunEvent, WindowEvent};
 #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -39,7 +39,26 @@ fn open_database() -> Arc<Database> {
     Arc::new(Database::open(&path).expect("failed to open pickforge database"))
 }
 
+fn bridge_app_root(bridge_path: &Path, dev_root: PathBuf) -> PathBuf {
+    bridge_path
+        .parent()
+        .and_then(|scripts_dir| scripts_dir.parent())
+        .map(PathBuf::from)
+        .unwrap_or(dev_root)
+}
+
 fn resolve_agent_app_root(app: &tauri::App) -> PathBuf {
+    let dev_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match app
+        .path()
+        .resolve("scripts/claude-bridge.ts", BaseDirectory::Resource)
+    {
+        Ok(path) if path.exists() => bridge_app_root(&path, dev_root),
+        _ => dev_root,
+    }
+}
+
+fn resolve_pi_session_root(app: &tauri::App) -> PathBuf {
     let root = pickforge_home(None)
         .ok()
         .map(PathBuf::from)
@@ -184,6 +203,7 @@ pub fn run() {
             app.manage(AgentChatManager::new(
                 Arc::clone(&manager_database),
                 resolve_agent_app_root(app),
+                resolve_pi_session_root(app),
             ));
             // The static assetProtocol scope only covers the default
             // ~/.pickforge; a PICKFORGE_HOME override relocates the stash, so
@@ -445,6 +465,15 @@ mod tests {
             }
             image => panic!("expected wasm image, got {image:?}"),
         }
+    }
+
+    #[test]
+    fn debug_claude_bridge_root_stays_on_repo_or_resource_scripts() {
+        let repo_root = PathBuf::from("/workspace/pickforge");
+        let bridge_path = repo_root.join("scripts").join("claude-bridge.ts");
+        let user_data = PathBuf::from("/home/user/.pickforge");
+
+        assert_eq!(bridge_app_root(&bridge_path, user_data), repo_root);
     }
 
     #[test]

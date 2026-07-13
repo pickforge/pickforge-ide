@@ -16,6 +16,10 @@ import { AgentChatView } from "../../components/chat/AgentChatView";
 import { OrchestraView } from "../../components/orchestra/OrchestraView";
 import { disposeAgentChat } from "../../stores/agentChat";
 import { loadAgentModels } from "../../lib/agentModels";
+import {
+  normalizeAgentProvider,
+  nativeChatUnavailableReason,
+} from "../../lib/agentBackends";
 import { ForgeEmptyState, PaneReveal } from "../../components/ui";
 import { IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
@@ -342,7 +346,8 @@ export function WorkbenchScreen() {
           <For each={mounted()}>
             {(h) => {
               const chat = findChat(h.chatId);
-              const provider = (chat?.agentId ?? "claudeCode") as "claudeCode" | "codex";
+              const agentId = chat?.agentId ?? "";
+              const provider = normalizeAgentProvider(agentId);
               return (
               <div
                 class="pf-term-slot"
@@ -408,14 +413,25 @@ export function WorkbenchScreen() {
                 />
                   }
                 >
-                  <div class="pf-agent-slot">
-                    <AgentChatView
-                      chatId={h.chatId}
-                      projectRoot={h.projectRoot}
-                      provider={provider}
-                      model={loadAgentModels()[provider] ?? null}
-                    />
-                  </div>
+                  <Show
+                    when={provider}
+                    fallback={
+                      <div class="pf-chat-error" role="alert">
+                        {nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable"}
+                      </div>
+                    }
+                  >
+                    {(nativeProvider) => (
+                      <div class="pf-agent-slot">
+                        <AgentChatView
+                          chatId={h.chatId}
+                          projectRoot={h.projectRoot}
+                          provider={nativeProvider()}
+                          model={loadAgentModels()[nativeProvider()] ?? null}
+                        />
+                      </div>
+                    )}
+                  </Show>
                 </Show>
               </div>
               );

@@ -54,14 +54,17 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
-import { AGENTS } from "../../lib/agentModels";
+import {
+  isNativeAgentProvider,
+  NATIVE_AGENT_BACKENDS,
+  normalizeAgentProvider,
+} from "../../lib/agentBackends";
 import {
   loadAskChatTitle,
   loadDefaultChatKind,
   loadLastAgentProvider,
   setLastAgentProvider,
 } from "../../lib/chatDefaults";
-import { type AgentProvider } from "../../lib/agentChat";
 import { isPrimaryChat } from "../../lib/chatLabels";
 import {
   chatTitleOverride,
@@ -92,11 +95,10 @@ import {
 
 const PROJECT_MIME = "application/x-pf-project";
 
-// Providers a structured agent chat can drive (AgentChatView backends). Reuses
-// the AGENTS profile labels so the picker stays in sync with the model settings.
-const AGENT_CHAT_PROVIDERS = AGENTS.filter((a) => a.id === "claudeCode" || a.id === "codex");
+const AGENT_CHAT_PROVIDERS = NATIVE_AGENT_BACKENDS;
 const AGENT_CHAT_MARKS: Record<string, string> = { claudeCode: "CC", codex: "CX" };
-const agentChatMark = (agentId: string): string => AGENT_CHAT_MARKS[agentId] ?? "AI";
+const agentChatMark = (agentId: string): string =>
+  AGENT_CHAT_MARKS[normalizeAgentProvider(agentId) ?? agentId] ?? "AI";
 
 function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
@@ -210,10 +212,9 @@ export function ProjectsPane() {
     void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
   };
   const newAgentChat = (root: string, provider: string, title?: string) => {
+    if (!isNativeAgentProvider(provider)) return;
     if (!chatsExpanded(root)) toggleChats(root);
-    if (provider === "claudeCode" || provider === "codex") {
-      setLastAgentProvider(provider as AgentProvider);
-    }
+    setLastAgentProvider(provider);
     void addChat(title?.trim() || DEFAULT_CHAT_TITLE, provider, root, "agent");
   };
   const newChatFromButton = (root: string, e: MouseEvent) => {

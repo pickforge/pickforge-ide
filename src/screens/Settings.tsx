@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Index, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, Index, onCleanup, onMount, Show, type JSX } from "solid-js";
 import {
   agentProfiles,
   discoverAgentCli,
@@ -7,6 +7,7 @@ import {
   type AgentCliDiagnostic,
   type AgentProfile,
 } from "../lib/agentModels";
+import { nativeChatUnavailableReason, type AgentEngine } from "../lib/agentBackends";
 import {
   addQuickLaunchItem,
   addOptionalQuickLaunch,
@@ -57,7 +58,6 @@ import {
   setDefaultChatKind,
   type DefaultChatKind,
 } from "../lib/chatDefaults";
-import { type AgentEngine } from "../lib/agentChat";
 import { appVersion } from "../lib/appInfo";
 import { appTheme, applyTheme } from "../stores/theme";
 import {
@@ -203,6 +203,10 @@ function rememberSettingsCategory(category: SettingsCategoryKey): void {
   }
 }
 const AGENT_DIAGNOSTIC_IDS = ["omp", "pi"] as const;
+const AGENT_BRAND_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Object.freeze({
+  claudeCode: () => <IconClaude size={14} />,
+  codex: () => <IconOpenAI size={14} />,
+});
 
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
@@ -600,9 +604,11 @@ export function SettingsScreen() {
   const agentCapabilityLabel = (agent: AgentProfile): string => {
     const diagnostic = agentDiagnostics()[agent.id];
     const failure = agentDiagnosticErrors()[agent.id];
-    if (failure) return `Terminal-only status unavailable · ${failure}`;
-    if (!diagnostic?.installed) return `Terminal only · ${agent.binary} is required on PATH`;
-    const capabilities = ["terminal only"];
+    const nativeChatReason =
+      nativeChatUnavailableReason(agent.id) ?? "Native chat is unavailable for this profile";
+    if (failure) return `${nativeChatReason} · status unavailable · ${failure}`;
+    if (!diagnostic?.installed) return `${nativeChatReason} · ${agent.binary} is required on PATH`;
+    const capabilities = [nativeChatReason];
     if (diagnostic.capabilities.dynamicModels) capabilities.push("offline model catalog");
     if (diagnostic.capabilities.providerSelection) capabilities.push("provider selection");
     if (diagnostic.capabilities.profiles) capabilities.push("named profiles");
@@ -803,11 +809,8 @@ export function SettingsScreen() {
               <>
                 <div class="pf-settings-row">
                   <span class="pf-settings-label">
-                    <Show when={agent.id === "claudeCode"}>
-                      <span class="pf-settings-brand"><IconClaude size={14} /></span>
-                    </Show>
-                    <Show when={agent.id === "codex"}>
-                      <span class="pf-settings-brand"><IconOpenAI size={14} /></span>
+                    <Show when={AGENT_BRAND_ICON[agent.id]}>
+                      {(icon) => <span class="pf-settings-brand">{icon()()}</span>}
                     </Show>
                     {agent.label}
                     <Show when={agent.terminalOnly}>
@@ -1181,7 +1184,7 @@ export function SettingsScreen() {
             {(choice) => (
               <button
                 class="pf-ql-add"
-                onClick={() => addOptionalQuickLaunch(choice.agentId === "omp" ? "omp" : "pi")}
+                onClick={() => addOptionalQuickLaunch(choice.agentId)}
               >
                 <IconPlus size={13} /> Add {choice.label}
               </button>

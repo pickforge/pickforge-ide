@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SwarmRunSnapshot } from "../../src/lib/mcp";
 
 const deps = vi.hoisted(() => {
   type ChatRow = {
@@ -257,5 +258,63 @@ describe("swarm dispatch", () => {
     const last = updatedRuns().at(-1);
     expect(last).toMatchObject({ status: "failed" });
     expect(last?.error).toContain("mystery-9");
+  });
+
+  it("synthesizes completed swarms for persisted legacy Claude origins", async () => {
+    const timestamp = Date.now();
+    deps.chats.set("chat-legacy-claude", {
+      chatId: "chat-legacy-claude",
+      projectRoot: "/project",
+      title: "Legacy Claude chat",
+      kind: "agent",
+      agentId: "claude",
+      labelsJson: null,
+    });
+    const run: SwarmRunSnapshot = {
+      runId: "legacy-claude-run",
+      projectRoot: "/project",
+      goal: "summarize the review",
+      requestedCount: 1,
+      model: null,
+      providerPreference: "claudeCode",
+      mode: "review",
+      source: "pickforge",
+      originChatId: "chat-legacy-claude",
+      status: "completed",
+      synthesisStatus: "idle",
+      synthesisError: null,
+      synthesizedAt: null,
+      lanes: [{
+        id: "lane-1",
+        chatId: "worker-1",
+        provider: "claudeCode",
+        model: "claude-opus-4-8",
+        title: "Review",
+        status: "completed",
+        summary: "The review passed.",
+        error: null,
+        updatedAt: timestamp,
+      }],
+      error: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const { dispatchSynthesis } = await loadSwarmStore();
+
+    await dispatchSynthesis(run);
+
+    expect(deps.sendAgentMessage).toHaveBeenCalledWith(
+      "chat-legacy-claude",
+      expect.stringContaining("The review passed."),
+      [],
+      { hidden: true },
+    );
+    expect(deps.ensureAgentChat).toHaveBeenCalledWith(
+      "chat-legacy-claude",
+      "/project",
+      "claudeCode",
+      null,
+      { engine: "test-engine" },
+    );
   });
 });

@@ -23,6 +23,11 @@ import {
   agentStashImageFromPath,
   codexConfigDefaultEffort,
 } from "../../lib/agentChat";
+import {
+  agentBackendDescriptor,
+  isNativeAgentProvider,
+  type AgentEngine,
+} from "../../lib/agentBackends";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import {
   type ComposerAttachment,
@@ -73,9 +78,12 @@ import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
 const PROVIDERS = AGENTS.filter(
-  (a): a is AgentProfile & { id: AgentProvider } =>
-    a.id === "claudeCode" || a.id === "codex",
+  (agent): agent is AgentProfile & { id: AgentProvider } => isNativeAgentProvider(agent.id),
 );
+const PROVIDER_ICON: Record<AgentProvider, () => JSX.Element> = {
+  claudeCode: () => <IconClaude size={13} />,
+  codex: () => <IconOpenAI size={13} />,
+};
 
 const EFFORT_LABELS: Record<string, string> = {
   low: "Low",
@@ -171,10 +179,13 @@ type Suggestion =
 
 export function Composer(props: {
   provider: AgentProvider;
+  engine: AgentEngine;
   model: string | null;
   effort?: string | null;
   mode?: string | null;
   turnActive: boolean;
+  supportsImages: boolean;
+  imageUnavailableReason?: string;
   onSend: (text: string, images?: string[]) => void | Promise<void>;
   onInterrupt: () => void;
   onProviderChange?: (provider: AgentProvider) => void;
@@ -182,6 +193,7 @@ export function Composer(props: {
   onEffortChange?: (effort: string) => void;
   onModeChange?: (mode: string) => void;
   supportsSteer?: boolean;
+  steerUnavailableReason?: string;
   onSteer?: (text: string) => void | Promise<void>;
   emberYielded?: boolean;
   meter?: JSX.Element;
@@ -438,16 +450,15 @@ export function Composer(props: {
   // than a separate Default entry; picking it sends no explicit effort.
   const defaultEffort = () => {
     const fallback = modelOption(props.provider, props.model)?.defaultEffort;
-    const resolved =
-      props.provider === "codex" ? (codexEffortOverride() ?? fallback) : fallback;
+    const source = agentBackendDescriptor(props.provider).effortDefaultSource;
+    const resolved = source === "codexConfig" ? (codexEffortOverride() ?? fallback) : fallback;
     return resolved && effortOptions().includes(resolved) ? resolved : null;
   };
   const providerDropdownOptions = (): DropdownOption[] =>
     PROVIDERS.map((agent) => ({
       value: agent.id,
       label: agent.label,
-      icon: () =>
-        agent.id === "claudeCode" ? <IconClaude size={13} /> : <IconOpenAI size={13} />,
+      icon: PROVIDER_ICON[agent.id],
     }));
 
   const modelDropdownOptions = (): DropdownOption[] =>
@@ -485,7 +496,9 @@ export function Composer(props: {
     }));
 
   createEffect(() => {
-    if (props.provider === "codex") ensureCodexEffortOverride();
+    if (agentBackendDescriptor(props.provider).effortDefaultSource === "codexConfig") {
+      ensureCodexEffortOverride();
+    }
   });
 
   const steering = () => props.turnActive && !!props.supportsSteer && !!props.onSteer;
@@ -777,12 +790,22 @@ export function Composer(props: {
     showPasteError(message);
   };
 
+  const rejectUnsupportedImages = () => {
+    if (props.supportsImages) return false;
+    showPasteError(
+      props.imageUnavailableReason ?? "Image input is unavailable for this backend",
+      4000,
+    );
+    return true;
+  };
+
   const attachNativeClipboardImage = (generation: number, anchor: MarkerAnchor) => {
     if (generation !== pasteGeneration || preparing()) return;
     if (props.turnActive) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
+    if (rejectUnsupportedImages()) return;
     clearPasteError();
     const attachment = addPendingImage(null, anchor);
     void agentStashClipboardImage()
@@ -904,6 +927,7 @@ export function Composer(props: {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
+    if (rejectUnsupportedImages()) return;
     if (files.length > 0) clearPasteError();
     if (unsupported > 0) {
       showPasteError("Unsupported image type — use PNG, JPEG, GIF, or WebP");
@@ -927,6 +951,7 @@ export function Composer(props: {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
+    if (rejectUnsupportedImages()) return;
     const files = paths.filter((path) => acceptedPathExt(path));
     if (files.length > 0) clearPasteError();
     if (files.length !== paths.length) {
@@ -1142,7 +1167,9 @@ export function Composer(props: {
           up
           disabled={props.turnActive || preparing()}
           value={props.provider}
-          onChange={(value) => props.onProviderChange?.(value as AgentProvider)}
+          onChange={(value) => {
+            if (isNativeAgentProvider(value)) props.onProviderChange?.(value);
+          }}
           options={providerDropdownOptions()}
         />
         <Dropdown
@@ -1160,7 +1187,7 @@ export function Composer(props: {
             disabled={props.turnActive || preparing()}
             value={props.effort && props.effort !== defaultEffort() ? props.effort : ""}
             title={
-              props.provider === "claudeCode"
+              agentBackendDescriptor(props.provider).controls.effort[props.engine] === "newSession"
                 ? "Effort applies to new sessions"
                 : undefined
             }
@@ -1174,9 +1201,7 @@ export function Composer(props: {
             up
             disabled={props.turnActive || preparing()}
             value={modeValue()}
-            title={
-              props.provider === "claudeCode" ? "Permission mode" : "Sandbox & approvals"
-            }
+            title={agentBackendDescriptor(props.provider).modeControlLabel}
             onChange={(value) => props.onModeChange?.(value)}
             options={modeDropdownOptions()}
           />
@@ -1325,6 +1350,12 @@ export function Composer(props: {
           aria-multiline="true"
           aria-label={placeholder()}
           data-placeholder={placeholder()}
+          title={
+            props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
+          }
+          aria-description={
+            props.turnActive && !props.supportsSteer ? props.steerUnavailableReason : undefined
+          }
           contentEditable={!preparing()}
           spellcheck={true}
           onInput={onInput}

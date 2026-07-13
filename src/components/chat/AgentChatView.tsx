@@ -22,7 +22,11 @@ import {
 } from "../../stores/agentChat";
 import { type AgentProvider } from "../../lib/agentChat";
 import {
-  AGENTS,
+  agentBackendDescriptor,
+  backendCapabilityReason,
+  supportsBackendCapability,
+} from "../../lib/agentBackends";
+import {
   loadAgentEfforts,
   loadAgentModels,
   modelOption,
@@ -53,7 +57,9 @@ export function AgentChatView(props: {
   provider: AgentProvider;
   model?: string | null;
 }): JSX.Element {
+  const configuredEngine = loadAgentEngine();
   const state = () => agentChat(props.chatId);
+  const engine = () => state()?.engine ?? configuredEngine;
   const provider = () => state()?.provider ?? props.provider;
   const model = () =>
     state()?.model ??
@@ -62,7 +68,9 @@ export function AgentChatView(props: {
   const effort = () => state()?.effort ?? null;
   const mode = () => state()?.mode ?? loadAgentModes()[provider()] ?? null;
 
-  const approvals = createMemo(() => state()?.approvals ?? []);
+  const approvalsSupported = () =>
+    supportsBackendCapability(provider(), "approvalEvents", "nativeChat", engine());
+  const approvals = createMemo(() => (approvalsSupported() ? (state()?.approvals ?? []) : []));
   const hasApprovals = () => approvals().length > 0;
   const visibleSwarms = createMemo(() =>
     swarmRuns()
@@ -88,7 +96,7 @@ export function AgentChatView(props: {
 
   onMount(() => {
     void ensureAgentChat(props.chatId, props.projectRoot, provider(), model(), {
-      engine: loadAgentEngine(),
+      engine: configuredEngine,
       effort: loadAgentEfforts()[provider()] ?? null,
       mode: loadAgentModes()[provider()] ?? null,
     });
@@ -97,8 +105,7 @@ export function AgentChatView(props: {
   // Switching providers abandons the session's context, so a chat that already
   // has content asks first instead of switching on a stray select change.
   const [pendingProvider, setPendingProvider] = createSignal<AgentProvider | null>(null);
-  const providerLabel = (id: AgentProvider) =>
-    AGENTS.find((agent) => agent.id === id)?.label ?? id;
+  const providerLabel = (id: AgentProvider) => agentBackendDescriptor(id).label;
 
   const doSwitch = (next: AgentProvider) => {
     const nextModel = nativeChatModel(next, loadAgentModels()[next] ?? null);
@@ -273,11 +280,19 @@ export function AgentChatView(props: {
             </Show>
           }
           provider={provider()}
+          engine={engine()}
           model={model()}
           effort={effort()}
           mode={mode()}
           turnActive={state()?.turnActive ?? false}
-          supportsSteer={provider() === "codex"}
+          supportsImages={supportsBackendCapability(provider(), "imageInput", "nativeChat", engine())}
+          imageUnavailableReason={
+            backendCapabilityReason(provider(), "imageInput", "nativeChat", engine()) ?? undefined
+          }
+          supportsSteer={supportsBackendCapability(provider(), "steerTurn", "nativeChat", engine())}
+          steerUnavailableReason={
+            backendCapabilityReason(provider(), "steerTurn", "nativeChat", engine()) ?? undefined
+          }
           emberYielded={hasApprovals()}
           onSend={onSend}
           onSteer={(text) => steerAgentChat(props.chatId, text)}

@@ -12,6 +12,19 @@ const tauri = vi.hoisted(() => {
   return { channels, invoke, Channel };
 });
 
+const settings = vi.hoisted(() => {
+  const values = new Map<string, string>();
+  globalThis.localStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => void values.set(key, value),
+    removeItem: (key: string) => void values.delete(key),
+    clear: () => values.clear(),
+    key: () => null,
+    length: 0,
+  } as unknown as Storage;
+  return values;
+});
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: tauri.invoke,
   Channel: tauri.Channel,
@@ -110,11 +123,13 @@ import {
 } from "../../src/stores/agentChat";
 import {
   agentChatSend,
+  agentChatStart,
   agentSkillsList,
   type AgentEvent,
   type AgentTimelineEntry,
 } from "../../src/lib/agentChat";
 import { markChatTitleManual } from "../../src/lib/chatAutoName";
+import { setAgentEngine } from "../../src/lib/chatDefaults";
 
 let counter = 0;
 
@@ -234,6 +249,8 @@ beforeEach(() => {
   workspace.projects = [];
   flags.remoteProjects = false;
   flags.dynamicChatTitles = false;
+  settings.clear();
+  setAgentEngine("v2");
 });
 
 describe("agentChat IPC wrappers", () => {
@@ -258,6 +275,37 @@ describe("agentChat IPC wrappers", () => {
     await expect(agentSkillsList("codex")).resolves.toEqual(skills);
 
     expect(tauri.invoke).toHaveBeenCalledWith("agent_skills_list", { provider: "codex" });
+  });
+
+  it.each([
+    ["omp", "OMP"],
+    ["pi", "Pi"],
+  ])("rejects terminal-only %s before invoking native chat", async (provider, label) => {
+    await expect(agentChatStart({
+      chatId: `chat-${provider}`,
+      projectRoot: "/project",
+      provider,
+      onEvent: () => undefined,
+    })).rejects.toThrow(`${label} native chat is not integrated yet`);
+
+    expect(tauri.invoke).not.toHaveBeenCalled();
+    expect(tauri.channels).toHaveLength(0);
+  });
+
+  it("normalizes persisted legacy Claude IDs before the native backend guard", async () => {
+    tauri.invoke.mockResolvedValue("session-legacy");
+
+    await expect(agentChatStart({
+      chatId: "chat-legacy-claude",
+      projectRoot: "/project",
+      provider: "claude",
+      onEvent: () => undefined,
+    })).resolves.toBe("session-legacy");
+
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_start",
+      expect.objectContaining({ provider: "claudeCode" }),
+    );
   });
 });
 
@@ -485,6 +533,24 @@ describe("agentChat store reducer", () => {
       },
     ]);
     expect(agentChat(chatId)?.error).toBe("approval failed");
+  });
+
+  it("drops replayed impossible approvals and rejects their actions before IPC", async () => {
+    const chatId = nextChatId();
+    mockInvoke(historyFromEvents([{
+      kind: "approvalRequest",
+      approvalId: "stale-v1-approval",
+      approvalKind: "command",
+      detail: "persisted but impossible",
+    }]));
+
+    await ensureAgentChat(chatId, "/project", "codex", null, { engine: "v1" });
+
+    expect(agentChat(chatId)?.approvals).toEqual([]);
+    await expect(
+      approveAgentRequest(chatId, "stale-v1-approval", "accept"),
+    ).rejects.toThrow("v2 agent engine");
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_approve")).toBe(false);
   });
 
   it("accumulates usage totals with reported cost", async () => {
@@ -923,11 +989,29 @@ describe("ensureAgentChat", () => {
     expect(startCall?.[1]).toEqual(
       expect.objectContaining({
         projectRoot: "/not/present/locally",
-        engine: "v2",
+        engine: "v1",
         remote: { host: "mac-mini", remoteRoot: "/srv/app" },
       }),
     );
     expect(agentChat(chatId)?.remoteHost).toBe("mac-mini");
+    startCall?.[1].onEvent.onmessage({
+      kind: "approvalRequest",
+      approvalId: "remote-approval",
+      approvalKind: "command",
+      detail: "impossible on remote v1",
+    });
+    expect(agentChat(chatId)?.approvals).toEqual([]);
+    expect(agentChat(chatId)?.engine).toBe("v1");
+    await expect(
+      sendAgentMessage(chatId, "inspect", ["/tmp/remote.png"]),
+    ).rejects.toThrow("v2 agent engine");
+    await expect(steerAgentChat(chatId, "change direction")).rejects.toThrow("v2 agent engine");
+    await expect(
+      approveAgentRequest(chatId, "remote-approval", "accept"),
+    ).rejects.toThrow("v2 agent engine");
+    for (const command of ["agent_chat_send", "agent_chat_steer", "agent_chat_approve"]) {
+      expect(tauri.invoke.mock.calls.some((call) => call[0] === command)).toBe(false);
+    }
 
     startCall?.[1].onEvent.onmessage({
       kind: "turnFailed",
@@ -936,6 +1020,23 @@ describe("ensureAgentChat", () => {
     });
     expect(agentChat(chatId)?.error).toContain("ssh:mac-mini exited 255");
     expect(agentChat(chatId)?.error).toContain("Test connection");
+  });
+
+  it("keeps a live session on its effective engine after Settings changes", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null, { engine: "v1" });
+
+    setAgentEngine("v2");
+    await ensureAgentChat(chatId, "/project", "claudeCode", null, { engine: "v2" });
+
+    expect(agentChat(chatId)?.provider).toBe("codex");
+    expect(agentChat(chatId)?.engine).toBe("v1");
+    await expect(
+      sendAgentMessage(chatId, "inspect", ["/tmp/local.png"]),
+    ).rejects.toThrow("v2 agent engine");
+    await expect(steerAgentChat(chatId, "change direction")).rejects.toThrow("v2 agent engine");
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(1);
   });
 
   it("starts once per chat id", async () => {
@@ -1174,6 +1275,46 @@ describe("sendAgentMessage", () => {
     ]);
   });
 
+  it("rejects images before dispatch when the selected engine cannot send them", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null, { engine: "v1" });
+
+    await expect(
+      sendAgentMessage(chatId, "inspect this", ["/tmp/image.png"]),
+    ).rejects.toThrow("v2 agent engine");
+
+    expect(timeline(chatId)).toEqual([]);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
+  });
+
+  it("accepts Claude v2 images and rejects them for a live Claude v1 session", async () => {
+    const v2ChatId = nextChatId();
+    mockInvoke();
+    await ensureAgentChat(v2ChatId, "/project", "claudeCode", null, { engine: "v2" });
+    await sendAgentMessage(v2ChatId, "inspect", ["/tmp/claude-v2.png"]);
+
+    expect(tauri.invoke).toHaveBeenCalledWith("agent_chat_send", {
+      sessionId: "session-1",
+      text: "inspect",
+      effort: null,
+      model: null,
+      images: ["/tmp/claude-v2.png"],
+    });
+
+    const v1ChatId = nextChatId();
+    await ensureAgentChat(v1ChatId, "/project", "claudeCode", null, { engine: "v1" });
+    const sendsBefore = tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send").length;
+
+    await expect(
+      sendAgentMessage(v1ChatId, "inspect", ["/tmp/claude-v1.png"]),
+    ).rejects.toThrow("v2 agent engine");
+    expect(timeline(v1ChatId)).toEqual([]);
+    expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_send")).toHaveLength(
+      sendsBefore,
+    );
+  });
+
   it("sends hidden internal messages while marking the optimistic row hidden", async () => {
     const { chatId } = await startChat([], "gpt-5.3-codex-spark");
     const text = "Pickforge swarm finished for this chat.\n\nWorker lane results:";
@@ -1384,7 +1525,10 @@ describe("switchAgentChatProvider", () => {
       { entryType: "message", seq: 2, role: "assistant", content: "after", createdAt: 2 },
     ];
     mockInvoke(history);
+    setAgentEngine("v1");
     await ensureAgentChat(chatId, "/project", "codex", "gpt-old");
+    expect(agentChat(chatId)?.engine).toBe("v1");
+    setAgentEngine("v2");
 
     await expect(switchAgentChatProvider(chatId, "claudeCode", "claude-new")).resolves.toBe(true);
 
@@ -1404,6 +1548,7 @@ describe("switchAgentChatProvider", () => {
     );
     expect(agentChat(chatId)).toMatchObject({
       provider: "claudeCode",
+      engine: "v2",
       model: "claude-new",
       providerSwitched: true,
       contextUsed: null,
@@ -1424,6 +1569,34 @@ describe("switchAgentChatProvider", () => {
       "Cannot switch provider while a turn is active",
     );
     expect(workspace.setChatAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe("steerAgentChat", () => {
+  it("rejects unsupported Claude steering before adding an optimistic action", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "claudeCode", null);
+
+    await expect(steerAgentChat(chatId, "change direction")).rejects.toThrow(
+      "Agent SDK exposes it",
+    );
+
+    expect(timeline(chatId)).toEqual([]);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_steer")).toBe(false);
+  });
+
+  it("rejects Codex steering when the active engine cannot perform it", async () => {
+    const chatId = nextChatId();
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null, { engine: "v1" });
+
+    await expect(steerAgentChat(chatId, "change direction")).rejects.toThrow(
+      "v2 agent engine",
+    );
+
+    expect(timeline(chatId)).toEqual([]);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_steer")).toBe(false);
   });
 });
 

@@ -1,4 +1,5 @@
 import type { AgentProvider } from "../lib/agentChat";
+import { normalizeAgentProvider } from "../lib/agentBackends";
 import {
   loadAgentEfforts,
   loadAgentModels,
@@ -265,11 +266,6 @@ function agentProviderFromIntent(provider: "claude" | "codex"): AgentProvider {
   return provider === "claude" ? "claudeCode" : "codex";
 }
 
-function agentProviderFromChat(chat: Chat): AgentProvider | null {
-  if (chat.agentId === "claudeCode" || chat.agentId === "claude") return "claudeCode";
-  if (chat.agentId === "codex") return "codex";
-  return null;
-}
 
 function activeChat(): Resolution<Chat> {
   const chatId = workspace.activeChatId;
@@ -283,7 +279,7 @@ function agentTarget(chat: Chat): Resolution<{ chat: Chat; provider: AgentProvid
   if (chat.kind !== "agent") {
     return { ok: false, message: `Chat "${chat.title}" is not an agent chat` };
   }
-  const provider = agentProviderFromChat(chat);
+  const provider = normalizeAgentProvider(chat.agentId);
   if (!provider) {
     return { ok: false, message: `Chat "${chat.title}" has unsupported agent "${chat.agentId}"` };
   }

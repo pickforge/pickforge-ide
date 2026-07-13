@@ -3,6 +3,7 @@
 // localStorage (global, like the Flutter SharedPreferences store).
 import { flagEnabled } from "../stores/flags";
 import { probeAgentCli, type AgentCliProbe } from "./process";
+import { isNativeAgentProvider } from "./agentBackends";
 
 export interface AgentModelOption {
   id: string;
@@ -346,8 +347,7 @@ export function launchBinary(agentId: string): string | null {
 }
 
 export function nativeChatModel(agentId: string, modelId: string | null): string | null {
-  const profile = profileForAgent(agentId);
-  if (profile?.terminalOnly) return null;
+  if (!isNativeAgentProvider(agentId)) return null;
   const option = modelOption(agentId, modelId);
   return option?.terminalOnly ? null : modelId;
 }

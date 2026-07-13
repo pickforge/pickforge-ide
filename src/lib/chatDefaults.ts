@@ -1,4 +1,8 @@
-import { type AgentEngine, type AgentProvider } from "./agentChat";
+import {
+  isNativeAgentProvider,
+  type AgentEngine,
+  type AgentProvider,
+} from "./agentBackends";
 
 export type DefaultChatKind = "ask" | "terminal" | "agent";
 
@@ -37,7 +41,7 @@ export function setAgentEngine(engine: AgentEngine) {
 export function loadLastAgentProvider(): AgentProvider {
   try {
     const value = localStorage.getItem(PROVIDER_KEY);
-    if (value === "claudeCode" || value === "codex") return value;
+    if (value && isNativeAgentProvider(value)) return value;
   } catch {
     // fall through to default
   }

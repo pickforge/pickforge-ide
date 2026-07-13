@@ -1628,9 +1628,16 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_file(&marker);
-        let mut command = Command::new("cmd");
+        let mut command = Command::new("powershell.exe");
         command
-            .args(["/C", &format!("echo resumed>\"{}\"", marker.display())])
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Set-Content -LiteralPath $env:PICKFORGE_PI_RESUME_MARKER -Value resumed",
+            ])
+            .env("PICKFORGE_PI_RESUME_MARKER", &marker)
             .creation_flags(CREATE_SUSPENDED);
         let child = command.spawn().expect("spawn suspended Windows fixture");
         std::thread::sleep(Duration::from_millis(100));

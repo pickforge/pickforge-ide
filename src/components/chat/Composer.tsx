@@ -29,6 +29,7 @@ import {
   isCompatiblePiRpcVersion,
   type AgentEngine,
 } from "../../lib/agentBackends";
+import { flagEnabled } from "../../stores/flags";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import {
   type ComposerAttachment,
@@ -206,6 +207,7 @@ export function Composer(props: {
     (AgentProfile & { id: AgentProvider })[]
   >([...BASE_PROVIDERS]);
   onMount(() => {
+    if (!flagEnabled("ompPiAgents")) return;
     void discoverAgentCli("pi")
       .then((diagnostic) => {
         if (!diagnostic.installed || !isCompatiblePiRpcVersion(diagnostic.version)) return;

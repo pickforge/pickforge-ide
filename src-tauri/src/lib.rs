@@ -25,7 +25,7 @@ use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
     PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
 };
-use tauri::{path::BaseDirectory, Manager, RunEvent, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -40,18 +40,20 @@ fn open_database() -> Arc<Database> {
 }
 
 fn resolve_agent_app_root(app: &tauri::App) -> PathBuf {
-    let dev_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    match app
-        .path()
-        .resolve("scripts/claude-bridge.ts", BaseDirectory::Resource)
-    {
-        Ok(path) if path.exists() => path
-            .parent()
-            .and_then(|scripts_dir| scripts_dir.parent())
-            .map(PathBuf::from)
-            .unwrap_or(dev_root),
-        _ => dev_root,
-    }
+    let root = pickforge_home(None)
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| {
+            app.path()
+                .app_data_dir()
+                .expect("resolve durable PickForge user-data directory")
+        });
+    assert!(
+        root.is_absolute(),
+        "PickForge user-data directory must be absolute"
+    );
+    root
 }
 
 fn file_name_only(path: &str) -> String {

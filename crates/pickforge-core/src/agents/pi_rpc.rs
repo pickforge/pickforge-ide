@@ -68,6 +68,7 @@ struct ClientState {
     closed: AtomicBool,
     shutting_down: AtomicBool,
     active: AtomicBool,
+    pending_failure: Mutex<Option<String>>,
     terminal_sent: AtomicBool,
     turn_sequence: AtomicU64,
     message_sequence: AtomicU64,
@@ -318,6 +319,7 @@ impl PiRpcClient {
             active: AtomicBool::new(false),
             stderr_done: AtomicBool::new(false),
             terminal_sent: AtomicBool::new(false),
+            pending_failure: Mutex::new(None),
             turn_sequence: AtomicU64::new(0),
             message_sequence: AtomicU64::new(0),
             next_id: AtomicU64::new(1),
@@ -391,6 +393,9 @@ impl PiRpcClient {
     pub fn prompt(&self, message: &str) -> Result<(), PiRpcError> {
         self.state.active.store(true, Ordering::SeqCst);
         self.state.terminal_sent.store(false, Ordering::SeqCst);
+        if let Ok(mut pending_failure) = self.state.pending_failure.lock() {
+            *pending_failure = None;
+        }
         match self.request(json!({"type": "prompt", "message": message}), REQUEST_TIMEOUT) {
             Ok(_) => Ok(()),
             Err(error) => {
@@ -1077,6 +1082,9 @@ fn handle_incoming(state: &Arc<ClientState>, value: Value) {
         "agent_start" => {
             state.active.store(true, Ordering::SeqCst);
             state.terminal_sent.store(false, Ordering::SeqCst);
+            if let Ok(mut pending_failure) = state.pending_failure.lock() {
+                *pending_failure = None;
+            }
             state.turn_sequence.fetch_add(1, Ordering::SeqCst);
             state.message_sequence.store(0, Ordering::SeqCst);
             (state.sink)(AgentEvent::TurnStarted);
@@ -1097,13 +1105,26 @@ fn handle_incoming(state: &Arc<ClientState>, value: Value) {
         "tool_execution_update" => normalize_tool_update(state, &value),
         "tool_execution_end" => normalize_tool_end(state, &value),
         "agent_end" => {
+            if value.get("willRetry").and_then(Value::as_bool).unwrap_or(false) {
+                if let Ok(mut pending_failure) = state.pending_failure.lock() {
+                    *pending_failure = None;
+                }
+                return;
+            }
             state.active.store(false, Ordering::SeqCst);
-            if !value.get("willRetry").and_then(Value::as_bool).unwrap_or(false)
-                && !state.terminal_sent.swap(true, Ordering::SeqCst)
-            {
-                (state.sink)(AgentEvent::TurnDone {
-                    status: TurnStatus::Completed,
-                });
+            if !state.terminal_sent.swap(true, Ordering::SeqCst) {
+                let pending_failure = state
+                    .pending_failure
+                    .lock()
+                    .ok()
+                    .and_then(|mut pending_failure| pending_failure.take());
+                if let Some(error) = pending_failure {
+                    (state.sink)(AgentEvent::TurnFailed { error });
+                } else {
+                    (state.sink)(AgentEvent::TurnDone {
+                        status: TurnStatus::Completed,
+                    });
+                }
             }
         }
         "session_info_changed" => (state.sink)(AgentEvent::SessionUpdated {
@@ -1216,14 +1237,23 @@ fn normalize_message_end(state: &Arc<ClientState>, value: &Value) {
         });
     }
     match message.get("stopReason").and_then(Value::as_str) {
-        Some("error") => emit_failure(
-            state,
-            message
+        Some("error") => {
+            let error = message
                 .get("errorMessage")
                 .and_then(Value::as_str)
                 .unwrap_or("Pi model turn failed")
-                .to_string(),
-        ),
+                .to_string();
+            if is_aborted_error(&error) {
+                state.active.store(false, Ordering::SeqCst);
+                if !state.terminal_sent.swap(true, Ordering::SeqCst) {
+                    (state.sink)(AgentEvent::TurnDone {
+                        status: TurnStatus::Interrupted,
+                    });
+                }
+            } else if let Ok(mut pending_failure) = state.pending_failure.lock() {
+                *pending_failure = Some(error);
+            }
+        }
         Some("aborted") => {
             state.active.store(false, Ordering::SeqCst);
             if !state.terminal_sent.swap(true, Ordering::SeqCst) {
@@ -1342,12 +1372,21 @@ fn register_extension_dialog(state: &Arc<ClientState>, value: &Value) {
     }
 }
 
+fn is_aborted_error(error: &str) -> bool {
+    let normalized = error.trim().to_ascii_lowercase();
+    normalized == "aborted"
+        || normalized == "abort"
+        || normalized.contains("aborterror")
+        || normalized.contains("operation aborted")
+}
 fn emit_failure(state: &Arc<ClientState>, error: String) {
     state.active.store(false, Ordering::SeqCst);
     if !state.terminal_sent.swap(true, Ordering::SeqCst) {
         (state.sink)(AgentEvent::TurnFailed { error });
     }
 }
+
+
 
 fn cancel_all_dialogs(state: &Arc<ClientState>) {
     let ids = state
@@ -1831,6 +1870,26 @@ for raw in sys.stdin.buffer:
             raise SystemExit(7)
         if mode == "interrupt":
             continue
+        if mode == "abort_error":
+            message = {"role": "assistant", "content": [], "usage": {}, "stopReason": "error",
+                       "errorMessage": "AbortError: operation aborted"}
+            emit({"type": "message_end", "message": message})
+            emit({"type": "agent_end", "messages": [message], "willRetry": False})
+            continue
+        if mode in ("retry_success", "retry_fail"):
+            failed = {"role": "assistant", "content": [], "usage": {}, "stopReason": "error",
+                      "errorMessage": "retryable fixture error"}
+            emit({"type": "message_end", "message": failed})
+            emit({"type": "agent_end", "messages": [failed], "willRetry": True})
+            emit({"type": "agent_start"})
+            if mode == "retry_fail":
+                final = {"role": "assistant", "content": [], "usage": {}, "stopReason": "error",
+                         "errorMessage": "final fixture error"}
+            else:
+                final = {"role": "assistant", "content": [], "usage": {}, "stopReason": "stop"}
+            emit({"type": "message_end", "message": final})
+            emit({"type": "agent_end", "messages": [final], "willRetry": False})
+            continue
         emit({"type": "thinking_level_changed", "level": "high"})
         emit({"type": "session_info_changed", "name": "Renamed fixture"})
         emit({"type": "tool_execution_start", "toolCallId": "tool-1", "toolName": "write",
@@ -2139,6 +2198,57 @@ if mode == "hang":
             Err(PiRpcError::Response(message)) if message == "fixture rejected prompt"
         ));
         rejected_client.shutdown().expect("shutdown rejecting Pi");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_defers_retryable_errors_and_normalizes_abort_errors() {
+        for (mode, expected_failure) in [
+            ("abort_error", None),
+            ("retry_success", None),
+            ("retry_fail", Some("final fixture error")),
+        ] {
+            let fixture = fake_pi();
+            let events = Arc::new(Mutex::new(Vec::<AgentEvent>::new()));
+            let sink_events = Arc::clone(&events);
+            let client = spawn(
+                fixture.options(mode),
+                Arc::new(move |event| sink_events.lock().unwrap().push(event)),
+            )
+            .expect("spawn fake Pi");
+            client.prompt("test").expect("prompt accepted");
+            wait_until(|| {
+                events
+                    .lock()
+                    .map(|events| {
+                        events.iter().any(|event| {
+                            matches!(event, AgentEvent::TurnDone { .. } | AgentEvent::TurnFailed { .. })
+                        })
+                    })
+                    .unwrap_or(false)
+            });
+            let captured = events.lock().unwrap();
+            let terminal = captured
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnDone { .. } | AgentEvent::TurnFailed { .. }))
+                .collect::<Vec<_>>();
+            assert_eq!(terminal.len(), 1, "{mode} must emit exactly one terminal event");
+            match expected_failure {
+                Some(error) => assert!(matches!(
+                    terminal[0],
+                    AgentEvent::TurnFailed { error: actual } if actual == error
+                )),
+                None if mode == "abort_error" => assert!(matches!(
+                    terminal[0],
+                    AgentEvent::TurnDone { status: TurnStatus::Interrupted }
+                )),
+                None => assert!(matches!(
+                    terminal[0],
+                    AgentEvent::TurnDone { status: TurnStatus::Completed }
+                )),
+            }
+            client.shutdown().expect("shutdown fake Pi");
+        }
     }
 
     #[cfg(unix)]

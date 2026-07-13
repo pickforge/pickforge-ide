@@ -1,9 +1,10 @@
 import {
+  NATIVE_AGENT_BACKENDS,
+  type AgentBackendDescriptor,
   isNativeAgentProvider,
   type AgentEngine,
   type AgentProvider,
 } from "./agentBackends";
-import { flagEnabled } from "../stores/flags";
 
 export type DefaultChatKind = "ask" | "terminal" | "agent";
 
@@ -39,17 +40,21 @@ export function setAgentEngine(engine: AgentEngine) {
   localStorage.setItem(ENGINE_KEY, engine);
 }
 
-export function loadLastAgentProvider(): AgentProvider {
+export function selectableLastAgentProvider(
+  selectable: readonly AgentBackendDescriptor[] = NATIVE_AGENT_BACKENDS,
+): AgentProvider {
+  const selectableIds = new Set(selectable.map((backend) => backend.id));
   try {
     const value = localStorage.getItem(PROVIDER_KEY);
-    if (value && isNativeAgentProvider(value)) {
-      if (value === "pi" && !flagEnabled("ompPiAgents")) return "claudeCode";
-      return value;
-    }
+    if (value && isNativeAgentProvider(value) && selectableIds.has(value)) return value;
   } catch {
     // fall through to default
   }
   return "claudeCode";
+}
+
+export function loadLastAgentProvider(): AgentProvider {
+  return selectableLastAgentProvider();
 }
 
 export function setLastAgentProvider(provider: AgentProvider) {

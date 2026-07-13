@@ -63,7 +63,7 @@ import {
 import {
   loadAskChatTitle,
   loadDefaultChatKind,
-  loadLastAgentProvider,
+  selectableLastAgentProvider,
   setLastAgentProvider,
 } from "../../lib/chatDefaults";
 import { isPrimaryChat } from "../../lib/chatLabels";

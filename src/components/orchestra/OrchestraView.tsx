@@ -8,6 +8,7 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  onMount,
   untrack,
 } from "solid-js";
 import { AgentChatView } from "../chat/AgentChatView";
@@ -98,7 +99,7 @@ import { markChatTitleManual } from "../../lib/chatAutoName";
 import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
-const PROVIDER_MARK: Record<string, string> = { claudeCode: "CC", codex: "CX" };
+const PROVIDER_MARK: Record<string, string> = { claudeCode: "CC", codex: "CX", omp: "OM", pi: "PI" };
 
 const STATUS_ORDER: OrchestraTaskStatus[] = [
   "planned",
@@ -271,6 +272,18 @@ export function OrchestraView(props: {
   // in a direction (from a lane's split menu) instead of appended to the root.
   const [pendingTarget, setPendingTarget] = createSignal<{ chatId: string; dir: LaneDir } | null>(null);
   const [flashChat, setFlashChat] = createSignal<string | null>(null);
+  const [agentProviders, setAgentProviders] =
+    createSignal<readonly AgentBackendDescriptor[]>(NATIVE_AGENT_BACKENDS);
+  onMount(() => {
+    if (!flagEnabled("ompPiAgents")) return;
+    void discoverAgentCli("pi")
+      .then((diagnostic) =>
+        setAgentProviders(
+          selectableNativeAgentBackends(true, diagnostic.installed ? diagnostic.version : null),
+        ),
+      )
+      .catch(() => setAgentProviders(NATIVE_AGENT_BACKENDS));
+  });
 
   let orchEl: HTMLDivElement | undefined;
   let gridEl: HTMLDivElement | undefined;

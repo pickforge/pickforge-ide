@@ -1,15 +1,16 @@
-import { createEffect, createSignal, For, Index, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, type JSX } from "solid-js";
 import {
   agentProfiles,
   discoverAgentCli,
   loadAgentModels,
+  OMP_MODEL_CATALOG_ADVISORY,
   setAgentModel,
+  SUPPORTED_OMP_ACP_VERSION,
   type AgentCliDiagnostic,
   type AgentProfile,
 } from "../lib/agentModels";
 import {
   isCompatiblePiRpcVersion,
-  nativeChatUnavailableReason,
   type AgentEngine,
 } from "../lib/agentBackends";
 import {
@@ -25,7 +26,7 @@ import {
   resetQuickLaunchItems,
   updateQuickLaunchItem,
 } from "../stores/quickLaunch";
-import { MonoEyebrow } from "../components/ui";
+import { MonoEyebrow, StatusPill, type StatusIntent } from "../components/ui";
 import { Dropdown } from "../components/Dropdown";
 import {
   IconClaude,
@@ -206,11 +207,107 @@ function rememberSettingsCategory(category: SettingsCategoryKey): void {
     // Settings navigation remains usable when storage is unavailable.
   }
 }
+
+type AgentConnectorState = {
+  label: string;
+  intent: StatusIntent;
+  reason: string;
+};
+
+function connectorNativeState(
+  agent: AgentProfile,
+  diagnostic: AgentCliDiagnostic | undefined,
+  failure: string | undefined,
+  loading: boolean,
+): AgentConnectorState {
+  if (loading) {
+    return {
+      label: "Checking native chat…",
+      intent: "neutral",
+      reason: `Checking the installed ${agent.label} CLI and native protocol support.`,
+    };
+  }
+  if (failure) {
+    return {
+      label: "Native status unavailable",
+      intent: "error",
+      reason: `The local compatibility probe failed: ${failure}`,
+    };
+  }
+  if (!diagnostic) {
+    return {
+      label: "Native chat not checked",
+      intent: "neutral",
+      reason: "Refresh connector status to check native chat compatibility.",
+    };
+  }
+  if (!diagnostic.installed) {
+    return {
+      label: "Native chat unavailable",
+      intent: "neutral",
+      reason: `${agent.binary} is not installed on PATH. Terminal launch and native chat are unavailable.`,
+    };
+  }
+  if (diagnostic.capabilities.nativeChat) {
+    return {
+      label: "Native chat ready",
+      intent: "connected",
+      reason: agent.id === "omp"
+        ? "ACP integration is available; the compatibility probe runs with extensions disabled."
+        : "Pi RPC loads installed extensions and tools; native approvals and per-session MCP grants are not available.",
+    };
+  }
+  if (agent.id === "omp") {
+    const capabilityErrors = diagnostic.errors.filter(
+      (error) => error !== OMP_MODEL_CATALOG_ADVISORY,
+    );
+    return {
+      label: "Native chat unavailable",
+      intent: "warning",
+      reason: diagnostic.version !== SUPPORTED_OMP_ACP_VERSION
+        ? `Native chat requires OMP ${SUPPORTED_OMP_ACP_VERSION}; found ${diagnostic.version ?? "an unknown version"}. Terminal launch remains available.`
+        : capabilityErrors.length > 0
+          ? `OMP compatibility probe did not qualify: ${capabilityErrors.join("; ")}. Terminal launch remains available.`
+          : `OMP ${SUPPORTED_OMP_ACP_VERSION} did not report the required ACP and no-extensions support. Terminal launch remains available.`,
+    };
+  }
+  return {
+    label: "Native chat unavailable",
+    intent: "warning",
+    reason: !isCompatiblePiRpcVersion(diagnostic.version)
+      ? `Native Pi RPC requires >=0.79.10 and <0.80.0; found ${diagnostic.version ?? "an unknown version"}. Terminal launch remains available.`
+      : diagnostic.errors.length > 0
+        ? `Pi compatibility probe did not qualify: ${diagnostic.errors.join("; ")}. Terminal launch remains available.`
+        : "The Pi compatibility probe did not report native RPC support. Terminal launch remains available.",
+  };
+}
+
+function connectorCapabilitySummary(
+  diagnostic: AgentCliDiagnostic | undefined,
+  failure: string | undefined,
+  loading: boolean,
+): string {
+  if (loading) return "Capabilities pending local probe.";
+  if (failure) return "Capabilities unavailable because the local probe failed.";
+  if (!diagnostic) return "Capabilities not checked.";
+  if (!diagnostic.installed) return "Capabilities unavailable until the CLI is installed.";
+  const capabilities = ["terminal launch"];
+  if (diagnostic.capabilities.nativeChat) capabilities.push("native chat");
+  if (diagnostic.capabilities.dynamicModels) capabilities.push("offline model catalog");
+  if (diagnostic.capabilities.providerSelection) capabilities.push("provider selection");
+  if (diagnostic.capabilities.profiles) capabilities.push("named profiles");
+  return `Available: ${capabilities.join(" · ")}`;
+}
+
+function isConnectorProfile(agent: AgentProfile): boolean {
+  return agent.id === "omp" || agent.id === "pi";
+}
 const AGENT_DIAGNOSTIC_IDS = ["omp", "pi"] as const;
 const AGENT_BRAND_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Object.freeze({
   claudeCode: () => <IconClaude size={14} />,
   codex: () => <IconOpenAI size={14} />,
   omp: () => <IconIngot size={14} />,
+  pi: () => <IconIngot size={14} />,
 });
 
 export function SettingsScreen() {
@@ -503,6 +600,8 @@ export function SettingsScreen() {
   };
   const reloadAgentDiagnostics = async () => {
     if (!flagEnabled("ompPiAgents") || agentDiagnosticsLoading()) return;
+    setAgentDiagnostics(() => ({}));
+    setAgentDiagnosticErrors(() => ({}));
     setAgentDiagnosticsLoading(true);
     const next: Record<string, AgentCliDiagnostic> = {};
     const failures: Record<string, string> = {};
@@ -513,8 +612,8 @@ export function SettingsScreen() {
         failures[agentId] = error instanceof Error ? error.message : String(error);
       }
     }));
-    setAgentDiagnostics(next);
-    setAgentDiagnosticErrors(failures);
+    setAgentDiagnostics(() => next);
+    setAgentDiagnosticErrors(() => failures);
     setAgentDiagnosticsLoading(false);
   };
   onMount(() => {
@@ -601,29 +700,13 @@ export function SettingsScreen() {
   const agentStatusLabel = (agent: AgentProfile): string => {
     const diagnostic = agentDiagnostics()[agent.id];
     const failure = agentDiagnosticErrors()[agent.id];
-    if (failure) return "Diagnostic failed";
-    if (!diagnostic) return agentDiagnosticsLoading() ? "Checking installation…" : "Not checked";
+    if (agentDiagnosticsLoading()) return "Checking installation…";
+    if (failure) return "Status unavailable";
+    if (!diagnostic) return "Not checked";
     if (!diagnostic.installed) return "Not installed";
-    return diagnostic.version ? `${agent.binary} ${diagnostic.version}` : "Installed";
-  };
-  const agentCapabilityLabel = (agent: AgentProfile): string => {
-    const diagnostic = agentDiagnostics()[agent.id];
-    const failure = agentDiagnosticErrors()[agent.id];
-    const nativeChatReason = agent.id === "pi"
-      ? diagnostic?.installed && isCompatiblePiRpcVersion(diagnostic.version)
-        ? "Native chat loads installed Pi extensions and tools; no native approvals or per-session MCP grants"
-        : diagnostic?.version
-          ? `Native Pi RPC requires >=0.79.10 and <0.80.0; found ${diagnostic.version}`
-          : "Native Pi RPC requires a compatible installed Pi"
-      : nativeChatUnavailableReason(agent.id) ?? "Native chat is unavailable for this profile";
-    if (failure) return `${nativeChatReason} · status unavailable · ${failure}`;
-    if (!diagnostic?.installed) return `${nativeChatReason} · ${agent.binary} is required on PATH`;
-    const capabilities = [nativeChatReason];
-    if (diagnostic.capabilities.dynamicModels) capabilities.push("offline model catalog");
-    if (diagnostic.capabilities.providerSelection) capabilities.push("provider selection");
-    if (diagnostic.capabilities.profiles) capabilities.push("named profiles");
-    if (diagnostic.errors.length > 0) capabilities.push(diagnostic.errors.join("; "));
-    return capabilities.join(" · ");
+    return diagnostic.version
+      ? `Installed · ${agent.binary} ${diagnostic.version}`
+      : `Installed · ${agent.binary}`;
   };
   const routerBackendOptions = [
     { value: "off", label: "Off" },
@@ -814,61 +897,196 @@ export function SettingsScreen() {
           : ""}`}
       >
         <AgentModelsSettingsSection>
-          <For each={agentProfiles()}>
+          <For each={agentProfiles().filter((agent) => !isConnectorProfile(agent))}>
             {(agent) => (
-              <>
-                <div class="pf-settings-row">
-                  <span class="pf-settings-label">
-                    <Show when={AGENT_BRAND_ICON[agent.id]}>
-                      {(icon) => <span class="pf-settings-brand">{icon()()}</span>}
-                    </Show>
-                    {agent.label}
-                    <Show when={agent.terminalOnly}>
-                      <span class="pf-settings-hint-inline">{agentStatusLabel(agent)}</span>
-                    </Show>
-                  </span>
-                  <Show
-                    when={agentModelsFor(agent).length > 0}
-                    fallback={
-                      <span class="pf-settings-muted">
-                        {agent.terminalOnly ? "Models unavailable · CLI default" : "CLI default"}
-                      </span>
-                    }
-                  >
-                    <Dropdown
-                      class="pf-settings-dropdown"
-                      value={models()[agent.id] ?? ""}
-                      onChange={(v) => changeModel(agent.id, v)}
-                      options={agentModelsFor(agent).map((model) => ({
-                        value: model.id,
-                        label: model.label,
-                        icon: () => <IconIngot size={13} />,
-                      }))}
-                    />
+              <div class="pf-settings-row">
+                <span class="pf-settings-label">
+                  <Show when={AGENT_BRAND_ICON[agent.id]}>
+                    {(icon) => <span class="pf-settings-brand">{icon()()}</span>}
                   </Show>
-                </div>
-                <Show when={agent.terminalOnly}>
-                  <span class="pf-settings-muted">{agentCapabilityLabel(agent)}</span>
+                  {agent.label}
+                </span>
+                <Show
+                  when={agentModelsFor(agent).length > 0}
+                  fallback={<span class="pf-settings-muted">CLI default</span>}
+                >
+                  <Dropdown
+                    class="pf-settings-dropdown"
+                    value={models()[agent.id] ?? ""}
+                    onChange={(value) => changeModel(agent.id, value)}
+                    options={agentModelsFor(agent).map((model) => ({
+                      value: model.id,
+                      label: model.label,
+                      icon: () => <IconIngot size={13} />,
+                    }))}
+                  />
                 </Show>
-              </>
+              </div>
             )}
           </For>
+
           <Show when={flagEnabled("ompPiAgents")}>
-            <span class="pf-settings-muted">
-              Offline, read-only checks disable extensions. OMP native chat requires exact 16.4.8;
-              Pi native RPC requires a compatible 0.79.x probe and loads installed extensions and
-              tools, without PickForge-configured approvals or per-session MCP grants. Both terminal
-              launches remain available independently.
-            </span>
-            <div class="pf-ql-actions">
+            <div class="pf-agent-diagnostics-head">
+              <div class="pf-agent-diagnostics-copy">
+                <MonoEyebrow text="Connector diagnostics" />
+                <span
+                  class="pf-settings-muted"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  {agentDiagnosticsLoading()
+                    ? "Checking OMP and Pi on the local PATH…"
+                    : "Read-only local probes; extensions stay disabled during compatibility checks."}
+                </span>
+              </div>
               <button
                 class="pf-ql-add"
-                disabled={agentDiagnosticsLoading()}
+                aria-disabled={agentDiagnosticsLoading()}
                 onClick={() => void reloadAgentDiagnostics()}
               >
                 <IconRefresh size={13} />
-                {agentDiagnosticsLoading() ? "Checking…" : "Refresh agent status"}
+                {agentDiagnosticsLoading() ? "Checking connectors…" : "Refresh connector status"}
               </button>
+            </div>
+
+            <div class="pf-agent-connector-list">
+              <For each={agentProfiles().filter(isConnectorProfile)}>
+                {(agent) => {
+                  const diagnostic = () => agentDiagnostics()[agent.id];
+                  const failure = () => agentDiagnosticErrors()[agent.id];
+                  const nativeState = createMemo(() =>
+                    connectorNativeState(
+                      agent,
+                      diagnostic(),
+                      failure(),
+                      agentDiagnosticsLoading(),
+                    ));
+                  const catalog = () => agentModelsFor(agent);
+                  return (
+                    <section
+                      class="pf-agent-connector"
+                      data-agent-connector={agent.id}
+                      aria-labelledby={`pf-agent-connector-${agent.id}`}
+                      aria-busy={agentDiagnosticsLoading()}
+                    >
+                      <div class="pf-agent-connector-head">
+                        <div class="pf-agent-connector-identity">
+                          <span class="pf-settings-brand">
+                            {AGENT_BRAND_ICON[agent.id]?.()}
+                          </span>
+                          <strong id={`pf-agent-connector-${agent.id}`}>{agent.label}</strong>
+                          <span class="pf-agent-connector-binary">{agent.binary}</span>
+                        </div>
+                        <div role="status" aria-live="polite" aria-atomic="true">
+                          <Show
+                            when={failure()}
+                            fallback={
+                              <StatusPill
+                                label={nativeState().label}
+                                intent={nativeState().intent}
+                              />
+                            }
+                          >
+                            <StatusPill label="Native status unavailable" intent="error" />
+                          </Show>
+                        </div>
+                      </div>
+
+                      <div class="pf-agent-connector-facts">
+                        <div class="pf-agent-connector-fact">
+                          <span class="pf-agent-connector-key">Installation</span>
+                          <Show
+                            when={agentDiagnosticsLoading()}
+                            fallback={
+                              <Show
+                                when={failure()}
+                                fallback={
+                                  <span class="pf-agent-connector-value">
+                                    {agentStatusLabel(agent)}
+                                  </span>
+                                }
+                              >
+                                <span class="pf-agent-connector-value">Status unavailable</span>
+                              </Show>
+                            }
+                          >
+                            <span class="pf-agent-connector-value">Checking installation…</span>
+                          </Show>
+                        </div>
+                        <div class="pf-agent-connector-fact">
+                          <span class="pf-agent-connector-key">Model catalog</span>
+                          <Show
+                            when={catalog().length > 0}
+                            fallback={
+                              <span class="pf-agent-connector-value">
+                                {agentDiagnosticsLoading()
+                                  ? "Checking…"
+                                  : failure()
+                                    ? "Unavailable · local probe failed"
+                                    : diagnostic()
+                                      ? !diagnostic()!.installed
+                                        ? "Unavailable · CLI not installed"
+                                        : agent.id === "omp"
+                                          ? "Not queried · offline safety"
+                                          : diagnostic()!.errors.length > 0
+                                          ? `Unavailable · ${diagnostic()!.errors.join("; ")}`
+                                          : "No models reported"
+                                      : "Not checked"}
+                              </span>
+                            }
+                          >
+                            <div class="pf-agent-connector-catalog">
+                              <Dropdown
+                                class="pf-settings-dropdown"
+                                value={models()[agent.id] ?? ""}
+                                placeholder={`${catalog().length} discovered · CLI default`}
+                                title={`${agent.label} model`}
+                                onChange={(value) => changeModel(agent.id, value)}
+                                options={catalog().map((model) => ({
+                                  value: model.id,
+                                  label: model.label,
+                                  icon: () => <IconIngot size={13} />,
+                                }))}
+                              />
+                              <span class="pf-settings-muted">
+                                {catalog().length} discovered offline
+                              </span>
+                            </div>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <Show
+                        when={failure()}
+                        fallback={
+                          <>
+                            <p class="pf-agent-connector-reason">{nativeState().reason}</p>
+                            <p class="pf-agent-connector-capabilities">
+                              {connectorCapabilitySummary(
+                                diagnostic(),
+                                undefined,
+                                agentDiagnosticsLoading(),
+                              )}
+                            </p>
+                          </>
+                        }
+                      >
+                        {(message) => (
+                          <>
+                            <p class="pf-agent-connector-reason">
+                              The local compatibility probe failed: {message()}
+                            </p>
+                            <p class="pf-agent-connector-capabilities">
+                              Capabilities unavailable because the local probe failed.
+                            </p>
+                          </>
+                        )}
+                      </Show>
+                    </section>
+                  );
+                }}
+              </For>
             </div>
           </Show>
         </AgentModelsSettingsSection>

@@ -163,6 +163,8 @@ export interface AgentCliDiagnostic {
 }
 
 export const SUPPORTED_OMP_ACP_VERSION = "16.4.8";
+export const OMP_MODEL_CATALOG_ADVISORY =
+  "OMP models unavailable: no enforced offline/cache-only catalog probe";
 export type OmpNativeCompatibility = "unprobed" | "probing" | "compatible" | "incompatible";
 const [ompNativeCompatibility, setOmpNativeCompatibility] =
   createSignal<OmpNativeCompatibility>("unprobed");
@@ -196,6 +198,12 @@ export function recordAgentCliDiagnostic(diagnostic: AgentCliDiagnostic) {
 
 export function ompNativeChatAvailable(): boolean {
   return flagEnabled("ompPiAgents") && ompNativeCompatibility() === "compatible";
+}
+
+export function isOmpNativeCompatibilityPending(): boolean {
+  if (!flagEnabled("ompPiAgents")) return false;
+  const compatibility = ompNativeCompatibility();
+  return compatibility === "unprobed" || compatibility === "probing";
 }
 
 export function ompNativeChatUnavailableReason(): string | null {
@@ -234,6 +242,12 @@ export function ensureOmpNativeCompatibility(force = false): Promise<boolean> {
 
 export function piNativeChatAvailable(): boolean {
   return flagEnabled("ompPiAgents") && piNativeCompatibility() === "compatible";
+}
+
+export function isPiNativeCompatibilityPending(): boolean {
+  if (!flagEnabled("ompPiAgents")) return false;
+  const compatibility = piNativeCompatibility();
+  return compatibility === "unprobed" || compatibility === "probing";
 }
 
 export function piNativeChatUnavailableReason(): string | null {
@@ -360,7 +374,7 @@ export function diagnosticFromProbe(
 
   let models: AgentModelOption[] = [];
   if (agentId === "omp" && probe.installed) {
-    errors.push("OMP models unavailable: no enforced offline/cache-only catalog probe");
+    errors.push(OMP_MODEL_CATALOG_ADVISORY);
   } else if (probe.installed && probe.modelsOutput.trim()) {
     try {
       models = parsePiModelCatalog(probe.modelsOutput);

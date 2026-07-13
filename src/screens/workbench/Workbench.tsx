@@ -28,8 +28,11 @@ import { disposeAgentChat } from "../../stores/agentChat";
 import {
   ensureOmpNativeCompatibility,
   ensurePiNativeCompatibility,
+  isOmpNativeCompatibilityPending,
+  isPiNativeCompatibilityPending,
   loadAgentModels,
   ompNativeChatUnavailableReason,
+  piNativeChatUnavailableReason,
 } from "../../lib/agentModels";
 import {
   normalizeAgentProvider,
@@ -442,15 +445,39 @@ export function WorkbenchScreen() {
                     when={
                       provider
                       && (provider !== "omp" || !ompNativeChatUnavailableReason())
+                      && (provider !== "pi" || !piNativeChatUnavailableReason())
                         ? provider
                         : null
                     }
                     fallback={
-                      <div class="pf-chat-error" role="alert">
-                        {provider === "omp"
-                          ? ompNativeChatUnavailableReason()
-                          : (nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable")}
-                      </div>
+                      <Show
+                        when={
+                          (provider === "omp" && isOmpNativeCompatibilityPending())
+                          || (provider === "pi" && isPiNativeCompatibilityPending())
+                        }
+                        fallback={
+                          <div class="pf-chat-error" role="alert">
+                            {provider === "omp"
+                              ? ompNativeChatUnavailableReason()
+                              : provider === "pi"
+                                ? piNativeChatUnavailableReason()
+                                : (nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable")}
+                          </div>
+                        }
+                      >
+                        <div
+                          class="pf-chat-switch-notice"
+                          role="status"
+                          aria-live="polite"
+                          aria-busy="true"
+                        >
+                          <span class="pf-chat-switch-notice-text">
+                            {provider === "omp"
+                              ? ompNativeChatUnavailableReason()
+                              : piNativeChatUnavailableReason()}
+                          </span>
+                        </div>
+                      </Show>
                     }
                   >
                     {(nativeProvider) => (

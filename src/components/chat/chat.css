@@ -863,6 +863,8 @@
   color: var(--pf-error);
 }
 .pf-chat-error-text {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--pf-font-sans);
   font-size: var(--pf-size-body-md);
   color: var(--pf-error);

@@ -83,6 +83,7 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(models.ompNativeChatUnavailableReason()).toBe(
       `Checking for compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
     );
+    expect(models.isOmpNativeCompatibilityPending()).toBe(true);
     expect(models.defaultNativeAgentProvider("omp")).toBe("claudeCode");
 
     expect(models.nativeAgentProfiles().map((profile) => profile.id)).toEqual([
@@ -103,6 +104,7 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(models.ompNativeChatUnavailableReason()).toBe(
       `OMP native chat requires an installed, compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
     );
+    expect(models.isOmpNativeCompatibilityPending()).toBe(false);
     models.recordAgentCliDiagnostic({
       ...incompatible,
       capabilities: { ...incompatible.capabilities, nativeChat: true },
@@ -124,6 +126,7 @@ describe("OMP/Pi rollout gating and commands", () => {
     ]);
     expect(models.nativeChatModel("omp", "openai/gpt-test")).toBe("openai/gpt-test");
     expect(models.ompNativeChatUnavailableReason()).toBeNull();
+    expect(models.isOmpNativeCompatibilityPending()).toBe(false);
     expect(models.defaultNativeAgentProvider("omp")).toBe("omp");
     expect(models.launchCommand("omp")).toBe("omp ");
 
@@ -136,6 +139,7 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(models.ompNativeChatUnavailableReason()).toBe(
       "OMP native chat is disabled by the ompPiAgents feature flag",
     );
+    expect(models.isOmpNativeCompatibilityPending()).toBe(false);
   });
 
   it("gates Orchestra menu and persisted default through the reactive native registry", async () => {
@@ -227,6 +231,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
   it("attaches Pi probe models to the native picker and preserves provider/model selection", async () => {
     const { flags, models } = await loadModules();
     flags.setFlagOverride("ompPiAgents", true);
+    expect(models.isPiNativeCompatibilityPending()).toBe(true);
     models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
       installed: true,
       versionOutput: "pi 0.79.10",
@@ -237,6 +242,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
       ].join("\n"),
       errors: [],
     }));
+    expect(models.isPiNativeCompatibilityPending()).toBe(false);
     const pi = models.agentProfiles().find((profile) => profile.id === "pi");
     expect(pi).toBeDefined();
     const catalog = [

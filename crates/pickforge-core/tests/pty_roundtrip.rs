@@ -33,7 +33,9 @@ fn shell_echo_round_trips_through_the_sink() {
 
     // Let the shell come up, then run a uniquely marked echo.
     sleep(Duration::from_millis(400));
-    manager.write(id, b"echo pf_marker_42\n").expect("write to shell");
+    manager
+        .write(id, b"echo pf_marker_42\n")
+        .expect("write to shell");
 
     let mut seen = String::new();
     let deadline = Instant::now() + Duration::from_secs(6);
@@ -95,8 +97,14 @@ fn command_mode_runs_once_and_exits() {
     }
 
     manager.kill(id).ok();
-    assert!(seen.contains("pf_cmd_marker"), "expected command output, got: {seen:?}");
-    assert!(exited, "command-mode pty should exit on its own, not idle at a prompt");
+    assert!(
+        seen.contains("pf_cmd_marker"),
+        "expected command output, got: {seen:?}"
+    );
+    assert!(
+        exited,
+        "command-mode pty should exit on its own, not idle at a prompt"
+    );
 }
 
 #[cfg(unix)]
@@ -200,7 +208,10 @@ fn detach_on_a_raw_session_tears_it_down_like_kill() {
     assert_eq!(manager.len(), 1);
 
     manager.detach(id).expect("detach a raw session");
-    assert!(manager.is_empty(), "raw session must be torn down, not leaked");
+    assert!(
+        manager.is_empty(),
+        "raw session must be torn down, not leaked"
+    );
     // Idempotent: detaching an already-gone session is a no-op, never a panic.
     manager.detach(id).expect("second detach is a no-op");
 }
@@ -319,6 +330,28 @@ fn shutdown_tears_down_detachable_clients_too() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn shutdown_uses_one_shared_grace_for_all_pty_sessions() {
+    let manager = PtyManager::new();
+    for _ in 0..4 {
+        manager
+            .spawn(SpawnOptions::default(), |_event| {})
+            .expect("spawn shell");
+    }
+    sleep(Duration::from_millis(300));
+
+    let started = Instant::now();
+    manager.shutdown();
+    let elapsed = started.elapsed();
+
+    assert!(manager.is_empty());
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "four PTYs consumed serial grace periods: {elapsed:?}"
+    );
+}
+
 #[test]
 fn resize_and_kill_are_idempotent_enough() {
     let manager = PtyManager::new();
@@ -330,7 +363,10 @@ fn resize_and_kill_are_idempotent_enough() {
     manager.kill(id).expect("kill once");
     // Second kill / resize after removal must not panic.
     manager.kill(id).expect("kill again is a no-op");
-    assert!(manager.resize(id, 10, 10).is_err(), "resize after kill errors");
+    assert!(
+        manager.resize(id, 10, 10).is_err(),
+        "resize after kill errors"
+    );
     assert!(manager.is_empty(), "registry drained after kill");
 }
 
@@ -341,10 +377,8 @@ fn remote_pty_spawn_uses_ssh_argv_and_keeps_pty_io_and_resize() {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before unix epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "pickforge-fake-ssh-{}-{nonce}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("pickforge-fake-ssh-{}-{nonce}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create fake ssh dir");
     let fake_ssh = dir.join("ssh");
     let argv_log = dir.join("argv.log");

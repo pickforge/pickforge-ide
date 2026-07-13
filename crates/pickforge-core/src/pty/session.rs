@@ -18,6 +18,8 @@ use super::shell::{resolve_shell, ShellInvocation};
 use crate::process::user_shell_environment;
 use crate::remote::{shell_quote_argv, ssh_base_args, SshTarget};
 
+const PTY_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Events emitted by a running PTY session.
 #[derive(Debug, Clone)]
 pub enum PtyEvent {
@@ -278,7 +280,11 @@ impl PtyManager {
             Err(err) => {
                 // Roll back the just-registered session so a failed reader spawn
                 // can't leak the child + PTY handles.
-                let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+                let removed = self
+                    .sessions
+                    .lock()
+                    .expect("pty registry poisoned")
+                    .remove(&id);
                 if let Some(mut session) = removed {
                     let _ = session.child.kill();
                     let _ = session.child.wait();
@@ -323,7 +329,11 @@ impl PtyManager {
         // Remove under the lock, then signal + reap outside it so the registry
         // lock is never held across a blocking wait. Once removed, the reader
         // thread's own EOF path can't reap the child, so we must wait here.
-        let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+        let removed = self
+            .sessions
+            .lock()
+            .expect("pty registry poisoned")
+            .remove(&id);
         if let Some(session) = removed {
             teardown_session(session);
         }
@@ -339,7 +349,11 @@ impl PtyManager {
     /// detachable (`detach_on_drop == false`), so calling `detach` on a raw shell
     /// still tears it down cleanly rather than leaking it.
     pub fn detach(&self, id: u32) -> Result<(), PtyError> {
-        let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+        let removed = self
+            .sessions
+            .lock()
+            .expect("pty registry poisoned")
+            .remove(&id);
         let Some(session) = removed else {
             return Ok(()); // already gone (e.g. the reader hit EOF first)
         };
@@ -384,8 +398,9 @@ impl PtyManager {
         Ok(())
     }
 
-    /// Idempotently drain and tear down every PTY session.
-    pub fn shutdown(&self) {
+    /// Idempotently drain and tear down every PTY session. Returns the number
+    /// whose reap did not complete before the shared shutdown deadline.
+    pub fn shutdown(&self) -> usize {
         // spawn re-checks this gate under the registry lock before insertion.
         self.shutting_down.store(true, Ordering::SeqCst);
         let drained = {
@@ -395,9 +410,7 @@ impl PtyManager {
                 .map(|(_, session)| session)
                 .collect::<Vec<_>>()
         };
-        for session in drained {
-            teardown_session(session);
-        }
+        teardown_sessions(drained, PTY_SHUTDOWN_TIMEOUT)
     }
 
     /// Number of live sessions (handy for tests / diagnostics).
@@ -408,6 +421,55 @@ impl PtyManager {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// Tear down a drained registry with one shared Unix grace period. Signalling
+/// every group before waiting avoids an N×150 ms exit as PTY count grows.
+fn teardown_sessions(sessions: Vec<Session>, timeout: std::time::Duration) -> usize {
+    #[cfg(unix)]
+    {
+        let mut pgids = Vec::new();
+        for session in &sessions {
+            extend_process_group_ids(
+                &mut pgids,
+                session.shell_pid,
+                session.master.process_group_leader(),
+            );
+        }
+        signal_process_groups(&pgids, libc::SIGTERM);
+        if !pgids.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        signal_process_groups(&pgids, libc::SIGKILL);
+    }
+
+    let total = sessions.len();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    for mut session in sessions {
+        let done_tx = done_tx.clone();
+        let _ = std::thread::Builder::new()
+            .name("pty-shutdown".to_string())
+            .spawn(move || {
+                let _ = session.child.kill();
+                let _ = session.child.wait();
+                if let Some(thread) = session.reader_thread.take() {
+                    let _ = thread.join();
+                }
+                let _ = done_tx.send(());
+            });
+    }
+    drop(done_tx);
+
+    let deadline = std::time::Instant::now() + timeout;
+    let mut completed = 0;
+    while completed < total {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() || done_rx.recv_timeout(remaining).is_err() {
+            break;
+        }
+        completed += 1;
+    }
+    total - completed
 }
 
 /// Must run outside the registry lock because the reader thread takes it on EOF.
@@ -475,9 +537,10 @@ fn read_loop<S: PtySink>(
             Ok(n) => {
                 let chunk = buf[..n].to_vec();
                 // A panicking sink must not skip the reap below.
-                let delivered =
-                    std::panic::catch_unwind(AssertUnwindSafe(|| sink.emit(PtyEvent::Output(chunk))))
-                        .is_ok();
+                let delivered = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    sink.emit(PtyEvent::Output(chunk))
+                }))
+                .is_ok();
                 if !delivered {
                     break;
                 }
@@ -522,32 +585,41 @@ fn signal_client_hangup(client_pid: Option<u32>) {
 /// portable-pty `setsid`s the slave (session + group leader).
 #[cfg(unix)]
 fn terminate_process_groups(shell_pid: Option<u32>, foreground_leader: Option<libc::pid_t>) {
-    let mut pgids: Vec<libc::pid_t> = Vec::new();
+    let mut pgids = Vec::new();
+    extend_process_group_ids(&mut pgids, shell_pid, foreground_leader);
+    signal_process_groups(&pgids, libc::SIGTERM);
+    if !pgids.is_empty() {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    signal_process_groups(&pgids, libc::SIGKILL);
+}
+
+#[cfg(unix)]
+fn extend_process_group_ids(
+    pgids: &mut Vec<libc::pid_t>,
+    shell_pid: Option<u32>,
+    foreground_leader: Option<libc::pid_t>,
+) {
     if let Some(pid) = shell_pid {
-        pgids.push(pid as libc::pid_t);
+        let pid = pid as libc::pid_t;
+        if !pgids.contains(&pid) {
+            pgids.push(pid);
+        }
     }
     if let Some(pgid) = foreground_leader {
         if pgid > 0 && !pgids.contains(&pgid) {
             pgids.push(pgid);
         }
     }
-    if pgids.is_empty() {
-        return;
-    }
+}
 
-    for pgid in &pgids {
-        // SAFETY: killpg with a valid pgid is well-defined; ESRCH (already gone)
-        // is harmless and ignored.
+#[cfg(unix)]
+fn signal_process_groups(pgids: &[libc::pid_t], signal: libc::c_int) {
+    for &pgid in pgids {
+        // SAFETY: killpg with a positive pgid is well-defined; ESRCH means the
+        // exact group already exited and is harmless.
         unsafe {
-            libc::killpg(*pgid, libc::SIGTERM);
-        }
-    }
-    // Brief grace for a TERM-aware job to clean up before the unconditional kill.
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    for pgid in &pgids {
-        // SAFETY: as above; SIGKILL is unconditionally fatal.
-        unsafe {
-            libc::killpg(*pgid, libc::SIGKILL);
+            libc::killpg(pgid, signal);
         }
     }
 }

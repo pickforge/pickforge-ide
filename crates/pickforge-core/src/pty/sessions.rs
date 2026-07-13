@@ -23,26 +23,81 @@
 //! (`PtyManager::spawn_chat`). Keeping the command construction pure makes it
 //! unit-testable without a live dtach/tmux.
 
-use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use super::shell::{resolve_shell, ShellInvocation};
-use crate::process::{is_binary_on_path, run_timeout, user_shell_environment};
+use crate::process::{is_binary_on_path, run_timeout, user_shell_environment, RunError};
 
-static PROCESS_INSTANCE_ID: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        "{:x}-{:016x}",
-        std::process::id(),
-        rand::random::<u64>()
-    )
-});
+static PROCESS_INSTANCE_ID: LazyLock<String> =
+    LazyLock::new(|| format!("{:x}-{:016x}", std::process::id(), rand::random::<u64>()));
 
 static TMUX_SERVER_NAME: LazyLock<String> =
     LazyLock::new(|| format!("pickforge-{}", &*PROCESS_INSTANCE_ID));
+static RECOVERABLE_SPAWN_GATE: LazyLock<Arc<RecoverableSpawnGate>> =
+    LazyLock::new(|| Arc::new(RecoverableSpawnGate::default()));
+static TMUX_SERVER_MAY_EXIST: AtomicBool = AtomicBool::new(false);
 
 fn tmux_server_name() -> &'static str {
     &TMUX_SERVER_NAME
+}
+
+#[derive(Default)]
+struct RecoverableSpawnGate {
+    closed: AtomicBool,
+    active: AtomicUsize,
+}
+
+/// Holds the recoverable-session gate across attach-or-create and PTY
+/// registration. Exit closes the same gate before sweeping owners, so an
+/// in-flight dtach/tmux creation either finishes before the sweep or is rejected.
+pub struct RecoverableSpawnPermit {
+    gate: Arc<RecoverableSpawnGate>,
+}
+
+impl Drop for RecoverableSpawnPermit {
+    fn drop(&mut self) {
+        self.gate.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn begin_recoverable_session_spawn_on(
+    gate: &Arc<RecoverableSpawnGate>,
+) -> Result<RecoverableSpawnPermit, String> {
+    if gate.closed.load(Ordering::SeqCst) {
+        return Err("recoverable-session manager is shutting down".to_string());
+    }
+    gate.active.fetch_add(1, Ordering::SeqCst);
+    if gate.closed.load(Ordering::SeqCst) {
+        gate.active.fetch_sub(1, Ordering::SeqCst);
+        return Err("recoverable-session manager is shutting down".to_string());
+    }
+    Ok(RecoverableSpawnPermit {
+        gate: Arc::clone(gate),
+    })
+}
+
+pub fn begin_recoverable_session_spawn() -> Result<RecoverableSpawnPermit, String> {
+    begin_recoverable_session_spawn_on(&RECOVERABLE_SPAWN_GATE)
+}
+
+fn close_recoverable_session_spawn_gate_on(gate: &RecoverableSpawnGate) {
+    gate.closed.store(true, Ordering::SeqCst);
+    while gate.active.load(Ordering::SeqCst) != 0 {
+        std::thread::yield_now();
+    }
+}
+
+/// Permanently reject new recoverable owners. This waits for any in-flight
+/// permit, providing the happens-before edge required by the following sweep.
+pub fn close_recoverable_session_spawn_gate() {
+    close_recoverable_session_spawn_gate_on(&RECOVERABLE_SPAWN_GATE);
+}
+
+pub fn mark_tmux_server_may_exist() {
+    TMUX_SERVER_MAY_EXIST.store(true, Ordering::SeqCst);
 }
 
 /// Which session backend a chat shell is run under.
@@ -131,6 +186,50 @@ pub fn session_name(project_root: &str, chat_id: &str) -> String {
     format!("pf-{:032x}", hasher.finish())
 }
 
+pub fn validate_session_name(name: &str) -> Result<(), String> {
+    let Some(hex) = name.strip_prefix("pf-") else {
+        return Err("recoverable session name must start with pf-".to_string());
+    };
+    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(
+            "recoverable session name must be pf- followed by 32 hex characters".to_string(),
+        );
+    }
+    Ok(())
+}
+
+pub fn parse_recoverable_session_id(session_id: &str) -> Result<(SessionBackend, &str), String> {
+    let (tag, name) = session_id
+        .split_once(':')
+        .ok_or_else(|| format!("malformed session id: {session_id}"))?;
+    let backend = match tag {
+        "dtach" => SessionBackend::Dtach,
+        "tmux" => SessionBackend::Tmux,
+        "raw" if name.is_empty() => SessionBackend::Raw,
+        _ => return Err(format!("unsupported recoverable session id: {session_id}")),
+    };
+    if backend != SessionBackend::Raw {
+        validate_session_name(name)?;
+    }
+    Ok((backend, name))
+}
+
+/// Construct a dtach path only after proving the renderer-supplied name is one
+/// normal basename inside this process's private namespace.
+pub fn validated_dtach_socket_path(runtime_base: &Path, name: &str) -> Result<PathBuf, String> {
+    validate_session_name(name)?;
+    let dir = sessions_dir(runtime_base);
+    let socket = dir.join(format!("{name}.dtach"));
+    let relative = socket
+        .strip_prefix(&dir)
+        .map_err(|_| "dtach socket escaped the private session namespace".to_string())?;
+    let mut components = relative.components();
+    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+        return Err("dtach socket escaped the private session namespace".to_string());
+    }
+    Ok(socket)
+}
+
 /// The directory holding this process's dtach sockets:
 /// `<runtime_base>/pickforge/s-<instance-id>/`.
 ///
@@ -161,25 +260,85 @@ pub fn dtach_socket_path(runtime_base: &Path, name: &str) -> PathBuf {
 /// already closed means signalling this master — otherwise the shell/agent inside
 /// it keeps running, orphaned, once the socket is removed.
 #[cfg(target_os = "linux")]
-pub fn dtach_master_pids(socket: &Path) -> Vec<i32> {
-    let socket_arg = socket.as_os_str().as_encoded_bytes();
-    let mut pids = Vec::new();
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ProcessIdentity {
+    pid: i32,
+    start_time: u64,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProcessRecord {
+    identity: ProcessIdentity,
+    parent_pid: i32,
+    session_id: i32,
+    zombie: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn parse_proc_stat(pid: i32, stat: &str) -> Option<ProcessRecord> {
+    let (_, fields) = stat.rsplit_once(") ")?;
+    let mut fields = fields.split_whitespace();
+    let zombie = fields.next()? == "Z";
+    let parent_pid = fields.next()?.parse().ok()?;
+    let _process_group = fields.next()?;
+    let session_id = fields.next()?.parse().ok()?;
+    let start_time = fields.nth(15)?.parse().ok()?;
+    Some(ProcessRecord {
+        identity: ProcessIdentity { pid, start_time },
+        parent_pid,
+        session_id,
+        zombie,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn read_process_record(pid: i32) -> Option<ProcessRecord> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    parse_proc_stat(pid, &stat)
+}
+
+#[cfg(target_os = "linux")]
+fn process_snapshot() -> Vec<ProcessRecord> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
-        return pids;
+        return Vec::new();
     };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(pid) = name.to_str().and_then(|s| s.parse::<i32>().ok()) else {
-            continue; // not a /proc/<pid> dir
-        };
-        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
-            continue; // process exited / not readable
-        };
-        if cmdline_is_dtach_for_socket(&cmdline, socket_arg) {
-            pids.push(pid);
-        }
-    }
-    pids
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<i32>().ok()?;
+            read_process_record(pid)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn dtach_master_identities(socket: &Path) -> Vec<ProcessIdentity> {
+    let socket_arg = socket.as_os_str().as_encoded_bytes();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<i32>().ok()?;
+            let before = read_process_record(pid)?.identity;
+            let cmdline = std::fs::read(entry.path().join("cmdline")).ok()?;
+            if !cmdline_is_dtach_for_socket(&cmdline, socket_arg) {
+                return None;
+            }
+            let after = read_process_record(pid)?.identity;
+            (before == after).then_some(after)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+pub fn dtach_master_pids(socket: &Path) -> Vec<i32> {
+    dtach_master_identities(socket)
+        .into_iter()
+        .map(|identity| identity.pid)
+        .collect()
 }
 
 /// True when a NUL-separated `/proc/<pid>/cmdline` is a `dtach` process (argv[0]
@@ -216,61 +375,156 @@ pub enum DtachKillError {
 }
 
 #[cfg(target_os = "linux")]
-fn proc_parent_pid(pid: i32) -> Option<i32> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let (_, fields) = stat.rsplit_once(") ")?;
-    fields.split_whitespace().nth(1)?.parse().ok()
-}
-
-#[cfg(target_os = "linux")]
-fn descendant_pids(roots: &[i32]) -> Vec<i32> {
-    let mut children: std::collections::HashMap<i32, Vec<i32>> =
-        std::collections::HashMap::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    for entry in entries.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<i32>().ok())
-        else {
-            continue;
-        };
-        if let Some(parent) = proc_parent_pid(pid) {
-            children.entry(parent).or_default().push(pid);
-        }
-    }
-
-    let mut descendants = Vec::new();
-    let mut pending = roots.to_vec();
-    while let Some(parent) = pending.pop() {
-        if let Some(found) = children.get(&parent) {
-            for &pid in found {
-                if !roots.contains(&pid) && !descendants.contains(&pid) {
-                    descendants.push(pid);
-                    pending.push(pid);
-                }
+fn expand_owned_processes(
+    records: &[ProcessRecord],
+    owned: &mut std::collections::HashSet<ProcessIdentity>,
+    owned_sessions: &mut std::collections::HashMap<i32, ProcessIdentity>,
+) {
+    let by_pid: std::collections::HashMap<i32, ProcessIdentity> = records
+        .iter()
+        .map(|record| (record.identity.pid, record.identity))
+        .collect();
+    owned_sessions.retain(|session_id, leader| {
+        by_pid
+            .get(session_id)
+            .is_none_or(|current| current == leader)
+    });
+    loop {
+        let mut changed = false;
+        for record in records {
+            let parent_owned = by_pid
+                .get(&record.parent_pid)
+                .is_some_and(|parent| owned.contains(parent));
+            let session_owned = owned_sessions.contains_key(&record.session_id);
+            if (owned.contains(&record.identity) || parent_owned || session_owned)
+                && owned.insert(record.identity)
+            {
+                changed = true;
+            }
+            if owned.contains(&record.identity)
+                && record.identity.pid == record.session_id
+                && owned_sessions
+                    .insert(record.session_id, record.identity)
+                    .is_none()
+            {
+                changed = true;
             }
         }
+        if !changed {
+            break;
+        }
     }
-    descendants
 }
 
 #[cfg(target_os = "linux")]
-fn signal_dtach_pid(pid: i32, signal: libc::c_int) -> Result<(), DtachKillError> {
-    if unsafe { libc::kill(pid, signal) } == 0 {
-        return Ok(());
+fn signal_process_identity(
+    identity: ProcessIdentity,
+    signal: libc::c_int,
+) -> Result<bool, DtachKillError> {
+    if read_process_record(identity.pid).map(|record| record.identity) != Some(identity) {
+        return Ok(false);
     }
+
+    // pidfd anchors the signal to this process instance. Revalidate start_time
+    // after opening it so PID reuse between discovery and pidfd_open cannot
+    // redirect cleanup at an unrelated process.
+    let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, identity.pid, 0) as libc::c_int };
+    if pidfd < 0 {
+        let error = std::io::Error::last_os_error();
+        return if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(false)
+        } else {
+            Err(DtachKillError::SignalFailed {
+                pid: identity.pid,
+                error: error.to_string(),
+            })
+        };
+    }
+    if read_process_record(identity.pid).map(|record| record.identity) != Some(identity) {
+        unsafe {
+            libc::close(pidfd);
+        }
+        return Ok(false);
+    }
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd,
+            signal,
+            std::ptr::null::<libc::siginfo_t>(),
+            0,
+        )
+    };
     let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(())
+    unsafe {
+        libc::close(pidfd);
+    }
+    if result == 0 || error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(result == 0)
     } else {
         Err(DtachKillError::SignalFailed {
-            pid,
+            pid: identity.pid,
             error: error.to_string(),
         })
     }
+}
+
+#[cfg(target_os = "linux")]
+fn terminate_owned_processes_with(
+    roots: &[ProcessIdentity],
+    mut snapshot: impl FnMut() -> Vec<ProcessRecord>,
+    mut signal: impl FnMut(ProcessIdentity, libc::c_int) -> Result<bool, DtachKillError>,
+    mut pause: impl FnMut(Duration),
+) -> Result<usize, DtachKillError> {
+    let mut owned: std::collections::HashSet<ProcessIdentity> = roots.iter().copied().collect();
+    let mut owned_sessions = std::collections::HashMap::new();
+    let mut term_signalled = std::collections::HashSet::new();
+
+    // Re-scan throughout TERM grace. A TERM handler that forks a resistant
+    // child cannot escape: descendants are remembered by identity, and any
+    // discovered session leader gives us a kernel-maintained session boundary
+    // that remains valid after reparenting.
+    for _ in 0..15 {
+        let records = snapshot();
+        expand_owned_processes(&records, &mut owned, &mut owned_sessions);
+        for identity in records
+            .iter()
+            .filter(|record| !record.zombie)
+            .map(|record| record.identity)
+            .filter(|identity| owned.contains(identity) && term_signalled.insert(*identity))
+        {
+            signal(identity, libc::SIGTERM)?;
+        }
+        pause(Duration::from_millis(10));
+    }
+
+    // Continue discovering and SIGKILLing exact identities until two
+    // consecutive scans are empty, or the shared containment deadline expires.
+    let mut empty_scans = 0;
+    for _ in 0..25 {
+        let records = snapshot();
+        expand_owned_processes(&records, &mut owned, &mut owned_sessions);
+        let live = records
+            .iter()
+            .filter(|record| !record.zombie && owned.contains(&record.identity))
+            .map(|record| record.identity)
+            .collect::<Vec<_>>();
+        if live.is_empty() {
+            empty_scans += 1;
+            if empty_scans == 2 {
+                return Ok(owned.len());
+            }
+        } else {
+            empty_scans = 0;
+            for identity in live {
+                signal(identity, libc::SIGKILL)?;
+            }
+        }
+        pause(Duration::from_millis(20));
+    }
+    Err(DtachKillError::StillRunning(
+        "owned dtach process tree".to_string(),
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -295,7 +549,7 @@ fn dtach_socket_is_stale(socket: &Path) -> bool {
 
 #[cfg(target_os = "linux")]
 pub fn kill_dtach_master(socket: &Path) -> Result<usize, DtachKillError> {
-    let masters = dtach_master_pids(socket);
+    let masters = dtach_master_identities(socket);
     if masters.is_empty() {
         return if dtach_socket_is_stale(socket) {
             Ok(0)
@@ -303,23 +557,18 @@ pub fn kill_dtach_master(socket: &Path) -> Result<usize, DtachKillError> {
             Err(DtachKillError::MasterNotFound(socket.display().to_string()))
         };
     }
-    let mut targets = descendant_pids(&masters);
-    targets.extend(masters);
-    for &pid in &targets {
-        signal_dtach_pid(pid, libc::SIGTERM)?;
-    }
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    for &pid in &targets {
-        signal_dtach_pid(pid, libc::SIGKILL)?;
-    }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-    while !dtach_master_pids(socket).is_empty() {
-        if std::time::Instant::now() >= deadline {
-            return Err(DtachKillError::StillRunning(socket.display().to_string()));
+    terminate_owned_processes_with(
+        &masters,
+        process_snapshot,
+        signal_process_identity,
+        std::thread::sleep,
+    )
+    .map_err(|error| match error {
+        DtachKillError::StillRunning(_) => {
+            DtachKillError::StillRunning(socket.display().to_string())
         }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    Ok(targets.len())
+        other => other,
+    })
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -475,8 +724,8 @@ fn owned_dtach_sockets(dir: &Path) -> Vec<PathBuf> {
         let owned_name = path
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| name.starts_with("pf-") && name.ends_with(".dtach"))
-            .unwrap_or(false);
+            .and_then(|name| name.strip_suffix(".dtach"))
+            .is_some_and(|name| validate_session_name(name).is_ok());
         let is_symlink = std::fs::symlink_metadata(&path)
             .map(|meta| meta.file_type().is_symlink())
             .unwrap_or(true);
@@ -506,7 +755,10 @@ fn validated_sessions_dir(runtime_base: &Path) -> Result<PathBuf, String> {
             || metadata.uid() != unsafe { libc::getuid() }
             || metadata.permissions().mode() & 0o077 != 0
         {
-            return Err(format!("unsafe recoverable-session directory: {}", path.display()));
+            return Err(format!(
+                "unsafe recoverable-session directory: {}",
+                path.display()
+            ));
         }
     }
     Ok(dir)
@@ -540,7 +792,27 @@ fn tmux_server_is_absent(stderr: &[u8]) -> bool {
     stderr.contains("no server running") || stderr.contains("failed to connect to server")
 }
 
+fn validate_tmux_cleanup_result(
+    result: Result<crate::process::CommandOutcome, RunError>,
+    server_may_exist: bool,
+) -> Result<(), String> {
+    match result {
+        Ok(outcome) if outcome.success() || tmux_server_is_absent(&outcome.stderr) => Ok(()),
+        Ok(outcome) => Err(format!(
+            "tmux cleanup failed: {}",
+            String::from_utf8_lossy(&outcome.stderr).trim()
+        )),
+        Err(RunError::Io(error))
+            if error.kind() == std::io::ErrorKind::NotFound && !server_may_exist =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(format!("cannot run tmux cleanup: {error}")),
+    }
+}
+
 pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), String> {
+    close_recoverable_session_spawn_gate();
     let mut errors = match validated_sessions_dir(runtime_base) {
         Ok(dir) => cleanup_owned_dtach_sockets(&dir, kill_dtach_master),
         Err(error) => vec![error],
@@ -548,19 +820,11 @@ pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), Stri
     let args = tmux_kill_server_args();
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let environment = user_shell_environment();
-    match run_timeout(
-        "tmux",
-        &refs,
-        None,
-        Some(&environment),
-        TMUX_KILL_TIMEOUT,
-    ) {
-        Ok(outcome) if outcome.success() || tmux_server_is_absent(&outcome.stderr) => {}
-        Ok(outcome) => errors.push(format!(
-            "tmux cleanup failed: {}",
-            String::from_utf8_lossy(&outcome.stderr).trim()
-        )),
-        Err(error) => errors.push(format!("cannot run tmux cleanup: {error}")),
+    let result = run_timeout("tmux", &refs, None, Some(&environment), TMUX_KILL_TIMEOUT);
+    if let Err(error) =
+        validate_tmux_cleanup_result(result, TMUX_SERVER_MAY_EXIST.load(Ordering::SeqCst))
+    {
+        errors.push(error);
     }
     if errors.is_empty() {
         Ok(())
@@ -739,14 +1003,76 @@ mod tests {
     #[test]
     fn session_name_distinguishes_chat_and_project() {
         let base = session_name("/home/dev/app", "chat-1");
-        assert_ne!(base, session_name("/home/dev/app", "chat-2"), "chat id matters");
-        assert_ne!(base, session_name("/home/dev/other", "chat-1"), "root matters");
+        assert_ne!(
+            base,
+            session_name("/home/dev/app", "chat-2"),
+            "chat id matters"
+        );
+        assert_ne!(
+            base,
+            session_name("/home/dev/other", "chat-1"),
+            "root matters"
+        );
         // The domain separator prevents (a+b, c) colliding with (a, b+c).
         assert_ne!(
             session_name("/ab", "c"),
             session_name("/a", "bc"),
             "boundary between root and chat id must not blur",
         );
+    }
+
+    #[test]
+    fn renderer_session_names_use_the_exact_owned_grammar() {
+        let valid = "pf-0123456789abcdef0123456789abcdef";
+        assert!(validate_session_name(valid).is_ok());
+        assert_eq!(
+            validated_dtach_socket_path(Path::new("/run/user/1000"), valid).unwrap(),
+            sessions_dir(Path::new("/run/user/1000")).join(format!("{valid}.dtach"))
+        );
+
+        for invalid in [
+            "",
+            "pf-abc",
+            "pf-0123456789abcdef0123456789abcdeg",
+            "pf-0123456789abcdef0123456789abcdef/child",
+            "../pf-0123456789abcdef0123456789abcdef",
+            "/tmp/pf-0123456789abcdef0123456789abcdef",
+            "pf-0123456789abcdef0123456789abcdef..",
+        ] {
+            assert!(validate_session_name(invalid).is_err(), "{invalid:?}");
+            assert!(
+                validated_dtach_socket_path(Path::new("/run/user/1000"), invalid).is_err(),
+                "{invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn recoverable_spawn_gate_serializes_creation_before_exit_sweep() {
+        let gate = Arc::new(RecoverableSpawnGate::default());
+        let permit = begin_recoverable_session_spawn_on(&gate).unwrap();
+        let owner = Arc::new(AtomicBool::new(false));
+        let owner_for_shutdown = Arc::clone(&owner);
+        let gate_for_shutdown = Arc::clone(&gate);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+
+        let shutdown = std::thread::spawn(move || {
+            close_recoverable_session_spawn_gate_on(&gate_for_shutdown);
+            owner_for_shutdown.store(false, Ordering::SeqCst);
+            done_tx.send(()).unwrap();
+        });
+
+        owner.store(true, Ordering::SeqCst);
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "exit sweep must wait for the in-flight owner creation"
+        );
+        drop(permit);
+        done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        shutdown.join().unwrap();
+
+        assert!(!owner.load(Ordering::SeqCst), "late owner must be swept");
+        assert!(begin_recoverable_session_spawn_on(&gate).is_err());
     }
 
     #[test]
@@ -842,11 +1168,30 @@ mod tests {
 
     #[test]
     fn tmux_missing_server_errors_are_idempotent() {
-        assert!(tmux_server_is_absent(b"no server running on /tmp/tmux.sock"));
+        assert!(tmux_server_is_absent(
+            b"no server running on /tmp/tmux.sock"
+        ));
         assert!(tmux_server_is_absent(
             b"failed to connect to server: Connection refused"
         ));
         assert!(!tmux_server_is_absent(b"permission denied"));
+    }
+
+    #[test]
+    fn missing_tmux_is_idempotent_only_before_a_private_server_can_exist() {
+        let missing = || {
+            Err(RunError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "tmux missing",
+            )))
+        };
+        assert!(validate_tmux_cleanup_result(missing(), false).is_ok());
+        assert!(
+            validate_tmux_cleanup_result(missing(), true)
+                .unwrap_err()
+                .contains("tmux missing"),
+            "a possibly-live private server must not be silently abandoned"
+        );
     }
 
     #[cfg(unix)]
@@ -865,13 +1210,14 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create sweep dir");
 
         // Ours: a regular pf-*.dtach file.
-        let ours = dir.join("pf-abc123.dtach");
+        let ours = dir.join("pf-0123456789abcdef0123456789abcdef.dtach");
         std::fs::write(&ours, b"").expect("write owned socket");
         // Not ours: wrong prefix, wrong suffix, and a planted symlink that
         // resolves to a pf-named path — the sweep must skip all three.
         std::fs::write(dir.join("other.dtach"), b"").expect("write foreign socket");
         std::fs::write(dir.join("pf-abc123.sock"), b"").expect("write wrong suffix");
-        symlink(&ours, dir.join("pf-planted.dtach")).expect("plant symlink");
+        symlink(&ours, dir.join("pf-fedcba9876543210fedcba9876543210.dtach"))
+            .expect("plant symlink");
 
         assert_eq!(owned_dtach_sockets(&dir), vec![ours]);
 
@@ -917,7 +1263,7 @@ mod tests {
         ));
         let dir = sessions_dir(&base);
         std::fs::create_dir_all(&dir).expect("create sessions dir");
-        let socket = dir.join("pf-unmatched.dtach");
+        let socket = dir.join("pf-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.dtach");
         std::fs::write(&socket, b"").expect("write fake socket");
 
         let errors = cleanup_owned_dtach_sockets(&dir, |path| {
@@ -932,19 +1278,12 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn exit_cleanup_removes_a_stale_owned_socket() {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "pickforge-dtach-stale-{}-{nonce}",
-            std::process::id()
-        ));
+        let base = std::env::temp_dir().join(format!("pfds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
         let dir = sessions_dir(&base);
         std::fs::create_dir_all(&dir).expect("create sessions dir");
-        let socket = dir.join("pf-stale.dtach");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&socket).expect("bind stale socket");
+        let socket = dir.join("pf-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.dtach");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind stale socket");
         drop(listener);
 
         let errors = cleanup_owned_dtach_sockets(&dir, kill_dtach_master);
@@ -989,7 +1328,11 @@ mod tests {
 
     #[test]
     fn backend_tag_round_trips() {
-        for b in [SessionBackend::Dtach, SessionBackend::Tmux, SessionBackend::Raw] {
+        for b in [
+            SessionBackend::Dtach,
+            SessionBackend::Tmux,
+            SessionBackend::Raw,
+        ] {
             assert_eq!(SessionBackend::from_tag(b.tag()), b);
         }
         assert_eq!(SessionBackend::from_tag("bogus"), SessionBackend::Raw);
@@ -1012,20 +1355,35 @@ mod tests {
         // Our master, with an absolute dtach path → matched.
         assert!(cmdline_is_dtach_for_socket(
             &cmdline(&[
-                "/usr/bin/dtach", "-A",
+                "/usr/bin/dtach",
+                "-A",
                 "/run/user/1000/pickforge/sessions/pf-abc.dtach",
-                "-E", "-z", "-r", "winch", "/bin/zsh",
+                "-E",
+                "-z",
+                "-r",
+                "winch",
+                "/bin/zsh",
             ]),
             sock,
         ));
         // Bare `dtach` (no path) → matched on basename.
         assert!(cmdline_is_dtach_for_socket(
-            &cmdline(&["dtach", "-A", "/run/user/1000/pickforge/sessions/pf-abc.dtach", "/bin/zsh"]),
+            &cmdline(&[
+                "dtach",
+                "-A",
+                "/run/user/1000/pickforge/sessions/pf-abc.dtach",
+                "/bin/zsh"
+            ]),
             sock,
         ));
         // A DIFFERENT socket (even a prefix of ours) must NOT match.
         assert!(!cmdline_is_dtach_for_socket(
-            &cmdline(&["dtach", "-A", "/run/user/1000/pickforge/sessions/pf-abcd.dtach", "/bin/zsh"]),
+            &cmdline(&[
+                "dtach",
+                "-A",
+                "/run/user/1000/pickforge/sessions/pf-abcd.dtach",
+                "/bin/zsh"
+            ]),
             sock,
         ));
         // A non-dtach process that merely has the socket path in its args (e.g. an
@@ -1038,14 +1396,191 @@ mod tests {
         assert!(!cmdline_is_dtach_for_socket(&[], sock));
     }
 
+    #[cfg(target_os = "linux")]
+    fn process(pid: i32, start_time: u64, parent_pid: i32, session_id: i32) -> ProcessRecord {
+        ProcessRecord {
+            identity: ProcessIdentity { pid, start_time },
+            parent_pid,
+            session_id,
+            zombie: false,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pid_identity_revalidation_refuses_a_mismatched_start_time() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let current = read_process_record(child.id() as i32).unwrap().identity;
+        let reused = ProcessIdentity {
+            start_time: current.start_time + 1,
+            ..current
+        };
+
+        assert!(!signal_process_identity(reused, libc::SIGKILL).unwrap());
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "unrelated PID was killed"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn iterative_dtach_containment_catches_a_term_handler_fork() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let master = process(10, 1, 1, 10);
+        let handler = process(11, 2, 10, 11);
+        let resistant = process(12, 3, 1, 11);
+        let state = Rc::new(RefCell::new(vec![master, handler]));
+        let signalled = Rc::new(RefCell::new(Vec::new()));
+        let state_for_scan = Rc::clone(&state);
+        let state_for_signal = Rc::clone(&state);
+        let signalled_for_signal = Rc::clone(&signalled);
+
+        let killed = terminate_owned_processes_with(
+            &[master.identity],
+            move || state_for_scan.borrow().clone(),
+            move |identity, signal| {
+                signalled_for_signal.borrow_mut().push((identity, signal));
+                let mut records = state_for_signal.borrow_mut();
+                if identity == handler.identity && signal == libc::SIGTERM {
+                    records.retain(|record| record.identity != handler.identity);
+                    records.push(resistant);
+                } else if signal == libc::SIGKILL {
+                    records.retain(|record| record.identity != identity);
+                }
+                Ok(true)
+            },
+            |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(killed, 3);
+        assert!(
+            signalled
+                .borrow()
+                .contains(&(resistant.identity, libc::SIGKILL)),
+            "the child forked from the TERM handler must be contained before unlink"
+        );
+        assert!(state.borrow().is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dtach_cleanup_kills_a_resistant_child_forked_from_a_term_handler() {
+        use std::os::unix::process::CommandExt;
+        use std::process::Command;
+
+        let base = std::env::temp_dir().join(format!("pfdt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let socket = base.join("owned.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let child_script = base.join("resistant.sh");
+        let child_pid_file = base.join("child.pid");
+        std::fs::write(
+            &child_script,
+            format!(
+                "trap '' TERM\necho $$ > '{}'\nwhile :; do sleep 1; done\n",
+                child_pid_file.display()
+            ),
+        )
+        .unwrap();
+        let master_script = format!(
+            "trap '/bin/sh \"{}\" &' TERM\nwhile :; do sleep 1; done\n",
+            child_script.display()
+        );
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg0("dtach")
+            .arg("-c")
+            .arg(master_script)
+            .arg(&socket);
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut master = command.spawn().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while dtach_master_pids(&socket).is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let result = kill_dtach_master(&socket);
+        let _ = master.wait();
+        drop(listener);
+        let child_pid = std::fs::read_to_string(&child_pid_file)
+            .expect("TERM handler did not fork the resistant child")
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            !Path::new(&format!("/proc/{child_pid}")).exists(),
+            "TERM-handler child survived dtach containment"
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn iterative_dtach_containment_does_not_signal_a_reused_pid() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let master = process(20, 10, 1, 20);
+        let child = process(21, 11, 20, 21);
+        let reused = process(21, 99, 1, 21);
+        let state = Rc::new(RefCell::new(vec![master, child]));
+        let signalled = Rc::new(RefCell::new(Vec::new()));
+        let state_for_scan = Rc::clone(&state);
+        let state_for_signal = Rc::clone(&state);
+        let signalled_for_signal = Rc::clone(&signalled);
+
+        terminate_owned_processes_with(
+            &[master.identity],
+            move || state_for_scan.borrow().clone(),
+            move |identity, signal| {
+                signalled_for_signal.borrow_mut().push((identity, signal));
+                let mut records = state_for_signal.borrow_mut();
+                if identity == child.identity && signal == libc::SIGTERM {
+                    records.retain(|record| record.identity != child.identity);
+                    records.push(reused);
+                } else if signal == libc::SIGKILL {
+                    records.retain(|record| record.identity != identity);
+                }
+                Ok(true)
+            },
+            |_| {},
+        )
+        .unwrap();
+
+        assert!(
+            !signalled
+                .borrow()
+                .iter()
+                .any(|(identity, _)| *identity == reused.identity),
+            "PID reuse must not transfer ownership to an unrelated process"
+        );
+        assert!(state.borrow().contains(&reused));
+    }
+
     #[test]
     fn socket_path_is_under_this_process_sessions_dir() {
         let base = PathBuf::from("/run/user/1000");
         let p = dtach_socket_path(&base, "pf-abc");
-        assert_eq!(
-            p,
-            sessions_dir(&base).join("pf-abc.dtach")
-        );
+        assert_eq!(p, sessions_dir(&base).join("pf-abc.dtach"));
         assert_ne!(
             sessions_dir_for_instance(&base, "first"),
             sessions_dir_for_instance(&base, "second")
@@ -1057,8 +1592,13 @@ mod tests {
         let base = PathBuf::from("/run/user/1000");
         // Socket absent → created.
         let p = prepare_chat_session(
-            &base, "/app", "chat-1", SessionBackend::Dtach, None,
-            |_| false, |_| false,
+            &base,
+            "/app",
+            "chat-1",
+            SessionBackend::Dtach,
+            None,
+            |_| false,
+            |_| false,
         );
         assert_eq!(p.backend, SessionBackend::Dtach);
         assert_eq!(p.status, SessionStatus::Created);
@@ -1069,8 +1609,13 @@ mod tests {
 
         // Socket present → attached, same durable id.
         let p2 = prepare_chat_session(
-            &base, "/app", "chat-1", SessionBackend::Dtach, None,
-            |_| true, |_| false,
+            &base,
+            "/app",
+            "chat-1",
+            SessionBackend::Dtach,
+            None,
+            |_| true,
+            |_| false,
         );
         assert_eq!(p2.status, SessionStatus::Attached);
         assert_eq!(p2.session_id, p.session_id, "stable across opens");
@@ -1080,20 +1625,34 @@ mod tests {
     fn prepare_tmux_uses_name_and_attach_status() {
         let base = PathBuf::from("/run/user/1000");
         let created = prepare_chat_session(
-            &base, "/app", "chat-1", SessionBackend::Tmux, None,
-            |_| false, |_| false,
+            &base,
+            "/app",
+            "chat-1",
+            SessionBackend::Tmux,
+            None,
+            |_| false,
+            |_| false,
         );
         assert_eq!(created.backend, SessionBackend::Tmux);
         assert_eq!(created.status, SessionStatus::Created);
-        assert!(created.session_id.as_deref().unwrap().starts_with("tmux:pf-"));
+        assert!(created
+            .session_id
+            .as_deref()
+            .unwrap()
+            .starts_with("tmux:pf-"));
         assert!(created.dtach_socket.is_none());
         let (prog, args) = created.program_override.as_ref().unwrap();
         assert_eq!(prog, "tmux");
         assert!(args.iter().any(|a| a == "new-session"));
 
         let attached = prepare_chat_session(
-            &base, "/app", "chat-1", SessionBackend::Tmux, None,
-            |_| false, |_| true,
+            &base,
+            "/app",
+            "chat-1",
+            SessionBackend::Tmux,
+            None,
+            |_| false,
+            |_| true,
         );
         assert_eq!(attached.status, SessionStatus::Attached);
     }
@@ -1104,18 +1663,31 @@ mod tests {
         // `Raw` requested (or a degraded backend) must keep the recoverable id so
         // a temporarily-missing dtach/tmux doesn't wipe the user's session.
         let p = prepare_chat_session(
-            &base, "/app", "chat-1", SessionBackend::Raw, Some("dtach:pf-keepme"),
-            |_| true, |_| true,
+            &base,
+            "/app",
+            "chat-1",
+            SessionBackend::Raw,
+            Some("dtach:pf-keepme"),
+            |_| true,
+            |_| true,
         );
         assert_eq!(p.backend, SessionBackend::Raw);
-        assert!(p.program_override.is_none(), "raw = plain interactive shell");
+        assert!(
+            p.program_override.is_none(),
+            "raw = plain interactive shell"
+        );
         assert_eq!(p.session_id.as_deref(), Some("dtach:pf-keepme"));
         assert_eq!(p.status, SessionStatus::Created);
 
         // …and with no prior id, raw simply has none.
         let none = prepare_chat_session(
-            &base, "/app", "chat-1", SessionBackend::Raw, None,
-            |_| false, |_| false,
+            &base,
+            "/app",
+            "chat-1",
+            SessionBackend::Raw,
+            None,
+            |_| false,
+            |_| false,
         );
         assert!(none.session_id.is_none());
     }

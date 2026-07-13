@@ -21,10 +21,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pickforge_core::{
-    dtach_socket_path, kill_dtach_master, prepare_chat_session, run_timeout, select_backend,
-    session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
-    Database, PreparedSession, PtyEvent, PtyManager, RemotePty, SessionBackend,
-    SpawnOptions,
+    begin_recoverable_session_spawn, kill_dtach_master, mark_tmux_server_may_exist,
+    parse_recoverable_session_id, prepare_chat_session, run_timeout, select_backend, sessions_dir,
+    tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
+    validated_dtach_socket_path, Database, PreparedSession, PtyError, PtyEvent, PtyManager,
+    RemotePty, SessionBackend, SpawnOptions,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
@@ -54,7 +55,11 @@ pub(crate) fn runtime_base() -> PathBuf {
 /// AFTER spawn — that's the shell, not IPC; only the spawn cwd is gated.
 fn resolve_spawn_cwd(cwd: Option<String>, roots: &ApprovedRoots) -> Result<Option<String>, String> {
     match cwd.filter(|c| !c.is_empty()) {
-        Some(cwd) => Ok(Some(approved_canonical(&cwd, roots)?.to_string_lossy().into_owned())),
+        Some(cwd) => Ok(Some(
+            approved_canonical(&cwd, roots)?
+                .to_string_lossy()
+                .into_owned(),
+        )),
         None => Ok(None),
     }
 }
@@ -148,7 +153,12 @@ pub(crate) fn authorize_remote_pty_with(
     let binding = project_root
         .filter(|root| !root.is_empty())
         .and_then(|root| projects.iter().find(|project| project.project_root == root))
-        .map(|project| (project.remote_host.as_deref(), project.remote_root.as_deref()));
+        .map(|project| {
+            (
+                project.remote_host.as_deref(),
+                project.remote_root.as_deref(),
+            )
+        });
     authorize_remote_pty_binding(project_root, remote, binding, authorize_host)
 }
 
@@ -188,7 +198,9 @@ fn chat_spawn_options(
 ) -> Result<SpawnOptions, String> {
     let remote_chat = remote.is_some();
     let mut opts = spawn_options(cwd, None, rows, cols, env, remote, roots)?;
-    opts.program_override = (!remote_chat).then(|| prepared.program_override.clone()).flatten();
+    opts.program_override = (!remote_chat)
+        .then(|| prepared.program_override.clone())
+        .flatten();
     opts.detach_on_drop = !remote_chat && prepared.backend != SessionBackend::Raw;
     Ok(opts)
 }
@@ -304,7 +316,9 @@ fn ensure_sessions_dir(dir: &Path) -> Result<(), String> {
                     .recursive(false)
                     .mode(0o700)
                     .create(d)
-                    .map_err(|e| format!("cannot create private session dir {}: {e}", d.display()))?;
+                    .map_err(|e| {
+                        format!("cannot create private session dir {}: {e}", d.display())
+                    })?;
             }
             Err(e) => return Err(format!("cannot stat session dir {}: {e}", d.display())),
         }
@@ -325,6 +339,61 @@ fn tmux_enable_titles() {
     for args in tmux_set_titles_args() {
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let _ = run_timeout("tmux", &refs, None, None, TMUX_PROBE_TIMEOUT);
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DestroyTarget {
+    Dtach(PathBuf),
+    Tmux(String),
+    Raw,
+}
+
+fn destroy_target(session_id: &str, base: &Path) -> Result<DestroyTarget, String> {
+    let (backend, name) = parse_recoverable_session_id(session_id)?;
+    match backend {
+        SessionBackend::Dtach => validated_dtach_socket_path(base, name).map(DestroyTarget::Dtach),
+        SessionBackend::Tmux => Ok(DestroyTarget::Tmux(name.to_string())),
+        SessionBackend::Raw => Ok(DestroyTarget::Raw),
+    }
+}
+
+fn destroy_target_now(target: DestroyTarget) -> Result<(), String> {
+    match target {
+        DestroyTarget::Tmux(name) => {
+            let args = tmux_kill_session_args(&name);
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            match run_timeout("tmux", &refs, None, None, TMUX_PROBE_TIMEOUT) {
+                Ok(outcome)
+                    if outcome.success()
+                        || String::from_utf8_lossy(&outcome.stderr)
+                            .contains("can't find session")
+                        || String::from_utf8_lossy(&outcome.stderr)
+                            .contains("no server running") =>
+                {
+                    Ok(())
+                }
+                Ok(outcome) => Err(format!(
+                    "tmux session cleanup failed: {}",
+                    String::from_utf8_lossy(&outcome.stderr).trim()
+                )),
+                Err(error) => Err(format!("cannot run tmux session cleanup: {error}")),
+            }
+        }
+        DestroyTarget::Dtach(socket) => {
+            let dir = socket
+                .parent()
+                .ok_or_else(|| "dtach socket has no private namespace".to_string())?;
+            ensure_sessions_dir(dir)?;
+            kill_dtach_master(&socket).map_err(|error| error.to_string())?;
+            if let Ok(meta) = std::fs::symlink_metadata(&socket) {
+                if !meta.file_type().is_symlink() {
+                    std::fs::remove_file(&socket).map_err(|error| error.to_string())?;
+                }
+            }
+            Ok(())
+        }
+        DestroyTarget::Raw => Ok(()),
     }
 }
 
@@ -371,16 +440,20 @@ pub fn pty_spawn_chat(
     let degraded =
         !remote_chat && selected == SessionBackend::Raw && requested != SessionBackend::Raw;
 
+    let _recoverable_permit = if matches!(selected, SessionBackend::Dtach | SessionBackend::Tmux) {
+        Some(begin_recoverable_session_spawn()?)
+    } else {
+        None
+    };
+
     let base = runtime_base();
 
     // For dtach, the sockets dir must be a private 0700 dir before we bind in it.
     if selected == SessionBackend::Dtach {
-        ensure_sessions_dir(&sessions_dir(&base)).map_err(|e| {
-            format!("cannot prepare dtach session dir: {e}")
-        })?;
+        ensure_sessions_dir(&sessions_dir(&base))
+            .map_err(|e| format!("cannot prepare dtach session dir: {e}"))?;
     }
 
-    let name = session_name(&canonical_root, &chat_id);
     let prepared = prepare_chat_session(
         &base,
         &canonical_root,
@@ -399,20 +472,38 @@ pub fn pty_spawn_chat(
 
     let opts = chat_spawn_options(cwd, rows, cols, env, remote, &prepared, &roots)?;
 
-    let pty_id = manager
-        .spawn(opts, move |event: PtyEvent| match event {
-            PtyEvent::Output(bytes) => {
-                let _ = on_output.send(Response::new(bytes));
+    if selected == SessionBackend::Tmux {
+        // From this point the attach-or-create command may bring the private
+        // server up. A later missing binary is therefore a real cleanup error.
+        mark_tmux_server_may_exist();
+    }
+
+    let spawn_result = manager.spawn(opts, move |event: PtyEvent| match event {
+        PtyEvent::Output(bytes) => {
+            let _ = on_output.send(Response::new(bytes));
+        }
+        PtyEvent::Exit(code) => {
+            let _ = on_exit.send(code);
+        }
+    });
+    let pty_id = match spawn_result {
+        Ok(id) => id,
+        Err(error) => {
+            let mut message = error.to_string();
+            if matches!(error, PtyError::ShuttingDown) {
+                if let Some(session_id) = prepared.session_id.as_deref() {
+                    match destroy_target(session_id, &base).and_then(destroy_target_now) {
+                        Ok(()) => {}
+                        Err(cleanup) => {
+                            message.push_str("; late recoverable owner cleanup failed: ");
+                            message.push_str(&cleanup);
+                        }
+                    }
+                }
             }
-            PtyEvent::Exit(code) => {
-                let _ = on_exit.send(code);
-            }
-        })
-        .map_err(|e| {
-            // A spawn failure mustn't leave a half-bound name around.
-            let _ = &name;
-            e.to_string()
-        })?;
+            return Err(message);
+        }
+    };
 
     // tmux: enable window-title reporting AFTER the spawn — `new-session -A`
     // above is what brings the private `-L pickforge` server up, so a set-option
@@ -442,34 +533,7 @@ pub fn pty_spawn_chat(
 /// closed (or after an app restart); removing only the socket would orphan it.
 #[tauri::command]
 pub fn pty_destroy_chat_session(session_id: String) -> Result<(), String> {
-    let (tag, name) = session_id
-        .split_once(':')
-        .ok_or_else(|| format!("malformed session id: {session_id}"))?;
-    match SessionBackend::from_tag(tag) {
-        SessionBackend::Tmux => {
-            let args = tmux_kill_session_args(name);
-            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            // Best-effort: a missing session / server is already "destroyed".
-            let _ = run_timeout("tmux", &refs, None, None, TMUX_PROBE_TIMEOUT);
-            Ok(())
-        }
-        SessionBackend::Dtach => {
-            let sock = dtach_socket_path(&runtime_base(), name);
-            // Terminate the dtach master holding this socket FIRST — otherwise the
-            // shell/agent inside it keeps running after we unlink the socket. Only
-            // matches a dtach whose argv carries this exact (unique) socket path.
-            kill_dtach_master(&sock).map_err(|error| error.to_string())?;
-            // Only remove a real socket/file — never follow a symlink someone
-            // swapped in for the path.
-            if let Ok(meta) = std::fs::symlink_metadata(&sock) {
-                if !meta.file_type().is_symlink() {
-                    std::fs::remove_file(&sock).map_err(|error| error.to_string())?;
-                }
-            }
-            Ok(())
-        }
-        SessionBackend::Raw => Ok(()), // nothing to destroy
-    }
+    destroy_target(&session_id, &runtime_base()).and_then(destroy_target_now)
 }
 
 #[cfg(test)]
@@ -489,6 +553,34 @@ mod spawn_cwd_tests {
     }
 
     #[test]
+    fn destroy_ipc_rejects_traversal_absolute_and_malformed_session_ids() {
+        let base = Path::new("/run/user/1000");
+        let name = "pf-0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            destroy_target(&format!("dtach:{name}"), base).unwrap(),
+            DestroyTarget::Dtach(sessions_dir(base).join(format!("{name}.dtach")))
+        );
+        assert_eq!(
+            destroy_target(&format!("tmux:{name}"), base).unwrap(),
+            DestroyTarget::Tmux(name.to_string())
+        );
+
+        for malicious in [
+            "dtach:../../tmp/pf-0123456789abcdef0123456789abcdef",
+            "dtach:/tmp/pf-0123456789abcdef0123456789abcdef",
+            "dtach:pf-0123456789abcdef0123456789abcdef/child",
+            "tmux:../pf-0123456789abcdef0123456789abcdef",
+            "tmux:/tmp/pf-0123456789abcdef0123456789abcdef",
+            "tmux:pf-0123456789abcdef0123456789abcdef:other",
+            "dtach:pf-short",
+            "bogus:pf-0123456789abcdef0123456789abcdef",
+            "raw:anything",
+        ] {
+            assert!(destroy_target(malicious, base).is_err(), "{malicious:?}");
+        }
+    }
+
+    #[test]
     fn allows_an_in_root_cwd_and_returns_the_canonical_path() {
         let (roots, root) = temp_root("inroot");
         let resolved = resolve_spawn_cwd(Some(root.to_string_lossy().into_owned()), &roots)
@@ -503,7 +595,15 @@ mod spawn_cwd_tests {
         std::fs::create_dir_all(&nested).unwrap();
         let resolved = resolve_spawn_cwd(Some(nested.to_string_lossy().into_owned()), &roots)
             .expect("a nested in-root cwd must be allowed");
-        assert_eq!(resolved, Some(std::fs::canonicalize(&nested).unwrap().to_string_lossy().into_owned()));
+        assert_eq!(
+            resolved,
+            Some(
+                std::fs::canonicalize(&nested)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
     }
 
     #[test]
@@ -533,7 +633,10 @@ mod spawn_cwd_tests {
     #[test]
     fn allows_no_cwd_and_an_empty_cwd() {
         let (roots, _root) = temp_root("nocwd");
-        assert_eq!(resolve_spawn_cwd(None, &roots).expect("None cwd is fine"), None);
+        assert_eq!(
+            resolve_spawn_cwd(None, &roots).expect("None cwd is fine"),
+            None
+        );
         assert_eq!(
             resolve_spawn_cwd(Some(String::new()), &roots).expect("empty cwd is fine"),
             None,
@@ -543,8 +646,8 @@ mod spawn_cwd_tests {
     #[test]
     fn rejects_a_nonexistent_cwd() {
         let roots = ApprovedRoots::default();
-        let missing = std::env::temp_dir()
-            .join(format!("pf-ptymissing-{}-nope", std::process::id()));
+        let missing =
+            std::env::temp_dir().join(format!("pf-ptymissing-{}-nope", std::process::id()));
         assert!(
             !Path::new(&missing).exists(),
             "the probe dir must not exist for this test",
@@ -704,8 +807,8 @@ mod spawn_cwd_tests {
             host: "mac-mini".to_string(),
             remote_root: "/Users/dev/other".to_string(),
         };
-        let err = authorize_remote_pty_with(&db, Some("/app"), Some(&mismatch), |_| Ok(()))
-            .unwrap_err();
+        let err =
+            authorize_remote_pty_with(&db, Some("/app"), Some(&mismatch), |_| Ok(())).unwrap_err();
         assert!(err.contains("not authorized for project /app"));
     }
 

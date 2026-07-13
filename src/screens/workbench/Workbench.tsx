@@ -27,6 +27,7 @@ import { OrchestraView } from "../../components/orchestra/OrchestraView";
 import { disposeAgentChat } from "../../stores/agentChat";
 import {
   ensureOmpNativeCompatibility,
+  ensurePiNativeCompatibility,
   loadAgentModels,
   ompNativeChatUnavailableReason,
 } from "../../lib/agentModels";
@@ -97,6 +98,7 @@ export function WorkbenchScreen() {
   createEffect(() => {
     if (flagEnabled("ompPiAgents")) {
       void untrack(() => ensureOmpNativeCompatibility());
+      void untrack(() => ensurePiNativeCompatibility());
     }
   });
 

@@ -303,6 +303,20 @@ pub async fn agent_chat_steer(
 }
 
 #[tauri::command]
+pub async fn agent_chat_follow_up(
+    mgr: State<'_, AgentChatManager>,
+    session_id: String,
+    text: String,
+) -> Result<(), String> {
+    let mgr = mgr.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        mgr.follow_up(&session_id, &text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn agent_chat_history(
     db: State<'_, Arc<Database>>,
     chat_id: String,

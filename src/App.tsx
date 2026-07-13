@@ -18,7 +18,10 @@ import { installAccountStoreBootstrap } from "./stores/account";
 import { installCreditsBootstrap } from "./stores/credits";
 import { installSettingsSyncBootstrap } from "./stores/settingsSyncStore";
 import { handleTitlebarMouseDown } from "./lib/windowChrome";
-import { ensureOmpNativeCompatibility } from "./lib/agentModels";
+import {
+  ensureOmpNativeCompatibility,
+  ensurePiNativeCompatibility,
+} from "./lib/agentModels";
 import { flagEnabled, subscribeToFlagChanges } from "./stores/flags";
 import { WorkbenchScreen } from "./screens/workbench/Workbench";
 import { OnboardingScreen } from "./screens/Onboarding";
@@ -39,13 +42,14 @@ const WINDOW_RESIZING_SETTLE_MS = 180;
 export function App() {
   const [, setReady] = createSignal(false);
   installAccountStoreBootstrap();
-  const probeOmpCompatibility = () => {
+  const probeNativeCompatibility = () => {
     if (flagEnabled("ompPiAgents")) {
       void ensureOmpNativeCompatibility(true);
+      void ensurePiNativeCompatibility(true);
     }
   };
-  probeOmpCompatibility();
-  onCleanup(subscribeToFlagChanges(probeOmpCompatibility));
+  probeNativeCompatibility();
+  onCleanup(subscribeToFlagChanges(probeNativeCompatibility));
   // macOS convention: window controls sit top-left, so the brand moves to the
   // top-right to balance the bar (matches the platform's own app chrome).
   const brandOnRight = () => hostPlatform() === "macos";

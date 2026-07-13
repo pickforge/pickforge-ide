@@ -6,7 +6,12 @@ import {
   type AgentProvider,
 } from "./agentBackends";
 import { flagEnabled } from "../stores/flags";
-import { ensureOmpNativeCompatibility, ompNativeChatAvailable } from "./agentModels";
+import {
+  ensureOmpNativeCompatibility,
+  ensurePiNativeCompatibility,
+  ompNativeChatAvailable,
+  piNativeChatAvailable,
+} from "./agentModels";
 import { ensureMcpRunning, mcpEnv } from "../stores/mcp";
 
 export type { AgentEngine, AgentProvider } from "./agentBackends";
@@ -20,10 +25,19 @@ export interface AgentSkill {
 
 export type AgentEvent =
   | { kind: "sessionStarted"; providerSessionId: string }
+  | {
+      kind: "sessionUpdated";
+      providerSessionId: string | null;
+      sessionFile: string | null;
+      title: string | null;
+      model: string | null;
+      thinkingLevel: string | null;
+    }
+  | { kind: "providerEvent"; provider: string; payload: string }
   | { kind: "turnStarted" }
-  | { kind: "textDelta"; text: string }
+  | { kind: "textDelta"; itemId?: string | null; text: string }
   | { kind: "textFinal"; itemId: string | null; text: string }
-  | { kind: "thinkingDelta"; text: string }
+  | { kind: "thinkingDelta"; itemId?: string | null; text: string }
   | { kind: "thinkingFinal"; itemId: string | null; text: string }
   | { kind: "commandStarted"; itemId: string; command: string; cwd: string | null }
   | {
@@ -167,21 +181,29 @@ async function ompMcpServers(opts: AgentChatStartOptions): Promise<AgentMcpServe
 
 
 export async function agentChatStart(opts: AgentChatStartOptions): Promise<string> {
+  if (opts.provider === "pi" && !flagEnabled("ompPiAgents")) {
+    throw new Error("Pi native chat is disabled by the ompPiAgents rollout flag");
+  }
   const provider = normalizeAgentProvider(opts.provider);
   const engine = opts.engine ?? "v2";
   if (provider === "omp" && flagEnabled("ompPiAgents")) {
     await ensureOmpNativeCompatibility();
+  } else if (provider === "pi" && flagEnabled("ompPiAgents")) {
+    await ensurePiNativeCompatibility();
   }
   if (
-    !provider ||
-    (provider === "omp" && !ompNativeChatAvailable()) ||
-    nativeChatUnavailableReason(provider ?? opts.provider, engine)
+    !provider
+    || (provider === "omp" && !ompNativeChatAvailable())
+    || (provider === "pi" && !piNativeChatAvailable())
+    || nativeChatUnavailableReason(provider ?? opts.provider, engine)
   ) {
     throw new Error(
       provider === "omp" && !ompNativeChatAvailable()
         ? "OMP native chat requires the ompPiAgents flag and compatible OMP 16.4.8 probe"
-        : (nativeChatUnavailableReason(provider ?? opts.provider, engine) ??
-            "Agent backend does not support native chat"),
+        : provider === "pi" && !piNativeChatAvailable()
+          ? "Pi native chat requires the ompPiAgents flag and compatible Pi >=0.79.10 and <0.80.0 probe"
+          : (nativeChatUnavailableReason(provider ?? opts.provider, engine)
+              ?? "Agent backend does not support native chat"),
     );
   }
   const mcpServers = provider === "omp" ? await ompMcpServers(opts) : (opts.mcpServers ?? []);
@@ -282,6 +304,10 @@ export function agentChatApprove(
 
 export function agentChatSteer(sessionId: string, text: string): Promise<void> {
   return invoke("agent_chat_steer", { sessionId, text });
+}
+
+export function agentChatFollowUp(sessionId: string, text: string): Promise<void> {
+  return invoke("agent_chat_follow_up", { sessionId, text });
 }
 
 export function agentChatHistory(chatId: string): Promise<AgentTimelineEntry[]> {

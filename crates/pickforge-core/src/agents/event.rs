@@ -10,6 +10,7 @@ pub enum AgentEvent {
     },
     TurnStarted,
     TextDelta {
+        item_id: Option<String>,
         text: String,
     },
     TextFinal {
@@ -17,6 +18,7 @@ pub enum AgentEvent {
         text: String,
     },
     ThinkingDelta {
+        item_id: Option<String>,
         text: String,
     },
     ThinkingFinal {
@@ -95,6 +97,19 @@ pub enum AgentEvent {
         method: String,
         payload: serde_json::Value,
     },
+    /// Provider-native event retained verbatim alongside normalized events.
+    ProviderEvent {
+        provider: String,
+        payload: String,
+    },
+    /// Session metadata that may change independently of a turn.
+    SessionUpdated {
+        provider_session_id: Option<String>,
+        session_file: Option<String>,
+        title: Option<String>,
+        model: Option<String>,
+        thinking_level: Option<String>,
+    },
     Noise {
         line: String,
     },
@@ -167,6 +182,7 @@ mod tests {
             },
             AgentEvent::TurnStarted,
             AgentEvent::TextDelta {
+                item_id: None,
                 text: "hello".to_string(),
             },
             AgentEvent::TextFinal {
@@ -174,6 +190,7 @@ mod tests {
                 text: "final text".to_string(),
             },
             AgentEvent::ThinkingDelta {
+                item_id: None,
                 text: "thinking".to_string(),
             },
             AgentEvent::ThinkingFinal {
@@ -290,10 +307,11 @@ mod tests {
     fn serializes_exact_json_contract_samples() {
         assert_eq!(
             serde_json::to_string(&AgentEvent::TextDelta {
+                item_id: None,
                 text: "hello".to_string(),
             })
             .unwrap(),
-            r#"{"kind":"textDelta","text":"hello"}"#
+            r#"{"kind":"textDelta","itemId":null,"text":"hello"}"#
         );
 
         assert_eq!(

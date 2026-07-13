@@ -98,7 +98,7 @@ import { markChatTitleManual } from "../../lib/chatAutoName";
 import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
-const PROVIDER_MARK: Record<string, string> = { claudeCode: "CC", codex: "CX" };
+const PROVIDER_MARK: Record<string, string> = { claudeCode: "CC", codex: "CX", omp: "OM", pi: "PI" };
 
 const STATUS_ORDER: OrchestraTaskStatus[] = [
   "planned",

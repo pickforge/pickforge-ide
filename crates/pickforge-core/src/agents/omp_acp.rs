@@ -1184,7 +1184,7 @@ fn handle_session_update(state: &Arc<ClientState>, params: Value) {
                 if let Ok(mut buffer) = state.turn_text.lock() {
                     buffer.push_str(&text);
                 }
-                emit(state, AgentEvent::TextDelta { text });
+                emit(state, AgentEvent::TextDelta { item_id: None, text });
             }
         }
         Some("agent_thought_chunk") => {
@@ -1192,7 +1192,7 @@ fn handle_session_update(state: &Arc<ClientState>, params: Value) {
                 if let Ok(mut buffer) = state.turn_thought.lock() {
                     buffer.push_str(&text);
                 }
-                emit(state, AgentEvent::ThinkingDelta { text });
+                emit(state, AgentEvent::ThinkingDelta { item_id: None, text });
             }
         }
         Some("tool_call") => emit_tool_start(state, update),
@@ -1892,8 +1892,8 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage"
         client.prompt("hello", &[]).unwrap();
         wait_for(&events, |event| matches!(event, AgentEvent::TurnDone { .. }));
         let events = events.lock().unwrap();
-        assert!(events.iter().any(|event| matches!(event, AgentEvent::ThinkingDelta { text } if text == "think")));
-        assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "hello")));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::ThinkingDelta { text, .. } if text == "think")));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text, .. } if text == "hello")));
         assert!(events.iter().any(|event| matches!(event, AgentEvent::PlanUpdate { items } if items[0].completed)));
         assert!(events.iter().any(|event| matches!(
             event,

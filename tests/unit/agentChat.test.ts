@@ -162,10 +162,14 @@ function mockInvoke(history: AgentTimelineEntry[] = []) {
   });
 }
 
-async function startChat(history: AgentTimelineEntry[] = [], model: string | null = null) {
+async function startChat(
+  history: AgentTimelineEntry[] = [],
+  model: string | null = null,
+  provider: "codex" | "pi" = "codex",
+) {
   const chatId = nextChatId();
   mockInvoke(history);
-  await ensureAgentChat(chatId, "/project", "codex", model);
+  await ensureAgentChat(chatId, "/project", provider, model);
   const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
   return {
     chatId,
@@ -289,18 +293,6 @@ describe("agentChat IPC wrappers", () => {
     expect(tauri.invoke).toHaveBeenCalledWith("agent_skills_list", { provider: "codex" });
   });
 
-  it("rejects Pi before invoking native chat", async () => {
-    await expect(agentChatStart({
-      chatId: "chat-pi",
-      projectRoot: "/project",
-      provider: "pi",
-      onEvent: () => undefined,
-    })).rejects.toThrow("Pi native chat is not integrated yet");
-
-    expect(tauri.invoke).not.toHaveBeenCalled();
-    expect(tauri.channels).toHaveLength(0);
-  });
-
   it("rejects OMP before IPC while ompPiAgents is off", async () => {
     await expect(agentChatStart({
       chatId: "chat-omp",
@@ -367,6 +359,42 @@ describe("agentChat IPC wrappers", () => {
   });
 
 
+  it("rejects Pi before IPC while the rollout flag is off", async () => {
+    await expect(agentChatStart({
+      chatId: "chat-pi",
+      projectRoot: "/project",
+      provider: "pi",
+      onEvent: () => undefined,
+    })).rejects.toThrow("ompPiAgents rollout flag");
+
+    expect(tauri.invoke).not.toHaveBeenCalled();
+    expect(tauri.channels).toHaveLength(0);
+  });
+
+  it("starts Pi through the native IPC seam while the rollout flag is on", async () => {
+    flags.ompPiAgents = true;
+    recordAgentCliDiagnostic(diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "",
+      modelsOutput: "",
+      errors: [],
+    }));
+    tauri.invoke.mockResolvedValue("session-pi");
+    await expect(agentChatStart({
+      chatId: "chat-pi",
+      projectRoot: "/project",
+      provider: "pi",
+      engine: "v2",
+      model: "test/model",
+      onEvent: () => undefined,
+    })).resolves.toBe("session-pi");
+
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_start",
+      expect.objectContaining({ provider: "pi", engine: "v2", model: "test/model" }),
+    );
+  });
   it("normalizes persisted legacy Claude IDs before the native backend guard", async () => {
     tauri.invoke.mockResolvedValue("session-legacy");
 
@@ -399,6 +427,47 @@ describe("agentChat store reducer", () => {
       { type: "assistantText", text: "hello", streaming: false },
       { type: "thinking", text: "reason", streaming: false },
     ]);
+  });
+
+  it("reconciles interleaved Pi thinking and text finals by content identity", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "thinkingDelta", itemId: "pi-message-1-0", text: "think" });
+    emit({ kind: "textDelta", itemId: "pi-message-1-1", text: "draft" });
+    emit({ kind: "thinkingFinal", itemId: "pi-message-1-0", text: "think final" });
+    emit({ kind: "textFinal", itemId: "pi-message-1-1", text: "answer final" });
+
+    expect(timeline(chatId)).toMatchObject([
+      {
+        type: "thinking",
+        itemId: "pi-message-1-0",
+        text: "think final",
+        streaming: false,
+      },
+      {
+        type: "assistantText",
+        itemId: "pi-message-1-1",
+        text: "answer final",
+        streaming: false,
+      },
+    ]);
+    expect(timeline(chatId)).toHaveLength(2);
+  });
+
+  it("does not treat Pi thinking metadata as a selectable effort", async () => {
+    flags.ompPiAgents = true;
+    const { chatId, emit } = await startChat([], "test/model", "pi");
+
+    emit({
+      kind: "sessionUpdated",
+      providerSessionId: null,
+      sessionFile: null,
+      title: null,
+      model: null,
+      thinkingLevel: "high",
+    });
+
+    expect(agentChat(chatId)?.effort).toBeNull();
   });
 
   it("ignores blank thinking final events", async () => {
@@ -527,6 +596,29 @@ describe("agentChat store reducer", () => {
     expect(timeline(failedChat.chatId)).toEqual([]);
   });
 
+  it("replaces accumulated Pi tool updates instead of appending them", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "toolUse",
+      itemId: "pi-tool-1",
+      name: "write",
+      status: "inProgress",
+      detail: "a",
+    });
+    emit({
+      kind: "toolUse",
+      itemId: "pi-tool-1",
+      name: "write",
+      status: "inProgress",
+      detail: "ab",
+    });
+
+    expect(timeline(chatId)).toMatchObject([
+      { type: "toolUse", itemId: "pi-tool-1", name: "write", detail: "ab" },
+    ]);
+  });
+
   it("stores approval requests and clears them on turn done", async () => {
     const { chatId, emit } = await startChat();
     const detail = JSON.stringify({
@@ -625,6 +717,25 @@ describe("agentChat store reducer", () => {
     await expect(
       approveAgentRequest(chatId, "stale-v1-approval", "accept"),
     ).rejects.toThrow("v2 agent engine");
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_approve")).toBe(false);
+  });
+
+  it("rejects Pi approval actions before IPC", async () => {
+    const chatId = nextChatId();
+    flags.ompPiAgents = true;
+    mockInvoke(historyFromEvents([{
+      kind: "approvalRequest",
+      approvalId: "not-a-pi-protocol-event",
+      approvalKind: "toolUse",
+      detail: "must never be actionable",
+    }]));
+
+    await ensureAgentChat(chatId, "/project", "pi", "test/model", { engine: "v2" });
+
+    expect(agentChat(chatId)?.approvals).toEqual([]);
+    await expect(
+      approveAgentRequest(chatId, "not-a-pi-protocol-event", "accept"),
+    ).rejects.toThrow("no native approval protocol");
     expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_approve")).toBe(false);
   });
 

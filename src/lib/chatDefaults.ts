@@ -1,4 +1,7 @@
 import {
+  NATIVE_AGENT_BACKENDS,
+  type AgentBackendDescriptor,
+  isAgentBackendId,
   isNativeAgentProvider,
   type AgentEngine,
   type AgentProvider,
@@ -36,6 +39,19 @@ export function loadAgentEngine(): AgentEngine {
 
 export function setAgentEngine(engine: AgentEngine) {
   localStorage.setItem(ENGINE_KEY, engine);
+}
+
+export function selectableLastAgentProvider(
+  selectable: readonly AgentBackendDescriptor[] = NATIVE_AGENT_BACKENDS,
+): AgentProvider {
+  const selectableIds = new Set(selectable.map((backend) => backend.id));
+  try {
+    const value = localStorage.getItem(PROVIDER_KEY);
+    if (value && isAgentBackendId(value) && selectableIds.has(value)) return value;
+  } catch {
+    // fall through to default
+  }
+  return "claudeCode";
 }
 
 export function loadLastAgentProvider(): AgentProvider {

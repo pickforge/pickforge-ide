@@ -175,7 +175,7 @@ describe("agent backend capability registry", () => {
       .toContain("Agent SDK");
   });
 
-  it("gates the OMP native predicate without adding it to ungated lists", async () => {
+  it("gates OMP and Pi native predicates without adding them to ungated lists", async () => {
     const { backends } = await loadBackends();
 
     expect(backends.normalizeAgentProvider("claude")).toBe("claudeCode");
@@ -184,8 +184,11 @@ describe("agent backend capability registry", () => {
     expect(backends.normalizeAgentProvider("omp")).toBe("omp");
     expect(backends.normalizeAgentProvider("pi")).toBeNull();
     expect(backends.isNativeAgentProvider("omp")).toBe(false);
+    expect(backends.isNativeAgentProvider("pi")).toBe(false);
     rollout.ompPiAgents = true;
     expect(backends.isNativeAgentProvider("omp")).toBe(true);
+    expect(backends.isNativeAgentProvider("pi")).toBe(true);
+    expect(backends.normalizeAgentProvider("pi")).toBe("pi");
     expect(backends.NATIVE_AGENT_BACKENDS.map(({ id }) => id)).toEqual(["claudeCode", "codex"]);
   });
 
@@ -247,16 +250,52 @@ describe("agent backend capability registry", () => {
     });
   });
 
-  it("keeps Pi RPC terminal-only until its connector lands", async () => {
+  it("registers version-gated Pi RPC with honest unsupported capabilities", async () => {
     const { backends } = await loadBackends();
     const pi = backends.AGENT_BACKENDS.pi;
 
-    expect(pi.protocol).toEqual({ kind: "rpc", availability: "availableNotIntegrated" });
-    expect(backends.isNativeAgentProvider("pi")).toBe(false);
-    expect(backends.supportsBackendCapability("pi", "nativeChat")).toBe(false);
-    expect(backends.nativeChatUnavailableReason("pi")).toContain("not integrated yet");
-    expect(backends.supportsBackendCapability("pi", "terminal", "terminal")).toBe(true);
-    expect(pi.capabilities.imageInput.support).toBe("unknown");
-    expect(pi.capabilities.mcpConfiguration.support).toBe("unsupported");
+    expect(pi.protocol).toEqual({ kind: "rpc", availability: "integrated" });
+    expect(backends.supportsBackendCapability("pi", "nativeChat", "nativeChat", "v1"))
+      .toBe(false);
+    expect(backends.supportsBackendCapability("pi", "nativeChat", "nativeChat", "v2"))
+      .toBe(true);
+    expect(backends.supportsBackendCapability("pi", "steerTurn")).toBe(true);
+    expect(backends.supportsBackendCapability("pi", "approvalEvents")).toBe(false);
+    expect(backends.backendCapabilityReason("pi", "approvalEvents")).toContain("no native approval");
+    expect(backends.supportsBackendCapability("pi", "mcpConfiguration")).toBe(false);
+    expect(backends.backendCapabilityReason("pi", "mcpConfiguration"))
+      .toContain("load the user's installed extensions and tools");
+    for (const capability of [
+      "imageInput",
+      "effortSelection",
+      "effortSwitching",
+      "titleEvents",
+      "remoteExecution",
+    ] as const) {
+      expect(backends.supportsBackendCapability("pi", capability)).toBe(false);
+      expect(backends.backendCapabilityReason("pi", capability)).not.toBeNull();
+    }
+    expect(pi.controls.effort).toEqual({
+      v1: "unsupported",
+      v2: "unsupported",
+    });
+    expect(pi.nativePayload.effort).toBe("unsupported");
+    expect(pi.lifecycle).toEqual({
+      start: { v1: "unsupported", v2: "residentRpc" },
+      close: { v1: "unsupported", v2: "closeRpcProcess" },
+      resume: { v1: "unsupported", v2: "providerSessionId" },
+      remote: "unknown",
+    });
+
+    expect(backends.selectableNativeAgentBackends(false, "0.79.10").map((item) => item.id))
+      .toEqual(["claudeCode", "codex"]);
+    expect(backends.selectableNativeAgentBackends(true, "0.79.9").map((item) => item.id))
+      .toEqual(["claudeCode", "codex"]);
+    expect(backends.selectableNativeAgentBackends(true, "0.80.0").map((item) => item.id))
+      .toEqual(["claudeCode", "codex"]);
+    expect(backends.selectableNativeAgentBackends(true, "0.79.10").map((item) => item.id))
+      .toEqual(["claudeCode", "codex", "pi"]);
+    expect(backends.selectableNativeAgentBackends(true, "v0.79.99").map((item) => item.id))
+      .toEqual(["claudeCode", "codex", "pi"]);
   });
 });

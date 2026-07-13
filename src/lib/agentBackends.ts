@@ -2,8 +2,8 @@ import { flagEnabled } from "../stores/flags";
 
 export type AgentEngine = "v1" | "v2";
 export type AgentBackendId = "claudeCode" | "codex" | "omp" | "pi";
-export type AgentProvider = "claudeCode" | "codex" | "omp";
-export type AgentBackendKind = "claudeAgentSdk" | "codexAppServer" | "ompAcp" | "terminal";
+export type AgentProvider = "claudeCode" | "codex" | "omp" | "pi";
+export type AgentBackendKind = "claudeAgentSdk" | "codexAppServer" | "ompAcp" | "piRpc" | "terminal";
 export type AgentBackendProtocol = "native" | "acp" | "rpc";
 export type AgentProtocolAvailability = "integrated" | "availableNotIntegrated";
 export type AgentCapabilitySupport = "supported" | "unsupported" | "unknown";
@@ -77,13 +77,23 @@ export interface AgentBackendDescriptor {
     start: Readonly<
       Record<
         AgentEngine,
-        "oneShotProcess" | "residentBridgeChat" | "appServerThread" | "acpSession" | "unsupported"
+        | "oneShotProcess"
+        | "residentBridgeChat"
+        | "appServerThread"
+        | "acpSession"
+        | "residentRpc"
+        | "unsupported"
       >
     >;
     close: Readonly<
       Record<
         AgentEngine,
-        "killActiveProcess" | "closeBridgeChat" | "unsubscribeThread" | "closeAcpSession" | "unsupported"
+        | "killActiveProcess"
+        | "closeBridgeChat"
+        | "unsubscribeThread"
+        | "closeAcpSession"
+        | "closeRpcProcess"
+        | "unsupported"
       >
     >;
     resume: Readonly<Record<AgentEngine, "providerSessionId" | "unsupported">>;
@@ -144,11 +154,8 @@ function unsupported(reason: string): AgentBackendCapability {
   return capability("unsupported", NO_SURFACES, NO_ENGINES, reason);
 }
 
-function unknown(reason: string): AgentBackendCapability {
-  return capability("unknown", NO_SURFACES, NO_ENGINES, reason);
-}
 
-const NO_NATIVE_PI = "Pi native chat is not integrated yet; use its terminal profile";
+
 const NO_CLAUDE_STEER = "Claude Code steering is unavailable until the Agent SDK exposes it";
 const NO_CLAUDE_EFFORT_SWITCH = "Changing Claude effort requires starting a new session";
 const NO_SESSION_MCP = "PickForge does not pass per-session MCP configuration to this native backend";
@@ -308,46 +315,52 @@ const OMP_CAPABILITIES = Object.freeze({
   processCleanup: OMP_NATIVE,
 } satisfies AgentBackendCapabilityMatrix);
 
-function terminalOnlyCapabilities(nativeReason: string, mcpReason: string): AgentBackendCapabilityMatrix {
-  const noNative = unsupported(nativeReason);
-  return Object.freeze({
-    nativeChat: noNative,
-    terminal: TERMINAL,
-    startSession: noNative,
-    streamEvents: noNative,
-    sessionEvents: noNative,
-    interruptTurn: noNative,
-    closeSession: noNative,
-    resumeSession: noNative,
-    steerTurn: noNative,
-    textInput: TERMINAL,
-    imageInput: unknown("Structured image input has not been characterized for this terminal profile"),
-    modelSelection: TERMINAL,
-    modelSwitching: unsupported("Changing models requires starting a new terminal process"),
-    effortSelection: unknown("PickForge has not characterized terminal effort selection for this agent"),
-    effortSwitching: unknown("PickForge has not characterized terminal effort switching for this agent"),
-    modeSelection: unknown("PickForge has not characterized terminal mode selection for this agent"),
-    modeSwitching: unknown("PickForge has not characterized terminal mode switching for this agent"),
-    planEvents: noNative,
-    toolEvents: noNative,
-    fileEvents: noNative,
-    approvalEvents: noNative,
-    mcpConfiguration: unsupported(mcpReason),
-    usageReporting: noNative,
-    contextReporting: noNative,
-    rateLimitReporting: noNative,
-    titleEvents: noNative,
-    authDiscovery: noNative,
-    remoteExecution: unknown("Remote terminal support depends on the configured host environment"),
-    errorEvents: noNative,
-    processCleanup: noNative,
-  } satisfies AgentBackendCapabilityMatrix);
-}
 
-const PI_CAPABILITIES = terminalOnlyCapabilities(
-  NO_NATIVE_PI,
-  "PickForge does not configure MCP for Pi terminal launches in this release",
-);
+const PI_CAPABILITIES = Object.freeze({
+  nativeChat: NATIVE_V2,
+  terminal: TERMINAL,
+  startSession: NATIVE_V2,
+  streamEvents: NATIVE_V2,
+  sessionEvents: NATIVE_V2,
+  interruptTurn: NATIVE_V2,
+  closeSession: NATIVE_V2,
+  resumeSession: NATIVE_V2,
+  steerTurn: NATIVE_V2,
+  textInput: BOTH,
+  imageInput: unsupported("PickForge does not translate stashed image paths to Pi RPC image payloads"),
+  modelSelection: BOTH,
+  modelSwitching: NATIVE_V2,
+  effortSelection: unsupported(
+    "PickForge does not expose Pi thinking-level selection or live switching in this release",
+  ),
+  effortSwitching: unsupported(
+    "PickForge does not expose Pi thinking-level selection or live switching in this release",
+  ),
+  modeSelection: unsupported("Pi RPC exposes thinking level, not a native sandbox or approval mode"),
+  modeSwitching: unsupported("Pi RPC exposes thinking level, not a native sandbox or approval mode"),
+  planEvents: unsupported("Pi RPC 0.79.10 does not emit typed plan or todo events"),
+  toolEvents: NATIVE_V2,
+  fileEvents: capability(
+    "supported",
+    NATIVE_SURFACE,
+    V2_ENGINE,
+    "File activity is inferred from successful mutating tool arguments; Pi has no typed file event",
+  ),
+  approvalEvents: unsupported("Pi RPC 0.79.10 has no native approval protocol"),
+  mcpConfiguration: unsupported(
+    "PickForge does not inject per-session MCP configuration; native Pi sessions still load the user's installed extensions and tools",
+  ),
+  usageReporting: NATIVE_V2,
+  contextReporting: unsupported("Pi context usage requires explicit session-stat polling"),
+  rateLimitReporting: unsupported("Pi RPC 0.79.10 does not emit rate-limit events"),
+  titleEvents: unsupported(
+    "Pi session names are not connected to durable PickForge chat title ownership",
+  ),
+  authDiscovery: unsupported("Pi authentication is owned by provider configuration outside RPC"),
+  remoteExecution: unsupported("PickForge Pi RPC is a local process-group connector"),
+  errorEvents: NATIVE_V2,
+  processCleanup: NATIVE_V2,
+} satisfies AgentBackendCapabilityMatrix);
 
 const CLAUDE_BACKEND = Object.freeze({
   id: "claudeCode",
@@ -418,23 +431,23 @@ const OMP_BACKEND = Object.freeze({
 const PI_BACKEND = Object.freeze({
   id: "pi",
   label: "Pi",
-  backendKind: "terminal",
-  protocol: Object.freeze({ kind: "rpc", availability: "availableNotIntegrated" }),
+  backendKind: "piRpc",
+  protocol: Object.freeze({ kind: "rpc", availability: "integrated" }),
   capabilities: PI_CAPABILITIES,
   lifecycle: frozenLifecycle(
-    { v1: "unsupported", v2: "unsupported" },
-    { v1: "unsupported", v2: "unsupported" },
-    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unsupported", v2: "residentRpc" },
+    { v1: "unsupported", v2: "closeRpcProcess" },
+    { v1: "unsupported", v2: "providerSessionId" },
     "unknown",
   ),
   controls: frozenControls(
+    { v1: "unsupported", v2: "liveSession" },
     { v1: "unsupported", v2: "unsupported" },
-    { v1: "unknown", v2: "unknown" },
-    { v1: "unknown", v2: "unknown" },
+    { v1: "unsupported", v2: "unsupported" },
   ),
-  nativePayload: frozenPayload("unsupported", "unsupported", "unsupported"),
+  nativePayload: frozenPayload("sessionState", "unsupported", "unsupported"),
   effortDefaultSource: "unknown",
-  modeControlLabel: "Mode",
+  modeControlLabel: "Thinking level",
 } satisfies AgentBackendDescriptor);
 
 export const AGENT_BACKENDS = Object.freeze({
@@ -447,6 +460,23 @@ export const AGENT_BACKENDS = Object.freeze({
 const AGENT_BACKEND_IDS = new Set<string>(Object.keys(AGENT_BACKENDS));
 export const NATIVE_AGENT_BACKENDS = Object.freeze([CLAUDE_BACKEND, CODEX_BACKEND]);
 
+export function isCompatiblePiRpcVersion(version: string | null | undefined): boolean {
+  if (!version) return false;
+  const match = version.trim().match(/^v?(0)\.(79)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/);
+  return match !== null && Number(match[3]) >= 10;
+}
+
+/** Pi is selectable only after the default-off rollout flag and the installed
+ * version gate both pass. Claude/Codex remain unchanged. */
+export function selectableNativeAgentBackends(
+  ompPiEnabled: boolean,
+  piVersion: string | null | undefined,
+): readonly AgentBackendDescriptor[] {
+  return ompPiEnabled && isCompatiblePiRpcVersion(piVersion)
+    ? Object.freeze([...NATIVE_AGENT_BACKENDS, PI_BACKEND])
+    : NATIVE_AGENT_BACKENDS;
+}
+
 export function isAgentBackendId(value: string): value is AgentBackendId {
   return AGENT_BACKEND_IDS.has(value);
 }
@@ -456,7 +486,7 @@ export function isAgentBackendId(value: string): value is AgentBackendId {
 export function isNativeAgentProvider(value: string): value is AgentProvider {
   return value === "claudeCode"
     || value === "codex"
-    || (value === "omp" && flagEnabled("ompPiAgents"));
+    || ((value === "omp" || value === "pi") && flagEnabled("ompPiAgents"));
 }
 
 export function normalizeAgentProvider(value: string): AgentProvider | null {

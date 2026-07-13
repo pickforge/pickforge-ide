@@ -5,6 +5,7 @@ pub mod codex_exec;
 pub mod event;
 pub mod omp_acp;
 pub mod manager;
+pub mod pi_rpc;
 pub mod remote_exec;
 pub mod skills;
 

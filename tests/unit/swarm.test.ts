@@ -101,6 +101,11 @@ vi.mock("../../src/lib/agentModels", () => ({
   loadAgentModels: deps.loadAgentModels,
   modelOption: deps.modelOption,
   ompNativeChatAvailable: vi.fn(() => false),
+  piNativeChatAvailable: vi.fn(() => true),
+}));
+vi.mock("../../src/stores/flags", () => ({
+  flagEnabled: (key: string) => key === "ompPiAgents",
+  subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 vi.mock("../../src/lib/chatDefaults", () => ({ loadAgentEngine: deps.loadAgentEngine }));
 vi.mock("../../src/stores/agentChat", () => ({
@@ -261,17 +266,14 @@ describe("swarm dispatch", () => {
     expect(last?.error).toContain("mystery-9");
   });
 
-  it.each([
-    ["omp", "OMP"],
-    ["pi", "Pi"],
-  ])("fails terminal-only %s origin synthesis without a native send", async (agentId, label) => {
-    const originChatId = `chat-${agentId}`;
+  it("fails terminal-only OMP origin synthesis without a native send", async () => {
+    const originChatId = "chat-omp";
     deps.chats.set(originChatId, {
       chatId: originChatId,
       projectRoot: "/project",
-      title: `${label} terminal chat`,
+      title: "OMP terminal chat",
       kind: "agent",
-      agentId,
+      agentId: "omp",
       labelsJson: null,
     });
     const { startSwarm, dispatchSynthesis, swarmRuns } = await loadSwarmStore();
@@ -299,10 +301,54 @@ describe("swarm dispatch", () => {
       runId: completed.runId,
       synthesisStatus: "failed",
       synthesisError: expect.stringContaining(
-        agentId === "omp"
-          ? "requires the ompPiAgents flag and compatible OMP 16.4.8 probe"
-          : `${label} native chat is not integrated yet`,
+        "requires the ompPiAgents flag and compatible OMP 16.4.8 probe",
       ),
+    });
+  });
+
+  it("synthesizes completed swarms for native Pi origins", async () => {
+    const originChatId = "chat-pi";
+    deps.chats.set(originChatId, {
+      chatId: originChatId,
+      projectRoot: "/project",
+      title: "Pi native chat",
+      kind: "agent",
+      agentId: "pi",
+      labelsJson: null,
+    });
+    const { startSwarm, dispatchSynthesis, swarmRuns } = await loadSwarmStore();
+    await startSwarm("/project", "summarize terminal results", {
+      count: 1,
+      providerPreference: "codex",
+      originChatId,
+    });
+    const running = swarmRuns()[0];
+    const completed: SwarmRunSnapshot = {
+      ...running,
+      status: "completed",
+      lanes: running.lanes.map((lane) => ({
+        ...lane,
+        status: "completed",
+        summary: "Worker result.",
+      })),
+    };
+    deps.sendAgentMessage.mockClear();
+
+    await dispatchSynthesis(completed);
+
+    expect(deps.sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(deps.sendAgentMessage).toHaveBeenCalledWith(
+      originChatId,
+      expect.stringContaining("summarize terminal results"),
+      [],
+      { hidden: true },
+    );
+    expect(deps.sendAgentMessage.mock.calls[0][1]).toContain("Worker result.");
+    expect(updatedRuns().at(-1)).toMatchObject({
+      runId: completed.runId,
+      synthesisStatus: "sent",
+      synthesisError: null,
+      synthesizedAt: expect.any(Number),
     });
   });
 

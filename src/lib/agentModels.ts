@@ -4,7 +4,11 @@ import { createSignal } from "solid-js";
 // localStorage (global, like the Flutter SharedPreferences store).
 import { flagEnabled } from "../stores/flags";
 import { probeAgentCli, type AgentCliProbe } from "./process";
-import { AGENT_BACKENDS, isNativeAgentProvider } from "./agentBackends";
+import {
+  AGENT_BACKENDS,
+  isCompatiblePiRpcVersion,
+  isNativeAgentProvider,
+} from "./agentBackends";
 
 export interface AgentModelOption {
   id: string;
@@ -162,6 +166,9 @@ export const SUPPORTED_OMP_ACP_VERSION = "16.4.8";
 export type OmpNativeCompatibility = "unprobed" | "probing" | "compatible" | "incompatible";
 const [ompNativeCompatibility, setOmpNativeCompatibility] =
   createSignal<OmpNativeCompatibility>("unprobed");
+export type PiNativeCompatibility = "unprobed" | "probing" | "compatible" | "incompatible";
+const [piNativeCompatibility, setPiNativeCompatibility] =
+  createSignal<PiNativeCompatibility>("unprobed");
 
 export function isCompatibleOmpAcpProbe(probe: AgentCliDiagnostic): boolean {
   return probe.agentId === "omp"
@@ -174,6 +181,15 @@ export function recordAgentCliDiagnostic(diagnostic: AgentCliDiagnostic) {
   if (diagnostic.agentId === "omp") {
     setOmpNativeCompatibility(
       isCompatibleOmpAcpProbe(diagnostic) ? "compatible" : "incompatible",
+    );
+  }
+  if (diagnostic.agentId === "pi") {
+    setPiNativeCompatibility(
+      diagnostic.installed
+        && isCompatiblePiRpcVersion(diagnostic.version)
+        && diagnostic.capabilities.nativeChat
+        ? "compatible"
+        : "incompatible",
     );
   }
 }
@@ -216,22 +232,68 @@ export function ensureOmpNativeCompatibility(force = false): Promise<boolean> {
   return ompCompatibilityProbe;
 }
 
-export function nativeAgentProfiles(): Array<AgentProfile & { id: "claudeCode" | "codex" | "omp" }> {
+export function piNativeChatAvailable(): boolean {
+  return flagEnabled("ompPiAgents") && piNativeCompatibility() === "compatible";
+}
+
+export function piNativeChatUnavailableReason(): string | null {
+  if (!flagEnabled("ompPiAgents")) {
+    return "Pi native chat is disabled by the ompPiAgents rollout flag";
+  }
+  switch (piNativeCompatibility()) {
+    case "compatible":
+      return null;
+    case "incompatible":
+      return "Pi native chat requires an installed, compatible Pi >=0.79.10 and <0.80.0";
+    case "unprobed":
+    case "probing":
+      return "Checking for compatible Pi >=0.79.10 and <0.80.0";
+  }
+}
+
+let piCompatibilityProbe: Promise<boolean> | null = null;
+
+export function ensurePiNativeCompatibility(force = false): Promise<boolean> {
+  if (!flagEnabled("ompPiAgents")) return Promise.resolve(false);
+  if (!force && piNativeCompatibility() === "compatible") return Promise.resolve(true);
+  if (!force && piCompatibilityProbe) return piCompatibilityProbe;
+  setPiNativeCompatibility("probing");
+  piCompatibilityProbe = discoverAgentCli("pi")
+    .then((diagnostic) => (
+      diagnostic.installed
+      && isCompatiblePiRpcVersion(diagnostic.version)
+      && diagnostic.capabilities.nativeChat
+    ))
+    .catch(() => {
+      setPiNativeCompatibility("incompatible");
+      return false;
+    })
+    .finally(() => {
+      piCompatibilityProbe = null;
+    });
+  return piCompatibilityProbe;
+}
+
+export type NativeAgentProfile = AgentProfile & {
+  id: "claudeCode" | "codex" | "omp" | "pi";
+};
+
+export function nativeAgentProfiles(): NativeAgentProfile[] {
   return agentProfiles().filter(
-    (agent): agent is AgentProfile & { id: "claudeCode" | "codex" | "omp" } =>
-      isNativeAgentProvider(agent.id) && (agent.id !== "omp" || ompNativeChatAvailable()),
+    (agent): agent is NativeAgentProfile =>
+      isNativeAgentProvider(agent.id)
+      && (agent.id !== "omp" || ompNativeChatAvailable())
+      && (agent.id !== "pi" || piNativeChatAvailable()),
   );
 }
 
-export function nativeAgentProfile(
-  provider: string,
-): (AgentProfile & { id: "claudeCode" | "codex" | "omp" }) | null {
+export function nativeAgentProfile(provider: string): NativeAgentProfile | null {
   return nativeAgentProfiles().find((profile) => profile.id === provider) ?? null;
 }
 
 export function defaultNativeAgentProvider(
   preferred: string,
-): "claudeCode" | "codex" | "omp" {
+): NativeAgentProfile["id"] {
   return nativeAgentProfile(preferred)?.id ?? nativeAgentProfiles()[0].id;
 }
 
@@ -243,6 +305,14 @@ function uniqueModels(models: AgentModelOption[]): AgentModelOption[] {
     seen.add(model.id);
     return true;
   });
+}
+
+/** Attach a probe-owned catalog to the profile rendered by reactive pickers. */
+export function profileWithDiscoveredModels<T extends AgentProfile>(
+  profile: T,
+  models: AgentModelOption[],
+): T {
+  return { ...profile, models: uniqueModels(models) };
 }
 
 
@@ -264,7 +334,6 @@ export function parsePiModelCatalog(raw: string): AgentModelOption[] {
     models.push({
       id: `${provider}/${model}`,
       label: `${model} · ${provider}`,
-      terminalOnly: true,
     });
   }
   if (models.length === 0 && raw.trim()) {
@@ -312,12 +381,15 @@ export function diagnosticFromProbe(
       dynamicModels: installed && models.length > 0,
       profiles: installed && /--profile(?:=|\s|<)/.test(help),
       providerSelection: installed && /--provider(?:=|\s|<)/.test(help),
-      nativeChat: agentId === "omp"
-        && installed
-        && version === SUPPORTED_OMP_ACP_VERSION
+      nativeChat: installed
         && probe.errors.length === 0
-        && /\bacp\b/.test(help)
-        && /--no-extensions(?:\s|$|,)/.test(help),
+        && (
+          (agentId === "omp"
+            && version === SUPPORTED_OMP_ACP_VERSION
+            && /\bacp\b/.test(help)
+            && /--no-extensions(?:\s|$|,)/.test(help))
+          || (agentId === "pi" && isCompatiblePiRpcVersion(version))
+        ),
     },
     errors,
   };

@@ -56,6 +56,7 @@ describe("modeOverrides", () => {
       sandbox: "workspace-write",
       approvalPolicy: "on-request",
     });
+    expect(modeOverrides("pi", null)).toEqual({});
   });
 });
 
@@ -67,15 +68,17 @@ describe("isDangerMode", () => {
     expect(isDangerMode("codex", "read-only")).toBe(false);
     expect(isDangerMode("claudeCode", null)).toBe(false);
     expect(isDangerMode("omp", "plan")).toBe(false);
+    expect(isDangerMode("pi", null)).toBe(false);
   });
 });
 
 describe("loadAgentModes / setAgentMode", () => {
   it("returns provider defaults when nothing is stored", () => {
-    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto", omp: "default" });
+    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto", omp: "default", pi: "" });
     expect(defaultMode("claudeCode")).toBe("default");
     expect(defaultMode("codex")).toBe("auto");
     expect(defaultMode("omp")).toBe("default");
+    expect(defaultMode("pi")).toBe("");
   });
 
   it("round-trips a persisted mode", () => {
@@ -85,16 +88,17 @@ describe("loadAgentModes / setAgentMode", () => {
       claudeCode: "plan",
       codex: "read-only",
       omp: "default",
+      pi: "",
     });
   });
 
   it("drops invalid stored values back to the default", () => {
     store.set("pickforge.agentModes", JSON.stringify({ codex: "bogus", claudeCode: "plan" }));
-    expect(loadAgentModes()).toEqual({ claudeCode: "plan", codex: "auto", omp: "default" });
+    expect(loadAgentModes()).toEqual({ claudeCode: "plan", codex: "auto", omp: "default", pi: "" });
   });
 
   it("falls back to defaults on malformed json", () => {
     store.set("pickforge.agentModes", "{not json");
-    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto", omp: "default" });
+    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto", omp: "default", pi: "" });
   });
 });

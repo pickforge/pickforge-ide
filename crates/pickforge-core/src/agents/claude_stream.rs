@@ -133,6 +133,7 @@ impl ClaudeStreamParser {
             Some("thinking_delta") => string_at(delta, "thinking")
                 .map(|text| {
                     vec![AgentEvent::ThinkingDelta {
+                        item_id: None,
                         text: text.to_string(),
                     }]
                 })
@@ -140,6 +141,7 @@ impl ClaudeStreamParser {
             Some("text_delta") => string_at(delta, "text")
                 .map(|text| {
                     vec![AgentEvent::TextDelta {
+                        item_id: None,
                         text: text.to_string(),
                     }]
                 })

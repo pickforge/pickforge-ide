@@ -29,6 +29,9 @@ pub fn list_agent_skills(provider: AgentProvider) -> Vec<AgentSkill> {
             list_codex_skills_from_home(&codex_home)
         }
         AgentProvider::Omp => Vec::new(),
+        // Pi commands are session-scoped RPC data. Do not scan global Pi
+        // configuration or extensions from this credential-free helper.
+        AgentProvider::Pi => Vec::new(),
     }
 }
 
@@ -44,6 +47,7 @@ pub fn list_agent_skills_from_home(provider: AgentProvider, home: &Path) -> Vec<
             scan_codex_prompt_dir(&home.join(".codex").join("prompts"), &mut skills);
         }
         AgentProvider::Omp => {}
+        AgentProvider::Pi => {}
     }
     dedupe_and_sort(skills)
 }

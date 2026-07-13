@@ -11,7 +11,13 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { modelOption, nativeAgentProfiles } from "../../lib/agentModels";
+import {
+  type AgentProfile,
+  discoverAgentCli,
+  modelOption,
+  nativeAgentProfiles,
+  profileWithDiscoveredModels,
+} from "../../lib/agentModels";
 import {
   type AgentProvider,
   type AgentSkill,
@@ -28,6 +34,7 @@ import {
   isNativeAgentProvider,
   type AgentEngine,
 } from "../../lib/agentBackends";
+import { flagEnabled } from "../../stores/flags";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import {
   type ComposerAttachment,
@@ -72,6 +79,7 @@ import {
   IconIngot,
   IconOpenAI,
   IconShield,
+  IconTerminal,
 } from "../icons";
 import { Spinner } from "../ui";
 import { openLightbox } from "./ImageLightbox";
@@ -81,6 +89,7 @@ const PROVIDER_ICON: Record<AgentProvider, () => JSX.Element> = {
   claudeCode: () => <IconClaude size={13} />,
   codex: () => <IconOpenAI size={13} />,
   omp: () => <IconIngot size={13} />,
+  pi: () => <IconTerminal size={13} />,
 };
 
 const EFFORT_LABELS: Record<string, string> = {
@@ -167,8 +176,8 @@ function readBase64(file: File): Promise<string> {
   });
 }
 
-function modelsFor(provider: AgentProvider) {
-  return nativeAgentProfiles()
+function modelsFor(profiles: AgentProfile[], provider: AgentProvider) {
+  return profiles
     .find((agent) => agent.id === provider)
     ?.models.filter((model) => !model.terminalOnly) ?? [];
 }
@@ -199,6 +208,18 @@ export function Composer(props: {
   meter?: JSX.Element;
 }): JSX.Element {
   const [text, setText] = createSignal("");
+  const [piModels, setPiModels] = createSignal<AgentProfile["models"]>([]);
+  const providers = createMemo(() =>
+    nativeAgentProfiles().map((profile) =>
+      profile.id === "pi" ? profileWithDiscoveredModels(profile, piModels()) : profile
+    )
+  );
+  onMount(() => {
+    if (!flagEnabled("ompPiAgents")) return;
+    void discoverAgentCli("pi")
+      .then((diagnostic) => setPiModels(diagnostic.models))
+      .catch(() => undefined);
+  });
   const [dismissed, setDismissed] = createSignal(false);
   const [selected, setSelected] = createSignal(0);
   const [skills, setSkills] = createSignal<AgentSkill[]>([]);
@@ -462,7 +483,7 @@ export function Composer(props: {
     }));
 
   const modelDropdownOptions = (): DropdownOption[] =>
-    modelsFor(props.provider).map((m) => ({
+    modelsFor(providers(), props.provider).map((m) => ({
       value: m.id,
       label: m.label,
       icon: () => <IconIngot size={13} />,
@@ -1175,7 +1196,11 @@ export function Composer(props: {
         <Dropdown
           class="pf-chat-dd"
           up
-          disabled={props.turnActive || preparing() || modelsFor(props.provider).length === 0}
+          disabled={
+            props.turnActive
+            || preparing()
+            || modelsFor(providers(), props.provider).length === 0
+          }
           value={props.model ?? ""}
           onChange={(value) => props.onModelChange?.(value || null)}
           options={modelDropdownOptions()}

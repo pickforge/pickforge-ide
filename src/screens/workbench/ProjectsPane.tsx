@@ -100,6 +100,7 @@ const AGENT_CHAT_MARKS: Record<string, string> = {
   claudeCode: "CC",
   codex: "CX",
   omp: "OM",
+  pi: "PI",
 };
 const agentChatMark = (agentId: string): string =>
   AGENT_CHAT_MARKS[normalizeAgentProvider(agentId) ?? agentId] ?? "AI";

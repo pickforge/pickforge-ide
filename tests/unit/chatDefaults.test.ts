@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AGENT_BACKENDS } from "../../src/lib/agentBackends";
 
 const mem = vi.hoisted(() => {
   const m = new Map<string, string>();
@@ -17,6 +18,7 @@ import {
   loadAgentEngine,
   loadDefaultChatKind,
   loadLastAgentProvider,
+  selectableLastAgentProvider,
   setAgentEngine,
   setDefaultChatKind,
   setLastAgentProvider,
@@ -79,5 +81,11 @@ describe("last agent provider", () => {
   it("falls back to claudeCode on a bogus stored value", () => {
     localStorage.setItem("pickforge.lastAgentProvider", "gemini");
     expect(loadLastAgentProvider()).toBe("claudeCode");
+  });
+
+  it("rejects a stale Pi default when the compatible registry excludes it", () => {
+    setLastAgentProvider("pi");
+    expect(selectableLastAgentProvider([])).toBe("claudeCode");
+    expect(selectableLastAgentProvider([AGENT_BACKENDS.pi])).toBe("pi");
   });
 });

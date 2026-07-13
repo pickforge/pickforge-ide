@@ -1267,7 +1267,7 @@ done
             .any(|event| *event == AgentEvent::TurnStarted));
         assert!(snapshot
             .iter()
-            .any(|event| matches!(event, AgentEvent::TextDelta { text } if text == "hi")));
+            .any(|event| matches!(event, AgentEvent::TextDelta { text, .. } if text == "hi")));
         assert!(snapshot.iter().any(|event| {
             matches!(
                 event,

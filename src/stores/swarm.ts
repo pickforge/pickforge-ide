@@ -14,7 +14,12 @@ import {
   type SwarmRequest,
   type SwarmRunSnapshot,
 } from "../lib/mcp";
-import { loadAgentModels, modelOption, ompNativeChatAvailable } from "../lib/agentModels";
+import {
+  loadAgentModels,
+  modelOption,
+  ompNativeChatAvailable,
+  piNativeChatAvailable,
+} from "../lib/agentModels";
 import { swarmWorkerLabels } from "../lib/chatLabels";
 import { SWARM_SYNTHESIS_PROMPT_PREFIX } from "../lib/swarmSynthesis";
 import { ensureAgentChat, agentChat, sendAgentMessage } from "./agentChat";
@@ -171,12 +176,14 @@ const MODEL_ALIASES: Readonly<
     { terms: ["spark"], model: "gpt-5.3-codex-spark" },
   ]),
   omp: Object.freeze([]),
+  pi: Object.freeze([]),
 });
 
 const READ_ONLY_MODE: Readonly<Record<AgentProvider, string>> = Object.freeze({
   claudeCode: "plan",
   codex: "read-only",
   omp: "plan",
+  pi: "",
 });
 
 function providersFor(
@@ -485,6 +492,14 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
     updateRun(run.runId, {
       synthesisStatus: "failed",
       synthesisError: "OMP native chat requires the ompPiAgents flag and compatible OMP 16.4.8 probe.",
+    });
+    return;
+  }
+  if (provider === "pi" && !piNativeChatAvailable()) {
+    updateRun(run.runId, {
+      synthesisStatus: "failed",
+      synthesisError:
+        "Pi native chat requires the ompPiAgents flag and compatible Pi >=0.79.10 and <0.80.0 probe.",
     });
     return;
   }

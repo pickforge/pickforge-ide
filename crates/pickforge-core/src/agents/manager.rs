@@ -618,6 +618,10 @@ impl AgentChatManager {
         model: Option<String>,
         images: Option<Vec<String>>,
     ) -> Result<(), AgentChatError> {
+        let _send_permit = self
+            .start_gate
+            .begin()
+            .map_err(|_| AgentChatError::ShuttingDown)?;
         let effort = non_empty(effort);
         let turn_model = non_empty(model);
         let images = images
@@ -4877,6 +4881,10 @@ exec sleep 5
                 AgentStartOverrides::default(),
                 sink2,
             ),
+            Err(AgentChatError::ShuttingDown)
+        ));
+        assert!(matches!(
+            manager.send(&session_id, "late", None, None, None),
             Err(AgentChatError::ShuttingDown)
         ));
 

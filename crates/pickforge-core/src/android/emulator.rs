@@ -315,7 +315,10 @@ impl EmulatorManager {
                 .provisional
                 .lock()
                 .expect("emulator provisional registry poisoned");
-            provisional.drain().map(|(_, child)| child).collect::<Vec<_>>()
+            provisional
+                .drain()
+                .map(|(_, child)| child)
+                .collect::<Vec<_>>()
         };
         for child in provisional {
             kill_owned_child_now(&child);
@@ -553,13 +556,7 @@ mod tests {
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let pid = {
             let provisional = manager.state.provisional.lock().unwrap();
-            let pid = provisional
-                .values()
-                .next()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .id() as i32;
+            let pid = provisional.values().next().unwrap().lock().unwrap().id() as i32;
             pid
         };
 

@@ -54,11 +54,12 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
+import { normalizeAgentProvider } from "../../lib/agentBackends";
 import {
-  isNativeAgentProvider,
-  normalizeAgentProvider,
-} from "../../lib/agentBackends";
-import { nativeAgentProfiles } from "../../lib/agentModels";
+  defaultNativeAgentProvider,
+  nativeAgentProfile,
+  nativeAgentProfiles,
+} from "../../lib/agentModels";
 import {
   loadAskChatTitle,
   loadDefaultChatKind,
@@ -215,13 +216,16 @@ export function ProjectsPane() {
     void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
   };
   const newAgentChat = (root: string, provider: string, title?: string) => {
-    if (
-      !isNativeAgentProvider(provider)
-      || !nativeAgentProfiles().some((profile) => profile.id === provider)
-    ) return;
+    const availableProvider = nativeAgentProfile(provider);
+    if (!availableProvider) return;
     if (!chatsExpanded(root)) toggleChats(root);
-    setLastAgentProvider(provider);
-    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, provider, root, "agent");
+    setLastAgentProvider(availableProvider.id);
+    void addChat(
+      title?.trim() || DEFAULT_CHAT_TITLE,
+      availableProvider.id,
+      root,
+      "agent",
+    );
   };
   const newChatFromButton = (root: string, e: MouseEvent) => {
     const kind = loadDefaultChatKind();
@@ -233,7 +237,7 @@ export function ProjectsPane() {
     }
     e.stopPropagation();
     if (kind === "terminal") newTerminalChat(root);
-    else newAgentChat(root, loadLastAgentProvider());
+    else newAgentChat(root, defaultNativeAgentProvider(loadLastAgentProvider()));
   };
   const toggleArchivedFor = (root: string) =>
     setShowArchived((s) => {
@@ -468,7 +472,13 @@ export function ProjectsPane() {
     const createDefault = () => {
       const kind = loadDefaultChatKind();
       if (kind === "ask") return;
-      if (kind === "agent") newAgentChat(p.root, loadLastAgentProvider(), title());
+      if (kind === "agent") {
+        newAgentChat(
+          p.root,
+          defaultNativeAgentProvider(loadLastAgentProvider()),
+          title(),
+        );
+      }
       else newTerminalChat(p.root, title());
       closeMenu();
     };

@@ -52,8 +52,10 @@ reset this file.
   chat and terminal surfaces. Claude Code and Codex behavior is unchanged; the
   OMP 16.4.8 ACP connector provides renderer-flagged, exact-probed local v2
   sessions, streaming, exact approvals, identity-keyed scoped MCP grants and
-  canonical cwd reuse, model validation, safe reattach/resume, bounded transport
-  failure recovery, cumulative-context and durable-title events, and process-tree cleanup.
+  canonical cwd reuse, schema-correct exact-ID resume/load, model validation,
+  bounded late-response handling, cumulative-context and durable-title events,
+  and Unix/Windows process-tree cleanup. Platform CI runs the OMP Unix fixture
+  on macOS and the executable Job Object cleanup regression on Windows.
 - OMP ACP launches as `omp acp --no-extensions --approval-mode=always-ask`,
   with no config/yolo overlay. Its cleared child environment restores exactly
   `PATH`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `XDG_CONFIG_HOME`,
@@ -103,8 +105,9 @@ reset this file.
 - `bunx vitest run tests/unit/agentBackends.test.ts tests/unit/agentChat.test.ts tests/unit/agentModels.test.ts tests/unit/agentModes.test.ts tests/unit/chatDefaults.test.ts tests/unit/swarm.test.ts tests/unit/operatorDispatch.test.ts tests/unit/orchestraView.test.ts tests/unit/settingsRegistry.test.ts`
   — 216 focused capability-matrix, exact-probe native-chat parity, control,
   provider, composer-store, swarm, operator, and Settings tests green.
-- `cargo test -p pickforge-core --lib agents::manager::tests:: --locked` — 27
-  focused session lifecycle, capability-gate, approval replay, and dispatch tests green.
+- `cargo test -p pickforge-core --lib agents::manager::tests:: --locked` — 32
+  focused session lifecycle, capability-gate, approval replay, resume-fallback,
+  and dispatch tests green.
 - `bun run build` — frontend type-check and Vite production build clean;
   dynamic-import and chunk-size warnings remain.
 
@@ -124,9 +127,27 @@ reset this file.
   roots: protocol-v1 initialize, session/new, session/close, clean exit 0; no
   prompt, credentials, or model turn.
 
+- `cargo test -p pickforge-core --lib agents::omp_acp::tests:: --locked` — 18
+  focused OMP ACP tests green, including schema-compliant resume/load without a
+  response `sessionId`, exact opaque-ID retention, typed resume fallback
+  boundaries, late/duplicate/unknown response isolation, and Unix process-tree
+  cleanup.
+- `cargo test -p pickforge-core --lib agents::manager::tests::omp_ --locked` —
+  5 focused OMP manager lifecycle tests green, including fresh fallback only
+  for resume/open failure and no fallback after successful resume plus model
+  rejection.
+- `bunx vitest run tests/unit/agentModels.test.ts` — 10 reactive native-provider
+  registry/default fallback tests green.
+- `cargo check -p pickforge-core --locked` and `bun run build` — focused Rust
+  compile, frontend type-check, and production build clean; the existing Vite
+  dynamic-import and chunk-size warnings remain.
+- `.github/workflows/ci.yml` parsed successfully after adding the focused macOS
+  OMP ACP fixture and Windows Job Object cleanup jobs.
+
 ### Not tested yet
 
-- OMP ACP connector smoke on Windows and macOS.
+- OMP ACP runtime smoke and the new platform-specific cleanup tests were not
+  locally exercised on Windows or macOS; their Windows/macOS CI jobs are configured.
 - Windows development OAuth deep-link smoke (no Windows Rust target is installed).
 - Tauri app bundle build.
 - Installer or updater flow.

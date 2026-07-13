@@ -18,6 +18,7 @@ const ACP_PROTOCOL_VERSION: u64 = 1;
 const SUPPORTED_OMP_VERSION: &str = "16.4.8";
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_REQUESTS: usize = 128;
+const MAX_RETIRED_REQUESTS: usize = 256;
 const MAX_QUEUED_UPDATES: usize = 128;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
@@ -92,6 +93,8 @@ pub enum OmpAcpError {
     Timeout(&'static str),
     #[error("OMP ACP protocol error: {0}")]
     Protocol(String),
+    #[error("OMP ACP session open failed: {0}")]
+    SessionOpen(String),
     #[error("OMP ACP operation is unsupported: {0}")]
     Unsupported(String),
     #[error("OMP ACP permission request not found: {0}")]
@@ -104,6 +107,7 @@ struct ClientState {
     #[cfg(windows)]
     job: Mutex<Option<isize>>,
     pending: Mutex<HashMap<u64, PendingRequest>>,
+    retired_response_ids: Mutex<HashSet<String>>,
     next_id: AtomicU64,
     closed: AtomicBool,
     session_id: Mutex<Option<String>>,
@@ -204,6 +208,7 @@ impl OmpAcpClient {
             #[cfg(windows)]
             job: Mutex::new(Some(job)),
             pending: Mutex::new(HashMap::new()),
+            retired_response_ids: Mutex::new(HashSet::new()),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             session_id: Mutex::new(None),
@@ -248,6 +253,14 @@ impl OmpAcpClient {
             OmpAcpSessionOpen::Resume(session_id) => ("session/resume", Some(session_id)),
             OmpAcpSessionOpen::Load(session_id) => ("session/load", Some(session_id)),
         };
+        if requested_session_id
+            .as_deref()
+            .is_some_and(|session_id| session_id.trim().is_empty())
+        {
+            return Err(OmpAcpError::SessionOpen(
+                "requested sessionId must be nonempty".to_string(),
+            ));
+        }
         let mut params = json!({
             "cwd": options.project_root,
             "mcpServers": options.mcp_servers,
@@ -255,22 +268,36 @@ impl OmpAcpClient {
         if let Some(provider_session_id) = requested_session_id.as_ref() {
             params["sessionId"] = Value::String(provider_session_id.clone());
         }
-        let opened = client.request(method, params, "open session")?;
-        let session_id = opened
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| OmpAcpError::Protocol("session response omitted sessionId".to_string()))?
-            .to_string();
-        if requested_session_id
-            .as_deref()
-            .is_some_and(|requested| requested != session_id)
-        {
-            return Err(OmpAcpError::Protocol(format!(
-                "{method} returned sessionId {session_id}, expected {}",
-                requested_session_id.as_deref().unwrap_or_default()
-            )));
-        }
+        let opened = client
+            .request(method, params, "open session")
+            .map_err(|error| OmpAcpError::SessionOpen(error.to_string()))?;
+        let session_id = if let Some(requested) = requested_session_id {
+            match opened.get("sessionId") {
+                None => requested,
+                Some(Value::String(provided)) if provided == &requested => requested,
+                Some(Value::String(provided)) => {
+                    return Err(OmpAcpError::SessionOpen(format!(
+                        "{method} returned sessionId {provided}, expected {requested}"
+                    )));
+                }
+                Some(_) => {
+                    return Err(OmpAcpError::SessionOpen(format!(
+                        "{method} returned a non-string sessionId"
+                    )));
+                }
+            }
+        } else {
+            opened
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    OmpAcpError::SessionOpen(
+                        "session/new response omitted nonempty sessionId".to_string(),
+                    )
+                })?
+                .to_string()
+        };
         *client
             .state
             .available_modes
@@ -388,6 +415,7 @@ impl OmpAcpClient {
             "params": {"sessionId": session_id, "prompt": content}
         })) {
             if remove_pending(&self.state, id) {
+                retire_request(&self.state, id);
                 emit(
                     &self.state,
                     AgentEvent::TurnFailed {
@@ -528,6 +556,7 @@ impl OmpAcpClient {
                     let _ = close_rx.recv_timeout(SHUTDOWN_GRACE);
                 }
                 remove_pending(&self.state, id);
+                retire_request(&self.state, id);
             }
             let _ = writer.try_send(WriterMessage::Close);
         }
@@ -564,6 +593,7 @@ impl OmpAcpClient {
             "params": params,
         })) {
             remove_pending(&self.state, id);
+            retire_request(&self.state, id);
             return Err(error);
         }
         match rx.recv_timeout(timeout) {
@@ -571,6 +601,7 @@ impl OmpAcpClient {
             Ok(Err(error)) => Err(OmpAcpError::Protocol(error)),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 remove_pending(&self.state, id);
+                retire_request(&self.state, id);
                 Err(OmpAcpError::Timeout(label))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(OmpAcpError::Closed(
@@ -1052,16 +1083,19 @@ fn handle_permission_request(state: &Arc<ClientState>, value: Value) -> Result<(
 }
 
 fn handle_response(state: &Arc<ClientState>, value: Value) -> Result<(), String> {
-    let id = value
-        .get("id")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "ACP response id must be an unsigned integer".to_string())?;
+    let Some(id) = value.get("id").and_then(Value::as_u64) else {
+        retire_response_id(state, value.get("id"));
+        return Ok(());
+    };
     let pending = state
         .pending
         .lock()
         .map_err(|_| "pending request state poisoned".to_string())?
-        .remove(&id)
-        .ok_or_else(|| format!("ACP response has unknown or duplicate id {id}"))?;
+        .remove(&id);
+    retire_request(state, id);
+    let Some(pending) = pending else {
+        return Ok(());
+    };
     let result = if let Some(error) = value.get("error") {
         Err(rpc_error_message(error))
     } else {
@@ -1497,6 +1531,23 @@ fn remove_pending(state: &Arc<ClientState>, id: u64) -> bool {
         .unwrap_or(false)
 }
 
+fn retire_request(state: &Arc<ClientState>, id: u64) {
+    let id = id.to_string();
+    retire_response_id(state, Some(&Value::String(id)));
+}
+
+fn retire_response_id(state: &Arc<ClientState>, id: Option<&Value>) {
+    let key = id
+        .map(|value| serde_json::to_string(value).unwrap_or_else(|_| "null".to_string()))
+        .unwrap_or_else(|| "<missing>".to_string());
+    if let Ok(mut retired) = state.retired_response_ids.lock() {
+        if retired.len() >= MAX_RETIRED_REQUESTS {
+            retired.clear();
+        }
+        retired.insert(key);
+    }
+}
+
 fn fail_pending(state: &Arc<ClientState>, message: &str) {
     let pending = state
         .pending
@@ -1679,13 +1730,13 @@ fn base64_encode(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::sync::Mutex;
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
@@ -1745,10 +1796,10 @@ mod tests {
       printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"omp-session-1","modes":{{"availableModes":[{{"id":"default"}},{{"id":"plan"}}]}},"configOptions":[{{"id":"model","options":[{{"value":"openai/gpt-test"}}]}}]}}}}'
       ;;
     *'"method":"session/resume"'*)
-      printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"omp-session-1","modes":{{"availableModes":[{{"id":"default"}}]}}}}}}'
+      printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"modes":{{"availableModes":[{{"id":"default"}}]}}}}}}'
       ;;
     *'"method":"session/load"'*)
-      printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"omp-session-1","modes":{{"availableModes":[{{"id":"default"}}]}}}}}}'
+      printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"modes":{{"availableModes":[{{"id":"default"}}]}}}}}}'
       ;;
     *'"method":"session/set_config_option"'*)
       printf '%s\n' '{{"jsonrpc":"2.0","id":3,"result":{{"configOptions":[]}}}}'
@@ -1919,15 +1970,17 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage"
         let client = spawn_fixture(options(
             &fixture,
             Arc::clone(&events),
-            Some("omp-session-1"),
+            Some("  opaque/OMP session  "),
         ))
         .unwrap();
+        assert_eq!(client.provider_session_id().unwrap(), "  opaque/OMP session  ");
         client.prompt("wait", &[]).unwrap();
         client.cancel().unwrap();
         wait_for(&events, |event| matches!(event, AgentEvent::TurnDone { status: TurnStatus::Interrupted }));
         client.close();
         let log = fs::read_to_string(&fixture.log).unwrap();
         assert!(log.contains("\"method\":\"session/resume\""));
+        assert!(log.contains("\"sessionId\":\"  opaque/OMP session  \""));
         assert!(log.contains("\"method\":\"session/cancel\""));
         assert!(log.contains("\"method\":\"session/close\""));
         assert!(log.contains("\"mcpServers\":[{\"args\":[],\"command\":\"/tmp/pickforge-mcp\",\"name\":\"pickforge\"}]"));
@@ -1967,8 +2020,9 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage"
         let fixture = standard_script(":");
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut opts = options(&fixture, events, None);
-        opts.session = OmpAcpSessionOpen::Load("omp-session-1".to_string());
+        opts.session = OmpAcpSessionOpen::Load("opaque/load#session".to_string());
         let client = spawn_fixture(opts).unwrap();
+        assert_eq!(client.provider_session_id().unwrap(), "opaque/load#session");
 
         let log = fs::read_to_string(&fixture.log).unwrap();
         assert!(log.contains("\"method\":\"session/load\""));
@@ -2009,6 +2063,67 @@ done"#,
             "env": [{"name": "PICKFORGE_IPC_ENDPOINT", "value": "/tmp/socket"}]
         })])
         .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn late_duplicate_and_unknown_responses_do_not_close_an_active_prompt() {
+        let fixture = fixture(
+            r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
+    *'"method":"session/new"'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-session-1"}}' ;;
+    *'"method":"test/slow"'*)
+      request_id=${line#*\"id\":}; request_id=${request_id%%,*}
+      (sleep 0.10; printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"late\":true}}") &
+      ;;
+    *'"method":"session/prompt"'*)
+      request_id=${line#*\"id\":}; request_id=${request_id%%,*}
+      (
+        sleep 0.20
+        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"duplicate":true}}'
+        printf '%s\n' '{"jsonrpc":"2.0","id":"never-issued","result":{"unknown":true}}'
+        printf '%s\n' '{"jsonrpc":"2.0","id":999999,"result":{"unknown":true}}'
+        printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"stopReason\":\"end_turn\"}}"
+      ) &
+      ;;
+  esac
+done"#,
+        );
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let client = spawn_fixture(options(&fixture, Arc::clone(&events), None)).unwrap();
+
+        assert!(matches!(
+            client.request_inner(
+                "test/slow",
+                json!({}),
+                "deliberately slow request",
+                Duration::from_millis(40),
+            ),
+            Err(OmpAcpError::Timeout("deliberately slow request"))
+        ));
+        client.prompt("first", &[]).unwrap();
+        wait_for(&events, |event| matches!(event, AgentEvent::TurnDone { .. }));
+        assert!(!client.is_closed());
+        assert!(client.state.pending.lock().unwrap().is_empty());
+        assert!(client.state.retired_response_ids.lock().unwrap().len() >= 4);
+
+        client.prompt("second", &[]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            let done = events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnDone { .. }))
+                .count();
+            if done == 2 {
+                assert!(!client.is_closed());
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("second prompt did not complete after retired responses");
     }
 
     #[cfg(unix)]
@@ -2136,6 +2251,7 @@ done"#,
                 (1, PendingRequest::Wait(wait_tx)),
                 (2, PendingRequest::Prompt),
             ])),
+            retired_response_ids: Mutex::new(HashSet::new()),
             next_id: AtomicU64::new(3),
             closed: AtomicBool::new(false),
             session_id: Mutex::new(Some("backpressure-session".to_string())),
@@ -2266,7 +2382,27 @@ done"#,
             opts.session = session;
             assert!(matches!(
                 spawn_fixture(opts),
-                Err(OmpAcpError::Protocol(message)) if message.contains("expected-session")
+                Err(OmpAcpError::SessionOpen(message)) if message.contains("expected-session")
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn session_new_still_requires_a_nonempty_response_session_id() {
+        for result in [r#"{}"#, r#"{"sessionId":""}"#] {
+            let fixture = fixture(&format!(
+                r#"while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"oh-my-pi","version":"16.4.8"}},"agentCapabilities":{{"loadSession":true,"sessionCapabilities":{{"resume":{{}},"close":{{}}}}}}}}}}' ;;
+    *'"method":"session/new"'*) printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{result}}}' ;;
+  esac
+done"#
+            ));
+            let events = Arc::new(Mutex::new(Vec::new()));
+            assert!(matches!(
+                spawn_fixture(options(&fixture, events, None)),
+                Err(OmpAcpError::SessionOpen(message)) if message.contains("nonempty sessionId")
             ));
         }
     }
@@ -2314,6 +2450,55 @@ done"#,
         let _ = spawn_fixture(options(&fixture, events, None));
         thread::sleep(Duration::from_millis(700));
         assert!(!survivor.exists(), "descendant survived ACP parent exit");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_job_cleanup_kills_descendant_after_direct_parent_exits() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "pickforge-omp-job-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let gate = dir.join("gate");
+        let survivor = dir.join("survived");
+        let grandchild = dir.join("grandchild.ps1");
+        let parent = dir.join("parent.ps1");
+        let ps_literal = |path: &Path| path.to_string_lossy().replace('\'', "''");
+        fs::write(
+            &grandchild,
+            format!(
+                "Start-Sleep -Milliseconds 800\nSet-Content -LiteralPath '{}' -Value survived\n",
+                ps_literal(&survivor)
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &parent,
+            format!(
+                "while (-not (Test-Path -LiteralPath '{}')) {{ Start-Sleep -Milliseconds 10 }}\nStart-Process powershell.exe -ArgumentList @('-NoProfile', '-NonInteractive', '-File', '{}')\n",
+                ps_literal(&gate),
+                ps_literal(&grandchild)
+            ),
+        )
+        .unwrap();
+
+        let mut child = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-File"])
+            .arg(&parent)
+            .spawn()
+            .unwrap();
+        let job = create_kill_on_close_job(&child).unwrap();
+        fs::write(&gate, b"go").unwrap();
+        assert!(child.wait().unwrap().success());
+        terminate_and_close_job(job);
+        thread::sleep(Duration::from_millis(1200));
+        assert!(!survivor.exists(), "job descendant survived parent exit");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

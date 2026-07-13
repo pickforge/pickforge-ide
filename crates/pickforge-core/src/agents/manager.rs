@@ -18,7 +18,7 @@ use super::codex_app::{
 use super::codex_exec::{spawn_codex_turn, CodexExecTurn, CodexTurnOptions};
 use super::event::AgentEvent;
 use super::omp_acp::{
-    validate_omp_mcp_servers, OmpAcpClient, OmpAcpOptions, OmpAcpSessionOpen,
+    validate_omp_mcp_servers, OmpAcpClient, OmpAcpError, OmpAcpOptions, OmpAcpSessionOpen,
 };
 use super::remote_exec::RemoteExec;
 
@@ -487,10 +487,11 @@ impl AgentChatManager {
                     let client = match OmpAcpClient::spawn(options.clone()) {
                         Ok(client) => Ok(client),
                         // Provider session ids are opaque and may expire outside
-                        // PickForge. A failed resume gets exactly one isolated
-                        // fresh-session attempt; its SessionStarted event and the
-                        // assignment below replace the stale persisted id.
-                        Err(_) if resume_requested => {
+                        // PickForge. Only a typed failure from the resume/open
+                        // exchange gets one isolated fresh-session attempt.
+                        // Model/config application happens after that exchange
+                        // and must never abandon a successfully resumed session.
+                        Err(OmpAcpError::SessionOpen(_)) if resume_requested => {
                             options.session = OmpAcpSessionOpen::New;
                             OmpAcpClient::spawn(options)
                         }
@@ -2355,8 +2356,11 @@ while IFS= read -r line; do
     *'"method":"initialize"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
-    *'"method":"session/new"'*|*'"method":"session/resume"'*)
+    *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-manager-session","modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
+      ;;
+    *'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
       ;;
     *'"method":"session/prompt"'*)
       request_id=${line#*\"id\":}
@@ -2537,8 +2541,11 @@ while IFS= read -r line; do
     *'"method":"initialize"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
-    *'"method":"session/new"'*|*'"method":"session/resume"'*)
+    *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-identity-session"}}'
+      ;;
+    *'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{}}'
       ;;
     *'"method":"session/close"'*)
       exit 0
@@ -2691,8 +2698,11 @@ while IFS= read -r line; do
     *'"method":"initialize"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
-    *'"method":"session/new"'*|*'"method":"session/resume"'*)
+    *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-dead-session"}}'
+      ;;
+    *'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{}}'
       ;;
     *'"method":"session/prompt"'*)
       if [ "$recovered" -eq 0 ]; then
@@ -2852,6 +2862,76 @@ done"#
         assert_eq!(contents.matches("\"method\":\"session/new\"").count(), 1);
         manager.dispose("persisted-omp-session");
         let _ = std::fs::remove_file(format!("{}.fresh", log.display()));
+        let _ = std::fs::remove_file(log);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_successful_resume_is_not_abandoned_when_initial_model_is_rejected() {
+        let log = std::env::temp_dir().join(format!(
+            "pickforge-omp-resume-model-{}-{}.log",
+            std::process::id(),
+            now_millis()
+        ));
+        let body = r#"#!/bin/sh
+log='__LOG__'
+printf 'launch\n' >> "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"configOptions":[{"id":"model","options":[{"value":"openai/available"}]}]}}'
+      ;;
+    *'"method":"session/new"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"must-not-replace-resume"}}'
+      ;;
+  esac
+done"#
+            .replace("__LOG__", &log.to_string_lossy());
+        let script = test_script("omp-resume-model-rejected", &body);
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.agent_session_create(&AgentSessionRow {
+            id: "persisted-model-session".to_string(),
+            chat_id: "omp-resume-model-chat".to_string(),
+            provider: "omp".to_string(),
+            provider_session_id: Some("exact-provider-session".to_string()),
+            model: None,
+            status: "idle".to_string(),
+            created_at: 1,
+        })
+        .unwrap();
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let (_, sink) = event_sink();
+
+        assert!(matches!(
+            manager.start(
+                "omp-resume-model-chat",
+                script.dir.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                Some("openai/unavailable".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            ),
+            Err(AgentChatError::Spawn(message)) if message.contains("did not advertise model")
+        ));
+        let contents = wait_for_file(&log, |value| {
+            value.contains("\"method\":\"session/resume\"")
+        });
+        assert_eq!(contents.matches("launch\n").count(), 1);
+        assert_eq!(contents.matches("\"method\":\"session/resume\"").count(), 1);
+        assert_eq!(contents.matches("\"method\":\"session/new\"").count(), 0);
+        let row = db
+            .latest_agent_session_for_chat("omp-resume-model-chat")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.provider_session_id.as_deref(),
+            Some("exact-provider-session")
+        );
         let _ = std::fs::remove_file(log);
     }
 

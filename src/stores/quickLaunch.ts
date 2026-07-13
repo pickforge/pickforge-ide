@@ -3,6 +3,7 @@
 // or type a literal command. Persisted in localStorage like agentModels.
 import { createSignal } from "solid-js";
 import { launchBinary, launchCommand } from "../lib/agentModels";
+import type { AgentBackendId } from "../lib/agentBackends";
 import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 import { flagEnabled } from "./flags";
 
@@ -21,6 +22,8 @@ export interface QuickLaunchItem {
    *  this item's command). Set per item in Settings; agent items default on. */
   ai?: boolean;
 }
+type OptionalAgentId = Extract<AgentBackendId, "omp" | "pi">;
+type OptionalQuickLaunchItem = QuickLaunchItem & { agentId: OptionalAgentId };
 
 const STORE_KEY = "pickforge.quickLaunch";
 
@@ -31,13 +34,13 @@ export const DEFAULT_QUICK_LAUNCH: QuickLaunchItem[] = [
   { id: "tool-adb-devices", label: "adb devices", command: "adb devices ", binary: "adb", hotkey: "Mod+4" },
 ];
 
-const OPTIONAL_OMP_PI_QUICK_LAUNCH: QuickLaunchItem[] = [
+const OPTIONAL_OMP_PI_QUICK_LAUNCH: OptionalQuickLaunchItem[] = [
   { id: "agent-omp", label: "omp", agentId: "omp", hotkey: null, ai: true },
   { id: "agent-pi", label: "pi", agentId: "pi", hotkey: null, ai: true },
 ];
 
-const clone = (items: QuickLaunchItem[]): QuickLaunchItem[] =>
-  items.map((i) => ({ ...i }));
+const clone = <T extends QuickLaunchItem>(items: readonly T[]): T[] =>
+  items.map((item) => ({ ...item }));
 
 function load(): QuickLaunchItem[] {
   try {
@@ -92,13 +95,13 @@ export function resetQuickLaunchItems() {
 
 /** Optional rollout-gated agent chips not inserted into existing or default
  * layouts. Settings offers only choices that have not already been added. */
-export function optionalQuickLaunchChoices(): QuickLaunchItem[] {
+export function optionalQuickLaunchChoices(): OptionalQuickLaunchItem[] {
   if (!flagEnabled("ompPiAgents")) return [];
   const existing = new Set(items().map((item) => item.agentId));
   return clone(OPTIONAL_OMP_PI_QUICK_LAUNCH.filter((item) => !existing.has(item.agentId)));
 }
 
-export function addOptionalQuickLaunch(agentId: "omp" | "pi") {
+export function addOptionalQuickLaunch(agentId: OptionalAgentId) {
   if (!flagEnabled("ompPiAgents") || items().some((item) => item.agentId === agentId)) return;
   const choice = OPTIONAL_OMP_PI_QUICK_LAUNCH.find((item) => item.agentId === agentId);
   if (choice) persist([...items(), { ...choice }]);

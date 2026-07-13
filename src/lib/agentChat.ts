@@ -1,7 +1,12 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import {
+  nativeChatUnavailableReason,
+  normalizeAgentProvider,
+  type AgentEngine,
+  type AgentProvider,
+} from "./agentBackends";
 
-export type AgentProvider = "claudeCode" | "codex";
-export type AgentEngine = "v1" | "v2";
+export type { AgentEngine, AgentProvider } from "./agentBackends";
 export type AgentApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
 export interface AgentSkill {
@@ -97,7 +102,7 @@ export type AgentTimelineEntry =
 export interface AgentChatStartOptions {
   chatId: string;
   projectRoot: string;
-  provider: AgentProvider;
+  provider: string;
   model?: string | null;
   effort?: string | null;
   engine?: AgentEngine;
@@ -116,13 +121,20 @@ export interface AgentChatSendOptions {
 }
 
 export async function agentChatStart(opts: AgentChatStartOptions): Promise<string> {
+  const provider = normalizeAgentProvider(opts.provider);
+  if (!provider) {
+    throw new Error(
+      nativeChatUnavailableReason(opts.provider, opts.engine) ??
+        "Agent backend does not support native chat",
+    );
+  }
   const onEvent = new Channel<AgentEvent>();
   onEvent.onmessage = opts.onEvent;
 
   return invoke<string>("agent_chat_start", {
     chatId: opts.chatId,
     projectRoot: opts.projectRoot,
-    provider: opts.provider,
+    provider,
     model: opts.model ?? null,
     effort: opts.effort ?? null,
     engine: opts.engine ?? null,

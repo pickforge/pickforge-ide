@@ -1,0 +1,452 @@
+
+export type AgentEngine = "v1" | "v2";
+export type AgentBackendId = "claudeCode" | "codex" | "omp" | "pi";
+export type AgentProvider = "claudeCode" | "codex";
+export type AgentBackendKind = "claudeAgentSdk" | "codexAppServer" | "terminal";
+export type AgentBackendProtocol = "native" | "acp" | "rpc";
+export type AgentProtocolAvailability = "integrated" | "availableNotIntegrated";
+export type AgentCapabilitySupport = "supported" | "unsupported" | "unknown";
+export type AgentCapabilitySurface = "nativeChat" | "terminal";
+
+export const AGENT_BACKEND_CAPABILITY_KEYS = Object.freeze([
+  "nativeChat",
+  "terminal",
+  "startSession",
+  "streamEvents",
+  "sessionEvents",
+  "interruptTurn",
+  "closeSession",
+  "resumeSession",
+  "steerTurn",
+  "textInput",
+  "imageInput",
+  "modelSelection",
+  "modelSwitching",
+  "effortSelection",
+  "effortSwitching",
+  "modeSelection",
+  "modeSwitching",
+  "planEvents",
+  "toolEvents",
+  "fileEvents",
+  "approvalEvents",
+  "mcpConfiguration",
+  "usageReporting",
+  "contextReporting",
+  "rateLimitReporting",
+  "titleEvents",
+  "authDiscovery",
+  "remoteExecution",
+  "errorEvents",
+  "processCleanup",
+] as const);
+
+export type AgentBackendCapabilityKey = (typeof AGENT_BACKEND_CAPABILITY_KEYS)[number];
+
+export interface AgentBackendCapability {
+  readonly support: AgentCapabilitySupport;
+  readonly surfaces: readonly AgentCapabilitySurface[];
+  readonly engines: readonly AgentEngine[];
+  readonly reason: string | null;
+  readonly engineReason: string | null;
+}
+
+export type AgentBackendCapabilityMatrix = Readonly<
+  Record<AgentBackendCapabilityKey, AgentBackendCapability>
+>;
+
+export type AgentControlTiming =
+  | "liveSession"
+  | "nextTurn"
+  | "perTurnPayload"
+  | "newSession"
+  | "unsupported"
+  | "unknown";
+
+export interface AgentBackendDescriptor {
+  readonly id: AgentBackendId;
+  readonly label: string;
+  readonly backendKind: AgentBackendKind;
+  readonly protocol: Readonly<{
+    kind: AgentBackendProtocol;
+    availability: AgentProtocolAvailability;
+  }>;
+  readonly capabilities: AgentBackendCapabilityMatrix;
+  readonly lifecycle: Readonly<{
+    start: Readonly<
+      Record<AgentEngine, "oneShotProcess" | "residentBridgeChat" | "appServerThread" | "unsupported">
+    >;
+    close: Readonly<
+      Record<AgentEngine, "killActiveProcess" | "closeBridgeChat" | "unsubscribeThread" | "unsupported">
+    >;
+    resume: Readonly<Record<AgentEngine, "providerSessionId" | "unsupported">>;
+    remote: "v1SshProcess" | "unknown";
+  }>;
+  readonly controls: Readonly<{
+    model: Readonly<Record<AgentEngine, AgentControlTiming>>;
+    effort: Readonly<Record<AgentEngine, AgentControlTiming>>;
+    mode: Readonly<Record<AgentEngine, AgentControlTiming>>;
+  }>;
+  readonly nativePayload: Readonly<{
+    model: "sessionState" | "turn" | "unsupported";
+    effort: "sessionState" | "turn" | "unsupported";
+    mode: "sessionState" | "unsupported";
+  }>;
+  readonly effortDefaultSource: "modelCatalog" | "codexConfig" | "unknown";
+  readonly modeControlLabel: string;
+}
+
+const BOTH_ENGINES = Object.freeze(["v1", "v2"] as const);
+const V1_ENGINE = Object.freeze(["v1"] as const);
+const V2_ENGINE = Object.freeze(["v2"] as const);
+const NATIVE_SURFACE = Object.freeze(["nativeChat"] as const);
+const TERMINAL_SURFACE = Object.freeze(["terminal"] as const);
+const BOTH_SURFACES = Object.freeze(["nativeChat", "terminal"] as const);
+const NO_ENGINES = Object.freeze([] as const);
+const NO_SURFACES = Object.freeze([] as const);
+
+function capability(
+  support: AgentCapabilitySupport,
+  surfaces: readonly AgentCapabilitySurface[],
+  engines: readonly AgentEngine[],
+  reason: string | null = null,
+  engineReason: string | null = null,
+): AgentBackendCapability {
+  return Object.freeze({ support, surfaces, engines, reason, engineReason });
+}
+
+const NATIVE = capability("supported", NATIVE_SURFACE, BOTH_ENGINES);
+const NATIVE_V2 = capability(
+  "supported",
+  NATIVE_SURFACE,
+  V2_ENGINE,
+  null,
+  "This control requires the v2 agent engine",
+);
+const NATIVE_V1 = capability(
+  "supported",
+  NATIVE_SURFACE,
+  V1_ENGINE,
+  null,
+  "Remote execution requires the v1 agent engine",
+);
+const TERMINAL = capability("supported", TERMINAL_SURFACE, NO_ENGINES);
+const BOTH = capability("supported", BOTH_SURFACES, BOTH_ENGINES);
+
+function unsupported(reason: string): AgentBackendCapability {
+  return capability("unsupported", NO_SURFACES, NO_ENGINES, reason);
+}
+
+function unknown(reason: string): AgentBackendCapability {
+  return capability("unknown", NO_SURFACES, NO_ENGINES, reason);
+}
+
+const NO_NATIVE_OMP = "OMP native chat is not integrated yet; use its terminal profile";
+const NO_NATIVE_PI = "Pi native chat is not integrated yet; use its terminal profile";
+const NO_CLAUDE_STEER = "Claude Code steering is unavailable until the Agent SDK exposes it";
+const NO_CLAUDE_EFFORT_SWITCH = "Changing Claude effort requires starting a new session";
+const NO_SESSION_MCP = "PickForge does not pass per-session MCP configuration to this native backend";
+const NO_TITLE_EVENTS = "This backend does not emit session title events";
+const NO_AUTH_DISCOVERY = "Authentication discovery is not exposed through this backend";
+
+function frozenLifecycle(
+  start: AgentBackendDescriptor["lifecycle"]["start"],
+  close: AgentBackendDescriptor["lifecycle"]["close"],
+  resume: AgentBackendDescriptor["lifecycle"]["resume"],
+  remote: AgentBackendDescriptor["lifecycle"]["remote"],
+): AgentBackendDescriptor["lifecycle"] {
+  return Object.freeze({
+    start: Object.freeze(start),
+    close: Object.freeze(close),
+    resume: Object.freeze(resume),
+    remote,
+  });
+}
+
+function frozenControls(
+  model: Readonly<Record<AgentEngine, AgentControlTiming>>,
+  effort: Readonly<Record<AgentEngine, AgentControlTiming>>,
+  mode: Readonly<Record<AgentEngine, AgentControlTiming>>,
+): AgentBackendDescriptor["controls"] {
+  return Object.freeze({
+    model: Object.freeze(model),
+    effort: Object.freeze(effort),
+    mode: Object.freeze(mode),
+  });
+}
+
+function frozenPayload(
+  model: AgentBackendDescriptor["nativePayload"]["model"],
+  effort: AgentBackendDescriptor["nativePayload"]["effort"],
+  mode: AgentBackendDescriptor["nativePayload"]["mode"],
+): AgentBackendDescriptor["nativePayload"] {
+  return Object.freeze({ model, effort, mode });
+}
+
+const CLAUDE_CAPABILITIES = Object.freeze({
+  nativeChat: NATIVE,
+  terminal: TERMINAL,
+  startSession: NATIVE,
+  streamEvents: NATIVE,
+  sessionEvents: NATIVE,
+  interruptTurn: NATIVE,
+  closeSession: NATIVE,
+  resumeSession: NATIVE,
+  steerTurn: unsupported(NO_CLAUDE_STEER),
+  textInput: BOTH,
+  imageInput: NATIVE_V2,
+  modelSelection: BOTH,
+  modelSwitching: NATIVE,
+  effortSelection: NATIVE,
+  effortSwitching: unsupported(NO_CLAUDE_EFFORT_SWITCH),
+  modeSelection: NATIVE,
+  modeSwitching: NATIVE,
+  planEvents: NATIVE,
+  toolEvents: NATIVE,
+  fileEvents: NATIVE,
+  approvalEvents: NATIVE_V2,
+  mcpConfiguration: capability("supported", TERMINAL_SURFACE, NO_ENGINES, NO_SESSION_MCP),
+  usageReporting: NATIVE,
+  contextReporting: NATIVE,
+  rateLimitReporting: unsupported("Claude Code does not emit normalized rate-limit events"),
+  titleEvents: unsupported(NO_TITLE_EVENTS),
+  authDiscovery: unsupported(NO_AUTH_DISCOVERY),
+  remoteExecution: NATIVE_V1,
+  errorEvents: NATIVE,
+  processCleanup: NATIVE,
+} satisfies AgentBackendCapabilityMatrix);
+
+const CODEX_CAPABILITIES = Object.freeze({
+  nativeChat: NATIVE,
+  terminal: TERMINAL,
+  startSession: NATIVE,
+  streamEvents: NATIVE,
+  sessionEvents: NATIVE,
+  interruptTurn: NATIVE,
+  closeSession: NATIVE,
+  resumeSession: NATIVE,
+  steerTurn: NATIVE_V2,
+  textInput: BOTH,
+  imageInput: NATIVE_V2,
+  modelSelection: BOTH,
+  modelSwitching: NATIVE,
+  effortSelection: NATIVE,
+  effortSwitching: NATIVE,
+  modeSelection: NATIVE,
+  modeSwitching: NATIVE,
+  planEvents: NATIVE,
+  toolEvents: NATIVE,
+  fileEvents: NATIVE,
+  approvalEvents: NATIVE_V2,
+  mcpConfiguration: capability("supported", TERMINAL_SURFACE, NO_ENGINES, NO_SESSION_MCP),
+  usageReporting: NATIVE,
+  contextReporting: NATIVE,
+  rateLimitReporting: NATIVE_V2,
+  titleEvents: unsupported(NO_TITLE_EVENTS),
+  authDiscovery: unsupported(NO_AUTH_DISCOVERY),
+  remoteExecution: NATIVE_V1,
+  errorEvents: NATIVE,
+  processCleanup: NATIVE,
+} satisfies AgentBackendCapabilityMatrix);
+
+function terminalOnlyCapabilities(nativeReason: string, mcpReason: string): AgentBackendCapabilityMatrix {
+  const noNative = unsupported(nativeReason);
+  return Object.freeze({
+    nativeChat: noNative,
+    terminal: TERMINAL,
+    startSession: noNative,
+    streamEvents: noNative,
+    sessionEvents: noNative,
+    interruptTurn: noNative,
+    closeSession: noNative,
+    resumeSession: noNative,
+    steerTurn: noNative,
+    textInput: TERMINAL,
+    imageInput: unknown("Structured image input has not been characterized for this terminal profile"),
+    modelSelection: TERMINAL,
+    modelSwitching: unsupported("Changing models requires starting a new terminal process"),
+    effortSelection: unknown("PickForge has not characterized terminal effort selection for this agent"),
+    effortSwitching: unknown("PickForge has not characterized terminal effort switching for this agent"),
+    modeSelection: unknown("PickForge has not characterized terminal mode selection for this agent"),
+    modeSwitching: unknown("PickForge has not characterized terminal mode switching for this agent"),
+    planEvents: noNative,
+    toolEvents: noNative,
+    fileEvents: noNative,
+    approvalEvents: noNative,
+    mcpConfiguration: unsupported(mcpReason),
+    usageReporting: noNative,
+    contextReporting: noNative,
+    rateLimitReporting: noNative,
+    titleEvents: noNative,
+    authDiscovery: noNative,
+    remoteExecution: unknown("Remote terminal support depends on the configured host environment"),
+    errorEvents: noNative,
+    processCleanup: noNative,
+  } satisfies AgentBackendCapabilityMatrix);
+}
+
+const OMP_CAPABILITIES = terminalOnlyCapabilities(
+  NO_NATIVE_OMP,
+  "PickForge does not configure MCP for OMP terminal launches in this release",
+);
+const PI_CAPABILITIES = terminalOnlyCapabilities(
+  NO_NATIVE_PI,
+  "PickForge does not configure MCP for Pi terminal launches in this release",
+);
+
+const CLAUDE_BACKEND = Object.freeze({
+  id: "claudeCode",
+  label: "Claude Code",
+  backendKind: "claudeAgentSdk",
+  protocol: Object.freeze({ kind: "native", availability: "integrated" }),
+  capabilities: CLAUDE_CAPABILITIES,
+  lifecycle: frozenLifecycle(
+    { v1: "oneShotProcess", v2: "residentBridgeChat" },
+    { v1: "killActiveProcess", v2: "closeBridgeChat" },
+    { v1: "providerSessionId", v2: "providerSessionId" },
+    "v1SshProcess",
+  ),
+  controls: frozenControls(
+    { v1: "nextTurn", v2: "liveSession" },
+    { v1: "newSession", v2: "newSession" },
+    { v1: "nextTurn", v2: "liveSession" },
+  ),
+  nativePayload: frozenPayload("sessionState", "sessionState", "sessionState"),
+  effortDefaultSource: "modelCatalog",
+  modeControlLabel: "Permission mode",
+} satisfies AgentBackendDescriptor);
+
+const CODEX_BACKEND = Object.freeze({
+  id: "codex",
+  label: "Codex",
+  backendKind: "codexAppServer",
+  protocol: Object.freeze({ kind: "native", availability: "integrated" }),
+  capabilities: CODEX_CAPABILITIES,
+  lifecycle: frozenLifecycle(
+    { v1: "oneShotProcess", v2: "appServerThread" },
+    { v1: "killActiveProcess", v2: "unsubscribeThread" },
+    { v1: "providerSessionId", v2: "providerSessionId" },
+    "v1SshProcess",
+  ),
+  controls: frozenControls(
+    { v1: "nextTurn", v2: "perTurnPayload" },
+    { v1: "perTurnPayload", v2: "perTurnPayload" },
+    { v1: "nextTurn", v2: "perTurnPayload" },
+  ),
+  nativePayload: frozenPayload("turn", "turn", "sessionState"),
+  effortDefaultSource: "codexConfig",
+  modeControlLabel: "Sandbox & approvals",
+} satisfies AgentBackendDescriptor);
+
+const OMP_BACKEND = Object.freeze({
+  id: "omp",
+  label: "Oh My Pi (OMP)",
+  backendKind: "terminal",
+  protocol: Object.freeze({ kind: "acp", availability: "availableNotIntegrated" }),
+  capabilities: OMP_CAPABILITIES,
+  lifecycle: frozenLifecycle(
+    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unsupported", v2: "unsupported" },
+    "unknown",
+  ),
+  controls: frozenControls(
+    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unknown", v2: "unknown" },
+    { v1: "unknown", v2: "unknown" },
+  ),
+  nativePayload: frozenPayload("unsupported", "unsupported", "unsupported"),
+  effortDefaultSource: "unknown",
+  modeControlLabel: "Mode",
+} satisfies AgentBackendDescriptor);
+
+const PI_BACKEND = Object.freeze({
+  id: "pi",
+  label: "Pi",
+  backendKind: "terminal",
+  protocol: Object.freeze({ kind: "rpc", availability: "availableNotIntegrated" }),
+  capabilities: PI_CAPABILITIES,
+  lifecycle: frozenLifecycle(
+    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unsupported", v2: "unsupported" },
+    "unknown",
+  ),
+  controls: frozenControls(
+    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unknown", v2: "unknown" },
+    { v1: "unknown", v2: "unknown" },
+  ),
+  nativePayload: frozenPayload("unsupported", "unsupported", "unsupported"),
+  effortDefaultSource: "unknown",
+  modeControlLabel: "Mode",
+} satisfies AgentBackendDescriptor);
+
+export const AGENT_BACKENDS = Object.freeze({
+  claudeCode: CLAUDE_BACKEND,
+  codex: CODEX_BACKEND,
+  omp: OMP_BACKEND,
+  pi: PI_BACKEND,
+} satisfies Readonly<Record<AgentBackendId, AgentBackendDescriptor>>);
+
+const AGENT_BACKEND_IDS = new Set<string>(Object.keys(AGENT_BACKENDS));
+export const NATIVE_AGENT_BACKENDS = Object.freeze([CLAUDE_BACKEND, CODEX_BACKEND]);
+
+export function isAgentBackendId(value: string): value is AgentBackendId {
+  return AGENT_BACKEND_IDS.has(value);
+}
+
+export function isNativeAgentProvider(value: string): value is AgentProvider {
+  return value === "claudeCode" || value === "codex";
+}
+
+export function normalizeAgentProvider(value: string): AgentProvider | null {
+  if (value === "claude") return "claudeCode";
+  return isNativeAgentProvider(value) ? value : null;
+}
+
+export function agentBackendDescriptor(id: AgentBackendId): AgentBackendDescriptor;
+export function agentBackendDescriptor(id: string): AgentBackendDescriptor | undefined;
+export function agentBackendDescriptor(id: string): AgentBackendDescriptor | undefined {
+  return isAgentBackendId(id) ? AGENT_BACKENDS[id] : undefined;
+}
+
+
+export function supportsBackendCapability(
+  id: AgentBackendId,
+  key: AgentBackendCapabilityKey,
+  surface: AgentCapabilitySurface = "nativeChat",
+  engine: AgentEngine = "v2",
+): boolean {
+  const capability = AGENT_BACKENDS[id].capabilities[key];
+  if (capability.support !== "supported" || !capability.surfaces.includes(surface)) return false;
+  return surface === "terminal" || capability.engines.includes(engine);
+}
+
+export function backendCapabilityReason(
+  id: AgentBackendId,
+  key: AgentBackendCapabilityKey,
+  surface: AgentCapabilitySurface = "nativeChat",
+  engine: AgentEngine = "v2",
+): string | null {
+  const descriptor = AGENT_BACKENDS[id];
+  const capability = descriptor.capabilities[key];
+  if (capability.support !== "supported") return capability.reason;
+  if (!capability.surfaces.includes(surface)) {
+    if (capability.reason) return capability.reason;
+    if (surface === "nativeChat") {
+      return descriptor.capabilities.nativeChat.reason ?? "This capability is not available in native chat";
+    }
+    return "This capability is not available in terminal sessions";
+  }
+  if (surface === "nativeChat" && !capability.engines.includes(engine)) {
+    return capability.engineReason ?? `This capability is not available with the ${engine} agent engine`;
+  }
+  return null;
+}
+
+export function nativeChatUnavailableReason(id: string, engine: AgentEngine = "v2"): string | null {
+  const descriptor = agentBackendDescriptor(id);
+  if (!descriptor) return "Unknown agent backend";
+  return backendCapabilityReason(descriptor.id, "nativeChat", "nativeChat", engine);
+}

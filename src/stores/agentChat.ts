@@ -15,6 +15,11 @@ import {
   type AgentProvider,
   type AgentTimelineEntry,
 } from "../lib/agentChat";
+import {
+  agentBackendDescriptor,
+  backendCapabilityReason,
+  supportsBackendCapability,
+} from "../lib/agentBackends";
 import { modeOverrides } from "../lib/agentModes";
 import { nativeChatModel } from "../lib/agentModels";
 import { isSwarmWorkerChat } from "../lib/chatLabels";
@@ -109,6 +114,7 @@ export interface AgentChatState {
   sessionId: string | null;
   projectRoot: string | null;
   provider: AgentProvider;
+  engine: AgentEngine;
   model: string | null;
   effort: string | null;
   mode: string | null;
@@ -211,11 +217,16 @@ export interface EnsureAgentChatOptions {
   allowedTools?: string[];
 }
 
-function emptyState(provider: AgentProvider, model: string | null): AgentChatState {
+function emptyState(
+  provider: AgentProvider,
+  model: string | null,
+  engine: AgentEngine = loadAgentEngine(),
+): AgentChatState {
   return {
     sessionId: null,
     projectRoot: null,
     provider,
+    engine,
     model,
     effort: null,
     mode: null,
@@ -711,6 +722,9 @@ function reduceAgentEvent(
     case "turnFailed":
       return { ...finalizeStreaming(chat), turnActive: false, error: event.error, approvals: [] };
     case "approvalRequest":
+      if (!supportsBackendCapability(chat.provider, "approvalEvents", "nativeChat", chat.engine)) {
+        return chat;
+      }
       return { ...chat, approvals: [...chat.approvals, approvalFromEvent(event)] };
     case "commandOutput":
     case "noise":
@@ -774,7 +788,11 @@ function queueAgentChatSetModel(chatId: string, sessionId: string, model: string
     .then(async () => {
       const current = chats[chatId];
       if ((ensureGenerations.get(chatId) ?? 0) !== generation) return;
-      if (!current || current.provider !== "claudeCode" || current.sessionId !== sessionId) return;
+      if (
+        !current ||
+        agentBackendDescriptor(current.provider).nativePayload.model !== "sessionState" ||
+        current.sessionId !== sessionId
+      ) return;
       await agentChatSetModel(sessionId, model);
     })
     .catch(() => undefined);
@@ -850,9 +868,10 @@ function stateFromHistory(
   chatId: string,
   provider: AgentProvider,
   model: string | null,
+  engine: AgentEngine,
   entries: AgentTimelineEntry[],
 ): AgentChatState {
-  let chat = { ...emptyState(provider, model), historyLoaded: true };
+  let chat = { ...emptyState(provider, model, engine), historyLoaded: true };
   let maxSeq = 0;
   completedTitleTurnsByChat.delete(chatId);
   for (const entry of [...entries].sort((a, b) => a.seq - b.seq)) {
@@ -925,11 +944,22 @@ export async function ensureAgentChat(
   model: string | null,
   options: EnsureAgentChatOptions = {},
 ): Promise<void> {
+  const live = chats[chatId];
+  if (live?.sessionId) return;
+  const existing = ensurePromises.get(chatId);
+  if (existing) return existing;
   const safeModel = nativeChatModel(provider, model);
   const remote = remotePtyFor(projectRoot);
-  const created = !chats[chatId];
-  if (created) setChats(chatId, emptyState(provider, safeModel));
-  setChats(chatId, { projectRoot, provider, model: safeModel });
+  const engine: AgentEngine = remote ? "v1" : (options.engine ?? loadAgentEngine());
+  const created = !live;
+  if (created) setChats(chatId, emptyState(provider, safeModel, engine));
+  setChats(chatId, {
+    projectRoot,
+    provider,
+    engine,
+    model: safeModel,
+    remoteHost: remote?.host ?? null,
+  });
   if (
     options.effort !== undefined &&
     (created || (!chats[chatId].sessionId && chats[chatId].effort === null))
@@ -942,9 +972,6 @@ export async function ensureAgentChat(
   ) {
     setChats(chatId, { mode: options.mode || null });
   }
-  if (chats[chatId]?.sessionId) return;
-  const existing = ensurePromises.get(chatId);
-  if (existing) return existing;
 
   // disposeAgentChat bumps the generation; a stale ensure must stop writing —
   // its awaited continuations would otherwise resurrect the old provider's
@@ -960,10 +987,11 @@ export async function ensureAgentChat(
         const history = await agentChatHistory(chatId);
         if (stale()) return;
         const loadedModel = chats[chatId]?.model ?? safeModel;
-        const loaded = stateFromHistory(chatId, provider, loadedModel, history);
+        const loaded = stateFromHistory(chatId, provider, loadedModel, engine, history);
         setChats(chatId, {
           ...loaded,
           projectRoot,
+          remoteHost: remote?.host ?? null,
           effort: previous?.effort ?? loaded.effort,
           mode: previous?.mode ?? loaded.mode,
           providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
@@ -982,6 +1010,7 @@ export async function ensureAgentChat(
         approvalPolicy: overrides.approvalPolicy,
         permissionMode: overrides.permissionMode,
         ...options,
+        engine,
         effort: chats[chatId].effort,
         remote,
         onEvent: (event) => receiveAgentEvent(chatId, event),
@@ -996,11 +1025,15 @@ export async function ensureAgentChat(
         sessionId,
         projectRoot,
         provider,
+        engine,
         model: currentModel,
         error: null,
         remoteHost: remote?.host ?? null,
       });
-      if (provider === "claudeCode" && currentModel !== startModel) {
+      if (
+        agentBackendDescriptor(provider).nativePayload.model === "sessionState" &&
+        currentModel !== startModel
+      ) {
         queueAgentChatSetModel(chatId, sessionId, currentModel);
       }
       // A mode picked while the start was in flight never reached the backend
@@ -1026,12 +1059,22 @@ export async function hydrateAgentChatHistory(
   projectRoot: string,
   provider: AgentProvider,
   model: string | null,
-  options: Pick<EnsureAgentChatOptions, "effort" | "mode"> = {},
+  options: Pick<EnsureAgentChatOptions, "engine" | "effort" | "mode"> = {},
 ): Promise<void> {
+  const live = chats[chatId];
+  if (live?.sessionId) return;
   const safeModel = nativeChatModel(provider, model);
-  const created = !chats[chatId];
-  if (created) setChats(chatId, emptyState(provider, safeModel));
-  setChats(chatId, { projectRoot, provider, model: chats[chatId]?.model ?? safeModel });
+  const remote = remotePtyFor(projectRoot);
+  const engine: AgentEngine = remote ? "v1" : (options.engine ?? live?.engine ?? loadAgentEngine());
+  const created = !live;
+  if (created) setChats(chatId, emptyState(provider, safeModel, engine));
+  setChats(chatId, {
+    projectRoot,
+    provider,
+    engine,
+    model: chats[chatId]?.model ?? safeModel,
+    remoteHost: remote?.host ?? null,
+  });
   if (
     options.effort !== undefined &&
     (created || (!chats[chatId].sessionId && chats[chatId].effort === null))
@@ -1058,10 +1101,11 @@ export async function hydrateAgentChatHistory(
       const history = await agentChatHistory(chatId);
       if (stale() || chats[chatId].historyLoaded) return;
       const loadedModel = chats[chatId]?.model ?? safeModel;
-      const loaded = stateFromHistory(chatId, provider, loadedModel, history);
+      const loaded = stateFromHistory(chatId, provider, loadedModel, engine, history);
       setChats(chatId, {
         ...loaded,
         projectRoot,
+        remoteHost: remote?.host ?? null,
         effort: previous?.effort ?? loaded.effort,
         mode: previous?.mode ?? loaded.mode,
         providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
@@ -1080,10 +1124,12 @@ export function setAgentChatModel(chatId: string, model: string | null) {
   if (!chat) return;
   const safeModel = nativeChatModel(chat.provider, model);
   setChats(chatId, { model: safeModel });
-  // A live claude session pins its model at start — push the change into the
-  // running query (SDK setModel) or the picker silently lies until the next
-  // session. Codex reads the model per turn, so the store update suffices.
-  if (chat.provider === "claudeCode" && chat.sessionId) {
+  // Session-state model backends need an explicit update; turn-payload
+  // backends read this store value when the next message is sent.
+  if (
+    agentBackendDescriptor(chat.provider).nativePayload.model === "sessionState" &&
+    chat.sessionId
+  ) {
     queueAgentChatSetModel(chatId, chat.sessionId, safeModel);
   }
 }
@@ -1138,10 +1184,24 @@ function queueAgentChatSetMode(
 }
 
 function sendOptions(chat: AgentChatState, images: string[]) {
+  const payload = agentBackendDescriptor(chat.provider).nativePayload;
   return {
-    ...(chat.provider === "codex" ? { effort: chat.effort, model: chat.model } : {}),
+    effort: payload.effort === "turn" ? chat.effort : null,
+    model: payload.model === "turn" ? chat.model : null,
     images: [...images],
   };
+}
+
+function assertImageInputSupported(chat: AgentChatState, images: string[]) {
+  if (
+    images.some((image) => image.trim().length > 0) &&
+    !supportsBackendCapability(chat.provider, "imageInput", "nativeChat", chat.engine)
+  ) {
+    throw new Error(
+      backendCapabilityReason(chat.provider, "imageInput", "nativeChat", chat.engine) ??
+        "This backend cannot accept image input",
+    );
+  }
 }
 
 export async function switchAgentChatProvider(
@@ -1150,6 +1210,7 @@ export async function switchAgentChatProvider(
   model: string | null,
   effort: string | null = null,
   mode: string | null = null,
+  engine: AgentEngine = loadAgentEngine(),
 ): Promise<boolean> {
   const current = chats[chatId];
   if (current?.turnActive) throw new Error("Cannot switch provider while a turn is active");
@@ -1161,7 +1222,7 @@ export async function switchAgentChatProvider(
   await disposeAgentChat(chatId);
   await setChatAgent(chatId, provider, "agent");
   await ensureAgentChat(chatId, projectRoot, provider, nativeChatModel(provider, model), {
-    engine: loadAgentEngine(),
+    engine,
     effort,
     mode,
   });
@@ -1191,6 +1252,7 @@ export async function sendAgentMessage(
   let sessionId = chat.sessionId;
   const projectRoot = chat.projectRoot;
   if (!sessionId && !projectRoot) throw new Error("Agent chat is not started");
+  assertImageInputSupported(chat, images);
   flushPendingDeltas(chatId);
   let optimisticSeq = takeSeq(chatId);
   const imageList = [...images];
@@ -1205,7 +1267,7 @@ export async function sendAgentMessage(
     if (!sessionId) {
       if (!projectRoot) throw new Error("Agent chat is not started");
       await ensureAgentChat(chatId, projectRoot, chat.provider, chat.model, {
-        engine: loadAgentEngine(),
+        engine: chat.engine,
         effort: chat.effort,
       });
       if (stale()) return;
@@ -1236,7 +1298,7 @@ export async function sendAgentMessage(
 
     let target = sendTarget();
     if (!target) return;
-    if (target.chat.provider === "claudeCode") {
+    if (agentBackendDescriptor(target.chat.provider).nativePayload.model === "sessionState") {
       await pendingSetModelByChat.get(chatId)?.promise;
       if (stale()) return;
       target = sendTarget();
@@ -1251,6 +1313,9 @@ export async function sendAgentMessage(
       target = sendTarget();
       if (!target) return;
     }
+    // ensureAgentChat can force a remote session onto v1 after the first
+    // capability check. Gate the live state that will actually dispatch.
+    assertImageInputSupported(target.chat, imageList);
     await agentChatSend(target.sessionId, text, sendOptions(target.chat, imageList));
   } catch (error) {
     if (stale()) throw error;
@@ -1280,6 +1345,12 @@ export async function approveAgentRequest(
   const chat = chats[chatId];
   const sessionId = chat?.sessionId;
   if (!sessionId) throw new Error("Agent chat is not started");
+  if (!supportsBackendCapability(chat.provider, "approvalEvents", "nativeChat", chat.engine)) {
+    throw new Error(
+      backendCapabilityReason(chat.provider, "approvalEvents", "nativeChat", chat.engine) ??
+        "This backend cannot resolve approval requests",
+    );
+  }
 
   try {
     await agentChatApprove(sessionId, approvalId, decision);
@@ -1298,8 +1369,15 @@ export async function approveAgentRequest(
 export async function steerAgentChat(chatId: string, text: string): Promise<void> {
   const generation = ensureGenerations.get(chatId) ?? 0;
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
-  const sessionId = chats[chatId]?.sessionId;
-  if (!sessionId) throw new Error("Agent chat is not started");
+  const chat = chats[chatId];
+  const sessionId = chat?.sessionId;
+  if (!sessionId || !chat) throw new Error("Agent chat is not started");
+  if (!supportsBackendCapability(chat.provider, "steerTurn", "nativeChat", chat.engine)) {
+    throw new Error(
+      backendCapabilityReason(chat.provider, "steerTurn", "nativeChat", chat.engine) ??
+        "This backend cannot steer a running turn",
+    );
+  }
   flushPendingDeltas(chatId);
   const optimisticSeq = takeSeq(chatId);
   setChats(chatId, {

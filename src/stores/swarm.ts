@@ -1,6 +1,12 @@
 import { createEffect, createSignal } from "solid-js";
 import type { AgentProvider } from "../lib/agentChat";
 import {
+  agentBackendDescriptor,
+  isNativeAgentProvider,
+  nativeChatUnavailableReason,
+  normalizeAgentProvider,
+} from "../lib/agentBackends";
+import {
   mcpSwarmStatus,
   mcpTakeSwarmRequests,
   mcpUpdateSwarmRun,
@@ -14,6 +20,7 @@ import { SWARM_SYNTHESIS_PROMPT_PREFIX } from "../lib/swarmSynthesis";
 import { ensureAgentChat, agentChat, sendAgentMessage } from "./agentChat";
 import { addChat, ensureChatsLoaded, findChat, workspace } from "./workspace";
 import { loadAgentEngine } from "../lib/chatDefaults";
+import { modeOverrides } from "../lib/agentModes";
 
 const POLL_MS = 1200;
 const MAX_GOAL_CHARS = 8000;
@@ -149,12 +156,33 @@ function providerForRequestedModel(requested: string | null): AgentProvider | nu
   return null;
 }
 
+const MODEL_ALIASES: Readonly<
+  Record<AgentProvider, readonly Readonly<{ terms: readonly string[]; model: string }>[]>
+> = Object.freeze({
+  claudeCode: Object.freeze([
+    { terms: ["opus", "4.8"], model: "claude-opus-4-8" },
+    { terms: ["sonnet", "5"], model: "claude-sonnet-5" },
+    { terms: ["haiku"], model: "claude-haiku-4-5" },
+  ]),
+  codex: Object.freeze([
+    { terms: ["gpt-5.5"], model: "gpt-5.5" },
+    { terms: ["gpt-5.4-mini"], model: "gpt-5.4-mini" },
+    { terms: ["gpt-5.4"], model: "gpt-5.4" },
+    { terms: ["spark"], model: "gpt-5.3-codex-spark" },
+  ]),
+});
+
+const READ_ONLY_MODE: Readonly<Record<AgentProvider, string>> = Object.freeze({
+  claudeCode: "plan",
+  codex: "read-only",
+});
+
 function providersFor(
   pref: SwarmRequest["providerPreference"],
   count: number,
   requestedModel: string | null,
 ): AgentProvider[] {
-  if (pref === "claudeCode" || pref === "codex") {
+  if (isNativeAgentProvider(pref)) {
     return Array.from({ length: count }, () => pref);
   }
   const modelProvider = providerForRequestedModel(requestedModel);
@@ -180,21 +208,10 @@ function resolveModel(provider: AgentProvider, requested: string | null): ModelR
   }
   const native = modelOption(provider, requested);
   if (native && !native.terminalOnly) return { ok: true, model: native.id };
-  if (provider === "claudeCode") {
-    if (text.includes("opus") && text.includes("4.8")) {
-      return { ok: true, model: "claude-opus-4-8" };
-    }
-    if (text.includes("sonnet") && text.includes("5")) {
-      return { ok: true, model: "claude-sonnet-5" };
-    }
-    if (text.includes("haiku")) return { ok: true, model: "claude-haiku-4-5" };
-  }
-  if (provider === "codex") {
-    if (text.includes("gpt-5.5")) return { ok: true, model: "gpt-5.5" };
-    if (text.includes("gpt-5.4-mini")) return { ok: true, model: "gpt-5.4-mini" };
-    if (text.includes("gpt-5.4")) return { ok: true, model: "gpt-5.4" };
-    if (text.includes("spark")) return { ok: true, model: "gpt-5.3-codex-spark" };
-  }
+  const alias = MODEL_ALIASES[provider].find((candidate) =>
+    candidate.terms.every((term) => text.includes(term))
+  );
+  if (alias) return { ok: true, model: alias.model };
   const model = requested?.trim() ?? "";
   return {
     ok: false,
@@ -203,23 +220,16 @@ function resolveModel(provider: AgentProvider, requested: string | null): ModelR
 }
 
 function readOnlyOptions(provider: AgentProvider) {
-  if (provider === "codex") {
-    return {
-      engine: loadAgentEngine(),
-      mode: "read-only",
-      sandbox: "read-only",
-      approvalPolicy: "on-request",
-    };
-  }
+  const mode = READ_ONLY_MODE[provider];
   return {
     engine: loadAgentEngine(),
-    mode: "plan",
-    permissionMode: "plan",
+    mode,
+    ...modeOverrides(provider, mode),
   };
 }
 
-function providerLabel(provider: AgentProvider): string {
-  return provider === "codex" ? "Codex" : "Claude";
+function providerLabel(provider: string): string {
+  return agentBackendDescriptor(provider)?.label ?? provider;
 }
 
 function workerPrompt(
@@ -429,7 +439,7 @@ function synthesisPrompt(run: SwarmRunSnapshot): string {
     return [
       `${index + 1}. ${lane.title}`,
       `   Status: ${lane.status}`,
-      `   Provider/model: ${providerLabel(lane.provider as AgentProvider)} / ${lane.model ?? "default"}`,
+      `   Provider/model: ${providerLabel(lane.provider)} / ${lane.model ?? "default"}`,
       `   Result: ${clipped(result, 2200)}`,
     ].join("\n");
   });
@@ -448,7 +458,7 @@ function synthesisPrompt(run: SwarmRunSnapshot): string {
   ].join("\n");
 }
 
-async function dispatchSynthesis(run: SwarmRunSnapshot) {
+export async function dispatchSynthesis(run: SwarmRunSnapshot) {
   if (!shouldSynthesize(run) || synthesizing.has(run.runId)) return;
   const originChatId = run.originChatId;
   if (!originChatId) return;
@@ -457,6 +467,15 @@ async function dispatchSynthesis(run: SwarmRunSnapshot) {
     updateRun(run.runId, {
       synthesisStatus: "failed",
       synthesisError: "Origin chat is not an active structured agent chat.",
+    });
+    return;
+  }
+  const provider = normalizeAgentProvider(origin.agentId);
+  if (!provider) {
+    updateRun(run.runId, {
+      synthesisStatus: "failed",
+      synthesisError:
+        nativeChatUnavailableReason(origin.agentId) ?? "Origin backend cannot run native chat.",
     });
     return;
   }
@@ -472,7 +491,6 @@ async function dispatchSynthesis(run: SwarmRunSnapshot) {
     if (run.synthesisStatus !== "pending") {
       updateRun(run.runId, { synthesisStatus: "pending", synthesisError: null });
     }
-    const provider = origin.agentId === "codex" ? "codex" : "claudeCode";
     if (!agentChat(originChatId)) {
       await ensureAgentChat(originChatId, origin.projectRoot, provider, null, {
         engine: loadAgentEngine(),

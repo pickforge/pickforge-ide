@@ -21,8 +21,9 @@ async function loadModules() {
   vi.resetModules();
   const flags = await import("../../src/stores/flags");
   const models = await import("../../src/lib/agentModels");
+  const backends = await import("../../src/lib/agentBackends");
   const quickLaunch = await import("../../src/stores/quickLaunch");
-  return { flags, models, quickLaunch };
+  return { flags, models, backends, quickLaunch };
 }
 
 beforeEach(() => {
@@ -97,6 +98,16 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(quickLaunch.allQuickLaunchItems().some((item) => item.agentId === "omp")).toBe(true);
     flags.setFlagOverride("ompPiAgents", true);
     expect(quickLaunch.quickLaunchItems().some((item) => item.agentId === "omp")).toBe(true);
+  });
+
+  it("keeps UI profile labels aligned with the backend registry", async () => {
+    const { flags, models, backends } = await loadModules();
+    flags.setFlagOverride("ompPiAgents", true);
+
+    for (const descriptor of Object.values(backends.AGENT_BACKENDS)) {
+      expect(models.agentProfiles().find((profile) => profile.id === descriptor.id)?.label)
+        .toBe(descriptor.label);
+    }
   });
 });
 

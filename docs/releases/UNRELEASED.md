@@ -48,6 +48,10 @@ reset this file.
   recognition landed dark behind the default-off `ompPiAgents` flag. OMP model
   discovery and PickForge MCP wiring remain deferred until the CLIs expose
   supported, offline-safe integration paths.
+- Added an exhaustive, immutable agent-backend capability registry for native
+  chat and terminal surfaces. Claude Code and Codex controls now consume the
+  registry, while OMP ACP and Pi RPC remain honestly terminal-only and
+  unavailable for native chat behind `ompPiAgents`.
 
 ## Validation
 
@@ -86,6 +90,13 @@ reset this file.
 - `bunx tsc --noEmit` — frontend type-check clean.
 - `cargo test -p pickforge-tauri agent_probe_is_strictly_allowlisted --lib` —
   fixed diagnostic command allowlist test green.
+- `bunx vitest run tests/unit/agentBackends.test.ts tests/unit/agentChat.test.ts tests/unit/agentModels.test.ts tests/unit/agentModes.test.ts tests/unit/chatDefaults.test.ts tests/unit/swarm.test.ts tests/unit/operatorDispatch.test.ts tests/unit/orchestraView.test.ts tests/unit/settingsRegistry.test.ts`
+  — 210 focused capability-matrix, native-chat parity, control, provider,
+  composer-store, swarm, operator, and Settings tests green.
+- `cargo test -p pickforge-core --lib agents::manager::tests:: --locked` — 27
+  focused session lifecycle, capability-gate, approval replay, and dispatch tests green.
+- `bun run build` — frontend type-check and Vite production build clean;
+  dynamic-import and chunk-size warnings remain.
 
 ### Not tested yet
 

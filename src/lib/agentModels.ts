@@ -3,6 +3,7 @@
 // localStorage (global, like the Flutter SharedPreferences store).
 import { flagEnabled } from "../stores/flags";
 import { probeAgentCli, type AgentCliProbe } from "./process";
+import { AGENT_BACKENDS, isNativeAgentProvider } from "./agentBackends";
 
 export interface AgentModelOption {
   id: string;
@@ -41,7 +42,7 @@ const CODEX_EFFORTS = ["low", "medium", "high", "xhigh"];
 export const AGENTS: AgentProfile[] = [
   {
     id: "claudeCode",
-    label: "Claude Code",
+    label: AGENT_BACKENDS.claudeCode.label,
     binary: "claude",
     defaultModel: "claude-haiku-4-5",
     models: [
@@ -80,7 +81,7 @@ export const AGENTS: AgentProfile[] = [
   },
   {
     id: "codex",
-    label: "Codex",
+    label: AGENT_BACKENDS.codex.label,
     binary: "codex",
     defaultModel: "gpt-5.3-codex-spark",
     models: [
@@ -114,7 +115,7 @@ export const AGENTS: AgentProfile[] = [
 const OMP_PI_AGENTS: AgentProfile[] = [
   {
     id: "omp",
-    label: "Oh My Pi (OMP)",
+    label: AGENT_BACKENDS.omp.label,
     binary: "omp",
     defaultModel: null,
     models: [],
@@ -122,7 +123,7 @@ const OMP_PI_AGENTS: AgentProfile[] = [
   },
   {
     id: "pi",
-    label: "Pi",
+    label: AGENT_BACKENDS.pi.label,
     binary: "pi",
     defaultModel: null,
     models: [],
@@ -346,8 +347,7 @@ export function launchBinary(agentId: string): string | null {
 }
 
 export function nativeChatModel(agentId: string, modelId: string | null): string | null {
-  const profile = profileForAgent(agentId);
-  if (profile?.terminalOnly) return null;
+  if (!isNativeAgentProvider(agentId)) return null;
   const option = modelOption(agentId, modelId);
   return option?.terminalOnly ? null : modelId;
 }

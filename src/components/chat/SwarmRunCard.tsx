@@ -1,14 +1,12 @@
 import { For, Show, type JSX, createSignal } from "solid-js";
 import { compactInline } from "../../lib/chatDisplay";
+import { agentBackendDescriptor } from "../../lib/agentBackends";
 import type { SwarmLaneSnapshot, SwarmRunSnapshot } from "../../lib/mcp";
 import { setOrchestraOpen } from "../../stores/orchestraStage";
 import { selectChat } from "../../stores/workspace";
 import { IconChevronDown, IconChevronRight, IconGrid } from "../icons";
 import "./chat.css";
 
-function providerName(provider: string): string {
-  return provider === "codex" ? "Codex" : "Claude";
-}
 
 function modelName(lane: SwarmLaneSnapshot): string {
   return lane.model?.trim() || "default model";
@@ -103,7 +101,7 @@ function SwarmRow(props: { run: SwarmRunSnapshot }): JSX.Element {
                   <span class="pf-chat-swarm-lane-main">
                     <span class="pf-chat-swarm-lane-title">{lane.title}</span>
                     <span class="pf-chat-swarm-lane-meta">
-                      {providerName(lane.provider)} / {modelName(lane)}
+                      {agentBackendDescriptor(lane.provider)?.label ?? lane.provider} / {modelName(lane)}
                     </span>
                     <span class="pf-chat-swarm-lane-detail">{laneDetail(lane)}</span>
                   </span>

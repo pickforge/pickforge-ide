@@ -27,6 +27,7 @@ import {
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
 import { AGENTS, loadAgentEfforts, loadAgentModels } from "../../lib/agentModels";
+import { normalizeAgentProvider, NATIVE_AGENT_BACKENDS } from "../../lib/agentBackends";
 import { loadAgentModes } from "../../lib/agentModes";
 import { isPrimaryChat } from "../../lib/chatLabels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
@@ -86,7 +87,7 @@ import { markChatTitleManual } from "../../lib/chatAutoName";
 import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
-const AGENT_PROVIDERS = AGENTS.filter((a) => a.id === "claudeCode" || a.id === "codex");
+const AGENT_PROVIDERS = NATIVE_AGENT_BACKENDS;
 const PROVIDER_MARK: Record<string, string> = { claudeCode: "CC", codex: "CX" };
 
 const STATUS_ORDER: OrchestraTaskStatus[] = [
@@ -105,8 +106,8 @@ const STATUS_INTENT: Record<OrchestraTaskStatus, string> = {
 };
 
 function providerOf(chatId: string): AgentProvider {
-  const agentId = findChat(chatId)?.agentId ?? "claudeCode";
-  return (agentId === "codex" ? "codex" : "claudeCode") as AgentProvider;
+  const agentId = findChat(chatId)?.agentId ?? "";
+  return normalizeAgentProvider(agentId) ?? "claudeCode";
 }
 
 function modelLabel(provider: AgentProvider): string {
@@ -938,7 +939,7 @@ export function OrchestraView(props: {
                   <For each={run.lanes}>
                     {(lane) => (
                       <span class="pf-orch-swarm-lane">
-                        {lane.provider === "codex" ? "CX" : "CC"} · {lane.status}
+                        {PROVIDER_MARK[lane.provider] ?? "AI"} · {lane.status}
                       </span>
                     )}
                   </For>

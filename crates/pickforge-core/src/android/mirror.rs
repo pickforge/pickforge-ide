@@ -86,8 +86,14 @@ pub async fn start_session_cancellable(
     jar_path: &Path,
     cancelled: Arc<AtomicBool>,
 ) -> Result<MirrorSession, MirrorError> {
+    if cancelled.load(Ordering::SeqCst) {
+        return Err(MirrorError::Cancelled);
+    }
     let jar = jar_path.to_string_lossy();
     adb(&["-s", serial, "push", &jar, REMOTE_JAR])?;
+    if cancelled.load(Ordering::SeqCst) {
+        return Err(MirrorError::Cancelled);
+    }
 
     let scid = gen_scid(serial);
     let socket_name = format!("localabstract:scrcpy_{scid}");
@@ -100,6 +106,10 @@ pub async fn start_session_cancellable(
         &socket_name,
         &format!("tcp:{port}"),
     ])?;
+    if cancelled.load(Ordering::SeqCst) {
+        remove_reverse(serial.to_string(), socket_name).await;
+        return Err(MirrorError::Cancelled);
+    }
 
     // app_process runs the server jar's main. Reverse tunnel ⇒ no dummy byte.
     let scid_arg = format!("scid={scid}");
@@ -135,7 +145,18 @@ pub async fn start_session_cancellable(
     for (k, v) in user_shell_environment() {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn()?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            remove_reverse(serial.to_string(), socket_name).await;
+            return Err(error.into());
+        }
+    };
+    if cancelled.load(Ordering::SeqCst) {
+        let _ = child.kill().await;
+        remove_reverse(serial.to_string(), socket_name).await;
+        return Err(MirrorError::Cancelled);
+    }
 
     // The server connects video first, then control (audio disabled).
     let accept = async {
@@ -200,4 +221,21 @@ pub async fn stop_session(mut session: MirrorSession) {
         format!("localabstract:scrcpy_{}", session.scid),
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_start_returns_before_touching_adb() {
+        let result = start_session_cancellable(
+            "missing-device",
+            Path::new("/missing/scrcpy-server.jar"),
+            Arc::new(AtomicBool::new(true)),
+        )
+        .await;
+
+        assert!(matches!(result, Err(MirrorError::Cancelled)));
+    }
 }

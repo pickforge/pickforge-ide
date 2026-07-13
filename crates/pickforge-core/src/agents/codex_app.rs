@@ -17,6 +17,7 @@ use super::event::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CHILD_REAP_TIMEOUT: Duration = Duration::from_secs(2);
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(150);
 const OUTPUT_TAIL_CHARS: usize = 2000;
 
 #[derive(Debug, Clone)]
@@ -406,6 +407,10 @@ impl CodexAppClient {
         .map(|_| ())
     }
 
+    pub fn turn_interrupt_nowait(&self, thread_id: &str, turn_id: &str) {
+        send_turn_interrupt(&self.state, thread_id, turn_id);
+    }
+
     pub fn turn_steer(
         &self,
         thread_id: &str,
@@ -511,6 +516,18 @@ impl CodexAppClient {
     }
 
     pub fn unsubscribe(&self, thread_id: &str) -> Result<(), CodexAppError> {
+        self.unsubscribe_with_timeout(thread_id, REQUEST_TIMEOUT)
+    }
+
+    pub fn unsubscribe_for_shutdown(&self, thread_id: &str) -> Result<(), CodexAppError> {
+        self.unsubscribe_with_timeout(thread_id, SHUTDOWN_GRACE)
+    }
+
+    fn unsubscribe_with_timeout(
+        &self,
+        thread_id: &str,
+        timeout: Duration,
+    ) -> Result<(), CodexAppError> {
         // Drop the local sink FIRST so no more events fan out to a disposed
         // session while the server round-trip is in flight (late events would
         // otherwise recreate rows for a deleted chat).
@@ -526,7 +543,7 @@ impl CodexAppClient {
         if !self.is_closed() {
             let mut params = Map::new();
             params.insert("threadId".to_string(), Value::String(thread_id.to_string()));
-            let _ = self.request("thread/unsubscribe", Value::Object(params), REQUEST_TIMEOUT);
+            let _ = self.request("thread/unsubscribe", Value::Object(params), timeout);
         }
         Ok(())
     }
@@ -542,7 +559,19 @@ impl CodexAppClient {
 
     pub fn shutdown(&self) -> Result<(), CodexAppError> {
         self.state.closed.store(true, Ordering::SeqCst);
+        let interrupted = self
+            .state
+            .expected_turns
+            .lock()
+            .map(|mut turns| turns.drain().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for (thread_id, turn_id) in &interrupted {
+            send_turn_interrupt(&self.state, thread_id, turn_id);
+        }
         fail_pending(&self.state, "codex app-server shutdown");
+        if !interrupted.is_empty() {
+            std::thread::sleep(SHUTDOWN_GRACE);
+        }
         if let Ok(mut tx) = self.state.writer_tx.lock() {
             if let Some(tx) = tx.take() {
                 let _ = tx.send(WriterMessage::Shutdown);

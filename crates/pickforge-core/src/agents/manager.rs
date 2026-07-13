@@ -408,6 +408,10 @@ impl AgentChatManager {
         {
             let mut inner = self.lock_inner()?;
             if self.shutting_down.load(Ordering::SeqCst) {
+                drop(inner);
+                if let Some((client, thread_id)) = codex_app_client.as_ref() {
+                    let _ = client.unsubscribe_for_shutdown(thread_id);
+                }
                 return Err(AgentChatError::ShuttingDown);
             }
             upsert_session_state(
@@ -468,12 +472,16 @@ impl AgentChatManager {
         match (engine, provider) {
             (Engine::V2, AgentProvider::Codex) => {
                 if let Some((client, thread_id)) = codex_app_client {
-                    client
-                        .subscribe(
-                            &thread_id,
-                            self.wrapping_sink(session_id.clone(), chat_id.to_string()),
-                        )
-                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                    if let Err(err) = client.subscribe(
+                        &thread_id,
+                        self.wrapping_sink(session_id.clone(), chat_id.to_string()),
+                    ) {
+                        let _ = client.unsubscribe(&thread_id);
+                        if let Ok(mut inner) = self.inner.lock() {
+                            inner.remove(&session_id);
+                        }
+                        return Err(AgentChatError::Spawn(err.to_string()));
+                    }
                 }
             }
             (Engine::V2, AgentProvider::ClaudeCode) => {
@@ -883,7 +891,13 @@ impl AgentChatManager {
         }
 
         if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
-            let client = self.claude_bridge_client()?;
+            let client = match self.claude_bridge_client() {
+                Ok(client) => client,
+                Err(err) => {
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
+                    return Err(err);
+                }
+            };
             // The bridge chat dies with its claude CLI process (crash, auth
             // expiry, idle exit) while the session stays resumable — restart it
             // transparently instead of sending into a void.
@@ -926,6 +940,7 @@ impl AgentChatManager {
                 }
                 Err(err) => {
                     rollback_prompt(&prompt_seqs);
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
                     if let Some(turn) = clear_active_turn(&self.inner, session_id) {
                         turn.reap();
                     }
@@ -1725,8 +1740,19 @@ impl AgentChatManager {
             .map(|mut inner| inner.drain().collect::<Vec<_>>())
             .unwrap_or_default();
         for (session_id, state) in drained {
-            if let Some(turn) = state.active_turn {
+            let had_active_turn = if let Some(turn) = state.active_turn {
                 turn.shutdown();
+                true
+            } else {
+                false
+            };
+            let was_running = self
+                .db
+                .agent_session_status(&session_id)
+                .ok()
+                .flatten()
+                .is_some_and(|status| status == "running");
+            if had_active_turn || was_running {
                 let _ = self.db.agent_session_set_status(&session_id, "idle");
             }
         }
@@ -2079,9 +2105,33 @@ impl ActiveTurn {
         }
     }
 
-    /// Unlike `reap`, this drops V1 handles synchronously so their reader threads join.
+    /// Interrupt V2 turns while their provider client is still alive, then drop
+    /// V1 handles synchronously so their reader threads join.
     fn shutdown(&self) {
-        let handle = self.inner.lock().ok().and_then(|mut handle| handle.take());
+        let handle = self.inner.lock().ok().and_then(|mut slot| {
+            if let Some(handle) = slot.as_ref() {
+                match handle {
+                    ActiveTurnHandle::CodexApp {
+                        client,
+                        thread_id,
+                        turn_id,
+                        pending_interrupt,
+                    } => {
+                        pending_interrupt.store(true, Ordering::SeqCst);
+                        if let Some(turn_id) = turn_id.lock().ok().and_then(|turn| turn.clone()) {
+                            if pending_interrupt.swap(false, Ordering::SeqCst) {
+                                client.turn_interrupt_nowait(thread_id, &turn_id);
+                            }
+                        }
+                    }
+                    ActiveTurnHandle::ClaudeBridge { client, chat_id } => {
+                        let _ = client.chat_interrupt(chat_id);
+                    }
+                    ActiveTurnHandle::Codex(_) | ActiveTurnHandle::Claude(_) => {}
+                }
+            }
+            slot.take()
+        });
         drop(handle);
     }
 }
@@ -4943,6 +4993,64 @@ exec sleep 5
         assert!(manager.inner.lock().unwrap().is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejected_v2_start_unsubscribes_created_thread() {
+        let script = test_script(
+            "codex-start-shutdown-race",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-rejected"}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{"id":3,"result":{}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = Arc::new(codex_manager(Arc::clone(&db), &script));
+        let inner_guard = manager.inner.lock().unwrap();
+        let worker_manager = Arc::clone(&manager);
+        let root = script.dir.clone();
+        let worker = std::thread::spawn(move || {
+            let (_events, sink) = event_sink();
+            worker_manager.start(
+                "chat-rejected-v2",
+                root,
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+        });
+
+        wait_for_file(&log, |text| text.contains(r#""method":"thread/start""#));
+        manager.shutting_down.store(true, Ordering::SeqCst);
+        drop(inner_guard);
+
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(AgentChatError::ShuttingDown)
+        ));
+        let log = wait_for_file(&log, |text| {
+            text.contains(r#""method":"thread/unsubscribe""#)
+        });
+        assert!(log.contains(r#""threadId":"thread-rejected""#));
+        assert!(manager.inner.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn shutdown_preserves_terminal_session_status() {
         let db = Arc::new(Database::open_in_memory().unwrap());
@@ -4970,6 +5078,34 @@ exec sleep 5
         assert_eq!(row.status, "failed");
     }
 
+    #[test]
+    fn shutdown_reconciles_running_session_without_active_turn() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = AgentChatManager::new(Arc::clone(&db), PathBuf::from("."));
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-running",
+                PathBuf::from("."),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        db.agent_session_set_status(&session_id, "running")
+            .unwrap();
+
+        manager.shutdown();
+
+        let row = db
+            .latest_agent_session_for_chat("chat-running")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "idle");
+    }
+
     #[cfg(unix)]
     #[test]
     fn shutdown_stops_cached_v2_codex_client() {
@@ -4977,8 +5113,11 @@ exec sleep 5
             "codex-app-shutdown",
             r#"#!/bin/sh
 pid_file="$0.pid"
+log="$0.stdin"
 printf '%s' "$$" > "$pid_file"
+: > "$log"
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
       printf '%s\n' '{"id":1,"result":{}}'
@@ -4986,16 +5125,21 @@ while IFS= read -r line; do
     *'"method":"thread/start"'*)
       printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-shutdown"}}}'
       ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-shutdown"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-shutdown","turnId":"turn-shutdown"}}'
+      ;;
   esac
 done
 sleep 30
 "#,
         );
         let pid_file = script.path.with_file_name("fake-agent.pid");
+        let log = script.path.with_file_name("fake-agent.stdin");
         let db = Arc::new(Database::open_in_memory().unwrap());
         let manager = codex_manager(Arc::clone(&db), &script);
-        let (_events, sink) = event_sink();
-        manager
+        let (events, sink) = event_sink();
+        let session_id = manager
             .start(
                 "chat-v2-shutdown",
                 script.dir.clone(),
@@ -5006,6 +5150,14 @@ sleep 30
                 sink,
             )
             .unwrap();
+        manager
+            .send(&session_id, "run", None, None, None)
+            .unwrap();
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnStarted))
+        });
         let pid: i32 = wait_for_file(&pid_file, |text| !text.trim().is_empty())
             .trim()
             .parse()
@@ -5015,6 +5167,8 @@ sleep 30
         manager.shutdown();
 
         wait_for_process_exit(pid);
+        let log = wait_for_file(&log, |text| text.contains(r#""method":"turn/interrupt""#));
+        assert!(log.contains(r#""turnId":"turn-shutdown""#));
         assert!(
             manager.codex_app_clients.lock().unwrap().is_empty(),
             "client cache must drain on shutdown"

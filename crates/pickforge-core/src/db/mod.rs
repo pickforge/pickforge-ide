@@ -1194,6 +1194,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn agent_session_status(&self, id: &str) -> Result<Option<String>, DbError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT status FROM agent_sessions WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![id], |row| row.get(0))?;
+        match rows.next() {
+            Some(status) => Ok(Some(status?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn agent_session_set_model(&self, id: &str, model: Option<&str>) -> Result<(), DbError> {
         self.lock().execute(
             "UPDATE agent_sessions SET model = ?2 WHERE id = ?1",

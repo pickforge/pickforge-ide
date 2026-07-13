@@ -30,18 +30,21 @@ const MODE_OPTIONS: Record<AgentProvider, AgentModeOption[]> = {
     { id: "full-access", label: "Full access" },
   ],
   omp: [{ id: "default", label: "Default" }],
+  pi: [],
 };
 
 const DEFAULT_MODE: Record<AgentProvider, string> = {
   claudeCode: "default",
   codex: "auto",
   omp: "default",
+  pi: "",
 };
 
 const DANGER_MODES: Record<AgentProvider, string> = {
   claudeCode: "bypassPermissions",
   codex: "full-access",
   omp: "",
+  pi: "",
 };
 
 export function modeOptions(provider: AgentProvider): AgentModeOption[] {
@@ -59,10 +62,12 @@ function resolveMode(provider: AgentProvider, mode: string | null): string {
 }
 
 export function isDangerMode(provider: AgentProvider, mode: string | null): boolean {
+  if (modeOptions(provider).length === 0) return false;
   return resolveMode(provider, mode) === DANGER_MODES[provider];
 }
 
 export function modeOverrides(provider: AgentProvider, mode: string | null): ModeOverrides {
+  if (provider === "pi") return {};
   const resolved = resolveMode(provider, mode);
   if (provider === "claudeCode") return { permissionMode: resolved };
   if (provider === "omp") return { permissionMode: resolved };

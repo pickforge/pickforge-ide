@@ -47,15 +47,19 @@ reset this file.
   offline model catalog, optional quick-launch chips, and OMP activity/title
   recognition landed dark behind the default-off `ompPiAgents` flag. OMP keeps
   its terminal profile; native chat appears only after an exact compatible
-  16.4.8 probe. Pi RPC remains terminal-only.
+  16.4.8 probe. Compatible Pi 0.79.x installs expose native RPC only after the
+  same flag and an exact-compatible version probe; both terminal profiles remain.
 - Added an exhaustive, immutable agent-backend capability registry for native
   chat and terminal surfaces. Claude Code and Codex behavior is unchanged; the
   OMP 16.4.8 ACP connector provides renderer-flagged, exact-probed local v2
   sessions, streaming, exact approvals, identity-keyed scoped MCP grants and
   canonical cwd reuse, schema-correct exact-ID resume/load, model validation,
   bounded late-response handling, cumulative-context and durable-title events,
-  and Unix/Windows process-tree cleanup. Platform CI runs the OMP Unix fixture
-  on macOS and the executable Job Object cleanup regression on Windows.
+  and Unix/Windows process-tree cleanup. Compatible Pi 0.79.x installs add
+  version-gated native RPC behind `ompPiAgents`, with isolated resumable sessions
+  and bounded process cleanup; native approvals and MCP grants remain explicitly
+  unsupported. Platform CI runs the OMP Unix fixture on macOS and both OMP/Pi
+  executable Job Object cleanup regressions on Windows.
 - OMP ACP launches as `omp acp --no-extensions --approval-mode=always-ask`,
   with no config/yolo overlay. Its cleared child environment restores exactly
   `PATH`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `XDG_CONFIG_HOME`,
@@ -110,6 +114,12 @@ reset this file.
   and dispatch tests green.
 - `bun run build` — frontend type-check and Vite production build clean;
   dynamic-import and chunk-size warnings remain.
+- Pi RPC validation: 9 deterministic framing/lifecycle/process tests, all
+  430 `pickforge-core` tests, 11 Tauri agent-chat command tests, 104 focused
+  frontend capability/chat/model tests, and `bun run build` passed. Installed
+  Pi 0.79.10 also completed an isolated `get_state` startup smoke with
+  `--offline --no-extensions`; no model turn ran and the temporary root was
+  removed.
 
 - `cargo test -p pickforge-core agents:: --locked` — 97 core-agent tests green,
   including 18 OMP ACP environment, handshake, immutable-identity, trusted

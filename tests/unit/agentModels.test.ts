@@ -219,9 +219,28 @@ describe("OMP/Pi discovery parsing and failures", () => {
     ].join("\n");
 
     expect(models.parsePiModelCatalog(raw)).toEqual([
-      { id: "anthropic/claude-sonnet-4-6", label: "claude-sonnet-4-6 · anthropic", terminalOnly: true },
-      { id: "openai-codex/gpt-5.5", label: "gpt-5.5 · openai-codex", terminalOnly: true },
+      { id: "anthropic/claude-sonnet-4-6", label: "claude-sonnet-4-6 · anthropic" },
+      { id: "openai-codex/gpt-5.5", label: "gpt-5.5 · openai-codex" },
     ]);
+  });
+
+  it("attaches Pi probe models to the native picker and preserves provider/model selection", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("ompPiAgents", true);
+    const pi = models.agentProfiles().find((profile) => profile.id === "pi");
+    expect(pi).toBeDefined();
+    const catalog = [
+      { id: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { id: "openai-codex/gpt-5.5", label: "GPT-5.5" },
+    ];
+
+    const nativeProfile = models.profileWithDiscoveredModels(pi!, catalog);
+    expect(nativeProfile.models).toEqual(catalog);
+    expect(nativeProfile.defaultModel).toBeNull();
+
+    models.setAgentModel("pi", catalog[1].id);
+    expect(models.loadAgentModels().pi).toBe("openai-codex/gpt-5.5");
+    expect(models.nativeChatModel("pi", catalog[1].id)).toBe("openai-codex/gpt-5.5");
   });
 
   it("rejects Pi diagnostics that omit the catalog header", async () => {

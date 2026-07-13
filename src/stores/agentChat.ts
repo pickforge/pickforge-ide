@@ -48,8 +48,8 @@ export type AgentTimelineItem =
       optimistic?: boolean;
       hidden?: boolean;
     }
-  | { type: "assistantText"; seq: number; text: string; streaming: boolean }
-  | { type: "thinking"; seq: number; text: string; streaming: boolean }
+  | { type: "assistantText"; seq: number; itemId?: string | null; text: string; streaming: boolean }
+  | { type: "thinking"; seq: number; itemId?: string | null; text: string; streaming: boolean }
   | {
       type: "command";
       seq: number;
@@ -163,6 +163,7 @@ type AgentDeltaEvent =
 
 type PendingDelta = {
   kind: AgentDeltaEvent["kind"];
+  itemId: string | null;
   text: string;
 };
 
@@ -378,78 +379,149 @@ function finalizeStreaming(chat: AgentChatState): AgentChatState {
   return changed ? withTimeline(chat, timeline) : chat;
 }
 
+function findLastTimelineIndex(
+  timeline: readonly AgentTimelineItem[],
+  predicate: (item: AgentTimelineItem) => boolean,
+): number {
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    if (predicate(timeline[index])) return index;
+  }
+  return -1;
+}
+
 function reduceTextDelta(
   chat: AgentChatState,
+  itemId: string | null,
   text: string,
   nextSeq: () => number,
 ): AgentChatState {
-  const last = chat.timeline[chat.timeline.length - 1];
-  if (last?.type === "assistantText" && last.streaming) {
+  const index =
+    itemId !== null
+      ? findLastTimelineIndex(
+          chat.timeline,
+          (item) =>
+            item.type === "assistantText" && item.streaming && item.itemId === itemId,
+        )
+      : chat.timeline.length - 1;
+  const current = chat.timeline[index];
+  if (
+    current?.type === "assistantText" &&
+    current.streaming &&
+    (itemId !== null || index === chat.timeline.length - 1)
+  ) {
     const timeline = chat.timeline.slice();
-    timeline[timeline.length - 1] = { ...last, text: `${last.text}${text}` };
+    timeline[index] = { ...current, text: `${current.text}${text}` };
     return withTimeline(chat, timeline);
   }
   return withTimeline(chat, [
     ...chat.timeline,
-    { type: "assistantText", seq: nextSeq(), text, streaming: true },
+    { type: "assistantText", seq: nextSeq(), itemId, text, streaming: true },
   ]);
 }
 
 function reduceTextFinal(
   chat: AgentChatState,
+  itemId: string | null,
   text: string,
   nextSeq: () => number,
 ): AgentChatState {
-  const last = chat.timeline[chat.timeline.length - 1];
-  if (last?.type === "assistantText" && last.streaming) {
+  const identifiedIndex =
+    itemId !== null
+      ? findLastTimelineIndex(
+          chat.timeline,
+          (item) => item.type === "assistantText" && item.itemId === itemId,
+        )
+      : -1;
+  const index =
+    identifiedIndex >= 0
+      ? identifiedIndex
+      : findLastTimelineIndex(
+          chat.timeline,
+          (item) => item.type === "assistantText" && item.streaming,
+        );
+  const current = chat.timeline[index];
+  if (
+    current?.type === "assistantText" &&
+    (itemId !== null || current.streaming)
+  ) {
     const timeline = chat.timeline.slice();
-    timeline[timeline.length - 1] = { ...last, text, streaming: false };
+    timeline[index] = { ...current, itemId, text, streaming: false };
     return withTimeline(chat, timeline);
   }
   return withTimeline(chat, [
     ...chat.timeline,
-    { type: "assistantText", seq: nextSeq(), text, streaming: false },
+    { type: "assistantText", seq: nextSeq(), itemId, text, streaming: false },
   ]);
 }
 
 function reduceThinkingDelta(
   chat: AgentChatState,
+  itemId: string | null,
   text: string,
   nextSeq: () => number,
 ): AgentChatState {
-  const last = chat.timeline[chat.timeline.length - 1];
-  if (last?.type === "thinking" && last.streaming) {
+  const index =
+    itemId !== null
+      ? findLastTimelineIndex(
+          chat.timeline,
+          (item) => item.type === "thinking" && item.streaming && item.itemId === itemId,
+        )
+      : chat.timeline.length - 1;
+  const current = chat.timeline[index];
+  if (
+    current?.type === "thinking" &&
+    current.streaming &&
+    (itemId !== null || index === chat.timeline.length - 1)
+  ) {
     const timeline = chat.timeline.slice();
-    timeline[timeline.length - 1] = { ...last, text: `${last.text}${text}` };
+    timeline[index] = { ...current, text: `${current.text}${text}` };
     return withTimeline(chat, timeline);
   }
   return withTimeline(chat, [
     ...chat.timeline,
-    { type: "thinking", seq: nextSeq(), text, streaming: true },
+    { type: "thinking", seq: nextSeq(), itemId, text, streaming: true },
   ]);
 }
 
 function reduceThinkingFinal(
   chat: AgentChatState,
+  itemId: string | null,
   text: string,
   nextSeq: () => number,
 ): AgentChatState {
   const blank = isBlankText(text);
-  const last = chat.timeline[chat.timeline.length - 1];
-  if (last?.type === "thinking" && last.streaming) {
+  const identifiedIndex =
+    itemId !== null
+      ? findLastTimelineIndex(
+          chat.timeline,
+          (item) => item.type === "thinking" && item.itemId === itemId,
+        )
+      : -1;
+  const index =
+    identifiedIndex >= 0
+      ? identifiedIndex
+      : findLastTimelineIndex(
+          chat.timeline,
+          (item) => item.type === "thinking" && item.streaming,
+        );
+  const current = chat.timeline[index];
+  if (
+    current?.type === "thinking" &&
+    (itemId !== null || current.streaming)
+  ) {
     const timeline = chat.timeline.slice();
     if (blank) {
-      if (isBlankText(last.text)) timeline.pop();
-      else timeline[timeline.length - 1] = { ...last, streaming: false };
+      if (isBlankText(current.text)) timeline.splice(index, 1);
+      else timeline[index] = { ...current, itemId, streaming: false };
     } else {
-      timeline[timeline.length - 1] = { ...last, text, streaming: false };
+      timeline[index] = { ...current, itemId, text, streaming: false };
     }
     return withTimeline(chat, timeline);
   }
   if (blank) return chat;
   return withTimeline(chat, [
     ...chat.timeline,
-    { type: "thinking", seq: nextSeq(), text, streaming: false },
+    { type: "thinking", seq: nextSeq(), itemId, text, streaming: false },
   ]);
 }
 
@@ -485,9 +557,9 @@ function flushPendingDeltas(chatId: string) {
     chatId,
     buffer.deltas.reduce((next, delta) => {
       if (delta.kind === "textDelta") {
-        return reduceTextDelta(next, delta.text, () => takeSeq(chatId));
+        return reduceTextDelta(next, delta.itemId, delta.text, () => takeSeq(chatId));
       }
-      return reduceThinkingDelta(next, delta.text, () => takeSeq(chatId));
+      return reduceThinkingDelta(next, delta.itemId, delta.text, () => takeSeq(chatId));
     }, chat),
   );
 }
@@ -518,9 +590,10 @@ function queuePendingDelta(chatId: string, event: AgentDeltaEvent) {
     buffer = { deltas: [], generation, animationFrame: null, timeout: null };
     pendingDeltasByChat.set(chatId, buffer);
   }
+  const itemId = event.itemId ?? null;
   const last = buffer.deltas[buffer.deltas.length - 1];
-  if (last?.kind === event.kind) last.text += event.text;
-  else buffer.deltas.push({ kind: event.kind, text: event.text });
+  if (last?.kind === event.kind && last.itemId === itemId) last.text += event.text;
+  else buffer.deltas.push({ kind: event.kind, itemId, text: event.text });
   schedulePendingDeltaFlush(chatId, buffer);
 }
 
@@ -610,19 +683,33 @@ function reduceAgentEvent(
   switch (event.kind) {
     case "sessionStarted":
       return chat;
+    case "sessionUpdated":
+      return {
+        ...chat,
+        model: event.model ?? chat.model,
+        effort: supportsBackendCapability(
+          chat.provider,
+          "effortSelection",
+          "nativeChat",
+          chat.engine,
+        )
+          ? (event.thinkingLevel ?? chat.effort)
+          : chat.effort,
+      };
     case "sessionTitle":
     case "providerPayload":
+    case "providerEvent":
       return chat;
     case "turnStarted":
       return { ...chat, turnActive: true, error: null, providerSwitched: false };
     case "textDelta":
-      return reduceTextDelta(chat, event.text, nextSeq);
+      return reduceTextDelta(chat, event.itemId ?? null, event.text, nextSeq);
     case "textFinal":
-      return reduceTextFinal(chat, event.text, nextSeq);
+      return reduceTextFinal(chat, event.itemId, event.text, nextSeq);
     case "thinkingDelta":
-      return reduceThinkingDelta(chat, event.text, nextSeq);
+      return reduceThinkingDelta(chat, event.itemId ?? null, event.text, nextSeq);
     case "thinkingFinal":
-      return reduceThinkingFinal(chat, event.text, nextSeq);
+      return reduceThinkingFinal(chat, event.itemId, event.text, nextSeq);
     case "commandStarted":
       return withTimeline(chat, [
         ...chat.timeline,
@@ -672,7 +759,18 @@ function reduceAgentEvent(
           changes: event.changes.map((change) => ({ ...change })),
         },
       ]);
-    case "toolUse":
+    case "toolUse": {
+      let matched = false;
+      const timeline = chat.timeline.map((item) => {
+        if (item.type !== "toolUse" || item.itemId !== event.itemId) return item;
+        matched = true;
+        return {
+          ...item,
+          name: event.name,
+          detail: event.detail,
+        };
+      });
+      if (matched) return withTimeline(chat, timeline);
       return withTimeline(chat, [
         ...chat.timeline,
         {
@@ -683,6 +781,7 @@ function reduceAgentEvent(
           detail: event.detail,
         },
       ]);
+    }
     case "mcpToolCall":
       return withTimeline(chat, [
         ...chat.timeline,

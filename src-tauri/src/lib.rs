@@ -300,6 +300,7 @@ pub fn run() {
             agent_chat_commands::agent_chat_interrupt,
             agent_chat_commands::agent_chat_approve,
             agent_chat_commands::agent_chat_steer,
+            agent_chat_commands::agent_chat_follow_up,
             agent_chat_commands::agent_chat_history,
             agent_chat_commands::agent_skills_list,
             agent_chat_commands::agent_stash_image,

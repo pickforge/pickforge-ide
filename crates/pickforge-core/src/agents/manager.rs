@@ -20,6 +20,7 @@ use super::event::AgentEvent;
 use super::omp_acp::{
     validate_omp_mcp_servers, OmpAcpClient, OmpAcpError, OmpAcpOptions, OmpAcpSessionOpen,
 };
+use super::pi_rpc::{spawn as spawn_pi_rpc, PiRpcClient, PiRpcError, PiRpcOptions};
 use super::remote_exec::RemoteExec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,6 +28,7 @@ pub enum AgentProvider {
     ClaudeCode,
     Codex,
     Omp,
+    Pi,
 }
 
 impl AgentProvider {
@@ -35,6 +37,7 @@ impl AgentProvider {
             Self::ClaudeCode => "claudeCode",
             Self::Codex => "codex",
             Self::Omp => "omp",
+            Self::Pi => "pi",
         }
     }
 }
@@ -47,6 +50,7 @@ impl FromStr for AgentProvider {
             "claudeCode" => Ok(Self::ClaudeCode),
             "codex" => Ok(Self::Codex),
             "omp" => Ok(Self::Omp),
+            "pi" => Ok(Self::Pi),
             _ => Err(AgentChatError::BadProvider),
         }
     }
@@ -123,6 +127,7 @@ struct SessionState {
     allowed_tools: Option<Vec<String>>,
     provider_session_id: Option<String>,
     sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    pi_client: Option<Arc<PiRpcClient>>,
     active_turn: Option<ActiveTurn>,
     /// A V1 terminal event arrived before the turn handle was claimed — the
     /// claim then reports this so it doesn't install a handle for a dead
@@ -188,6 +193,10 @@ enum ActiveTurnHandle {
     },
     Omp {
         client: Arc<OmpAcpClient>,
+    PiRpc {
+        client: Arc<PiRpcClient>,
+        prompt_started: Arc<AtomicBool>,
+        pending_interrupt: Arc<AtomicBool>,
     },
 }
 
@@ -239,6 +248,16 @@ impl AgentChatManager {
         let _start_guard = self.acquire_start_guard(chat_id)?;
         let remote = overrides.remote.clone();
         let engine = engine_for_start(engine, remote.as_ref());
+        if provider == AgentProvider::Pi && (engine != Engine::V2 || remote.is_some()) {
+            return Err(AgentChatError::Unsupported(
+                "Pi RPC native chat requires the local v2 agent engine".to_string(),
+            ));
+        }
+        if provider == AgentProvider::Pi && non_empty(overrides.effort.clone()).is_some() {
+            return Err(AgentChatError::Unsupported(
+                "Pi thinking-level selection is not exposed in this release".to_string(),
+            ));
+        }
         if engine == Engine::V1 && provider == AgentProvider::ClaudeCode {
             claude_v1_permission_mode(overrides.permission_mode.clone())?;
             claude_v1_allowed_tools(overrides.allowed_tools.clone())?;
@@ -392,6 +411,7 @@ impl AgentChatManager {
                     allowed_tools: overrides.allowed_tools.clone(),
                     provider_session_id: provider_session_id.clone(),
                     sink: Arc::clone(&sink),
+                    pi_client: None,
                     active_turn: None,
                     terminal_pending: false,
                     pending_approvals: Vec::new(),
@@ -516,6 +536,50 @@ impl AgentChatManager {
                     }
                 }
             }
+            (Engine::V2, AgentProvider::Pi) => {
+                let existing_client = self
+                    .lock_inner()?
+                    .get(&session_id)
+                    .and_then(|state| state.pi_client.clone())
+                    .filter(|client| !client.is_closed());
+                if existing_client.is_none() {
+                    let session_root = self.app_root.clone();
+                    let session_dir = session_root.join("agent-sessions").join("pi");
+                    let persisted_path = provider_session_id
+                        .as_deref()
+                        .map(PathBuf::from)
+                        .filter(|path| path.is_absolute() && path.starts_with(&session_dir));
+                    let session_path = persisted_path
+                        .unwrap_or_else(|| session_dir.join(format!("{session_id}.jsonl")));
+                    let client = spawn_pi_rpc(
+                        PiRpcOptions {
+                            cwd: project_root.clone(),
+                            session_root,
+                            session_dir,
+                            session_path,
+                            model: model.clone(),
+                            binary: self.pi_binary(),
+                            no_extensions: true,
+                            offline: false,
+                            environment_overrides: HashMap::new(),
+                        },
+                        self.wrapping_sink(session_id.clone(), chat_id.to_string()),
+                    )
+                    .map(Arc::new)
+                    .map_err(|error| {
+                        if let Ok(mut inner) = self.inner.lock() {
+                            inner.remove(&session_id);
+                        }
+                        let _ = self.db.agent_session_set_status(&session_id, "failed");
+                        AgentChatError::Spawn(error.to_string())
+                    })?;
+                    let mut inner = self.lock_inner()?;
+                    let state = inner
+                        .get_mut(&session_id)
+                        .ok_or_else(|| AgentChatError::UnknownSession(session_id.clone()))?;
+                    state.pi_client = Some(client);
+                }
+            }
             (Engine::V1, _) => {}
         }
 
@@ -557,6 +621,7 @@ impl AgentChatManager {
             permission_mode,
             allowed_tools,
             omp_client,
+            pi_client,
         ) = {
             let mut inner = self.lock_inner()?;
             let state = inner
@@ -564,6 +629,11 @@ impl AgentChatManager {
                 .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
             if state.active_turn.is_some() {
                 return Err(AgentChatError::TurnActive);
+            }
+            if state.provider == AgentProvider::Pi && !images.is_empty() {
+                return Err(AgentChatError::Unsupported(
+                    "Pi RPC image-path input is not supported by PickForge".to_string(),
+                ));
             }
             if state.engine == Engine::V1 && !images.is_empty() {
                 return Err(AgentChatError::Unsupported(
@@ -573,6 +643,7 @@ impl AgentChatManager {
             state.last_turn_model = match state.provider {
                 AgentProvider::Codex => turn_model.clone().or_else(|| state.model.clone()),
                 AgentProvider::ClaudeCode | AgentProvider::Omp => state.model.clone(),
+                AgentProvider::ClaudeCode | AgentProvider::Pi => state.model.clone(),
             };
             (
                 state.chat_id.clone(),
@@ -588,6 +659,7 @@ impl AgentChatManager {
                 state.permission_mode.clone(),
                 state.allowed_tools.clone(),
                 state.omp_client.clone(),
+                state.pi_client.clone(),
             )
         };
         let codex_model = turn_model.or_else(|| session_model.clone());
@@ -737,6 +809,51 @@ impl AgentChatManager {
             }
         }
 
+        if engine == Engine::V2 && provider == AgentProvider::Pi {
+            let client = pi_client.ok_or_else(|| {
+                AgentChatError::Spawn("Pi RPC client is not running".to_string())
+            })?;
+            if client.is_closed() {
+                let _ = self.db.agent_session_set_status(session_id, "failed");
+                return Err(AgentChatError::Spawn("Pi RPC client is closed".to_string()));
+            }
+            let prompt_started = Arc::new(AtomicBool::new(false));
+            let pending_interrupt = Arc::new(AtomicBool::new(false));
+            if !self.claim_turn(
+                session_id,
+                ActiveTurn::new(ActiveTurnHandle::PiRpc {
+                    client: Arc::clone(&client),
+                    prompt_started: Arc::clone(&prompt_started),
+                    pending_interrupt: Arc::clone(&pending_interrupt),
+                }),
+            )? {
+                return Ok(());
+            }
+            let prompt_seqs =
+                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
+            return match start_pi_prompt(
+                &client,
+                &prompt_started,
+                &pending_interrupt,
+                text,
+            ) {
+                Ok(()) => {
+                    if !self.session_present(session_id) {
+                        rollback_prompt(&prompt_seqs);
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    rollback_prompt(&prompt_seqs);
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
+                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                        turn.reap();
+                    }
+                    Err(AgentChatError::Spawn(error.to_string()))
+                }
+            };
+        }
+
         if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
             let client = self.claude_bridge_client()?;
             // The bridge chat dies with its claude CLI process (crash, auth
@@ -863,6 +980,8 @@ impl AgentChatManager {
             }
             (Engine::V1, AgentProvider::Omp) => Err(AgentChatError::Unsupported(
                 "OMP ACP requires the v2 agent engine".to_string(),
+            (Engine::V1, AgentProvider::Pi) => Err(AgentChatError::Unsupported(
+                "Pi RPC requires the v2 agent engine".to_string(),
             )),
             (Engine::V2, _) => unreachable!("handled before match"),
         };
@@ -983,6 +1102,9 @@ impl AgentChatManager {
                 .ok_or_else(|| AgentChatError::Spawn("OMP ACP client is not running".to_string()))?
                 .approve(approval_id, decision)
                 .map_err(|err| AgentChatError::Spawn(err.to_string())),
+            (Engine::V2, AgentProvider::Pi) => Err(AgentChatError::Unsupported(
+                "Pi RPC has no native approval protocol".to_string(),
+            )),
             (Engine::V1, _) => Err(AgentChatError::Unsupported(
                 "approvals require the v2 agent engine".to_string(),
             )),
@@ -1037,27 +1159,75 @@ impl AgentChatManager {
             (Engine::V2, AgentProvider::Omp) => Err(AgentChatError::Unsupported(
                 "OMP ACP does not advertise turn steering".to_string(),
             )),
+            (Engine::V2, AgentProvider::Pi) => {
+                let Some(active_turn) = active_turn else {
+                    return Err(AgentChatError::Unsupported(
+                        "Pi steering requires an active turn".to_string(),
+                    ));
+                };
+                let Some(client) = active_turn.pi_rpc_client()? else {
+                    return Err(AgentChatError::Unsupported(
+                        "Pi steering requires an active Pi RPC turn".to_string(),
+                    ));
+                };
+                client
+                    .steer(text)
+                    .map_err(|error| AgentChatError::Spawn(error.to_string()))?;
+                let _ = self.db.agent_message_append(session_id, &chat_id, "user", text);
+                Ok(())
+            }
             (Engine::V1, _) => Err(AgentChatError::Unsupported(
                 "steering requires the v2 agent engine".to_string(),
             )),
         }
     }
 
-    /// Apply a model change to a LIVE session. Claude bridge sessions switch
-    /// via the SDK's setModel (like `/model` in the CLI); codex sessions carry
-    /// the model per turn, so only the stored default updates.
+    pub fn follow_up(&self, session_id: &str, text: &str) -> Result<(), AgentChatError> {
+        let (chat_id, client) = {
+            let inner = self.lock_inner()?;
+            let state = inner
+                .get(session_id)
+                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            if state.provider != AgentProvider::Pi || state.engine != Engine::V2 {
+                return Err(AgentChatError::Unsupported(
+                    "follow-up queueing is only supported by Pi RPC".to_string(),
+                ));
+            }
+            if state.active_turn.is_none() {
+                return Err(AgentChatError::Unsupported(
+                    "Pi follow-up queueing requires an active turn".to_string(),
+                ));
+            }
+            let client = state.pi_client.clone().ok_or_else(|| {
+                AgentChatError::Spawn("Pi RPC client is not running".to_string())
+            })?;
+            (state.chat_id.clone(), client)
+        };
+        client
+            .follow_up(text)
+            .map_err(|error| AgentChatError::Spawn(error.to_string()))?;
+        let _ = self.db.agent_message_append(session_id, &chat_id, "user", text);
+        Ok(())
+    }
+
+    /// Apply a model change to a live session.
     pub fn set_model(
         &self,
         session_id: &str,
         model: Option<String>,
     ) -> Result<(), AgentChatError> {
         let model = non_empty(model);
-        let (provider, engine, omp_client) = {
+        let (provider, engine, omp_client, pi_client) = {
             let inner = self.lock_inner()?;
             let state = inner
                 .get(session_id)
                 .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
-            (state.provider, state.engine, state.omp_client.clone())
+            (
+                state.provider,
+                state.engine,
+                state.omp_client.clone(),
+                state.pi_client.clone(),
+            )
         };
         if engine == Engine::V2 && provider == AgentProvider::Omp {
             let model_id = model.as_deref().ok_or_else(|| {
@@ -1067,6 +1237,15 @@ impl AgentChatManager {
                 .ok_or_else(|| AgentChatError::Spawn("OMP ACP client is not running".to_string()))?
                 .set_model(model_id)
                 .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+        }
+        if engine == Engine::V2 && provider == AgentProvider::Pi {
+            let model_name = model.as_deref().ok_or_else(|| {
+                AgentChatError::Unsupported("Pi RPC requires an explicit provider/model".to_string())
+            })?;
+            pi_client
+                .ok_or_else(|| AgentChatError::Spawn("Pi RPC client is not running".to_string()))?
+                .set_model(model_name)
+                .map_err(|error| AgentChatError::Spawn(error.to_string()))?;
         }
         if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
             let client = self.claude_bridge_client()?;
@@ -1115,6 +1294,11 @@ impl AgentChatManager {
             let state = inner
                 .get_mut(session_id)
                 .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            if state.provider == AgentProvider::Pi {
+                return Err(AgentChatError::Unsupported(
+                    "Pi RPC exposes no native approval or sandbox mode control".to_string(),
+                ));
+            }
             if let Some(sandbox) = sandbox {
                 state.sandbox = sandbox;
             }
@@ -1478,6 +1662,9 @@ impl AgentChatManager {
             (Engine::V2, AgentProvider::Omp) => {
                 if let Some(client) = state.omp_client {
                     client.close();
+            (Engine::V2, AgentProvider::Pi) => {
+                if let Some(client) = state.pi_client {
+                    let _ = client.shutdown();
                 }
             }
             (Engine::V1, _) => {}
@@ -1513,6 +1700,7 @@ impl AgentChatManager {
                 codex: codex_binary,
                 claude: claude_binary,
                 omp: omp_binary,
+                pi: None,
             },
         }
     }
@@ -1546,6 +1734,16 @@ impl AgentChatManager {
         None
     }
 
+
+    #[cfg(test)]
+    fn pi_binary(&self) -> Option<String> {
+        self.test_binaries.pi.clone()
+    }
+
+    #[cfg(not(test))]
+    fn pi_binary(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Packaged builds ship the bridge as the self-contained
@@ -1600,10 +1798,27 @@ fn upsert_session_state(
         existing.allowed_tools = state.allowed_tools;
         existing.provider_session_id = state.provider_session_id;
         existing.omp_identity = state.omp_identity;
+        if existing.pi_client.as_ref().is_none_or(|client| client.is_closed()) {
+            existing.pi_client = state.pi_client;
+        }
         existing.sink = state.sink;
     } else {
         inner.insert(session_id, state);
     }
+}
+
+fn start_pi_prompt(
+    client: &Arc<PiRpcClient>,
+    prompt_started: &Arc<AtomicBool>,
+    pending_interrupt: &Arc<AtomicBool>,
+    text: &str,
+) -> Result<(), PiRpcError> {
+    client.prompt(text)?;
+    prompt_started.store(true, Ordering::SeqCst);
+    if pending_interrupt.swap(false, Ordering::SeqCst) {
+        client.abort()?;
+    }
+    Ok(())
 }
 
 impl ActiveTurn {
@@ -1614,11 +1829,10 @@ impl ActiveTurn {
     }
 
     fn kill(&self) -> Result<(), AgentChatError> {
-        // turn_interrupt blocks on a response only the client's reader thread
-        // can deliver, and that thread takes this same handle mutex in reap()
-        // when the turn completes — so the blocking call must happen with the
-        // mutex released.
-        let codex_interrupt = {
+        // Provider interrupt calls block on responses delivered by reader
+        // threads whose terminal path reaps this handle, so decide the action
+        // under the mutex and execute it only after releasing the mutex.
+        let (codex_interrupt, pi_interrupt) = {
             let handle = self
                 .inner
                 .lock()
@@ -1643,6 +1857,23 @@ impl ActiveTurn {
                     return client
                         .cancel()
                         .map_err(|err| AgentChatError::Spawn(err.to_string()));
+                Some(ActiveTurnHandle::PiRpc {
+                    client,
+                    prompt_started,
+                    pending_interrupt,
+                }) => {
+                    // Arm before checking prompt_started. Whichever side wins
+                    // the race swaps the flag and sends exactly one abort, but
+                    // never before Pi has acknowledged the prompt command.
+                    pending_interrupt.store(true, Ordering::SeqCst);
+                    let client = if prompt_started.load(Ordering::SeqCst)
+                        && pending_interrupt.swap(false, Ordering::SeqCst)
+                    {
+                        Some(Arc::clone(client))
+                    } else {
+                        None
+                    };
+                    (None, client)
                 }
                 Some(ActiveTurnHandle::CodexApp {
                     client,
@@ -1660,23 +1891,40 @@ impl ActiveTurn {
                             AgentChatError::Spawn("agent turn lock poisoned".to_string())
                         })?
                         .clone();
-                    match turn_id {
+                    let interrupt = match turn_id {
                         Some(turn_id) if pending_interrupt.swap(false, Ordering::SeqCst) => {
                             Some((Arc::clone(client), thread_id.clone(), turn_id))
                         }
                         _ => None,
-                    }
+                    };
+                    (interrupt, None)
                 }
-                None => None,
+                None => (None, None),
             }
         };
 
+        if let Some(client) = pi_interrupt {
+            return client
+                .abort()
+                .map_err(|error| AgentChatError::Spawn(error.to_string()));
+        }
         match codex_interrupt {
             Some((client, thread_id, turn_id)) => client
                 .turn_interrupt(&thread_id, &turn_id)
                 .map_err(|err| AgentChatError::Spawn(err.to_string())),
             None => Ok(()),
         }
+    }
+
+    fn pi_rpc_client(&self) -> Result<Option<Arc<PiRpcClient>>, AgentChatError> {
+        let handle = self
+            .inner
+            .lock()
+            .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?;
+        Ok(match handle.as_ref() {
+            Some(ActiveTurnHandle::PiRpc { client, .. }) => Some(Arc::clone(client)),
+            _ => None,
+        })
     }
 
     fn codex_app_turn(
@@ -1774,6 +2022,8 @@ fn handle_runner_event(
         AgentEvent::SessionStarted { .. }
             | AgentEvent::SessionTitle { .. }
             | AgentEvent::ProviderPayload { .. }
+            | AgentEvent::SessionUpdated { .. }
+            | AgentEvent::ProviderEvent { .. }
             | AgentEvent::RateLimits { .. }
             | AgentEvent::Noise { .. }
     );
@@ -1907,10 +2157,12 @@ fn handle_runner_event(
                 }
             }
         }
+        AgentEvent::TurnStarted => {}
         AgentEvent::TextDelta { .. }
         | AgentEvent::ThinkingDelta { .. }
         | AgentEvent::CommandOutput { .. }
-        | AgentEvent::TurnStarted
+        | AgentEvent::ProviderEvent { .. }
+        | AgentEvent::SessionUpdated { .. }
         | AgentEvent::Noise { .. }
         | AgentEvent::RateLimits { .. } => {}
     }
@@ -1974,11 +2226,10 @@ fn clear_active_turn(
     inner: &Arc<Mutex<HashMap<String, SessionState>>>,
     session_id: &str,
 ) -> Option<ActiveTurn> {
-    inner.lock().ok().and_then(|mut states| {
-        states
-            .get_mut(session_id)
-            .and_then(|state| state.active_turn.take())
-    })
+    inner
+        .lock()
+        .ok()
+        .and_then(|mut states| states.get_mut(session_id)?.active_turn.take())
 }
 
 /// Whether a terminal event should be ignored. A session that already owns an
@@ -2111,6 +2362,8 @@ fn v1_turn_overrides(
         }),
         AgentProvider::Omp => Err(AgentChatError::Unsupported(
             "OMP ACP requires the v2 agent engine".to_string(),
+        AgentProvider::Pi => Err(AgentChatError::Unsupported(
+            "Pi RPC requires the v2 agent engine".to_string(),
         )),
     }
 }
@@ -2182,6 +2435,7 @@ struct TestBinaries {
     codex: Option<String>,
     claude: Option<String>,
     omp: Option<String>,
+    pi: Option<String>,
 }
 
 #[cfg(test)]
@@ -2258,6 +2512,83 @@ mod tests {
             None,
             None,
             Some(script.path.to_string_lossy().to_string()),
+        )
+    }
+
+    #[cfg(unix)]
+    fn pi_manager(db: Arc<Database>, script: &TestScript) -> AgentChatManager {
+        let mut manager = AgentChatManager::new(db, script.dir.clone());
+        manager.test_binaries.pi = Some(script.path.to_string_lossy().to_string());
+        manager
+    }
+
+    #[cfg(unix)]
+    fn pi_rpc_test_script(name: &str) -> TestScript {
+        test_script(
+            name,
+            r#"#!/usr/bin/env python3
+import json, sys
+
+if "--version" in sys.argv:
+    print("pi 0.79.10")
+    raise SystemExit(0)
+
+log_path = sys.argv[0] + ".stdin"
+session_path = sys.argv[sys.argv.index("--session") + 1]
+prompt_count = 0
+
+def emit(value):
+    print(json.dumps(value, separators=(",", ":")), flush=True)
+
+for raw in sys.stdin:
+    command = json.loads(raw)
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(command, separators=(",", ":")) + "\n")
+    response = {
+        "type": "response",
+        "id": command["id"],
+        "command": command["type"],
+        "success": True,
+    }
+    if command["type"] == "get_state":
+        response["data"] = {
+            "sessionId": "pi-manager-fixture",
+            "sessionFile": session_path,
+            "isStreaming": False,
+            "thinkingLevel": "medium",
+            "model": {"provider": "test", "id": "model"},
+        }
+    emit(response)
+    if command["type"] == "prompt":
+        prompt_count += 1
+        emit({"type": "agent_start"})
+        if "follow-up-lifecycle" in sys.argv[0]:
+            text = "initial answer" if prompt_count == 1 else "next answer"
+            message = {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}],
+                "usage": {},
+                "stopReason": "stop",
+            }
+            emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
+            emit({"type": "message_end", "message": message})
+            if prompt_count > 1:
+                emit({"type": "agent_end", "messages": [message], "willRetry": False})
+    elif command["type"] == "follow_up" and "follow-up-lifecycle" in sys.argv[0]:
+        message = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "queued answer"}],
+            "usage": {},
+            "stopReason": "stop",
+        }
+        emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
+        emit({"type": "message_end", "message": message})
+        emit({"type": "agent_end", "messages": [message], "willRetry": False})
+    elif command["type"] == "abort":
+        message = {"role": "assistant", "content": [], "usage": {}, "stopReason": "aborted"}
+        emit({"type": "message_end", "message": message})
+        emit({"type": "agent_end", "messages": [message], "willRetry": False})
+"#,
         )
     }
 
@@ -2954,6 +3285,36 @@ done"#
         assert_eq!("v1".parse::<Engine>().unwrap(), Engine::V1);
         assert_eq!("v2".parse::<Engine>().unwrap(), Engine::V2);
         assert!("V2".parse::<Engine>().is_err());
+    }
+
+    #[test]
+    fn pi_rejects_unexposed_thinking_effort_instead_of_ignoring_it() {
+        let manager = AgentChatManager::new(
+            Arc::new(Database::open_in_memory().unwrap()),
+            PathBuf::new(),
+        );
+        let (_events, sink) = event_sink();
+
+        let error = manager
+            .start(
+                "chat-pi-effort",
+                PathBuf::from("/project"),
+                AgentProvider::Pi,
+                Engine::V2,
+                None,
+                AgentStartOverrides {
+                    effort: Some("high".to_string()),
+                    ..AgentStartOverrides::default()
+                },
+                sink,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AgentChatError::Unsupported(message)
+                if message.contains("thinking-level selection")
+        ));
     }
 
     #[test]
@@ -4440,5 +4801,207 @@ printf '%s\n' \
                 .and_then(|state| state.provider_session_id.as_deref()),
             None,
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_interrupt_armed_before_prompt_start_is_sent_after_prompt_ack() {
+        let script = pi_rpc_test_script("pi-prompt-interrupt-race");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = pi_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-pi-prompt-race",
+                script.dir.clone(),
+                AgentProvider::Pi,
+                Engine::V2,
+                Some("test/model".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        let client = {
+            let Ok(states) = manager.inner.lock() else {
+                panic!("manager state lock");
+            };
+            states[&session_id].pi_client.clone().expect("Pi client")
+        };
+        let prompt_started = Arc::new(AtomicBool::new(false));
+        let pending_interrupt = Arc::new(AtomicBool::new(false));
+        let turn = ActiveTurn::new(ActiveTurnHandle::PiRpc {
+            client: Arc::clone(&client),
+            prompt_started: Arc::clone(&prompt_started),
+            pending_interrupt: Arc::clone(&pending_interrupt),
+        });
+
+        turn.kill().expect("arm interrupt before prompt");
+        assert!(!prompt_started.load(Ordering::SeqCst));
+        start_pi_prompt(&client, &prompt_started, &pending_interrupt, "race")
+            .expect("prompt then pending interrupt");
+
+        let log = script.path.with_extension("stdin");
+        let commands = wait_for_file(&log, |text| text.contains(r#""type":"abort""#));
+        let kinds = commands
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|command| command["type"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        let prompt = kinds.iter().position(|kind| kind == "prompt").unwrap();
+        let abort = kinds.iter().position(|kind| kind == "abort").unwrap();
+        assert!(prompt < abort, "abort must not overtake prompt: {kinds:?}");
+        assert!(!pending_interrupt.load(Ordering::SeqCst));
+        manager.dispose(&session_id);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_follow_up_drains_inside_one_agent_lifecycle_and_allows_the_next_prompt() {
+        let script = pi_rpc_test_script("pi-follow-up-lifecycle");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = pi_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-pi-follow-up",
+                script.dir.clone(),
+                AgentProvider::Pi,
+                Engine::V2,
+                Some("test/model".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        if let Ok(mut captured) = events.lock() {
+            captured.clear();
+        }
+        manager
+            .set_model(&session_id, Some("openai-codex/gpt-5.5".to_string()))
+            .expect("switch Pi model");
+        let command_log = script.path.with_extension("stdin");
+        let commands = wait_for_file(&command_log, |text| text.contains(r#""type":"set_model""#));
+        let set_model = commands
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|command| command["type"] == "set_model")
+            .expect("set_model command");
+        assert_eq!(set_model["provider"], "openai-codex");
+        assert_eq!(set_model["modelId"], "gpt-5.5");
+
+        manager
+            .send(&session_id, "initial", None, None, None)
+            .expect("initial prompt");
+        wait_for_events(&events, |events| {
+            events.iter().any(
+                |event| matches!(event, AgentEvent::TextFinal { text, .. } if text == "initial answer"),
+            )
+        });
+        manager
+            .follow_up(&session_id, "queued")
+            .expect("follow-up accepted during active lifecycle");
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnDone { .. }))
+        });
+
+        let row = wait_for_status(&db, "chat-pi-follow-up", "idle");
+        assert_eq!(row.status, "idle");
+        assert_eq!(row.model.as_deref(), Some("openai-codex/gpt-5.5"));
+        {
+            let Ok(states) = manager.inner.lock() else {
+                panic!("manager state lock");
+            };
+            assert!(states[&session_id].active_turn.is_none());
+        }
+        let snapshot = events.lock().map(|events| events.clone()).unwrap_or_default();
+        assert_eq!(
+            snapshot
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnStarted))
+                .count(),
+            1,
+        );
+        assert_eq!(
+            snapshot
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnDone { .. }))
+                .count(),
+            1,
+        );
+        for expected in ["initial answer", "queued answer"] {
+            assert!(snapshot.iter().any(
+                |event| matches!(event, AgentEvent::TextFinal { text, .. } if text == expected)
+            ));
+        }
+        let message_ids = snapshot
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::TextFinal {
+                    item_id: Some(item_id),
+                    text,
+                } if text == "initial answer" || text == "queued answer" => Some(item_id.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            message_ids,
+            ["pi-message-1-1-0", "pi-message-1-2-0"],
+            "follow-up assistant messages in one agent lifecycle need distinct item ids",
+        );
+
+        manager
+            .send(&session_id, "next", None, None, None)
+            .expect("next prompt after final agent_end");
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnDone { .. }))
+                .count()
+                == 2
+        });
+        assert_eq!(
+            wait_for_status(&db, "chat-pi-follow-up", "idle").status,
+            "idle"
+        );
+        let timeline = db.agent_timeline_for_chat("chat-pi-follow-up").unwrap();
+        for expected in ["initial answer", "queued answer", "next answer"] {
+            assert!(timeline.iter().any(|entry| {
+                matches!(
+                    entry,
+                    AgentTimelineEntry::Message { role, content, .. }
+                        if role == "assistant" && content == expected
+                )
+            }));
+        }
+        manager.dispose(&session_id);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_start_rejects_a_symlinked_session_ancestor_beneath_the_app_root() {
+        use std::os::unix::fs::symlink;
+
+        let script = pi_rpc_test_script("pi-symlinked-session-ancestor");
+        let outside = script.dir.with_extension("outside");
+        std::fs::create_dir_all(&outside).expect("create outside directory");
+        symlink(&outside, script.dir.join("agent-sessions")).expect("symlink session ancestor");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = pi_manager(db, &script);
+        let error = manager
+            .start(
+                "chat-pi-symlink",
+                script.dir.clone(),
+                AgentProvider::Pi,
+                Engine::V2,
+                Some("test/model".to_string()),
+                AgentStartOverrides::default(),
+                Arc::new(|_| {}),
+            )
+            .expect_err("symlinked session ancestor must be rejected");
+        assert!(
+            matches!(error, AgentChatError::Spawn(message) if message.contains("unsafe Pi session path"))
+        );
+        std::fs::remove_dir_all(&outside).expect("remove outside directory");
     }
 }

@@ -841,11 +841,27 @@ fn notification_events(method: &str, params: &Value) -> Vec<RoutedEvent> {
     match method {
         "turn/started" => routed(params, AgentEvent::TurnStarted),
         "item/agentMessage/delta" => string_field(params, &["delta"])
-            .map(|text| routed(params, AgentEvent::TextDelta { text }))
+            .map(|text| {
+                routed(
+                    params,
+                    AgentEvent::TextDelta {
+                        item_id: string_field(params, &["itemId"]),
+                        text,
+                    },
+                )
+            })
             .unwrap_or_default(),
         "item/reasoning/textDelta" | "item/reasoning/summaryTextDelta" => {
             string_field(params, &["delta"])
-                .map(|text| routed(params, AgentEvent::ThinkingDelta { text }))
+                .map(|text| {
+                    routed(
+                        params,
+                        AgentEvent::ThinkingDelta {
+                            item_id: string_field(params, &["itemId"]),
+                            text,
+                        },
+                    )
+                })
                 .unwrap_or_default()
         }
         "item/commandExecution/outputDelta" => {

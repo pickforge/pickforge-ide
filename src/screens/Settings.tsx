@@ -7,7 +7,11 @@ import {
   type AgentCliDiagnostic,
   type AgentProfile,
 } from "../lib/agentModels";
-import { nativeChatUnavailableReason, type AgentEngine } from "../lib/agentBackends";
+import {
+  isCompatiblePiRpcVersion,
+  nativeChatUnavailableReason,
+  type AgentEngine,
+} from "../lib/agentBackends";
 import {
   addQuickLaunchItem,
   addOptionalQuickLaunch,
@@ -605,8 +609,13 @@ export function SettingsScreen() {
   const agentCapabilityLabel = (agent: AgentProfile): string => {
     const diagnostic = agentDiagnostics()[agent.id];
     const failure = agentDiagnosticErrors()[agent.id];
-    const nativeChatReason =
-      nativeChatUnavailableReason(agent.id) ?? "Native chat is unavailable for this profile";
+    const nativeChatReason = agent.id === "pi"
+      ? diagnostic?.installed && isCompatiblePiRpcVersion(diagnostic.version)
+        ? "Native chat over version-gated Pi RPC; no native approvals or MCP grants"
+        : diagnostic?.version
+          ? `Native Pi RPC requires >=0.79.10 and <0.80.0; found ${diagnostic.version}`
+          : "Native Pi RPC requires a compatible installed Pi"
+      : nativeChatUnavailableReason(agent.id) ?? "Native chat is unavailable for this profile";
     if (failure) return `${nativeChatReason} · status unavailable · ${failure}`;
     if (!diagnostic?.installed) return `${nativeChatReason} · ${agent.binary} is required on PATH`;
     const capabilities = [nativeChatReason];
@@ -846,8 +855,9 @@ export function SettingsScreen() {
           </For>
           <Show when={flagEnabled("ompPiAgents")}>
             <span class="pf-settings-muted">
-              Offline, read-only checks only. OMP native chat appears after an exact
-              compatible 16.4.8 probe; its terminal launch remains available independently.
+              Offline, read-only checks only. OMP native chat requires exact 16.4.8; Pi native
+              RPC requires a compatible 0.79.x probe and never configures approvals or MCP grants.
+              Both terminal launches remain available independently.
             </span>
             <div class="pf-ql-actions">
               <button

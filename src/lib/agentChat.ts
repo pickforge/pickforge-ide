@@ -20,10 +20,19 @@ export interface AgentSkill {
 
 export type AgentEvent =
   | { kind: "sessionStarted"; providerSessionId: string }
+  | {
+      kind: "sessionUpdated";
+      providerSessionId: string | null;
+      sessionFile: string | null;
+      title: string | null;
+      model: string | null;
+      thinkingLevel: string | null;
+    }
+  | { kind: "providerEvent"; provider: string; payload: string }
   | { kind: "turnStarted" }
-  | { kind: "textDelta"; text: string }
+  | { kind: "textDelta"; itemId?: string | null; text: string }
   | { kind: "textFinal"; itemId: string | null; text: string }
-  | { kind: "thinkingDelta"; text: string }
+  | { kind: "thinkingDelta"; itemId?: string | null; text: string }
   | { kind: "thinkingFinal"; itemId: string | null; text: string }
   | { kind: "commandStarted"; itemId: string; command: string; cwd: string | null }
   | {
@@ -184,6 +193,9 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
             "Agent backend does not support native chat"),
     );
   }
+  if (provider === "pi" && !flagEnabled("ompPiAgents")) {
+    throw new Error("Pi native chat is disabled by the ompPiAgents rollout flag");
+  }
   const mcpServers = provider === "omp" ? await ompMcpServers(opts) : (opts.mcpServers ?? []);
   const onEvent = new Channel<AgentEvent>();
   onEvent.onmessage = opts.onEvent;
@@ -282,6 +294,10 @@ export function agentChatApprove(
 
 export function agentChatSteer(sessionId: string, text: string): Promise<void> {
   return invoke("agent_chat_steer", { sessionId, text });
+}
+
+export function agentChatFollowUp(sessionId: string, text: string): Promise<void> {
+  return invoke("agent_chat_follow_up", { sessionId, text });
 }
 
 export function agentChatHistory(chatId: string): Promise<AgentTimelineEntry[]> {

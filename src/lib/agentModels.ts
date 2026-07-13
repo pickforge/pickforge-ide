@@ -245,6 +245,14 @@ function uniqueModels(models: AgentModelOption[]): AgentModelOption[] {
   });
 }
 
+/** Attach a probe-owned catalog to the profile rendered by reactive pickers. */
+export function profileWithDiscoveredModels<T extends AgentProfile>(
+  profile: T,
+  models: AgentModelOption[],
+): T {
+  return { ...profile, models: uniqueModels(models) };
+}
+
 
 /** Parse the stable whitespace table emitted by `pi --list-models`. */
 export function parsePiModelCatalog(raw: string): AgentModelOption[] {
@@ -264,7 +272,6 @@ export function parsePiModelCatalog(raw: string): AgentModelOption[] {
     models.push({
       id: `${provider}/${model}`,
       label: `${model} · ${provider}`,
-      terminalOnly: true,
     });
   }
   if (models.length === 0 && raw.trim()) {

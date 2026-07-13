@@ -3,7 +3,7 @@
 // collapsible groups, three-dots + right-click menus, inline rename, and DnD
 // into a group; chats keep rename / archive / delete / drag-reorder. A toolbar
 // control collapses or expands every project's chats at once.
-import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
 import { FloatingMenu } from "../../components/FloatingMenu";
 import { Collapse } from "../../components/ui";
 import {
@@ -100,6 +100,7 @@ const AGENT_CHAT_MARKS: Record<string, string> = {
   claudeCode: "CC",
   codex: "CX",
   omp: "OM",
+  pi: "PI",
 };
 const agentChatMark = (agentId: string): string =>
   AGENT_CHAT_MARKS[normalizeAgentProvider(agentId) ?? agentId] ?? "AI";
@@ -127,6 +128,18 @@ export function ProjectsPane() {
   // is bound to a host and the remoteProjects flag is on).
   useRemoteHealth();
   const remoteOn = () => flagEnabled("remoteProjects");
+  const [agentChatProviders, setAgentChatProviders] =
+    createSignal<readonly AgentBackendDescriptor[]>(NATIVE_AGENT_BACKENDS);
+  onMount(() => {
+    if (!flagEnabled("ompPiAgents")) return;
+    void discoverAgentCli("pi")
+      .then((diagnostic) => {
+        setAgentChatProviders(
+          selectableNativeAgentBackends(true, diagnostic.installed ? diagnostic.version : null),
+        );
+      })
+      .catch(() => setAgentChatProviders(NATIVE_AGENT_BACKENDS));
+  });
 
   const [menu, setMenu] = createSignal<MenuState | null>(null);
   const [renaming, setRenaming] = createSignal<string | null>(null);

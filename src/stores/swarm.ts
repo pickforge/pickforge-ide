@@ -171,12 +171,14 @@ const MODEL_ALIASES: Readonly<
     { terms: ["spark"], model: "gpt-5.3-codex-spark" },
   ]),
   omp: Object.freeze([]),
+  pi: Object.freeze([]),
 });
 
 const READ_ONLY_MODE: Readonly<Record<AgentProvider, string>> = Object.freeze({
   claudeCode: "plan",
   codex: "read-only",
   omp: "plan",
+  pi: "",
 });
 
 function providersFor(

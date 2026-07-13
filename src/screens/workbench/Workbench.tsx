@@ -2,7 +2,17 @@
 // Each chat owns its own terminal host (its own panes/shells). Visited hosts
 // stay mounted (visibility toggled) so switching chats/projects never kills a
 // running shell; a host is disposed only when its chat is deleted.
-import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  onMount,
+  Show,
+  Switch,
+  untrack,
+} from "solid-js";
 import { ProjectsPane } from "./ProjectsPane";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
@@ -15,7 +25,11 @@ import { TerminalHost } from "../../components/TerminalHost";
 import { AgentChatView } from "../../components/chat/AgentChatView";
 import { OrchestraView } from "../../components/orchestra/OrchestraView";
 import { disposeAgentChat } from "../../stores/agentChat";
-import { loadAgentModels } from "../../lib/agentModels";
+import {
+  ensureOmpNativeCompatibility,
+  loadAgentModels,
+  ompNativeChatUnavailableReason,
+} from "../../lib/agentModels";
 import {
   normalizeAgentProvider,
   nativeChatUnavailableReason,
@@ -76,6 +90,15 @@ export function WorkbenchScreen() {
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
   const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
   const [pendingOrchestraCleanup, setPendingOrchestraCleanup] = createSignal<MountedHost[]>([]);
+
+  // Trigger the exact-version probe reactively when the rollout flag turns on.
+  // The availability reason itself comes from the shared reactive registry used
+  // by every native-provider creation surface.
+  createEffect(() => {
+    if (flagEnabled("ompPiAgents")) {
+      void untrack(() => ensureOmpNativeCompatibility());
+    }
+  });
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
   // goes into the chat's PRIMARY, session-backed pane so the agent runs inside
@@ -414,10 +437,17 @@ export function WorkbenchScreen() {
                   }
                 >
                   <Show
-                    when={provider}
+                    when={
+                      provider
+                      && (provider !== "omp" || !ompNativeChatUnavailableReason())
+                        ? provider
+                        : null
+                    }
                     fallback={
                       <div class="pf-chat-error" role="alert">
-                        {nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable"}
+                        {provider === "omp"
+                          ? ompNativeChatUnavailableReason()
+                          : (nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable")}
                       </div>
                     }
                   >

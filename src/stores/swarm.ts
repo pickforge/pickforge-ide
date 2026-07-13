@@ -14,7 +14,7 @@ import {
   type SwarmRequest,
   type SwarmRunSnapshot,
 } from "../lib/mcp";
-import { loadAgentModels, modelOption } from "../lib/agentModels";
+import { loadAgentModels, modelOption, ompNativeChatAvailable } from "../lib/agentModels";
 import { swarmWorkerLabels } from "../lib/chatLabels";
 import { SWARM_SYNTHESIS_PROMPT_PREFIX } from "../lib/swarmSynthesis";
 import { ensureAgentChat, agentChat, sendAgentMessage } from "./agentChat";
@@ -170,11 +170,13 @@ const MODEL_ALIASES: Readonly<
     { terms: ["gpt-5.4"], model: "gpt-5.4" },
     { terms: ["spark"], model: "gpt-5.3-codex-spark" },
   ]),
+  omp: Object.freeze([]),
 });
 
 const READ_ONLY_MODE: Readonly<Record<AgentProvider, string>> = Object.freeze({
   claudeCode: "plan",
   codex: "read-only",
+  omp: "plan",
 });
 
 function providersFor(
@@ -476,6 +478,13 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
       synthesisStatus: "failed",
       synthesisError:
         nativeChatUnavailableReason(origin.agentId) ?? "Origin backend cannot run native chat.",
+    });
+    return;
+  }
+  if (provider === "omp" && !ompNativeChatAvailable()) {
+    updateRun(run.runId, {
+      synthesisStatus: "failed",
+      synthesisError: "OMP native chat requires the ompPiAgents flag and compatible OMP 16.4.8 probe.",
     });
     return;
   }

@@ -10,8 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use base64::{engine::general_purpose, Engine as _};
 use image::{codecs::png::PngEncoder, ColorType, ImageEncoder, RgbaImage};
 use pickforge_core::agents::{
-    list_agent_skills, AgentChatManager, AgentEvent, AgentProvider, AgentSkill,
-    AgentStartOverrides, Engine, RemoteExec,
+    list_agent_skills, validate_omp_mcp_servers, AgentChatManager, AgentEvent, AgentProvider,
+    AgentSkill, AgentStartOverrides, Engine, RemoteExec,
 };
 use pickforge_core::db::{AgentTimelineEntry, Database};
 use pickforge_core::pickforge_home;
@@ -43,6 +43,24 @@ impl From<RemoteAgentInput> for RemotePty {
             remote_root: value.remote_root,
         }
     }
+}
+
+fn validate_agent_chat_backend(
+    provider: AgentProvider,
+    engine: Engine,
+    mcp_servers: Option<&[serde_json::Value]>,
+) -> Result<(), String> {
+    if provider == AgentProvider::Omp {
+        if engine != Engine::V2 {
+            return Err("OMP ACP native chat requires the local v2 engine".to_string());
+        }
+        return validate_omp_mcp_servers(mcp_servers.unwrap_or_default())
+            .map_err(|error| error.to_string());
+    }
+    if mcp_servers.is_some_and(|servers| !servers.is_empty()) {
+        return Err("session-scoped MCP grants are not supported by this backend".to_string());
+    }
+    Ok(())
 }
 
 fn resolve_agent_chat_start(
@@ -91,6 +109,10 @@ fn resolve_agent_chat_start_with(
  * thread_start, claude bridge chat_start) that can take seconds. Sync commands
  * run on the main thread and freeze the webview, so both hop to a blocking
  * thread and the command itself stays async. */
+
+/// Trusted app capability, not a rollout-authorization boundary. The typed
+/// renderer flag and exact OMP probe control native discoverability/dispatch;
+/// Tauri capability/CSP policy controls which app code can invoke this command.
 #[tauri::command]
 pub async fn agent_chat_start(
     mgr: State<'_, AgentChatManager>,
@@ -107,6 +129,7 @@ pub async fn agent_chat_start(
     permission_mode: Option<String>,
     allowed_tools: Option<Vec<String>>,
     remote: Option<RemoteAgentInput>,
+    mcp_servers: Option<Vec<serde_json::Value>>,
     on_event: Channel<AgentEvent>,
 ) -> Result<String, String> {
     let provider = provider
@@ -117,6 +140,7 @@ pub async fn agent_chat_start(
         .unwrap_or("v2")
         .parse::<Engine>()
         .map_err(|e| e.to_string())?;
+    validate_agent_chat_backend(provider, engine, mcp_servers.as_deref())?;
     let remote = remote.map(Into::into);
     let (project_root, engine, remote) =
         resolve_agent_chat_start(&db, &roots, &project_root, engine, remote)?;
@@ -138,6 +162,7 @@ pub async fn agent_chat_start(
                 allowed_tools,
                 effort,
                 remote,
+                mcp_servers: mcp_servers.unwrap_or_default(),
             },
             sink,
         )
@@ -625,6 +650,38 @@ mod tests {
             remote_host: Some(host.to_string()),
             remote_root: Some(remote_root.to_string()),
         }
+    }
+
+    #[test]
+    fn validates_omp_engine_and_mcp_grants_without_a_caller_rollout_override() {
+        let grants = vec![serde_json::json!({
+            "name": "pickforge",
+            "command": "pickforge-mcp",
+            "args": []
+        })];
+
+        assert!(validate_agent_chat_backend(
+            AgentProvider::Omp,
+            Engine::V1,
+            Some(&grants),
+        )
+        .unwrap_err()
+        .contains("v2 engine"));
+        assert!(validate_agent_chat_backend(
+            AgentProvider::Codex,
+            Engine::V2,
+            Some(&grants),
+        )
+        .unwrap_err()
+        .contains("not supported"));
+        assert!(validate_agent_chat_backend(
+            AgentProvider::Omp,
+            Engine::V2,
+            Some(&[serde_json::json!({"name":"nested","type":"acp","url":"x"})]),
+        )
+        .unwrap_err()
+        .contains("nested ACP"));
+        validate_agent_chat_backend(AgentProvider::Omp, Engine::V2, Some(&grants)).unwrap();
     }
 
     #[test]

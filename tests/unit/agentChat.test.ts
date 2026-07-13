@@ -35,7 +35,11 @@ const activity = vi.hoisted(() => ({
   agentTurnDone: vi.fn(),
   agentTurnCleared: vi.fn(),
 }));
-const flags = vi.hoisted(() => ({ remoteProjects: false, dynamicChatTitles: false }));
+const flags = vi.hoisted(() => ({
+  remoteProjects: false,
+  dynamicChatTitles: false,
+  ompPiAgents: false,
+}));
 const workspace = vi.hoisted(() => ({
   chats: new Map<string, {
     chatId: string;
@@ -102,7 +106,9 @@ vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isCha
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: (key: string) =>
     (key === "remoteProjects" && flags.remoteProjects) ||
-    (key === "dynamicChatTitles" && flags.dynamicChatTitles),
+    (key === "dynamicChatTitles" && flags.dynamicChatTitles) ||
+    (key === "ompPiAgents" && flags.ompPiAgents),
+  subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 
 import {
@@ -128,6 +134,11 @@ import {
   type AgentEvent,
   type AgentTimelineEntry,
 } from "../../src/lib/agentChat";
+import {
+  diagnosticFromProbe,
+  recordAgentCliDiagnostic,
+  SUPPORTED_OMP_ACP_VERSION,
+} from "../../src/lib/agentModels";
 import { markChatTitleManual } from "../../src/lib/chatAutoName";
 import { setAgentEngine } from "../../src/lib/chatDefaults";
 
@@ -249,6 +260,7 @@ beforeEach(() => {
   workspace.projects = [];
   flags.remoteProjects = false;
   flags.dynamicChatTitles = false;
+  flags.ompPiAgents = false;
   settings.clear();
   setAgentEngine("v2");
 });
@@ -277,20 +289,83 @@ describe("agentChat IPC wrappers", () => {
     expect(tauri.invoke).toHaveBeenCalledWith("agent_skills_list", { provider: "codex" });
   });
 
-  it.each([
-    ["omp", "OMP"],
-    ["pi", "Pi"],
-  ])("rejects terminal-only %s before invoking native chat", async (provider, label) => {
+  it("rejects Pi before invoking native chat", async () => {
     await expect(agentChatStart({
-      chatId: `chat-${provider}`,
+      chatId: "chat-pi",
       projectRoot: "/project",
-      provider,
+      provider: "pi",
       onEvent: () => undefined,
-    })).rejects.toThrow(`${label} native chat is not integrated yet`);
+    })).rejects.toThrow("Pi native chat is not integrated yet");
 
     expect(tauri.invoke).not.toHaveBeenCalled();
     expect(tauri.channels).toHaveLength(0);
   });
+
+  it("rejects OMP before IPC while ompPiAgents is off", async () => {
+    await expect(agentChatStart({
+      chatId: "chat-omp",
+      projectRoot: "/project",
+      provider: "omp",
+      onEvent: () => undefined,
+    })).rejects.toThrow("requires the ompPiAgents flag and compatible");
+
+    expect(tauri.invoke).not.toHaveBeenCalled();
+    expect(tauri.channels).toHaveLength(0);
+  });
+
+  it("creates a session-scoped PickForge MCP grant for compatible OMP", async () => {
+    flags.ompPiAgents = true;
+    recordAgentCliDiagnostic(diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: `omp ${SUPPORTED_OMP_ACP_VERSION}`,
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: [],
+    }));
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "mcp_start") {
+        return Promise.resolve({
+          endpoint: "/tmp/pickforge.sock",
+          contextDir: "/tmp/context",
+          runsDir: "/tmp/runs",
+          chatsDir: "/tmp/chats",
+          mcpConfigPath: "/tmp/context/mcp.json",
+          mcpCommand: "/tmp/pickforge-mcp",
+        });
+      }
+      if (cmd === "agent_chat_start") return Promise.resolve("session-omp");
+      return Promise.resolve(null);
+    });
+
+    await expect(agentChatStart({
+      chatId: "chat-omp",
+      projectRoot: "/project",
+      provider: "omp",
+      onEvent: () => undefined,
+    })).resolves.toBe("session-omp");
+
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_start",
+      expect.objectContaining({
+        provider: "omp",
+        engine: null,
+        mcpServers: [expect.objectContaining({
+          name: "pickforge",
+          command: "/tmp/pickforge-mcp",
+          env: expect.arrayContaining([
+            { name: "PICKFORGE_IPC_ENDPOINT", value: "/tmp/pickforge.sock" },
+            { name: "PICKFORGE_CONTEXT_DIR", value: "/tmp/context" },
+          ]),
+        })],
+      }),
+    );
+    const startPayload = tauri.invoke.mock.calls.find(
+      (call) => call[0] === "agent_chat_start",
+    )?.[1];
+    expect(startPayload).not.toHaveProperty("ompPiAgentsEnabled");
+    expect(tauri.invoke).not.toHaveBeenCalledWith("agent_chat_set_omp_enabled", expect.anything());
+  });
+
 
   it("normalizes persisted legacy Claude IDs before the native backend guard", async () => {
     tauri.invoke.mockResolvedValue("session-legacy");
@@ -1961,6 +2036,33 @@ describe("dynamic native chat titles", () => {
     expect(workspace.setChatTitle).toHaveBeenCalledWith(
       chatId,
       "Rework OAuth session recovery",
+    );
+  });
+
+  it("commits OMP session title events only at a successful durable ownership boundary", async () => {
+    flags.dynamicChatTitles = true;
+    const chatId = nextChatId();
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, {
+        title: "Existing automatic title",
+        titleSource: "auto",
+      }),
+    );
+    mockInvoke();
+    await ensureAgentChat(chatId, "/project", "codex", null);
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+
+    await sendAgentMessage(chatId, "rework the OMP connector");
+    startCall?.[1].onEvent.onmessage({
+      kind: "sessionTitle",
+      title: "Safe OMP connector lifecycle",
+    });
+    expect(workspace.setChatTitle).not.toHaveBeenCalled();
+    startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
+    expect(workspace.setChatTitle).toHaveBeenCalledWith(
+      chatId,
+      "Safe OMP connector lifecycle",
     );
   });
 

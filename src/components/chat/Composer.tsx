@@ -11,7 +11,7 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { AGENTS, type AgentProfile, modelOption } from "../../lib/agentModels";
+import { modelOption, nativeAgentProfiles } from "../../lib/agentModels";
 import {
   type AgentProvider,
   type AgentSkill,
@@ -77,12 +77,10 @@ import { Spinner } from "../ui";
 import { openLightbox } from "./ImageLightbox";
 import "./chat.css";
 
-const PROVIDERS = AGENTS.filter(
-  (agent): agent is AgentProfile & { id: AgentProvider } => isNativeAgentProvider(agent.id),
-);
 const PROVIDER_ICON: Record<AgentProvider, () => JSX.Element> = {
   claudeCode: () => <IconClaude size={13} />,
   codex: () => <IconOpenAI size={13} />,
+  omp: () => <IconIngot size={13} />,
 };
 
 const EFFORT_LABELS: Record<string, string> = {
@@ -170,7 +168,9 @@ function readBase64(file: File): Promise<string> {
 }
 
 function modelsFor(provider: AgentProvider) {
-  return AGENTS.find((a) => a.id === provider)?.models.filter((model) => !model.terminalOnly) ?? [];
+  return nativeAgentProfiles()
+    .find((agent) => agent.id === provider)
+    ?.models.filter((model) => !model.terminalOnly) ?? [];
 }
 
 type Suggestion =
@@ -455,7 +455,7 @@ export function Composer(props: {
     return resolved && effortOptions().includes(resolved) ? resolved : null;
   };
   const providerDropdownOptions = (): DropdownOption[] =>
-    PROVIDERS.map((agent) => ({
+    nativeAgentProfiles().map((agent) => ({
       value: agent.id,
       label: agent.label,
       icon: PROVIDER_ICON[agent.id],

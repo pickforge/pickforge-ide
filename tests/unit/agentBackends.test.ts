@@ -1,4 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const rollout = vi.hoisted(() => ({ ompPiAgents: false }));
+vi.mock("../../src/stores/flags", () => ({
+  flagEnabled: (key: string) => key === "ompPiAgents" && rollout.ompPiAgents,
+}));
+
+beforeEach(() => {
+  rollout.ompPiAgents = false;
+});
 
 
 async function loadBackends() {
@@ -166,34 +175,88 @@ describe("agent backend capability registry", () => {
       .toContain("Agent SDK");
   });
 
-  it("normalizes persisted legacy Claude IDs without accepting terminal-only backends", async () => {
+  it("gates the OMP native predicate without adding it to ungated lists", async () => {
     const { backends } = await loadBackends();
 
     expect(backends.normalizeAgentProvider("claude")).toBe("claudeCode");
     expect(backends.normalizeAgentProvider("claudeCode")).toBe("claudeCode");
     expect(backends.normalizeAgentProvider("codex")).toBe("codex");
-    expect(backends.normalizeAgentProvider("omp")).toBeNull();
+    expect(backends.normalizeAgentProvider("omp")).toBe("omp");
     expect(backends.normalizeAgentProvider("pi")).toBeNull();
+    expect(backends.isNativeAgentProvider("omp")).toBe(false);
+    rollout.ompPiAgents = true;
+    expect(backends.isNativeAgentProvider("omp")).toBe(true);
+    expect(backends.NATIVE_AGENT_BACKENDS.map(({ id }) => id)).toEqual(["claudeCode", "codex"]);
   });
 
-  it("advertises OMP ACP and Pi RPC without claiming native chat", async () => {
+  it("registers only fixture-proven OMP ACP v2 capabilities", async () => {
     const { backends } = await loadBackends();
+    const omp = backends.AGENT_BACKENDS.omp;
 
-    expect(backends.AGENT_BACKENDS.omp.protocol).toEqual({
-      kind: "acp",
-      availability: "availableNotIntegrated",
+    expect(omp.backendKind).toBe("ompAcp");
+    expect(omp.protocol).toEqual({ kind: "acp", availability: "integrated" });
+    expect(omp.lifecycle).toEqual({
+      start: { v1: "unsupported", v2: "acpSession" },
+      close: { v1: "unsupported", v2: "closeAcpSession" },
+      resume: { v1: "unsupported", v2: "providerSessionId" },
+      remote: "unknown",
     });
-    expect(backends.AGENT_BACKENDS.pi.protocol).toEqual({
-      kind: "rpc",
-      availability: "availableNotIntegrated",
-    });
-    for (const id of ["omp", "pi"] as const) {
-      expect(backends.isNativeAgentProvider(id)).toBe(false);
-      expect(backends.supportsBackendCapability(id, "nativeChat")).toBe(false);
-      expect(backends.nativeChatUnavailableReason(id)).toContain("not integrated yet");
-      expect(backends.supportsBackendCapability(id, "terminal", "terminal")).toBe(true);
-      expect(backends.AGENT_BACKENDS[id].capabilities.imageInput.support).toBe("unknown");
-      expect(backends.AGENT_BACKENDS[id].capabilities.mcpConfiguration.support).toBe("unsupported");
+    for (const capability of [
+      "nativeChat",
+      "startSession",
+      "streamEvents",
+      "sessionEvents",
+      "interruptTurn",
+      "closeSession",
+      "resumeSession",
+      "textInput",
+      "imageInput",
+      "modelSelection",
+      "modelSwitching",
+      "planEvents",
+      "toolEvents",
+      "fileEvents",
+      "approvalEvents",
+      "mcpConfiguration",
+      "usageReporting",
+      "contextReporting",
+      "titleEvents",
+      "errorEvents",
+      "processCleanup",
+    ] as const) {
+      expect(backends.supportsBackendCapability("omp", capability, "nativeChat", "v2")).toBe(true);
+      expect(backends.supportsBackendCapability("omp", capability, "nativeChat", "v1")).toBe(false);
     }
+    for (const capability of [
+      "steerTurn",
+      "effortSelection",
+      "effortSwitching",
+      "modeSelection",
+      "modeSwitching",
+      "rateLimitReporting",
+      "authDiscovery",
+      "remoteExecution",
+    ] as const) {
+      expect(backends.supportsBackendCapability("omp", capability, "nativeChat", "v2")).toBe(false);
+      expect(backends.backendCapabilityReason("omp", capability, "nativeChat", "v2")).toBeTruthy();
+    }
+    expect(omp.nativePayload).toEqual({
+      model: "sessionState",
+      effort: "unsupported",
+      mode: "unsupported",
+    });
+  });
+
+  it("keeps Pi RPC terminal-only until its connector lands", async () => {
+    const { backends } = await loadBackends();
+    const pi = backends.AGENT_BACKENDS.pi;
+
+    expect(pi.protocol).toEqual({ kind: "rpc", availability: "availableNotIntegrated" });
+    expect(backends.isNativeAgentProvider("pi")).toBe(false);
+    expect(backends.supportsBackendCapability("pi", "nativeChat")).toBe(false);
+    expect(backends.nativeChatUnavailableReason("pi")).toContain("not integrated yet");
+    expect(backends.supportsBackendCapability("pi", "terminal", "terminal")).toBe(true);
+    expect(pi.capabilities.imageInput.support).toBe("unknown");
+    expect(pi.capabilities.mcpConfiguration.support).toBe("unsupported");
   });
 });

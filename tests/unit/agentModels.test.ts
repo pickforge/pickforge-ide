@@ -23,7 +23,8 @@ async function loadModules() {
   const models = await import("../../src/lib/agentModels");
   const backends = await import("../../src/lib/agentBackends");
   const quickLaunch = await import("../../src/stores/quickLaunch");
-  return { flags, models, backends, quickLaunch };
+  const chatDefaults = await import("../../src/lib/chatDefaults");
+  return { flags, models, backends, quickLaunch, chatDefaults };
 }
 
 beforeEach(() => {
@@ -56,7 +57,7 @@ describe("OMP/Pi rollout gating and commands", () => {
       id: agent.id,
       terminalOnly: agent.terminalOnly,
     }))).toEqual([
-      { id: "omp", terminalOnly: true },
+      { id: "omp", terminalOnly: undefined },
       { id: "pi", terminalOnly: true },
     ]);
 
@@ -73,6 +74,102 @@ describe("OMP/Pi rollout gating and commands", () => {
     })).toBe(
       "pi --model anthropic/claude-sonnet-4-6 ",
     );
+  });
+
+  it("selects OMP native chat only after the exact compatible probe", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("ompPiAgents", true);
+
+    expect(models.ompNativeChatUnavailableReason()).toBe(
+      `Checking for compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
+    );
+    expect(models.defaultNativeAgentProvider("omp")).toBe("claudeCode");
+
+    expect(models.nativeAgentProfiles().map((profile) => profile.id)).toEqual([
+      "claudeCode",
+      "codex",
+    ]);
+    expect(models.nativeChatModel("omp", "openai/gpt-test")).toBeNull();
+
+    const incompatible = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 16.4.9",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: [],
+    });
+    models.recordAgentCliDiagnostic(incompatible);
+    expect(models.nativeAgentProfiles().some((profile) => profile.id === "omp")).toBe(false);
+    expect(models.ompNativeChatUnavailableReason()).toBe(
+      `OMP native chat requires an installed, compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
+    );
+    models.recordAgentCliDiagnostic({
+      ...incompatible,
+      capabilities: { ...incompatible.capabilities, nativeChat: true },
+    });
+    expect(models.nativeAgentProfile("omp")).toBeNull();
+
+    const compatible = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: `omp ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: [],
+    });
+    models.recordAgentCliDiagnostic(compatible);
+    expect(models.nativeAgentProfiles().map((profile) => profile.id)).toEqual([
+      "claudeCode",
+      "codex",
+      "omp",
+    ]);
+    expect(models.nativeChatModel("omp", "openai/gpt-test")).toBe("openai/gpt-test");
+    expect(models.ompNativeChatUnavailableReason()).toBeNull();
+    expect(models.defaultNativeAgentProvider("omp")).toBe("omp");
+    expect(models.launchCommand("omp")).toBe("omp ");
+
+    flags.setFlagOverride("ompPiAgents", false);
+    expect(models.nativeAgentProfiles().some((profile) => profile.id === "omp")).toBe(false);
+    expect(models.nativeChatModel("omp", "openai/gpt-test")).toBeNull();
+    expect(models.launchCommand("omp")).toBe("");
+    expect(models.nativeAgentProfile("omp")).toBeNull();
+    expect(models.defaultNativeAgentProvider("omp")).toBe("claudeCode");
+    expect(models.ompNativeChatUnavailableReason()).toBe(
+      "OMP native chat is disabled by the ompPiAgents feature flag",
+    );
+  });
+
+  it("gates Orchestra menu and persisted default through the reactive native registry", async () => {
+    const { flags, models, chatDefaults } = await loadModules();
+    flags.setFlagOverride("ompPiAgents", true);
+    chatDefaults.setLastAgentProvider("omp");
+
+    expect(chatDefaults.loadLastAgentProvider()).toBe("omp");
+    expect(models.nativeAgentProfiles().map(({ id }) => id)).toEqual(["claudeCode", "codex"]);
+    expect(
+      models.defaultNativeAgentProvider(chatDefaults.loadLastAgentProvider()),
+    ).toBe("claudeCode");
+
+    models.recordAgentCliDiagnostic(models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: `omp ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: [],
+    }));
+    expect(models.nativeAgentProfiles().map(({ id }) => id)).toEqual([
+      "claudeCode",
+      "codex",
+      "omp",
+    ]);
+    expect(
+      models.defaultNativeAgentProvider(chatDefaults.loadLastAgentProvider()),
+    ).toBe("omp");
+
+    flags.setFlagOverride("ompPiAgents", false);
+    expect(chatDefaults.loadLastAgentProvider()).toBe("claudeCode");
+    expect(
+      models.defaultNativeAgentProvider(chatDefaults.loadLastAgentProvider()),
+    ).toBe("claudeCode");
   });
 
   it("offers optional chips without changing defaults or duplicating an agent", async () => {
@@ -169,7 +266,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
     const diagnostic = models.diagnosticFromProbe("omp", {
       installed: true,
       versionOutput: "omp v16.4.8",
-      helpOutput: "--provider=<value>  --profile=<value>  --mode=text|rpc\n  acp  Run ACP server",
+      helpOutput: "--no-extensions  Disable extensions\n--provider=<value>  --profile=<value>\n  acp  Run ACP server",
       modelsOutput: "",
       errors: [],
     });
@@ -184,7 +281,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
     });
     expect(diagnostic.capabilities).not.toHaveProperty("acp");
     expect(diagnostic.capabilities).not.toHaveProperty("rpc");
-    expect(diagnostic.capabilities).not.toHaveProperty("nativeChat");
+    expect(diagnostic.capabilities.nativeChat).toBe(true);
     expect(diagnostic.errors).toEqual([
       "OMP models unavailable: no enforced offline/cache-only catalog probe",
     ]);

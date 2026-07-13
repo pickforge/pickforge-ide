@@ -54,11 +54,12 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
+import { normalizeAgentProvider } from "../../lib/agentBackends";
 import {
-  isNativeAgentProvider,
-  NATIVE_AGENT_BACKENDS,
-  normalizeAgentProvider,
-} from "../../lib/agentBackends";
+  defaultNativeAgentProvider,
+  nativeAgentProfile,
+  nativeAgentProfiles,
+} from "../../lib/agentModels";
 import {
   loadAskChatTitle,
   loadDefaultChatKind,
@@ -95,8 +96,11 @@ import {
 
 const PROJECT_MIME = "application/x-pf-project";
 
-const AGENT_CHAT_PROVIDERS = NATIVE_AGENT_BACKENDS;
-const AGENT_CHAT_MARKS: Record<string, string> = { claudeCode: "CC", codex: "CX" };
+const AGENT_CHAT_MARKS: Record<string, string> = {
+  claudeCode: "CC",
+  codex: "CX",
+  omp: "OM",
+};
 const agentChatMark = (agentId: string): string =>
   AGENT_CHAT_MARKS[normalizeAgentProvider(agentId) ?? agentId] ?? "AI";
 
@@ -212,10 +216,16 @@ export function ProjectsPane() {
     void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
   };
   const newAgentChat = (root: string, provider: string, title?: string) => {
-    if (!isNativeAgentProvider(provider)) return;
+    const availableProvider = nativeAgentProfile(provider);
+    if (!availableProvider) return;
     if (!chatsExpanded(root)) toggleChats(root);
-    setLastAgentProvider(provider);
-    void addChat(title?.trim() || DEFAULT_CHAT_TITLE, provider, root, "agent");
+    setLastAgentProvider(availableProvider.id);
+    void addChat(
+      title?.trim() || DEFAULT_CHAT_TITLE,
+      availableProvider.id,
+      root,
+      "agent",
+    );
   };
   const newChatFromButton = (root: string, e: MouseEvent) => {
     const kind = loadDefaultChatKind();
@@ -227,7 +237,7 @@ export function ProjectsPane() {
     }
     e.stopPropagation();
     if (kind === "terminal") newTerminalChat(root);
-    else newAgentChat(root, loadLastAgentProvider());
+    else newAgentChat(root, defaultNativeAgentProvider(loadLastAgentProvider()));
   };
   const toggleArchivedFor = (root: string) =>
     setShowArchived((s) => {
@@ -462,7 +472,13 @@ export function ProjectsPane() {
     const createDefault = () => {
       const kind = loadDefaultChatKind();
       if (kind === "ask") return;
-      if (kind === "agent") newAgentChat(p.root, loadLastAgentProvider(), title());
+      if (kind === "agent") {
+        newAgentChat(
+          p.root,
+          defaultNativeAgentProvider(loadLastAgentProvider()),
+          title(),
+        );
+      }
       else newTerminalChat(p.root, title());
       closeMenu();
     };
@@ -487,7 +503,7 @@ export function ProjectsPane() {
         <button class="pf-menu-item pf-menu-item--accent" onClick={() => { newTerminalChat(p.root, title()); closeMenu(); }}>Terminal</button>
         <div class="pf-menu-sep" />
         <div class="pf-menu-label">Agent</div>
-        <For each={AGENT_CHAT_PROVIDERS}>
+        <For each={nativeAgentProfiles()}>
           {(a) => (
             <button class="pf-menu-item" onClick={() => { newAgentChat(p.root, a.id, title()); closeMenu(); }}>{a.label}</button>
           )}

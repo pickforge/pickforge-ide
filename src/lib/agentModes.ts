@@ -29,16 +29,19 @@ const MODE_OPTIONS: Record<AgentProvider, AgentModeOption[]> = {
     { id: "read-only", label: "Plan / read-only" },
     { id: "full-access", label: "Full access" },
   ],
+  omp: [{ id: "default", label: "Default" }],
 };
 
 const DEFAULT_MODE: Record<AgentProvider, string> = {
   claudeCode: "default",
   codex: "auto",
+  omp: "default",
 };
 
 const DANGER_MODES: Record<AgentProvider, string> = {
   claudeCode: "bypassPermissions",
   codex: "full-access",
+  omp: "",
 };
 
 export function modeOptions(provider: AgentProvider): AgentModeOption[] {
@@ -62,6 +65,7 @@ export function isDangerMode(provider: AgentProvider, mode: string | null): bool
 export function modeOverrides(provider: AgentProvider, mode: string | null): ModeOverrides {
   const resolved = resolveMode(provider, mode);
   if (provider === "claudeCode") return { permissionMode: resolved };
+  if (provider === "omp") return { permissionMode: resolved };
   switch (resolved) {
     case "read-only":
       return { sandbox: "read-only", approvalPolicy: "on-request" };

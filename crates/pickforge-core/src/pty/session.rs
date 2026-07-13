@@ -8,15 +8,17 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 use super::env::normalize_pty_env;
 use super::shell::{resolve_shell, ShellInvocation};
-use crate::process::user_shell_environment;
+use crate::process::{user_shell_environment, StartGate};
 use crate::remote::{shell_quote_argv, ssh_base_args, SshTarget};
+
+const PTY_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Events emitted by a running PTY session.
 #[derive(Debug, Clone)]
@@ -88,6 +90,10 @@ pub struct SpawnOptions {
 pub enum PtyError {
     #[error("pty session {0} not found")]
     NotFound(u32),
+    #[error("pty manager is shutting down")]
+    ShuttingDown,
+    #[error("pty manager began shutting down after the child was spawned")]
+    ShuttingDownAfterSpawn,
     #[error("invalid remote PTY root")]
     InvalidRemoteRoot,
     #[error(transparent)]
@@ -130,6 +136,10 @@ struct Session {
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<u32, Session>>>,
     next_id: AtomicU32,
+    shutting_down: AtomicBool,
+    start_gate: Arc<StartGate>,
+    #[cfg(test)]
+    after_child_spawn: Mutex<Option<Arc<dyn Fn(Option<u32>) + Send + Sync>>>,
 }
 
 impl Default for PtyManager {
@@ -137,6 +147,10 @@ impl Default for PtyManager {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU32::new(1),
+            shutting_down: AtomicBool::new(false),
+            start_gate: Arc::new(StartGate::default()),
+            #[cfg(test)]
+            after_child_spawn: Mutex::new(None),
         }
     }
 }
@@ -150,6 +164,10 @@ impl PtyManager {
     /// is the user's interactive `$SHELL`; with it, a one-shot `$SHELL -c
     /// <command>` that exits when the command does. Returns the session id.
     pub fn spawn<S: PtySink>(&self, opts: SpawnOptions, sink: S) -> Result<u32, PtyError> {
+        let _start_permit = self
+            .start_gate
+            .begin()
+            .map_err(|_| PtyError::ShuttingDown)?;
         let rows = if opts.rows == 0 { 24 } else { opts.rows };
         let cols = if opts.cols == 0 { 80 } else { opts.cols };
 
@@ -213,6 +231,15 @@ impl PtyManager {
         }
 
         let child = pair.slave.spawn_command(cmd)?;
+        #[cfg(test)]
+        if let Some(hook) = self
+            .after_child_spawn
+            .lock()
+            .expect("pty spawn hook poisoned")
+            .clone()
+        {
+            hook(child.process_id());
+        }
         drop(pair.slave); // parent must close its slave handle
 
         #[cfg(unix)]
@@ -222,24 +249,31 @@ impl PtyManager {
         let writer = pair.master.take_writer()?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
+        let session = Session {
+            master: pair.master,
+            writer,
+            child,
+            reader_thread: None,
+            #[cfg(unix)]
+            shell_pid,
+            detach_on_drop,
+        };
+
         // Register before starting the reader so a shell that exits immediately
         // can't try to remove its session before it has been inserted. The reader
         // thread handle is attached just below, once the thread is spawned.
-        self.sessions
-            .lock()
-            .expect("pty registry poisoned")
-            .insert(
-                id,
-                Session {
-                    master: pair.master,
-                    writer,
-                    child,
-                    reader_thread: None,
-                    #[cfg(unix)]
-                    shell_pid,
-                    detach_on_drop,
-                },
-            );
+        // Re-check the shutdown gate UNDER the registry lock: shutdown() sets the
+        // flag before draining under this same lock, so a spawn that raced past
+        // the entry check can't insert a session behind the drain.
+        {
+            let mut sessions = self.sessions.lock().expect("pty registry poisoned");
+            if self.shutting_down.load(Ordering::SeqCst) {
+                drop(sessions);
+                teardown_session(session);
+                return Err(PtyError::ShuttingDownAfterSpawn);
+            }
+            sessions.insert(id, session);
+        }
 
         let sink = Arc::new(sink);
         let sessions = Arc::clone(&self.sessions);
@@ -264,7 +298,11 @@ impl PtyManager {
             Err(err) => {
                 // Roll back the just-registered session so a failed reader spawn
                 // can't leak the child + PTY handles.
-                let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
+                let removed = self
+                    .sessions
+                    .lock()
+                    .expect("pty registry poisoned")
+                    .remove(&id);
                 if let Some(mut session) = removed {
                     let _ = session.child.kill();
                     let _ = session.child.wait();
@@ -309,15 +347,13 @@ impl PtyManager {
         // Remove under the lock, then signal + reap outside it so the registry
         // lock is never held across a blocking wait. Once removed, the reader
         // thread's own EOF path can't reap the child, so we must wait here.
-        let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
-        if let Some(mut session) = removed {
-            // On Unix, take down the shell's whole process group (and the
-            // current foreground job's group) so a `flutter run`/`gradle`/`adb`
-            // child can't outlive the shell. Then reap the shell itself.
-            #[cfg(unix)]
-            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
-            let _ = session.child.kill();
-            let _ = session.child.wait();
+        let removed = self
+            .sessions
+            .lock()
+            .expect("pty registry poisoned")
+            .remove(&id);
+        if let Some(session) = removed {
+            teardown_session(session);
         }
         Ok(())
     }
@@ -331,19 +367,17 @@ impl PtyManager {
     /// detachable (`detach_on_drop == false`), so calling `detach` on a raw shell
     /// still tears it down cleanly rather than leaking it.
     pub fn detach(&self, id: u32) -> Result<(), PtyError> {
-        let removed = self.sessions.lock().expect("pty registry poisoned").remove(&id);
-        let Some(mut session) = removed else {
+        let removed = self
+            .sessions
+            .lock()
+            .expect("pty registry poisoned")
+            .remove(&id);
+        let Some(session) = removed else {
             return Ok(()); // already gone (e.g. the reader hit EOF first)
         };
         if !session.detach_on_drop {
             // Not a recoverable session — tear it down like kill() would.
-            #[cfg(unix)]
-            terminate_process_groups(session.shell_pid, session.master.process_group_leader());
-            let _ = session.child.kill();
-            let _ = session.child.wait();
-            if let Some(t) = session.reader_thread.take() {
-                let _ = t.join();
-            }
+            teardown_session(session);
             return Ok(());
         }
         // Detach the dtach/tmux CLIENT so the session (and the agent shell inside
@@ -382,6 +416,22 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Idempotently drain and tear down every PTY session. Returns the number
+    /// whose reap did not complete before the shared shutdown deadline.
+    pub fn shutdown(&self) -> usize {
+        self.start_gate.close();
+        self.shutting_down.store(true, Ordering::SeqCst);
+        self.start_gate.wait();
+        let drained = {
+            let mut sessions = self.sessions.lock().expect("pty registry poisoned");
+            sessions
+                .drain()
+                .map(|(_, session)| session)
+                .collect::<Vec<_>>()
+        };
+        teardown_sessions(drained, PTY_SHUTDOWN_TIMEOUT)
+    }
+
     /// Number of live sessions (handy for tests / diagnostics).
     pub fn len(&self) -> usize {
         self.sessions.lock().expect("pty registry poisoned").len()
@@ -389,6 +439,66 @@ impl PtyManager {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+/// Tear down a drained registry with one shared Unix grace period. Signalling
+/// every group before waiting avoids an N×150 ms exit as PTY count grows.
+fn teardown_sessions(sessions: Vec<Session>, timeout: std::time::Duration) -> usize {
+    #[cfg(unix)]
+    {
+        let mut pgids = Vec::new();
+        for session in &sessions {
+            extend_process_group_ids(
+                &mut pgids,
+                session.shell_pid,
+                session.master.process_group_leader(),
+            );
+        }
+        signal_process_groups(&pgids, libc::SIGTERM);
+        if !pgids.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        signal_process_groups(&pgids, libc::SIGKILL);
+    }
+
+    let total = sessions.len();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    for mut session in sessions {
+        let done_tx = done_tx.clone();
+        let _ = std::thread::Builder::new()
+            .name("pty-shutdown".to_string())
+            .spawn(move || {
+                let _ = session.child.kill();
+                let _ = session.child.wait();
+                if let Some(thread) = session.reader_thread.take() {
+                    let _ = thread.join();
+                }
+                let _ = done_tx.send(());
+            });
+    }
+    drop(done_tx);
+
+    let deadline = std::time::Instant::now() + timeout;
+    let mut completed = 0;
+    while completed < total {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() || done_rx.recv_timeout(remaining).is_err() {
+            break;
+        }
+        completed += 1;
+    }
+    total - completed
+}
+
+/// Must run outside the registry lock because the reader thread takes it on EOF.
+fn teardown_session(mut session: Session) {
+    #[cfg(unix)]
+    terminate_process_groups(session.shell_pid, session.master.process_group_leader());
+    let _ = session.child.kill();
+    let _ = session.child.wait();
+    if let Some(t) = session.reader_thread.take() {
+        let _ = t.join();
     }
 }
 
@@ -446,9 +556,10 @@ fn read_loop<S: PtySink>(
             Ok(n) => {
                 let chunk = buf[..n].to_vec();
                 // A panicking sink must not skip the reap below.
-                let delivered =
-                    std::panic::catch_unwind(AssertUnwindSafe(|| sink.emit(PtyEvent::Output(chunk))))
-                        .is_ok();
+                let delivered = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    sink.emit(PtyEvent::Output(chunk))
+                }))
+                .is_ok();
                 if !delivered {
                     break;
                 }
@@ -493,32 +604,41 @@ fn signal_client_hangup(client_pid: Option<u32>) {
 /// portable-pty `setsid`s the slave (session + group leader).
 #[cfg(unix)]
 fn terminate_process_groups(shell_pid: Option<u32>, foreground_leader: Option<libc::pid_t>) {
-    let mut pgids: Vec<libc::pid_t> = Vec::new();
+    let mut pgids = Vec::new();
+    extend_process_group_ids(&mut pgids, shell_pid, foreground_leader);
+    signal_process_groups(&pgids, libc::SIGTERM);
+    if !pgids.is_empty() {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    signal_process_groups(&pgids, libc::SIGKILL);
+}
+
+#[cfg(unix)]
+fn extend_process_group_ids(
+    pgids: &mut Vec<libc::pid_t>,
+    shell_pid: Option<u32>,
+    foreground_leader: Option<libc::pid_t>,
+) {
     if let Some(pid) = shell_pid {
-        pgids.push(pid as libc::pid_t);
+        let pid = pid as libc::pid_t;
+        if !pgids.contains(&pid) {
+            pgids.push(pid);
+        }
     }
     if let Some(pgid) = foreground_leader {
         if pgid > 0 && !pgids.contains(&pgid) {
             pgids.push(pgid);
         }
     }
-    if pgids.is_empty() {
-        return;
-    }
+}
 
-    for pgid in &pgids {
-        // SAFETY: killpg with a valid pgid is well-defined; ESRCH (already gone)
-        // is harmless and ignored.
+#[cfg(unix)]
+fn signal_process_groups(pgids: &[libc::pid_t], signal: libc::c_int) {
+    for &pgid in pgids {
+        // SAFETY: killpg with a positive pgid is well-defined; ESRCH means the
+        // exact group already exited and is harmless.
         unsafe {
-            libc::killpg(*pgid, libc::SIGTERM);
-        }
-    }
-    // Brief grace for a TERM-aware job to clean up before the unconditional kill.
-    std::thread::sleep(std::time::Duration::from_millis(150));
-    for pgid in &pgids {
-        // SAFETY: as above; SIGKILL is unconditionally fatal.
-        unsafe {
-            libc::killpg(*pgid, libc::SIGKILL);
+            libc::killpg(pgid, signal);
         }
     }
 }
@@ -532,6 +652,55 @@ mod tests {
             host: host.to_string(),
             remote_root: remote_root.to_string(),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_waits_for_post_spawn_rollback_and_child_death() {
+        let manager = Arc::new(PtyManager::new());
+        let (spawned_tx, spawned_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        *manager
+            .after_child_spawn
+            .lock()
+            .expect("pty spawn hook poisoned") = Some(Arc::new(move |pid| {
+            spawned_tx.send(pid).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        }));
+        let spawning_manager = Arc::clone(&manager);
+        let spawn =
+            std::thread::spawn(move || spawning_manager.spawn(SpawnOptions::default(), |_| {}));
+        let pid = spawned_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap()
+            .unwrap() as i32;
+        let shutdown_manager = Arc::clone(&manager);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            shutdown_manager.shutdown();
+            done_tx.send(()).unwrap();
+        });
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(50))
+                .is_err(),
+            "shutdown returned while a post-spawn permit was still active"
+        );
+
+        release_tx.send(()).unwrap();
+        assert!(matches!(
+            spawn.join().unwrap(),
+            Err(PtyError::ShuttingDownAfterSpawn)
+        ));
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        shutdown.join().unwrap();
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "post-spawn PTY child survived shutdown"
+        );
     }
 
     #[test]

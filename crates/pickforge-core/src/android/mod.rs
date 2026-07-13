@@ -11,12 +11,15 @@ pub use adb::{
     capture_screenshot, dump_uiautomator_xml, list_devices, running_avd_id, wait_for_online,
     AdbDevice,
 };
-pub use mirror::{start_session, stop_session, MirrorError, MirrorSession, SERVER_VERSION};
 pub use emulator::{
-    device_list, launch_avd, list_avds, resolve_emulator_binary, AvdInfo, DeviceEntry, DeviceKind,
-    DeviceState,
+    device_list, list_avds, resolve_emulator_binary, AvdInfo, DeviceEntry, DeviceKind, DeviceState,
+    EmulatorManager,
 };
 pub use logcat::{logcat_event, LogEvent, LogLevel};
+pub use mirror::{
+    start_session, start_session_cancellable, stop_session, MirrorError, MirrorSession,
+    SERVER_VERSION,
+};
 pub use uiautomator::{
     ancestor_hierarchy, hit_test, parse_uiautomator, A11yNode, A11yRole, Rect, UiAutomatorError,
 };

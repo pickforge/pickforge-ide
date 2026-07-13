@@ -7,11 +7,11 @@
 
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use pickforge_core::android::{logcat_event, LogEvent};
-use pickforge_core::user_shell_environment;
+use pickforge_core::{user_shell_environment, StartGate};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -26,19 +26,45 @@ struct LogcatSession {
 }
 
 #[derive(Default, Clone)]
-pub struct LogcatManager(Arc<Mutex<HashMap<String, LogcatSession>>>);
+pub struct LogcatManager(
+    Arc<Mutex<HashMap<String, LogcatSession>>>,
+    Arc<AtomicBool>,
+    Arc<StartGate>,
+);
 
 impl LogcatManager {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Insert `session` for `serial`, returning whatever it displaced — all under
-    /// a single held lock so the epoch bump + insert is atomic with respect to
-    /// concurrent start/stop/reader-cleanup. The caller kills the displaced child
-    /// OUTSIDE the lock (kill is blocking; the lock must never span an `.await`).
-    async fn replace_session(&self, serial: &str, session: LogcatSession) -> Option<LogcatSession> {
-        self.0.lock().await.insert(serial.to_string(), session)
+    fn is_shutting_down(&self) -> bool {
+        self.1.load(Ordering::SeqCst)
+    }
+
+    async fn replace_session(
+        &self,
+        serial: &str,
+        session: LogcatSession,
+    ) -> Result<Option<LogcatSession>, LogcatSession> {
+        let mut sessions = self.0.lock().await;
+        if self.is_shutting_down() {
+            return Err(session);
+        }
+        Ok(sessions.insert(serial.to_string(), session))
+    }
+
+    pub async fn shutdown(&self) {
+        self.2.close();
+        self.1.store(true, Ordering::SeqCst);
+        let sessions = {
+            let mut reg = self.0.lock().await;
+            reg.drain().map(|(_, session)| session).collect::<Vec<_>>()
+        };
+        for session in sessions {
+            stop_child(session).await;
+        }
+        let gate = Arc::clone(&self.2);
+        let _ = tokio::task::spawn_blocking(move || gate.wait()).await;
     }
 }
 
@@ -62,6 +88,13 @@ pub async fn logcat_start(
     serial: String,
     on_line: Channel<LogEvent>,
 ) -> Result<(), String> {
+    let _start_permit = manager
+        .2
+        .begin()
+        .map_err(|_| "logcat manager is shutting down".to_string())?;
+    if manager.is_shutting_down() {
+        return Err("logcat manager is shutting down".to_string());
+    }
     let mut cmd = Command::new("adb");
     cmd.args(["-s", &serial, "logcat", "-v", "threadtime", "-T", "1"])
         .stdout(Stdio::piped())
@@ -84,11 +117,16 @@ pub async fn logcat_start(
     // (b) the displaced session's reader (older epoch) can never match the new
     // session and tear it down. Kill the displaced child OUTSIDE the lock so the
     // blocking wait never wedges concurrent start/stop/cleanup for any device.
-    if let Some(old) = manager
+    match manager
         .replace_session(&serial, LogcatSession { child, epoch })
         .await
     {
-        stop_child(old).await;
+        Ok(Some(old)) => stop_child(old).await,
+        Ok(None) => {}
+        Err(session) => {
+            stop_child(session).await;
+            return Err("logcat manager is shutting down".to_string());
+        }
     }
 
     let registry = manager.0.clone();
@@ -180,15 +218,24 @@ mod tests {
         let serial = "emulator-5554";
 
         let epoch1 = next_epoch();
-        let first = LogcatSession { child: spawn_sleeper(), epoch: epoch1 };
-        assert!(manager.replace_session(serial, first).await.is_none());
+        let first = LogcatSession {
+            child: spawn_sleeper(),
+            epoch: epoch1,
+        };
+        assert!(matches!(
+            manager.replace_session(serial, first).await,
+            Ok(None)
+        ));
 
         let epoch2 = next_epoch();
-        let second = LogcatSession { child: spawn_sleeper(), epoch: epoch2 };
-        let displaced = manager
-            .replace_session(serial, second)
-            .await
-            .expect("first session is displaced");
+        let second = LogcatSession {
+            child: spawn_sleeper(),
+            epoch: epoch2,
+        };
+        let displaced = match manager.replace_session(serial, second).await {
+            Ok(Some(displaced)) => displaced,
+            _ => panic!("first session is displaced"),
+        };
 
         // Exactly one session remains, and it's the newer one.
         {
@@ -209,10 +256,67 @@ mod tests {
         // A stale reader for the OLD epoch must no-op against the current session.
         let reg = manager.0.lock().await;
         let stale_matches = reg.get(serial).map(|s| s.epoch == epoch1).unwrap_or(false);
-        assert!(!stale_matches, "stale (older) epoch must not match the live session");
+        assert!(
+            !stale_matches,
+            "stale (older) epoch must not match the live session"
+        );
     }
 
     async fn stop_child_for_test(session: &mut LogcatSession) {
         let _ = session.child.kill().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shutdown_kills_all_streams_and_is_idempotent() {
+        let manager = LogcatManager::new();
+        let first = spawn_sleeper();
+        let second = spawn_sleeper();
+        let first_pid = first.id().expect("first pid");
+        let second_pid = second.id().expect("second pid");
+        let _ = manager
+            .replace_session(
+                "emulator-5554",
+                LogcatSession {
+                    child: first,
+                    epoch: next_epoch(),
+                },
+            )
+            .await;
+        let _ = manager
+            .replace_session(
+                "emulator-5556",
+                LogcatSession {
+                    child: second,
+                    epoch: next_epoch(),
+                },
+            )
+            .await;
+
+        manager.shutdown().await;
+
+        assert!(manager.0.lock().await.is_empty(), "registry must drain");
+        for pid in [first_pid, second_pid] {
+            assert_ne!(
+                unsafe { libc::kill(pid as i32, 0) },
+                0,
+                "child {pid} must be dead after shutdown",
+            );
+        }
+
+        manager.shutdown().await;
+        assert!(manager.0.lock().await.is_empty());
+
+        let raced = LogcatSession {
+            child: spawn_sleeper(),
+            epoch: next_epoch(),
+        };
+        let raced_pid = raced.child.id().expect("raced pid");
+        let raced = match manager.replace_session("emulator-5558", raced).await {
+            Err(raced) => raced,
+            Ok(_) => panic!("shutdown gate must reject raced session"),
+        };
+        stop_child(raced).await;
+        assert_ne!(unsafe { libc::kill(raced_pid as i32, 0) }, 0);
     }
 }

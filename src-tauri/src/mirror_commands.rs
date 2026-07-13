@@ -6,10 +6,13 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use pickforge_core::android::{start_session, stop_session, MirrorSession, SERVER_VERSION};
-use pickforge_core::pickforge_home;
+use pickforge_core::android::{
+    start_session_cancellable, stop_session, MirrorSession, SERVER_VERSION,
+};
+use pickforge_core::{pickforge_home, StartGate};
 use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -20,11 +23,45 @@ use tokio::sync::Mutex;
 const SERVER_JAR: &[u8] = include_bytes!("../resources/scrcpy-server-v3.3.3");
 
 #[derive(Default, Clone)]
-pub struct MirrorManager(Arc<Mutex<HashMap<String, MirrorSession>>>);
+pub struct MirrorManager(
+    Arc<Mutex<HashMap<String, MirrorSession>>>,
+    Arc<AtomicBool>,
+    Arc<StartGate>,
+);
 
 impl MirrorManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn is_shutting_down(&self) -> bool {
+        self.1.load(Ordering::SeqCst)
+    }
+
+    async fn replace_session(
+        &self,
+        serial: &str,
+        session: MirrorSession,
+    ) -> Result<Option<MirrorSession>, MirrorSession> {
+        let mut sessions = self.0.lock().await;
+        if self.is_shutting_down() {
+            return Err(session);
+        }
+        Ok(sessions.insert(serial.to_string(), session))
+    }
+
+    pub async fn shutdown(&self) {
+        self.2.close();
+        self.1.store(true, Ordering::SeqCst);
+        let sessions = {
+            let mut reg = self.0.lock().await;
+            reg.drain().map(|(_, session)| session).collect::<Vec<_>>()
+        };
+        for session in sessions {
+            stop_session(session).await;
+        }
+        let gate = Arc::clone(&self.2);
+        let _ = tokio::task::spawn_blocking(move || gate.wait()).await;
     }
 }
 
@@ -46,14 +83,33 @@ pub async fn mirror_start(
     serial: String,
     on_video: Channel<Response>,
 ) -> Result<(), String> {
+    let _start_permit = manager
+        .2
+        .begin()
+        .map_err(|_| "mirror manager is shutting down".to_string())?;
+    if manager.is_shutting_down() {
+        return Err("mirror manager is shutting down".to_string());
+    }
     if let Some(old) = manager.0.lock().await.remove(&serial) {
         stop_session(old).await;
     }
     let jar = ensure_jar()?;
-    let mut session = start_session(&serial, &jar).await.map_err(|e| e.to_string())?;
-    let video = session.video.take().ok_or("no video socket")?;
+    let mut session = start_session_cancellable(&serial, &jar, Arc::clone(&manager.1))
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(video) = session.video.take() else {
+        stop_session(session).await;
+        return Err("no video socket".to_string());
+    };
     let scid = session.scid.clone();
-    manager.0.lock().await.insert(serial.clone(), session);
+    match manager.replace_session(&serial, session).await {
+        Ok(Some(old)) => stop_session(old).await,
+        Ok(None) => {}
+        Err(session) => {
+            stop_session(session).await;
+            return Err("mirror manager is shutting down".to_string());
+        }
+    }
 
     let app = app.clone();
     let registry = manager.0.clone();
@@ -112,7 +168,11 @@ enum ControlLen {
     /// `header` fixed bytes, then a length-prefixed body. `prefix_at` is the byte
     /// offset of the big-endian length field, `prefix_width` its size (1/2/4),
     /// and the total must be exactly `header + <decoded prefix>`.
-    Prefixed { header: usize, prefix_at: usize, prefix_width: usize },
+    Prefixed {
+        header: usize,
+        prefix_at: usize,
+        prefix_width: usize,
+    },
     /// Two length-prefixed bodies back to back (only `UHidCreate`): a u8-prefixed
     /// name then a u16-prefixed descriptor. `header` covers the bytes up to and
     /// including the first prefix; the second prefix sits right after the name.
@@ -127,25 +187,44 @@ enum ControlLen {
 fn control_len(type_byte: u8) -> Option<ControlLen> {
     use ControlLen::*;
     Some(match type_byte {
-        0 => Fixed(14),  // InjectKeyCode: action1 + keyCode4 + repeat4 + metaState4
-        1 => Prefixed { header: 5, prefix_at: 1, prefix_width: 4 }, // InjectText: u32 text
-        2 => Fixed(32),  // InjectTouch
-        3 => Fixed(21),  // InjectScroll
-        4 => Fixed(2),   // BackOrScreenOn: action1
-        5 => Fixed(1),   // ExpandNotificationPanel
-        6 => Fixed(1),   // ExpandSettingsPanel
-        7 => Fixed(1),   // CollapsePanels
-        8 => Fixed(2),   // GetClipboard: copyKey1
-        9 => Prefixed { header: 14, prefix_at: 10, prefix_width: 4 }, // SetClipboard: seq8+paste1+u32 text
-        10 => Fixed(2),  // SetDisplayPower: on1
-        11 => Fixed(1),  // RotateDevice
+        0 => Fixed(14), // InjectKeyCode: action1 + keyCode4 + repeat4 + metaState4
+        1 => Prefixed {
+            header: 5,
+            prefix_at: 1,
+            prefix_width: 4,
+        }, // InjectText: u32 text
+        2 => Fixed(32), // InjectTouch
+        3 => Fixed(21), // InjectScroll
+        4 => Fixed(2),  // BackOrScreenOn: action1
+        5 => Fixed(1),  // ExpandNotificationPanel
+        6 => Fixed(1),  // ExpandSettingsPanel
+        7 => Fixed(1),  // CollapsePanels
+        8 => Fixed(2),  // GetClipboard: copyKey1
+        9 => Prefixed {
+            header: 14,
+            prefix_at: 10,
+            prefix_width: 4,
+        }, // SetClipboard: seq8+paste1+u32 text
+        10 => Fixed(2), // SetDisplayPower: on1
+        11 => Fixed(1), // RotateDevice
         // UHidCreate: id2 + vendorId2 + productId2 + u8 name + u16 descriptor
-        12 => UHidCreate { header: 8, first_at: 7 },
-        13 => Prefixed { header: 5, prefix_at: 3, prefix_width: 2 }, // UHidInput: id2 + u16 data
-        14 => Fixed(3),  // UHidDestroy: id2
-        15 => Fixed(1),  // OpenHardKeyboardSettings
-        16 => Prefixed { header: 2, prefix_at: 1, prefix_width: 1 }, // StartApp: u8 name
-        17 => Fixed(1),  // ResetVideo
+        12 => UHidCreate {
+            header: 8,
+            first_at: 7,
+        },
+        13 => Prefixed {
+            header: 5,
+            prefix_at: 3,
+            prefix_width: 2,
+        }, // UHidInput: id2 + u16 data
+        14 => Fixed(3), // UHidDestroy: id2
+        15 => Fixed(1), // OpenHardKeyboardSettings
+        16 => Prefixed {
+            header: 2,
+            prefix_at: 1,
+            prefix_width: 1,
+        }, // StartApp: u8 name
+        17 => Fixed(1), // ResetVideo
         _ => return None,
     })
 }
@@ -175,7 +254,11 @@ fn validate_control_payload(bytes: &[u8]) -> Result<(), String> {
     };
     let expected = match spec {
         ControlLen::Fixed(n) => n,
-        ControlLen::Prefixed { header, prefix_at, prefix_width } => {
+        ControlLen::Prefixed {
+            header,
+            prefix_at,
+            prefix_width,
+        } => {
             if bytes.len() < header {
                 return Err("truncated control message header".into());
             }
@@ -192,9 +275,11 @@ fn validate_control_payload(bytes: &[u8]) -> Result<(), String> {
             // u8 name length, then a u16 descriptor length right after the name.
             let name = read_prefix(&bytes, first_at, 1)
                 .ok_or("truncated control message length prefix")?;
-            let desc_at = header.checked_add(name).ok_or("control message length overflow")?;
-            let desc = read_prefix(&bytes, desc_at, 2)
-                .ok_or("truncated control message length prefix")?;
+            let desc_at = header
+                .checked_add(name)
+                .ok_or("control message length overflow")?;
+            let desc =
+                read_prefix(&bytes, desc_at, 2).ok_or("truncated control message length prefix")?;
             desc_at
                 .checked_add(2)
                 .and_then(|n| n.checked_add(desc))
@@ -223,9 +308,17 @@ pub async fn mirror_send_control(
     // mirror_start/mirror_stop/relay cleanup for every device.
     let control = {
         let reg = manager.0.lock().await;
-        reg.get(&serial).ok_or("no active mirror for device")?.control.clone()
+        reg.get(&serial)
+            .ok_or("no active mirror for device")?
+            .control
+            .clone()
     };
-    control.lock().await.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    control
+        .lock()
+        .await
+        .write_all(&bytes)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -236,6 +329,66 @@ pub async fn mirror_stop(manager: State<'_, MirrorManager>, serial: String) -> R
         stop_session(session).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    async fn fake_session(scid: &str) -> (MirrorSession, u32) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let control = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let child = tokio::process::Command::new("sleep")
+            .arg("30")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id().expect("child pid");
+        (
+            MirrorSession {
+                serial: "emulator-5554".to_string(),
+                scid: scid.to_string(),
+                child,
+                video: None,
+                control: Arc::new(Mutex::new(control)),
+            },
+            pid,
+        )
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shutdown_kills_all_sessions_and_is_idempotent() {
+        let (session, pid) = fake_session("00000001").await;
+        let manager = MirrorManager::new();
+        manager
+            .0
+            .lock()
+            .await
+            .insert("emulator-5554".to_string(), session);
+
+        manager.shutdown().await;
+
+        assert!(manager.0.lock().await.is_empty(), "registry must drain");
+        assert_ne!(
+            unsafe { libc::kill(pid as i32, 0) },
+            0,
+            "mirror server child must be dead after shutdown",
+        );
+
+        manager.shutdown().await;
+        assert!(manager.0.lock().await.is_empty());
+
+        let (raced, raced_pid) = fake_session("00000002").await;
+        let raced = match manager.replace_session("emulator-5554", raced).await {
+            Err(raced) => raced,
+            Ok(_) => panic!("shutdown gate must reject raced session"),
+        };
+        stop_session(raced).await;
+        assert_ne!(unsafe { libc::kill(raced_pid as i32, 0) }, 0);
+    }
 }
 
 #[cfg(test)]

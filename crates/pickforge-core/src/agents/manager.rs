@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{AgentSessionRow, Database, DbError};
+use crate::process::StartGate;
 
 use super::claude_bridge::{spawn as spawn_claude_bridge, ClaudeBridgeClient, ClaudeBridgeOptions};
 use super::claude_stream::{spawn_claude_turn, ClaudeStreamTurn, ClaudeTurnOptions};
@@ -104,6 +105,8 @@ pub struct AgentChatManager {
     claude_bridge: Arc<Mutex<Option<Arc<ClaudeBridgeClient>>>>,
     remote_sessions: Arc<Mutex<HashMap<RemoteSessionKey, String>>>,
     starting_chats: Arc<Mutex<HashSet<String>>>,
+    shutting_down: Arc<AtomicBool>,
+    start_gate: Arc<StartGate>,
     #[cfg(test)]
     test_binaries: TestBinaries,
 }
@@ -218,6 +221,8 @@ pub enum AgentChatError {
     BadEngine,
     #[error("unsupported agent chat operation: {0}")]
     Unsupported(String),
+    #[error("agent chat manager is shutting down")]
+    ShuttingDown,
 }
 
 impl AgentChatManager {
@@ -231,6 +236,8 @@ impl AgentChatManager {
             claude_bridge: Arc::new(Mutex::new(None)),
             remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
+            shutting_down: Arc::new(AtomicBool::new(false)),
+            start_gate: Arc::new(StartGate::default()),
             #[cfg(test)]
             test_binaries: TestBinaries::default(),
         }
@@ -248,6 +255,10 @@ impl AgentChatManager {
         overrides: AgentStartOverrides,
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
     ) -> Result<String, AgentChatError> {
+        let _start_permit = self
+            .start_gate
+            .begin()
+            .map_err(|_| AgentChatError::ShuttingDown)?;
         let _start_guard = self.acquire_start_guard(chat_id)?;
         let remote = overrides.remote.clone();
         let engine = engine_for_start(engine, remote.as_ref());
@@ -396,6 +407,13 @@ impl AgentChatManager {
 
         {
             let mut inner = self.lock_inner()?;
+            if self.shutting_down.load(Ordering::SeqCst) {
+                drop(inner);
+                if let Some((client, thread_id)) = codex_app_client.as_ref() {
+                    let _ = client.unsubscribe_for_shutdown(thread_id);
+                }
+                return Err(AgentChatError::ShuttingDown);
+            }
             upsert_session_state(
                 &mut inner,
                 session_id.clone(),
@@ -437,7 +455,12 @@ impl AgentChatManager {
                     if state.active_turn.is_some() {
                         events.push(AgentEvent::TurnStarted);
                     }
-                    events.extend(state.pending_approvals.iter().map(|(_, event)| event.clone()));
+                    events.extend(
+                        state
+                            .pending_approvals
+                            .iter()
+                            .map(|(_, event)| event.clone()),
+                    );
                     events
                 })
                 .unwrap_or_default()
@@ -449,12 +472,16 @@ impl AgentChatManager {
         match (engine, provider) {
             (Engine::V2, AgentProvider::Codex) => {
                 if let Some((client, thread_id)) = codex_app_client {
-                    client
-                        .subscribe(
-                            &thread_id,
-                            self.wrapping_sink(session_id.clone(), chat_id.to_string()),
-                        )
-                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                    if let Err(err) = client.subscribe(
+                        &thread_id,
+                        self.wrapping_sink(session_id.clone(), chat_id.to_string()),
+                    ) {
+                        let _ = client.unsubscribe(&thread_id);
+                        if let Ok(mut inner) = self.inner.lock() {
+                            inner.remove(&session_id);
+                        }
+                        return Err(AgentChatError::Spawn(err.to_string()));
+                    }
                 }
             }
             (Engine::V2, AgentProvider::ClaudeCode) => {
@@ -599,6 +626,10 @@ impl AgentChatManager {
         model: Option<String>,
         images: Option<Vec<String>>,
     ) -> Result<(), AgentChatError> {
+        let _send_permit = self
+            .start_gate
+            .begin()
+            .map_err(|_| AgentChatError::ShuttingDown)?;
         let effort = non_empty(effort);
         let turn_model = non_empty(model);
         let images = images
@@ -691,7 +722,8 @@ impl AgentChatManager {
         // disposed mid-flight, rolls these rows back so no phantom prompt (or
         // orphan of a deleted chat) survives.
         let persist_prompt = |db: &Database| -> Result<Vec<i64>, AgentChatError> {
-            let mut seqs = vec![db.agent_message_append(&session_id_owned, &chat_id, "user", text)?];
+            let mut seqs =
+                vec![db.agent_message_append(&session_id_owned, &chat_id, "user", text)?];
             if !images.is_empty() {
                 let payload =
                     serde_json::json!({ "kind": "attachments", "paths": images }).to_string();
@@ -859,7 +891,13 @@ impl AgentChatManager {
         }
 
         if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
-            let client = self.claude_bridge_client()?;
+            let client = match self.claude_bridge_client() {
+                Ok(client) => client,
+                Err(err) => {
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
+                    return Err(err);
+                }
+            };
             // The bridge chat dies with its claude CLI process (crash, auth
             // expiry, idle exit) while the session stays resumable — restart it
             // transparently instead of sending into a void.
@@ -902,6 +940,7 @@ impl AgentChatManager {
                 }
                 Err(err) => {
                     rollback_prompt(&prompt_seqs);
+                    let _ = self.db.agent_session_set_status(session_id, "failed");
                     if let Some(turn) = clear_active_turn(&self.inner, session_id) {
                         turn.reap();
                     }
@@ -1155,7 +1194,9 @@ impl AgentChatManager {
                     .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
                 // Record the steer as a user message so reloaded history keeps
                 // the instruction that shaped the running turn.
-                let _ = self.db.agent_message_append(session_id, &chat_id, "user", text);
+                let _ = self
+                    .db
+                    .agent_message_append(session_id, &chat_id, "user", text);
                 Ok(())
             }
             (Engine::V2, AgentProvider::ClaudeCode) => Err(AgentChatError::Unsupported(
@@ -1330,7 +1371,10 @@ impl AgentChatManager {
             let client = match self.cached_claude_bridge_client() {
                 Ok(client) => Some(client),
                 Err(AgentChatError::Spawn(message))
-                    if message == "claude bridge client is not running" => None,
+                    if message == "claude bridge client is not running" =>
+                {
+                    None
+                }
                 Err(err) => return Err(err),
             };
             if let Some(client) = client {
@@ -1404,19 +1448,16 @@ impl AgentChatManager {
         host: &str,
         remote_root: &str,
     ) -> Option<String> {
-        self.remote_sessions
-            .lock()
-            .ok()
-            .and_then(|sessions| {
-                sessions
-                    .get(&RemoteSessionKey {
-                        chat_id: chat_id.to_string(),
-                        provider,
-                        host: host.to_string(),
-                        remote_root: remote_root.to_string(),
-                    })
-                    .cloned()
-            })
+        self.remote_sessions.lock().ok().and_then(|sessions| {
+            sessions
+                .get(&RemoteSessionKey {
+                    chat_id: chat_id.to_string(),
+                    provider,
+                    host: host.to_string(),
+                    remote_root: remote_root.to_string(),
+                })
+                .cloned()
+        })
     }
 
     fn codex_app_client(
@@ -1427,6 +1468,10 @@ impl AgentChatManager {
             .codex_app_clients
             .lock()
             .map_err(|_| AgentChatError::Spawn("codex app client lock poisoned".to_string()))?;
+        // This lock also serializes the shutdown drain with client creation.
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(AgentChatError::ShuttingDown);
+        }
         if let Some(client) = clients.get(&project_root) {
             if !client.is_closed() {
                 return Ok(Arc::clone(client));
@@ -1486,6 +1531,10 @@ impl AgentChatManager {
             .claude_bridge
             .lock()
             .map_err(|_| AgentChatError::Spawn("claude bridge lock poisoned".to_string()))?;
+        // This lock also serializes the shutdown drain with bridge creation.
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(AgentChatError::ShuttingDown);
+        }
         if let Some(client) = bridge.as_ref() {
             if !client.is_closed() {
                 return Ok(Arc::clone(client));
@@ -1679,6 +1728,65 @@ impl AgentChatManager {
         let _ = self.db.agent_session_set_status(session_id, "idle");
     }
 
+    /// Idempotently stop all owned agent sessions and provider clients.
+    pub fn shutdown(&self) {
+        self.start_gate.close();
+        self.shutting_down.store(true, Ordering::SeqCst);
+        self.start_gate.wait();
+
+        let drained = self
+            .inner
+            .lock()
+            .map(|mut inner| inner.drain().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for (session_id, state) in drained {
+            let had_active_turn = if let Some(turn) = state.active_turn {
+                turn.shutdown();
+                true
+            } else {
+                false
+            };
+            let was_running = self
+                .db
+                .agent_session_status(&session_id)
+                .ok()
+                .flatten()
+                .is_some_and(|status| status == "running");
+            if had_active_turn || was_running {
+                let _ = self.db.agent_session_set_status(&session_id, "idle");
+            }
+        }
+
+        let clients = self
+            .codex_app_clients
+            .lock()
+            .map(|mut clients| {
+                clients
+                    .drain()
+                    .map(|(_, client)| client)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for client in clients {
+            let _ = client.shutdown();
+        }
+        let bridge = self
+            .claude_bridge
+            .lock()
+            .ok()
+            .and_then(|mut bridge| bridge.take());
+        if let Some(bridge) = bridge {
+            let _ = bridge.shutdown();
+        }
+
+        if let Ok(mut sessions) = self.remote_sessions.lock() {
+            sessions.clear();
+        }
+        if let Ok(mut starting) = self.starting_chats.lock() {
+            starting.clear();
+        }
+    }
+
     fn lock_inner(
         &self,
     ) -> Result<std::sync::MutexGuard<'_, HashMap<String, SessionState>>, AgentChatError> {
@@ -1705,6 +1813,8 @@ impl AgentChatManager {
             claude_bridge: Arc::new(Mutex::new(None)),
             remote_sessions: Arc::new(Mutex::new(HashMap::new())),
             starting_chats: Arc::new(Mutex::new(HashSet::new())),
+            shutting_down: Arc::new(AtomicBool::new(false)),
+            start_gate: Arc::new(StartGate::default()),
             test_binaries: TestBinaries {
                 codex: codex_binary,
                 claude: claude_binary,
@@ -1897,9 +2007,7 @@ impl ActiveTurn {
                     pending_interrupt.store(true, Ordering::SeqCst);
                     let turn_id = turn_id
                         .lock()
-                        .map_err(|_| {
-                            AgentChatError::Spawn("agent turn lock poisoned".to_string())
-                        })?
+                        .map_err(|_| AgentChatError::Spawn("agent turn lock poisoned".to_string()))?
                         .clone();
                     let interrupt = match turn_id {
                         Some(turn_id) if pending_interrupt.swap(false, Ordering::SeqCst) => {
@@ -1996,6 +2104,41 @@ impl ActiveTurn {
                 .spawn(move || drop(ManuallyDrop::into_inner(handle)));
         }
     }
+
+    /// Interrupt V2 turns while their provider client is still alive, then drop
+    /// V1 handles synchronously so their reader threads join.
+    fn shutdown(&self) {
+        let handle = self.inner.lock().ok().and_then(|mut slot| {
+            if let Some(handle) = slot.as_ref() {
+                match handle {
+                    ActiveTurnHandle::CodexApp {
+                        client,
+                        thread_id,
+                        turn_id,
+                        pending_interrupt,
+                    } => {
+                        pending_interrupt.store(true, Ordering::SeqCst);
+                        if let Some(turn_id) = turn_id.lock().ok().and_then(|turn| turn.clone()) {
+                            if pending_interrupt.swap(false, Ordering::SeqCst) {
+                                client.turn_interrupt_nowait(thread_id, &turn_id);
+                            }
+                        }
+                    }
+                    ActiveTurnHandle::ClaudeBridge { client, chat_id } => {
+                        let _ = client.chat_interrupt(chat_id);
+                    }
+                    ActiveTurnHandle::Omp { client } => {
+                        let _ = client.cancel();
+                    }
+                    ActiveTurnHandle::PiRpc { .. }
+                    | ActiveTurnHandle::Codex(_)
+                    | ActiveTurnHandle::Claude(_) => {}
+                }
+            }
+            slot.take()
+        });
+        drop(handle);
+    }
 }
 
 fn handle_runner_event(
@@ -2022,9 +2165,15 @@ fn handle_runner_event(
     let (session_present, has_turn, is_v2) = inner
         .lock()
         .map(|states| {
-            states.get(session_id).map_or((false, false, false), |state| {
-                (true, state.active_turn.is_some(), state.engine == Engine::V2)
-            })
+            states
+                .get(session_id)
+                .map_or((false, false, false), |state| {
+                    (
+                        true,
+                        state.active_turn.is_some(),
+                        state.engine == Engine::V2,
+                    )
+                })
         })
         .unwrap_or((false, false, false));
     let turn_scoped = !matches!(
@@ -2117,7 +2266,10 @@ fn handle_runner_event(
         AgentEvent::Usage { .. } => {
             let model = inner.lock().ok().and_then(|states| {
                 states.get(session_id).and_then(|state| {
-                    state.last_turn_model.clone().or_else(|| state.model.clone())
+                    state
+                        .last_turn_model
+                        .clone()
+                        .or_else(|| state.model.clone())
                 })
             });
             if let Err(err) = append_usage_item(db, session_id, chat_id, &event, model) {
@@ -2268,10 +2420,7 @@ fn terminal_should_skip(
     false
 }
 
-fn clear_pending_approvals(
-    inner: &Arc<Mutex<HashMap<String, SessionState>>>,
-    session_id: &str,
-) {
+fn clear_pending_approvals(inner: &Arc<Mutex<HashMap<String, SessionState>>>, session_id: &str) {
     if let Ok(mut states) = inner.lock() {
         if let Some(state) = states.get_mut(session_id) {
             state.pending_approvals.clear();
@@ -2561,11 +2710,13 @@ mod tests {
         test_script(
             name,
             r#"#!/usr/bin/env python3
-import json, sys
+import json, os, sys
 
 if "--version" in sys.argv:
     print("pi 0.79.10")
     raise SystemExit(0)
+with open(sys.argv[0] + ".pid", "w", encoding="utf-8") as handle:
+    handle.write(str(os.getpid()))
 with open(sys.argv[0] + ".argv", "w", encoding="utf-8") as handle:
     json.dump(sys.argv[1:], handle)
 
@@ -4725,6 +4876,483 @@ exec sleep 5
             matches!(entry, AgentTimelineEntry::Item { kind, payload, .. }
                 if kind == "turnFailed" && payload.contains("interrupted"))
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_kills_v1_turn_tree_and_rejects_new_starts() {
+        let marker = std::env::temp_dir().join(format!(
+            "pickforge-manager-shutdown-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let script = test_script(
+            "codex-shutdown-tree",
+            &format!(
+                r#"#!/bin/sh
+printf '%s\n' '{{"type":"thread.started","thread_id":"thread-shutdown"}}'
+printf '%s\n' '{{"type":"turn.started"}}'
+sh -c 'sleep 3; : > {}' &
+exec sleep 5
+"#,
+                marker.display()
+            ),
+        );
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-shutdown",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                Arc::clone(&sink),
+            )
+            .unwrap();
+        manager.send(&session_id, "go", None, None, None).unwrap();
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnStarted))
+        });
+        std::thread::sleep(Duration::from_millis(200)); // let the grandchild fork
+
+        manager.shutdown();
+        manager.shutdown(); // idempotent across multiple exit events
+
+        let (_events2, sink2) = event_sink();
+        assert!(matches!(
+            manager.start(
+                "chat-shutdown",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                sink2,
+            ),
+            Err(AgentChatError::ShuttingDown)
+        ));
+        assert!(matches!(
+            manager.send(&session_id, "late", None, None, None),
+            Err(AgentChatError::ShuttingDown)
+        ));
+
+        let row = db
+            .latest_agent_session_for_chat("chat-shutdown")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "idle");
+
+        std::thread::sleep(Duration::from_secs(4));
+        assert!(
+            !marker.exists(),
+            "descendant survived manager shutdown (marker was written)"
+        );
+        let _ = std::fs::remove_file(&marker);
+    }
+
+    #[test]
+    fn start_rechecks_shutdown_gate_before_registering_state() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = Arc::new(AgentChatManager::new(
+            Arc::clone(&db),
+            PathBuf::from("."),
+            PathBuf::from("."),
+        ));
+        let inner_guard = manager.inner.lock().unwrap();
+        let worker_manager = Arc::clone(&manager);
+        let worker = std::thread::spawn(move || {
+            let (_events, sink) = event_sink();
+            worker_manager.start(
+                "chat-raced-shutdown",
+                PathBuf::from("."),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while db
+            .latest_agent_session_for_chat("chat-raced-shutdown")
+            .unwrap()
+            .is_none()
+        {
+            assert!(
+                Instant::now() < deadline,
+                "start did not reach registration"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        manager.shutting_down.store(true, Ordering::SeqCst);
+        drop(inner_guard);
+
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(AgentChatError::ShuttingDown)
+        ));
+        assert!(manager.inner.lock().unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejected_v2_start_unsubscribes_created_thread() {
+        let script = test_script(
+            "codex-start-shutdown-race",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-rejected"}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{"id":3,"result":{}}'
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = Arc::new(codex_manager(Arc::clone(&db), &script));
+        let inner_guard = manager.inner.lock().unwrap();
+        let worker_manager = Arc::clone(&manager);
+        let root = script.dir.clone();
+        let worker = std::thread::spawn(move || {
+            let (_events, sink) = event_sink();
+            worker_manager.start(
+                "chat-rejected-v2",
+                root,
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+        });
+
+        wait_for_file(&log, |text| text.contains(r#""method":"thread/start""#));
+        manager.shutting_down.store(true, Ordering::SeqCst);
+        drop(inner_guard);
+
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(AgentChatError::ShuttingDown)
+        ));
+        let log = wait_for_file(&log, |text| {
+            text.contains(r#""method":"thread/unsubscribe""#)
+        });
+        assert!(log.contains(r#""threadId":"thread-rejected""#));
+        assert!(manager.inner.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn shutdown_preserves_terminal_session_status() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = AgentChatManager::new(
+            Arc::clone(&db),
+            PathBuf::from("."),
+            PathBuf::from("."),
+        );
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-terminal",
+                PathBuf::from("."),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        db.agent_session_set_status(&session_id, "failed").unwrap();
+
+        manager.shutdown();
+
+        let row = db
+            .latest_agent_session_for_chat("chat-terminal")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "failed");
+    }
+
+    #[test]
+    fn shutdown_reconciles_running_session_without_active_turn() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = AgentChatManager::new(
+            Arc::clone(&db),
+            PathBuf::from("."),
+            PathBuf::from("."),
+        );
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-running",
+                PathBuf::from("."),
+                AgentProvider::Codex,
+                Engine::V1,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        db.agent_session_set_status(&session_id, "running")
+            .unwrap();
+
+        manager.shutdown();
+
+        let row = db
+            .latest_agent_session_for_chat("chat-running")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "idle");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_stops_cached_v2_codex_client() {
+        let script = test_script(
+            "codex-app-shutdown",
+            r#"#!/bin/sh
+pid_file="$0.pid"
+log="$0.stdin"
+printf '%s' "$$" > "$pid_file"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-shutdown"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-shutdown"}}}'
+      printf '%s\n' '{"method":"turn/started","params":{"threadId":"thread-shutdown","turnId":"turn-shutdown"}}'
+      ;;
+  esac
+done
+sleep 30
+"#,
+        );
+        let pid_file = script.path.with_file_name("fake-agent.pid");
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = codex_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-v2-shutdown",
+                script.dir.clone(),
+                AgentProvider::Codex,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "run", None, None, None)
+            .unwrap();
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnStarted))
+        });
+        let pid: i32 = wait_for_file(&pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(pid));
+
+        manager.shutdown();
+
+        wait_for_process_exit(pid);
+        let log = wait_for_file(&log, |text| text.contains(r#""method":"turn/interrupt""#));
+        assert!(log.contains(r#""turnId":"turn-shutdown""#));
+        assert!(
+            manager.codex_app_clients.lock().unwrap().is_empty(),
+            "client cache must drain on shutdown"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_stops_the_claude_bridge() {
+        let script = test_script(
+            "claude-bridge-shutdown",
+            r#"#!/bin/sh
+pid_file="$0.pid"
+printf '%s' "$$" > "$pid_file"
+while IFS= read -r line; do
+  chat_id=$(printf '%s\n' "$line" | sed 's/.*"chatId":"\([^"]*\)".*/\1/')
+  case "$line" in
+    *'"op":"start"'*)
+      printf '{"ev":"started","chatId":"%s"}\n' "$chat_id"
+      ;;
+    *'"op":"shutdown"'*)
+      exit 0
+      ;;
+  esac
+done
+sleep 30
+"#,
+        );
+        let pid_file = script.path.with_file_name("fake-agent.pid");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = claude_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        manager
+            .start(
+                "chat-bridge-shutdown",
+                script.dir.clone(),
+                AgentProvider::ClaudeCode,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        let pid: i32 = wait_for_file(&pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(pid));
+
+        manager.shutdown();
+
+        wait_for_process_exit(pid);
+        assert!(
+            manager.claude_bridge.lock().unwrap().is_none(),
+            "bridge slot must drain on shutdown"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_cancels_omp_turn_and_stops_client() {
+        let script = test_script(
+            "omp-shutdown",
+            r#"#!/bin/sh
+pid_file="$0.pid"
+log="$0.stdin"
+printf '%s' "$$" > "$pid_file"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/new"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-shutdown-session","modes":{"availableModes":[{"id":"default"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
+      ;;
+    *'"method":"session/cancel"'*)
+      printf '%s\n' CANCELLED >> "$log"
+      ;;
+    *'"method":"session/close"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        );
+        let pid_file = script.path.with_file_name("fake-agent.pid");
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-omp-shutdown",
+                script.dir.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "run", None, None, None)
+            .unwrap();
+        wait_for_file(&log, |text| text.contains(r#""method":"session/prompt""#));
+        let pid: i32 = wait_for_file(&pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(pid));
+
+        manager.shutdown();
+
+        wait_for_process_exit(pid);
+        let log = wait_for_file(&log, |text| text.contains("CANCELLED"));
+        assert!(log.contains(r#""method":"session/cancel""#));
+        let row = db
+            .latest_agent_session_for_chat("chat-omp-shutdown")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "idle");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_aborts_pi_turn_and_stops_client() {
+        let script = pi_rpc_test_script("pi-shutdown");
+        let pid_file = script.path.with_extension("pid");
+        let log = script.path.with_extension("stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = pi_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-pi-shutdown",
+                script.dir.clone(),
+                AgentProvider::Pi,
+                Engine::V2,
+                Some("test/model".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "run", None, None, None)
+            .unwrap();
+        wait_for_file(&log, |text| text.contains(r#""type":"prompt""#));
+        let pid: i32 = wait_for_file(&pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(pid));
+
+        manager.shutdown();
+
+        wait_for_process_exit(pid);
+        let log = wait_for_file(&log, |text| text.contains(r#""type":"abort""#));
+        assert!(log.contains(r#""type":"abort""#));
+        let row = db
+            .latest_agent_session_for_chat("chat-pi-shutdown")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "idle");
     }
 
     #[cfg(unix)]

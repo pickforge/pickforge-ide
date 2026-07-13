@@ -20,8 +20,8 @@ pub mod remote;
 pub mod storage;
 pub mod targets;
 pub mod transcript;
-pub mod voice;
 pub mod vm_service;
+pub mod voice;
 
 pub use cdp::{decode_dom_node, find_node_path, CdpClient, CdpError, CdpTarget, DomNode};
 pub use inspector::{
@@ -42,26 +42,28 @@ pub use db::{
 
 pub use process::{
     is_binary_on_path, is_on_user_path, run, run_timeout, run_timeout_capped,
-    user_shell_environment, which_in, CommandOutcome, OutputTruncation,
+    user_shell_environment, which_in, CommandOutcome, OutputTruncation, StartGate, StartPermit,
 };
 pub use pty::{
-    dtach_socket_path, kill_dtach_master, prepare_chat_session, select_backend, session_name,
-    sessions_dir, tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args,
-    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, RemotePty, SessionBackend,
-    SessionStatus, SpawnOptions,
+    begin_recoverable_session_spawn, close_recoverable_session_spawn_gate, dtach_master_pids,
+    dtach_socket_path, kill_dtach_master, kill_recoverable_sessions_on_exit,
+    mark_tmux_server_may_exist, parse_recoverable_session_id, prepare_chat_session, select_backend,
+    session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args,
+    tmux_set_titles_args, validate_session_name, validated_dtach_socket_path, DtachKillError,
+    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, RecoverableSpawnPermit, RemotePty,
+    SessionBackend, SessionStatus, SpawnOptions,
 };
 pub use remote::{
     decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener, probe_host,
     probe_tailnet_peer, remote_auth_store_path, remote_detect_binaries, remote_flutter_devices,
-    remote_nearest_pubspec, remote_pubspec_uses_flutter,
-    spawn_remote_http_server, ssh_run, tailscale_ssh_set, tailscale_status, ClientTokenRecord,
-    DaemonConfig, DaemonConfigEnvError, DaemonConfigError, DaemonListener, DaemonStatus,
-    IssuedClientToken, PairingCode, ProbeState, RemoteAuthError, RemoteAuthStore,
-    RemoteAuthStoreSnapshot, RemoteCapability, RemoteDetectError, RemoteFlutterDevice, RemoteFrame,
-    RemoteFrameError, RemoteHostDaemon, RemoteHostHealth, RemoteHttpServer, RemoteHttpServerInfo,
-    RemoteRequest, RemoteResponse, RemoteServerError, RemoteTunnel, RemoteTunnelClosed, SshError,
-    SshTarget, TailscaleStatus, TunnelError, TunnelManager,
-    REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
+    remote_nearest_pubspec, remote_pubspec_uses_flutter, spawn_remote_http_server, ssh_run,
+    tailscale_ssh_set, tailscale_status, ClientTokenRecord, DaemonConfig, DaemonConfigEnvError,
+    DaemonConfigError, DaemonListener, DaemonStatus, IssuedClientToken, PairingCode, ProbeState,
+    RemoteAuthError, RemoteAuthStore, RemoteAuthStoreSnapshot, RemoteCapability, RemoteDetectError,
+    RemoteFlutterDevice, RemoteFrame, RemoteFrameError, RemoteHostDaemon, RemoteHostHealth,
+    RemoteHttpServer, RemoteHttpServerInfo, RemoteRequest, RemoteResponse, RemoteServerError,
+    RemoteTunnel, RemoteTunnelClosed, SshError, SshTarget, TailscaleStatus, TunnelError,
+    TunnelManager, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
 };
 pub use storage::{
     load_telemetry_config, pickforge_env_vars, pickforge_home, project_id, save_telemetry_config,

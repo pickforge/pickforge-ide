@@ -461,7 +461,7 @@ impl ClaudeStreamTurn {
             .lock()
             .map_err(|_| AgentSpawnError::ProcessLockPoisoned)?;
         if let Some(child) = child.as_mut() {
-            child.kill().map_err(AgentSpawnError::Io)?;
+            signal_child(child);
         }
         Ok(())
     }
@@ -580,6 +580,14 @@ where
         .stderr(Stdio::piped());
     if let Some(cwd) = turn_command.cwd.as_ref() {
         command.current_dir(cwd);
+    }
+    // Own process group so kill() can take down the whole tree — a claude turn
+    // spawns descendants (MCP servers, Bash tool children) that would otherwise
+    // outlive it. Mirrors codex_exec.rs.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
     }
 
     let mut child = command.spawn().map_err(|source| AgentSpawnError::Spawn {
@@ -737,8 +745,16 @@ fn drain_stderr(mut stderr: impl Read) {
 }
 
 fn kill_and_wait_child(mut child: Child) {
-    let _ = child.kill();
+    signal_child(&mut child);
     let _ = child.wait();
+}
+
+fn signal_child(child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+    }
+    let _ = child.kill();
 }
 
 fn kill_state_child(state: &Arc<TurnState>) {
@@ -1313,6 +1329,45 @@ exit 3
                 AgentEvent::TurnFailed { error } if error.contains("claude exited with status 3")
             )
         }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_kill_terminates_descendants_too() {
+        let marker = std::env::temp_dir().join(format!(
+            "pickforge-claude-killtree-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_file(&marker);
+        let script = test_script(&format!(
+            r#"#!/bin/sh
+printf '%s\n' '{{"type":"system","subtype":"init","session_id":"runner-tree"}}'
+sh -c 'sleep 3; : > {}' &
+exec sleep 5
+"#,
+            marker.display()
+        ));
+        let (turn, events) = collected_runner_events(&script);
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::SessionStarted { .. }))
+        });
+        thread::sleep(Duration::from_millis(200)); // let the grandchild fork
+
+        turn.kill().unwrap();
+        drop(turn); // joins the readers; the child is reaped
+
+        thread::sleep(Duration::from_secs(4));
+        assert!(
+            !marker.exists(),
+            "descendant survived the turn kill (marker was written)"
+        );
+        let _ = fs::remove_file(&marker);
     }
 
     #[cfg(unix)]

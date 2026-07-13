@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -13,7 +14,11 @@ pub trait ActiveRecording: Send {
 }
 
 pub trait RecorderBackend: Send + Sync + 'static {
-    fn start(&self, capture_path: &Path) -> Result<Box<dyn ActiveRecording>, VoiceError>;
+    fn start(
+        &self,
+        capture_path: &Path,
+        cancelled: &AtomicBool,
+    ) -> Result<Box<dyn ActiveRecording>, VoiceError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29,8 +34,12 @@ impl PwRecordBackend {
 }
 
 impl RecorderBackend for PwRecordBackend {
-    fn start(&self, capture_path: &Path) -> Result<Box<dyn ActiveRecording>, VoiceError> {
-        start_pw_record(capture_path, self.env.as_ref())
+    fn start(
+        &self,
+        capture_path: &Path,
+        cancelled: &AtomicBool,
+    ) -> Result<Box<dyn ActiveRecording>, VoiceError> {
+        start_pw_record(capture_path, self.env.as_ref(), cancelled)
             .map(|recording| Box::new(recording) as Box<dyn ActiveRecording>)
     }
 }
@@ -72,7 +81,11 @@ pub fn pw_record_argv(capture_path: &Path) -> LocalCommandSpec {
 fn start_pw_record(
     capture_path: &Path,
     env_override: Option<&HashMap<String, String>>,
+    cancelled: &AtomicBool,
 ) -> Result<PwRecordChild, VoiceError> {
+    if cancelled.load(Ordering::SeqCst) {
+        return Err(VoiceError::ShuttingDown);
+    }
     if let Some(parent) = capture_path.parent() {
         create_private_dir_all(parent)?;
     }
@@ -108,7 +121,7 @@ fn start_pw_record(
     }
 
     match command.spawn() {
-        Ok(mut child) => match wait_for_immediate_exit(&mut child)? {
+        Ok(mut child) => match wait_for_immediate_exit(&mut child, cancelled)? {
             true => Err(VoiceError::RecorderExited),
             false => Ok(PwRecordChild { child }),
         },
@@ -123,13 +136,18 @@ fn start_pw_record(
 fn start_pw_record(
     _capture_path: &Path,
     _env_override: Option<&HashMap<String, String>>,
+    _cancelled: &AtomicBool,
 ) -> Result<PwRecordChild, VoiceError> {
     Err(VoiceError::UnsupportedPlatform)
 }
 
-fn wait_for_immediate_exit(child: &mut Child) -> Result<bool, VoiceError> {
+fn wait_for_immediate_exit(child: &mut Child, cancelled: &AtomicBool) -> Result<bool, VoiceError> {
     let deadline = Instant::now() + FAST_FAIL_WINDOW;
     while Instant::now() < deadline {
+        if cancelled.load(Ordering::SeqCst) {
+            stop_child(child);
+            return Err(VoiceError::ShuttingDown);
+        }
         if child.try_wait()?.is_some() {
             return Ok(true);
         }
@@ -221,7 +239,7 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("PATH".to_string(), bin_dir.to_string_lossy().into_owned());
         let backend = PwRecordBackend::with_env(env);
-        let result = backend.start(&dir.join("capture.wav"));
+        let result = backend.start(&dir.join("capture.wav"), &AtomicBool::new(false));
 
         assert!(matches!(result, Err(VoiceError::RecorderExited)));
         let _ = std::fs::remove_dir_all(&dir);

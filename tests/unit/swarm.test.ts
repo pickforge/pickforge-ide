@@ -101,6 +101,11 @@ vi.mock("../../src/lib/agentModels", () => ({
   loadAgentModels: deps.loadAgentModels,
   modelOption: deps.modelOption,
   ompNativeChatAvailable: vi.fn(() => false),
+  piNativeChatAvailable: vi.fn(() => true),
+}));
+vi.mock("../../src/stores/flags", () => ({
+  flagEnabled: (key: string) => key === "ompPiAgents",
+  subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 vi.mock("../../src/lib/chatDefaults", () => ({ loadAgentEngine: deps.loadAgentEngine }));
 vi.mock("../../src/stores/agentChat", () => ({

@@ -194,6 +194,7 @@ enum ActiveTurnHandle {
     },
     Omp {
         client: Arc<OmpAcpClient>,
+    },
     PiRpc {
         client: Arc<PiRpcClient>,
         prompt_started: Arc<AtomicBool>,
@@ -644,8 +645,9 @@ impl AgentChatManager {
             }
             state.last_turn_model = match state.provider {
                 AgentProvider::Codex => turn_model.clone().or_else(|| state.model.clone()),
-                AgentProvider::ClaudeCode | AgentProvider::Omp => state.model.clone(),
-                AgentProvider::ClaudeCode | AgentProvider::Pi => state.model.clone(),
+                AgentProvider::ClaudeCode | AgentProvider::Omp | AgentProvider::Pi => {
+                    state.model.clone()
+                }
             };
             (
                 state.chat_id.clone(),
@@ -982,6 +984,7 @@ impl AgentChatManager {
             }
             (Engine::V1, AgentProvider::Omp) => Err(AgentChatError::Unsupported(
                 "OMP ACP requires the v2 agent engine".to_string(),
+            )),
             (Engine::V1, AgentProvider::Pi) => Err(AgentChatError::Unsupported(
                 "Pi RPC requires the v2 agent engine".to_string(),
             )),
@@ -1664,6 +1667,8 @@ impl AgentChatManager {
             (Engine::V2, AgentProvider::Omp) => {
                 if let Some(client) = state.omp_client {
                     client.close();
+                }
+            }
             (Engine::V2, AgentProvider::Pi) => {
                 if let Some(client) = state.pi_client {
                     let _ = client.shutdown();
@@ -1861,6 +1866,7 @@ impl ActiveTurn {
                     return client
                         .cancel()
                         .map_err(|err| AgentChatError::Spawn(err.to_string()));
+                }
                 Some(ActiveTurnHandle::PiRpc {
                     client,
                     prompt_started,
@@ -2366,6 +2372,7 @@ fn v1_turn_overrides(
         }),
         AgentProvider::Omp => Err(AgentChatError::Unsupported(
             "OMP ACP requires the v2 agent engine".to_string(),
+        )),
         AgentProvider::Pi => Err(AgentChatError::Unsupported(
             "Pi RPC requires the v2 agent engine".to_string(),
         )),
@@ -2515,6 +2522,7 @@ mod tests {
         AgentChatManager::with_test_binaries(
             db,
             script.dir.clone(),
+            script.dir.join("user-data"),
             None,
             None,
             Some(script.path.to_string_lossy().to_string()),

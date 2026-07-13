@@ -373,6 +373,13 @@ describe("agentChat IPC wrappers", () => {
 
   it("starts Pi through the native IPC seam while the rollout flag is on", async () => {
     flags.ompPiAgents = true;
+    recordAgentCliDiagnostic(diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "",
+      modelsOutput: "",
+      errors: [],
+    }));
     tauri.invoke.mockResolvedValue("session-pi");
     await expect(agentChatStart({
       chatId: "chat-pi",

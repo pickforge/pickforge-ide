@@ -11,7 +11,13 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { modelOption, nativeAgentProfiles } from "../../lib/agentModels";
+import {
+  type AgentProfile,
+  discoverAgentCli,
+  modelOption,
+  nativeAgentProfiles,
+  profileWithDiscoveredModels,
+} from "../../lib/agentModels";
 import {
   type AgentProvider,
   type AgentSkill,
@@ -26,7 +32,6 @@ import {
 import {
   agentBackendDescriptor,
   isNativeAgentProvider,
-  isCompatiblePiRpcVersion,
   type AgentEngine,
 } from "../../lib/agentBackends";
 import { flagEnabled } from "../../stores/flags";
@@ -171,8 +176,8 @@ function readBase64(file: File): Promise<string> {
   });
 }
 
-function modelsFor(provider: AgentProvider) {
-  return nativeAgentProfiles()
+function modelsFor(profiles: AgentProfile[], provider: AgentProvider) {
+  return profiles
     .find((agent) => agent.id === provider)
     ?.models.filter((model) => !model.terminalOnly) ?? [];
 }
@@ -203,24 +208,16 @@ export function Composer(props: {
   meter?: JSX.Element;
 }): JSX.Element {
   const [text, setText] = createSignal("");
-  const [providers, setProviders] = createSignal<
-    (AgentProfile & { id: AgentProvider })[]
-  >([...BASE_PROVIDERS]);
+  const [piModels, setPiModels] = createSignal<AgentProfile["models"]>([]);
+  const providers = createMemo(() =>
+    nativeAgentProfiles().map((profile) =>
+      profile.id === "pi" ? profileWithDiscoveredModels(profile, piModels()) : profile
+    )
+  );
   onMount(() => {
     if (!flagEnabled("ompPiAgents")) return;
     void discoverAgentCli("pi")
-      .then((diagnostic) => {
-        if (!diagnostic.installed || !isCompatiblePiRpcVersion(diagnostic.version)) return;
-        const pi = agentProfiles().find(
-          (agent): agent is AgentProfile & { id: AgentProvider } => agent.id === "pi",
-        );
-        if (pi) {
-          setProviders([
-            ...BASE_PROVIDERS,
-            { ...profileWithDiscoveredModels(pi, diagnostic.models), terminalOnly: false },
-          ]);
-        }
-      })
+      .then((diagnostic) => setPiModels(diagnostic.models))
       .catch(() => undefined);
   });
   const [dismissed, setDismissed] = createSignal(false);

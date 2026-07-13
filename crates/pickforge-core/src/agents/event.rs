@@ -96,6 +96,7 @@ pub enum AgentEvent {
         provider: String,
         method: String,
         payload: serde_json::Value,
+    },
     /// Provider-native event retained verbatim alongside normalized events.
     ProviderEvent {
         provider: String,

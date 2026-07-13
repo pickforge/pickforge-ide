@@ -227,6 +227,16 @@ describe("OMP/Pi discovery parsing and failures", () => {
   it("attaches Pi probe models to the native picker and preserves provider/model selection", async () => {
     const { flags, models } = await loadModules();
     flags.setFlagOverride("ompPiAgents", true);
+    models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "",
+      modelsOutput: [
+        "provider model context max-out thinking images",
+        "openai-codex gpt-5.5 272K 128K yes yes",
+      ].join("\n"),
+      errors: [],
+    }));
     const pi = models.agentProfiles().find((profile) => profile.id === "pi");
     expect(pi).toBeDefined();
     const catalog = [

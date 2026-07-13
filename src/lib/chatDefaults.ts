@@ -1,6 +1,7 @@
 import {
   NATIVE_AGENT_BACKENDS,
   type AgentBackendDescriptor,
+  isAgentBackendId,
   isNativeAgentProvider,
   type AgentEngine,
   type AgentProvider,
@@ -46,7 +47,7 @@ export function selectableLastAgentProvider(
   const selectableIds = new Set(selectable.map((backend) => backend.id));
   try {
     const value = localStorage.getItem(PROVIDER_KEY);
-    if (value && isNativeAgentProvider(value) && selectableIds.has(value)) return value;
+    if (value && isAgentBackendId(value) && selectableIds.has(value)) return value;
   } catch {
     // fall through to default
   }
@@ -54,7 +55,13 @@ export function selectableLastAgentProvider(
 }
 
 export function loadLastAgentProvider(): AgentProvider {
-  return selectableLastAgentProvider();
+  try {
+    const value = localStorage.getItem(PROVIDER_KEY);
+    if (value && isNativeAgentProvider(value)) return value;
+  } catch {
+    // fall through to default
+  }
+  return "claudeCode";
 }
 
 export function setLastAgentProvider(provider: AgentProvider) {

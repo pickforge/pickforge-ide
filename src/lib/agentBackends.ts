@@ -154,9 +154,6 @@ function unsupported(reason: string): AgentBackendCapability {
   return capability("unsupported", NO_SURFACES, NO_ENGINES, reason);
 }
 
-function unknown(reason: string): AgentBackendCapability {
-  return capability("unknown", NO_SURFACES, NO_ENGINES, reason);
-}
 
 
 const NO_CLAUDE_STEER = "Claude Code steering is unavailable until the Agent SDK exposes it";
@@ -318,41 +315,6 @@ const OMP_CAPABILITIES = Object.freeze({
   processCleanup: OMP_NATIVE,
 } satisfies AgentBackendCapabilityMatrix);
 
-function terminalOnlyCapabilities(nativeReason: string, mcpReason: string): AgentBackendCapabilityMatrix {
-  const noNative = unsupported(nativeReason);
-  return Object.freeze({
-    nativeChat: noNative,
-    terminal: TERMINAL,
-    startSession: noNative,
-    streamEvents: noNative,
-    sessionEvents: noNative,
-    interruptTurn: noNative,
-    closeSession: noNative,
-    resumeSession: noNative,
-    steerTurn: noNative,
-    textInput: TERMINAL,
-    imageInput: unknown("Structured image input has not been characterized for this terminal profile"),
-    modelSelection: TERMINAL,
-    modelSwitching: unsupported("Changing models requires starting a new terminal process"),
-    effortSelection: unknown("PickForge has not characterized terminal effort selection for this agent"),
-    effortSwitching: unknown("PickForge has not characterized terminal effort switching for this agent"),
-    modeSelection: unknown("PickForge has not characterized terminal mode selection for this agent"),
-    modeSwitching: unknown("PickForge has not characterized terminal mode switching for this agent"),
-    planEvents: noNative,
-    toolEvents: noNative,
-    fileEvents: noNative,
-    approvalEvents: noNative,
-    mcpConfiguration: unsupported(mcpReason),
-    usageReporting: noNative,
-    contextReporting: noNative,
-    rateLimitReporting: noNative,
-    titleEvents: noNative,
-    authDiscovery: noNative,
-    remoteExecution: unknown("Remote terminal support depends on the configured host environment"),
-    errorEvents: noNative,
-    processCleanup: noNative,
-  } satisfies AgentBackendCapabilityMatrix);
-}
 
 const PI_CAPABILITIES = Object.freeze({
   nativeChat: NATIVE_V2,

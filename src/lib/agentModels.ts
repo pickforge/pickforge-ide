@@ -159,31 +159,57 @@ export interface AgentCliDiagnostic {
 }
 
 export const SUPPORTED_OMP_ACP_VERSION = "16.4.8";
-const [ompAcpProbeCompatible, setOmpAcpProbeCompatible] = createSignal(false);
+export type OmpNativeCompatibility = "unprobed" | "probing" | "compatible" | "incompatible";
+const [ompNativeCompatibility, setOmpNativeCompatibility] =
+  createSignal<OmpNativeCompatibility>("unprobed");
 
 export function isCompatibleOmpAcpProbe(probe: AgentCliDiagnostic): boolean {
-  return probe.agentId === "omp" && probe.capabilities.nativeChat;
+  return probe.agentId === "omp"
+    && probe.installed
+    && probe.version === SUPPORTED_OMP_ACP_VERSION
+    && probe.capabilities.nativeChat;
 }
 
 export function recordAgentCliDiagnostic(diagnostic: AgentCliDiagnostic) {
   if (diagnostic.agentId === "omp") {
-    setOmpAcpProbeCompatible(isCompatibleOmpAcpProbe(diagnostic));
+    setOmpNativeCompatibility(
+      isCompatibleOmpAcpProbe(diagnostic) ? "compatible" : "incompatible",
+    );
   }
 }
 
 export function ompNativeChatAvailable(): boolean {
-  return flagEnabled("ompPiAgents") && ompAcpProbeCompatible();
+  return flagEnabled("ompPiAgents") && ompNativeCompatibility() === "compatible";
+}
+
+export function ompNativeChatUnavailableReason(): string | null {
+  if (!flagEnabled("ompPiAgents")) {
+    return "OMP native chat is disabled by the ompPiAgents feature flag";
+  }
+  switch (ompNativeCompatibility()) {
+    case "compatible":
+      return null;
+    case "incompatible":
+      return `OMP native chat requires an installed, compatible OMP ${SUPPORTED_OMP_ACP_VERSION}`;
+    case "unprobed":
+    case "probing":
+      return `Checking for compatible OMP ${SUPPORTED_OMP_ACP_VERSION}`;
+  }
 }
 
 let ompCompatibilityProbe: Promise<boolean> | null = null;
 
 export function ensureOmpNativeCompatibility(force = false): Promise<boolean> {
   if (!flagEnabled("ompPiAgents")) return Promise.resolve(false);
-  if (!force && ompAcpProbeCompatible()) return Promise.resolve(true);
+  if (!force && ompNativeCompatibility() === "compatible") return Promise.resolve(true);
   if (!force && ompCompatibilityProbe) return ompCompatibilityProbe;
+  setOmpNativeCompatibility("probing");
   ompCompatibilityProbe = discoverAgentCli("omp")
     .then((diagnostic) => isCompatibleOmpAcpProbe(diagnostic))
-    .catch(() => false)
+    .catch(() => {
+      setOmpNativeCompatibility("incompatible");
+      return false;
+    })
     .finally(() => {
       ompCompatibilityProbe = null;
     });
@@ -195,6 +221,18 @@ export function nativeAgentProfiles(): Array<AgentProfile & { id: "claudeCode" |
     (agent): agent is AgentProfile & { id: "claudeCode" | "codex" | "omp" } =>
       isNativeAgentProvider(agent.id) && (agent.id !== "omp" || ompNativeChatAvailable()),
   );
+}
+
+export function nativeAgentProfile(
+  provider: string,
+): (AgentProfile & { id: "claudeCode" | "codex" | "omp" }) | null {
+  return nativeAgentProfiles().find((profile) => profile.id === provider) ?? null;
+}
+
+export function defaultNativeAgentProvider(
+  preferred: string,
+): "claudeCode" | "codex" | "omp" {
+  return nativeAgentProfile(preferred)?.id ?? nativeAgentProfiles()[0].id;
 }
 
 

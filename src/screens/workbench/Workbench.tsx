@@ -2,7 +2,17 @@
 // Each chat owns its own terminal host (its own panes/shells). Visited hosts
 // stay mounted (visibility toggled) so switching chats/projects never kills a
 // running shell; a host is disposed only when its chat is deleted.
-import { createEffect, createSignal, For, Match, onCleanup, onMount, Show, Switch } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  onMount,
+  Show,
+  Switch,
+  untrack,
+} from "solid-js";
 import { ProjectsPane } from "./ProjectsPane";
 import { FileExplorer } from "./FileExplorer";
 import { InspectorPanel } from "./InspectorPanel";
@@ -18,7 +28,7 @@ import { disposeAgentChat } from "../../stores/agentChat";
 import {
   ensureOmpNativeCompatibility,
   loadAgentModels,
-  ompNativeChatAvailable,
+  ompNativeChatUnavailableReason,
 } from "../../lib/agentModels";
 import {
   normalizeAgentProvider,
@@ -80,19 +90,14 @@ export function WorkbenchScreen() {
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
   const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
   const [pendingOrchestraCleanup, setPendingOrchestraCleanup] = createSignal<MountedHost[]>([]);
-  const [ompNativeReady, setOmpNativeReady] = createSignal(ompNativeChatAvailable());
 
-  // A persisted OMP chat must not mount a native surface merely because its
-  // saved provider id says "omp": both the default-off flag and this build's
-  // exact compatibility probe are required on every Workbench entry.
+  // Trigger the exact-version probe reactively when the rollout flag turns on.
+  // The availability reason itself comes from the shared reactive registry used
+  // by every native-provider creation surface.
   createEffect(() => {
-    if (!flagEnabled("ompPiAgents")) {
-      setOmpNativeReady(false);
-      return;
+    if (flagEnabled("ompPiAgents")) {
+      void untrack(() => ensureOmpNativeCompatibility());
     }
-    void ensureOmpNativeCompatibility().then((compatible) => {
-      setOmpNativeReady(compatible && ompNativeChatAvailable());
-    });
   });
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch
@@ -432,10 +437,17 @@ export function WorkbenchScreen() {
                   }
                 >
                   <Show
-                    when={provider && (provider !== "omp" || ompNativeReady()) ? provider : null}
+                    when={
+                      provider
+                      && (provider !== "omp" || !ompNativeChatUnavailableReason())
+                        ? provider
+                        : null
+                    }
                     fallback={
                       <div class="pf-chat-error" role="alert">
-                        {nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable"}
+                        {provider === "omp"
+                          ? ompNativeChatUnavailableReason()
+                          : (nativeChatUnavailableReason(agentId) ?? "Native chat is unavailable")}
                       </div>
                     }
                   >

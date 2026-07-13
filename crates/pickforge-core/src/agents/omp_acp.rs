@@ -609,22 +609,27 @@ impl OmpAcpClient {
                 "outgoing ACP frame exceeds size limit".to_string(),
             ));
         }
-        let writer = self
-            .state
-            .writer
-            .lock()
-            .map_err(|_| OmpAcpError::Closed("writer state poisoned".to_string()))?
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| OmpAcpError::Closed("writer is closed".to_string()))?;
-        if self.state.closed.load(Ordering::SeqCst) {
-            return Err(OmpAcpError::Closed("client is closed".to_string()));
-        }
-        match writer.try_send(WriterMessage::Json(value)) {
+        let send_result = {
+            let writer = self
+                .state
+                .writer
+                .lock()
+                .map_err(|_| OmpAcpError::Closed("writer state poisoned".to_string()))?
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| OmpAcpError::Closed("writer is closed".to_string()))?;
+            if self.state.closed.load(Ordering::SeqCst) {
+                return Err(OmpAcpError::Closed("client is closed".to_string()));
+            }
+            writer.try_send(WriterMessage::Json(value))
+        };
+        match send_result {
             Ok(()) => Ok(()),
-            Err(mpsc::TrySendError::Full(_)) => Err(OmpAcpError::Protocol(
-                "OMP ACP writer queue is full".to_string(),
-            )),
+            Err(mpsc::TrySendError::Full(_)) => {
+                let message = "OMP ACP writer queue is full".to_string();
+                transport_failed(&self.state, message.clone());
+                Err(OmpAcpError::Closed(message))
+            }
             Err(mpsc::TrySendError::Disconnected(_)) => {
                 transport_failed(&self.state, "OMP ACP writer thread stopped".to_string());
                 Err(OmpAcpError::Closed(
@@ -1440,19 +1445,26 @@ fn send_from_state(state: &Arc<ClientState>, value: Value) -> Result<(), String>
     if encoded.len() > MAX_FRAME_BYTES {
         return Err("outgoing ACP frame exceeds size limit".to_string());
     }
-    let writer = state
-        .writer
-        .lock()
-        .map_err(|_| "writer state poisoned".to_string())?
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| "writer is closed".to_string())?;
-    if state.closed.load(Ordering::SeqCst) {
-        return Err("client is closed".to_string());
-    }
-    match writer.try_send(WriterMessage::Json(value)) {
+    let send_result = {
+        let writer = state
+            .writer
+            .lock()
+            .map_err(|_| "writer state poisoned".to_string())?
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "writer is closed".to_string())?;
+        if state.closed.load(Ordering::SeqCst) {
+            return Err("client is closed".to_string());
+        }
+        writer.try_send(WriterMessage::Json(value))
+    };
+    match send_result {
         Ok(()) => Ok(()),
-        Err(mpsc::TrySendError::Full(_)) => Err("OMP ACP writer queue is full".to_string()),
+        Err(mpsc::TrySendError::Full(_)) => {
+            let message = "OMP ACP writer queue is full".to_string();
+            transport_failed(state, message.clone());
+            Err(message)
+        }
         Err(mpsc::TrySendError::Disconnected(_)) => {
             let message = "OMP ACP writer thread stopped".to_string();
             transport_failed(state, message.clone());
@@ -2080,6 +2092,91 @@ done"#,
             1,
             "writer/reader transport ownership cycle survived failure"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_writer_queue_fails_closed_drains_pending_and_reaps_process_tree() {
+        use std::os::unix::process::CommandExt;
+
+        let fixture = fixture(":");
+        let ready = fixture.dir.join("backpressure.ready");
+        let survivor = fixture.dir.join("backpressure.survived");
+        let script = format!(
+            "(sleep 0.4; printf survived > '{}') & printf ready > '{}'; wait",
+            survivor.display(),
+            ready.display(),
+        );
+        let mut command = Command::new("sh");
+        command
+            .arg("-c")
+            .arg(script)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().unwrap();
+        let ready_deadline = Instant::now() + Duration::from_secs(2);
+        while !ready.exists() && Instant::now() < ready_deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready.exists(), "backpressure process fixture did not start");
+
+        let (writer, writer_rx) = mpsc::sync_channel(1);
+        writer
+            .try_send(WriterMessage::Json(json!({"queued": true})))
+            .unwrap();
+        let (wait_tx, wait_rx) = mpsc::channel();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let event_sink = Arc::clone(&events);
+        let state = Arc::new(ClientState {
+            writer: Mutex::new(Some(writer)),
+            child: Mutex::new(Some(child)),
+            pending: Mutex::new(HashMap::from([
+                (1, PendingRequest::Wait(wait_tx)),
+                (2, PendingRequest::Prompt),
+            ])),
+            next_id: AtomicU64::new(3),
+            closed: AtomicBool::new(false),
+            session_id: Mutex::new(Some("backpressure-session".to_string())),
+            sink: Mutex::new(Arc::new(move |event| {
+                event_sink.lock().unwrap().push(event);
+            })),
+            queued_updates: Mutex::new(Vec::new()),
+            permissions: Mutex::new(HashMap::new()),
+            tools: Mutex::new(HashMap::new()),
+            handshake: Mutex::new(None),
+            available_modes: Mutex::new(HashSet::new()),
+            available_models: Mutex::new(HashSet::new()),
+            turn_text: Mutex::new(String::new()),
+            turn_thought: Mutex::new(String::new()),
+        });
+        let client = OmpAcpClient { state };
+
+        assert!(matches!(
+            client.send_json(json!({"jsonrpc": "2.0", "method": "session/prompt"})),
+            Err(OmpAcpError::Closed(message)) if message == "OMP ACP writer queue is full"
+        ));
+        assert!(client.is_closed());
+        assert!(client.state.writer.lock().unwrap().is_none());
+        assert!(client.state.child.lock().unwrap().is_none());
+        assert!(client.state.pending.lock().unwrap().is_empty());
+        assert_eq!(
+            wait_rx.recv_timeout(Duration::from_millis(100)).unwrap(),
+            Err("OMP ACP writer queue is full".to_string())
+        );
+        assert!(events.lock().unwrap().iter().any(|event| matches!(
+            event,
+            AgentEvent::TurnFailed { error } if error == "OMP ACP writer queue is full"
+        )));
+        assert!(matches!(
+            client.send_json(json!({"jsonrpc": "2.0", "method": "initialize"})),
+            Err(OmpAcpError::Closed(_))
+        ));
+
+        drop(writer_rx);
+        thread::sleep(Duration::from_millis(700));
+        assert!(!survivor.exists(), "writer backpressure left an OMP descendant alive");
     }
 
     #[cfg(unix)]

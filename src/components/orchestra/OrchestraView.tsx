@@ -26,12 +26,23 @@ import {
   IconSplitTrigger,
 } from "../icons";
 import { type AgentProvider } from "../../lib/agentChat";
-import { AGENTS, loadAgentEfforts, loadAgentModels } from "../../lib/agentModels";
-import { normalizeAgentProvider, NATIVE_AGENT_BACKENDS } from "../../lib/agentBackends";
+import {
+  agentProfiles,
+  defaultNativeAgentProvider,
+  loadAgentEfforts,
+  loadAgentModels,
+  nativeAgentProfile,
+  nativeAgentProfiles,
+} from "../../lib/agentModels";
+import { normalizeAgentProvider } from "../../lib/agentBackends";
 import { loadAgentModes } from "../../lib/agentModes";
 import { isPrimaryChat } from "../../lib/chatLabels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
-import { loadAskChatTitle, loadLastAgentProvider } from "../../lib/chatDefaults";
+import {
+  loadAskChatTitle,
+  loadLastAgentProvider,
+  setLastAgentProvider,
+} from "../../lib/chatDefaults";
 import { PROMPT_TEMPLATES } from "../../lib/promptTemplates";
 import { gitDiff, gitStatus } from "../../lib/git";
 import { buildWorkingDiff, fillDiffTemplate } from "./diff";
@@ -87,7 +98,6 @@ import { markChatTitleManual } from "../../lib/chatAutoName";
 import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
-const AGENT_PROVIDERS = NATIVE_AGENT_BACKENDS;
 const PROVIDER_MARK: Record<string, string> = { claudeCode: "CC", codex: "CX" };
 
 const STATUS_ORDER: OrchestraTaskStatus[] = [
@@ -113,7 +123,7 @@ function providerOf(chatId: string): AgentProvider {
 function modelLabel(provider: AgentProvider): string {
   const model = loadAgentModels()[provider];
   if (!model) return "";
-  return AGENTS.find((a) => a.id === provider)?.models.find((m) => m.id === model)?.label ?? model;
+  return agentProfiles().find((a) => a.id === provider)?.models.find((m) => m.id === model)?.label ?? model;
 }
 
 function laneTitle(chatId: string): string {
@@ -597,9 +607,17 @@ export function OrchestraView(props: {
   };
 
   const createLane = async (provider: string, title?: string) => {
+    const availableProvider = nativeAgentProfile(provider);
+    if (!availableProvider) return;
+    setLastAgentProvider(availableProvider.id);
     setAddMenu(null);
     setNewLaneTitle("");
-    await addChat(title?.trim() || DEFAULT_CHAT_TITLE, provider, props.projectRoot, "agent");
+    await addChat(
+      title?.trim() || DEFAULT_CHAT_TITLE,
+      availableProvider.id,
+      props.projectRoot,
+      "agent",
+    );
     const created = workspace.activeChatId;
     if (created) placeLane(created);
   };
@@ -1220,12 +1238,15 @@ export function OrchestraView(props: {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        void createLane(loadLastAgentProvider(), newLaneTitle());
+                        void createLane(
+                          defaultNativeAgentProvider(loadLastAgentProvider()),
+                          newLaneTitle(),
+                        );
                       }
                     }}
                   />
                 </Show>
-                <For each={AGENT_PROVIDERS}>
+                <For each={nativeAgentProfiles()}>
                   {(agent) => (
                     <button
                       class="pf-menu-item"

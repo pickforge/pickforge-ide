@@ -30,8 +30,9 @@ pub struct PiRpcOptions {
     pub session_path: PathBuf,
     pub model: Option<String>,
     pub binary: Option<String>,
-    /// Test/dogfood only: prevents loading configured extensions and does not
-    /// alter Pi's global configuration.
+    /// Safe diagnostic/test probes only. Production sessions leave this false
+    /// so Pi loads the user's installed extensions and tools without mutating
+    /// global configuration.
     pub no_extensions: bool,
     /// Startup smoke only. Production sessions leave this false so model turns
     /// can use their configured provider normally.
@@ -99,9 +100,7 @@ impl WindowsJob {
 
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if handle.is_null() {
-            return Err(PiRpcError::ProcessIsolation(
-                std::io::Error::last_os_error().to_string(),
-            ));
+            return Err(process_isolation_error());
         }
         let job = Self(handle as isize);
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
@@ -115,16 +114,12 @@ impl WindowsJob {
             )
         };
         if configured == 0 {
-            return Err(PiRpcError::ProcessIsolation(
-                std::io::Error::last_os_error().to_string(),
-            ));
+            return Err(process_isolation_error());
         }
         let assigned =
             unsafe { AssignProcessToJobObject(handle, child.as_raw_handle() as *mut _) };
         if assigned == 0 {
-            return Err(PiRpcError::ProcessIsolation(
-                std::io::Error::last_os_error().to_string(),
-            ));
+            return Err(process_isolation_error());
         }
         Ok(job)
     }
@@ -141,6 +136,69 @@ impl Drop for WindowsJob {
     }
 }
 
+#[cfg(windows)]
+fn process_isolation_error() -> PiRpcError {
+    PiRpcError::ProcessIsolation(std::io::Error::last_os_error().to_string())
+}
+
+#[cfg(windows)]
+fn resume_primary_thread(child: &Child) -> Result<(), PiRpcError> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32,
+        TH32CS_SNAPTHREAD,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(process_isolation_error());
+    }
+    let mut entry = THREADENTRY32 {
+        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let mut found = unsafe { Thread32First(snapshot, &mut entry) } != 0;
+    let thread_id = loop {
+        if !found {
+            unsafe {
+                CloseHandle(snapshot);
+            }
+            return Err(PiRpcError::ProcessIsolation(format!(
+                "suspended primary thread for process {} was not found",
+                child.id()
+            )));
+        }
+        if entry.th32OwnerProcessID == child.id() {
+            break entry.th32ThreadID;
+        }
+        found = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
+    };
+    unsafe {
+        CloseHandle(snapshot);
+    }
+
+    let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, thread_id) };
+    if thread.is_null() {
+        return Err(process_isolation_error());
+    }
+    let previous_count = unsafe { ResumeThread(thread) };
+    unsafe {
+        CloseHandle(thread);
+    }
+    if previous_count == u32::MAX {
+        return Err(process_isolation_error());
+    }
+    if previous_count != 1 {
+        return Err(PiRpcError::ProcessIsolation(format!(
+            "suspended primary thread had unexpected suspend count {previous_count}"
+        )));
+    }
+    Ok(())
+}
+
 impl ManagedChild {
     fn new(child: Child) -> Result<Self, PiRpcError> {
         #[cfg(windows)]
@@ -154,6 +212,12 @@ impl ManagedChild {
                 return Err(error);
             }
         };
+        #[cfg(windows)]
+        if let Err(error) = resume_primary_thread(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
         Ok(Self {
             child,
             #[cfg(windows)]
@@ -285,6 +349,13 @@ impl PiRpcClient {
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+            command.creation_flags(CREATE_SUSPENDED);
         }
 
         let child = command.spawn().map_err(|source| PiRpcError::Spawn {
@@ -1544,14 +1615,32 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_children_are_assigned_to_a_kill_on_close_job() {
-        let child = Command::new("cmd")
-            .args(["/C", "ping -n 2 127.0.0.1 >nul"])
-            .spawn()
-            .expect("spawn Windows fixture");
-        let managed = ManagedChild::new(child).expect("assign Windows Job Object");
+    fn windows_children_are_suspended_until_job_assignment_then_resumed() {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let marker = std::env::temp_dir().join(format!(
+            "pickforge-pi-resumed-{}-{nonce}.txt",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let mut command = Command::new("cmd");
+        command
+            .args(["/C", &format!("echo resumed>\"{}\"", marker.display())])
+            .creation_flags(CREATE_SUSPENDED);
+        let child = command.spawn().expect("spawn suspended Windows fixture");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!marker.exists(), "suspended child must not execute before job assignment");
+
+        let mut managed = ManagedChild::new(child).expect("assign job and resume primary thread");
         assert_ne!(managed._job.0, 0);
-        kill_and_wait_child(managed);
+        assert!(managed.child.wait().expect("reap Windows fixture").success());
+        assert!(marker.exists(), "managed child must execute after resume");
+        std::fs::remove_file(marker).expect("remove Windows fixture marker");
     }
 
     #[test]

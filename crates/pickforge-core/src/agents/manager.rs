@@ -561,7 +561,7 @@ impl AgentChatManager {
                             session_path,
                             model: model.clone(),
                             binary: self.pi_binary(),
-                            no_extensions: true,
+                            no_extensions: false,
                             offline: false,
                             environment_overrides: HashMap::new(),
                         },
@@ -2558,6 +2558,9 @@ import json, sys
 if "--version" in sys.argv:
     print("pi 0.79.10")
     raise SystemExit(0)
+with open(sys.argv[0] + ".argv", "w", encoding="utf-8") as handle:
+    json.dump(sys.argv[1:], handle)
+
 
 log_path = sys.argv[0] + ".stdin"
 session_path = sys.argv[sys.argv.index("--session") + 1]
@@ -4815,6 +4818,35 @@ printf '%s\n' \
                 .and_then(|state| state.provider_session_id.as_deref()),
             None,
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_production_spawn_loads_installed_extensions_and_tools() {
+        let script = pi_rpc_test_script("pi-production-argv");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = pi_manager(db, &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-pi-production-argv",
+                script.dir.clone(),
+                AgentProvider::Pi,
+                Engine::V2,
+                Some("test/model".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .expect("start production Pi RPC session");
+
+        let argv_path = script.path.with_extension("argv");
+        let argv = wait_for_file(&argv_path, |text| !text.is_empty());
+        let argv: Vec<String> = serde_json::from_str(&argv).expect("parse Pi argv");
+        assert!(argv.windows(2).any(|pair| pair == ["--mode", "rpc"]));
+        assert!(argv.windows(2).any(|pair| pair == ["--model", "test/model"]));
+        assert!(!argv.iter().any(|arg| arg == "--no-extensions"));
+        assert!(!argv.iter().any(|arg| arg == "--offline"));
+        manager.dispose(&session_id);
     }
 
     #[cfg(unix)]

@@ -136,6 +136,9 @@ jobs:
       - name: OMP Windows job cleanup
         run: cargo test -p pickforge-core --lib --locked agents::omp_acp::tests::windows_job_cleanup_kills_descendant_after_direct_parent_exits
 
+      - name: Pi process isolation test
+        run: cargo test -p pickforge-core --locked agents::pi_rpc::tests::windows_children_are_suspended_until_job_assignment_then_resumed
+
   macos-omp-acp:
     name: macOS OMP ACP
     runs-on: macos-latest

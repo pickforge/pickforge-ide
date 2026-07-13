@@ -56,10 +56,11 @@ reset this file.
   canonical cwd reuse, schema-correct exact-ID resume/load, model validation,
   bounded late-response handling, cumulative-context and durable-title events,
   and Unix/Windows process-tree cleanup. Compatible Pi 0.79.x installs add
-  version-gated native RPC behind `ompPiAgents`, with isolated resumable sessions
-  and bounded process cleanup; native approvals and MCP grants remain explicitly
-  unsupported. Platform CI runs the OMP Unix fixture on macOS and both OMP/Pi
-  executable Job Object cleanup regressions on Windows.
+  version-gated native RPC behind `ompPiAgents`, with isolated resumable sessions,
+  bounded process cleanup, and the user's installed Pi extensions and tools;
+  PickForge does not inject per-session MCP grants or native approvals. Platform
+  CI runs the OMP Unix fixture on macOS and both OMP/Pi executable Job Object
+  cleanup regressions on Windows.
 - OMP ACP launches as `omp acp --no-extensions --approval-mode=always-ask`,
   with no config/yolo overlay. Its cleared child environment restores exactly
   `PATH`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `XDG_CONFIG_HOME`,

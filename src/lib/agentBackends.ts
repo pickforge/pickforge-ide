@@ -385,7 +385,9 @@ const PI_CAPABILITIES = Object.freeze({
     "File activity is inferred from successful mutating tool arguments; Pi has no typed file event",
   ),
   approvalEvents: unsupported("Pi RPC 0.79.10 has no native approval protocol"),
-  mcpConfiguration: unsupported("Pi RPC 0.79.10 has no native MCP configuration or grant protocol"),
+  mcpConfiguration: unsupported(
+    "PickForge does not inject per-session MCP configuration; native Pi sessions still load the user's installed extensions and tools",
+  ),
   usageReporting: NATIVE_V2,
   contextReporting: unsupported("Pi context usage requires explicit session-stat polling"),
   rateLimitReporting: unsupported("Pi RPC 0.79.10 does not emit rate-limit events"),

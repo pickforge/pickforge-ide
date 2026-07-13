@@ -611,7 +611,7 @@ export function SettingsScreen() {
     const failure = agentDiagnosticErrors()[agent.id];
     const nativeChatReason = agent.id === "pi"
       ? diagnostic?.installed && isCompatiblePiRpcVersion(diagnostic.version)
-        ? "Native chat over version-gated Pi RPC; no native approvals or MCP grants"
+        ? "Native chat loads installed Pi extensions and tools; no native approvals or per-session MCP grants"
         : diagnostic?.version
           ? `Native Pi RPC requires >=0.79.10 and <0.80.0; found ${diagnostic.version}`
           : "Native Pi RPC requires a compatible installed Pi"
@@ -855,9 +855,10 @@ export function SettingsScreen() {
           </For>
           <Show when={flagEnabled("ompPiAgents")}>
             <span class="pf-settings-muted">
-              Offline, read-only checks only. OMP native chat requires exact 16.4.8; Pi native
-              RPC requires a compatible 0.79.x probe and never configures approvals or MCP grants.
-              Both terminal launches remain available independently.
+              Offline, read-only checks disable extensions. OMP native chat requires exact 16.4.8;
+              Pi native RPC requires a compatible 0.79.x probe and loads installed extensions and
+              tools, without PickForge-configured approvals or per-session MCP grants. Both terminal
+              launches remain available independently.
             </span>
             <div class="pf-ql-actions">
               <button

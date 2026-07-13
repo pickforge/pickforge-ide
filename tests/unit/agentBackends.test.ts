@@ -263,7 +263,8 @@ describe("agent backend capability registry", () => {
     expect(backends.supportsBackendCapability("pi", "approvalEvents")).toBe(false);
     expect(backends.backendCapabilityReason("pi", "approvalEvents")).toContain("no native approval");
     expect(backends.supportsBackendCapability("pi", "mcpConfiguration")).toBe(false);
-    expect(backends.backendCapabilityReason("pi", "mcpConfiguration")).toContain("no native MCP");
+    expect(backends.backendCapabilityReason("pi", "mcpConfiguration"))
+      .toContain("load the user's installed extensions and tools");
     for (const capability of [
       "imageInput",
       "effortSelection",

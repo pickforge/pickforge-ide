@@ -43,8 +43,9 @@ reset this file.
 - Hosted Pro Operator routing and credit purchase landed dark behind the `operator` flag (requires sign-in): a hosted router backend closes the routing ladder, the dock surfaces cost/balance and a quiet buy-credits prompt, and Settings gains a credit-pack purchase flow. Local and BYO routing stay free.
 - In-app account deletion + data export (LGPD user rights), behind the `accounts` flag.
 - Graceful owned-manager teardown (#208 PR 1): one exactly-once orchestrator
-  drains local managers on confirmed app-exit events, with bounded async stops
-  and Unix process-group cleanup where available. Windows Job Objects, escaped
+  drains local managers on confirmed app-exit events, interrupts active V2 turns,
+  reconciles interrupted session state, cancels provisional mirror setup, and uses
+  Unix process-group cleanup where available. Windows Job Objects, escaped
   descendants, and crash/SIGKILL containment remain PR 2; remote leases remain
   PR 3.
 - Section-based Settings navigation landed dark behind the default-off `settingsNavigation` flag, with remembered/direct categories and wide/narrow preference layouts.
@@ -86,6 +87,11 @@ reset this file.
 
 ### Tested
 
+- Graceful shutdown: 585 Rust workspace tests, 820 frontend unit tests,
+  workspace `cargo check`, and frontend production build passed. An isolated live
+  Codex V2 turn running `sleep 120` terminated with PickForge and returned its
+  persisted session status to idle; mirror cancellation has focused regression
+  coverage but was not driven against the available physical Android device.
 - Workflow YAML parse check:
   `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 - `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.

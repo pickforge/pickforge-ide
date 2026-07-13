@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   enabled: false,
+  leases: false,
   projects: [] as Array<{
     projectRoot: string;
     remoteHost: string | null;
@@ -10,7 +11,8 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: () => state.enabled,
+  flagEnabled: (key: string) =>
+    key === "remoteProjects" ? state.enabled : state.leases,
 }));
 
 vi.mock("../../src/stores/workspace", () => ({
@@ -34,6 +36,7 @@ import { startPtyWithLocalFallback } from "../../src/lib/remoteTerminal";
 describe("remotePtyFor", () => {
   beforeEach(() => {
     state.enabled = false;
+    state.leases = false;
     state.projects = [];
   });
 
@@ -71,6 +74,25 @@ describe("remotePtyFor", () => {
     expect(remotePtyFor("/app")).toEqual({
       host: "mac-mini",
       remoteRoot: "/Users/dev/app",
+      remoteProcessLeases: false,
+    });
+  });
+
+  it("captures the enabled lease flag at the remote launch seam", () => {
+    state.enabled = true;
+    state.leases = true;
+    state.projects = [
+      {
+        projectRoot: "/app",
+        remoteHost: "mac-mini",
+        remoteRoot: "/Users/dev/app",
+      },
+    ];
+
+    expect(remotePtyFor("/app")).toEqual({
+      host: "mac-mini",
+      remoteRoot: "/Users/dev/app",
+      remoteProcessLeases: true,
     });
   });
 
@@ -96,16 +118,18 @@ describe("remotePtyFor", () => {
     expect(panes["pane-1"]).toEqual({
       host: "mac-mini",
       remoteRoot: "/Users/dev/app",
+      remoteProcessLeases: false,
     });
     expect(remotePtyFor("/app")).toEqual({
       host: "linux-box",
       remoteRoot: "/srv/app",
+      remoteProcessLeases: false,
     });
   });
 
   it("uses local MCP context when a remote start resolves through the fallback", async () => {
     const started = await startPtyWithLocalFallback(
-      { host: "mac-mini", remoteRoot: "/srv/app" },
+      { host: "mac-mini", remoteRoot: "/srv/app", remoteProcessLeases: false },
       async (remote) => {
         if (remote) throw new Error("remote unavailable");
         return 42;
@@ -123,6 +147,7 @@ describe("remotePtyFor", () => {
     const panes = captureRemotePtyForPane({}, "pane-1", {
       host: "mac-mini",
       remoteRoot: "/srv/app",
+      remoteProcessLeases: false,
     });
     expect(canLaunchAgentForMode(paneSpawnModeFor(panes, "pane-1"))).toBe(true);
   });

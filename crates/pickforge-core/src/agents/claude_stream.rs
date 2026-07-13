@@ -14,6 +14,7 @@ use super::event::{
     TurnStatus,
 };
 use super::remote_exec::{remote_ssh_exit_error, RemoteExec, RemoteExecError};
+use crate::remote::RemoteLeaseHandle;
 
 const DEFAULT_ALLOWED_TOOLS: &str = "Bash,Edit,Write,Read,Glob,Grep,WebSearch,WebFetch,TodoWrite";
 const DEFAULT_PERMISSION_MODE: &str = "acceptEdits";
@@ -454,6 +455,18 @@ pub struct ClaudeStreamTurn {
 
 impl ClaudeStreamTurn {
     pub fn kill(&self) -> Result<(), AgentSpawnError> {
+        stop_state_lease(&self.state);
+        if self.state.terminal_emitted.load(Ordering::SeqCst) {
+            let mut child = self
+                .state
+                .child
+                .lock()
+                .map_err(|_| AgentSpawnError::ProcessLockPoisoned)?;
+            if let Some(child) = child.as_mut() {
+                signal_child(child);
+            }
+            return Ok(());
+        }
         self.state.interrupted.store(true, Ordering::SeqCst);
         let mut child = self
             .state
@@ -464,6 +477,29 @@ impl ClaudeStreamTurn {
             signal_child(child);
         }
         Ok(())
+    }
+
+    pub(crate) fn shutdown_bounded(&self) {
+        let terminal = self.state.terminal_emitted.load(Ordering::SeqCst);
+        if !terminal {
+            self.state.interrupted.store(true, Ordering::SeqCst);
+        }
+        if let Ok(mut child) = self.state.child.lock() {
+            if let Some(child) = child.as_mut() {
+                signal_child(child);
+            }
+        }
+        stop_state_lease_bounded(&self.state);
+        if let Ok(mut reader) = self.reader_thread.lock() {
+            if let Some(thread) = reader.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut stderr) = self.stderr_thread.lock() {
+            if let Some(thread) = stderr.take() {
+                let _ = thread.join();
+            }
+        }
     }
 }
 
@@ -510,6 +546,7 @@ struct TurnCommand {
     args: Vec<String>,
     cwd: Option<PathBuf>,
     remote_host: Option<String>,
+    lease: Option<RemoteLeaseHandle>,
 }
 
 fn turn_command(opts: &ClaudeTurnOptions) -> Result<TurnCommand, AgentSpawnError> {
@@ -548,11 +585,13 @@ fn turn_command(opts: &ClaudeTurnOptions) -> Result<TurnCommand, AgentSpawnError
         args.push(session_id.to_string());
     }
     if let Some(remote) = opts.remote.as_ref() {
+        let (args, lease) = remote.ssh_launch(&args)?;
         return Ok(TurnCommand {
             program: "ssh".to_string(),
-            args: remote.ssh_args(&args)?,
+            args,
             cwd: None,
             remote_host: Some(remote.host.clone()),
+            lease,
         });
     }
     args.remove(0);
@@ -561,6 +600,7 @@ fn turn_command(opts: &ClaudeTurnOptions) -> Result<TurnCommand, AgentSpawnError
         args,
         cwd: Some(opts.cwd.clone()),
         remote_host: None,
+        lease: None,
     })
 }
 
@@ -571,7 +611,7 @@ pub fn spawn_claude_turn<F>(
 where
     F: Fn(AgentEvent) + Send + Sync + 'static,
 {
-    let turn_command = turn_command(&opts)?;
+    let mut turn_command = turn_command(&opts)?;
     let mut command = Command::new(&turn_command.program);
     command
         .args(&turn_command.args)
@@ -589,17 +629,32 @@ where
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    if let Some(lease) = turn_command.lease.as_ref() {
+        lease.prepare().map_err(AgentSpawnError::Thread)?;
+    }
 
     let mut child = command.spawn().map_err(|source| AgentSpawnError::Spawn {
         binary: turn_command.program.clone(),
         source,
     })?;
+    if let Some(lease) = turn_command.lease.as_ref() {
+        if let Err(error) = lease.start_heartbeat() {
+            kill_and_wait_child(child);
+            return Err(AgentSpawnError::Thread(error));
+        }
+    }
 
     let Some(stdout) = child.stdout.take() else {
+        if let Some(lease) = turn_command.lease.take() {
+            lease.stop();
+        }
         kill_and_wait_child(child);
         return Err(AgentSpawnError::MissingStdout);
     };
     let Some(stderr) = child.stderr.take() else {
+        if let Some(lease) = turn_command.lease.take() {
+            lease.stop();
+        }
         kill_and_wait_child(child);
         return Err(AgentSpawnError::MissingStderr);
     };
@@ -607,11 +662,13 @@ where
         child: Mutex::new(Some(child)),
         terminal_emitted: AtomicBool::new(false),
         interrupted: AtomicBool::new(false),
+        lease: Mutex::new(turn_command.lease),
     });
 
+    let stderr_state = Arc::clone(&state);
     let stderr_thread = match std::thread::Builder::new()
         .name("claude-stderr-drain".to_string())
-        .spawn(move || drain_stderr(stderr))
+        .spawn(move || drain_stderr(stderr, stderr_state))
     {
         Ok(thread) => thread,
         Err(error) => {
@@ -645,6 +702,7 @@ struct TurnState {
     child: Mutex<Option<Child>>,
     terminal_emitted: AtomicBool,
     interrupted: AtomicBool,
+    lease: Mutex<Option<RemoteLeaseHandle>>,
 }
 
 fn read_stdout<F>(
@@ -660,6 +718,8 @@ where
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
 
+    let mut reader_failed = false;
+
     loop {
         line.clear();
         match reader.read_line(&mut line) {
@@ -673,11 +733,24 @@ where
                     }
                 }
                 if !delivered {
+                    reader_failed = true;
                     break;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(_) => {
+                reader_failed = true;
+                break;
+            }
+        }
+    }
+
+    if reader_failed {
+        stop_state_lease(&state);
+        if let Ok(mut child) = state.child.lock() {
+            if let Some(child) = child.as_mut() {
+                signal_child(child);
+            }
         }
     }
 
@@ -687,6 +760,7 @@ where
         .ok()
         .and_then(|mut child| child.take())
         .and_then(|mut child| child.wait().ok());
+    finish_state_lease(&state);
 
     if state.interrupted.load(Ordering::SeqCst) {
         let _ = emit_event(
@@ -740,8 +814,16 @@ fn is_terminal_event(event: &AgentEvent) -> bool {
     )
 }
 
-fn drain_stderr(mut stderr: impl Read) {
-    let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+fn drain_stderr(mut stderr: impl Read, state: Arc<TurnState>) {
+    if std::io::copy(&mut stderr, &mut std::io::sink()).is_err() {
+        state.interrupted.store(true, Ordering::SeqCst);
+        stop_state_lease(&state);
+        if let Ok(mut child) = state.child.lock() {
+            if let Some(child) = child.as_mut() {
+                signal_child(child);
+            }
+        }
+    }
 }
 
 fn kill_and_wait_child(mut child: Child) {
@@ -757,7 +839,33 @@ fn signal_child(child: &mut Child) {
     let _ = child.kill();
 }
 
+
+fn stop_state_lease(state: &Arc<TurnState>) {
+    if let Ok(mut lease) = state.lease.lock() {
+        if let Some(lease) = lease.take() {
+            lease.stop();
+        }
+    }
+}
+
+fn stop_state_lease_bounded(state: &Arc<TurnState>) {
+    if let Ok(mut lease) = state.lease.lock() {
+        if let Some(lease) = lease.take() {
+            lease.stop_bounded();
+        }
+    }
+}
+
+fn finish_state_lease(state: &Arc<TurnState>) {
+    if let Ok(mut lease) = state.lease.lock() {
+        if let Some(lease) = lease.take() {
+            lease.finish_natural();
+        }
+    }
+}
+
 fn kill_state_child(state: &Arc<TurnState>) {
+    stop_state_lease(state);
     if let Ok(mut child) = state.child.lock() {
         if let Some(child) = child.take() {
             kill_and_wait_child(child);
@@ -1274,7 +1382,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn runner_clean_run_emits_one_terminal_event() {
+    fn kill_after_terminal_stops_remaining_lease_once() {
         let script = test_script(
             r#"#!/bin/sh
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"runner-clean"}'
@@ -1282,11 +1390,25 @@ printf '%s\n' '{"type":"stream_event","event":{"type":"message_start"}}'
 printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"runner hi"}}}'
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"runner hi"}]}}'
 printf '%s\n' '{"type":"result","subtype":"success","usage":{"input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3},"total_cost_usd":0.25}'
+sleep 5
 "#,
         );
         let (turn, events) = collected_runner_events(&script);
         wait_for_events(&events, |events| terminal_event_count(events) == 1);
+        assert!(turn.state.terminal_emitted.load(Ordering::SeqCst));
+        let Ok(mut lease) = turn.state.lease.lock() else {
+            panic!("turn lease lock poisoned");
+        };
+        *lease = Some(crate::remote::RemoteLeaseHandle::new(
+            crate::remote::SshTarget::new("127.0.0.1").unwrap(),
+            Vec::new(),
+        ));
+        drop(lease);
+        let started = std::time::Instant::now();
+        turn.kill().unwrap();
+        assert!(turn.state.lease.lock().is_ok_and(|lease| lease.is_none()));
         drop(turn);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
         let snapshot = events.lock().unwrap().clone();
 
         assert_eq!(terminal_event_count(&snapshot), 1);

@@ -45,6 +45,7 @@ const definitions = {
   operator: { description: "Operator command layer (epic #118)" },
   ompPiAgents: { description: "OMP/Pi terminal profiles and discovery (#212)" },
   remoteProjects: { description: "Per-project remote hosts (epic #144)" },
+  remoteProcessLeases: { description: "Exact remote process cleanup leases (#208)" },
   accounts: { description: "Accounts and Pro entitlements (#132)" },
   settingsSync: { description: "Settings sync for signed-in users (#151)" },
   settingsNavigation: { description: "Section-based Settings navigation (#211)" },

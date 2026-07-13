@@ -82,16 +82,22 @@ reset this file.
   `LC_CTYPE`, `TERM`, `COLORTERM`, and `NO_COLOR`. Home/config roots let OMP
   discover its own auth without PickForge reading or copying provider tokens;
   inherited provider secrets and extension/config injection variables are absent.
+- Remote process leases (#208 PR 3) landed default-off behind
+  `remoteProcessLeases`: leased SSH PTYs and V1 Claude/Codex turns use secure
+  stdin bootstrap, 10-second heartbeats, a 45-second remote-clock TTL, verified
+  payload/foreground-group teardown, and an independent expiry watchdog.
+  Deliberate payload `setsid`/daemon escapes remain later guardian/platform scope.
 
 ## Validation
 
 ### Tested
 
-- Graceful shutdown: 635 Rust workspace tests, 875 frontend unit tests,
-  workspace `cargo check`, and frontend production build passed. An isolated live
-  Codex V2 turn running `sleep 120` terminated with PickForge and returned its
-  persisted session status to idle; mirror cancellation has focused regression
-  coverage but was not driven against the available physical Android device.
+- Graceful shutdown and remote leases: 653 Rust workspace tests, 877 frontend
+  unit tests, workspace `cargo check`, and frontend production build passed. An
+  isolated live Codex V2 turn running `sleep 120` terminated with PickForge and
+  returned its persisted session status to idle. Remote lease supervisor,
+  heartbeat, expiry, identity, and bounded-stop fixtures passed; real Tailnet
+  lease-expiry smoke remains outstanding while the feature stays default-off.
 - Workflow YAML parse check:
   `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 - `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.

@@ -1,9 +1,13 @@
-use crate::remote::{shell_quote_argv, ssh_one_shot_args, SshError, SshTarget};
+use crate::remote::{
+    remote_process_command, shell_quote_argv, ssh_one_shot_args, RemoteLeaseHandle,
+    RemoteLeasePayload, SshError, SshTarget,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteExec {
     pub host: String,
     pub remote_root: String,
+    process_leases: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -22,10 +26,22 @@ impl RemoteExec {
         if remote_root.is_empty() || !remote_root.starts_with('/') || remote_root.contains('\0') {
             return Err(RemoteExecError::InvalidRemoteRoot);
         }
-        Ok(Self { host, remote_root })
+        Ok(Self {
+            host,
+            remote_root,
+            process_leases: false,
+        })
     }
 
-    pub(crate) fn ssh_args(&self, agent_argv: &[String]) -> Result<Vec<String>, RemoteExecError> {
+    pub fn with_process_leases(mut self, enabled: bool) -> Self {
+        self.process_leases = enabled;
+        self
+    }
+
+    pub(crate) fn ssh_launch(
+        &self,
+        agent_argv: &[String],
+    ) -> Result<(Vec<String>, Option<RemoteLeaseHandle>), RemoteExecError> {
         let target = SshTarget::new(&self.host)?;
         if self.remote_root.is_empty()
             || !self.remote_root.starts_with('/')
@@ -33,15 +49,29 @@ impl RemoteExec {
         {
             return Err(RemoteExecError::InvalidRemoteRoot);
         }
+        let direct_command = self.remote_command(agent_argv);
+        let (command, lease) = remote_process_command(
+            &target,
+            self.process_leases,
+            RemoteLeasePayload::LoginArgv {
+                cwd: self.remote_root.clone(),
+                argv: agent_argv.to_vec(),
+            },
+            direct_command,
+        );
+        Ok((ssh_one_shot_args(&target, command), lease))
+    }
+
+    fn remote_command(&self, agent_argv: &[String]) -> String {
         let argv = agent_argv.iter().map(String::as_str).collect::<Vec<_>>();
         let agent_command = shell_quote_argv(&argv);
-        let remote_command = format!(
+        format!(
             "cd {} && exec \"$SHELL\" -lc {}",
             shell_quote_argv(&[&self.remote_root]),
             shell_quote_argv(&[&agent_command])
-        );
-        Ok(ssh_one_shot_args(&target, remote_command))
+        )
     }
+
 }
 
 pub(crate) fn remote_ssh_exit_error(host: &str) -> String {
@@ -54,31 +84,30 @@ pub(crate) fn remote_ssh_exit_error(host: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn builds_a_batch_ssh_command_with_one_quoted_remote_command() {
-        let remote = RemoteExec::new("mac-mini", "/Users/dev/it's $root").unwrap();
-        let args = remote
-            .ssh_args(&[
-                "codex".to_string(),
-                "exec".to_string(),
-                "prompt with spaces".to_string(),
-            ])
-            .unwrap();
 
-        assert_eq!(
-            args,
-            vec![
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=5",
-                "-o",
-                "StrictHostKeyChecking=accept-new",
-                "--",
-                "mac-mini",
-                "cd '/Users/dev/it'\\''s $root' && exec \"$SHELL\" -lc ''\\''codex'\\'' '\\''exec'\\'' '\\''prompt with spaces'\\'''",
-            ]
-        );
+    #[test]
+    fn process_lease_flag_has_one_narrow_remote_launch_seam() {
+        let argv = vec![
+            "codex".to_string(),
+            "exec".to_string(),
+            "hostile ' prompt $HOME `uname`".to_string(),
+        ];
+        let direct = RemoteExec::new("mac-mini", "/srv/app")
+            .unwrap()
+            .ssh_launch(&argv)
+            .unwrap();
+        assert!(direct.1.is_none());
+        assert!(direct.0.last().unwrap().contains("hostile"));
+
+        let leased = RemoteExec::new("mac-mini", "/srv/secret app")
+            .unwrap()
+            .with_process_leases(true)
+            .ssh_launch(&argv)
+            .unwrap();
+        assert!(!leased.0.last().unwrap().contains("hostile"));
+        assert!(!leased.0.last().unwrap().contains("/srv/secret app"));
+        let lease = leased.1.expect("flag-on launch owns a lease");
+        lease.finish_natural();
     }
 
     #[test]

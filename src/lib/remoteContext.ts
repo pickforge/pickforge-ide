@@ -13,7 +13,11 @@ export function remotePtyFor(
     (item) => item.projectRoot === projectRoot,
   );
   if (!project?.remoteHost || !project.remoteRoot) return null;
-  return { host: project.remoteHost, remoteRoot: project.remoteRoot };
+  return {
+    host: project.remoteHost,
+    remoteRoot: project.remoteRoot,
+    remoteProcessLeases: flagEnabled("remoteProcessLeases"),
+  };
 }
 
 export function captureRemotePtyForPane(

@@ -8,6 +8,7 @@ export type PtyBytes = ArrayBuffer | Uint8Array | number[];
 export interface RemotePty {
   host: string;
   remoteRoot: string;
+  remoteProcessLeases: boolean;
 }
 
 export interface SpawnOptions {

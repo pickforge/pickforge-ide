@@ -13,6 +13,7 @@ use super::event::{
     TurnStatus,
 };
 use super::remote_exec::{remote_ssh_exit_error, RemoteExec, RemoteExecError};
+use crate::remote::RemoteLeaseHandle;
 
 #[derive(Debug, Clone)]
 pub struct CodexTurnOptions {
@@ -48,6 +49,7 @@ struct TurnCommand {
     args: Vec<String>,
     cwd: Option<PathBuf>,
     remote_host: Option<String>,
+    lease: Option<RemoteLeaseHandle>,
 }
 
 fn turn_command(opts: &CodexTurnOptions) -> Result<TurnCommand, AgentSpawnError> {
@@ -96,11 +98,13 @@ fn turn_command(opts: &CodexTurnOptions) -> Result<TurnCommand, AgentSpawnError>
     }
     args.push(opts.prompt.clone());
     if let Some(remote) = opts.remote.as_ref() {
+        let (args, lease) = remote.ssh_launch(&args)?;
         return Ok(TurnCommand {
             program: "ssh".to_string(),
-            args: remote.ssh_args(&args)?,
+            args,
             cwd: None,
             remote_host: Some(remote.host.clone()),
+            lease,
         });
     }
     args.remove(0);
@@ -109,6 +113,7 @@ fn turn_command(opts: &CodexTurnOptions) -> Result<TurnCommand, AgentSpawnError>
         args,
         cwd: Some(opts.cwd.clone()),
         remote_host: None,
+        lease: None,
     })
 }
 
@@ -130,7 +135,7 @@ pub fn spawn_codex_turn<F>(
 where
     F: Fn(AgentEvent) + Send + Sync + 'static,
 {
-    let turn_command = turn_command(&opts)?;
+    let mut turn_command = turn_command(&opts)?;
     let mut cmd = Command::new(&turn_command.program);
     cmd.args(&turn_command.args)
         .stdin(Stdio::null())
@@ -148,13 +153,28 @@ where
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
+    if let Some(lease) = turn_command.lease.as_ref() {
+        lease.prepare()?;
+    }
 
     let mut child = cmd.spawn()?;
+    if let Some(lease) = turn_command.lease.as_ref() {
+        if let Err(error) = lease.start_heartbeat() {
+            kill_and_wait_child(child);
+            return Err(AgentSpawnError::Io(error));
+        }
+    }
     let Some(stdout) = child.stdout.take() else {
+        if let Some(lease) = turn_command.lease.take() {
+            lease.stop();
+        }
         kill_and_wait_child(child);
         return Err(AgentSpawnError::MissingPipe("stdout"));
     };
     let Some(stderr) = child.stderr.take() else {
+        if let Some(lease) = turn_command.lease.take() {
+            lease.stop();
+        }
         kill_and_wait_child(child);
         return Err(AgentSpawnError::MissingPipe("stderr"));
     };
@@ -163,12 +183,14 @@ where
         child: Mutex::new(Some(child)),
         killed: AtomicBool::new(false),
         terminal_sent: AtomicBool::new(false),
+        lease: Mutex::new(turn_command.lease),
     });
     let sink = Arc::new(sink);
 
+    let stderr_state = Arc::clone(&state);
     let stderr_thread = std::thread::Builder::new()
         .name("codex-exec-stderr".to_string())
-        .spawn(move || drain(stderr));
+        .spawn(move || drain(stderr, stderr_state));
     let stderr_thread = match stderr_thread {
         Ok(handle) => handle,
         Err(err) => {
@@ -201,9 +223,33 @@ where
 
 impl CodexExecTurn {
     pub fn kill(&self) -> Result<(), AgentSpawnError> {
+        stop_state_lease(&self.state);
+        if self.state.terminal_sent.load(Ordering::SeqCst) {
+            signal_state_child(&self.state);
+            return Ok(());
+        }
         self.state.killed.store(true, Ordering::SeqCst);
         signal_state_child(&self.state);
         Ok(())
+    }
+
+    pub(crate) fn shutdown_bounded(&self) {
+        let terminal = self.state.terminal_sent.load(Ordering::SeqCst);
+        if !terminal {
+            self.state.killed.store(true, Ordering::SeqCst);
+        }
+        signal_state_child(&self.state);
+        stop_state_lease_bounded(&self.state);
+        if let Ok(mut reader) = self.reader_thread.lock() {
+            if let Some(thread) = reader.take() {
+                let _ = thread.join();
+            }
+        }
+        if let Ok(mut stderr) = self.stderr_thread.lock() {
+            if let Some(thread) = stderr.take() {
+                let _ = thread.join();
+            }
+        }
     }
 }
 
@@ -227,6 +273,7 @@ struct CodexTurnState {
     child: Mutex<Option<Child>>,
     killed: AtomicBool,
     terminal_sent: AtomicBool,
+    lease: Mutex<Option<RemoteLeaseHandle>>,
 }
 
 struct ParsedCodexLine {
@@ -372,14 +419,24 @@ fn read_loop<F>(
 where
     F: Fn(AgentEvent) + Send + Sync + 'static,
 {
-    let reader = BufReader::new(stdout);
-    for line in reader.lines() {
-        let Ok(line) = line else {
-            break;
-        };
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let mut reader_failed = false;
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => {
+                reader_failed = true;
+                break;
+            }
+        }
         let parsed = parse_codex_exec_line_parts(&line);
         if let Some(event) = parsed.event {
             if !dispatch_event(&sink, &state.terminal_sent, event) {
+                reader_failed = true;
                 break;
             }
         }
@@ -392,11 +449,18 @@ where
                 },
             )
         {
+            reader_failed = true;
             break;
         }
     }
 
+    if reader_failed {
+        stop_state_lease(&state);
+        signal_state_child(&state);
+    }
+
     let status = wait_state_child(&state);
+    finish_state_lease(&state);
     if state.terminal_sent.load(Ordering::SeqCst) {
         return;
     }
@@ -460,14 +524,19 @@ where
     std::panic::catch_unwind(AssertUnwindSafe(|| (sink.as_ref())(event))).is_ok()
 }
 
-fn drain(mut stderr: impl Read) {
+fn drain(mut stderr: impl Read, state: Arc<CodexTurnState>) {
     let mut buffer = [0u8; 8192];
     loop {
         match stderr.read(&mut buffer) {
             Ok(0) => break,
             Ok(_) => {}
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(_) => {
+                state.killed.store(true, Ordering::SeqCst);
+                stop_state_lease(&state);
+                signal_state_child(&state);
+                break;
+            }
         }
     }
 }
@@ -485,7 +554,32 @@ fn signal_state_child(state: &Arc<CodexTurnState>) {
     }
 }
 
+fn stop_state_lease(state: &Arc<CodexTurnState>) {
+    if let Ok(mut lease) = state.lease.lock() {
+        if let Some(lease) = lease.take() {
+            lease.stop();
+        }
+    }
+}
+
+fn stop_state_lease_bounded(state: &Arc<CodexTurnState>) {
+    if let Ok(mut lease) = state.lease.lock() {
+        if let Some(lease) = lease.take() {
+            lease.stop_bounded();
+        }
+    }
+}
+
+fn finish_state_lease(state: &Arc<CodexTurnState>) {
+    if let Ok(mut lease) = state.lease.lock() {
+        if let Some(lease) = lease.take() {
+            lease.finish_natural();
+        }
+    }
+}
+
 fn kill_state_child(state: &Arc<CodexTurnState>) {
+    stop_state_lease(state);
     if let Ok(mut child) = state.child.lock() {
         if let Some(child) = child.take() {
             kill_and_wait_child(child);
@@ -1009,7 +1103,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn runner_appends_completed_turn_done_once() {
+    fn kill_after_terminal_stops_remaining_lease_once() {
         let script = write_script(
             "clean",
             r#"#!/bin/sh
@@ -1018,11 +1112,21 @@ printf '%s\n' \
 '{"type":"turn.started"}' \
 '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"hello"}}' \
 '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":2}}'
+sleep 5
 "#,
         );
         let events = Arc::new(Mutex::new(Vec::new()));
-        let _turn = spawn_script_turn(&script, Arc::clone(&events));
+        let turn = spawn_script_turn(&script, Arc::clone(&events));
         let snapshot = wait_for_events(&events, |events| terminal_event_count(events) == 1);
+        assert!(turn.state.terminal_sent.load(Ordering::SeqCst));
+        let Ok(mut lease) = turn.state.lease.lock() else {
+            panic!("turn lease lock poisoned");
+        };
+        *lease = Some(crate::remote::RemoteLeaseHandle::new(
+            crate::remote::SshTarget::new("127.0.0.1").unwrap(),
+            Vec::new(),
+        ));
+        drop(lease);
 
         assert_eq!(
             snapshot,
@@ -1049,6 +1153,11 @@ printf '%s\n' \
             ]
         );
         assert_eq!(terminal_event_count(&snapshot), 1);
+        let started = std::time::Instant::now();
+        turn.kill().unwrap();
+        assert!(turn.state.lease.lock().is_ok_and(|lease| lease.is_none()));
+        drop(turn);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[cfg(unix)]

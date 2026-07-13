@@ -34,6 +34,8 @@ const STASH_IMAGE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub struct RemoteAgentInput {
     host: String,
     remote_root: String,
+    #[serde(default)]
+    remote_process_leases: bool,
 }
 
 impl From<RemoteAgentInput> for RemotePty {
@@ -41,6 +43,7 @@ impl From<RemoteAgentInput> for RemotePty {
         Self {
             host: value.host,
             remote_root: value.remote_root,
+            remote_process_leases: value.remote_process_leases,
         }
     }
 }
@@ -73,7 +76,8 @@ fn resolve_agent_chat_start(
     if let Some(remote) = remote {
         authorize_remote_pty(db, Some(project_root), Some(&remote))?;
         let remote_exec = RemoteExec::new(remote.host, remote.remote_root)
-            .map_err(|err| format!("remote agent authorization failed: {err}"))?;
+            .map_err(|err| format!("remote agent authorization failed: {err}"))?
+            .with_process_leases(remote.remote_process_leases);
         return Ok((
             PathBuf::from(&remote_exec.remote_root),
             Engine::V1,
@@ -95,7 +99,8 @@ fn resolve_agent_chat_start_with(
     if let Some(remote) = remote {
         authorize_remote_pty_with(db, Some(project_root), Some(&remote), authorize_host)?;
         let remote_exec = RemoteExec::new(remote.host, remote.remote_root)
-            .map_err(|err| format!("remote agent authorization failed: {err}"))?;
+            .map_err(|err| format!("remote agent authorization failed: {err}"))?
+            .with_process_leases(remote.remote_process_leases);
         return Ok((
             PathBuf::from(&remote_exec.remote_root),
             Engine::V1,
@@ -650,6 +655,7 @@ mod tests {
         RemotePty {
             host: host.to_string(),
             remote_root: remote_root.to_string(),
+            remote_process_leases: false,
         }
     }
 
@@ -708,12 +714,14 @@ mod tests {
         ))
         .unwrap();
 
+        let mut remote = remote("mac-mini", "/srv/app");
+        remote.remote_process_leases = true;
         let (cwd, engine, remote_exec) = resolve_agent_chat_start_with(
             &db,
             &ApprovedRoots::default(),
             "/not/present/locally",
             Engine::V2,
-            Some(remote("mac-mini", "/srv/app")),
+            Some(remote),
             |host| {
                 assert_eq!(host, "mac-mini");
                 Ok(())
@@ -723,7 +731,12 @@ mod tests {
 
         assert_eq!(cwd, PathBuf::from("/srv/app"));
         assert_eq!(engine, Engine::V1);
-        assert_eq!(remote_exec.unwrap().host, "mac-mini");
+        assert_eq!(
+            remote_exec.unwrap(),
+            RemoteExec::new("mac-mini", "/srv/app")
+                .unwrap()
+                .with_process_leases(true)
+        );
     }
 
     #[test]

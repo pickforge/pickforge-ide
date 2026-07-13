@@ -438,6 +438,7 @@ stty size > "$PF_FAKE_SSH_SIZE_AFTER" 2>/dev/null || true
                 remote: Some(RemotePty {
                     host: "mac-mini".to_string(),
                     remote_root: "/Users/dev/app root".to_string(),
+                    remote_process_leases: false,
                 }),
                 ..Default::default()
             },

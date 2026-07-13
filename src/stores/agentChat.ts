@@ -610,6 +610,9 @@ function reduceAgentEvent(
   switch (event.kind) {
     case "sessionStarted":
       return chat;
+    case "sessionTitle":
+    case "providerPayload":
+      return chat;
     case "turnStarted":
       return { ...chat, turnActive: true, error: null, providerSwitched: false };
     case "textDelta":
@@ -743,6 +746,17 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   if (!chat) return;
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
   const activeTitleTurn = activeTitleTurnByChat.get(chatId);
+  if (
+    flagEnabled("dynamicChatTitles")
+    && event.kind === "sessionTitle"
+    && activeTitleTurn
+    && !activeTitleTurn.hidden
+    && event.title.trim()
+  ) {
+    // Provider titles are only candidates. Commit at the completed-turn
+    // boundary through canAutoOwn/setChatTitle so a durable manual owner wins.
+    pendingProviderTitleByChat.set(chatId, event.title);
+  }
   if (flagEnabled("dynamicChatTitles") && event.kind === "planUpdate") {
     const candidate =
       event.items.find((item) => !item.completed)?.text ?? event.items[0]?.text ?? "";

@@ -56,9 +56,9 @@ import {
 } from "../../stores/workspace";
 import {
   isNativeAgentProvider,
-  NATIVE_AGENT_BACKENDS,
   normalizeAgentProvider,
 } from "../../lib/agentBackends";
+import { nativeAgentProfiles } from "../../lib/agentModels";
 import {
   loadAskChatTitle,
   loadDefaultChatKind,
@@ -95,8 +95,11 @@ import {
 
 const PROJECT_MIME = "application/x-pf-project";
 
-const AGENT_CHAT_PROVIDERS = NATIVE_AGENT_BACKENDS;
-const AGENT_CHAT_MARKS: Record<string, string> = { claudeCode: "CC", codex: "CX" };
+const AGENT_CHAT_MARKS: Record<string, string> = {
+  claudeCode: "CC",
+  codex: "CX",
+  omp: "OM",
+};
 const agentChatMark = (agentId: string): string =>
   AGENT_CHAT_MARKS[normalizeAgentProvider(agentId) ?? agentId] ?? "AI";
 
@@ -212,7 +215,10 @@ export function ProjectsPane() {
     void addChat(title?.trim() || DEFAULT_CHAT_TITLE, "claudeCode", root, "terminal");
   };
   const newAgentChat = (root: string, provider: string, title?: string) => {
-    if (!isNativeAgentProvider(provider)) return;
+    if (
+      !isNativeAgentProvider(provider)
+      || !nativeAgentProfiles().some((profile) => profile.id === provider)
+    ) return;
     if (!chatsExpanded(root)) toggleChats(root);
     setLastAgentProvider(provider);
     void addChat(title?.trim() || DEFAULT_CHAT_TITLE, provider, root, "agent");
@@ -487,7 +493,7 @@ export function ProjectsPane() {
         <button class="pf-menu-item pf-menu-item--accent" onClick={() => { newTerminalChat(p.root, title()); closeMenu(); }}>Terminal</button>
         <div class="pf-menu-sep" />
         <div class="pf-menu-label">Agent</div>
-        <For each={AGENT_CHAT_PROVIDERS}>
+        <For each={nativeAgentProfiles()}>
           {(a) => (
             <button class="pf-menu-item" onClick={() => { newAgentChat(p.root, a.id, title()); closeMenu(); }}>{a.label}</button>
           )}

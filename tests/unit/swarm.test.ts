@@ -100,6 +100,7 @@ vi.mock("../../src/lib/mcp", () => ({
 vi.mock("../../src/lib/agentModels", () => ({
   loadAgentModels: deps.loadAgentModels,
   modelOption: deps.modelOption,
+  ompNativeChatAvailable: vi.fn(() => false),
 }));
 vi.mock("../../src/lib/chatDefaults", () => ({ loadAgentEngine: deps.loadAgentEngine }));
 vi.mock("../../src/stores/agentChat", () => ({
@@ -297,7 +298,11 @@ describe("swarm dispatch", () => {
     expect(updatedRuns().at(-1)).toMatchObject({
       runId: completed.runId,
       synthesisStatus: "failed",
-      synthesisError: expect.stringContaining(`${label} native chat is not integrated yet`),
+      synthesisError: expect.stringContaining(
+        agentId === "omp"
+          ? "requires the ompPiAgents flag and compatible OMP 16.4.8 probe"
+          : `${label} native chat is not integrated yet`,
+      ),
     });
   });
 

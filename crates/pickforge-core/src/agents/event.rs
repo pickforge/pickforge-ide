@@ -85,6 +85,16 @@ pub enum AgentEvent {
     TurnFailed {
         error: String,
     },
+    SessionTitle {
+        title: String,
+    },
+    /// Opaque provider-native data accompanies normalized events so capability
+    /// adapters never erase protocol fields PickForge does not yet understand.
+    ProviderPayload {
+        provider: String,
+        method: String,
+        payload: serde_json::Value,
+    },
     Noise {
         line: String,
     },
@@ -254,6 +264,14 @@ mod tests {
             },
             AgentEvent::TurnFailed {
                 error: "failed".to_string(),
+            },
+            AgentEvent::SessionTitle {
+                title: "OMP session".to_string(),
+            },
+            AgentEvent::ProviderPayload {
+                provider: "omp".to_string(),
+                method: "session/update".to_string(),
+                payload: serde_json::json!({"sessionUpdate": "tool_call"}),
             },
             AgentEvent::Noise {
                 line: "raw line".to_string(),

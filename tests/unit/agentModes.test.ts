@@ -43,6 +43,12 @@ describe("modeOverrides", () => {
     });
   });
 
+  it("keeps unsafe OMP plan mode out of selectable controls", () => {
+    expect(modeOverrides("omp", "default")).toEqual({ permissionMode: "default" });
+    expect(modeOverrides("omp", "plan")).toEqual({ permissionMode: "default" });
+    expect(modeOverrides("omp", "unknown")).toEqual({ permissionMode: "default" });
+  });
+
   it("falls back to the provider default for null or unknown modes", () => {
     expect(modeOverrides("claudeCode", null)).toEqual({ permissionMode: "default" });
     expect(modeOverrides("claudeCode", "nonsense")).toEqual({ permissionMode: "default" });
@@ -60,29 +66,35 @@ describe("isDangerMode", () => {
     expect(isDangerMode("claudeCode", "default")).toBe(false);
     expect(isDangerMode("codex", "read-only")).toBe(false);
     expect(isDangerMode("claudeCode", null)).toBe(false);
+    expect(isDangerMode("omp", "plan")).toBe(false);
   });
 });
 
 describe("loadAgentModes / setAgentMode", () => {
   it("returns provider defaults when nothing is stored", () => {
-    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto" });
+    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto", omp: "default" });
     expect(defaultMode("claudeCode")).toBe("default");
     expect(defaultMode("codex")).toBe("auto");
+    expect(defaultMode("omp")).toBe("default");
   });
 
   it("round-trips a persisted mode", () => {
     setAgentMode("codex", "read-only");
     setAgentMode("claudeCode", "plan");
-    expect(loadAgentModes()).toEqual({ claudeCode: "plan", codex: "read-only" });
+    expect(loadAgentModes()).toEqual({
+      claudeCode: "plan",
+      codex: "read-only",
+      omp: "default",
+    });
   });
 
   it("drops invalid stored values back to the default", () => {
     store.set("pickforge.agentModes", JSON.stringify({ codex: "bogus", claudeCode: "plan" }));
-    expect(loadAgentModes()).toEqual({ claudeCode: "plan", codex: "auto" });
+    expect(loadAgentModes()).toEqual({ claudeCode: "plan", codex: "auto", omp: "default" });
   });
 
   it("falls back to defaults on malformed json", () => {
     store.set("pickforge.agentModes", "{not json");
-    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto" });
+    expect(loadAgentModes()).toEqual({ claudeCode: "default", codex: "auto", omp: "default" });
   });
 });

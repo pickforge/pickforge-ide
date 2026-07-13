@@ -17,12 +17,16 @@ use super::codex_app::{
 };
 use super::codex_exec::{spawn_codex_turn, CodexExecTurn, CodexTurnOptions};
 use super::event::AgentEvent;
+use super::omp_acp::{
+    validate_omp_mcp_servers, OmpAcpClient, OmpAcpOptions, OmpAcpSessionOpen,
+};
 use super::remote_exec::RemoteExec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgentProvider {
     ClaudeCode,
     Codex,
+    Omp,
 }
 
 impl AgentProvider {
@@ -30,6 +34,7 @@ impl AgentProvider {
         match self {
             Self::ClaudeCode => "claudeCode",
             Self::Codex => "codex",
+            Self::Omp => "omp",
         }
     }
 }
@@ -41,6 +46,7 @@ impl FromStr for AgentProvider {
         match value {
             "claudeCode" => Ok(Self::ClaudeCode),
             "codex" => Ok(Self::Codex),
+            "omp" => Ok(Self::Omp),
             _ => Err(AgentChatError::BadProvider),
         }
     }
@@ -81,6 +87,7 @@ pub struct AgentStartOverrides {
     /// via `send`, so this is ignored there.
     pub effort: Option<String>,
     pub remote: Option<RemoteExec>,
+    pub mcp_servers: Vec<serde_json::Value>,
 }
 
 #[derive(Clone)]
@@ -125,6 +132,14 @@ struct SessionState {
     /// sink when a reloaded webview re-attaches mid-turn — without this the
     /// rebuilt UI has no prompt while the agent stays blocked waiting.
     pending_approvals: Vec<(String, AgentEvent)>,
+    omp_client: Option<Arc<OmpAcpClient>>,
+    omp_identity: Option<OmpClientIdentity>,
+}
+
+#[derive(Clone, PartialEq)]
+struct OmpClientIdentity {
+    canonical_project_root: PathBuf,
+    normalized_mcp_grants: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -171,6 +186,9 @@ enum ActiveTurnHandle {
         client: Arc<ClaudeBridgeClient>,
         chat_id: String,
     },
+    Omp {
+        client: Arc<OmpAcpClient>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -206,10 +224,12 @@ impl AgentChatManager {
         }
     }
 
+    /// Trusted internal capability. Product rollout/UI gating belongs to the
+    /// typed renderer flag; callers that reach the manager may start OMP.
     pub fn start(
         &self,
         chat_id: &str,
-        project_root: PathBuf,
+        mut project_root: PathBuf,
         provider: AgentProvider,
         engine: Engine,
         model: Option<String>,
@@ -222,6 +242,60 @@ impl AgentChatManager {
         if engine == Engine::V1 && provider == AgentProvider::ClaudeCode {
             claude_v1_permission_mode(overrides.permission_mode.clone())?;
             claude_v1_allowed_tools(overrides.allowed_tools.clone())?;
+        }
+        if provider == AgentProvider::Omp && (engine != Engine::V2 || remote.is_some()) {
+            return Err(AgentChatError::Unsupported(
+                "OMP ACP native chat requires the local v2 engine".to_string(),
+            ));
+        }
+        let omp_identity = if provider == AgentProvider::Omp {
+            validate_omp_mcp_servers(&overrides.mcp_servers)
+                .map_err(|err| AgentChatError::Unsupported(err.to_string()))?;
+            let canonical_project_root = std::fs::canonicalize(&project_root).map_err(|error| {
+                AgentChatError::Spawn(format!("failed to canonicalize OMP session cwd: {error}"))
+            })?;
+            project_root = canonical_project_root.clone();
+            Some(OmpClientIdentity {
+                canonical_project_root,
+                normalized_mcp_grants: normalize_omp_mcp_grants(&overrides.mcp_servers),
+            })
+        } else {
+            None
+        };
+        let existing_omp = if provider == AgentProvider::Omp {
+            self.lock_inner()?
+                .values()
+                .find(|state| state.chat_id == chat_id && state.provider == AgentProvider::Omp)
+                .and_then(|state| {
+                    state.omp_client.as_ref().map(|client| {
+                        (
+                            Arc::clone(client),
+                            state.model.clone(),
+                            state.omp_identity.clone(),
+                        )
+                    })
+                })
+        } else {
+            None
+        };
+        let reusable_omp = existing_omp.as_ref().and_then(
+            |(client, current_model, current_identity)| {
+                (!client.is_closed() && current_identity.as_ref() == omp_identity.as_ref())
+                    .then(|| (Arc::clone(client), current_model.clone()))
+            },
+        );
+        if let Some((client, _, current_identity)) = existing_omp.as_ref() {
+            if !client.is_closed() && current_identity.as_ref() != omp_identity.as_ref() {
+                client.close();
+            }
+        }
+        if reusable_omp
+            .as_ref()
+            .is_some_and(|(_, current_model)| current_model.is_some() && model.is_none())
+        {
+            return Err(AgentChatError::Unsupported(
+                "OMP model selection cannot be cleared on a live session".to_string(),
+            ));
         }
         let latest = self.db.latest_agent_session_for_chat(chat_id)?;
         let (session_id, persisted_provider_session_id) =
@@ -321,6 +395,8 @@ impl AgentChatManager {
                     active_turn: None,
                     terminal_pending: false,
                     pending_approvals: Vec::new(),
+                    omp_client: None,
+                    omp_identity: omp_identity.clone(),
                 },
             );
         }
@@ -378,6 +454,54 @@ impl AgentChatManager {
                     )
                     .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
             }
+            (Engine::V2, AgentProvider::Omp) => {
+                if let Some((client, current_model)) = reusable_omp {
+                    client
+                        .set_sink(self.wrapping_sink(session_id.clone(), chat_id.to_string()))
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                    if current_model != model {
+                        if let Some(model) = model.as_deref() {
+                            client
+                                .set_model(model)
+                                .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                        }
+                    }
+                    if let Some(state) = self.lock_inner()?.get_mut(&session_id) {
+                        state.omp_client = Some(client);
+                    }
+                } else {
+                    let client = OmpAcpClient::spawn(OmpAcpOptions {
+                        binary: self
+                            .omp_binary()
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|| PathBuf::from("omp")),
+                        project_root,
+                        session: provider_session_id
+                            .map(OmpAcpSessionOpen::Resume)
+                            .unwrap_or(OmpAcpSessionOpen::New),
+                        model,
+                        mcp_servers: overrides.mcp_servers,
+                        sink: self.wrapping_sink(session_id.clone(), chat_id.to_string()),
+                    })
+                    .map(Arc::new)
+                    .map_err(|err| {
+                        if let Ok(mut inner) = self.inner.lock() {
+                            inner.remove(&session_id);
+                        }
+                        let _ = self.db.agent_session_set_status(&session_id, "failed");
+                        AgentChatError::Spawn(err.to_string())
+                    })?;
+                    let provider_session_id = client
+                        .provider_session_id()
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+                    self.db
+                        .agent_session_set_provider_session_id(&session_id, &provider_session_id)?;
+                    if let Some(state) = self.lock_inner()?.get_mut(&session_id) {
+                        state.provider_session_id = Some(provider_session_id);
+                        state.omp_client = Some(client);
+                    }
+                }
+            }
             (Engine::V1, _) => {}
         }
 
@@ -418,6 +542,7 @@ impl AgentChatManager {
             session_effort,
             permission_mode,
             allowed_tools,
+            omp_client,
         ) = {
             let mut inner = self.lock_inner()?;
             let state = inner
@@ -433,7 +558,7 @@ impl AgentChatManager {
             }
             state.last_turn_model = match state.provider {
                 AgentProvider::Codex => turn_model.clone().or_else(|| state.model.clone()),
-                AgentProvider::ClaudeCode => state.model.clone(),
+                AgentProvider::ClaudeCode | AgentProvider::Omp => state.model.clone(),
             };
             (
                 state.chat_id.clone(),
@@ -448,6 +573,7 @@ impl AgentChatManager {
                 state.effort.clone(),
                 state.permission_mode.clone(),
                 state.allowed_tools.clone(),
+                state.omp_client.clone(),
             )
         };
         let codex_model = turn_model.or_else(|| session_model.clone());
@@ -649,6 +775,32 @@ impl AgentChatManager {
             };
         }
 
+        if engine == Engine::V2 && provider == AgentProvider::Omp {
+            let client = omp_client.ok_or_else(|| {
+                AgentChatError::Spawn("OMP ACP client is not running".to_string())
+            })?;
+            if !self.claim_turn(
+                session_id,
+                ActiveTurn::new(ActiveTurnHandle::Omp {
+                    client: Arc::clone(&client),
+                }),
+            )? {
+                return Ok(());
+            }
+            let prompt_seqs =
+                persist_prompt(&self.db).map_err(|err| self.abort_send(session_id, err))?;
+            return match client.prompt(text, &images) {
+                Ok(()) => Ok(()),
+                Err(err) => {
+                    rollback_prompt(&prompt_seqs);
+                    if let Some(turn) = clear_active_turn(&self.inner, session_id) {
+                        turn.reap();
+                    }
+                    let _ = self.db.agent_session_set_status(session_id, "idle");
+                    Err(AgentChatError::Spawn(err.to_string()))
+                }
+            };
+        }
         // V1 one-shot engine: the handle only exists after spawn, so a fast
         // process failure can emit its terminal event before the turn is
         // claimed. persist_prompt runs before spawn (seq order), and claim_turn
@@ -695,6 +847,9 @@ impl AgentChatManager {
                 .map(ActiveTurnHandle::Claude)
                 .map_err(|err| AgentChatError::Spawn(err.to_string()))
             }
+            (Engine::V1, AgentProvider::Omp) => Err(AgentChatError::Unsupported(
+                "OMP ACP requires the v2 agent engine".to_string(),
+            )),
             (Engine::V2, _) => unreachable!("handled before match"),
         };
 
@@ -773,12 +928,17 @@ impl AgentChatManager {
         approval_id: &str,
         decision: &str,
     ) -> Result<(), AgentChatError> {
-        let (engine, provider, project_root) = {
+        let (engine, provider, project_root, omp_client) = {
             let inner = self.lock_inner()?;
             let state = inner
                 .get(session_id)
                 .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
-            (state.engine, state.provider, state.project_root.clone())
+            (
+                state.engine,
+                state.provider,
+                state.project_root.clone(),
+                state.omp_client.clone(),
+            )
         };
 
         let result = match (engine, provider) {
@@ -804,6 +964,10 @@ impl AgentChatManager {
             (Engine::V2, AgentProvider::ClaudeCode) => self
                 .cached_claude_bridge_client()?
                 .chat_approve(session_id, approval_id, decision)
+                .map_err(|err| AgentChatError::Spawn(err.to_string())),
+            (Engine::V2, AgentProvider::Omp) => omp_client
+                .ok_or_else(|| AgentChatError::Spawn("OMP ACP client is not running".to_string()))?
+                .approve(approval_id, decision)
                 .map_err(|err| AgentChatError::Spawn(err.to_string())),
             (Engine::V1, _) => Err(AgentChatError::Unsupported(
                 "approvals require the v2 agent engine".to_string(),
@@ -856,6 +1020,9 @@ impl AgentChatManager {
             (Engine::V2, AgentProvider::ClaudeCode) => Err(AgentChatError::Unsupported(
                 "claude steering is not supported until SDK steering is available".to_string(),
             )),
+            (Engine::V2, AgentProvider::Omp) => Err(AgentChatError::Unsupported(
+                "OMP ACP does not advertise turn steering".to_string(),
+            )),
             (Engine::V1, _) => Err(AgentChatError::Unsupported(
                 "steering requires the v2 agent engine".to_string(),
             )),
@@ -871,21 +1038,36 @@ impl AgentChatManager {
         model: Option<String>,
     ) -> Result<(), AgentChatError> {
         let model = non_empty(model);
-        let (provider, engine) = {
-            let mut inner = self.lock_inner()?;
+        let (provider, engine, omp_client) = {
+            let inner = self.lock_inner()?;
             let state = inner
-                .get_mut(session_id)
+                .get(session_id)
                 .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
-            state.model = model.clone();
-            (state.provider, state.engine)
+            (state.provider, state.engine, state.omp_client.clone())
         };
-        self.db.agent_session_set_model(session_id, model.as_deref())?;
+        if engine == Engine::V2 && provider == AgentProvider::Omp {
+            let model_id = model.as_deref().ok_or_else(|| {
+                AgentChatError::Unsupported("OMP model selection cannot be cleared".to_string())
+            })?;
+            omp_client
+                .ok_or_else(|| AgentChatError::Spawn("OMP ACP client is not running".to_string()))?
+                .set_model(model_id)
+                .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+        }
         if engine == Engine::V2 && provider == AgentProvider::ClaudeCode {
             let client = self.claude_bridge_client()?;
             client
                 .chat_set_model(session_id, model.as_deref())
                 .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
         }
+        {
+            let mut inner = self.lock_inner()?;
+            let state = inner
+                .get_mut(session_id)
+                .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+            state.model = model.clone();
+        }
+        self.db.agent_session_set_model(session_id, model.as_deref())?;
         Ok(())
     }
 
@@ -899,6 +1081,21 @@ impl AgentChatManager {
         let sandbox = sandbox.map(|value| non_empty(Some(value)));
         let approval_policy = approval_policy.map(|value| non_empty(Some(value)));
         let permission_mode = permission_mode.map(|value| non_empty(Some(value)));
+        if let Some(mode) = permission_mode.as_ref().and_then(|mode| mode.as_deref()) {
+            let omp_client = {
+                let inner = self.lock_inner()?;
+                let state = inner
+                    .get(session_id)
+                    .ok_or_else(|| AgentChatError::UnknownSession(session_id.to_string()))?;
+                (state.provider == AgentProvider::Omp).then(|| state.omp_client.clone())
+            }
+            .flatten();
+            if let Some(client) = omp_client {
+                client
+                    .set_mode(mode)
+                    .map_err(|err| AgentChatError::Spawn(err.to_string()))?;
+            }
+        }
         let push_permission_mode = {
             let mut inner = self.lock_inner()?;
             let state = inner
@@ -1264,6 +1461,11 @@ impl AgentChatManager {
                     }
                 }
             }
+            (Engine::V2, AgentProvider::Omp) => {
+                if let Some(client) = state.omp_client {
+                    client.close();
+                }
+            }
             (Engine::V1, _) => {}
         }
         let _ = self.db.agent_session_set_status(session_id, "idle");
@@ -1283,6 +1485,7 @@ impl AgentChatManager {
         app_root: PathBuf,
         codex_binary: Option<String>,
         claude_binary: Option<String>,
+        omp_binary: Option<String>,
     ) -> Self {
         Self {
             db,
@@ -1295,6 +1498,7 @@ impl AgentChatManager {
             test_binaries: TestBinaries {
                 codex: codex_binary,
                 claude: claude_binary,
+                omp: omp_binary,
             },
         }
     }
@@ -1318,6 +1522,16 @@ impl AgentChatManager {
     fn claude_binary(&self) -> Option<String> {
         None
     }
+    #[cfg(test)]
+    fn omp_binary(&self) -> Option<String> {
+        self.test_binaries.omp.clone()
+    }
+
+    #[cfg(not(test))]
+    fn omp_binary(&self) -> Option<String> {
+        None
+    }
+
 }
 
 /// Packaged builds ship the bridge as the self-contained
@@ -1371,6 +1585,7 @@ fn upsert_session_state(
         existing.permission_mode = state.permission_mode;
         existing.allowed_tools = state.allowed_tools;
         existing.provider_session_id = state.provider_session_id;
+        existing.omp_identity = state.omp_identity;
         existing.sink = state.sink;
     } else {
         inner.insert(session_id, state);
@@ -1408,6 +1623,11 @@ impl ActiveTurn {
                 Some(ActiveTurnHandle::ClaudeBridge { client, chat_id }) => {
                     return client
                         .chat_interrupt(chat_id)
+                        .map_err(|err| AgentChatError::Spawn(err.to_string()));
+                }
+                Some(ActiveTurnHandle::Omp { client }) => {
+                    return client
+                        .cancel()
                         .map_err(|err| AgentChatError::Spawn(err.to_string()));
                 }
                 Some(ActiveTurnHandle::CodexApp {
@@ -1538,9 +1758,19 @@ fn handle_runner_event(
     let turn_scoped = !matches!(
         &event,
         AgentEvent::SessionStarted { .. }
+            | AgentEvent::SessionTitle { .. }
+            | AgentEvent::ProviderPayload { .. }
             | AgentEvent::RateLimits { .. }
             | AgentEvent::Noise { .. }
     );
+    if !session_present
+        && matches!(
+            &event,
+            AgentEvent::SessionTitle { .. } | AgentEvent::ProviderPayload { .. }
+        )
+    {
+        return;
+    }
     if turn_scoped && (!session_present || (is_v2 && !has_turn)) {
         return;
     }
@@ -1601,6 +1831,11 @@ fn handle_runner_event(
                 errors.push(err);
             }
         }
+        AgentEvent::SessionTitle { .. } | AgentEvent::ProviderPayload { .. } => {
+            if let Err(err) = append_item(db, session_id, chat_id, &event) {
+                errors.push(err);
+            }
+        }
         AgentEvent::Usage { .. } => {
             let model = inner.lock().ok().and_then(|states| {
                 states.get(session_id).and_then(|state| {
@@ -1628,7 +1863,18 @@ fn handle_runner_event(
             if let Err(err) = append_item(db, session_id, chat_id, &event) {
                 errors.push(err);
             }
-            if let Err(err) = db.agent_session_set_status(session_id, "failed") {
+            let status = inner
+                .lock()
+                .ok()
+                .and_then(|states| states.get(session_id).map(|state| state.provider))
+                .map_or("failed", |provider| {
+                    if provider == AgentProvider::Omp {
+                        "idle"
+                    } else {
+                        "failed"
+                    }
+                });
+            if let Err(err) = db.agent_session_set_status(session_id, status) {
                 errors.push(err.to_string());
             }
             active_turn = clear_active_turn(inner, session_id);
@@ -1777,6 +2023,39 @@ fn next_session_id(now: i64) -> String {
     format!("asess-{now}-{suffix}")
 }
 
+fn normalize_omp_mcp_grants(servers: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    fn normalize(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(values) => {
+                serde_json::Value::Array(values.iter().map(normalize).collect())
+            }
+            serde_json::Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+                let mut normalized = serde_json::Map::new();
+                for (key, value) in entries {
+                    normalized.insert(key.clone(), normalize(value));
+                }
+                serde_json::Value::Object(normalized)
+            }
+            value => value.clone(),
+        }
+    }
+
+    let mut normalized = servers
+        .iter()
+        .map(normalize)
+        .map(|value| {
+            (
+                serde_json::to_string(&value).expect("JSON values are serializable"),
+                value,
+            )
+        })
+        .collect::<Vec<_>>();
+    normalized.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    normalized.into_iter().map(|(_, value)| value).collect()
+}
+
 fn non_empty(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
@@ -1812,6 +2091,9 @@ fn v1_turn_overrides(
             allowed_tools: claude_v1_allowed_tools(allowed_tools)?,
             ..V1TurnOverrides::default()
         }),
+        AgentProvider::Omp => Err(AgentChatError::Unsupported(
+            "OMP ACP requires the v2 agent engine".to_string(),
+        )),
     }
 }
 
@@ -1881,6 +2163,7 @@ fn local_provider_session_id(provider_session_id: Option<String>) -> Option<Stri
 struct TestBinaries {
     codex: Option<String>,
     claude: Option<String>,
+    omp: Option<String>,
 }
 
 #[cfg(test)]
@@ -1934,6 +2217,7 @@ mod tests {
             script.dir.clone(),
             Some(script.path.to_string_lossy().to_string()),
             None,
+            None,
         )
     }
 
@@ -1942,6 +2226,18 @@ mod tests {
         AgentChatManager::with_test_binaries(
             db,
             script.dir.clone(),
+            None,
+            Some(script.path.to_string_lossy().to_string()),
+            None,
+        )
+    }
+
+    #[cfg(unix)]
+    fn omp_manager(db: Arc<Database>, script: &TestScript) -> AgentChatManager {
+        AgentChatManager::with_test_binaries(
+            db,
+            script.dir.clone(),
+            None,
             None,
             Some(script.path.to_string_lossy().to_string()),
         )
@@ -1956,6 +2252,7 @@ mod tests {
         let sink = Arc::new(move |event| sink_events.lock().unwrap().push(event));
         (events, sink)
     }
+
 
     #[cfg(unix)]
     fn wait_for_events(
@@ -2020,6 +2317,447 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(!process_alive(pid), "process {pid} should be gone");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_manager_lifecycle_reuses_live_client_and_resumes_after_dispose() {
+        let log = std::env::temp_dir().join(format!(
+            "pickforge-omp-manager-{}-{}.log",
+            std::process::id(),
+            now_millis()
+        ));
+        let body = r#"#!/bin/sh
+log='__LOG__'
+printf 'launch\n' >> "$log"
+prompt_count=0
+prompt_id=
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/new"'*|*'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-manager-session","modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
+      ;;
+    *'"method":"session/prompt"'*)
+      request_id=${line#*\"id\":}
+      request_id=${request_id%%,*}
+      prompt_id=$request_id
+      prompt_count=$((prompt_count + 1))
+      if [ "$prompt_count" -eq 1 ]; then
+        printf '%s\n' '{"jsonrpc":"2.0","id":"permission-1","method":"session/request_permission","params":{"sessionId":"omp-manager-session","toolCall":{"toolCallId":"tool-1","title":"Run checks","kind":"execute"},"options":[{"optionId":"once","kind":"allow_once"},{"optionId":"reject","kind":"reject_once"}]}}'
+      else
+        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}}}'
+        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"usage_update","size":100,"used":10}}}'
+        printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-manager-session","update":{"sessionUpdate":"session_info_update","title":"OMP managed title"}}}'
+        printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"stopReason\":\"end_turn\",\"usage\":{\"inputTokens\":2,\"outputTokens\":3,\"totalTokens\":5}}}"
+      fi
+      ;;
+    *'"method":"session/set_mode"'*)
+      request_id=${line#*\"id\":}
+      request_id=${request_id%%,*}
+      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{}}"
+      ;;
+    *'"method":"session/cancel"'*)
+      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$prompt_id,\"result\":{\"stopReason\":\"cancelled\"}}"
+      ;;
+    *'"method":"session/close"'*)
+      exit 0
+      ;;
+  esac
+done
+"#
+        .replace("__LOG__", &log.to_string_lossy());
+        let script = test_script("omp-lifecycle", &body);
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let (events1, sink1) = event_sink();
+        let session_id = manager
+            .start(
+                "omp-chat",
+                script.dir.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink1,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "first", None, None, None)
+            .unwrap();
+        let approval_id = wait_for_events(&events1, |events| {
+            events.iter().any(|event| matches!(event, AgentEvent::ApprovalRequest { .. }))
+        })
+        .into_iter()
+        .find_map(|event| match event {
+            AgentEvent::ApprovalRequest { approval_id, .. } => Some(approval_id),
+            _ => None,
+        })
+        .unwrap();
+
+        let (events2, sink2) = event_sink();
+        assert_eq!(
+            manager
+                .start(
+                    "omp-chat",
+                    script.dir.clone(),
+                    AgentProvider::Omp,
+                    Engine::V2,
+                    None,
+                    AgentStartOverrides::default(),
+                    sink2,
+                )
+                .unwrap(),
+            session_id
+        );
+        wait_for_events(&events2, |events| {
+            events.iter().any(|event| matches!(event, AgentEvent::TurnStarted))
+                && events.iter().any(|event| matches!(event, AgentEvent::ApprovalRequest { .. }))
+        });
+        assert_eq!(
+            wait_for_file(&log, |value| value.matches("launch\n").count() == 1)
+                .matches("launch\n")
+                .count(),
+            1
+        );
+
+        manager.approve(&session_id, &approval_id, "accept").unwrap();
+        manager
+            .set_mode(&session_id, None, None, Some("default".to_string()))
+            .unwrap();
+        assert!(matches!(
+            manager.set_mode(&session_id, None, None, Some("plan".to_string())),
+            Err(AgentChatError::Spawn(message)) if message.contains("did not advertise mode plan")
+        ));
+        manager.interrupt(&session_id).unwrap();
+        wait_for_events(&events2, |events| {
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::TurnDone {
+                    status: TurnStatus::Interrupted
+                }
+            ))
+        });
+        manager
+            .send(&session_id, "second", None, None, None)
+            .unwrap();
+        let completed = wait_for_events(&events2, |events| {
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::TurnDone {
+                    status: TurnStatus::Completed
+                }
+            ))
+        });
+        assert!(completed
+            .iter()
+            .any(|event| matches!(event, AgentEvent::SessionTitle { title } if title == "OMP managed title")));
+        assert!(completed.iter().any(|event| matches!(
+            event,
+            AgentEvent::Usage {
+                context_used: Some(10),
+                context_window: Some(100),
+                ..
+            }
+        )));
+        wait_for_status(&db, "omp-chat", "idle");
+        manager.dispose(&session_id);
+
+        let (_, sink3) = event_sink();
+        let resumed = manager
+            .start(
+                "omp-chat",
+                script.dir.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink3,
+            )
+            .unwrap();
+        assert_eq!(resumed, session_id);
+        let log_contents = wait_for_file(&log, |value| {
+            value.matches("launch\n").count() == 2 && value.contains("\"method\":\"session/resume\"")
+        });
+        assert!(log_contents.contains("\"optionId\":\"once\""));
+        assert!(log_contents.contains("\"method\":\"session/set_mode\""));
+        assert!(log_contents.contains("\"mcpServers\":[]"));
+        manager.dispose(&resumed);
+        let _ = std::fs::remove_file(log);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_live_reuse_requires_exact_canonical_cwd_and_normalized_mcp_grants() {
+        use std::os::unix::fs::symlink;
+
+        let log = std::env::temp_dir().join(format!(
+            "pickforge-omp-identity-{}-{}.log",
+            std::process::id(),
+            now_millis()
+        ));
+        let body = r#"#!/bin/sh
+log='__LOG__'
+printf 'launch\n' >> "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/new"'*|*'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-identity-session"}}'
+      ;;
+    *'"method":"session/close"'*)
+      exit 0
+      ;;
+  esac
+done"#
+        .replace("__LOG__", &log.to_string_lossy());
+        let script = test_script("omp-identity", &body);
+        let real_root = script.dir.join("real-root");
+        let other_root = script.dir.join("other-root");
+        let alias_root = script.dir.join("alias-root");
+        std::fs::create_dir_all(&real_root).unwrap();
+        std::fs::create_dir_all(&other_root).unwrap();
+        symlink(&real_root, &alias_root).unwrap();
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let grants = vec![
+            serde_json::json!({
+                "name": "stdio",
+                "command": "pickforge-mcp",
+                "args": ["--scope", "project"],
+                "env": {"PICKFORGE_TEST_TOKEN": "first"}
+            }),
+            serde_json::json!({
+                "name": "remote",
+                "type": "http",
+                "url": "https://mcp.invalid",
+                "headers": {"Authorization": "Bearer test"}
+            }),
+        ];
+        let overrides = |mcp_servers| AgentStartOverrides {
+            mcp_servers,
+            ..AgentStartOverrides::default()
+        };
+        let (_, first_sink) = event_sink();
+        let session_id = manager
+            .start(
+                "omp-identity-chat",
+                real_root.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                overrides(grants.clone()),
+                first_sink,
+            )
+            .unwrap();
+
+        let (_, alias_sink) = event_sink();
+        manager
+            .start(
+                "omp-identity-chat",
+                alias_root,
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                overrides(grants.iter().cloned().rev().collect()),
+                alias_sink,
+            )
+            .unwrap();
+        assert_eq!(
+            wait_for_file(&log, |value| value.matches("launch\n").count() == 1)
+                .matches("launch\n")
+                .count(),
+            1
+        );
+
+        let mut changed_grants = grants.clone();
+        changed_grants[0]["env"]["PICKFORGE_TEST_TOKEN"] =
+            serde_json::Value::String("second".to_string());
+        let (_, changed_sink) = event_sink();
+        manager
+            .start(
+                "omp-identity-chat",
+                real_root.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                overrides(changed_grants.clone()),
+                changed_sink,
+            )
+            .unwrap();
+        let (_, cwd_sink) = event_sink();
+        manager
+            .start(
+                "omp-identity-chat",
+                other_root.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                overrides(changed_grants),
+                cwd_sink,
+            )
+            .unwrap();
+
+        let contents = wait_for_file(&log, |value| value.matches("launch\n").count() == 3);
+        let opened = contents
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|value| {
+                matches!(
+                    value.get("method").and_then(serde_json::Value::as_str),
+                    Some("session/new" | "session/resume")
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(opened.len(), 3);
+        assert_eq!(
+            opened[0]["params"]["cwd"],
+            real_root.canonicalize().unwrap().to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            opened[1]["params"]["mcpServers"][0]["env"]["PICKFORGE_TEST_TOKEN"],
+            "second"
+        );
+        assert_eq!(
+            opened[2]["params"]["cwd"],
+            other_root.canonicalize().unwrap().to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            opened
+                .iter()
+                .filter(|value| value["method"] == "session/resume")
+                .count(),
+            2
+        );
+        manager.dispose(&session_id);
+        let _ = std::fs::remove_file(log);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_dead_transport_fails_boundedly_idles_and_resumes_on_restart() {
+        let log = std::env::temp_dir().join(format!(
+            "pickforge-omp-dead-{}-{}.log",
+            std::process::id(),
+            now_millis()
+        ));
+        let body = r#"#!/bin/sh
+log='__LOG__'
+marker="$log.recover"
+if [ -f "$marker" ]; then
+  recovered=1
+else
+  recovered=0
+  : > "$marker"
+fi
+printf 'launch\n' >> "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/new"'*|*'"method":"session/resume"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-dead-session"}}'
+      ;;
+    *'"method":"session/prompt"'*)
+      if [ "$recovered" -eq 0 ]; then
+        exit 9
+      fi
+      request_id=${line#*\"id\":}
+      request_id=${request_id%%,*}
+      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"stopReason\":\"end_turn\"}}"
+      ;;
+    *'"method":"session/close"'*)
+      exit 0
+      ;;
+  esac
+done"#
+        .replace("__LOG__", &log.to_string_lossy());
+        let script = test_script("omp-dead", &body);
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "omp-dead-chat",
+                script.dir.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "crash transport", None, None, None)
+            .unwrap();
+        wait_for_events(&events, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnFailed { .. }))
+        });
+        wait_for_status(&db, "omp-dead-chat", "idle");
+
+        let started = Instant::now();
+        assert!(matches!(
+            manager.send(&session_id, "reject while closed", None, None, None),
+            Err(AgentChatError::Spawn(message)) if message.contains("closed")
+        ));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "closed transport rejection was not synchronous"
+        );
+        wait_for_status(&db, "omp-dead-chat", "idle");
+        assert!(
+            manager
+                .lock_inner()
+                .unwrap()
+                .get(&session_id)
+                .is_some_and(|state| state.active_turn.is_none()),
+            "closed transport left a retained manager turn active"
+        );
+
+        let (recovered_events, recovered_sink) = event_sink();
+        assert_eq!(
+            manager
+                .start(
+                    "omp-dead-chat",
+                    script.dir.clone(),
+                    AgentProvider::Omp,
+                    Engine::V2,
+                    None,
+                    AgentStartOverrides::default(),
+                    recovered_sink,
+                )
+                .unwrap(),
+            session_id
+        );
+        manager
+            .send(&session_id, "after restart", None, None, None)
+            .unwrap();
+        wait_for_events(&recovered_events, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    AgentEvent::TurnDone {
+                        status: TurnStatus::Completed
+                    }
+                )
+            })
+        });
+        let contents = wait_for_file(&log, |value| value.matches("launch\n").count() == 2);
+        assert!(contents.contains("\"method\":\"session/resume\""));
+        wait_for_status(&db, "omp-dead-chat", "idle");
+        manager.dispose(&session_id);
+        let _ = std::fs::remove_file(format!("{}.recover", log.display()));
+        let _ = std::fs::remove_file(log);
     }
 
     #[test]

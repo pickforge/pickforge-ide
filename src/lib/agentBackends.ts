@@ -1,8 +1,9 @@
+import { flagEnabled } from "../stores/flags";
 
 export type AgentEngine = "v1" | "v2";
 export type AgentBackendId = "claudeCode" | "codex" | "omp" | "pi";
-export type AgentProvider = "claudeCode" | "codex";
-export type AgentBackendKind = "claudeAgentSdk" | "codexAppServer" | "terminal";
+export type AgentProvider = "claudeCode" | "codex" | "omp";
+export type AgentBackendKind = "claudeAgentSdk" | "codexAppServer" | "ompAcp" | "terminal";
 export type AgentBackendProtocol = "native" | "acp" | "rpc";
 export type AgentProtocolAvailability = "integrated" | "availableNotIntegrated";
 export type AgentCapabilitySupport = "supported" | "unsupported" | "unknown";
@@ -74,10 +75,16 @@ export interface AgentBackendDescriptor {
   readonly capabilities: AgentBackendCapabilityMatrix;
   readonly lifecycle: Readonly<{
     start: Readonly<
-      Record<AgentEngine, "oneShotProcess" | "residentBridgeChat" | "appServerThread" | "unsupported">
+      Record<
+        AgentEngine,
+        "oneShotProcess" | "residentBridgeChat" | "appServerThread" | "acpSession" | "unsupported"
+      >
     >;
     close: Readonly<
-      Record<AgentEngine, "killActiveProcess" | "closeBridgeChat" | "unsubscribeThread" | "unsupported">
+      Record<
+        AgentEngine,
+        "killActiveProcess" | "closeBridgeChat" | "unsubscribeThread" | "closeAcpSession" | "unsupported"
+      >
     >;
     resume: Readonly<Record<AgentEngine, "providerSessionId" | "unsupported">>;
     remote: "v1SshProcess" | "unknown";
@@ -141,7 +148,6 @@ function unknown(reason: string): AgentBackendCapability {
   return capability("unknown", NO_SURFACES, NO_ENGINES, reason);
 }
 
-const NO_NATIVE_OMP = "OMP native chat is not integrated yet; use its terminal profile";
 const NO_NATIVE_PI = "Pi native chat is not integrated yet; use its terminal profile";
 const NO_CLAUDE_STEER = "Claude Code steering is unavailable until the Agent SDK exposes it";
 const NO_CLAUDE_EFFORT_SWITCH = "Changing Claude effort requires starting a new session";
@@ -249,6 +255,59 @@ const CODEX_CAPABILITIES = Object.freeze({
   processCleanup: NATIVE,
 } satisfies AgentBackendCapabilityMatrix);
 
+const OMP_NATIVE = capability(
+  "supported",
+  NATIVE_SURFACE,
+  V2_ENGINE,
+  null,
+  "OMP ACP requires the local v2 agent engine",
+);
+const OMP_BOTH = capability(
+  "supported",
+  BOTH_SURFACES,
+  V2_ENGINE,
+  null,
+  "OMP ACP native chat requires the local v2 agent engine",
+);
+const OMP_CAPABILITIES = Object.freeze({
+  nativeChat: OMP_NATIVE,
+  terminal: TERMINAL,
+  startSession: OMP_NATIVE,
+  streamEvents: OMP_NATIVE,
+  sessionEvents: OMP_NATIVE,
+  interruptTurn: OMP_NATIVE,
+  closeSession: OMP_NATIVE,
+  resumeSession: OMP_NATIVE,
+  steerTurn: unsupported("OMP ACP 0.25.0 does not advertise turn steering"),
+  textInput: OMP_BOTH,
+  imageInput: OMP_NATIVE,
+  modelSelection: OMP_BOTH,
+  modelSwitching: OMP_NATIVE,
+  effortSelection: unsupported("OMP ACP does not advertise reasoning-effort controls"),
+  effortSwitching: unsupported("OMP ACP does not advertise reasoning-effort controls"),
+  modeSelection: unsupported(
+    "OMP plan mode is disabled because safe form elicitation is not integrated",
+  ),
+  modeSwitching: unsupported(
+    "OMP plan mode is disabled because safe form elicitation is not integrated",
+  ),
+  planEvents: OMP_NATIVE,
+  toolEvents: OMP_NATIVE,
+  fileEvents: OMP_NATIVE,
+  approvalEvents: OMP_NATIVE,
+  mcpConfiguration: OMP_NATIVE,
+  usageReporting: OMP_NATIVE,
+  contextReporting: OMP_NATIVE,
+  rateLimitReporting: unsupported("OMP ACP does not emit rate-limit updates"),
+  titleEvents: OMP_NATIVE,
+  authDiscovery: unsupported(
+    "OMP ACP authentication callbacks are not exposed until PickForge can handle them safely",
+  ),
+  remoteExecution: unsupported("OMP ACP is local-only in this connector"),
+  errorEvents: OMP_NATIVE,
+  processCleanup: OMP_NATIVE,
+} satisfies AgentBackendCapabilityMatrix);
+
 function terminalOnlyCapabilities(nativeReason: string, mcpReason: string): AgentBackendCapabilityMatrix {
   const noNative = unsupported(nativeReason);
   return Object.freeze({
@@ -285,10 +344,6 @@ function terminalOnlyCapabilities(nativeReason: string, mcpReason: string): Agen
   } satisfies AgentBackendCapabilityMatrix);
 }
 
-const OMP_CAPABILITIES = terminalOnlyCapabilities(
-  NO_NATIVE_OMP,
-  "PickForge does not configure MCP for OMP terminal launches in this release",
-);
 const PI_CAPABILITIES = terminalOnlyCapabilities(
   NO_NATIVE_PI,
   "PickForge does not configure MCP for Pi terminal launches in this release",
@@ -341,21 +396,21 @@ const CODEX_BACKEND = Object.freeze({
 const OMP_BACKEND = Object.freeze({
   id: "omp",
   label: "Oh My Pi (OMP)",
-  backendKind: "terminal",
-  protocol: Object.freeze({ kind: "acp", availability: "availableNotIntegrated" }),
+  backendKind: "ompAcp",
+  protocol: Object.freeze({ kind: "acp", availability: "integrated" }),
   capabilities: OMP_CAPABILITIES,
   lifecycle: frozenLifecycle(
-    { v1: "unsupported", v2: "unsupported" },
-    { v1: "unsupported", v2: "unsupported" },
-    { v1: "unsupported", v2: "unsupported" },
+    { v1: "unsupported", v2: "acpSession" },
+    { v1: "unsupported", v2: "closeAcpSession" },
+    { v1: "unsupported", v2: "providerSessionId" },
     "unknown",
   ),
   controls: frozenControls(
+    { v1: "unsupported", v2: "liveSession" },
     { v1: "unsupported", v2: "unsupported" },
-    { v1: "unknown", v2: "unknown" },
-    { v1: "unknown", v2: "unknown" },
+    { v1: "unsupported", v2: "unsupported" },
   ),
-  nativePayload: frozenPayload("unsupported", "unsupported", "unsupported"),
+  nativePayload: frozenPayload("sessionState", "unsupported", "unsupported"),
   effortDefaultSource: "unknown",
   modeControlLabel: "Mode",
 } satisfies AgentBackendDescriptor);
@@ -396,13 +451,17 @@ export function isAgentBackendId(value: string): value is AgentBackendId {
   return AGENT_BACKEND_IDS.has(value);
 }
 
+/** Flag-gated native-provider predicate. OMP's exact probe compatibility is
+ * additionally enforced by `nativeAgentProfiles`/`nativeChatModel`. */
 export function isNativeAgentProvider(value: string): value is AgentProvider {
-  return value === "claudeCode" || value === "codex";
+  return value === "claudeCode"
+    || value === "codex"
+    || (value === "omp" && flagEnabled("ompPiAgents"));
 }
 
 export function normalizeAgentProvider(value: string): AgentProvider | null {
   if (value === "claude") return "claudeCode";
-  return isNativeAgentProvider(value) ? value : null;
+  return value === "omp" || isNativeAgentProvider(value) ? value : null;
 }
 
 export function agentBackendDescriptor(id: AgentBackendId): AgentBackendDescriptor;

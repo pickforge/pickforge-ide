@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 // Agent profiles + per-agent model selection. Ports agent_model_settings.dart
 // (Claude→Haiku, Codex→GPT-5.3 Codex Spark defaults). Selection persists in
 // localStorage (global, like the Flutter SharedPreferences store).
@@ -119,7 +120,6 @@ const OMP_PI_AGENTS: AgentProfile[] = [
     binary: "omp",
     defaultModel: null,
     models: [],
-    terminalOnly: true,
   },
   {
     id: "pi",
@@ -146,6 +146,7 @@ export interface AgentCliCapabilities {
   dynamicModels: boolean;
   profiles: boolean;
   providerSelection: boolean;
+  nativeChat: boolean;
 }
 
 export interface AgentCliDiagnostic {
@@ -155,6 +156,45 @@ export interface AgentCliDiagnostic {
   models: AgentModelOption[];
   capabilities: AgentCliCapabilities;
   errors: string[];
+}
+
+export const SUPPORTED_OMP_ACP_VERSION = "16.4.8";
+const [ompAcpProbeCompatible, setOmpAcpProbeCompatible] = createSignal(false);
+
+export function isCompatibleOmpAcpProbe(probe: AgentCliDiagnostic): boolean {
+  return probe.agentId === "omp" && probe.capabilities.nativeChat;
+}
+
+export function recordAgentCliDiagnostic(diagnostic: AgentCliDiagnostic) {
+  if (diagnostic.agentId === "omp") {
+    setOmpAcpProbeCompatible(isCompatibleOmpAcpProbe(diagnostic));
+  }
+}
+
+export function ompNativeChatAvailable(): boolean {
+  return flagEnabled("ompPiAgents") && ompAcpProbeCompatible();
+}
+
+let ompCompatibilityProbe: Promise<boolean> | null = null;
+
+export function ensureOmpNativeCompatibility(force = false): Promise<boolean> {
+  if (!flagEnabled("ompPiAgents")) return Promise.resolve(false);
+  if (!force && ompAcpProbeCompatible()) return Promise.resolve(true);
+  if (!force && ompCompatibilityProbe) return ompCompatibilityProbe;
+  ompCompatibilityProbe = discoverAgentCli("omp")
+    .then((diagnostic) => isCompatibleOmpAcpProbe(diagnostic))
+    .catch(() => false)
+    .finally(() => {
+      ompCompatibilityProbe = null;
+    });
+  return ompCompatibilityProbe;
+}
+
+export function nativeAgentProfiles(): Array<AgentProfile & { id: "claudeCode" | "codex" | "omp" }> {
+  return agentProfiles().filter(
+    (agent): agent is AgentProfile & { id: "claudeCode" | "codex" | "omp" } =>
+      isNativeAgentProvider(agent.id) && (agent.id !== "omp" || ompNativeChatAvailable()),
+  );
 }
 
 
@@ -234,6 +274,12 @@ export function diagnosticFromProbe(
       dynamicModels: installed && models.length > 0,
       profiles: installed && /--profile(?:=|\s|<)/.test(help),
       providerSelection: installed && /--provider(?:=|\s|<)/.test(help),
+      nativeChat: agentId === "omp"
+        && installed
+        && version === SUPPORTED_OMP_ACP_VERSION
+        && probe.errors.length === 0
+        && /\bacp\b/.test(help)
+        && /--no-extensions(?:\s|$|,)/.test(help),
     },
     errors,
   };
@@ -243,7 +289,9 @@ export async function discoverAgentCli(
   agentId: "omp" | "pi",
   probe: (id: "omp" | "pi") => Promise<AgentCliProbe> = probeAgentCli,
 ): Promise<AgentCliDiagnostic> {
-  return diagnosticFromProbe(agentId, await probe(agentId));
+  const diagnostic = diagnosticFromProbe(agentId, await probe(agentId));
+  recordAgentCliDiagnostic(diagnostic);
+  return diagnostic;
 }
 
 const STORE_KEY = "pickforge.agentModels";
@@ -347,7 +395,9 @@ export function launchBinary(agentId: string): string | null {
 }
 
 export function nativeChatModel(agentId: string, modelId: string | null): string | null {
-  if (!isNativeAgentProvider(agentId)) return null;
+  if (!isNativeAgentProvider(agentId) || (agentId === "omp" && !ompNativeChatAvailable())) {
+    return null;
+  }
   const option = modelOption(agentId, modelId);
   return option?.terminalOnly ? null : modelId;
 }

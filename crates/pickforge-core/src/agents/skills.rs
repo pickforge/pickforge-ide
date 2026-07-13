@@ -28,6 +28,7 @@ pub fn list_agent_skills(provider: AgentProvider) -> Vec<AgentSkill> {
             };
             list_codex_skills_from_home(&codex_home)
         }
+        AgentProvider::Omp => Vec::new(),
     }
 }
 
@@ -42,6 +43,7 @@ pub fn list_agent_skills_from_home(provider: AgentProvider, home: &Path) -> Vec<
         AgentProvider::Codex => {
             scan_codex_prompt_dir(&home.join(".codex").join("prompts"), &mut skills);
         }
+        AgentProvider::Omp => {}
     }
     dedupe_and_sort(skills)
 }

@@ -56,7 +56,7 @@ describe("OMP/Pi rollout gating and commands", () => {
       id: agent.id,
       terminalOnly: agent.terminalOnly,
     }))).toEqual([
-      { id: "omp", terminalOnly: true },
+      { id: "omp", terminalOnly: undefined },
       { id: "pi", terminalOnly: true },
     ]);
 
@@ -73,6 +73,48 @@ describe("OMP/Pi rollout gating and commands", () => {
     })).toBe(
       "pi --model anthropic/claude-sonnet-4-6 ",
     );
+  });
+
+  it("selects OMP native chat only after the exact compatible probe", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("ompPiAgents", true);
+
+    expect(models.nativeAgentProfiles().map((profile) => profile.id)).toEqual([
+      "claudeCode",
+      "codex",
+    ]);
+    expect(models.nativeChatModel("omp", "openai/gpt-test")).toBeNull();
+
+    const incompatible = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 16.4.9",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: [],
+    });
+    models.recordAgentCliDiagnostic(incompatible);
+    expect(models.nativeAgentProfiles().some((profile) => profile.id === "omp")).toBe(false);
+
+    const compatible = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: `omp ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: [],
+    });
+    models.recordAgentCliDiagnostic(compatible);
+    expect(models.nativeAgentProfiles().map((profile) => profile.id)).toEqual([
+      "claudeCode",
+      "codex",
+      "omp",
+    ]);
+    expect(models.nativeChatModel("omp", "openai/gpt-test")).toBe("openai/gpt-test");
+    expect(models.launchCommand("omp")).toBe("omp ");
+
+    flags.setFlagOverride("ompPiAgents", false);
+    expect(models.nativeAgentProfiles().some((profile) => profile.id === "omp")).toBe(false);
+    expect(models.nativeChatModel("omp", "openai/gpt-test")).toBeNull();
+    expect(models.launchCommand("omp")).toBe("");
   });
 
   it("offers optional chips without changing defaults or duplicating an agent", async () => {
@@ -169,7 +211,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
     const diagnostic = models.diagnosticFromProbe("omp", {
       installed: true,
       versionOutput: "omp v16.4.8",
-      helpOutput: "--provider=<value>  --profile=<value>  --mode=text|rpc\n  acp  Run ACP server",
+      helpOutput: "--no-extensions  Disable extensions\n--provider=<value>  --profile=<value>\n  acp  Run ACP server",
       modelsOutput: "",
       errors: [],
     });
@@ -184,7 +226,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
     });
     expect(diagnostic.capabilities).not.toHaveProperty("acp");
     expect(diagnostic.capabilities).not.toHaveProperty("rpc");
-    expect(diagnostic.capabilities).not.toHaveProperty("nativeChat");
+    expect(diagnostic.capabilities.nativeChat).toBe(true);
     expect(diagnostic.errors).toEqual([
       "OMP models unavailable: no enforced offline/cache-only catalog probe",
     ]);

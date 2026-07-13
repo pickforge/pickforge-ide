@@ -45,13 +45,23 @@ reset this file.
   and a “Resume automatic titles” control.
 - OMP and Pi terminal profiles, bounded offline/read-only CLI diagnostics, Pi's
   offline model catalog, optional quick-launch chips, and OMP activity/title
-  recognition landed dark behind the default-off `ompPiAgents` flag. OMP model
-  discovery and PickForge MCP wiring remain deferred until the CLIs expose
-  supported, offline-safe integration paths.
+  recognition landed dark behind the default-off `ompPiAgents` flag. OMP keeps
+  its terminal profile; native chat appears only after an exact compatible
+  16.4.8 probe. Pi RPC remains terminal-only.
 - Added an exhaustive, immutable agent-backend capability registry for native
-  chat and terminal surfaces. Claude Code and Codex controls now consume the
-  registry, while OMP ACP and Pi RPC remain honestly terminal-only and
-  unavailable for native chat behind `ompPiAgents`.
+  chat and terminal surfaces. Claude Code and Codex behavior is unchanged; the
+  OMP 16.4.8 ACP connector provides renderer-flagged, exact-probed local v2
+  sessions, streaming, exact approvals, identity-keyed scoped MCP grants and
+  canonical cwd reuse, model validation, safe reattach/resume, bounded transport
+  failure recovery, cumulative-context and durable-title events, and process-tree cleanup.
+- OMP ACP launches as `omp acp --no-extensions --approval-mode=always-ask`,
+  with no config/yolo overlay. Its cleared child environment restores exactly
+  `PATH`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `XDG_CONFIG_HOME`,
+  `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`,
+  `WINDIR`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP`, `TMPDIR`, `LANG`, `LC_ALL`,
+  `LC_CTYPE`, `TERM`, `COLORTERM`, and `NO_COLOR`. Home/config roots let OMP
+  discover its own auth without PickForge reading or copying provider tokens;
+  inherited provider secrets and extension/config injection variables are absent.
 
 ## Validation
 
@@ -91,15 +101,32 @@ reset this file.
 - `cargo test -p pickforge-tauri agent_probe_is_strictly_allowlisted --lib` —
   fixed diagnostic command allowlist test green.
 - `bunx vitest run tests/unit/agentBackends.test.ts tests/unit/agentChat.test.ts tests/unit/agentModels.test.ts tests/unit/agentModes.test.ts tests/unit/chatDefaults.test.ts tests/unit/swarm.test.ts tests/unit/operatorDispatch.test.ts tests/unit/orchestraView.test.ts tests/unit/settingsRegistry.test.ts`
-  — 210 focused capability-matrix, native-chat parity, control, provider,
-  composer-store, swarm, operator, and Settings tests green.
+  — 216 focused capability-matrix, exact-probe native-chat parity, control,
+  provider, composer-store, swarm, operator, and Settings tests green.
 - `cargo test -p pickforge-core --lib agents::manager::tests:: --locked` — 27
   focused session lifecycle, capability-gate, approval replay, and dispatch tests green.
 - `bun run build` — frontend type-check and Vite production build clean;
   dynamic-import and chunk-size warnings remain.
 
+- `cargo test -p pickforge-core agents:: --locked` — 97 core-agent tests green,
+  including 18 OMP ACP environment, handshake, immutable-identity, trusted
+  direct-manager, bounded-failure, usage, title, model, approval, callback,
+  descendant-reaping, and lifecycle regressions.
+- `cargo test -p pickforge-tauri agent_chat_commands --locked` — 12 Tauri
+  agent-chat authorization, scoped-MCP, and remote-binding tests green.
+- `bunx vitest run tests/unit/agentBackends.test.ts tests/unit/agentChat.test.ts tests/unit/agentModels.test.ts tests/unit/agentModes.test.ts tests/unit/agentPricing.test.ts`
+  — 116 frontend capability, exact-probe, native-selection, title-ownership,
+  default-off rollout, IPC payload, and mode tests green.
+- `cargo check -p pickforge-core -p pickforge-tauri --locked` and `bun run build`
+  — native Rust compile, frontend type-check, and Vite production build clean
+  apart from pre-existing unused-function/dynamic-import/chunk-size warnings.
+- Real installed `omp acp` 16.4.8 smoke in isolated temporary HOME/XDG/project
+  roots: protocol-v1 initialize, session/new, session/close, clean exit 0; no
+  prompt, credentials, or model turn.
+
 ### Not tested yet
 
+- OMP ACP connector smoke on Windows and macOS.
 - Windows development OAuth deep-link smoke (no Windows Rust target is installed).
 - Tauri app bundle build.
 - Installer or updater flow.

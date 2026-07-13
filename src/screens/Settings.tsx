@@ -206,6 +206,7 @@ const AGENT_DIAGNOSTIC_IDS = ["omp", "pi"] as const;
 const AGENT_BRAND_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Object.freeze({
   claudeCode: () => <IconClaude size={14} />,
   codex: () => <IconOpenAI size={14} />,
+  omp: () => <IconIngot size={14} />,
 });
 
 export function SettingsScreen() {
@@ -845,8 +846,8 @@ export function SettingsScreen() {
           </For>
           <Show when={flagEnabled("ompPiAgents")}>
             <span class="pf-settings-muted">
-              Offline, read-only checks only. OMP model discovery and PickForge MCP wiring
-              are deferred until supported CLI integrations are available.
+              Offline, read-only checks only. OMP native chat appears after an exact
+              compatible 16.4.8 probe; its terminal launch remains available independently.
             </span>
             <div class="pf-ql-actions">
               <button

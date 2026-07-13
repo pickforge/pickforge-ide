@@ -2127,7 +2127,12 @@ impl ActiveTurn {
                     ActiveTurnHandle::ClaudeBridge { client, chat_id } => {
                         let _ = client.chat_interrupt(chat_id);
                     }
-                    ActiveTurnHandle::Codex(_) | ActiveTurnHandle::Claude(_) => {}
+                    ActiveTurnHandle::Omp { client } => {
+                        let _ = client.cancel();
+                    }
+                    ActiveTurnHandle::PiRpc { .. }
+                    | ActiveTurnHandle::Codex(_)
+                    | ActiveTurnHandle::Claude(_) => {}
                 }
             }
             slot.take()
@@ -2705,11 +2710,13 @@ mod tests {
         test_script(
             name,
             r#"#!/usr/bin/env python3
-import json, sys
+import json, os, sys
 
 if "--version" in sys.argv:
     print("pi 0.79.10")
     raise SystemExit(0)
+with open(sys.argv[0] + ".pid", "w", encoding="utf-8") as handle:
+    handle.write(str(os.getpid()))
 with open(sys.argv[0] + ".argv", "w", encoding="utf-8") as handle:
     json.dump(sys.argv[1:], handle)
 
@@ -4955,7 +4962,11 @@ exec sleep 5
     #[test]
     fn start_rechecks_shutdown_gate_before_registering_state() {
         let db = Arc::new(Database::open_in_memory().unwrap());
-        let manager = Arc::new(AgentChatManager::new(Arc::clone(&db), PathBuf::from(".")));
+        let manager = Arc::new(AgentChatManager::new(
+            Arc::clone(&db),
+            PathBuf::from("."),
+            PathBuf::from("."),
+        ));
         let inner_guard = manager.inner.lock().unwrap();
         let worker_manager = Arc::clone(&manager);
         let worker = std::thread::spawn(move || {
@@ -5054,7 +5065,11 @@ done
     #[test]
     fn shutdown_preserves_terminal_session_status() {
         let db = Arc::new(Database::open_in_memory().unwrap());
-        let manager = AgentChatManager::new(Arc::clone(&db), PathBuf::from("."));
+        let manager = AgentChatManager::new(
+            Arc::clone(&db),
+            PathBuf::from("."),
+            PathBuf::from("."),
+        );
         let (_events, sink) = event_sink();
         let session_id = manager
             .start(
@@ -5081,7 +5096,11 @@ done
     #[test]
     fn shutdown_reconciles_running_session_without_active_turn() {
         let db = Arc::new(Database::open_in_memory().unwrap());
-        let manager = AgentChatManager::new(Arc::clone(&db), PathBuf::from("."));
+        let manager = AgentChatManager::new(
+            Arc::clone(&db),
+            PathBuf::from("."),
+            PathBuf::from("."),
+        );
         let (_events, sink) = event_sink();
         let session_id = manager
             .start(
@@ -5225,6 +5244,115 @@ sleep 30
             manager.claude_bridge.lock().unwrap().is_none(),
             "bridge slot must drain on shutdown"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_cancels_omp_turn_and_stops_client() {
+        let script = test_script(
+            "omp-shutdown",
+            r#"#!/bin/sh
+pid_file="$0.pid"
+log="$0.stdin"
+printf '%s' "$$" > "$pid_file"
+: > "$log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/new"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-shutdown-session","modes":{"availableModes":[{"id":"default"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
+      ;;
+    *'"method":"session/cancel"'*)
+      printf '%s\n' CANCELLED >> "$log"
+      ;;
+    *'"method":"session/close"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        );
+        let pid_file = script.path.with_file_name("fake-agent.pid");
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-omp-shutdown",
+                script.dir.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "run", None, None, None)
+            .unwrap();
+        wait_for_file(&log, |text| text.contains(r#""method":"session/prompt""#));
+        let pid: i32 = wait_for_file(&pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(pid));
+
+        manager.shutdown();
+
+        wait_for_process_exit(pid);
+        let log = wait_for_file(&log, |text| text.contains("CANCELLED"));
+        assert!(log.contains(r#""method":"session/cancel""#));
+        let row = db
+            .latest_agent_session_for_chat("chat-omp-shutdown")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "idle");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_aborts_pi_turn_and_stops_client() {
+        let script = pi_rpc_test_script("pi-shutdown");
+        let pid_file = script.path.with_extension("pid");
+        let log = script.path.with_extension("stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = pi_manager(Arc::clone(&db), &script);
+        let (_events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "chat-pi-shutdown",
+                script.dir.clone(),
+                AgentProvider::Pi,
+                Engine::V2,
+                Some("test/model".to_string()),
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+        manager
+            .send(&session_id, "run", None, None, None)
+            .unwrap();
+        wait_for_file(&log, |text| text.contains(r#""type":"prompt""#));
+        let pid: i32 = wait_for_file(&pid_file, |text| !text.trim().is_empty())
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(process_alive(pid));
+
+        manager.shutdown();
+
+        wait_for_process_exit(pid);
+        let log = wait_for_file(&log, |text| text.contains(r#""type":"abort""#));
+        assert!(log.contains(r#""type":"abort""#));
+        let row = db
+            .latest_agent_session_for_chat("chat-pi-shutdown")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "idle");
     }
 
     #[cfg(unix)]

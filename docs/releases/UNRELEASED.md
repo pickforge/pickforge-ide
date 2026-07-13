@@ -87,7 +87,7 @@ reset this file.
 
 ### Tested
 
-- Graceful shutdown: 585 Rust workspace tests, 820 frontend unit tests,
+- Graceful shutdown: 635 Rust workspace tests, 875 frontend unit tests,
   workspace `cargo check`, and frontend production build passed. An isolated live
   Codex V2 turn running `sleep 120` terminated with PickForge and returned its
   persisted session status to idle; mirror cancellation has focused regression

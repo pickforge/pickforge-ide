@@ -17,7 +17,11 @@ import { startSwarmBridge } from "./stores/swarm";
 import { installAccountStoreBootstrap } from "./stores/account";
 import { installCreditsBootstrap } from "./stores/credits";
 import { installSettingsSyncBootstrap } from "./stores/settingsSyncStore";
-import { handleTitlebarMouseDown } from "./lib/windowChrome";
+import {
+  handleTitlebarMouseDown,
+  handleTitlebarMouseMove,
+  handleTitlebarMouseUp,
+} from "./lib/windowChrome";
 import {
   ensureOmpNativeCompatibility,
   ensurePiNativeCompatibility,
@@ -78,6 +82,9 @@ export function App() {
 
   onMount(() => {
     initTheme();
+    window.addEventListener("mouseup", handleTitlebarMouseUp, true);
+    onCleanup(() => window.removeEventListener("mouseup", handleTitlebarMouseUp, true));
+
 
     // Interface zoom (VS Code-style): apply persisted level + global hotkeys.
     // Registered synchronously so cleanup binds before the async bootstrap.
@@ -154,9 +161,8 @@ export function App() {
   return (
     <div class="pf-app">
       <ResizeHandles />
-      {/* Custom title bar: the whole bar is the drag region (decorations are off);
-          interactive children opt out of dragging by simply not carrying the
-          attribute. */}
+      {/* Drag starts only after the pointer moves so the second primary press
+          remains available to toggle maximize before Tauri takes over. */}
       <header
         class="pf-titlebar"
         classList={{
@@ -164,6 +170,7 @@ export function App() {
           "pf-titlebar--brand-right": brandOnRight(),
         }}
         onMouseDown={handleTitlebarMouseDown}
+        onMouseMove={handleTitlebarMouseMove}
       >
         <div class="pf-titlebar-left">
           <Show when={resolvedControlsSide() === "left"}>

@@ -9,6 +9,42 @@ test("agent chat fixture", async ({ page }) => {
   await page.getByText("Built a deterministic VRT fixture").waitFor();
   await page.getByRole("button", { name: "Show command details" }).click();
   await expect(page.getByText("No visual diffs found")).toBeVisible();
+  const timeline = page.locator(".pf-chat-timeline");
+  const settledTimeline = await timeline.evaluate(async (element) => {
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const snapshot = () => {
+      const firstRow = element.querySelector<HTMLElement>(".pf-chat-timeline-inner > *");
+      return {
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        firstRowTop: firstRow?.getBoundingClientRect().top,
+      };
+    };
+
+    element.scrollTop = element.scrollHeight;
+    await nextFrame();
+    await nextFrame();
+    element.scrollTop = 0;
+    await nextFrame();
+    await nextFrame();
+    // ChatTimeline releases deferred ResizeObserver updates after 120 ms of scroll idle.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 121));
+    await nextFrame();
+
+    const before = snapshot();
+    await nextFrame();
+    const after = snapshot();
+    if (
+      before.scrollTop !== after.scrollTop
+      || before.scrollHeight !== after.scrollHeight
+      || before.firstRowTop !== after.firstRowTop
+    ) {
+      throw new Error("Agent chat timeline did not settle before screenshot capture");
+    }
+    return after;
+  });
+  expect(settledTimeline.scrollTop).toBe(0);
+
 
   await expect(page.locator(".pf-chat-view")).toHaveScreenshot("agent-chat.png", {
     maxDiffPixelRatio: 0.025,

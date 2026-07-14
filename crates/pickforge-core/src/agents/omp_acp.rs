@@ -1548,12 +1548,23 @@ fn retire_response_id(state: &Arc<ClientState>, id: Option<&Value>) {
     }
 }
 
-fn fail_pending(state: &Arc<ClientState>, message: &str) {
-    let pending = state
+fn take_pending(state: &Arc<ClientState>) -> Vec<PendingRequest> {
+    state
         .pending
         .lock()
-        .map(|mut pending| pending.drain().map(|(_, pending)| pending).collect::<Vec<_>>())
-        .unwrap_or_default();
+        .map(|mut pending| pending.drain().map(|(_, pending)| pending).collect())
+        .unwrap_or_default()
+}
+
+fn take_pending_on_first_transport_failure(state: &Arc<ClientState>) -> Option<Vec<PendingRequest>> {
+    let mut pending = state.pending.lock().ok()?;
+    if state.closed.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    Some(pending.drain().map(|(_, pending)| pending).collect())
+}
+
+fn fail_requests(state: &Arc<ClientState>, pending: Vec<PendingRequest>, message: &str) {
     for pending in pending {
         match pending {
             PendingRequest::Wait(sender) => {
@@ -1569,23 +1580,25 @@ fn fail_pending(state: &Arc<ClientState>, message: &str) {
     }
 }
 
+fn fail_pending(state: &Arc<ClientState>, message: &str) {
+    fail_requests(state, take_pending(state), message);
+}
+
 fn transport_failed(state: &Arc<ClientState>, message: String) {
-    let first_failure = !state.closed.swap(true, Ordering::SeqCst);
-    if first_failure {
-        if let Ok(mut writer) = state.writer.lock() {
-            writer.take();
-        }
+    // The closed transition and pending drain share one lock acquisition. A
+    // response that won before this transition may complete normally; after it,
+    // neither a response nor a prompt cleanup can observe a pending request.
+    let Some(pending) = take_pending_on_first_transport_failure(state) else {
+        return;
+    };
+    if let Ok(mut writer) = state.writer.lock() {
+        writer.take();
     }
-    // Always drain again: a request may have reserved its slot immediately
-    // before the first failure set `closed`, but inserted only after that
-    // failure's first drain acquired the pending-request lock.
-    fail_pending(state, &message);
-    if first_failure {
-        if let Ok(mut permissions) = state.permissions.lock() {
-            permissions.clear();
-        }
-        terminate_and_reap(state);
+    if let Ok(mut permissions) = state.permissions.lock() {
+        permissions.clear();
     }
+    terminate_and_reap(state);
+    fail_requests(state, pending, &message);
 }
 
 fn terminate_and_reap(state: &Arc<ClientState>) {
@@ -1734,8 +1747,10 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::path::Path;
-    use std::sync::Mutex;
+    use std::sync::{Barrier, Mutex};
     #[cfg(any(unix, windows))]
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1756,13 +1771,14 @@ mod tests {
     }
 
     #[cfg(unix)]
+    static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+
+    #[cfg(unix)]
     fn fixture(body: &str) -> Fixture {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "pickforge-omp-acp-{}-{stamp}",
+            "pickforge-omp-acp-{}-{sequence}",
             std::process::id()
         ));
         fs::create_dir_all(&dir).unwrap();
@@ -1859,16 +1875,37 @@ done"#
         unreachable!("retry loop always returns")
     }
 
-    #[cfg(unix)]
     fn wait_for(events: &Arc<Mutex<Vec<AgentEvent>>>, predicate: impl Fn(&AgentEvent) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            if events.lock().unwrap().iter().any(&predicate) {
+            if events.lock().is_ok_and(|events| events.iter().any(&predicate)) {
                 return;
             }
             thread::sleep(Duration::from_millis(10));
         }
-        panic!("event not observed: {:?}", events.lock().unwrap());
+        let observed = events
+            .lock()
+            .map(|events| format!("{events:?}"))
+            .unwrap_or_else(|poison| format!("{:?}", poison.into_inner()));
+        panic!("event not observed: {observed}");
+    }
+
+    #[cfg(unix)]
+    fn wait_for_event(
+        events: &mpsc::Receiver<AgentEvent>,
+        predicate: impl Fn(&AgentEvent) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match events.recv_timeout(remaining) {
+                Ok(event) if predicate(&event) => return,
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
+                    break;
+                }
+            }
+        }
+        panic!("event not received");
     }
 
     #[cfg(unix)]
@@ -2068,14 +2105,27 @@ done"#,
     #[cfg(unix)]
     #[test]
     fn late_duplicate_and_unknown_responses_do_not_close_an_active_prompt() {
+        let marker_sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let slow_requested = std::env::temp_dir().join(format!(
+            "pickforge-omp-acp-slow-requested-{}-{marker_sequence}",
+            std::process::id()
+        ));
+        let release_slow = std::env::temp_dir().join(format!(
+            "pickforge-omp-acp-release-slow-{}-{marker_sequence}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&slow_requested);
+        let _ = fs::remove_file(&release_slow);
         let fixture = fixture(
-            r#"while IFS= read -r line; do
+            &r#"while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
     *'"method":"session/new"'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-session-1"}}' ;;
     *'"method":"test/slow"'*)
       request_id=${line#*\"id\":}; request_id=${request_id%%,*}
-      (sleep 0.10; printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"late\":true}}") &
+      printf requested > "__PICKFORGE_SLOW_REQUESTED__"
+      while [ ! -e "__PICKFORGE_RELEASE_SLOW__" ]; do sleep 0.01; done
+      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$request_id,\"result\":{\"late\":true}}"
       ;;
     *'"method":"session/prompt"'*)
       request_id=${line#*\"id\":}; request_id=${request_id%%,*}
@@ -2088,20 +2138,53 @@ done"#,
       ) &
       ;;
   esac
-done"#,
+done"#
+                .replace(
+                    "__PICKFORGE_SLOW_REQUESTED__",
+                    &slow_requested.to_string_lossy(),
+                )
+                .replace("__PICKFORGE_RELEASE_SLOW__", &release_slow.to_string_lossy()),
         );
         let events = Arc::new(Mutex::new(Vec::new()));
         let client = spawn_fixture(options(&fixture, Arc::clone(&events), None)).unwrap();
 
-        assert!(matches!(
-            client.request_inner(
-                "test/slow",
-                json!({}),
-                "deliberately slow request",
-                Duration::from_millis(40),
-            ),
-            Err(OmpAcpError::Timeout("deliberately slow request"))
-        ));
+        thread::scope(|scope| {
+            let (result_tx, result_rx) = mpsc::channel();
+            let client = &client;
+            scope.spawn(move || {
+                let _ = result_tx.send(client.request_inner(
+                    "test/slow",
+                    json!({}),
+                    "deliberately slow request",
+                    Duration::from_secs(1),
+                ));
+            });
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !slow_requested.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let marker_seen = slow_requested.exists();
+            let before_release = result_rx.try_recv();
+            let unavailable_before_release =
+                matches!(&before_release, Err(mpsc::TryRecvError::Empty));
+            let slow_result = match before_release {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => result_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .ok(),
+                Err(mpsc::TryRecvError::Disconnected) => None,
+            };
+            fs::write(&release_slow, "").unwrap();
+            assert!(marker_seen, "slow request never reached fixture");
+            assert!(
+                unavailable_before_release,
+                "slow request completed before its release marker"
+            );
+            assert!(matches!(
+                slow_result,
+                Some(Err(OmpAcpError::Timeout("deliberately slow request")))
+            ));
+        });
         client.prompt("first", &[]).unwrap();
         wait_for(&events, |event| matches!(event, AgentEvent::TurnDone { .. }));
         assert!(!client.is_closed());
@@ -2119,11 +2202,22 @@ done"#,
                 .count();
             if done == 2 {
                 assert!(!client.is_closed());
-                return;
+                break;
             }
             thread::sleep(Duration::from_millis(10));
         }
-        panic!("second prompt did not complete after retired responses");
+        assert_eq!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::TurnDone { .. }))
+                .count(),
+            2,
+            "second prompt did not complete after retired responses"
+        );
+        let _ = fs::remove_file(&slow_requested);
+        let _ = fs::remove_file(&release_slow);
     }
 
     #[cfg(unix)]
@@ -2147,13 +2241,34 @@ done"#,
     fn crash_during_prompt_closes_transport_drains_races_and_reaps_child() {
         let fixture = standard_script("exit 9");
         let events = Arc::new(Mutex::new(Vec::new()));
-        let client = spawn_fixture(options(&fixture, Arc::clone(&events), None)).unwrap();
+        let sink_events = Arc::clone(&events);
+        let (event_tx, event_rx) = mpsc::channel();
+        let mut opts = options(&fixture, Arc::clone(&events), None);
+        opts.sink = Arc::new(move |event| {
+            if let Ok(mut events) = sink_events.lock() {
+                events.push(event.clone());
+            }
+            let _ = event_tx.send(event);
+        });
+        let client = spawn_fixture(opts).unwrap();
         client.prompt("crash", &[]).unwrap();
-        wait_for(&events, |event| matches!(event, AgentEvent::TurnFailed { .. }));
+        wait_for_event(&event_rx, |event| matches!(event, AgentEvent::TurnFailed { .. }));
         assert!(client.is_closed());
         assert!(client.state.child.lock().unwrap().is_none());
         assert!(client.state.writer.lock().unwrap().is_none());
         assert!(client.state.pending.lock().unwrap().is_empty());
+
+        let events_before_buffered_response = events.lock().unwrap().len();
+        handle_response(
+            &client.state,
+            json!({"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "end_turn"}}),
+        )
+        .unwrap();
+        assert_eq!(
+            events.lock().unwrap().len(),
+            events_before_buffered_response,
+            "a buffered response after the pending drain must be ignored"
+        );
 
         let starts_before = events
             .lock()
@@ -2186,17 +2301,16 @@ done"#,
             pending.insert(901, PendingRequest::Prompt);
         }
         transport_failed(&client.state, "repeated transport failure".to_string());
-        assert_eq!(
-            wait_rx.recv_timeout(Duration::from_millis(100)).unwrap(),
-            Err("repeated transport failure".to_string())
-        );
-        assert!(client.state.pending.lock().unwrap().is_empty());
-        wait_for(&events, |event| {
-            matches!(
-                event,
-                AgentEvent::TurnFailed { error } if error == "repeated transport failure"
-            )
-        });
+        assert!(matches!(
+            wait_rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert_eq!(client.state.pending.lock().unwrap().len(), 2);
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        let _ = take_pending(&client.state);
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while Arc::strong_count(&client.state) != 1 && Instant::now() < deadline {
@@ -2207,6 +2321,55 @@ done"#,
             1,
             "writer/reader transport ownership cycle survived failure"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_transport_failures_have_one_terminal_owner() {
+        let (event_tx, event_rx) = mpsc::channel();
+        let state = Arc::new(ClientState {
+            writer: Mutex::new(None),
+            child: Mutex::new(None),
+            pending: Mutex::new(HashMap::from([(1, PendingRequest::Prompt)])),
+            retired_response_ids: Mutex::new(HashSet::new()),
+            next_id: AtomicU64::new(2),
+            closed: AtomicBool::new(false),
+            session_id: Mutex::new(None),
+            sink: Mutex::new(Arc::new(move |event| {
+                let _ = event_tx.send(event);
+            })),
+            queued_updates: Mutex::new(Vec::new()),
+            permissions: Mutex::new(HashMap::new()),
+            tools: Mutex::new(HashMap::new()),
+            handshake: Mutex::new(None),
+            available_modes: Mutex::new(HashSet::new()),
+            available_models: Mutex::new(HashSet::new()),
+            turn_text: Mutex::new(String::new()),
+            turn_thought: Mutex::new(String::new()),
+        });
+        let barrier = Arc::new(Barrier::new(3));
+        thread::scope(|scope| {
+            for message in ["first failure", "second failure"] {
+                let state = Arc::clone(&state);
+                let barrier = Arc::clone(&barrier);
+                scope.spawn(move || {
+                    barrier.wait();
+                    transport_failed(&state, message.to_string());
+                });
+            }
+            barrier.wait();
+        });
+
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_secs(1)),
+            Ok(AgentEvent::TurnFailed { .. })
+        ));
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(state.closed.load(Ordering::SeqCst));
+        assert!(state.pending.lock().unwrap().is_empty());
     }
 
     #[cfg(unix)]

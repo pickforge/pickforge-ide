@@ -57,8 +57,8 @@ jobs:
           codex app-server generate-json-schema --out "$SCHEMA_CHECK_DIR"
           test -d "$SCHEMA_CHECK_DIR"
 
-      - name: Diff committed schema
-        run: diff -ru "$CODEX_SCHEMA_DIR" "$SCHEMA_CHECK_DIR"
+      - name: Compare committed schema semantically
+        run: node scripts/check-agent-schema-drift.mjs "$CODEX_SCHEMA_DIR" "$SCHEMA_CHECK_DIR"
 
   claude-agent-sdk-pin:
     name: claude agent sdk pin

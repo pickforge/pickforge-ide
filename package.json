@@ -16,7 +16,7 @@
     "vrt": "playwright test",
     "e2e": "bun run tests/e2e/run.ts",
     "test:installer": "node tests/install-script.test.mjs",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run && node tests/agent-schema-drift.test.mjs",
     "test:coverage": "vitest run --coverage",
     "fonts:data": "node scripts/generate-fonts-data.mjs"
   },

@@ -9,7 +9,7 @@ members = ["crates/pickforge-core", "crates/pickforge-mcp", "crates/pickforged",
 
 [workspace.package]
 edition = "2021"
-version = "0.1.9"
+version = "0.1.10"
 license = "MIT"
 authors = ["PickForge"]
 

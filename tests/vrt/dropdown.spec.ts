@@ -2,7 +2,12 @@ import { expect, test } from "@playwright/test";
 
 test("title-less dropdown labels and keyboard dismissal", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("pickforge.flags", JSON.stringify({ operator: true }));
+    // Pin the legacy single-pane Settings layout this test was written against;
+    // settingsNavigation is default-on since v0.1.10.
+    localStorage.setItem(
+      "pickforge.flags",
+      JSON.stringify({ operator: true, settingsNavigation: false }),
+    );
   });
   await page.goto("/#/settings");
   const trigger = page.locator(".pf-settings-dropdown .pf-dropdown-trigger:not(:disabled)").first();

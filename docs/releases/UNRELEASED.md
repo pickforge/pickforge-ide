@@ -1,4 +1,4 @@
-# Unreleased
+# Unreleased — v0.1.10 candidate
 
 Working draft for the next PickForge release. Keep this current while PRs land.
 At release time, copy and polish it into the GitHub release description, then
@@ -6,193 +6,98 @@ reset this file.
 
 ## User-facing changes
 
+- New section-based Settings navigation: a category sidebar with remembered
+  last category, direct section links, keyboard navigation, and layouts that
+  adapt to narrow windows. (`settingsNavigation` now default on, #211)
+- Chats now get automatic titles from your first prompt, refreshed at
+  meaningful milestones. Renaming a chat locks its title until you choose
+  “Resume automatic titles”; manual titles survive restarts.
+  (`dynamicChatTitles` now default on, #210)
 - Double-clicking empty titlebar space now maximizes or restores the window.
-- Added Remote Host settings for starting the local daemon listener, issuing
-  pairing codes, and toggling Tailscale SSH.
-- Projects can now attach a remote host (over your tailnet) from the project
-  menu, with a live health badge in the sidebar and a test-connection check.
-- Remote health checks now resolve `pickforged` through the remote login shell,
-  including macOS hosts where non-login SSH omits `/usr/local/bin` from PATH.
-- Remote Flutter runs now discover devices on the bound host and require an
-  explicit device choice before launch when more than one is available.
-- Launching PickForge again now focuses the running window.
-- On normal app exit, PickForge now gracefully stops its supported owned agent,
-  terminal, emulator, mirror, and device-log managers. Private tmux sessions and
-  Linux dtach sessions still survive pane closure, but are cleaned up on app exit.
+- Launching PickForge again now focuses the running window instead of opening
+  a duplicate.
+- On normal app exit, PickForge gracefully stops its supported owned agent,
+  terminal, emulator, mirror, and device-log managers, and interrupts active
+  native agent turns so persisted chats return to idle. Crash/SIGKILL
+  containment is not included yet (#208).
 
-## Internal/release changes
+## Internal/release changes (dark: no default-on behavior change)
 
-- Release CI now caches Rust builds (`Swatinem/rust-cache`), and ci.yml no longer compiles the test suite twice.
-- Migrated release CI to the shared `@pickforge/tauri-release` tooling and draft-only `latest.json` finalization.
-- Added the `pickforged` daemon foundation with hashed-token pairing auth.
-- Landed the per-project remote host backend for bindings, SSH probing, and remote detection; UI follows.
-- Operator M1 core parser, dispatch, and audit landed dark behind the `operator` flag.
-- Operator composer dock landed dark behind the `operator` flag.
-- Operator device/run intents (M1.5) wired dark behind the `operator` flag.
-- BYO operator routing (Claude Code / Codex / Ollama) landed dark behind the `operator` flag.
-- Semantic Flutter widget selection now routes only indexed class names and labels, with local disambiguation and selection.
-- Landed accounts/auth wiring dark behind the `accounts` flag.
-- Hardened account session invalidation, offline cache clearing, and desktop OAuth deep-link registration.
-- Local dictation pipeline (Rust + IPC) landed dark; composer UI follows.
-- Core PTY can spawn over Tailscale SSH for remote projects; terminal and agent wiring follows.
-- Project terminals now run over SSH on their bound remote host; chat recovery stays local-only.
-- Agent chats now run V1 engines over SSH on the bound remote host.
-- Added managed SSH VM-service tunnels for remote Flutter runs and inspector reattach.
-- Dictation mic landed in the operator dock (live preview, push-to-command, model override) behind the `operator` flag.
-- Settings sync landed dark behind the `settingsSync` flag (opt-in, per-group).
-- Hosted Pro Operator routing and credit purchase landed dark behind the `operator` flag (requires sign-in): a hosted router backend closes the routing ladder, the dock surfaces cost/balance and a quiet buy-credits prompt, and Settings gains a credit-pack purchase flow. Local and BYO routing stay free.
-- In-app account deletion + data export (LGPD user rights), behind the `accounts` flag.
-- Graceful owned-manager teardown (#208 PR 1): one exactly-once orchestrator
-  drains local managers on confirmed app-exit events, interrupts active V2 turns,
-  reconciles interrupted session state, cancels provisional mirror setup, and uses
-  Unix process-group cleanup where available. Windows Job Objects, escaped
-  descendants, and crash/SIGKILL containment remain PR 2; remote leases remain
-  PR 3.
-- Section-based Settings navigation landed dark behind the default-off `settingsNavigation` flag, with remembered/direct categories and wide/narrow preference layouts.
-- Dynamic semantic chat titles landed dark behind the `dynamicChatTitles` flag,
-  with durable manual ownership, milestone refreshes, provider/OSC precedence,
-  and a “Resume automatic titles” control.
-- OMP and Pi terminal profiles, bounded offline/read-only CLI diagnostics, Pi's
-  offline model catalog, optional quick-launch chips, and OMP activity/title
-  recognition landed dark behind the default-off `ompPiAgents` flag. OMP keeps
-  its terminal profile; native chat appears only after an exact compatible
-  16.4.8 probe. Compatible Pi 0.79.x installs expose native RPC only after the
-  same flag and an exact-compatible version probe; both terminal profiles remain.
-- Added an exhaustive, immutable agent-backend capability registry for native
-  chat and terminal surfaces. Claude Code and Codex behavior is unchanged; the
-  OMP 16.4.8 ACP connector provides renderer-flagged, exact-probed local v2
-  sessions, streaming, exact approvals, identity-keyed scoped MCP grants and
-  canonical cwd reuse, schema-correct exact-ID resume/load, model validation,
-  bounded late-response handling, cumulative-context and durable-title events,
-  and Unix/Windows process-tree cleanup. Compatible Pi 0.79.x installs add
-  version-gated native RPC behind `ompPiAgents`, with isolated resumable sessions,
-  bounded process cleanup, and the user's installed Pi extensions and tools;
-  PickForge does not inject per-session MCP grants or native approvals. Platform
-  CI runs the OMP Unix fixture on macOS and both OMP/Pi executable Job Object
-  cleanup regressions on Windows.
-- Added flag-gated OMP/Pi connector diagnostics to the section-based Settings UI,
-  neutral persisted-chat compatibility checks, and actionable native-chat retry
-  recovery that safely replaces dead connector sessions without stale provider
-  completions winning. Both `settingsNavigation` and `ompPiAgents` remain default off.
-- OMP ACP launches as `omp acp --no-extensions --approval-mode=always-ask`,
-  with no config/yolo overlay. Its cleared child environment restores exactly
-  `PATH`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `XDG_CONFIG_HOME`,
-  `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`,
-  `WINDIR`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP`, `TMPDIR`, `LANG`, `LC_ALL`,
-  `LC_CTYPE`, `TERM`, `COLORTERM`, and `NO_COLOR`. Home/config roots let OMP
-  discover its own auth without PickForge reading or copying provider tokens;
-  inherited provider secrets and extension/config injection variables are absent.
-- Remote process leases (#208 PR 3) landed default-off behind
-  `remoteProcessLeases`: leased SSH PTYs and V1 Claude/Codex turns use secure
-  stdin bootstrap, 10-second heartbeats, a 45-second remote-clock TTL, verified
-  payload/foreground-group teardown, and an independent expiry watchdog.
-  Deliberate payload `setsid`/daemon escapes remain later guardian/platform scope.
+- Remote projects: per-project remote host binding over your tailnet, health
+  badges, SSH terminals, remote Claude/Codex V1 chats, remote Flutter device
+  discovery/launch, VM-service tunnels, and inspector reattach — all behind
+  the default-off `remoteProjects` flag (epic #144). A live Acorns macOS run
+  passed end to end.
+- Remote process leases: leased SSH PTYs and V1 turns with heartbeats, a
+  45-second TTL, and verified teardown, behind the default-off
+  `remoteProcessLeases` flag (#208).
+- Operator: typed intents, audited dispatch, device/run controls, BYO routing
+  (Claude Code / Codex / Ollama), local Whisper dictation, semantic Flutter
+  widget selection, hosted Pro routing, credits, and checkout — all behind the
+  default-off `operator` flag (epic #118).
+- Accounts: OAuth wiring, entitlement cache, opt-in settings sync, credit
+  packs, data export, and account deletion (LGPD user rights) behind the
+  default-off `accounts` and `settingsSync` flags (#132, #151).
+- OMP and Pi support behind the default-off `ompPiAgents` flag (#212): terminal
+  profiles, bounded offline diagnostics, and native chat gated by exact
+  version probes (OMP exactly 16.4.8 for ACP; compatible Pi 0.79.x for RPC).
+  OMP ACP runs with a cleared, minimal child environment and no injected
+  credentials; Pi native RPC uses the user's installed extensions and tools.
+  Includes Settings connector diagnostics, persisted-chat compatibility
+  checks, native-chat retry recovery, and Unix/Windows process-tree cleanup
+  with platform CI coverage.
+- Release CI migrated to the shared `@pickforge/tauri-release` tooling with
+  Rust caching, draft-only `latest.json` finalization, and AppImage repair.
+- `agent-protocol-drift` schedule fixed: schemas are now compared
+  semantically with an enforced file set and seven permanent contract tests
+  (#229).
+- Stabilized the agent-chat VRT capture race without changing baselines (#228).
 
 ## Validation
 
-### Tested
+### Verified on final main `d2ac412`
 
-- Graceful shutdown and remote leases: 653 Rust workspace tests, 877 frontend
-  unit tests, workspace `cargo check`, and frontend production build passed. An
-  isolated live Codex V2 turn running `sleep 120` terminated with PickForge and
-  returned its persisted session status to idle. Remote lease supervisor,
-  heartbeat, expiry, identity, and bounded-stop fixtures passed; real Tailnet
-  lease-expiry smoke remains outstanding while the feature stays default-off.
-- Workflow YAML parse check:
-  `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
-- `pickforge.release.json` shape checked against `../pickgauge/pickforge.release.json`.
-- `bun run test:coverage` — 750 tests green, including remote-device discovery,
-  persistence, launch-race, and keyboard regressions.
-- `bun run build` — `tsc --noEmit` + vite production build clean.
-- `bunx playwright test` — 12 tests green, including remote-device loading,
-  empty, error, stale, and keyboard-focus baselines at 1024px.
-- Settings navigation focused checks: 11 registry/flag unit tests and 10 legacy/flagged wide/narrow Playwright cases passed.
-- `cargo check` — workspace check clean.
-- `cargo test -p pickforge-core --lib --locked` — 391 tests green, including
-  login-shell quoting, noisy-profile output, and daemon health regressions.
-- `bun run test:unit -- chatAutoName flags agentChat` — 111 focused title,
-  precedence, cadence, restart-lock, manual-race, and flag-registry tests green.
-- `cargo test -p pickforge-core db::tests::` — 35 database migration and narrow
-  write tests green.
-- `cargo check -p pickforge-tauri` — title metadata IPC commands compile clean
-  (one pre-existing unused-function warning).
-- `bun run vrt -- tests/vrt/dropdown.spec.ts` — 2 focused menu tests green,
-  including automatic-title resume visibility.
-- `bunx vitest run` — 121 focused title ownership, ordering, lifecycle,
-  failed-turn, browser-mock, privacy, and default-off flag tests green.
-- `cargo test -p pickforge-core narrow_chat_updates_touch_only_their_column` —
-  monotonic title CAS, legacy sentinel adoption, and narrow provider writes green.
-- `bun run vrt -- tests/vrt/screens.spec.ts` — 5 existing browser baselines green
-  without updating snapshots.
-- Live Acorns macOS run — Tailnet attach, deterministic device launch, VM-service
-  tunnel, widget tree, node selection, hot reload, and stop all passed.
-- `bunx vitest run tests/unit/flags.test.ts tests/unit/agentModels.test.ts tests/unit/chatAutoName.test.ts tests/unit/settingsSync.test.ts`
-  — 65 focused flag, command, discovery, failure, terminal, and sync tests green.
-- `bunx tsc --noEmit` — frontend type-check clean.
-- `cargo test -p pickforge-tauri agent_probe_is_strictly_allowlisted --lib` —
-  fixed diagnostic command allowlist test green.
-- `bunx vitest run tests/unit/agentBackends.test.ts tests/unit/agentChat.test.ts tests/unit/agentModels.test.ts tests/unit/agentModes.test.ts tests/unit/chatDefaults.test.ts tests/unit/swarm.test.ts tests/unit/operatorDispatch.test.ts tests/unit/orchestraView.test.ts tests/unit/settingsRegistry.test.ts`
-  — 216 focused capability-matrix, exact-probe native-chat parity, control,
-  provider, composer-store, swarm, operator, and Settings tests green.
-- `cargo test -p pickforge-core --lib agents::manager::tests:: --locked` — 32
-  focused session lifecycle, capability-gate, approval replay, resume-fallback,
-  and dispatch tests green.
-- `bun run build` — frontend type-check and Vite production build clean;
-  dynamic-import and chunk-size warnings remain.
-- Pi RPC validation: 9 deterministic framing/lifecycle/process tests, all
-  430 `pickforge-core` tests, 11 Tauri agent-chat command tests, 104 focused
-  frontend capability/chat/model tests, and `bun run build` passed. Installed
-  Pi 0.79.10 also completed an isolated `get_state` startup smoke with
-  `--offline --no-extensions`; no model turn ran and the temporary root was
-  removed.
-- PR5 Settings/workbench integration: all 875 frontend unit tests, all 20
-  Settings navigation/connector Playwright cases, `bun run build`, and
-  `git diff --check` passed. An isolated Tauri lab confirmed both rollout flags
-  default off, live connector refresh pending states, and accurate OMP ACP
-  incompatibility messaging without the offline-catalog advisory masking it.
+- Frontend: 66 files / 882 unit tests plus seven schema contract tests,
+  coverage run, and production Vite build all passed.
+- Rust: 654 tests across 10 suites passed; workspace `cargo check` clean.
+- VRT 33/33, Playwright E2E, and installer smoke 9/9 passed.
+- Required CI checks green on #228, #229, #235, #236, including macOS OMP ACP
+  and visual regression.
+- Linux release binary: nonblank window, database quick-check, titlebar
+  maximize/restore and staged drag, single-instance focus, clean exit with no
+  owned helpers, and a clean worktree after launch.
+- Owner acceptance pass (14 Jul, local release binaries at `d2ac412`):
+  - Baseline (all flags off): project open, terminal, Claude/Codex chat,
+    exit with owned work running — clean teardown, no orphan processes,
+    clean worktree.
+  - Two-flag candidate: Settings navigation (wide/narrow, keyboard,
+    persisted category, gated categories correctly absent) and dynamic chat
+    titles (auto title, milestone refresh, manual rename lock, restart
+    persistence, resume-auto) passed.
+  - Default-off re-check in the baseline binary passed: legacy Settings
+    layout and static titles confirmed.
 
-- `cargo test -p pickforge-core agents:: --locked` — 97 core-agent tests green,
-  including 18 OMP ACP environment, handshake, immutable-identity, trusted
-  direct-manager, bounded-failure, usage, title, model, approval, callback,
-  descendant-reaping, and lifecycle regressions.
-- `cargo test -p pickforge-tauri agent_chat_commands --locked` — 12 Tauri
-  agent-chat authorization, scoped-MCP, and remote-binding tests green.
-- `bunx vitest run tests/unit/agentBackends.test.ts tests/unit/agentChat.test.ts tests/unit/agentModels.test.ts tests/unit/agentModes.test.ts tests/unit/agentPricing.test.ts`
-  — 116 frontend capability, exact-probe, native-selection, title-ownership,
-  default-off rollout, IPC payload, and mode tests green.
-- `cargo check -p pickforge-core -p pickforge-tauri --locked` and `bun run build`
-  — native Rust compile, frontend type-check, and Vite production build clean
-  apart from pre-existing unused-function/dynamic-import/chunk-size warnings.
-- Real installed `omp acp` 16.4.8 smoke in isolated temporary HOME/XDG/project
-  roots: protocol-v1 initialize, session/new, session/close, clean exit 0; no
-  prompt, credentials, or model turn.
+### Not tested yet — release gates
 
-- `cargo test -p pickforge-core --lib agents::omp_acp::tests:: --locked` — 18
-  focused OMP ACP tests green, including schema-compliant resume/load without a
-  response `sessionId`, exact opaque-ID retention, typed resume fallback
-  boundaries, late/duplicate/unknown response isolation, and Unix process-tree
-  cleanup.
-- `cargo test -p pickforge-core --lib agents::manager::tests::omp_ --locked` —
-  5 focused OMP manager lifecycle tests green, including fresh fallback only
-  for resume/open failure and no fallback after successful resume plus model
-  rejection.
-- `bunx vitest run tests/unit/agentModels.test.ts` — 10 reactive native-provider
-  registry/default fallback tests green.
-- `cargo check -p pickforge-core --locked` and `bun run build` — focused Rust
-  compile, frontend type-check, and production build clean; the existing Vite
-  dynamic-import and chunk-size warnings remain.
-- `.github/workflows/ci.yml` parsed successfully after adding the focused macOS
-  OMP ACP fixture and Windows Job Object cleanup jobs.
+- Signed platform bundles: this machine has no release signing key, and
+  AppImage must be proven by release CI (cached linuxdeploy cannot strip
+  current Arch RELR host libraries). Inspect every draft asset and
+  `latest.json` before publishing.
+- Installer/updater flow: updating an installed v0.1.9 to the v0.1.10
+  candidate (restart, version display, retained projects/settings).
+- First full production proof of the rewritten release workflow (post-#157):
+  matrix build, asset collection, AppImage repair, and `latest.json`.
+- Install/launch/update smoke from the published GitHub artifacts (repeat
+  after publish).
 
-### Not tested yet
+### Known limits (not blockers for this staged patch)
 
-- OMP ACP runtime smoke and the new platform-specific cleanup tests were not
-  locally exercised on Windows or macOS; their Windows/macOS CI jobs are configured.
-- Windows development OAuth deep-link smoke (no Windows Rust target is installed).
-- Tauri app bundle build.
-- Installer or updater flow.
-- Platform smoke checks.
-
-### Release blockers
-
-- None known.
+- Crash/SIGKILL containment, Windows Job Objects, stale bootstrap
+  reconciliation, and payload-created daemon escapes remain open (#208).
+- Remote disconnect/reattach semantics and real Tailnet lease expiry need
+  release-artifact acceptance before `remoteProjects`/`remoteProcessLeases`
+  enable (#152).
+- OMP 16.5.0 certification is tracked in #212; the ACP contract is pinned to
+  exactly 16.4.8, so `ompPiAgents` stays default off.
+- A stripped launch environment can fall back to a current-directory
+  database; standard installed launches are unaffected (#237).

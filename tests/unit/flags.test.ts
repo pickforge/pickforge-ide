@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("flags", () => {
-  it("registers all feature flags, default-off", async () => {
+  it("registers all feature flags with v0.1.10 ship defaults", async () => {
     const store = await loadStore();
 
     const states = store.flagStates();
@@ -39,9 +39,11 @@ describe("flags", () => {
       "settingsNavigation",
       "dynamicChatTitles",
     ]);
+    // Shipped in v0.1.10 (#210, #211); everything else stays dark.
+    const shipped = new Set(["settingsNavigation", "dynamicChatTitles"]);
     for (const state of states) {
-      expect(state.defaultValue).toBe(false);
-      expect(state.enabled).toBe(false);
+      expect(state.defaultValue).toBe(shipped.has(state.key));
+      expect(state.enabled).toBe(shipped.has(state.key));
     }
     expect(store.flagEnabled("operator")).toBe(false);
     expect(store.flagEnabled("ompPiAgents")).toBe(false);
@@ -49,8 +51,8 @@ describe("flags", () => {
     expect(store.flagEnabled("remoteProcessLeases")).toBe(false);
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);
-    expect(store.flagEnabled("settingsNavigation")).toBe(false);
-    expect(store.flagEnabled("dynamicChatTitles")).toBe(false);
+    expect(store.flagEnabled("settingsNavigation")).toBe(true);
+    expect(store.flagEnabled("dynamicChatTitles")).toBe(true);
   });
 
   it("persists an override to localStorage and reflects it", async () => {
@@ -78,7 +80,7 @@ describe("flags", () => {
     const store = await loadStore();
 
     expect(store.flagEnabled("operator")).toBe(false);
-    expect(store.flagStates().every((s) => s.enabled === false)).toBe(true);
+    expect(store.flagStates().every((s) => s.enabled === s.defaultValue)).toBe(true);
   });
 
   it("drops non-boolean values from stored overrides", async () => {

@@ -82,8 +82,8 @@ export interface SwarmRunSnapshot {
 
 /** Start the MCP socket server for `projectRoot` (idempotent). Resolves storage,
  *  writes the discovery file, and returns the endpoint + storage dirs. */
-export function mcpStart(projectRoot: string): Promise<McpStartResult> {
-  return invoke<McpStartResult>("mcp_start", { projectRoot });
+export function mcpStart(projectRoot: string, generation: number): Promise<McpStartResult> {
+  return invoke<McpStartResult>("mcp_start", { projectRoot, generation });
 }
 
 /** Stop the MCP server and remove its socket. */
@@ -92,19 +92,27 @@ export function mcpStop(): Promise<void> {
 }
 
 /** Publish the active-target / context snapshot the tools gate against. */
-export function mcpPublishState(snapshot: McpPublishedState): Promise<void> {
-  return invoke("mcp_publish_state", { snapshot });
+export function mcpPublishState(
+  generation: number,
+  publicationRevision: number,
+  snapshot: McpPublishedState,
+): Promise<boolean> {
+  return invoke("mcp_publish_state", { generation, publicationRevision, snapshot });
 }
 
 /** Append run-console / logcat lines to the MCP run-log ring buffer. */
-export function mcpPushLog(lines: string[]): Promise<void> {
-  return invoke("mcp_push_log", { lines });
+export function mcpPushLog(
+  generation: number,
+  runEpoch: number,
+  lines: string[],
+): Promise<boolean> {
+  return invoke("mcp_push_log", { generation, runEpoch, lines });
 }
 
 /** Reset the run-log ring at the start of a new run so `get_run_logs` never
  *  mixes a previous run's lines into the fresh one. */
-export function mcpRunStarted(): Promise<void> {
-  return invoke("mcp_run_started");
+export function mcpRunStarted(generation: number, runEpoch: number): Promise<boolean> {
+  return invoke("mcp_run_started", { generation, runEpoch });
 }
 
 export function mcpTakeSwarmRequests(): Promise<SwarmRequest[]> {

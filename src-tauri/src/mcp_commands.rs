@@ -215,13 +215,34 @@ impl ServerLifecycle {
     }
 }
 
-/// Shared, mutable MCP state: the latest published snapshot + a run-log ring.
+/// Shared, mutable MCP state: the latest epoch-keyed projection plus swarm state.
 #[derive(Clone)]
 pub struct McpState(Arc<McpInner>);
 
+struct McpProjection {
+    generation: u64,
+    project_root: Option<String>,
+    publication_revision: u64,
+    run_epoch: u64,
+    published: PublishedState,
+    logs: VecDeque<String>,
+}
+
+impl Default for McpProjection {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            project_root: None,
+            publication_revision: 0,
+            run_epoch: 0,
+            published: PublishedState::default(),
+            logs: VecDeque::with_capacity(256),
+        }
+    }
+}
+
 struct McpInner {
-    published: Mutex<PublishedState>,
-    logs: Mutex<VecDeque<String>>,
+    projection: Mutex<McpProjection>,
     swarm_requests: Mutex<VecDeque<SwarmRequest>>,
     swarm_runs: Mutex<HashMap<String, SwarmRunSnapshot>>,
     /// The server lifecycle (Idle / Starting / Running).
@@ -234,8 +255,7 @@ struct McpInner {
 impl McpState {
     pub fn new() -> Self {
         Self(Arc::new(McpInner {
-            published: Mutex::new(PublishedState::default()),
-            logs: Mutex::new(VecDeque::with_capacity(256)),
+            projection: Mutex::new(McpProjection::default()),
             swarm_requests: Mutex::new(VecDeque::new()),
             swarm_runs: Mutex::new(HashMap::new()),
             lifecycle: Mutex::new(ServerLifecycle::Idle),
@@ -244,44 +264,146 @@ impl McpState {
         }))
     }
 
-    fn set_published(&self, state: PublishedState) {
-        // When the active project changes, drop the run-log ring so a new
-        // project's `get_run_logs` can't read the previous project's output.
-        // (The tool layer also refuses logs with no active target; this keys the
-        // buffer to the project so a *switch* between projects can't leak either.)
+    fn activate_projection(&self, generation: u64, project_root: &str) -> bool {
+        let mut projection = self.0.projection.lock().unwrap();
+        if generation < projection.generation {
+            return false;
+        }
+        if generation == projection.generation {
+            return projection.project_root.as_deref() == Some(project_root);
+        }
+        projection.generation = generation;
+        projection.project_root = Some(project_root.to_string());
+        projection.publication_revision = 0;
+        projection.run_epoch = 0;
+        projection.published = PublishedState {
+            project_root: Some(project_root.to_string()),
+            ..Default::default()
+        };
+        projection.logs.clear();
+        true
+    }
+
+    fn projection_is_active(&self, generation: u64, project_root: &str) -> bool {
+        let projection = self.0.projection.lock().unwrap();
+        projection.generation == generation
+            && projection.project_root.as_deref() == Some(project_root)
+    }
+
+    fn publish_if_current(
+        &self,
+        generation: u64,
+        publication_revision: u64,
+        state: PublishedState,
+    ) -> bool {
+        let mut projection = self.0.projection.lock().unwrap();
+        if projection.generation != generation
+            || state.project_root.as_deref() != projection.project_root.as_deref()
+            || publication_revision <= projection.publication_revision
         {
-            let mut published = self.0.published.lock().unwrap();
-            if published.project_root != state.project_root {
-                self.0.logs.lock().unwrap().clear();
-            }
-            *published = state;
+            return false;
         }
+        projection.publication_revision = publication_revision;
+        projection.published = state;
+        true
     }
 
-    fn push_logs(&self, lines: Vec<String>) {
-        let mut buf = self.0.logs.lock().unwrap();
+    fn append_logs_if_current(
+        &self,
+        generation: u64,
+        run_epoch: u64,
+        lines: Vec<String>,
+    ) -> bool {
+        let mut projection = self.0.projection.lock().unwrap();
+        if projection.generation != generation
+            || run_epoch == 0
+            || run_epoch < projection.run_epoch
+        {
+            return false;
+        }
+        if run_epoch > projection.run_epoch {
+            projection.run_epoch = run_epoch;
+            projection.logs.clear();
+        }
         for line in lines {
-            if buf.len() >= MAX_LOG_LINES {
-                buf.pop_front();
+            if projection.logs.len() >= MAX_LOG_LINES {
+                projection.logs.pop_front();
             }
-            buf.push_back(line);
+            projection.logs.push_back(line);
         }
+        true
     }
 
-    /// Drop every buffered run-log line. Called at the start of each new run so a
-    /// previous run's output never bleeds into the next run's `get_run_logs`.
-    fn clear_logs(&self) {
-        self.0.logs.lock().unwrap().clear();
+    /// Advance the run epoch and drop previous output. Equal epochs are an
+    /// idempotent no-op so an append that arrives before its clear is preserved.
+    fn start_run_if_current(&self, generation: u64, run_epoch: u64) -> bool {
+        let mut projection = self.0.projection.lock().unwrap();
+        if projection.generation != generation
+            || run_epoch == 0
+            || run_epoch < projection.run_epoch
+        {
+            return false;
+        }
+        if run_epoch > projection.run_epoch {
+            projection.run_epoch = run_epoch;
+            projection.logs.clear();
+        }
+        true
     }
 
     fn snapshot(&self) -> PublishedState {
-        self.0.published.lock().unwrap().clone()
+        self.0.projection.lock().unwrap().published.clone()
     }
 
     fn recent_logs(&self, limit: usize) -> Vec<String> {
-        let buf = self.0.logs.lock().unwrap();
-        let n = limit.min(buf.len());
-        buf.iter().skip(buf.len() - n).cloned().collect()
+        let projection = self.0.projection.lock().unwrap();
+        let n = limit.min(projection.logs.len());
+        projection
+            .logs
+            .iter()
+            .skip(projection.logs.len() - n)
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn set_published(&self, mut state: PublishedState) {
+        let root = state.project_root.clone().unwrap_or_else(|| "/test".to_string());
+        state.project_root = Some(root.clone());
+        let (generation, revision) = {
+            let projection = self.0.projection.lock().unwrap();
+            let generation = if projection.project_root.as_deref() == Some(&root) {
+                projection.generation.max(1)
+            } else {
+                projection.generation + 1
+            };
+            (generation, projection.publication_revision + 1)
+        };
+        assert!(self.activate_projection(generation, &root));
+        assert!(self.publish_if_current(generation, revision, state));
+    }
+
+    #[cfg(test)]
+    fn push_logs(&self, lines: Vec<String>) {
+        let (generation, root, run_epoch) = {
+            let projection = self.0.projection.lock().unwrap();
+            (
+                projection.generation.max(1),
+                projection.project_root.clone().unwrap_or_else(|| "/test".to_string()),
+                projection.run_epoch.max(1),
+            )
+        };
+        assert!(self.activate_projection(generation, &root));
+        assert!(self.append_logs_if_current(generation, run_epoch, lines));
+    }
+
+    #[cfg(test)]
+    fn clear_logs(&self) {
+        let (generation, run_epoch) = {
+            let projection = self.0.projection.lock().unwrap();
+            (projection.generation, projection.run_epoch + 1)
+        };
+        assert!(self.start_run_if_current(generation, run_epoch));
     }
 
     fn enqueue_swarm_request(
@@ -747,22 +869,36 @@ fn current_uid() -> u32 {
 
 /// Publish the active-target / context snapshot the MCP tools gate against.
 #[tauri::command]
-pub fn mcp_publish_state(state: State<'_, McpState>, snapshot: PublishedState) {
-    state.set_published(snapshot);
+pub fn mcp_publish_state(
+    state: State<'_, McpState>,
+    generation: u64,
+    publication_revision: u64,
+    snapshot: PublishedState,
+) -> bool {
+    state.publish_if_current(generation, publication_revision, snapshot)
 }
 
 /// Append run-console / logcat lines to the MCP run-log ring buffer.
 #[tauri::command]
-pub fn mcp_push_log(state: State<'_, McpState>, lines: Vec<String>) {
-    state.push_logs(lines);
+pub fn mcp_push_log(
+    state: State<'_, McpState>,
+    generation: u64,
+    run_epoch: u64,
+    lines: Vec<String>,
+) -> bool {
+    state.append_logs_if_current(generation, run_epoch, lines)
 }
 
 /// Reset the run-log ring at the start of a new run, so a fresh run's
 /// `get_run_logs` never returns lines left over from the previous run (the
 /// common stop/fix/run-again loop). Called from `startRun` on the frontend.
 #[tauri::command]
-pub fn mcp_run_started(state: State<'_, McpState>) {
-    state.clear_logs();
+pub fn mcp_run_started(
+    state: State<'_, McpState>,
+    generation: u64,
+    run_epoch: u64,
+) -> bool {
+    state.start_run_if_current(generation, run_epoch)
 }
 
 #[tauri::command]
@@ -812,7 +948,11 @@ pub struct McpStartResult {
 pub async fn mcp_start(
     state: State<'_, McpState>,
     project_root: String,
+    generation: u64,
 ) -> Result<McpStartResult, String> {
+    if !state.activate_projection(generation, &project_root) {
+        return Err("MCP binding was superseded by a newer project".to_string());
+    }
     // Resolve (and create) the project's storage layout — the source of truth for
     // where the discovery file and context artifacts live.
     let resolved = ContextStorageService::new()
@@ -891,6 +1031,10 @@ pub async fn mcp_start(
         }
     };
 
+    if !state.projection_is_active(generation, &project_root) {
+        return Err("MCP binding was superseded by a newer project".to_string());
+    }
+
     let mcp_command = resolve_mcp_adapter_command();
     let mcp_config_path = write_mcp_config(&resolved.context_dir, &mcp_command)?;
 
@@ -909,12 +1053,19 @@ pub async fn mcp_start(
 #[cfg(not(unix))]
 #[tauri::command]
 pub async fn mcp_start(
-    _state: State<'_, McpState>,
+    state: State<'_, McpState>,
     project_root: String,
+    generation: u64,
 ) -> Result<McpStartResult, String> {
+    if !state.activate_projection(generation, &project_root) {
+        return Err("MCP binding was superseded by a newer project".to_string());
+    }
     let resolved = ContextStorageService::new()
         .ensure(&project_root, None)
         .map_err(|e| e.to_string())?;
+    if !state.projection_is_active(generation, &project_root) {
+        return Err("MCP binding was superseded by a newer project".to_string());
+    }
 
     Ok(McpStartResult {
         endpoint: String::new(),
@@ -1295,6 +1446,113 @@ mod tests {
         );
         st.push_logs(vec!["run2-boot".into()]);
         assert_eq!(st.recent_logs(10), vec!["run2-boot".to_string()]);
+    }
+
+    #[test]
+    fn stale_binding_and_publication_cannot_replace_the_current_projection() {
+        let st = McpState::new();
+        assert!(st.activate_projection(1, "/proj/a"));
+        assert!(st.publish_if_current(
+            1,
+            1,
+            PublishedState {
+                target_label: "A old".into(),
+                project_root: Some("/proj/a".into()),
+                ..Default::default()
+            },
+        ));
+
+        assert!(st.activate_projection(2, "/proj/b"));
+        assert!(st.publish_if_current(
+            2,
+            2,
+            PublishedState {
+                target_label: "B newest".into(),
+                project_root: Some("/proj/b".into()),
+                ..Default::default()
+            },
+        ));
+
+        assert!(!st.activate_projection(1, "/proj/a"));
+        assert!(!st.publish_if_current(
+            1,
+            99,
+            PublishedState {
+                target_label: "A late".into(),
+                project_root: Some("/proj/a".into()),
+                ..Default::default()
+            },
+        ));
+        assert_eq!(st.snapshot().project_root.as_deref(), Some("/proj/b"));
+        assert_eq!(st.snapshot().target_label, "B newest");
+    }
+
+    #[test]
+    fn connection_pinned_during_activation_observes_initial_publication() {
+        let st = McpState::new();
+        assert!(st.activate_projection(3, "/proj/a"));
+        let pinned = st.snapshot().project_root;
+        assert_eq!(pinned.as_deref(), Some("/proj/a"));
+
+        assert!(st.publish_if_current(
+            3,
+            1,
+            PublishedState {
+                target_id: "flutter".into(),
+                project_root: Some("/proj/a".into()),
+                ..Default::default()
+            },
+        ));
+        let live = SnapshotLiveState::for_connection(&st, &pinned);
+        assert_eq!(live.active_target().unwrap().id, "flutter");
+    }
+
+    #[test]
+    fn stale_publication_revision_cannot_overwrite_a_newer_snapshot() {
+        let st = McpState::new();
+        assert!(st.activate_projection(4, "/proj/a"));
+        assert!(st.publish_if_current(
+            4,
+            2,
+            PublishedState {
+                target_label: "newest".into(),
+                project_root: Some("/proj/a".into()),
+                ..Default::default()
+            },
+        ));
+        assert!(!st.publish_if_current(
+            4,
+            1,
+            PublishedState {
+                target_label: "late old snapshot".into(),
+                project_root: Some("/proj/a".into()),
+                ..Default::default()
+            },
+        ));
+        assert_eq!(st.snapshot().target_label, "newest");
+    }
+
+    #[test]
+    fn stale_run_clear_and_append_cannot_change_newer_run_logs() {
+        let st = McpState::new();
+        assert!(st.activate_projection(7, "/proj/a"));
+        assert!(st.start_run_if_current(7, 1));
+        assert!(st.append_logs_if_current(7, 1, vec!["run-1".into()]));
+
+        assert!(st.start_run_if_current(7, 2));
+        assert!(st.append_logs_if_current(7, 2, vec!["run-2".into()]));
+        assert!(!st.start_run_if_current(7, 1));
+        assert!(!st.append_logs_if_current(7, 1, vec!["run-1-late".into()]));
+        assert_eq!(st.recent_logs(10), vec!["run-2".to_string()]);
+    }
+
+    #[test]
+    fn same_run_append_before_clear_is_preserved() {
+        let st = McpState::new();
+        assert!(st.activate_projection(3, "/proj/a"));
+        assert!(st.append_logs_if_current(3, 1, vec!["early".into()]));
+        assert!(st.start_run_if_current(3, 1));
+        assert_eq!(st.recent_logs(10), vec!["early".to_string()]);
     }
 
     #[test]

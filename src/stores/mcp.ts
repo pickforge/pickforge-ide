@@ -21,9 +21,20 @@ interface McpBinding {
   chatsDir: string;
   mcpConfigPath: string;
   mcpCommand: string;
+  generation: number;
+}
+
+export interface McpSession {
+  projectRoot: string;
+  generation: number;
 }
 
 const [binding, setBinding] = createSignal<McpBinding | null>(null);
+let activeGeneration = 0;
+let publicationRevision = 0;
+let activeRunEpoch = 0;
+let activeRunProjectRoot: string | null = null;
+let pendingBinding: { session: McpSession; promise: Promise<McpSession | null> } | null = null;
 // The live selection (Flutter WidgetNode / UIAutomator A11yNode), set by the
 // inspector panels as the selection changes; null when nothing is selected.
 const [selection, setSelectionInternal] = createSignal<unknown | null>(null);
@@ -37,39 +48,83 @@ export function publishMcpSelection(node: unknown | null): void {
 }
 
 /** Start the MCP server for `projectRoot` (idempotent across projects: a second
- *  project rebinds the discovery file but reuses the one socket). Best-effort —
- *  a failure must never block a run. */
-export async function ensureMcpRunning(projectRoot: string | null): Promise<void> {
-  if (!projectRoot) return;
-  if (binding()?.projectRoot === projectRoot) return;
-  try {
-    const r = await mcp.mcpStart(projectRoot);
-    setBinding({
-      endpoint: r.endpoint,
-      projectRoot,
-      contextDir: r.contextDir,
-      runsDir: r.runsDir,
-      chatsDir: r.chatsDir,
-      mcpConfigPath: r.mcpConfigPath,
-      mcpCommand: r.mcpCommand,
-    });
-    void publishSnapshot();
-  } catch (e) {
-    console.warn("[pickforge] MCP endpoint failed to start", e);
+ *  project rebinds the discovery file but reuses the one socket). The returned
+ *  session captures the binding generation that won. Best-effort — a failure
+ *  must never block a run. */
+export function ensureMcpRunning(projectRoot: string | null): Promise<McpSession | null> {
+  if (!projectRoot) return Promise.resolve(null);
+  const current = binding();
+  if (current?.projectRoot === projectRoot && current.generation === activeGeneration) {
+    return Promise.resolve({ projectRoot, generation: current.generation });
   }
+  if (
+    pendingBinding?.session.projectRoot === projectRoot
+    && pendingBinding.session.generation === activeGeneration
+  ) {
+    return pendingBinding.promise;
+  }
+
+  const session = { projectRoot, generation: ++activeGeneration };
+  publicationRevision = 0;
+  setBinding(null);
+
+  const promise = (async (): Promise<McpSession | null> => {
+    try {
+      const r = await mcp.mcpStart(projectRoot, session.generation);
+      if (session.generation !== activeGeneration) return null;
+      setBinding({
+        endpoint: r.endpoint,
+        projectRoot,
+        contextDir: r.contextDir,
+        runsDir: r.runsDir,
+        chatsDir: r.chatsDir,
+        mcpConfigPath: r.mcpConfigPath,
+        mcpCommand: r.mcpCommand,
+        generation: session.generation,
+      });
+      void publishSnapshot();
+      return session;
+    } catch (e) {
+      if (session.generation === activeGeneration) {
+        console.warn("[pickforge] MCP endpoint failed to start", e);
+      }
+      return null;
+    } finally {
+      if (pendingBinding?.session.generation === session.generation) pendingBinding = null;
+    }
+  })();
+  pendingBinding = { session, promise };
+  return promise;
 }
 
-/** Append run-console / logcat lines to the MCP run-log buffer (best effort). */
+/** Append run-console / logcat lines to the active MCP run-log epoch. */
 export function pushMcpLogs(lines: string[]): void {
-  if (!binding() || lines.length === 0) return;
-  void mcp.mcpPushLog(lines).catch(() => {});
+  const b = binding();
+  const runEpoch = activeRunEpoch;
+  if (
+    !b
+    || b.generation !== activeGeneration
+    || b.projectRoot !== activeRunProjectRoot
+    || runEpoch === 0
+    || lines.length === 0
+  ) return;
+  void mcp.mcpPushLog(b.generation, runEpoch, lines).catch(() => {});
 }
 
-/** Reset the MCP run-log ring for a new run, so `get_run_logs` never returns a
- *  previous run's lines (the stop/fix/run-again loop). Best effort. */
-export function mcpRunStarted(): void {
-  if (!binding()) return;
-  void mcp.mcpRunStarted().catch(() => {});
+/** Reset the MCP run-log ring for a new run. The captured binding session keeps
+ *  a superseded bind completion from clearing the newer project's logs. */
+export function mcpRunStarted(session: McpSession | null | void): void {
+  const b = binding();
+  if (
+    !session
+    || !b
+    || session.generation !== activeGeneration
+    || b.generation !== session.generation
+    || b.projectRoot !== session.projectRoot
+  ) return;
+  const runEpoch = ++activeRunEpoch;
+  activeRunProjectRoot = session.projectRoot;
+  void mcp.mcpRunStarted(session.generation, runEpoch).catch(() => {});
 }
 
 /** The target the MCP tools should report. While a run is live, that is the
@@ -94,11 +149,12 @@ function activeDevicePlatform(projectRoot: string): "android" | "ios" {
 /** Push the current active-target + context snapshot to the Rust side. */
 export async function publishSnapshot(): Promise<void> {
   const b = binding();
-  if (!b) return;
+  if (!b || b.generation !== activeGeneration) return;
+  const revision = ++publicationRevision;
   const t = mcpTarget();
   const activeChatId = workspace.activeRoot === b.projectRoot ? workspace.activeChatId : null;
   await mcp
-    .mcpPublishState({
+    .mcpPublishState(b.generation, revision, {
       targetId: t?.id ?? "",
       targetLabel: t?.label ?? "",
       capabilities: t?.capabilities ?? [],

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "./errors";
 import type { SemanticWidgetNode } from "./vm";
 import { extractRouterText, routeRawPrompt } from "./operatorRouter";
 import { configuredRouterBackend } from "../stores/operatorRouterSettings";
@@ -322,6 +323,6 @@ export async function matchWidget(
     const response = JSON.parse(extractRouterText(routed.backend, routed.output)) as unknown;
     return parseWidgetMatchResponse(response, tree.nodes);
   } catch (error) {
-    return { kind: "error", message: error instanceof Error ? error.message : String(error) };
+    return { kind: "error", message: errorText(error) };
   }
 }

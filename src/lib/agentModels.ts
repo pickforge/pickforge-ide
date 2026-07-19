@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 // (Claude→Haiku, Codex→GPT-5.3 Codex Spark defaults). Selection persists in
 // localStorage (global, like the Flutter SharedPreferences store).
 import { flagEnabled } from "../stores/flags";
+import { errorText } from "./errors";
 import { probeAgentCli, type AgentCliProbe } from "./process";
 import {
   AGENT_BACKENDS,
@@ -379,7 +380,7 @@ export function diagnosticFromProbe(
     try {
       models = parsePiModelCatalog(probe.modelsOutput);
     } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error));
+      errors.push(errorText(error));
     }
   }
 

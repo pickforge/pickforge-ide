@@ -3,7 +3,7 @@
 
 use pickforge_core::{
     AgentRunLog, AgentSessionRow, AgentUsageSummary, Chat, Database, OperatorAuditRow,
-    OrchestraTask, PickHistory, Project, ProjectSettings, RunSessionLog,
+    OrchestraTask, PickHistory, Project, RunSessionLog,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -262,22 +262,6 @@ pub fn operator_audit_list(
 }
 
 #[tauri::command]
-pub fn settings_get(
-    db: State<'_, Arc<Database>>,
-    root: String,
-) -> Result<Option<ProjectSettings>, String> {
-    db.get_settings(&root).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn settings_upsert(
-    db: State<'_, Arc<Database>>,
-    settings: ProjectSettings,
-) -> Result<(), String> {
-    db.upsert_settings(&settings).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub fn picks_list(
     db: State<'_, Arc<Database>>,
     project_root: String,
@@ -322,18 +306,6 @@ pub fn run_finish(
 #[tauri::command]
 pub fn agent_run_insert(db: State<'_, Arc<Database>>, run: AgentRunLog) -> Result<i64, String> {
     db.insert_agent_run(&run).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn agent_run_finish(
-    db: State<'_, Arc<Database>>,
-    id: i64,
-    finished_at: i64,
-    exit_code: Option<i64>,
-    hot_reload_count: i64,
-) -> Result<(), String> {
-    db.finish_agent_run(id, finished_at, exit_code, hot_reload_count)
-        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

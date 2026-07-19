@@ -9,6 +9,7 @@ import { loadAgentModes } from "../lib/agentModes";
 import { isPrimaryChat } from "../lib/chatLabels";
 import { loadAgentEngine } from "../lib/chatDefaults";
 import * as db from "../lib/db";
+import { errorText } from "../lib/errors";
 import {
   adbScreenshot,
   androidLaunchAvd,
@@ -415,10 +416,6 @@ async function terminalResult(
   } catch (error) {
     return { status: "failed", message: errorText(error) };
   }
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function projectFor(intent: OperatorIntent): Promise<Resolution<Project>> {

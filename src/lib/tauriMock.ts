@@ -247,7 +247,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     chat.kind = String(a.kind);
     return null;
   },
-  settings_get: () => null,
   telemetry_get: () => MOCK_TELEMETRY,
   telemetry_set: (a) => {
     MOCK_TELEMETRY = { crash_reports: a.crashReports !== false };
@@ -366,7 +365,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   run_insert: () => null,
   run_finish: () => null,
   agent_run_insert: () => 1,
-  agent_run_finish: () => null,
   runs_list: () => SAMPLE_RUNS,
   list_dir: () => [
     { name: "lib", path: "/home/dev/acme-app/lib", isDir: true },

@@ -12,6 +12,7 @@ import {
   type VoiceEvent,
   type VoiceStatus,
 } from "../lib/voice";
+import { errorText as genericErrorText } from "../lib/errors";
 import { setOperatorInput, submitOperatorCommand } from "./operatorDock";
 import { voiceDictationSettings, voiceModelOverride } from "./voiceSettings";
 
@@ -50,8 +51,12 @@ let finalized = false;
 // when the start settles.
 let starting = false;
 
+// Not a plain duplicate of lib/errors' errorText: this falls back to a
+// dictation-specific message instead of `String(error)` for a non-Error,
+// non-string throw, so it keeps its own wrapper (delegating the Error-message
+// extraction to the shared helper).
 function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) return genericErrorText(error);
   return typeof error === "string" ? error : "dictation failed";
 }
 

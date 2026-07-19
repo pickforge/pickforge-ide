@@ -4,6 +4,7 @@ import {
   type PickforgeOAuthProvider,
 } from "@pickforge/auth";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { errorText } from "./errors";
 import { openExternalUrl } from "./opener";
 import {
   PICKFORGE_PRO_REDIRECT_URI,
@@ -26,10 +27,6 @@ function tauriAvailable(): boolean {
     typeof window !== "undefined" &&
     typeof (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ === "object"
   );
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function isAuthCallbackUrl(value: string): boolean {
@@ -55,7 +52,7 @@ async function shouldHandleRedirect(): Promise<boolean> {
 }
 
 async function routeRedirectError(error: unknown) {
-  const message = errorMessage(error);
+  const message = errorText(error);
   try {
     const store = await import("../stores/account");
     if (store.shouldHandleAccountRedirect()) {

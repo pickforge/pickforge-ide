@@ -95,6 +95,7 @@ import {
   workspace,
 } from "../../stores/workspace";
 import { markChatTitleManual } from "../../lib/chatAutoName";
+import { errorText } from "../../lib/errors";
 import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
@@ -426,8 +427,6 @@ export function OrchestraView(props: {
       delete next[chatId];
       return next;
     });
-  const errorText = (error: unknown) =>
-    error instanceof Error ? error.message : String(error);
 
   const tasks = () => taskList(props.projectRoot).items;
   const usage = () => usageSummary(props.projectRoot).items;

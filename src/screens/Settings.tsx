@@ -37,6 +37,7 @@ import {
   IconRefresh,
 } from "../components/icons";
 import { currentZoom, zoomIn, zoomOut, zoomReset } from "../lib/zoom";
+import { errorText } from "../lib/errors";
 import { setRunButtonLabels, workbenchPrefs } from "../stores/workbenchPrefs";
 import {
   setWindowControlsSide,
@@ -558,7 +559,7 @@ export function SettingsScreen() {
         version: null,
         doctor: null,
         agents: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       });
     } finally {
       setPickLabLoading(false);
@@ -570,7 +571,7 @@ export function SettingsScreen() {
       setCrashReports(config.crash_reports);
       setCrashReportsError(null);
     } catch (error) {
-      setCrashReportsError(error instanceof Error ? error.message : String(error));
+      setCrashReportsError(errorText(error));
     }
   };
   const reloadRemoteHost = async () => {
@@ -581,7 +582,7 @@ export function SettingsScreen() {
       setRemoteHost(next);
       setRemotePort(String(next.listener.kind === "loopback" ? next.listener.port : next.defaultPort));
     } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteError(errorText(error));
     } finally {
       setRemoteLoading(false);
     }
@@ -594,7 +595,7 @@ export function SettingsScreen() {
         available: false,
         missing: [],
         modelPath: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       });
     }
   };
@@ -609,7 +610,7 @@ export function SettingsScreen() {
       try {
         next[agentId] = await discoverAgentCli(agentId);
       } catch (error) {
-        failures[agentId] = error instanceof Error ? error.message : String(error);
+        failures[agentId] = errorText(error);
       }
     }));
     setAgentDiagnostics(() => next);
@@ -671,7 +672,7 @@ export function SettingsScreen() {
       await telemetrySet(on);
     } catch (error) {
       setCrashReports(previous);
-      setCrashReportsError(error instanceof Error ? error.message : String(error));
+      setCrashReportsError(errorText(error));
     }
   };
 
@@ -741,7 +742,7 @@ export function SettingsScreen() {
     try {
       await startCreditCheckout(pack);
     } catch (error) {
-      setCreditCheckoutError(error instanceof Error ? error.message : String(error));
+      setCreditCheckoutError(errorText(error));
     } finally {
       setCreditCheckoutBusy(false);
     }
@@ -810,7 +811,7 @@ export function SettingsScreen() {
       }
       setRemoteHost(await remoteHostStart(remoteHost()?.defaultHost ?? "127.0.0.1", port));
     } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteError(errorText(error));
     } finally {
       setRemoteLoading(false);
     }
@@ -821,7 +822,7 @@ export function SettingsScreen() {
     try {
       setRemoteHost(await remoteHostStop());
     } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteError(errorText(error));
     } finally {
       setRemoteLoading(false);
     }
@@ -834,7 +835,7 @@ export function SettingsScreen() {
       await remoteHostIssuePairingCode();
       await reloadRemoteHost();
     } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteError(errorText(error));
       setRemoteLoading(false);
     }
   };
@@ -862,7 +863,7 @@ export function SettingsScreen() {
       await remoteTailscaleSshSet(remoteHost()?.tailscale.sshEnabled !== true);
       await reloadRemoteHost();
     } catch (error) {
-      setRemoteError(error instanceof Error ? error.message : String(error));
+      setRemoteError(errorText(error));
       setRemoteLoading(false);
     }
   };

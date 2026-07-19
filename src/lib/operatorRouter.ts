@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
+import { errorText } from "./errors";
 import {
   operatorActionNames,
   operatorActionSchema,
@@ -172,17 +173,13 @@ function parseProposal(rawJson: string): RouterProposal {
   try {
     value = JSON.parse(rawJson);
   } catch (error) {
-    throw new Error(`router returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`router returned invalid JSON: ${errorText(error)}`);
   }
   const parsed = routerProposalSchema.safeParse(value);
   if (!parsed.success) {
     throw new Error(parsed.error.message);
   }
   return parsed.data;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function persistLatencyBestEffort(backend: OperatorRouterBackend, latencyMs: number): void {
@@ -215,7 +212,7 @@ export async function routeCommand(text: string): Promise<RouteOutcome> {
       latencyMs: raw.latencyMs,
     };
   } catch (error) {
-    return { kind: "error", message: errorMessage(error) };
+    return { kind: "error", message: errorText(error) };
   }
 }
 
@@ -246,7 +243,7 @@ export async function routeRawPrompt(prompt: string): Promise<RawRouterResult> {
       latencyMs: raw.latencyMs,
     };
   } catch (error) {
-    return { kind: "error", message: errorMessage(error) };
+    return { kind: "error", message: errorText(error) };
   }
 }
 

@@ -7,6 +7,7 @@ import {
   type AgentUsageSummary,
   type OrchestraTask,
 } from "../lib/orchestra";
+import { errorText } from "../lib/errors";
 
 export const MAX_LANES = 5;
 const ALL_USAGE_KEY = "__all__";
@@ -233,10 +234,6 @@ function emptyTasks(): OrchestraTaskListState {
 
 function emptyUsage(): OrchestraUsageState {
   return { items: [], loading: false, loaded: false, error: null };
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function compareTasks(a: OrchestraTask, b: OrchestraTask): number {

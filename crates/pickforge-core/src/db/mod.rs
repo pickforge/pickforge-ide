@@ -1413,21 +1413,6 @@ impl Database {
         )?;
         Ok(conn.last_insert_rowid())
     }
-
-    pub fn finish_agent_run(
-        &self,
-        id: i64,
-        finished_at: i64,
-        exit_code: Option<i64>,
-        hot_reload_count: i64,
-    ) -> Result<(), DbError> {
-        self.lock().execute(
-            "UPDATE agent_run_log SET finished_at = ?2, exit_code = ?3, hot_reload_count = ?4 \
-             WHERE id = ?1",
-            params![id, finished_at, exit_code, hot_reload_count],
-        )?;
-        Ok(())
-    }
 }
 
 fn project_from_row(row: &Row) -> rusqlite::Result<Project> {

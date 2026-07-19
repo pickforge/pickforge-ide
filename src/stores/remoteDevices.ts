@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { errorText } from "../lib/errors";
 import type { RemotePty } from "../lib/pty";
 import {
   remoteFlutterDevices,
@@ -66,7 +67,7 @@ export function refreshRemoteDevices(
     .catch((error) => publish(key, {
       status: "error",
       devices: prior.devices,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorText(error),
     }))
     .finally(() => {
       inFlight.delete(key);

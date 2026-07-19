@@ -33,27 +33,6 @@ export interface Chat {
   sortOrder: number;
 }
 
-export interface ProjectSettings {
-  projectRoot: string;
-  vmServiceUrl: string | null;
-  defaultAgentId: string | null;
-  lastChatId: string | null;
-  paneSizes: string | null;
-  lastUsedAt: number | null;
-  avdId: string | null;
-  avdName: string | null;
-  connectionMode: string;
-  flutterRunArgs: string | null;
-  targetFile: string | null;
-  validatorCommand: string | null;
-  emulatorLaunchOptions: string | null;
-  emulatorIdleShutdown: string | null;
-  autoBootOnSelect: boolean;
-  firstRunCelebrated: boolean;
-  contextStorageMode: string | null;
-  contextStorageCustomPath: string | null;
-}
-
 export interface PickHistory {
   id: number;
   projectRoot: string;
@@ -174,12 +153,6 @@ export const updateChatSessionId = (chatId: string, sessionId: string | null) =>
 export const updateChatSortOrder = (chatId: string, sortOrder: number) =>
   invoke<void>("update_chat_sort_order", { chatId, sortOrder });
 
-// ---- settings ----
-export const settingsGet = (root: string) =>
-  invoke<ProjectSettings | null>("settings_get", { root });
-export const settingsUpsert = (settings: ProjectSettings) =>
-  invoke<void>("settings_upsert", { settings });
-
 // ---- history ----
 export const picksList = (projectRoot: string, limit = 100) =>
   invoke<PickHistory[]>("picks_list", { projectRoot, limit });
@@ -197,13 +170,6 @@ export const runFinish = (
 ) => invoke<void>("run_finish", { sessionId, endedAt, exitReason, exitCode });
 export const agentRunInsert = (run: AgentRunLog) =>
   invoke<number>("agent_run_insert", { run });
-export const agentRunFinish = (
-  id: number,
-  finishedAt: number,
-  exitCode: number | null,
-  hotReloadCount: number,
-) =>
-  invoke<void>("agent_run_finish", { id, finishedAt, exitCode, hotReloadCount });
 export const agentSessionLatestForChat = (chatId: string) =>
   invoke<AgentSessionRow | null>("agent_session_latest_for_chat", { chatId });
 

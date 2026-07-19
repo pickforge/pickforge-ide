@@ -19,7 +19,9 @@ import {
 } from "../lib/device";
 import type { Chat, Project } from "../lib/db";
 import { riskTier, type OperatorIntent } from "../lib/operatorIntent";
-import { isCompatibleDevice, type RunTarget } from "../lib/runTargets";
+import { hasCapability, isCompatibleDevice, type RunTarget } from "../lib/runTargets";
+import { remotePtyFor } from "../lib/remoteContext";
+import type { RemotePty } from "../lib/pty";
 import { matchWidget, type IndexedWidgetNode } from "../lib/widgetMatch";
 import {
   inspectDir,
@@ -48,10 +50,8 @@ import {
   isBooting,
   launchActiveTarget,
   launchError,
-  resolveSelectedDevice,
-  resolveScreenshotDevice,
 } from "./runLaunch";
-import { setRunDevice } from "./runDevice";
+import { selectedDevice, setRunDevice } from "./runDevice";
 import {
   reloadRun as reloadActiveRun,
   restartRun as restartActiveRun,
@@ -111,6 +111,73 @@ type PendingWidgetSelection = {
 
 const WIDGET_MATCH_OBJECT_GROUP = "pf-operator-widget-match";
 const pendingWidgetSelections = new Map<string, PendingWidgetSelection>();
+
+/** The one execution transaction for an Operator intent: every mutable
+ *  Project/target/device/chat fact an action or its audit row can depend on,
+ *  resolved ONCE, synchronously, at dispatch intent — before the first await
+ *  (the audit insert). `runIntent` and every action helper below thread this
+ *  through instead of re-resolving live store state, so a Project switch (or
+ *  a target/device/chat change for the same Project) mid-await can never
+ *  retarget an audit row, launch, screenshot, widget select, or run control
+ *  that already started dispatching. Mirrors the pre-await capture discipline
+ *  `launchTarget` (runLaunch.ts) and `resolvePtyRemote` (remoteContext.ts)
+ *  established for the direct run path. */
+type ExecutionFacts = {
+  intent: OperatorIntent;
+  /** The intent's own Project reference, resolved once (null ref resolves to
+   *  whatever was active at capture time). */
+  project: Resolution<Project>;
+  /** The active Project at capture time, ignoring any explicit projectRef —
+   *  used only for chat-open's "fall back to the active project" rule. */
+  activeProject: Resolution<Project>;
+  /** workspace.activeRoot at capture time, for "is Project X active" checks
+   *  that must not read live state after an await. */
+  activeRoot: string | null;
+  /** workspace.activeChatId at capture time. */
+  activeChatId: string | null;
+  /** The target a fresh run would use for this Project at capture time
+   *  (the live run's target if one is running, else the selected launcher
+   *  target) — target discovery is Project-scoped, so this must be captured
+   *  alongside the Project, not re-read after an await. */
+  target: RunTarget | null;
+  /** All discovered targets for the captured Project at capture time. */
+  targets: RunTarget[];
+  /** The stored device selection for the captured Project at capture time
+   *  (a key, not a live DeviceEntry — device connection state is refreshed
+   *  fresh at use time, only WHICH device was chosen is captured). */
+  deviceSelectionKey: string;
+  /** The captured Project's remote binding (execution location): local-only
+   *  device adapters (emulator/simulator boot, adb/ios screenshot) must never
+   *  fall back to the local machine for a Project bound to a remote host. */
+  remote: RemotePty | null;
+};
+
+/** Facts captured for a tier-1 preview, kept until its confirmation dispatch
+ *  consumes them by auditId — so "confirm" executes against exactly what was
+ *  shown/audited at preview time, even if the active Project changed while
+ *  the confirmation was pending. Mirrors `pendingWidgetSelections` above:
+ *  no explicit TTL, an abandoned preview is simply never consumed. */
+const pendingExecutionFacts = new Map<string, ExecutionFacts>();
+
+function activeRunTarget(): RunTarget | null {
+  return runConsole.status() === "running" ? runConsole.target() : activeTarget();
+}
+
+function captureExecutionFacts(intent: OperatorIntent): ExecutionFacts {
+  const project = resolveProjectReference(intent.projectRef);
+  const activeProject = resolveProjectReference(null);
+  return {
+    intent,
+    project,
+    activeProject,
+    activeRoot: workspace.activeRoot,
+    activeChatId: workspace.activeChatId,
+    target: activeRunTarget(),
+    targets: runTargets(),
+    deviceSelectionKey: project.ok ? selectedDevice(project.value.projectRoot) : "",
+    remote: project.ok ? remotePtyFor(project.value.projectRoot) : null,
+  };
+}
 
 function normalize(value: string): string {
   return value.trim().toLowerCase();
@@ -268,14 +335,6 @@ function agentProviderFromIntent(provider: "claude" | "codex"): AgentProvider {
 }
 
 
-function activeChat(): Resolution<Chat> {
-  const chatId = workspace.activeChatId;
-  if (!chatId) return { ok: false, message: "No active chat" };
-  const chat = findChat(chatId);
-  if (!chat) return { ok: false, message: "Active chat is not loaded" };
-  return { ok: true, value: chat };
-}
-
 function agentTarget(chat: Chat): Resolution<{ chat: Chat; provider: AgentProvider }> {
   if (chat.kind !== "agent") {
     return { ok: false, message: `Chat "${chat.title}" is not an agent chat` };
@@ -349,10 +408,9 @@ function auditStatusFor(result: DispatchResultDraft): AuditStatus {
   }
 }
 
-function auditProjectRoot(intent: OperatorIntent): string | null {
+function auditProjectRootFor(facts: ExecutionFacts): string | null {
   if (!flagEnabled("operator")) return null;
-  const resolved = resolveProjectReference(intent.projectRef);
-  return resolved.ok ? resolved.value.projectRoot : null;
+  return facts.project.ok ? facts.project.value.projectRoot : null;
 }
 
 function auditInputText(intent: OperatorIntent, inputText: string | undefined): string {
@@ -405,9 +463,13 @@ async function terminalResult(
   projectRoot: string | null,
   result: DispatchResultDraft,
   inputText: string | undefined,
+  facts: ExecutionFacts | null,
 ): Promise<DispatchResult> {
   try {
     const auditId = await insertAudit(intent, tier, projectRoot, inputText);
+    if (facts && result.status === "needsConfirmation") {
+      pendingExecutionFacts.set(auditId, facts);
+    }
     const auditedResult: DispatchResult = result.status === "needsConfirmation"
       ? { ...result, auditId }
       : result;
@@ -418,12 +480,8 @@ async function terminalResult(
   }
 }
 
-async function projectFor(intent: OperatorIntent): Promise<Resolution<Project>> {
-  return resolveProjectReference(intent.projectRef);
-}
-
-async function chatFor(intent: OperatorIntent, chatRef: string | null): Promise<Resolution<Chat>> {
-  const project = await projectFor(intent);
+async function chatForFacts(facts: ExecutionFacts, chatRef: string | null): Promise<Resolution<Chat>> {
+  const project = facts.project;
   if (!project.ok) return project;
   return resolveChatReference(project.value.projectRoot, chatRef);
 }
@@ -438,8 +496,7 @@ function nonEmpty(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-async function chatToOpen(intent: OperatorIntent, chatRef: string | null): Promise<Resolution<Chat>> {
-  const project = await projectFor(intent);
+async function chatToOpenIn(project: Resolution<Project>, chatRef: string | null): Promise<Resolution<Chat>> {
   if (!project.ok) return project;
   if (chatRef) return resolveChatReference(project.value.projectRoot, chatRef);
 
@@ -500,10 +557,18 @@ async function sendToChat(chat: Chat, prompt: string): Promise<DispatchResult> {
   return { status: "done", summary: `Sent prompt to ${chat.title}` };
 }
 
-async function activeChatForIntent(intent: OperatorIntent): Promise<Resolution<Chat>> {
-  const project = intent.projectRef ? await projectFor(intent) : null;
+function capturedActiveChat(facts: ExecutionFacts): Resolution<Chat> {
+  const chatId = facts.activeChatId;
+  if (!chatId) return { ok: false, message: "No active chat" };
+  const chat = findChat(chatId);
+  if (!chat) return { ok: false, message: "Active chat is not loaded" };
+  return { ok: true, value: chat };
+}
+
+function activeChatForFacts(facts: ExecutionFacts): Resolution<Chat> {
+  const project = facts.intent.projectRef ? facts.project : null;
   if (project && !project.ok) return { ok: false, message: project.message };
-  const chat = activeChat();
+  const chat = capturedActiveChat(facts);
   if (!chat.ok) return chat;
   if (project && chat.value.projectRoot !== project.value.projectRoot) {
     return {
@@ -514,9 +579,9 @@ async function activeChatForIntent(intent: OperatorIntent): Promise<Resolution<C
   return chat;
 }
 
-async function resolveRunChat(intent: OperatorIntent, runRef: string | null): Promise<Resolution<Chat>> {
-  if (!runRef) return activeChatForIntent(intent);
-  return chatFor(intent, runRef);
+async function resolveRunChatFacts(facts: ExecutionFacts, runRef: string | null): Promise<Resolution<Chat>> {
+  if (!runRef) return activeChatForFacts(facts);
+  return chatForFacts(facts, runRef);
 }
 
 function swarmSummary(projectRoot: string): string {
@@ -542,10 +607,10 @@ function runTargetLabel(target: RunTarget): string {
   return target.label === target.id ? target.label : `${target.label} (${target.id})`;
 }
 
-function resolveRunTargetReference(targetRef: string | null): Resolution<RunTarget> {
-  const targets = runTargets();
+function resolveRunTargetFacts(facts: ExecutionFacts, targetRef: string | null): Resolution<RunTarget> {
+  const targets = facts.targets;
   if (!targetRef) {
-    const target = activeTarget();
+    const target = facts.target;
     if (!target) {
       return {
         ok: false,
@@ -565,10 +630,10 @@ function resolveRunTargetReference(targetRef: string | null): Resolution<RunTarg
   );
 }
 
-async function activeProjectForDeviceIntent(intent: OperatorIntent): Promise<Resolution<Project>> {
-  const project = await projectFor(intent);
+function activeProjectFacts(facts: ExecutionFacts): Resolution<Project> {
+  const project = facts.project;
   if (!project.ok) return project;
-  if (workspace.activeRoot !== project.value.projectRoot) {
+  if (facts.activeRoot !== project.value.projectRoot) {
     return {
       ok: false,
       message: `Project ${project.value.displayName} is not active`,
@@ -587,14 +652,15 @@ function pathIsWithinProject(path: string, projectRoot: string): boolean {
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
 }
 
+/** Whether the LIVE run console's current run belongs to the captured
+ *  Project: the run process is global (switching the active Project in the
+ *  UI doesn't retarget it), so reading it live here is correct — what must
+ *  never drift is which Project it's compared against, which is why callers
+ *  always pass the captured `project.projectRoot`, not a live re-resolution. */
 function activeRunBelongsToProject(projectRoot: string): boolean {
   const cwd = runConsole.current()?.cwd;
   if (!cwd) return workspace.activeRoot === projectRoot;
   return pathIsWithinProject(cwd, projectRoot);
-}
-
-function activeRunTarget(): RunTarget | null {
-  return runConsole.status() === "running" ? runConsole.target() : activeTarget();
 }
 
 function activeFlutterRunForProject(project: Project): Resolution<RunTarget> {
@@ -632,14 +698,20 @@ function selectableDeviceKindLabel(device: DeviceEntry): "device" | "emulator" |
   return "device";
 }
 
-function defaultVirtualDevice(devices: DeviceEntry[]): DeviceEntry | null {
-  const selected = resolveSelectedDevice();
-  if (selected && isLaunchableVirtualDevice(selected)) {
-    const key = deviceKey(selected);
-    const match = devices.find((device) => deviceKey(device) === key);
-    if (match) return match;
-  }
-  return devices.find((device) => device.state === "running") ??
+/** Resolve a device among an already target-compatible list using the
+ *  captured stored-selection key (an exact serial/avdId match), falling back
+ *  to the first running device, then the first stopped one — mirrors
+ *  `resolveSelectedDevice`'s matching order in runLaunch.ts, but reads the
+ *  key CAPTURED at intent time instead of the live selection, so a selection
+ *  change for the same Project mid-await can't retarget an in-flight
+ *  launch/screenshot. An explicit stored match always wins over the fallback,
+ *  even if it isn't currently running (never silently switches devices). */
+function resolveDeviceFromSelection(devices: DeviceEntry[], capturedKey: string): DeviceEntry | null {
+  const match = capturedKey
+    ? devices.find((device) => (device.serial && device.serial === capturedKey) || (device.avdId && device.avdId === capturedKey))
+    : undefined;
+  return match ??
+    devices.find((device) => device.state === "running") ??
     devices.find((device) => device.state === "stopped") ??
     null;
 }
@@ -652,16 +724,22 @@ function compatibleVirtualDevices(target: RunTarget | null, devices: DeviceEntry
   return compatibleDevices(target, devices).filter(isLaunchableVirtualDevice);
 }
 
-async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | null): Promise<DispatchResult> {
-  const project = await activeProjectForDeviceIntent(intent);
+async function launchEmulatorIntent(facts: ExecutionFacts, deviceRef: string | null): Promise<DispatchResult> {
+  const project = activeProjectFacts(facts);
   if (!project.ok) return { status: "failed", message: project.message };
+  if (facts.remote) {
+    return {
+      status: "failed",
+      message: `Project ${project.value.displayName} runs on ${facts.remote.host} — local emulator/simulator launch is unavailable`,
+    };
+  }
 
-  const target = activeRunTarget();
+  const target = facts.target;
   const refreshedDevices = await refreshDevices();
   const devices = deviceRef
     ? compatibleDevices(target, refreshedDevices)
     : compatibleVirtualDevices(target, refreshedDevices);
-  const fallback = deviceRef ? null : defaultVirtualDevice(devices);
+  const fallback = deviceRef ? null : resolveDeviceFromSelection(devices, facts.deviceSelectionKey);
   const resolved = deviceRef
     ? resolveDeviceReference(deviceRef, devices)
     : fallback
@@ -698,16 +776,25 @@ async function launchEmulatorIntent(intent: OperatorIntent, deviceRef: string | 
   return { status: "done", summary: `Launched emulator ${device.displayName}` };
 }
 
-async function launchRunIntent(intent: OperatorIntent, targetRef: string | null): Promise<DispatchResult> {
-  const project = await activeProjectForDeviceIntent(intent);
+async function launchRunIntent(facts: ExecutionFacts, targetRef: string | null): Promise<DispatchResult> {
+  const project = activeProjectFacts(facts);
   if (!project.ok) return { status: "failed", message: project.message };
   if (runConsole.status() === "running") {
     return { status: "noop", summary: "run already active" };
   }
   if (isBooting()) return { status: "failed", message: "Run launch is already in progress" };
 
-  const target = resolveRunTargetReference(targetRef);
+  const target = resolveRunTargetFacts(facts, targetRef);
   if (!target.ok) return { status: "failed", message: target.message };
+  // The captured Project was active when this intent was resolved (checked
+  // above), but this dispatch already crossed one await (the audit insert)
+  // before reaching here. Re-check against LIVE state right before handing
+  // off to `launchActiveTarget` — which reads `workspace.activeRoot` itself,
+  // with no parameter to inject the captured Project — so a switch during
+  // that earlier await can never launch against the wrong Project.
+  if (workspace.activeRoot !== project.value.projectRoot) {
+    return { status: "failed", message: `Project ${project.value.displayName} is no longer active` };
+  }
   if (targetRef) setActiveTargetId(target.value.id);
   await launchActiveTarget();
   if (isBooting()) return { status: "failed", message: "Run launch is already in progress" };
@@ -720,10 +807,10 @@ async function launchRunIntent(intent: OperatorIntent, targetRef: string | null)
 }
 
 async function runControlIntent(
-  intent: OperatorIntent,
+  facts: ExecutionFacts,
   action: "reloadRun" | "hotRestart" | "stopRun",
 ): Promise<DispatchResult> {
-  const project = await activeProjectForDeviceIntent(intent);
+  const project = activeProjectFacts(facts);
   if (!project.ok) return { status: "failed", message: project.message };
   if (runConsole.status() !== "running") {
     return { status: "noop", summary: "no active run" };
@@ -751,8 +838,8 @@ async function runControlIntent(
   return { status: "done", summary: "Stopped active run" };
 }
 
-async function enterSelectModeIntent(intent: OperatorIntent): Promise<DispatchResult> {
-  const project = await activeProjectForDeviceIntent(intent);
+async function enterSelectModeIntent(facts: ExecutionFacts): Promise<DispatchResult> {
+  const project = activeProjectFacts(facts);
   if (!project.ok) return { status: "failed", message: project.message };
   const target = activeFlutterRunForProject(project.value);
   if (!target.ok) return { status: "failed", message: target.message };
@@ -775,11 +862,11 @@ function candidateFor(node: IndexedWidgetNode): WidgetSelectionCandidate {
 }
 
 async function selectWidgetIntent(
-  intent: OperatorIntent,
+  facts: ExecutionFacts,
   description: string,
   auditId: string,
 ): Promise<DispatchResultDraft> {
-  const project = await activeProjectForDeviceIntent(intent);
+  const project = activeProjectFacts(facts);
   if (!project.ok) return { status: "failed", message: project.message };
   const target = activeFlutterRunForProject(project.value);
   if (!target.ok) return { status: "failed", message: target.message };
@@ -860,8 +947,13 @@ async function captureDeviceScreenshot(
     : adbScreenshot(device.serial, dir, "operator-screenshot.png");
 }
 
-async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchResult> {
-  const project = await activeProjectForDeviceIntent(intent);
+function screenshotTargetFor(target: RunTarget | null): RunTarget | null {
+  if (!hasCapability(target, "captureScreenshot")) return null;
+  return target?.inspectorKind === "vmService" || target?.deviceConvention !== "none" ? target : null;
+}
+
+async function takeScreenshotIntent(facts: ExecutionFacts): Promise<DispatchResult> {
+  const project = activeProjectFacts(facts);
   if (!project.ok) return { status: "failed", message: project.message };
   if (runConsole.status() === "running" && !activeRunBelongsToProject(project.value.projectRoot)) {
     return { status: "failed", message: `Active run is not in project ${project.value.displayName}` };
@@ -870,25 +962,34 @@ async function takeScreenshotIntent(intent: OperatorIntent): Promise<DispatchRes
   const vmPath = await captureVmScreenshot(project.value.projectRoot);
   if (vmPath) return { status: "done", summary: `Captured screenshot ${vmPath}` };
 
-  await refreshDevices();
-  const device = resolveScreenshotDevice();
-  if (device) {
-    const path = await captureDeviceScreenshot(project.value.projectRoot, device);
-    if (path) return { status: "done", summary: `Captured screenshot ${path}` };
+  // A remote Project's VM session already tried above (it works over the
+  // wire); its adb/ios screenshot fallback is local-only and must never
+  // capture the local machine on its behalf.
+  if (facts.remote) return { status: "noop", summary: "no device or VM session to capture" };
+
+  const screenshotTarget = screenshotTargetFor(facts.target);
+  if (screenshotTarget) {
+    const refreshedDevices = await refreshDevices();
+    const compatible = refreshedDevices.filter((device) => isCompatibleDevice(screenshotTarget, device.kind));
+    const device = resolveDeviceFromSelection(compatible, facts.deviceSelectionKey);
+    if (device?.serial && device.state === "running") {
+      const path = await captureDeviceScreenshot(project.value.projectRoot, device);
+      if (path) return { status: "done", summary: `Captured screenshot ${path}` };
+    }
   }
   return { status: "noop", summary: "no device or VM session to capture" };
 }
 
 async function runIntent(
-  intent: OperatorIntent,
+  facts: ExecutionFacts,
   inputText: string | undefined,
   auditId: string,
 ): Promise<DispatchResultDraft> {
-  const action = intent.action;
+  const action = facts.intent.action;
 
   switch (action.action) {
     case "openProject": {
-      const project = await projectFor(intent);
+      const project = facts.project;
       if (!project.ok) return { status: "failed", message: project.message };
       await selectProject(project.value.projectRoot);
       return { status: "done", summary: `Opened project ${project.value.displayName}` };
@@ -897,12 +998,12 @@ async function runIntent(
       const fallbackRef = openChatFallbackRef(inputText);
       let chat: Resolution<Chat> | null = null;
       if (fallbackRef && fallbackRef !== action.chat) {
-        const fallback = await chatToOpen({ ...intent, projectRef: null }, fallbackRef);
+        const fallback = await chatToOpenIn(facts.activeProject, fallbackRef);
         if (fallback.ok) chat = fallback;
       }
-      chat ??= await chatToOpen(intent, action.chat);
-      if (!chat.ok && intent.projectRef && fallbackRef && fallbackRef !== action.chat) {
-        const fallback = await chatToOpen({ ...intent, projectRef: null }, fallbackRef);
+      chat ??= await chatToOpenIn(facts.project, action.chat);
+      if (!chat.ok && facts.intent.projectRef && fallbackRef && fallbackRef !== action.chat) {
+        const fallback = await chatToOpenIn(facts.activeProject, fallbackRef);
         if (fallback.ok) chat = fallback;
       }
       if (!chat.ok) return { status: "failed", message: chat.message };
@@ -910,7 +1011,7 @@ async function runIntent(
       return { status: "done", summary: `Opened chat ${chat.value.title}` };
     }
     case "createChat": {
-      const project = await projectFor(intent);
+      const project = facts.project;
       if (!project.ok) return { status: "failed", message: project.message };
       const provider = agentProviderFromIntent(action.provider);
       const model = normalizeNativeModel(
@@ -937,16 +1038,16 @@ async function runIntent(
     }
     case "sendPrompt": {
       if (action.chat) {
-        const chat = await chatFor(intent, action.chat);
+        const chat = await chatForFacts(facts, action.chat);
         if (!chat.ok) return { status: "failed", message: chat.message };
         return sendToChat(chat.value, action.prompt);
       }
-      const chat = await activeChatForIntent(intent);
+      const chat = activeChatForFacts(facts);
       if (!chat.ok) return { status: "failed", message: chat.message };
       return sendToChat(chat.value, action.prompt);
     }
     case "startSwarm": {
-      const project = await projectFor(intent);
+      const project = facts.project;
       if (!project.ok) return { status: "failed", message: project.message };
       const providerPreference = action.provider === "claude" ? "claudeCode" : action.provider;
       const runId = await startSwarmRun(project.value.projectRoot, action.goal, {
@@ -957,12 +1058,12 @@ async function runIntent(
       return { status: "done", summary: `Started swarm ${runId}` };
     }
     case "swarmStatus": {
-      const project = await projectFor(intent);
+      const project = facts.project;
       if (!project.ok) return { status: "failed", message: project.message };
       return { status: "done", summary: swarmSummary(project.value.projectRoot) };
     }
     case "interruptRun": {
-      const chat = await resolveRunChat(intent, action.run);
+      const chat = await resolveRunChatFacts(facts, action.run);
       if (!chat.ok) return { status: "failed", message: chat.message };
       const target = agentTarget(chat.value);
       if (!target.ok) return { status: "failed", message: target.message };
@@ -974,7 +1075,7 @@ async function runIntent(
       return { status: "done", summary: `Interrupted ${chat.value.title}` };
     }
     case "steerRun": {
-      const chat = await resolveRunChat(intent, action.run);
+      const chat = await resolveRunChatFacts(facts, action.run);
       if (!chat.ok) return { status: "failed", message: chat.message };
       const target = agentTarget(chat.value);
       if (!target.ok) return { status: "failed", message: target.message };
@@ -982,21 +1083,21 @@ async function runIntent(
       return { status: "done", summary: `Steered ${chat.value.title}` };
     }
     case "launchEmulator":
-      return launchEmulatorIntent(intent, action.device);
+      return launchEmulatorIntent(facts, action.device);
     case "launchRun":
-      return launchRunIntent(intent, action.target);
+      return launchRunIntent(facts, action.target);
     case "reloadRun":
-      return runControlIntent(intent, "reloadRun");
+      return runControlIntent(facts, "reloadRun");
     case "stopRun":
-      return runControlIntent(intent, "stopRun");
+      return runControlIntent(facts, "stopRun");
     case "hotRestart":
-      return runControlIntent(intent, "hotRestart");
+      return runControlIntent(facts, "hotRestart");
     case "enterSelectMode":
-      return enterSelectModeIntent(intent);
+      return enterSelectModeIntent(facts);
     case "takeScreenshot":
-      return takeScreenshotIntent(intent);
+      return takeScreenshotIntent(facts);
     case "selectWidget":
-      return selectWidgetIntent(intent, action.description, auditId);
+      return selectWidgetIntent(facts, action.description, auditId);
   }
 }
 
@@ -1015,10 +1116,20 @@ export async function dispatchIntent(
         message: "Operator is disabled.",
       },
       opts.inputText,
+      null,
     );
   }
 
-  const projectRoot = auditProjectRoot(intent);
+  // The one execution transaction: every mutable Project/target/device/chat
+  // fact this dispatch can depend on is captured HERE, synchronously, before
+  // the first await below (the audit insert). A Project switch (or a
+  // target/device/chat change for the same Project) during that await, or
+  // during any await inside an action helper, can never retarget this
+  // dispatch's audit attribution or execution — everything downstream reads
+  // `facts`, never live store state.
+  const facts = captureExecutionFacts(intent);
+  const projectRoot = auditProjectRootFor(facts);
+
   if (tier === 1 && !opts.confirmed) {
     return terminalResult(
       intent,
@@ -1029,18 +1140,35 @@ export async function dispatchIntent(
         summary: summaryFor(intent),
       },
       opts.inputText,
+      facts,
     );
   }
 
   let auditId: string;
+  // A confirmed reuse consumes the facts captured at PREVIEW time (kept in
+  // `pendingExecutionFacts` since the preview's audit insert), so the
+  // confirmed execution matches exactly what was audited/shown to the user —
+  // not whatever Project happens to be active now. Falls back to this call's
+  // own freshly captured facts if the preview's were never recorded (e.g. an
+  // externally supplied reuseAuditId).
+  let execFacts = facts;
   try {
-    auditId = opts.reuseAuditId ?? await insertAudit(intent, tier, projectRoot, opts.inputText);
+    if (opts.reuseAuditId) {
+      auditId = opts.reuseAuditId;
+      const pending = pendingExecutionFacts.get(auditId);
+      if (pending) {
+        execFacts = pending;
+        pendingExecutionFacts.delete(auditId);
+      }
+    } else {
+      auditId = await insertAudit(intent, tier, projectRoot, opts.inputText);
+    }
   } catch (error) {
     return { status: "failed", message: errorText(error) };
   }
 
   try {
-    const result = await runIntent(intent, opts.inputText, auditId);
+    const result = await runIntent(execFacts, opts.inputText, auditId);
     const auditedResult: DispatchResult = result.status === "needsConfirmation"
       ? { ...result, auditId }
       : result;

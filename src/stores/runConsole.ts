@@ -16,7 +16,7 @@ import {
   hasVmTransport,
   reattachVm,
 } from "./vmService";
-import { remotePtyFor } from "../lib/remoteContext";
+import { executionRemoteFor, remotePtyFor } from "../lib/remoteContext";
 import type { RemotePty } from "../lib/pty";
 import type { PtyExit } from "../lib/remoteTerminal";
 
@@ -184,9 +184,7 @@ export function startRun(
   // The target carries its own run dir (derived from its program's pubspec, or
   // an explicit launch.json cwd); fall back to the project root.
   const base = t.cwd ?? remote?.remoteRoot ?? projectRoot;
-  const executionRemote = remote && t.cwd
-    ? { ...remote, remoteRoot: t.cwd }
-    : remote;
+  const executionRemote = executionRemoteFor(remote, t.cwd);
   setOpen(true);
   persist();
   setStatus("running");

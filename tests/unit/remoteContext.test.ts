@@ -26,9 +26,11 @@ vi.mock("../../src/stores/workspace", () => ({
 import {
   canLaunchAgentForMode,
   captureRemotePtyForPane,
+  executionRemoteFor,
   paneSpawnModeFor,
   remotePathFor,
   remotePtyFor,
+  resolvePtyRemote,
   shouldUseLocalMcp,
 } from "../../src/lib/remoteContext";
 import { startPtyWithLocalFallback } from "../../src/lib/remoteTerminal";
@@ -178,5 +180,75 @@ describe("remotePtyFor", () => {
     expect(remotePathFor("/app/other.dart", "/home/dev/app", "/app")).toBe(
       "/app/other.dart",
     );
+  });
+});
+
+describe("resolvePtyRemote", () => {
+  beforeEach(() => {
+    state.enabled = false;
+    state.leases = false;
+    state.projects = [];
+  });
+
+  it("looks up the project's live binding when nothing was captured yet", () => {
+    state.enabled = true;
+    state.projects = [
+      { projectRoot: "/app", remoteHost: "mac-mini", remoteRoot: "/srv/app" },
+    ];
+
+    expect(resolvePtyRemote(undefined, "/app")).toEqual({
+      host: "mac-mini",
+      remoteRoot: "/srv/app",
+      remoteProcessLeases: false,
+    });
+  });
+
+  it("keeps an already-captured binding even after the project's binding changes", () => {
+    state.enabled = true;
+    state.projects = [
+      { projectRoot: "/app", remoteHost: "mac-mini", remoteRoot: "/srv/app" },
+    ];
+    const captured = resolvePtyRemote(undefined, "/app");
+
+    state.projects = [
+      { projectRoot: "/app", remoteHost: "linux-box", remoteRoot: "/srv/app2" },
+    ];
+
+    expect(resolvePtyRemote(captured, "/app")).toEqual({
+      host: "mac-mini",
+      remoteRoot: "/srv/app",
+      remoteProcessLeases: false,
+    });
+  });
+
+  it("honors an explicit local override even when the project is remotely bound", () => {
+    state.enabled = true;
+    state.projects = [
+      { projectRoot: "/app", remoteHost: "mac-mini", remoteRoot: "/srv/app" },
+    ];
+
+    expect(resolvePtyRemote(null, "/app")).toBeNull();
+  });
+});
+
+describe("executionRemoteFor", () => {
+  it("passes a project-rooted remote through unchanged when the target has no nested cwd", () => {
+    const remote = { host: "mac-mini", remoteRoot: "/srv/app", remoteProcessLeases: false };
+
+    expect(executionRemoteFor(remote, undefined)).toEqual(remote);
+  });
+
+  it("stays on the SAME remote host, rooted at the target's nested cwd", () => {
+    const remote = { host: "mac-mini", remoteRoot: "/srv/repo", remoteProcessLeases: false };
+
+    expect(executionRemoteFor(remote, "/srv/repo/apps/app")).toEqual({
+      host: "mac-mini",
+      remoteRoot: "/srv/repo/apps/app",
+      remoteProcessLeases: false,
+    });
+  });
+
+  it("never invents a remote binding for a local target", () => {
+    expect(executionRemoteFor(null, "/local/apps/app")).toBeNull();
   });
 });

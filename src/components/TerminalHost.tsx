@@ -11,7 +11,7 @@ import { IconClose, IconGrip, IconSplit, IconSplitTrigger } from "./icons";
 import {
   captureRemotePtyForPane,
   paneSpawnModeFor,
-  remotePtyFor,
+  resolvePtyRemote,
   type CapturedRemotePtys,
   type PaneSpawnMode,
 } from "../lib/remoteContext";
@@ -253,11 +253,8 @@ export function TerminalHost(props: {
   };
 
   const primarySpawnMode = () => paneSpawnModeFor(paneRemote(), primaryId());
-  const primaryRemotePty = () => {
-    const remote = paneRemote()[primaryId()];
-    if (remote !== undefined) return remote;
-    return remotePtyFor(props.session?.projectRoot ?? props.cwd);
-  };
+  const primaryRemotePty = () =>
+    resolvePtyRemote(paneRemote()[primaryId()], props.session?.projectRoot ?? props.cwd);
 
   const notifyPaneClosed = (id: string) => {
     if (closedPanes.has(id)) return;

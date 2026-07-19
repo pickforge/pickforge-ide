@@ -16,9 +16,11 @@ vi.mock("../../src/lib/remoteHost", () => ({
   remotePubspecUsesFlutter: remote.pubspecUsesFlutter,
 }));
 
+import { invoke } from "@tauri-apps/api/core";
 import {
   defaultCommand,
   discoverRemoteRunTargets,
+  discoverRunTargetsForProject,
   expandVars,
   fromLaunchConfig,
   hasCapability,
@@ -132,6 +134,29 @@ describe("discoverRemoteRunTargets", () => {
     });
     resolveOld("/srv/old/app");
     await expect(stale).resolves.toBeNull();
+  });
+});
+
+describe("discoverRunTargetsForProject", () => {
+  it("never falls back to local detection when a remotely bound project's discovery fails", async () => {
+    remote.nearestPubspec.mockRejectedValue(new Error("ssh unavailable"));
+    vi.mocked(invoke).mockClear();
+
+    await expect(
+      discoverRunTargetsForProject("/local/app", { host: "mac-mini", remoteRoot: "/srv/app" }),
+    ).rejects.toThrow("ssh unavailable");
+
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("uses local detection only for an unbound project", async () => {
+    vi.mocked(invoke).mockClear();
+    remote.nearestPubspec.mockClear();
+
+    await discoverRunTargetsForProject("/local/app", null);
+
+    expect(invoke).toHaveBeenCalled();
+    expect(remote.nearestPubspec).not.toHaveBeenCalled();
   });
 });
 

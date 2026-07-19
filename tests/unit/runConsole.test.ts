@@ -15,6 +15,8 @@ const deps = vi.hoisted(() => ({
 
 vi.mock("../../src/lib/remoteContext", () => ({
   remotePtyFor: () => state.remote,
+  executionRemoteFor: (remote: typeof state.remote, cwd: string | null | undefined) =>
+    remote && cwd ? { ...remote, remoteRoot: cwd } : remote,
 }));
 
 vi.mock("../../src/stores/vmService", () => ({

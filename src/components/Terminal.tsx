@@ -17,7 +17,7 @@ import {
   type PtyBytes,
   type RemotePty,
 } from "../lib/pty";
-import { remotePtyFor } from "../lib/remoteContext";
+import { resolvePtyRemote } from "../lib/remoteContext";
 import {
   remotePtyExit,
   startPtyWithLocalFallback,
@@ -256,6 +256,17 @@ export function TerminalPane(props: {
       else void ptyKill(id);
     };
 
+    // Capture this pane's execution routing at MOUNT (spawn intent), not after
+    // the async font wait below: a project's remote binding can change while
+    // that wait is in flight (e.g. its remote host/root is edited), and re-
+    // reading it post-await would spawn this pane against a binding that was
+    // never the one live when the pane was actually opened. Mirrors the
+    // pre-await capture discipline `launchTarget` uses for a run's device
+    // selection.
+    const projectRoot = props.chat?.projectRoot ?? props.projectRoot ?? props.cwd;
+    const remote = resolvePtyRemote(props.remote, projectRoot);
+    let activeRemote: RemotePty | null = remote;
+
     // Register cleanup synchronously so it binds to this owner even though the
     // terminal opens after an async font wait.
     onCleanup(() => {
@@ -301,12 +312,6 @@ export function TerminalPane(props: {
       // font with mis-aligned columns.
       await ensureTerminalFontLoaded();
       if (disposed) return;
-
-      const projectRoot = props.chat?.projectRoot ?? props.projectRoot ?? props.cwd;
-      const remote = props.remote === undefined
-        ? remotePtyFor(projectRoot)
-        : props.remote;
-      let activeRemote = remote;
 
       term.open(container);
 

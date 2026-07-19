@@ -6,7 +6,22 @@ reset this file.
 
 ## User-facing changes
 
-- None yet.
+- Remote host settings now list paired clients with pairing dates and revoked
+  status, and let users revoke active client access (#241).
+- New section-based Settings navigation: a category sidebar with remembered
+  last category, direct section links, keyboard navigation, and layouts that
+  adapt to narrow windows. (`settingsNavigation` now default on, #211)
+- Chats now get automatic titles from your first prompt, refreshed at
+  meaningful milestones. Renaming a chat locks its title until you choose
+  “Resume automatic titles”; manual titles survive restarts.
+  (`dynamicChatTitles` now default on, #210)
+- Double-clicking empty titlebar space now maximizes or restores the window.
+- Launching PickForge again now focuses the running window instead of opening
+  a duplicate.
+- On normal app exit, PickForge gracefully stops its supported owned agent,
+  terminal, emulator, mirror, and device-log managers, and interrupts active
+  native agent turns so persisted chats return to idle. Crash/SIGKILL
+  containment is not included yet (#208).
 
 ## Internal/release changes (dark: no default-on behavior change)
 

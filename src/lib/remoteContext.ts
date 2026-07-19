@@ -28,6 +28,33 @@ export function captureRemotePtyForPane(
   return { ...panes, [paneId]: remote };
 }
 
+/** The one routing authority for resolving the remote binding a pty spawn
+ *  should use: an already-captured binding (a pane inheriting its host's
+ *  binding, or an explicit `null` local override) always wins over a fresh
+ *  lookup. Callers MUST call this synchronously, at spawn intent — before any
+ *  await — so a workspace binding change mid-flight can never retarget a pty
+ *  that already started spawning. Mirrors the pre-await capture discipline
+ *  `launchTarget` uses for a run's device selection. */
+export function resolvePtyRemote(
+  explicit: RemotePty | null | undefined,
+  projectRoot: string | null | undefined,
+): RemotePty | null {
+  return explicit === undefined ? remotePtyFor(projectRoot) : explicit;
+}
+
+/** The one routing authority for a target's execution location: a target with
+ *  its own run dir (a nested pubspec, or an explicit launch.json cwd) stays on
+ *  the SAME remote host as the captured binding, just rooted at that nested
+ *  dir instead of the project root — it never drops back to a local adapter.
+ *  Shared by every caller that turns a captured binding + target into the
+ *  pty's actual remote context (today: the direct run console). */
+export function executionRemoteFor(
+  remote: RemotePty | null,
+  cwd: string | null | undefined,
+): RemotePty | null {
+  return remote && cwd ? { ...remote, remoteRoot: cwd } : remote;
+}
+
 export function paneSpawnModeFor(
   panes: CapturedRemotePtys,
   paneId: string,

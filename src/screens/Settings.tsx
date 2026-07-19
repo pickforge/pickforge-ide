@@ -84,6 +84,7 @@ import {
 } from "../stores/operatorRouterSettings";
 import {
   remoteHostIssuePairingCode,
+  remoteHostRevokeClient,
   remoteHostStart,
   remoteHostStatus,
   remoteHostStop,
@@ -327,6 +328,7 @@ export function SettingsScreen() {
   const [remoteHost, setRemoteHost] = createSignal<RemoteHostOverview | null>(null);
   const [remotePort, setRemotePort] = createSignal("4747");
   const [remoteLoading, setRemoteLoading] = createSignal(false);
+  const [revokingClientId, setRevokingClientId] = createSignal<string | null>(null);
   const [remoteError, setRemoteError] = createSignal<string | null>(null);
   const [remoteNow, setRemoteNow] = createSignal(Date.now());
   const [voiceState, setVoiceState] = createSignal<VoiceStatus | null>(null);
@@ -856,6 +858,19 @@ export function SettingsScreen() {
       setRemoteError("Could not copy pairing code");
     }
   };
+  const revokeClient = async (clientId: string) => {
+    if (revokingClientId()) return;
+    setRevokingClientId(clientId);
+    setRemoteError(null);
+    try {
+      await remoteHostRevokeClient(clientId);
+      setRemoteHost(await remoteHostStatus());
+    } catch (error) {
+      setRemoteError(errorText(error));
+    } finally {
+      setRevokingClientId(null);
+    }
+  };
   const toggleSsh = async () => {
     setRemoteLoading(true);
     setRemoteError(null);
@@ -1313,6 +1328,31 @@ export function SettingsScreen() {
           <span class="pf-settings-label">Paired clients</span>
           <span class="pf-settings-muted">{remoteHost()?.clients.length ?? 0}</span>
         </div>
+        <For each={remoteHost()?.clients ?? []}>
+          {(client) => (
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">
+                {client.clientName}
+                <span class="pf-settings-hint-inline">
+                  Paired {new Date(client.issuedAtMs).toLocaleDateString()}
+                </span>
+              </span>
+              <Show
+                when={client.revokedAtMs === null}
+                fallback={<span class="pf-settings-muted">Revoked</span>}
+              >
+                <button
+                  class="pf-text-btn"
+                  aria-label={`Revoke ${client.clientName}`}
+                  disabled={revokingClientId() !== null}
+                  onClick={() => void revokeClient(client.clientId)}
+                >
+                  {revokingClientId() === client.clientId ? "Revoking…" : "Revoke"}
+                </button>
+              </Show>
+            </div>
+          )}
+        </For>
         <div class="pf-settings-row">
           <span class="pf-settings-label">Tailscale</span>
           <span class="pf-settings-muted">{tailscaleLabel()}</span>

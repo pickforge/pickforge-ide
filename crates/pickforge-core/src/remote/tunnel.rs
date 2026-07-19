@@ -140,6 +140,9 @@ impl TunnelManager {
                 .map_err(TunnelError::Spawn)?;
             let child = Arc::new(Mutex::new(child));
             let provisional_pid = child.lock().expect("remote tunnel child poisoned").id();
+            // Crash containment: the local ssh client is an owned root; killing
+            // it drops the tunnel (no-op unless the guardian/job is active).
+            crate::process::contain_owned_root(provisional_pid);
             self.state
                 .provisional
                 .lock()

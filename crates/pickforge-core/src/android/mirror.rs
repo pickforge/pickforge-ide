@@ -152,6 +152,10 @@ pub async fn start_session_cancellable(
             return Err(error.into());
         }
     };
+    // Crash containment: no-op unless the guardian/job is active.
+    if let Some(pid) = child.id() {
+        crate::process::contain_owned_root(pid);
+    }
     if cancelled.load(Ordering::SeqCst) {
         let _ = child.kill().await;
         remove_reverse(serial.to_string(), socket_name).await;

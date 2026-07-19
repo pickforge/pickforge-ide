@@ -46,6 +46,13 @@ fn tmux_server_name() -> &'static str {
     &TMUX_SERVER_NAME
 }
 
+/// The instance-private tmux server name, exposed so the crash guardian can be
+/// told exactly which server to kill if this process dies abruptly. Contains
+/// no secrets (pid + random hex).
+pub fn recoverable_tmux_server_name() -> &'static str {
+    tmux_server_name()
+}
+
 type RecoverableSpawnGate = StartGate;
 pub type RecoverableSpawnPermit = StartPermit;
 
@@ -569,6 +576,49 @@ pub fn kill_dtach_master(_socket: &Path) -> Result<usize, DtachKillError> {
     Err(DtachKillError::Unsupported)
 }
 
+/// Exact identity of an owned process-tree root registered with the crash
+/// guardian: the pid plus its kernel birth start-time, so PID reuse can never
+/// transfer ownership to an unrelated process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OwnedProcessIdentity {
+    pub pid: i32,
+    pub start_time: u64,
+}
+
+/// Terminate every still-live owned root — and every descendant discovered by
+/// exact identity through `/proc` ancestry/session expansion — with the same
+/// TERM-grace-then-KILL containment loop used for owned dtach masters. Roots
+/// whose identity no longer matches (already exited, or the pid was reused)
+/// are skipped, never signalled.
+#[cfg(target_os = "linux")]
+pub fn terminate_owned_process_trees(
+    roots: &[OwnedProcessIdentity],
+) -> Result<usize, DtachKillError> {
+    let roots: Vec<ProcessIdentity> = roots
+        .iter()
+        .map(|root| ProcessIdentity {
+            pid: root.pid,
+            start_time: root.start_time,
+        })
+        .collect();
+    if roots.is_empty() {
+        return Ok(0);
+    }
+    terminate_owned_processes_with(
+        &roots,
+        process_snapshot,
+        signal_process_identity,
+        std::thread::sleep,
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn terminate_owned_process_trees(
+    _roots: &[OwnedProcessIdentity],
+) -> Result<usize, DtachKillError> {
+    Err(DtachKillError::Unsupported)
+}
+
 /// A resolved program + args ready to hand to `portable-pty`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionInvocation {
@@ -801,6 +851,55 @@ fn validate_tmux_cleanup_result(
             Ok(())
         }
         Err(error) => Err(format!("cannot run tmux cleanup: {error}")),
+    }
+}
+
+/// Crash-guardian sweep of a DEAD PickForge instance's recoverable sessions:
+/// the instance-private dtach sockets under `sessions_dir` and the
+/// instance-private tmux server `tmux_server`. Runs in the guardian process
+/// (not the app), with the dead instance's namespace handed over at guardian
+/// start — so it can only ever touch sessions that instance owned.
+///
+/// `tmux_program` is the app-resolved tmux binary; the guardian's raw
+/// environment may lack the user's login-shell PATH. Absent both, tmux cleanup
+/// falls back to plain `tmux` and treats a missing binary as "no server".
+pub fn contain_recoverable_sessions(
+    sessions_dir: &Path,
+    tmux_server: Option<&str>,
+    tmux_program: Option<&Path>,
+) -> Result<(), String> {
+    let mut errors = cleanup_owned_dtach_sockets(sessions_dir, kill_dtach_master);
+    if errors.is_empty() {
+        // Best-effort: the dir may hold non-socket residue; never follow links.
+        let _ = std::fs::remove_dir(sessions_dir);
+    }
+    if let Some(server) = tmux_server {
+        let program = tmux_program
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "tmux".to_string());
+        let args = vec![
+            "-L".to_string(),
+            server.to_string(),
+            "kill-server".to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let result = run_timeout(&program, &refs, None, None, TMUX_KILL_TIMEOUT);
+        // The guardian cannot know whether the dead instance ever started its
+        // server, so a missing binary/server is success, not failure.
+        match result {
+            Ok(outcome) if outcome.success() || tmux_server_is_absent(&outcome.stderr) => {}
+            Ok(outcome) => errors.push(format!(
+                "tmux cleanup failed: {}",
+                String::from_utf8_lossy(&outcome.stderr).trim()
+            )),
+            Err(RunError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => errors.push(format!("cannot run tmux cleanup: {error}")),
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
@@ -1285,6 +1384,103 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         assert!(!socket.exists(), "stale socket must be removed");
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn terminate_owned_process_trees_kills_child_and_grandchild_by_exact_identity() {
+        use std::os::unix::process::CommandExt;
+
+        let base = std::env::temp_dir().join(format!("pf-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let grand_pid_file = base.join("grand.pid");
+        let script = format!(
+            "sleep 300 & echo $! > '{}'; exec sleep 300",
+            grand_pid_file.display()
+        );
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg("-c").arg(script);
+        command.process_group(0);
+        let mut root = command.spawn().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !grand_pid_file.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let grand: i32 = std::fs::read_to_string(&grand_pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let identity = read_process_record(root.id() as i32).unwrap().identity;
+
+        let killed = terminate_owned_process_trees(&[OwnedProcessIdentity {
+            pid: identity.pid,
+            start_time: identity.start_time,
+        }])
+        .unwrap();
+
+        assert!(killed >= 2, "expected root + grandchild, got {killed}");
+        let _ = root.wait();
+        assert!(
+            !Path::new(&format!("/proc/{grand}")).exists(),
+            "grandchild survived owned-tree termination"
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn terminate_owned_process_trees_skips_a_mismatched_birth_identity() {
+        let mut bystander = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let current = read_process_record(bystander.id() as i32).unwrap().identity;
+
+        // A stale registration whose start time no longer matches must be
+        // skipped, never signalled.
+        let killed = terminate_owned_process_trees(&[OwnedProcessIdentity {
+            pid: current.pid,
+            start_time: current.start_time + 1,
+        }])
+        .unwrap();
+        assert_eq!(killed, 1, "only the (dead) registered identity is counted");
+        assert!(
+            bystander.try_wait().unwrap().is_none(),
+            "an unrelated process with a reused pid was killed"
+        );
+        let _ = bystander.kill();
+        let _ = bystander.wait();
+    }
+
+    #[test]
+    fn terminate_owned_process_trees_with_no_roots_is_a_no_op() {
+        #[cfg(target_os = "linux")]
+        assert_eq!(terminate_owned_process_trees(&[]), Ok(0));
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(
+            terminate_owned_process_trees(&[]),
+            Err(DtachKillError::Unsupported)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn contain_recoverable_sessions_sweeps_stale_sockets_and_missing_tmux() {
+        let base = std::env::temp_dir().join(format!("pf-crs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let socket = base.join("pf-cccccccccccccccccccccccccccccccc.dtach");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        drop(listener); // stale: nothing is listening
+
+        let result = contain_recoverable_sessions(
+            &base,
+            Some("pickforge-test-absent-server"),
+            Some(Path::new("/nonexistent/pickforge-test-tmux")),
+        );
+
+        assert_eq!(result, Ok(()), "stale socket + missing tmux must sweep clean");
+        assert!(!socket.exists(), "stale owned socket must be removed");
+        assert!(!base.exists(), "emptied sessions dir is removed");
     }
 
     #[test]

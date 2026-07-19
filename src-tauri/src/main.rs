@@ -24,6 +24,12 @@ fn prefer_x11_backend() {
 }
 
 fn main() {
+    // Crash-containment guardian re-exec (#208): this must run before any
+    // Tauri/GTK/single-instance init — the guardian is this same binary and
+    // must never become a second app instance.
+    if pickforge_core::guardian_requested() {
+        pickforge_core::guardian_main();
+    }
     #[cfg(target_os = "linux")]
     prefer_x11_backend();
     pickforge_tauri_lib::run()

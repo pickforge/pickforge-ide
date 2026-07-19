@@ -41,17 +41,20 @@ pub use db::{
 };
 
 pub use process::{
-    is_binary_on_path, is_on_user_path, run, run_timeout, run_timeout_capped,
-    user_shell_environment, which_in, CommandOutcome, OutputTruncation, StartGate, StartPermit,
+    contain_owned_root, guardian_main, guardian_requested, is_binary_on_path, is_on_user_path,
+    local_crash_containment_enabled, run, run_timeout, run_timeout_capped,
+    start_local_crash_containment, user_shell_environment, which_in, CommandOutcome,
+    ContainmentContext, OutputTruncation, StartGate, StartPermit, GUARDIAN_ENV,
 };
 pub use pty::{
-    begin_recoverable_session_spawn, close_recoverable_session_spawn_gate, dtach_master_pids,
-    dtach_socket_path, kill_dtach_master, kill_recoverable_sessions_on_exit,
-    mark_tmux_server_may_exist, parse_recoverable_session_id, prepare_chat_session, select_backend,
-    session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args,
+    begin_recoverable_session_spawn, close_recoverable_session_spawn_gate,
+    contain_recoverable_sessions, dtach_master_pids, dtach_socket_path, kill_dtach_master,
+    kill_recoverable_sessions_on_exit, mark_tmux_server_may_exist, parse_recoverable_session_id,
+    prepare_chat_session, recoverable_tmux_server_name, select_backend, session_name, sessions_dir,
+    terminate_owned_process_trees, tmux_has_session_args, tmux_kill_session_args,
     tmux_set_titles_args, validate_session_name, validated_dtach_socket_path, DtachKillError,
-    PreparedSession, PtyError, PtyEvent, PtyManager, PtySink, RecoverableSpawnPermit, RemotePty,
-    SessionBackend, SessionStatus, SpawnOptions,
+    OwnedProcessIdentity, PreparedSession, PtyError, PtyEvent, PtyManager, PtySink,
+    RecoverableSpawnPermit, RemotePty, SessionBackend, SessionStatus, SpawnOptions,
 };
 pub use remote::{
     decode_remote_frame, encode_remote_frame, listener_from_parts, parse_listener, probe_host,

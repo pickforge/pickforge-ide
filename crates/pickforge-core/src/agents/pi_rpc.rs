@@ -362,6 +362,9 @@ impl PiRpcClient {
             binary: binary.to_string_lossy().into_owned(),
             source,
         })?;
+        // Crash containment: no-op unless the guardian/job is active. Windows
+        // job nesting (Win8+) lets this coexist with Pi's own per-child job.
+        crate::process::contain_owned_root(child.id());
         let mut child = ManagedChild::new(child)?;
         let Some(stdin) = child.child.stdin.take() else {
             kill_and_wait_child(child);

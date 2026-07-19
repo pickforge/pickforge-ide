@@ -115,7 +115,28 @@ fn sentry_enabled(consent: bool, debug_override: Option<&str>) -> bool {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Start the local crash-containment layer (#208 PR 2) when opted in via
+/// `PICKFORGE_LOCAL_CRASH_CONTAINMENT` (compiled default: off — the guardian
+/// must start before any frontend flag state exists, so a WebView-side flag
+/// cannot gate it). Unix spawns the guardian child; Windows creates the
+/// kill-on-close Job Object. Owned spawns register with it automatically.
+fn start_crash_containment() {
+    if !pickforge_core::local_crash_containment_enabled() {
+        return;
+    }
+    let environment = pickforge_core::user_shell_environment();
+    let ctx = pickforge_core::ContainmentContext {
+        sessions_dir: Some(pickforge_core::sessions_dir(&pty_commands::runtime_base())),
+        tmux_server: Some(pickforge_core::recoverable_tmux_server_name().to_string()),
+        tmux_program: pickforge_core::which_in("tmux", environment),
+    };
+    if let Err(error) = pickforge_core::start_local_crash_containment(&ctx) {
+        eprintln!("failed to start local crash containment: {error}");
+    }
+}
+
 pub fn run() {
+    start_crash_containment();
     let context = tauri::generate_context!();
     let release = format!(
         "pickforge@{}",

@@ -150,6 +150,8 @@ impl CodexAppClient {
             binary: binary.clone(),
             source,
         })?;
+        // Crash containment: no-op unless the guardian/job is active.
+        crate::process::contain_owned_root(child.id());
         let Some(stdin) = child.stdin.take() else {
             kill_and_wait_child(child);
             return Err(CodexAppError::MissingPipe("stdin"));

@@ -121,10 +121,14 @@ fn start_pw_record(
     }
 
     match command.spawn() {
-        Ok(mut child) => match wait_for_immediate_exit(&mut child, cancelled)? {
-            true => Err(VoiceError::RecorderExited),
-            false => Ok(PwRecordChild { child }),
-        },
+        Ok(mut child) => {
+            // Crash containment: no-op unless the guardian/job is active.
+            crate::process::contain_owned_root(child.id());
+            match wait_for_immediate_exit(&mut child, cancelled)? {
+                true => Err(VoiceError::RecorderExited),
+                false => Ok(PwRecordChild { child }),
+            }
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Err(VoiceError::MissingPwRecord)
         }

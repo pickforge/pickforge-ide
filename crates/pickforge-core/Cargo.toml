@@ -10,6 +10,12 @@ authors.workspace = true
 name = "pickforge_core"
 path = "src/lib.rs"
 
+# Forced-exit crash-containment harness (#208 PR 2): needs to re-exec itself
+# as guardian/app roles, so it manages its own process instead of libtest.
+[[test]]
+name = "crash_containment"
+harness = false
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

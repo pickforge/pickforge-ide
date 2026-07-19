@@ -238,6 +238,14 @@ impl PtyManager {
         }
 
         let mut child = pair.slave.spawn_command(cmd)?;
+        // Crash containment: register the shell/client as an owned tree root
+        // (no-op unless the guardian/job is active). A detachable dtach/tmux
+        // CLIENT still registers — abrupt app death must take the whole
+        // recoverable session down per the #208 ownership decision, and the
+        // guardian additionally sweeps this instance's dtach/tmux namespace.
+        if let Some(pid) = child.process_id() {
+            crate::process::contain_owned_root(pid);
+        }
         #[cfg(test)]
         if let Some(hook) = self
             .after_child_spawn

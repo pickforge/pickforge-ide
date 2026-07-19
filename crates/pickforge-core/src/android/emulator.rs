@@ -253,6 +253,10 @@ impl EmulatorManager {
                 return Err("emulator manager is shutting down".to_string());
             }
             let child = Arc::new(Mutex::new(cmd.spawn().map_err(|e| e.to_string())?));
+            // Crash containment: no-op unless the guardian/job is active.
+            crate::process::contain_owned_root(
+                child.lock().expect("emulator child poisoned").id(),
+            );
             provisional.insert(id, Arc::clone(&child));
             child
         };

@@ -3,12 +3,16 @@
 //! This binary (`harness = false`) plays three roles:
 //!
 //! * default — the test driver;
-//! * `PICKFORGE_CONTAINMENT_GUARDIAN` set — the containment guardian, exactly
-//!   as the shipped app binary dispatches it in `main`;
+//! * guardian — activated only by the `--pickforge-containment-guardian` argv
+//!   sentinel PLUS the one-time token in `PICKFORGE_CONTAINMENT_GUARDIAN`,
+//!   exactly as the shipped app binary dispatches it in `main`;
 //! * `PF_CC_ROLE=app` — a stand-in PickForge instance: it starts crash
 //!   containment, spawns an owned child that forks a grandchild, registers the
 //!   owned tree root, then dies in the scenario-selected way WITHOUT running
-//!   any graceful teardown.
+//!   any graceful teardown;
+//! * `PF_CC_ROLE=ambient-env-probe` — reports whether an INHERITED
+//!   `PICKFORGE_CONTAINMENT_GUARDIAN` env var (no argv sentinel) would hijack
+//!   the launch into guardian mode. It must not (#246 review, P1).
 //!
 //! Each scenario asserts that the whole owned tree — child AND grandchild —
 //! disappears after the "app" dies via normal close (exit 0), SIGTERM, panic,
@@ -27,11 +31,27 @@ mod unix {
         if pickforge_core::guardian_requested() {
             pickforge_core::guardian_main();
         }
-        if std::env::var_os("PF_CC_ROLE").is_some() {
-            app_role();
-            return;
+        match std::env::var("PF_CC_ROLE").ok().as_deref() {
+            Some("app") => {
+                app_role();
+                return;
+            }
+            Some("ambient-env-probe") => {
+                // Exit 0 only when the inherited env var did NOT activate
+                // guardian mode (we were spawned without the argv sentinel).
+                std::process::exit(u8::from(pickforge_core::guardian_requested()).into());
+            }
+            _ => {}
         }
         let mut failures = Vec::new();
+        print!("crash_containment::ambient_env_var_does_not_become_guardian ... ");
+        match ambient_env_scenario() {
+            Ok(()) => println!("ok"),
+            Err(error) => {
+                println!("FAILED: {error}");
+                failures.push("ambient-env");
+            }
+        }
         for scenario in SCENARIOS {
             print!("crash_containment::{scenario} ... ");
             match run_scenario(scenario) {
@@ -99,6 +119,27 @@ mod unix {
             _ => loop {
                 std::thread::sleep(Duration::from_secs(1));
             },
+        }
+    }
+
+    /// Regression (#246 review): a process launched with the guardian env var
+    /// merely INHERITED in its environment — e.g. any app/agent the guardian's
+    /// ancestry spawns — must never become a guardian that trusts stdin.
+    fn ambient_env_scenario() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let status = Command::new(exe)
+            .env("PF_CC_ROLE", "ambient-env-probe")
+            .env(pickforge_core::GUARDIAN_ENV, "stale-inherited-token")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .status()
+            .map_err(|e| format!("spawn probe: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "env-var-only launch reported guardian activation ({status})"
+            ))
         }
     }
 

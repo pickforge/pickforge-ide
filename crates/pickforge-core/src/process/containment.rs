@@ -7,8 +7,12 @@
 //! adds the abrupt-death backstop:
 //!
 //! * **Unix** — the app starts a GUARDIAN child at boot: its own executable
-//!   re-executed with [`GUARDIAN_ENV`] set, holding the read end of a private
-//!   pipe. Every owned process-tree ROOT is registered over that pipe as an
+//!   re-executed with the [`GUARDIAN_ARG`] argv sentinel plus a one-time
+//!   secret token in [`GUARDIAN_ENV`], holding the read end of a private
+//!   pipe. Activation needs BOTH (never the env var alone), the guardian
+//!   only trusts stdin whose first line authenticates with the token, and
+//!   free-form fields are newline-escaped so hostile paths cannot forge
+//!   protocol records. Every owned process-tree ROOT is registered over that pipe as an
 //!   exact `pid + birth start-time` identity. The guardian does nothing while
 //!   the app lives; when the pipe reaches EOF — which the kernel delivers for
 //!   normal exit, panic, abort, SIGTERM, and SIGKILL alike — it terminates the
@@ -34,9 +38,15 @@ use std::path::PathBuf;
 #[cfg(any(unix, windows))]
 use std::sync::OnceLock;
 
-/// Set (to any value) in the guardian child's environment so the re-executed
-/// binary knows to run [`guardian_main`] instead of the app.
+/// Carries the one-time auth token minted by the spawning parent for the
+/// guardian child. NEVER an activation trigger on its own: guardian mode also
+/// requires the [`GUARDIAN_ARG`] argv sentinel, so an inherited env var alone
+/// can never hijack a normal launch into guardian mode. The guardian clears
+/// it immediately on read.
 pub const GUARDIAN_ENV: &str = "PICKFORGE_CONTAINMENT_GUARDIAN";
+/// Argv sentinel the spawning parent passes as the FIRST argument of the
+/// guardian re-exec. Required alongside [`GUARDIAN_ENV`] for activation.
+pub const GUARDIAN_ARG: &str = "--pickforge-containment-guardian";
 const ENABLE_ENV: &str = "PICKFORGE_LOCAL_CRASH_CONTAINMENT";
 
 /// Whether local crash containment is enabled for this launch. Compiled
@@ -53,9 +63,19 @@ fn flag_enabled(value: &str) -> bool {
 }
 
 /// True when this process was launched as the containment guardian and must
-/// call [`guardian_main`] instead of running the app.
+/// call [`guardian_main`] instead of running the app. Activation is
+/// non-ambient: it requires BOTH the [`GUARDIAN_ARG`] argv sentinel (which
+/// only the spawning parent passes) and the [`GUARDIAN_ENV`] token, so an
+/// env var inherited by an unrelated child can never trigger guardian mode.
 pub fn guardian_requested() -> bool {
-    std::env::var_os(GUARDIAN_ENV).is_some()
+    guardian_activation(
+        std::env::args_os().nth(1).as_deref(),
+        std::env::var_os(GUARDIAN_ENV).is_some(),
+    )
+}
+
+fn guardian_activation(first_arg: Option<&std::ffi::OsStr>, token_present: bool) -> bool {
+    token_present && first_arg == Some(std::ffi::OsStr::new(GUARDIAN_ARG))
 }
 
 /// Non-secret context the guardian needs to sweep a dead instance's
@@ -76,7 +96,8 @@ static GUARDIAN_PIPE: OnceLock<std::sync::Mutex<std::process::ChildStdin>> = Onc
 static CONTAINMENT_JOB: OnceLock<isize> = OnceLock::new();
 
 /// Start the containment layer. Unix: spawn the guardian (this executable with
-/// [`GUARDIAN_ENV`] set) in its own process group and hand it the context.
+/// the [`GUARDIAN_ARG`] sentinel and a one-time token in [`GUARDIAN_ENV`]) in
+/// its own process group and hand it the context.
 /// Idempotent — a second call is a no-op.
 #[cfg(unix)]
 pub fn start_local_crash_containment(ctx: &ContainmentContext) -> std::io::Result<()> {
@@ -88,9 +109,13 @@ pub fn start_local_crash_containment(ctx: &ContainmentContext) -> std::io::Resul
         return Ok(());
     }
     let exe = std::env::current_exe()?;
+    // One-time secret: proves to the guardian that its stdin pipe belongs to
+    // the parent that spawned it, before any ownership command is trusted.
+    let token = format!("{:032x}", rand::random::<u128>());
     let mut command = Command::new(exe);
     command
-        .env(GUARDIAN_ENV, "1")
+        .arg(GUARDIAN_ARG)
+        .env(GUARDIAN_ENV, &token)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -99,14 +124,23 @@ pub fn start_local_crash_containment(ctx: &ContainmentContext) -> std::io::Resul
         .process_group(0);
     let mut child = command.spawn()?;
     let mut stdin = child.stdin.take().expect("guardian stdin is piped");
+    writeln!(stdin, "auth {token}")?;
     if let Some(dir) = ctx.sessions_dir.as_ref() {
-        writeln!(stdin, "sessions-dir {}", dir.display())?;
+        writeln!(
+            stdin,
+            "sessions-dir {}",
+            escape_field(&dir.display().to_string())
+        )?;
     }
     if let Some(server) = ctx.tmux_server.as_deref() {
-        writeln!(stdin, "tmux-server {server}")?;
+        writeln!(stdin, "tmux-server {}", escape_field(server))?;
     }
     if let Some(program) = ctx.tmux_program.as_ref() {
-        writeln!(stdin, "tmux-bin {}", program.display())?;
+        writeln!(
+            stdin,
+            "tmux-bin {}",
+            escape_field(&program.display().to_string())
+        )?;
     }
     stdin.flush()?;
     if GUARDIAN_PIPE.set(std::sync::Mutex::new(stdin)).is_err() {
@@ -270,6 +304,47 @@ struct GuardianState {
     tmux_program: Option<PathBuf>,
 }
 
+/// Escape a free-form field for the line-oriented pipe protocol so a value
+/// containing newlines/CR (e.g. a hostile `XDG_RUNTIME_DIR` or tmux socket
+/// path) can never inject a forged `own`/context record: every written line
+/// stays exactly one protocol record.
+#[cfg(unix)]
+fn escape_field(field: &str) -> String {
+    let mut out = String::with_capacity(field.len());
+    for ch in field.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+#[cfg(unix)]
+fn unescape_field(field: &str) -> String {
+    let mut out = String::with_capacity(field.len());
+    let mut chars = field.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 #[cfg(unix)]
 fn apply_guardian_line(line: &str, state: &mut GuardianState) {
     let Some((verb, rest)) = line.split_once(' ') else {
@@ -283,11 +358,29 @@ fn apply_guardian_line(line: &str, state: &mut GuardianState) {
                 }
             }
         }
-        "sessions-dir" => state.sessions_dir = Some(PathBuf::from(rest)),
-        "tmux-server" => state.tmux_server = Some(rest.to_string()),
-        "tmux-bin" => state.tmux_program = Some(PathBuf::from(rest)),
+        "sessions-dir" => state.sessions_dir = Some(PathBuf::from(unescape_field(rest))),
+        "tmux-server" => state.tmux_server = Some(unescape_field(rest)),
+        "tmux-bin" => state.tmux_program = Some(PathBuf::from(unescape_field(rest))),
         _ => {}
     }
+}
+
+/// Read the guardian's whole stdin protocol. The FIRST line must be
+/// `auth <token>` matching the one-time token the spawning parent minted;
+/// otherwise nothing on the pipe is trusted and `None` is returned (no sweep).
+#[cfg(unix)]
+fn read_guardian_state(reader: impl std::io::BufRead, token: &str) -> Option<GuardianState> {
+    let mut lines = reader.lines();
+    match lines.next() {
+        Some(Ok(line)) if line.strip_prefix("auth ") == Some(token) => {}
+        _ => return None,
+    }
+    let mut state = GuardianState::default();
+    for line in lines {
+        let Ok(line) = line else { break };
+        apply_guardian_line(&line, &mut state);
+    }
+    Some(state)
 }
 
 /// Guardian entry point. The binary must call this (and never return to the
@@ -297,17 +390,21 @@ fn apply_guardian_line(line: &str, state: &mut GuardianState) {
 pub fn guardian_main() -> ! {
     #[cfg(unix)]
     {
-        use std::io::BufRead;
-
-        let mut state = GuardianState::default();
+        // Take the one-time token and clear the env var immediately: it must
+        // never leak into anything the sweep spawns (tmux) nor linger as an
+        // ambient activation hint.
+        let token = std::env::var(GUARDIAN_ENV).ok();
+        std::env::remove_var(GUARDIAN_ENV);
         let stdin = std::io::stdin();
-        for line in stdin.lock().lines() {
-            let Ok(line) = line else { break };
-            apply_guardian_line(&line, &mut state);
-        }
+        let state = token
+            .filter(|token| !token.is_empty())
+            .and_then(|token| read_guardian_state(stdin.lock(), &token));
         // EOF: the owning PickForge process is gone — normal exit, panic,
-        // abort, SIGTERM, or SIGKILL alike. Contain exactly what it owned.
-        sweep(state);
+        // abort, SIGTERM, or SIGKILL alike. Contain exactly what it owned —
+        // but only when the pipe authenticated as the spawning parent's.
+        if let Some(state) = state {
+            sweep(state);
+        }
     }
     std::process::exit(0)
 }
@@ -451,6 +548,64 @@ mod tests {
                 "a reused pid can never predate the reaped child"
             );
         }
+    }
+
+    #[test]
+    fn guardian_activation_requires_argv_sentinel_and_token_together() {
+        let arg = std::ffi::OsStr::new(GUARDIAN_ARG);
+        // Inherited env var alone (any argv) must NEVER activate guardian mode.
+        assert!(!guardian_activation(None, true));
+        assert!(!guardian_activation(Some(std::ffi::OsStr::new("pick.pf")), true));
+        // Sentinel without the token is not a parent-authenticated launch.
+        assert!(!guardian_activation(Some(arg), false));
+        assert!(!guardian_activation(None, false));
+        // Only the exact pair the spawning parent passes activates.
+        assert!(guardian_activation(Some(arg), true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn newline_bearing_fields_cannot_forge_ownership_records() {
+        // A hostile XDG_RUNTIME_DIR-style path embedding protocol lines.
+        let evil = "/run/user/1000\nown 4242 1\nsessions-dir /tmp/forged";
+        let mut state = GuardianState::default();
+        apply_guardian_line(&format!("sessions-dir {}", escape_field(evil)), &mut state);
+        // One line in, one record out: the payload stays an inert path value.
+        assert!(state.owned.is_empty(), "forged own record must not register");
+        assert_eq!(state.sessions_dir.as_deref(), Some(std::path::Path::new(evil)));
+
+        let cr = "pickforge\r\nown 7 7\\srv";
+        assert_eq!(unescape_field(&escape_field(cr)), cr, "escape must round-trip");
+        let mut state = GuardianState::default();
+        apply_guardian_line(&format!("tmux-server {}", escape_field(cr)), &mut state);
+        assert!(state.owned.is_empty());
+        assert_eq!(state.tmux_server.as_deref(), Some(cr));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn guardian_state_is_only_read_from_an_authenticated_pipe() {
+        use std::io::BufReader;
+
+        let token = "deadbeefcafe";
+        let good = format!("auth {token}\nown 41 1234\ntmux-server srv\n");
+        let state = read_guardian_state(BufReader::new(good.as_bytes()), token)
+            .expect("authenticated pipe is trusted");
+        assert_eq!(state.owned.get(&41), Some(&1234));
+        assert_eq!(state.tmux_server.as_deref(), Some("srv"));
+
+        // Wrong or missing token: nothing on the pipe is trusted — no sweep.
+        let forged = "auth wrong\nown 41 1234\n";
+        assert_eq!(
+            read_guardian_state(BufReader::new(forged.as_bytes()), token),
+            None
+        );
+        let unauthenticated = "own 41 1234\n";
+        assert_eq!(
+            read_guardian_state(BufReader::new(unauthenticated.as_bytes()), token),
+            None
+        );
+        assert_eq!(read_guardian_state(BufReader::new(&b""[..]), token), None);
     }
 
     #[test]

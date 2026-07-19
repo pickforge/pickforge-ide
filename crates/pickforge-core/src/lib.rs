@@ -44,7 +44,7 @@ pub use process::{
     contain_owned_root, guardian_main, guardian_requested, is_binary_on_path, is_on_user_path,
     local_crash_containment_enabled, run, run_timeout, run_timeout_capped,
     start_local_crash_containment, user_shell_environment, which_in, CommandOutcome,
-    ContainmentContext, OutputTruncation, StartGate, StartPermit, GUARDIAN_ENV,
+    ContainmentContext, OutputTruncation, StartGate, StartPermit, GUARDIAN_ARG, GUARDIAN_ENV,
 };
 pub use pty::{
     begin_recoverable_session_spawn, close_recoverable_session_spawn_gate,

@@ -637,6 +637,8 @@ where
         binary: turn_command.program.clone(),
         source,
     })?;
+    // Crash containment: no-op unless the guardian/job is active.
+    crate::process::contain_owned_root(child.id());
     if let Some(lease) = turn_command.lease.as_ref() {
         if let Err(error) = lease.start_heartbeat() {
             kill_and_wait_child(child);

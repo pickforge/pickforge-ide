@@ -108,6 +108,10 @@ pub async fn logcat_start(
     }
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    // Crash containment: no-op unless the guardian/job is active.
+    if let Some(pid) = child.id() {
+        pickforge_core::contain_owned_root(pid);
+    }
     let stdout = child.stdout.take().ok_or("no logcat stdout")?;
     let epoch = next_epoch();
 

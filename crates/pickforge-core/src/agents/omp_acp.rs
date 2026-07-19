@@ -180,6 +180,8 @@ impl OmpAcpClient {
             command.process_group(0);
         }
         let mut child = command.spawn()?;
+        // Crash containment: no-op unless the guardian/job is active.
+        crate::process::contain_owned_root(child.id());
         #[cfg(windows)]
         let job = match create_kill_on_close_job(&child) {
             Ok(job) => job,

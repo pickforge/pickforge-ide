@@ -13,11 +13,12 @@ mod shell;
 pub use env::normalize_pty_env;
 pub use session::{PtyError, PtyEvent, PtyManager, PtySink, RemotePty, SpawnOptions};
 pub use sessions::{
-    begin_recoverable_session_spawn, close_recoverable_session_spawn_gate, dtach_master_pids,
-    dtach_socket_path, kill_dtach_master, kill_recoverable_sessions_on_exit,
-    mark_tmux_server_may_exist, parse_recoverable_session_id, prepare_chat_session, select_backend,
-    session_name, sessions_dir, tmux_has_session_args, tmux_kill_session_args,
+    begin_recoverable_session_spawn, close_recoverable_session_spawn_gate,
+    contain_recoverable_sessions, dtach_master_pids, dtach_socket_path, kill_dtach_master,
+    kill_recoverable_sessions_on_exit, mark_tmux_server_may_exist, parse_recoverable_session_id,
+    prepare_chat_session, recoverable_tmux_server_name, select_backend, session_name, sessions_dir,
+    terminate_owned_process_trees, tmux_has_session_args, tmux_kill_session_args,
     tmux_set_titles_args, validate_session_name, validated_dtach_socket_path, DtachKillError,
-    PreparedSession, RecoverableSpawnPermit, SessionBackend, SessionStatus,
+    OwnedProcessIdentity, PreparedSession, RecoverableSpawnPermit, SessionBackend, SessionStatus,
 };
 pub use shell::{resolve_shell, ShellInvocation};

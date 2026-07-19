@@ -55,26 +55,15 @@ import {
   quickLaunchItems,
   type QuickLaunchItem,
 } from "../../stores/quickLaunch";
-import { findChat, isChatDestroying, onChatDeleted, setChatSessionId, workspace } from "../../stores/workspace";
+import { findChat, isChatDestroying, onChatDeleted, workspace } from "../../stores/workspace";
 import { clearProjectOrchestra, removeChatFromOrchestra, selectedLanes } from "../../stores/orchestra";
 import { chatBackend } from "../../stores/chatSessions";
-import { clearChatActivity, graceChatUnseen, handlePaneClosed, REATTACH_REPLAY_GRACE_MS, recordChatAttention, recordChatOutput, setActiveChatForActivity, setStagedChatsForActivity } from "../../stores/chatActivity";
+import { setActiveChatForActivity, setStagedChatsForActivity } from "../../stores/chatActivity";
 import { orchestraOpen, setOrchestraOpen, stagedChatIds } from "../../stores/orchestraStage";
-import { isChatArchived } from "../../stores/chatArchive";
-import { deleteTerminalHost, getTerminalHost, setTerminalHost } from "../../stores/terminalHosts";
+import { getTerminalHost } from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import {
-  armChatAutoName,
-  chatHadAgentSession,
-  clearChatAgentSession,
-  forgetChatAutoName,
-  handleOscTitle,
-  handleAgentPaneExited,
-  markChatSessionPane,
-  maybeAutoNameChat,
-  revokeAgentPane,
-  transferAgentPaneOwnership,
-} from "../../lib/chatAutoName";
+import { armChatAutoName } from "../../lib/chatAutoName";
+import { chatTerminalHostBinding, disposeChatTerminalHostBinding } from "../../lib/chatTerminalLifecycle";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
 import { flagEnabled } from "../../stores/flags";
@@ -264,9 +253,7 @@ export function WorkbenchScreen() {
     const offDelete = onChatDeleted(async (chatId) => {
       const chat = findChat(chatId);
       setMounted((m) => m.filter((h) => h.chatId !== chatId));
-      clearChatActivity(chatId);
-      forgetChatAutoName(chatId);
-      deleteTerminalHost(chatId);
+      disposeChatTerminalHostBinding(chatId);
       await disposeAgentChat(chatId);
       if (chat) {
         setPendingOrchestraCleanup((items) =>
@@ -398,46 +385,18 @@ export function WorkbenchScreen() {
                       projectRoot: h.projectRoot,
                       sessionId: storedSessionId,
                       backend: chatBackend(h.chatId, storedSessionId),
-                      onSession: (info, paneId) => {
-                        // Persist the resolved recovery id (narrow write). On a raw
-                        // degrade with no id we leave the stored one alone.
-                        if (info.sessionId) void setChatSessionId(h.chatId, info.sessionId);
-                        // Fresh session: whatever agent flag the old one carried
-                        // died with it. Clear BEFORE markChatSessionPane, which
-                        // re-persists when a chip launch beat this spawn report.
-                        if (!info.attached) clearChatAgentSession(h.chatId);
-                        markChatSessionPane(h.chatId, paneId);
-                        if (info.attached && chatHadAgentSession(h.chatId)) {
-                          // The live session survived a restart/pane-close with an
-                          // agent launched into it — re-mark the recovered pane so
-                          // busy/attention still work, but let the re-attach screen
-                          // replay pass without counting as fresh activity.
-                          armChatAutoName(h.chatId, paneId);
-                          graceChatUnseen(h.chatId, REATTACH_REPLAY_GRACE_MS);
-                        }
-                      },
+                      onSession: chatTerminalHostBinding(h.chatId).onSession,
                     };
                   })()}
-                  onReady={(handle) => setTerminalHost(h.chatId, handle)}
-                  onOutput={(chunk, paneId) => {
-                    // An archived chat renders no indicator anywhere — never let
-                    // its still-running shell drive activity or an orphan chime.
-                    if (!isChatArchived(h.chatId)) recordChatOutput(h.chatId, paneId, chunk);
-                  }}
-                  onBell={(paneId) => {
-                    if (!isChatArchived(h.chatId)) recordChatAttention(h.chatId, paneId);
-                  }}
-                  onNotification={(_, paneId) => {
-                    if (!isChatArchived(h.chatId)) recordChatAttention(h.chatId, paneId);
-                  }}
-                  onPrimaryPaneRemount={(fromPaneId, toPaneId) => transferAgentPaneOwnership(h.chatId, fromPaneId, toPaneId)}
-                  onPaneExited={(paneId) => handleAgentPaneExited(h.chatId, paneId)}
-                  onPaneClosed={(paneId) => {
-                    revokeAgentPane(h.chatId, paneId);
-                    handlePaneClosed(h.chatId, paneId);
-                  }}
-                  onUserSubmit={(line, paneId) => maybeAutoNameChat(h.chatId, line, paneId)}
-                  onTitle={(title, paneId) => handleOscTitle(h.chatId, paneId, title)}
+                  onReady={chatTerminalHostBinding(h.chatId).onReady}
+                  onOutput={chatTerminalHostBinding(h.chatId).onOutput}
+                  onBell={chatTerminalHostBinding(h.chatId).onBell}
+                  onNotification={chatTerminalHostBinding(h.chatId).onNotification}
+                  onPrimaryPaneRemount={chatTerminalHostBinding(h.chatId).onPrimaryPaneRemount}
+                  onPaneExited={chatTerminalHostBinding(h.chatId).onPaneExited}
+                  onPaneClosed={chatTerminalHostBinding(h.chatId).onPaneClosed}
+                  onUserSubmit={chatTerminalHostBinding(h.chatId).onUserSubmit}
+                  onTitle={chatTerminalHostBinding(h.chatId).onTitle}
                 />
                   }
                 >

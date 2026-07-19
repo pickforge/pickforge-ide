@@ -6,6 +6,8 @@ reset this file.
 
 ## User-facing changes
 
+- Remote host settings now list paired clients with pairing dates and revoked
+  status, and let users revoke active client access (#241).
 - New section-based Settings navigation: a category sidebar with remembered
   last category, direct section links, keyboard navigation, and layouts that
   adapt to narrow windows. (`settingsNavigation` now default on, #211)

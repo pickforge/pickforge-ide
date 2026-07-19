@@ -187,6 +187,79 @@ test.describe("flagged settings navigation", () => {
     await expectPaneAtScrollTop(page);
     await expect.poll(() => tail.evaluate((element) => element.style.height)).toBe("");
   });
+  test("revokes a paired remote client and refreshes its status", async ({ page }) => {
+    await openSettings(page, "remoteHost");
+    await page.evaluate(() => {
+      const internals: unknown = Reflect.get(window, "__TAURI_INTERNALS__");
+      if (
+        !internals
+        || typeof internals !== "object"
+        || !("invoke" in internals)
+        || typeof internals.invoke !== "function"
+      ) {
+        throw new Error("Missing Tauri VRT invoke mock");
+      }
+
+      const originalInvoke = internals.invoke;
+      const revokeCalls: string[] = [];
+      let revoked = false;
+      Reflect.set(window, "__PICKFORGE_REMOTE_REVOKE_CALLS__", revokeCalls);
+      Reflect.set(
+        internals,
+        "invoke",
+        (command: string, args: Record<string, unknown> = {}) => {
+          if (command === "remote_host_revoke_client") {
+            revokeCalls.push(String(args.clientId));
+            revoked = true;
+            return Promise.resolve();
+          }
+          if (command === "remote_host_status") {
+            return Promise.resolve(Reflect.apply(originalInvoke, internals, [command, args]))
+              .then((overview: Record<string, unknown>) => ({
+                ...overview,
+                clients: [
+                  {
+                    clientId: "client-tablet",
+                    clientName: "Field tablet",
+                    issuedAtMs: Date.UTC(2026, 0, 15),
+                    lastSeenAtMs: null,
+                    revokedAtMs: revoked ? Date.UTC(2026, 0, 16) : null,
+                  },
+                  {
+                    clientId: "client-phone",
+                    clientName: "Studio phone",
+                    issuedAtMs: Date.UTC(2026, 0, 10),
+                    lastSeenAtMs: null,
+                    revokedAtMs: Date.UTC(2026, 0, 12),
+                  },
+                ],
+              }));
+          }
+          return Reflect.apply(originalInvoke, internals, [command, args]);
+        },
+      );
+    });
+
+    const remote = page.locator("[data-settings-section=remoteHost]");
+    await remote.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(remote.getByText("Field tablet", { exact: false })).toBeVisible();
+    await expect(remote.getByText("Studio phone", { exact: false })).toBeVisible();
+    await expect(remote.locator(".pf-settings-hint-inline", { hasText: "Paired" })).toHaveCount(2);
+    await expect(remote).toHaveScreenshot("remote-host-clients.png", {
+      animations: "disabled",
+    });
+
+    await remote.getByRole("button", { name: "Revoke Field tablet", exact: true }).click();
+
+    await expect(remote.getByText("Revoked", { exact: true })).toHaveCount(2);
+    await expect(
+      remote.getByRole("button", { name: "Revoke Field tablet", exact: true }),
+    ).toHaveCount(0);
+    expect(await page.evaluate(() =>
+      Reflect.get(window, "__PICKFORGE_REMOTE_REVOKE_CALLS__"),
+    )).toEqual(["client-tablet"]);
+  });
+
   test("keeps a later deep link aligned after PickLab finishes loading", async ({ page }) => {
     await openSettings(page, "quickLaunch");
     await expectSectionAtPaneTop(page, "quickLaunch");

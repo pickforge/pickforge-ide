@@ -15,19 +15,17 @@
 //! reachable, or a node with no source attribute, degrades to an honest empty /
 //! "no exact source" result rather than an error path.
 
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
-use tokio_tungstenite::tungstenite::Message;
+
+use crate::correlated_ws::{
+    guard_loopback_host as guard_shared_loopback_host, ConnectError, CorrelatedWebSocket,
+    RequestError,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CdpError {
@@ -66,34 +64,10 @@ pub struct CdpTarget {
     pub web_socket_debugger_url: String,
 }
 
-type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Value>>>>;
-type ConnSlot = Arc<AsyncMutex<Option<Conn>>>;
-
-struct Conn {
-    /// Monotonic id of this attach; reader/writer clear the slot only if it
-    /// still holds *their* generation (a remote close mustn't tear down a newer
-    /// reattach). Same pattern as `vm_service.rs`.
-    generation: u64,
-    target_url: String,
-    out: mpsc::UnboundedSender<Message>,
-    pending: Pending,
-    next_id: AtomicI64,
-}
-
 /// A live CDP attachment (or none). Lives behind Tauri's managed `State`.
 #[derive(Default)]
 pub struct CdpClient {
-    conn: ConnSlot,
-    generation: AtomicU64,
-}
-
-async fn clear_connection(slot: &ConnSlot, generation: u64) {
-    let mut guard = slot.lock().await;
-    if guard.as_ref().map(|c| c.generation) == Some(generation) {
-        if let Some(conn) = guard.take() {
-            conn.pending.lock().unwrap().clear();
-        }
-    }
+    connection: CorrelatedWebSocket<()>,
 }
 
 impl CdpClient {
@@ -129,123 +103,42 @@ impl CdpClient {
     /// attachment. The URL's host must resolve to loopback — a compromised
     /// renderer must not be able to point the CDP client at an arbitrary host.
     pub async fn attach(&self, ws_url: &str) -> Result<(), CdpError> {
-        guard_ws_url_loopback(ws_url).await?;
-        let (ws, _) = tokio_tungstenite::connect_async(ws_url)
+        self.connection
+            .connect(ws_url, (), |_| {})
             .await
-            .map_err(|e| CdpError::WebSocket(e.to_string()))?;
-        let (mut write, mut read) = ws.split();
-        let (out, mut out_rx) = mpsc::unbounded_channel::<Message>();
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-
-        let pending_read = Arc::clone(&pending);
-        *self.conn.lock().await = Some(Conn {
-            generation,
-            target_url: ws_url.to_string(),
-            out,
-            pending,
-            next_id: AtomicI64::new(1),
-        });
-
-        // Writer: drain the outbound queue to the socket.
-        let slot_write = Arc::clone(&self.conn);
-        tokio::spawn(async move {
-            while let Some(msg) = out_rx.recv().await {
-                if write.send(msg).await.is_err() {
-                    break;
+            .map_err(|error| match error {
+                ConnectError::Forbidden(message) => CdpError::Forbidden(message),
+                ConnectError::WebSocket(message) => CdpError::WebSocket(message),
+                ConnectError::Superseded => {
+                    CdpError::WebSocket("connection attempt superseded".into())
                 }
-            }
-            clear_connection(&slot_write, generation).await;
-        });
-
-        // Reader: route id'd responses to their pending sender. CDP events
-        // (no `id`, a `method`) are not needed by the inspector, so they're
-        // dropped — keeping the method set minimal.
-        let slot_read = Arc::clone(&self.conn);
-        tokio::spawn(async move {
-            while let Some(Ok(msg)) = read.next().await {
-                if let Message::Text(txt) = msg {
-                    if let Ok(value) = serde_json::from_str::<Value>(&txt) {
-                        if let Some(id) = value.get("id").and_then(Value::as_i64) {
-                            if let Some(tx) = pending_read.lock().unwrap().remove(&id) {
-                                let _ = tx.send(value);
-                            }
-                        }
-                    }
-                }
-            }
-            clear_connection(&slot_read, generation).await;
-        });
-
-        Ok(())
+            })
     }
 
     /// Issue a CDP JSON-RPC call and await `result`. CDP frames are
     /// `{ id, method, params }` → `{ id, result | error }`.
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, CdpError> {
-        let (out, pending, id) = {
-            let guard = self.conn.lock().await;
-            let conn = guard.as_ref().ok_or(CdpError::NotAttached)?;
-            let id = conn.next_id.fetch_add(1, Ordering::Relaxed);
-            (conn.out.clone(), Arc::clone(&conn.pending), id)
-        };
-
-        let (tx, rx) = oneshot::channel();
-        pending.lock().unwrap().insert(id, tx);
-        let req = json!({ "id": id, "method": method, "params": params });
-        if out.send(Message::Text(req.to_string())).is_err() {
-            pending.lock().unwrap().remove(&id);
-            return Err(CdpError::NotAttached);
-        }
-
-        let resp = match tokio::time::timeout(Duration::from_secs(10), rx).await {
-            Ok(Ok(v)) => v,
-            Ok(Err(_)) => return Err(CdpError::NotAttached),
-            Err(_) => {
-                pending.lock().unwrap().remove(&id);
-                return Err(CdpError::Timeout);
-            }
-        };
-        parse_cdp_result(resp)
+        let response = self
+            .connection
+            .request(|id| json!({ "id": id, "method": method, "params": params }))
+            .await
+            .map_err(|error| match error {
+                RequestError::Disconnected => CdpError::NotAttached,
+                RequestError::Timeout => CdpError::Timeout,
+            })?;
+        parse_cdp_result(response)
     }
 
     pub async fn detach(&self) {
-        *self.conn.lock().await = None;
+        self.connection.disconnect().await;
     }
 
     pub async fn is_attached(&self) -> bool {
-        self.conn.lock().await.is_some()
+        self.connection.is_connected().await
     }
 
     pub async fn current_url(&self) -> Option<String> {
-        self.conn.lock().await.as_ref().map(|c| c.target_url.clone())
-    }
-
-    #[cfg(test)]
-    async fn pending_len(&self) -> usize {
-        self.conn
-            .lock()
-            .await
-            .as_ref()
-            .map(|c| c.pending.lock().unwrap().len())
-            .unwrap_or(0)
-    }
-
-    /// Test seam: install an attachment whose outbound receiver is already
-    /// dropped, so the next `call()` hits the send-error path (mirrors the
-    /// vm_service leak test).
-    #[cfg(test)]
-    async fn install_dead_writer_conn(&self) {
-        let (out, out_rx) = mpsc::unbounded_channel::<Message>();
-        drop(out_rx);
-        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
-        *self.conn.lock().await = Some(Conn {
-            generation,
-            target_url: "ws://dead/devtools".to_string(),
-            out,
-            pending: Arc::new(Mutex::new(HashMap::new())),
-            next_id: AtomicI64::new(1),
-        });
+        self.connection.current_url().await
     }
 }
 
@@ -444,58 +337,6 @@ fn reject_crlf(s: &str, what: &str) -> Result<(), CdpError> {
     Ok(())
 }
 
-/// Accept `host` only if it resolves *exclusively* to loopback addresses. A bare
-/// `127.0.0.1` / `::1` is loopback by inspection; anything else (including the
-/// `localhost` name) is resolved and every resulting address must be loopback —
-/// so a renderer can't smuggle `127.0.0.1.evil.com`, `0.0.0.0`, a link-local
-/// metadata IP (`169.254.169.254`), or a name whose DNS points off-box.
-async fn guard_loopback_host(host: &str) -> Result<(), CdpError> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return if ip.is_loopback() {
-            Ok(())
-        } else {
-            Err(CdpError::Forbidden(format!("non-loopback host: {host}")))
-        };
-    }
-
-    // Hostname: resolve and require ALL addresses to be loopback. Port 0 is fine
-    // here — `lookup_host` just needs a `host:port` to resolve.
-    let mut addrs = tokio::net::lookup_host((host, 0))
-        .await
-        .map_err(|_| CdpError::Forbidden(format!("host does not resolve: {host}")))?
-        .peekable();
-    if addrs.peek().is_none() {
-        return Err(CdpError::Forbidden(format!("host does not resolve: {host}")));
-    }
-    for addr in addrs {
-        if !addr.ip().is_loopback() {
-            return Err(CdpError::Forbidden(format!(
-                "host {host} resolves to non-loopback {}",
-                addr.ip()
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Validate a `webSocketDebuggerUrl` before attaching: it must be a `ws`/`wss`
-/// URL whose host resolves to loopback. Closes the SSRF path on attach.
-async fn guard_ws_url_loopback(ws_url: &str) -> Result<(), CdpError> {
-    let url = url::Url::parse(ws_url)
-        .map_err(|e| CdpError::Forbidden(format!("invalid ws url: {e}")))?;
-    match url.scheme() {
-        "ws" | "wss" => {}
-        other => {
-            return Err(CdpError::Forbidden(format!("unsupported ws scheme: {other}")));
-        }
-    }
-    let host = url
-        .host_str()
-        .ok_or_else(|| CdpError::Forbidden("ws url has no host".into()))?;
-    // `Url::host_str` already strips a `[..]` IPv6 wrapper, so this parses clean.
-    guard_loopback_host(host).await
-}
-
 // ---- HTTP (just enough for /json discovery) --------------------------------
 
 /// A bare HTTP/1.1 GET to `http://host:port/path`, returning the body. The CDP
@@ -510,15 +351,14 @@ async fn http_get_json(host: &str, port: u16, path: &str) -> Result<String, CdpE
     // connections (SSRF). Refuse both up front.
     reject_crlf(path, "request path")?;
     reject_crlf(host, "host")?;
-    guard_loopback_host(host).await?;
+    guard_shared_loopback_host(host)
+        .await
+        .map_err(CdpError::Forbidden)?;
 
-    let mut stream = tokio::time::timeout(
-        Duration::from_secs(5),
-        TcpStream::connect((host, port)),
-    )
-    .await
-    .map_err(|_| CdpError::Discovery("connect timed out".into()))?
-    .map_err(|e| CdpError::Discovery(e.to_string()))?;
+    let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect((host, port)))
+        .await
+        .map_err(|_| CdpError::Discovery("connect timed out".into()))?
+        .map_err(|e| CdpError::Discovery(e.to_string()))?;
 
     let req = format!(
         "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
@@ -609,7 +449,10 @@ mod tests {
             .collect();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].id, "A");
-        assert_eq!(pages[0].web_socket_debugger_url, "ws://localhost:9222/devtools/page/A");
+        assert_eq!(
+            pages[0].web_socket_debugger_url,
+            "ws://localhost:9222/devtools/page/A"
+        );
     }
 
     // ---- HTTP body parsing ----
@@ -741,17 +584,6 @@ mod tests {
         assert!(find_node_path(&root, "999").is_none());
     }
 
-    // ---- attach lifecycle (mirrors vm_service) ----
-
-    #[tokio::test]
-    async fn send_failure_does_not_leak_a_pending_id() {
-        let client = CdpClient::new();
-        client.install_dead_writer_conn().await;
-        let result = client.call("DOM.getDocument", json!({})).await;
-        assert!(matches!(result, Err(CdpError::NotAttached)));
-        assert_eq!(client.pending_len().await, 0);
-    }
-
     #[tokio::test]
     async fn call_without_attach_is_not_attached() {
         let client = CdpClient::new();
@@ -776,7 +608,9 @@ mod tests {
                 "discover({host}) should be Forbidden, got {err:?}"
             );
             // The source-map fetch shares the same HTTP path — also refused.
-            let err = CdpClient::fetch_text(host, 9222, "/app.js.map").await.unwrap_err();
+            let err = CdpClient::fetch_text(host, 9222, "/app.js.map")
+                .await
+                .unwrap_err();
             assert!(
                 matches!(err, CdpError::Forbidden(_)),
                 "fetch_text({host}) should be Forbidden, got {err:?}"
@@ -798,33 +632,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn attach_rejects_non_loopback_ws_url() {
-        let client = CdpClient::new();
-        for ws in [
-            "ws://evil.com:9222/devtools/page/A",
-            "ws://169.254.169.254:9222/devtools/page/A",
-            "ws://8.8.8.8/devtools/page/A",
-        ] {
-            let err = client.attach(ws).await.unwrap_err();
-            assert!(
-                matches!(err, CdpError::Forbidden(_)),
-                "attach({ws}) should be Forbidden, got {err:?}"
-            );
-        }
-        assert!(!client.is_attached().await);
-    }
-
-    #[tokio::test]
-    async fn attach_rejects_non_ws_scheme() {
-        let client = CdpClient::new();
-        let err = client
-            .attach("http://127.0.0.1:9222/devtools/page/A")
-            .await
-            .unwrap_err();
-        assert!(matches!(err, CdpError::Forbidden(_)));
-    }
-
     // A path / Host carrying CR-LF would inject extra HTTP headers; refuse it
     // before it reaches the request line.
     #[tokio::test]
@@ -838,14 +645,5 @@ mod tests {
         assert!(reject_crlf("/json", "path").is_ok());
         assert!(reject_crlf("/a\rb", "path").is_err());
         assert!(reject_crlf("/a\nb", "path").is_err());
-    }
-
-    #[tokio::test]
-    async fn guard_loopback_host_classifies_addresses() {
-        assert!(guard_loopback_host("127.0.0.1").await.is_ok());
-        assert!(guard_loopback_host("127.0.0.5").await.is_ok());
-        assert!(guard_loopback_host("::1").await.is_ok());
-        assert!(guard_loopback_host("169.254.169.254").await.is_err());
-        assert!(guard_loopback_host("10.0.0.1").await.is_err());
     }
 }

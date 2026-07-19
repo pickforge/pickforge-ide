@@ -109,6 +109,15 @@ mod unix {
         std::fs::write(dir.join("root.pid"), child.id().to_string()).expect("write root pid");
         std::fs::write(dir.join("ready"), b"1").expect("write ready");
 
+        // Self-terminating modes race the driver's tree-alive check: wait for
+        // its `go` ack so the crash is only induced after the tree was seen.
+        if matches!(mode.as_str(), "exit" | "panic" | "abort") {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !dir.join("go").exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
         match mode.as_str() {
             // Normal close WITHOUT graceful teardown: strict ownership says the
             // tree must still die with the app.
@@ -188,8 +197,10 @@ mod unix {
         match mode {
             "sigterm" => signal(app.id(), libc::SIGTERM),
             "sigkill" => signal(app.id(), libc::SIGKILL),
-            // exit/panic/abort: the app role dies on its own.
-            _ => {}
+            // exit/panic/abort: ack the alive check; the app then dies on its own.
+            _ => {
+                std::fs::write(dir.join("go"), b"1").map_err(|e| format!("write go: {e}"))?;
+            }
         }
         let _ = app.wait();
 

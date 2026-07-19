@@ -20,8 +20,7 @@ import {
 import { inspectDir, inspectSave } from "../../lib/vm";
 import { captureInRepo, setCaptureInRepo } from "../../stores/inspectStorage";
 import { workspace } from "../../stores/workspace";
-import { getTerminalHost } from "../../stores/terminalHosts";
-import { armChatAutoName } from "../../lib/chatAutoName";
+import { hasTerminalHost, launchAgentInSplit } from "../../stores/terminalHosts";
 import { recordForgeDispatch } from "../../lib/runRecord";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
@@ -214,8 +213,7 @@ export function A11yTree(props: {
     const t = tree();
     const instruction = prompt();
     const chatId = workspace.activeChatId;
-    const host = getTerminalHost(chatId);
-    if (!host) {
+    if (!chatId || !hasTerminalHost(chatId)) {
       setError("Open a chat first so the agent has a terminal.");
       return;
     }
@@ -244,9 +242,8 @@ export function A11yTree(props: {
       const paths = await inspectSave(dir, base, md, png);
       const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by ${handles().search}). ${instruction}`;
       const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = host.openInNewPane(command, { forceLocal: true });
+      const paneId = launchAgentInSplit(chatId, command, { forceLocal: true });
       if (paneId) {
-        armChatAutoName(chatId, paneId);
         // Persist the dispatch (pick + agent run) for the forge audit. Best
         // effort — a write failure must not affect the launched agent. A11y
         // nodes carry no source file:line (search by resource-id / text / class).

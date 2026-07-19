@@ -23,8 +23,7 @@ import {
 import { inspectDir, inspectSave } from "../../lib/vm";
 import { captureInRepo, setCaptureInRepo } from "../../stores/inspectStorage";
 import { workspace } from "../../stores/workspace";
-import { getTerminalHost } from "../../stores/terminalHosts";
-import { armChatAutoName } from "../../lib/chatAutoName";
+import { hasTerminalHost, launchAgentInSplit } from "../../stores/terminalHosts";
 import { recordForgeDispatch } from "../../lib/runRecord";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
@@ -201,8 +200,7 @@ export function CdpTree(props: {
     const t = tree();
     const instruction = prompt();
     const chatId = workspace.activeChatId;
-    const host = getTerminalHost(chatId);
-    if (!host) {
+    if (!chatId || !hasTerminalHost(chatId)) {
       setError("Open a chat first so the agent has a terminal.");
       return;
     }
@@ -237,9 +235,8 @@ export function CdpTree(props: {
         : `NO exact source — search by selector / text / class`;
       const ask = `Read ${paths.mdPath} (PickForge web UI capture: selected DOM node + ${sourceNote}). ${instruction}`;
       const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = host.openInNewPane(command, { forceLocal: true });
+      const paneId = launchAgentInSplit(chatId, command, { forceLocal: true });
       if (paneId) {
-        armChatAutoName(chatId, paneId);
         // Persist the dispatch for the forge audit (best-effort). When a source
         // mapped, record it as the creation file:line so the audit row carries
         // the same source the agent received.

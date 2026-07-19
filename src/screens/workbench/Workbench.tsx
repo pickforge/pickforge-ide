@@ -43,11 +43,8 @@ import { IconGrid, IconTerminal } from "../../components/icons";
 import { detectBinaries } from "../../lib/process";
 import {
   canLaunchAgentForMode,
-  remotePathFor,
   shouldUseLocalMcp,
 } from "../../lib/remoteContext";
-import { editorCommand } from "../../stores/fileOpenSettings";
-import { openPathSystem } from "../../lib/opener";
 import {
   binaryForItem,
   commandForItem,
@@ -60,9 +57,13 @@ import { clearProjectOrchestra, removeChatFromOrchestra, selectedLanes } from ".
 import { chatBackend } from "../../stores/chatSessions";
 import { setActiveChatForActivity, setStagedChatsForActivity } from "../../stores/chatActivity";
 import { orchestraOpen, setOrchestraOpen, stagedChatIds } from "../../stores/orchestraStage";
-import { getTerminalHost } from "../../stores/terminalHosts";
+import {
+  chatSpawnMode,
+  launchAgentInPrimary,
+  openFileInChat,
+  runInSplit,
+} from "../../stores/terminalHosts";
 import { ensureMcpRunning, mcpEnv } from "../../stores/mcp";
-import { armChatAutoName } from "../../lib/chatAutoName";
 import { chatTerminalHostBinding, disposeChatTerminalHostBinding } from "../../lib/chatTerminalLifecycle";
 import { route } from "../../router";
 import { runConsole } from "../../stores/runConsole";
@@ -104,43 +105,25 @@ export function WorkbenchScreen() {
     const chatId = workspace.activeChatId;
     if (!chatId) return;
     const root = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
-    const host = getTerminalHost(chatId);
-    if (!host) return;
-    const mode = host.primarySpawnMode();
+    const mode = chatSpawnMode(chatId);
+    if (mode === undefined) return; // no mounted host yet
     if (item.agentId && !canLaunchAgentForMode(mode)) return;
     const localMcp = !!item.agentId && shouldUseLocalMcp(mode);
     if (localMcp && root) await ensureMcpRunning(root);
     // Remote agent MCP wiring lands in PR 3; remote shells must not receive local paths.
     const text = commandForItem(item, localMcp ? mcpEnv(root) : {});
     if (!text) return;
-    const paneId = item.agentId ? host.runInPrimary(text) : host.openInNewPane(text);
-    if (paneId && item.agentId) armChatAutoName(chatId, paneId);
+    if (item.agentId) launchAgentInPrimary(chatId, text);
+    else runInSplit(chatId, text);
   };
 
   // Open a file per the user's preference: a new editor pane (nvim/custom) or the
-  // OS default editor.
+  // OS default editor. Editor-pane modes need a live terminal host; with none
+  // open, openFileInChat falls back to the OS opener so the file still opens.
   const openFileInActive = (path: string) => {
     const chatId = workspace.activeChatId;
-    const host = getTerminalHost(chatId);
-    // Editor-pane modes need a live terminal host; with none open, fall back to
-    // the OS opener so the file still opens.
-    if (!chatId || !host) {
-      void openPathSystem(path).catch((e) =>
-        console.error("[pickforge] open_path failed", e),
-      );
-      return;
-    }
-    const remote = host.primaryRemotePty();
-    const projectRoot = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
-    const remotePath = remote ? remotePathFor(path, projectRoot, remote.remoteRoot) : null;
-    const cmd = editorCommand(remotePath ?? path);
-    if (cmd === null) {
-      void openPathSystem(path).catch((e) =>
-        console.error("[pickforge] open_path failed", e),
-      );
-      return;
-    }
-    host.openInNewPane(cmd, remotePath ? { remote } : { forceLocal: true });
+    const projectRoot = chatId ? (findChat(chatId)?.projectRoot ?? workspace.activeRoot) : workspace.activeRoot;
+    openFileInChat(chatId, path, projectRoot);
   };
 
   // Track which chats have a mount in flight so a re-run of this effect (e.g. a
@@ -288,7 +271,7 @@ export function WorkbenchScreen() {
           e.stopPropagation();
           // Remote-side binary detection lands in PR 3; let the remote shell report it.
           const bin = binaryForItem(item);
-          const mode = getTerminalHost(workspace.activeChatId)?.primarySpawnMode();
+          const mode = chatSpawnMode(workspace.activeChatId);
           if (mode === "local" && bin && available()[bin] === false) return;
           void launchItem(item);
           return;

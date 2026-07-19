@@ -7,13 +7,9 @@ import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { IconChevronDown, IconChevronRight, IconRefresh } from "../../components/icons";
 import { EmberButton, MonoEyebrow } from "../../components/ui";
-import { openPathSystem } from "../../lib/opener";
-import { remotePathFor } from "../../lib/remoteContext";
-import { editorCommand } from "../../stores/fileOpenSettings";
 import { findChat, workspace } from "../../stores/workspace";
-import { getTerminalHost } from "../../stores/terminalHosts";
+import { hasTerminalHost, launchAgentInSplit, openFileInChat } from "../../stores/terminalHosts";
 import { captureInRepo, setCaptureInRepo } from "../../stores/inspectStorage";
-import { armChatAutoName } from "../../lib/chatAutoName";
 import { recordForgeDispatch } from "../../lib/runRecord";
 import { shquote } from "../../lib/runTargets";
 import { commandForItem, isAskAiItem, quickLaunchItems, type QuickLaunchItem } from "../../stores/quickLaunch";
@@ -139,20 +135,8 @@ export function WidgetTree() {
     if (!n.creationLocation) return;
     const path = fileFromUri(n.creationLocation.file);
     const chatId = workspace.activeChatId;
-    const host = getTerminalHost(chatId);
-    if (!chatId || !host) {
-      void openPathSystem(path).catch(() => {});
-      return;
-    }
-    const remote = host.primaryRemotePty();
-    const projectRoot = findChat(chatId)?.projectRoot ?? workspace.activeRoot;
-    const remotePath = remote ? remotePathFor(path, projectRoot, remote.remoteRoot) : null;
-    const cmd = editorCommand(remotePath ?? path);
-    if (cmd === null) {
-      void openPathSystem(path).catch(() => {});
-      return;
-    }
-    host.openInNewPane(cmd, remotePath ? { remote } : { forceLocal: true });
+    const projectRoot = chatId ? (findChat(chatId)?.projectRoot ?? workspace.activeRoot) : workspace.activeRoot;
+    openFileInChat(chatId, path, projectRoot);
   };
 
   // Fetch properties + thumbnail when the selection changes.
@@ -184,8 +168,8 @@ export function WidgetTree() {
     const iso = isolate();
     const root = workspace.activeRoot;
     if (!item || !node || !iso || !root) return;
-    const host = getTerminalHost(workspace.activeChatId);
-    if (!host) {
+    const chatId = workspace.activeChatId;
+    if (!chatId || !hasTerminalHost(chatId)) {
       setError("Open a chat first so the agent has a terminal.");
       return;
     }
@@ -213,9 +197,8 @@ export function WidgetTree() {
       const paths = await inspectSave(dir, base, md, png);
       const ask = `Read ${paths.mdPath} (PickForge widget capture: screenshot path + source file:line + props inside). ${prompt()}`;
       const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = host.openInNewPane(command, { forceLocal: true });
+      const paneId = launchAgentInSplit(chatId, command, { forceLocal: true });
       if (paneId) {
-        armChatAutoName(workspace.activeChatId, paneId);
         // Persist the dispatch (pick + agent run) for the forge audit. Best
         // effort — a write failure must not affect the launched agent.
         const loc = node.creationLocation;
@@ -229,7 +212,7 @@ export function WidgetTree() {
             skillId: "",
             agentId: item.agentId ?? item.id,
             terminalId: paneId,
-            chatId: workspace.activeChatId,
+            chatId,
             pickedAt: Date.now(),
             widgetContextJson: md,
           },

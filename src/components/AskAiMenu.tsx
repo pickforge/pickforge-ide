@@ -11,9 +11,8 @@ import {
   quickLaunchItems,
   type QuickLaunchItem,
 } from "../stores/quickLaunch";
-import { getTerminalHost } from "../stores/terminalHosts";
+import { hasTerminalHost, launchAgentInSplit } from "../stores/terminalHosts";
 import { workspace } from "../stores/workspace";
-import { armChatAutoName } from "../lib/chatAutoName";
 import { shquote } from "../lib/runTargets";
 import "./AskAiMenu.css";
 
@@ -40,9 +39,9 @@ export function AskAiMenu(props: {
 
   const launch = (instruction: string) => {
     const a = agent();
+    const chatId = workspace.activeChatId;
     if (!a || !instruction.trim()) return;
-    const host = getTerminalHost(workspace.activeChatId);
-    if (!host) {
+    if (!chatId || !hasTerminalHost(chatId)) {
       setError("Open a chat first so the agent has a terminal.");
       return;
     }
@@ -57,8 +56,7 @@ export function AskAiMenu(props: {
       "```\n" +
       clipped +
       "\n```";
-    const paneId = host.openInNewPane(`${commandForItem(a)} ${shquote(ask)}`);
-    if (paneId) armChatAutoName(workspace.activeChatId, paneId);
+    launchAgentInSplit(chatId, `${commandForItem(a)} ${shquote(ask)}`);
     props.onClose();
   };
 

@@ -59,7 +59,7 @@ export function canLaunchActiveTarget(): boolean {
 }
 
 // Bumped on every launch and on cancel, so a stale boot can't latch a later run:
-// `waitForBootedSerial` polls it to break promptly, and `launchActiveTarget`
+// `waitForDevice` polls it to break promptly, and `launchActiveTarget`
 // bails after the await if its captured epoch was superseded. Mirrors the
 // watchEpoch pattern in runConsole.ts.
 const bootEpoch = new BootEpoch();
@@ -141,38 +141,24 @@ export function deviceLabel(d: DeviceEntry): string {
   return d.state === "running" && d.serial ? `${d.displayName} · ${d.serial}` : d.displayName;
 }
 
-/** Poll the device list until a running emulator with this AVD id appears, and
+/** Poll the device list until a running device matching `match` appears, and
  *  return its serial — or null if it doesn't boot within the timeout, or if this
  *  boot was cancelled / superseded (its `epoch` no longer matches `bootEpoch`).
  *  The abort is observed each iteration and inside an abortable poll sleep, so a
- *  cancel breaks out within ~one poll tick instead of waiting the full timeout. */
-async function waitForBootedSerial(avdId: string, epoch: number): Promise<string | null> {
+ *  cancel breaks out within ~one poll tick instead of waiting the full timeout.
+ *  Shared by the AVD wait (matches on avdId — an AVD's serial only appears
+ *  once booted) and the simulator wait (matches on udid, which a simulator
+ *  keeps as `serial` across the boot transition, unlike an AVD's). */
+async function waitForDevice(
+  match: (d: DeviceEntry) => boolean,
+  epoch: number,
+): Promise<string | null> {
   const live = () => bootEpoch.isCurrent(epoch);
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   while (live() && Date.now() < deadline) {
     const list = await refreshDevices();
     if (!live()) return null; // cancelled while awaiting the device list
-    const hit = list.find(
-      (d) => d.state === "running" && d.avdId === avdId && d.serial,
-    );
-    if (hit?.serial) return hit.serial;
-    await abortableSleep(BOOT_POLL_MS, live);
-  }
-  return null;
-}
-
-/** Poll the device list until the simulator with this udid reports "running",
- *  and return its serial — or null on timeout / cancellation. A simulator keeps
- *  its udid as `serial` across the boot transition (unlike an AVD, whose serial
- *  only appears once booted), so we match on that stable udid. Cancellable via
- *  the same `bootEpoch` as the AVD wait. */
-async function waitForBootedSimulator(udid: string, epoch: number): Promise<string | null> {
-  const live = () => bootEpoch.isCurrent(epoch);
-  const deadline = Date.now() + BOOT_TIMEOUT_MS;
-  while (live() && Date.now() < deadline) {
-    const list = await refreshDevices();
-    if (!live()) return null; // cancelled while awaiting the device list
-    const hit = list.find((d) => d.state === "running" && d.serial === udid);
+    const hit = list.find((d) => d.state === "running" && match(d));
     if (hit?.serial) return hit.serial;
     await abortableSleep(BOOT_POLL_MS, live);
   }
@@ -263,7 +249,7 @@ async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
       setBooting(true);
       try {
         await iosBootDevice(udid);
-        serial = await waitForBootedSimulator(udid, epoch);
+        serial = await waitForDevice((d) => d.serial === udid, epoch);
         if (!bootEpoch.isCurrent(epoch)) return;
         if (!serial) setError(`Timed out waiting for ${entry.displayName} to boot`);
       } catch (e) {
@@ -279,7 +265,7 @@ async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
       setBooting(true);
       try {
         await androidLaunchAvd(entry.avdId);
-        serial = await waitForBootedSerial(entry.avdId, epoch);
+        serial = await waitForDevice((d) => d.avdId === entry.avdId, epoch);
         // A cancel/supersede bumped the epoch: don't clobber its state or run.
         if (!bootEpoch.isCurrent(epoch)) return;
         if (!serial) setError(`Timed out waiting for ${entry.displayName} to boot`);

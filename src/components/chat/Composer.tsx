@@ -11,6 +11,7 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { errorText } from "../../lib/errors";
 import {
   type AgentProfile,
   discoverAgentCli,
@@ -800,7 +801,7 @@ export function Composer(props: {
       discardStaleImage(id, generation);
       return;
     }
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorText(error);
     const wasPreparing = preparing();
     let removed = false;
     batch(() => {
@@ -847,7 +848,7 @@ export function Composer(props: {
         attachNativeClipboardImage(generation, anchor);
       })
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorText(error);
         if (message !== "clipboard has no text") {
           showPasteError(message);
           return;
@@ -905,7 +906,7 @@ export function Composer(props: {
             paths.length > 0 ? { paths, text: paths.join(" ") } : readTextFlavor(),
           )
           .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = errorText(error);
             if (message !== "clipboard has no files") throw error;
             return readTextFlavor();
           })
@@ -920,7 +921,7 @@ export function Composer(props: {
             insertPastedText(paths.length > 0 ? paths.join(" ") : text, anchor);
           })
           .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = errorText(error);
             if (message === "clipboard has no text") return;
             showPasteError(message);
           });

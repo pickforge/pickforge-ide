@@ -33,6 +33,7 @@ import {
 import { estimateCostUsd } from "../lib/agentPricing";
 import { loadAgentEngine } from "../lib/chatDefaults";
 import { isInternalSwarmSynthesisPrompt } from "../lib/swarmSynthesis";
+import { errorText } from "../lib/errors";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
@@ -254,10 +255,6 @@ function emptyTotals(): AgentChatTotals {
     costUsd: 0,
     estimated: false,
   };
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function appendOptimisticUserMessage(

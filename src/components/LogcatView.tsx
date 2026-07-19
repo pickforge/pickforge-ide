@@ -16,6 +16,13 @@ import { deviceLabel, resolveSelectedDevice } from "../stores/runLaunch";
 import { pushMcpLogs } from "../stores/mcp";
 
 const MAX_LINES = 5000;
+// Log lines can arrive far faster than one-per-frame (adb logcat during app
+// startup easily bursts hundreds/sec); appending straight to the signal would
+// mean one IPC push (MCP ring) plus one reactive re-render per line. Instead
+// we buffer incoming lines and flush them together on a short timer or once
+// the buffer gets large, preserving arrival order either way.
+const FLUSH_MS = 75;
+const FLUSH_MAX_LINES = 200;
 
 type LogViewSource = "logcat" | "oslog";
 /** The console CSS only styles warning/error; everything else reads as the base
@@ -74,6 +81,8 @@ export function LogcatView(props: { source?: LogViewSource }) {
   let unlisten: UnlistenFn | undefined;
   let seq = 0;
   let streaming: string | null = null; // the serial we're streaming, if any
+  let pending: NormalizedLine[] = [];
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
 
   const device = () => resolveSelectedDevice();
   // Logcat only attaches to an online device (a stopped AVD has no log stream).
@@ -95,17 +104,42 @@ export function LogcatView(props: { source?: LogViewSource }) {
     setFollow(nearBottom);
   };
 
-  const append = (line: NormalizedLine) => {
+  // Flush the pending buffer: one signal update, one MCP push, in arrival
+  // order — same drop-oldest ring-buffer cap as the old per-line append.
+  const flush = () => {
+    if (pending.length === 0) return;
+    const batch = pending;
+    pending = [];
     setLines((prev) => {
-      const next = prev.length >= MAX_LINES ? prev.slice(prev.length - MAX_LINES + 1) : prev.slice();
-      next.push({ ...line, id: seq++ });
-      return next;
+      const next = prev.concat(batch.map((line) => ({ ...line, id: seq++ })));
+      return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
     });
     // Feed the device log into the MCP run-log ring too, so `get_run_logs` is
     // useful for RN / native-Android / native-iOS runs — whose app logs live
     // here, not in the run PTY that the Debug Console taps. Best effort (no-op
     // until the endpoint is up).
-    pushMcpLogs([line.text]);
+    pushMcpLogs(batch.map((line) => line.text));
+  };
+
+  const cancelScheduledFlush = () => {
+    if (flushTimer === undefined) return;
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
+  };
+
+  const append = (line: NormalizedLine) => {
+    pending.push(line);
+    if (pending.length >= FLUSH_MAX_LINES) {
+      cancelScheduledFlush();
+      flush();
+      return;
+    }
+    if (flushTimer === undefined) {
+      flushTimer = setTimeout(() => {
+        flushTimer = undefined;
+        flush();
+      }, FLUSH_MS);
+    }
   };
 
   const stop = async () => {
@@ -114,6 +148,8 @@ export function LogcatView(props: { source?: LogViewSource }) {
     setActive(false);
     const s = streaming;
     streaming = null;
+    cancelScheduledFlush();
+    flush();
     if (s) await wiring().stop(s).catch(() => {});
   };
 
@@ -142,12 +178,15 @@ export function LogcatView(props: { source?: LogViewSource }) {
   };
 
   const clear = () => {
+    cancelScheduledFlush();
+    pending = [];
     setLines([]);
     setFollow(true);
   };
 
   onCleanup(() => {
     unlisten?.();
+    cancelScheduledFlush();
     if (streaming) void wiring().stop(streaming).catch(() => {});
   });
 

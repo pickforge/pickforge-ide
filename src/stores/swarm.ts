@@ -26,6 +26,7 @@ import { ensureAgentChat, agentChat, sendAgentMessage } from "./agentChat";
 import { addChat, ensureChatsLoaded, findChat, workspace } from "./workspace";
 import { loadAgentEngine } from "../lib/chatDefaults";
 import { modeOverrides } from "../lib/agentModes";
+import { errorText } from "../lib/errors";
 
 const POLL_MS = 1200;
 const MAX_GOAL_CHARS = 8000;
@@ -367,8 +368,7 @@ async function dispatchSwarm(req: SwarmRequest) {
     }
     updateRun(req.runId, { status: "running" });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    updateRun(req.runId, { status: "failed", error: message });
+    updateRun(req.runId, { status: "failed", error: errorText(error) });
   } finally {
     dispatching.delete(req.runId);
   }
@@ -530,7 +530,7 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
   } catch (error) {
     updateRun(run.runId, {
       synthesisStatus: "failed",
-      synthesisError: error instanceof Error ? error.message : String(error),
+      synthesisError: errorText(error),
     });
   } finally {
     synthesizing.delete(run.runId);

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { errorText } from "./errors";
 import { getProSupabaseClient } from "./proAuth";
 import { accountSession, signOut } from "../stores/account";
 
@@ -26,10 +27,6 @@ export function deleteConfirmMatches(input: string, email: string | null): boole
   if (value === "DELETE") return true;
   const target = email?.trim();
   return !!target && value.toLowerCase() === target.toLowerCase();
-}
-
-function errorMessage(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
 }
 
 function errorStatus(error: unknown): number | null {
@@ -68,7 +65,7 @@ export async function exportAccountData(
       "export-account-data",
       { body: {} },
     );
-    if (error) return { ok: false, message: errorMessage(error) };
+    if (error) return { ok: false, message: errorText(error) };
     if (!data || typeof data !== "object") {
       return { ok: false, message: "Export returned no data." };
     }
@@ -80,7 +77,7 @@ export async function exportAccountData(
     });
     return { ok: true, saved: path !== null, path };
   } catch (value) {
-    return { ok: false, message: errorMessage(value) };
+    return { ok: false, message: errorText(value) };
   }
 }
 
@@ -95,7 +92,7 @@ export async function deleteAccount(): Promise<DeleteResult> {
       body: {},
     }));
   } catch (value) {
-    return { ok: false, reason: "error", message: errorMessage(value) };
+    return { ok: false, reason: "error", message: errorText(value) };
   }
 
   if (error) {
@@ -111,7 +108,7 @@ export async function deleteAccount(): Promise<DeleteResult> {
         message: "Couldn't complete deletion — please try again in a moment.",
       };
     }
-    return { ok: false, reason: "error", message: errorMessage(error) };
+    return { ok: false, reason: "error", message: errorText(error) };
   }
 
   if ((data as { deleted?: unknown })?.deleted === true) return { ok: true };

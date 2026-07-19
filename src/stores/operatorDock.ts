@@ -14,6 +14,7 @@ import {
 import { flagEnabled } from "./flags";
 import { creditBalanceCents, refreshCreditBalance } from "./credits";
 import { operatorAuditList, operatorAuditUpdate, type OperatorAuditRow } from "../lib/db";
+import { errorText } from "../lib/errors";
 import type { OperatorIntent } from "../lib/operatorIntent";
 import { navigateSettingsSection, onRouteChange } from "../router";
 
@@ -242,7 +243,7 @@ export async function pickOperatorWidgetCandidate(index: number): Promise<void> 
     } catch (error) {
       result = {
         status: "failed",
-        message: error instanceof Error ? error.message : String(error),
+        message: errorText(error),
       };
     }
     await settlePreviewAuditNow(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorText } from "./errors";
 
 const optionalString = z.string().nullable().default(null);
 const nonEmptyString = z.string().min(1);
@@ -164,7 +165,7 @@ export function parseOperatorIntent(json: string): OperatorIntentParseResult {
   try {
     value = JSON.parse(json);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, error: errorText(error) };
   }
 
   const version = z.object({ v: z.int() }).safeParse(value);

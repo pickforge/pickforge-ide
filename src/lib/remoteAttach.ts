@@ -4,6 +4,7 @@
 // clears the binding, and a test connection runs remoteHostHealth for the three
 // probe rows.
 import { createSignal, type Accessor } from "solid-js";
+import { errorText } from "./errors";
 import {
   projectRemoteClear,
   projectRemoteSet,
@@ -28,12 +29,6 @@ export type TestState =
 export interface TestResult {
   host: string;
   health: RemoteHostHealth;
-}
-
-function errText(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e instanceof Error) return e.message;
-  return String(e);
 }
 
 export interface RemoteAttach {
@@ -64,7 +59,7 @@ export function createRemoteAttach(projectRoot: () => string): RemoteAttach {
       setAttach({ kind: "idle" });
       return true;
     } catch (e) {
-      setAttach({ kind: "error", message: errText(e) });
+      setAttach({ kind: "error", message: errorText(e) });
       return false;
     }
   };
@@ -77,7 +72,7 @@ export function createRemoteAttach(projectRoot: () => string): RemoteAttach {
       setAttach({ kind: "idle" });
       return true;
     } catch (e) {
-      setAttach({ kind: "error", message: errText(e) });
+      setAttach({ kind: "error", message: errorText(e) });
       return false;
     }
   };
@@ -95,7 +90,7 @@ export function createRemoteAttach(projectRoot: () => string): RemoteAttach {
       setTest({ kind: "done", host: h, health });
       return { host: h, health };
     } catch (e) {
-      setTest({ kind: "error", message: errText(e) });
+      setTest({ kind: "error", message: errorText(e) });
       return null;
     }
   };

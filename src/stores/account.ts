@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import type { PickforgeEntitlement, PickforgeOAuthProvider } from "@pickforge/auth";
+import { errorText } from "../lib/errors";
 import { getProAuthClient, releaseProAuthRedirectGuard } from "../lib/proAuth";
 import { flagEnabled, subscribeToFlagChanges } from "./flags";
 
@@ -64,13 +65,9 @@ function accountsEnabled(): boolean {
   return flagEnabled("accounts");
 }
 
-function errorMessage(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
-}
-
 function networkLikeError(value: unknown): boolean {
   if (value instanceof TypeError) return true;
-  const message = errorMessage(value).toLowerCase();
+  const message = errorText(value).toLowerCase();
   return (
     message.includes("failed to fetch") ||
     message.includes("fetch failed") ||
@@ -314,7 +311,7 @@ function setAccountError(value: unknown) {
   releaseProAuthRedirectGuard();
   clearPendingSignIn();
   setStatus("error");
-  setError(errorMessage(value));
+  setError(errorText(value));
 }
 
 async function refreshFromAuth(options: RefreshOptions = {}) {
@@ -441,7 +438,7 @@ export async function signOut() {
     signOutError = value;
   }
   setSignedOut({ clearCache: true });
-  if (signOutError !== null) setError(errorMessage(signOutError));
+  if (signOutError !== null) setError(errorText(signOutError));
 }
 
 export function setAccountRedirectError(message: string) {

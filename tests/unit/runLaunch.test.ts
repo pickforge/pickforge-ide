@@ -5,6 +5,13 @@ const state = vi.hoisted(() => ({
   remote: { host: "mac-mini", remoteRoot: "/srv/app" } as { host: string; remoteRoot: string } | null,
   status: "idle",
   selected: "macos",
+  devices: [] as Array<{
+    serial: string | null;
+    avdId: string | null;
+    displayName: string;
+    state: "running" | "offline" | "stopped";
+    kind: "emulator" | "physical" | "simulator";
+  }>,
   remoteDevices: {
     status: "ready",
     devices: [{ id: "macos", name: "macOS", isSupported: true, emulator: false }],
@@ -26,6 +33,8 @@ const deps = vi.hoisted(() => ({
   mcpStarted: vi.fn(),
   setRunDevice: vi.fn(),
   refreshRemoteDevices: vi.fn(),
+  androidLaunchAvd: vi.fn(),
+  iosBootDevice: vi.fn(),
 }));
 
 const target = {
@@ -45,7 +54,7 @@ vi.mock("../../src/stores/runTargets", () => ({
 }));
 
 vi.mock("../../src/stores/deviceList", () => ({
-  deviceList: () => [],
+  deviceList: () => state.devices,
   refreshDevices: deps.refreshDevices,
 }));
 
@@ -86,8 +95,8 @@ vi.mock("../../src/stores/workspace", () => ({
 }));
 
 vi.mock("../../src/lib/device", () => ({
-  androidLaunchAvd: vi.fn(),
-  iosBootDevice: vi.fn(),
+  androidLaunchAvd: deps.androidLaunchAvd,
+  iosBootDevice: deps.iosBootDevice,
 }));
 
 vi.mock("../../src/lib/runTargets", () => ({
@@ -114,6 +123,7 @@ describe("launchActiveTarget remote routing", () => {
       devices: [{ id: "macos", name: "macOS", isSupported: true, emulator: false }],
       error: null,
     };
+    state.devices = [];
     deps.openConsole.mockReset();
     deps.startRun.mockReset().mockReturnValue({ key: 9 });
     deps.refreshDevices.mockReset();
@@ -123,6 +133,8 @@ describe("launchActiveTarget remote routing", () => {
     deps.mcpStarted.mockReset();
     deps.setRunDevice.mockReset();
     deps.refreshRemoteDevices.mockReset().mockImplementation(async () => state.remoteDevices);
+    deps.androidLaunchAvd.mockReset().mockResolvedValue(undefined);
+    deps.iosBootDevice.mockReset().mockResolvedValue(undefined);
   });
 
   it("launches the selected remote device with a deterministic -d argument", async () => {
@@ -198,6 +210,89 @@ describe("launchActiveTarget remote routing", () => {
     expect(deps.setRunDevice).not.toHaveBeenCalled();
     expect(deps.disconnectVm).not.toHaveBeenCalled();
     expect(deps.startRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps the device selected at launch intent when the saved selection changes during remote discovery", async () => {
+    let resolveDiscovery!: (value: typeof state.remoteDevices) => void;
+    deps.refreshRemoteDevices.mockImplementation(() => new Promise((resolve) => {
+      resolveDiscovery = resolve;
+    }));
+
+    const launch = launchActiveTarget();
+    await vi.waitFor(() => expect(deps.refreshRemoteDevices).toHaveBeenCalledTimes(1));
+    // A device-selection change for the SAME project, mid-discovery, must not
+    // retarget a launch that already captured "macos" at intent time.
+    state.selected = "chrome";
+    resolveDiscovery(state.remoteDevices);
+    await launch;
+
+    expect(deps.setRunDevice).toHaveBeenCalledWith("/local/app", "macos", state.remote);
+    expect(deps.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "flutter --color run -d 'macos'" }),
+      "/local/app",
+      expect.objectContaining({ serial: "macos" }),
+      state.remote,
+    );
+  });
+
+  it("cancels an emulator auto-boot launch when the active project changes mid-boot", async () => {
+    state.remote = null;
+    state.devices = [
+      { serial: null, avdId: "pixel-6", displayName: "Pixel 6", state: "stopped", kind: "emulator" },
+    ];
+    let resolveBoot!: () => void;
+    deps.androidLaunchAvd.mockImplementation(() => new Promise<void>((resolve) => {
+      resolveBoot = resolve;
+    }));
+
+    const launch = launchActiveTarget();
+    await vi.waitFor(() => expect(deps.androidLaunchAvd).toHaveBeenCalledWith("pixel-6"));
+    state.root = "/other/app";
+    resolveBoot();
+    await launch;
+
+    expect(deps.setRunDevice).not.toHaveBeenCalled();
+    expect(deps.startRun).not.toHaveBeenCalled();
+    expect(deps.armVm).not.toHaveBeenCalled();
+  });
+
+  it("cancels an emulator auto-boot launch when the active project changes during the serial wait", async () => {
+    state.remote = null;
+    state.devices = [
+      { serial: null, avdId: "pixel-6", displayName: "Pixel 6", state: "stopped", kind: "emulator" },
+    ];
+    let resolveWait!: (list: typeof state.devices) => void;
+    deps.refreshDevices.mockImplementation(() => new Promise((resolve) => {
+      resolveWait = resolve;
+    }));
+
+    const launch = launchActiveTarget();
+    await vi.waitFor(() => expect(deps.refreshDevices).toHaveBeenCalledTimes(1));
+    state.root = "/other/app";
+    resolveWait([
+      { serial: "emulator-5554", avdId: "pixel-6", displayName: "Pixel 6", state: "running", kind: "emulator" },
+    ]);
+    await launch;
+
+    expect(deps.setRunDevice).not.toHaveBeenCalled();
+    expect(deps.startRun).not.toHaveBeenCalled();
+    expect(deps.armVm).not.toHaveBeenCalled();
+  });
+
+  it("cancels when the active project changes during the awaited VM disconnect", async () => {
+    let resolveDisconnect!: () => void;
+    deps.disconnectVm.mockImplementation(() => new Promise<void>((resolve) => {
+      resolveDisconnect = resolve;
+    }));
+
+    const launch = launchActiveTarget();
+    await vi.waitFor(() => expect(deps.disconnectVm).toHaveBeenCalledTimes(1));
+    state.root = "/other/app";
+    resolveDisconnect();
+    await launch;
+
+    expect(deps.startRun).not.toHaveBeenCalled();
+    expect(deps.armVm).not.toHaveBeenCalled();
   });
 
   it("ignores a second Run click while disconnecting the previous inspector", async () => {

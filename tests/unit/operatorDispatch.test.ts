@@ -10,6 +10,8 @@ const deps = vi.hoisted(() => {
     lastOpenedAt: number;
     sortOrder: number;
     archivedAt: number | null;
+    remoteHost: string | null;
+    remoteRoot: string | null;
   };
   type Chat = {
     chatId: string;
@@ -45,12 +47,14 @@ const deps = vi.hoisted(() => {
     logSource: "pty" | "logcat" | "oslog";
     source: "detected" | "vscode";
   };
+
   const workspace = {
     projects: [] as Project[],
     activeRoot: null as string | null,
     chatsByRoot: {} as Record<string, Chat[]>,
     activeChatId: null as string | null,
   };
+  const deviceSelections = {} as Record<string, string>;
   const agentStates = new Map<string, {
     sessionId: string | null;
     model: string | null;
@@ -106,6 +110,7 @@ const deps = vi.hoisted(() => {
   };
   return {
     workspace,
+    deviceSelections,
     agentStates,
     latestSessions,
     archivedChats,
@@ -153,7 +158,16 @@ const deps = vi.hoisted(() => {
     iosBootDevice: vi.fn(),
     adbScreenshot: vi.fn(),
     iosScreenshot: vi.fn(),
-    setRunDevice: vi.fn(),
+    setRunDevice: vi.fn((root: string, key: string) => {
+      deviceSelections[root] = key;
+    }),
+    selectedDevice: vi.fn((root: string) => deviceSelections[root] ?? ""),
+    remotePtyFor: vi.fn((root: string | null) => {
+      const proj = workspace.projects.find((p) => p.projectRoot === root);
+      return proj?.remoteHost && proj?.remoteRoot
+        ? { host: proj.remoteHost, remoteRoot: proj.remoteRoot, remoteProcessLeases: false }
+        : null;
+    }),
     launchActiveTarget: vi.fn(),
     isBooting: vi.fn(() => runLaunchState.booting),
     launchError: vi.fn(() => runLaunchState.error),
@@ -197,6 +211,7 @@ const deps = vi.hoisted(() => {
       workspace.activeRoot = null;
       workspace.chatsByRoot = {};
       workspace.activeChatId = null;
+      for (const key of Object.keys(deviceSelections)) delete deviceSelections[key];
       agentStates.clear();
       latestSessions.clear();
       archivedChats.clear();
@@ -249,7 +264,11 @@ const deps = vi.hoisted(() => {
       this.iosBootDevice.mockReset().mockResolvedValue(undefined);
       this.adbScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
       this.iosScreenshot.mockReset().mockResolvedValue("/repo/app/.pickforge/operator-screenshot.png");
-      this.setRunDevice.mockReset().mockResolvedValue(undefined);
+      this.setRunDevice.mockReset().mockImplementation((root: string, key: string) => {
+        deviceSelections[root] = key;
+      });
+      this.selectedDevice.mockClear();
+      this.remotePtyFor.mockClear();
       this.launchActiveTarget.mockReset().mockImplementation(async () => {
         const target = activeTarget();
         runConsoleState.status = "running";
@@ -364,6 +383,11 @@ vi.mock("../../src/lib/device", () => ({
 
 vi.mock("../../src/stores/runDevice", () => ({
   setRunDevice: deps.setRunDevice,
+  selectedDevice: deps.selectedDevice,
+}));
+
+vi.mock("../../src/lib/remoteContext", () => ({
+  remotePtyFor: deps.remotePtyFor,
 }));
 
 vi.mock("../../src/stores/runLaunch", () => ({
@@ -410,7 +434,11 @@ vi.mock("../../src/lib/widgetMatch", () => ({
   matchWidget: deps.matchWidget,
 }));
 
-function project(projectRoot: string, displayName: string) {
+function project(
+  projectRoot: string,
+  displayName: string,
+  overrides: Partial<{ remoteHost: string | null; remoteRoot: string | null }> = {},
+) {
   return {
     projectRoot,
     displayName,
@@ -418,6 +446,9 @@ function project(projectRoot: string, displayName: string) {
     lastOpenedAt: 1,
     sortOrder: 0,
     archivedAt: null,
+    remoteHost: null,
+    remoteRoot: null,
+    ...overrides,
   };
 }
 
@@ -1904,5 +1935,235 @@ describe("dispatchIntent", () => {
     expect(result).toEqual({ status: "failed", message: "select failed" });
     expect(auditUpdateStatus()).toBe("failed");
     expect(deps.operatorAuditUpdate.mock.calls.at(-1)?.[2]).toBe("select failed");
+  });
+});
+
+// The execution transaction (CAND-1): every mutable Project/target/device/chat
+// fact an Operator intent depends on is captured ONCE, synchronously, before
+// the audit insert's await — mirrors PR #243's race coverage for the direct
+// run path (pending promise, flip live state, resolve, assert the CAPTURED
+// facts won, not the live ones).
+describe("dispatchIntent execution-transaction races", () => {
+  it("audits and executes against the Project captured before the audit insert, not a switch during it", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    let resolveInsert!: () => void;
+    deps.operatorAuditInsert.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveInsert = resolve;
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const dispatch = dispatchIntent(intent({ action: "openProject" }));
+    await vi.waitFor(() => expect(deps.operatorAuditInsert).toHaveBeenCalledTimes(1));
+    deps.workspace.activeRoot = "/repo/other";
+    resolveInsert();
+    const result = await dispatch;
+
+    expect(result).toEqual({ status: "done", summary: "Opened project App" });
+    expect(deps.selectProject).toHaveBeenCalledWith("/repo/app");
+    expect(deps.operatorAuditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: "/repo/app" }),
+    );
+  });
+
+  it("aborts a run launch instead of booting against a Project switched in during the audit insert", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    deps.targets.push(runTarget("detected", "Flutter"));
+    let resolveInsert!: () => void;
+    deps.operatorAuditInsert.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveInsert = resolve;
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const dispatch = dispatchIntent(intent({ action: "launchRun", target: null }));
+    await vi.waitFor(() => expect(deps.operatorAuditInsert).toHaveBeenCalledTimes(1));
+    deps.workspace.activeRoot = "/repo/other";
+    resolveInsert();
+    const result = await dispatch;
+
+    expect(result).toEqual({
+      status: "failed",
+      message: "Project App is no longer active",
+    });
+    expect(deps.launchActiveTarget).not.toHaveBeenCalled();
+    expect(deps.setActiveTargetId).not.toHaveBeenCalled();
+  });
+
+  it("keeps run-control targeting on the Project captured at dispatch despite a live switch during the audit insert", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    setActiveRun(runTarget("detected", "Flutter"), "/repo/app");
+    let resolveInsert!: () => void;
+    deps.operatorAuditInsert.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveInsert = resolve;
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const dispatch = dispatchIntent(intent({ action: "reloadRun" }));
+    await vi.waitFor(() => expect(deps.operatorAuditInsert).toHaveBeenCalledTimes(1));
+    deps.workspace.activeRoot = "/repo/other";
+    resolveInsert();
+    const result = await dispatch;
+
+    expect(result).toEqual({ status: "done", summary: "Reloaded active run" });
+    expect(deps.reloadRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a screenshot's device the one selected at intent time, not one changed during device refresh", async () => {
+    const target = runTarget("detected", "React Native", {
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+      logSource: "logcat",
+    });
+    deps.targets.push(target);
+    setActiveRun(target);
+    deps.devices.push(
+      device("Pixel 8", { serial: "emulator-5554", avdId: "Pixel_8", state: "running" }),
+      device("Pixel 9", { serial: "emulator-9999", avdId: "Pixel_9", state: "running" }),
+    );
+    deps.deviceSelections["/repo/app"] = "Pixel_8";
+    let resolveRefresh!: (list: typeof deps.devices) => void;
+    deps.refreshDevices.mockImplementation(() => new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const dispatch = dispatchIntent(intent({ action: "takeScreenshot" }));
+    await vi.waitFor(() => expect(deps.refreshDevices).toHaveBeenCalledTimes(1));
+    // A selection change for the SAME project, mid-refresh, must not retarget a
+    // screenshot that already captured "Pixel_8" at intent time.
+    deps.deviceSelections["/repo/app"] = "Pixel_9";
+    resolveRefresh(deps.devices);
+    const result = await dispatch;
+
+    expect(result).toEqual({
+      status: "done",
+      summary: "Captured screenshot /repo/app/.pickforge/operator-screenshot.png",
+    });
+    expect(deps.adbScreenshot).toHaveBeenCalledWith(
+      "emulator-5554",
+      "/repo/app/.pickforge",
+      "operator-screenshot.png",
+    );
+  });
+
+  it("keeps widget-select targeting on the Project captured at dispatch despite a live switch during the audit insert", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    setActiveRun();
+    deps.vmFindIsolate.mockResolvedValue("isolates/1");
+    deps.matchWidget.mockResolvedValue({
+      kind: "match",
+      node: { index: 1, valueId: "widget-1", className: "Button", label: "Go" },
+    });
+    let resolveInsert!: () => void;
+    deps.operatorAuditInsert.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveInsert = resolve;
+    }));
+    const { dispatchIntent } = await loadStore();
+
+    const dispatch = dispatchIntent(intent({ action: "selectWidget", description: "go button" }));
+    await vi.waitFor(() => expect(deps.operatorAuditInsert).toHaveBeenCalledTimes(1));
+    deps.workspace.activeRoot = "/repo/other";
+    resolveInsert();
+    const result = await dispatch;
+
+    expect(result).toEqual({ status: "done", summary: "Selected Button — 'Go'" });
+    expect(deps.vmSetSelection).toHaveBeenCalledWith("isolates/1", "widget-1", "pf-operator-widget-match");
+  });
+
+  it("confirms a tier-1 action against the Project captured at preview time, not a switch made before confirming", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App"),
+      project("/repo/other", "Other"),
+    ];
+    const { dispatchIntent } = await loadStore();
+    const action = {
+      action: "startSwarm" as const,
+      mode: "review" as const,
+      count: 2,
+      goal: "check the operator flow",
+      provider: "mixed" as const,
+    };
+
+    const preview = await dispatchIntent(intent(action), { inputText: "start review swarm" });
+    expect(preview.status).toBe("needsConfirmation");
+    if (preview.status !== "needsConfirmation") throw new Error("expected needsConfirmation");
+
+    // The user takes their time to confirm; the active Project changes in the
+    // meantime. The confirmed dispatch must still execute against what was
+    // previewed/audited (App), not whatever is active now (Other).
+    deps.workspace.activeRoot = "/repo/other";
+
+    const confirmed = await dispatchIntent(intent(action), {
+      confirmed: true,
+      inputText: "start review swarm",
+      reuseAuditId: preview.auditId,
+    });
+
+    expect(confirmed).toEqual({ status: "done", summary: "Started swarm swarm-1" });
+    expect(deps.startSwarm).toHaveBeenCalledWith(
+      "/repo/app",
+      "check the operator flow",
+      expect.objectContaining({ mode: "review", count: 2 }),
+    );
+  });
+
+  it("fails launchEmulator cleanly for a remote-bound project instead of using local device APIs", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App", { remoteHost: "mac-mini", remoteRoot: "/srv/app" }),
+    ];
+    deps.devices.push(device("Pixel 8", { avdId: "Pixel_8" }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "launchEmulator", device: "pixel 8" }));
+
+    expect(result.status).toBe("failed");
+    expect("message" in result ? result.message : "").toContain("mac-mini");
+    expect(deps.refreshDevices).not.toHaveBeenCalled();
+    expect(deps.androidLaunchAvd).not.toHaveBeenCalled();
+    expect(deps.iosBootDevice).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to a local device screenshot for a remote-bound project", async () => {
+    deps.workspace.projects = [
+      project("/repo/app", "App", { remoteHost: "mac-mini", remoteRoot: "/srv/app" }),
+    ];
+    deps.targets.push(runTarget("detected", "React Native", {
+      deviceConvention: "rnDevice",
+      inspectorKind: "uiAutomator",
+      logSource: "logcat",
+    }));
+    deps.devices.push(device("Pixel 8", { serial: "emulator-5554", avdId: "Pixel_8", state: "running" }));
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(intent({ action: "takeScreenshot" }));
+
+    expect(result).toEqual({ status: "noop", summary: "no device or VM session to capture" });
+    expect(deps.refreshDevices).not.toHaveBeenCalled();
+    expect(deps.adbScreenshot).not.toHaveBeenCalled();
+    expect(deps.iosScreenshot).not.toHaveBeenCalled();
+  });
+
+  it("fails cleanly when the chat captured as active at intent time is gone by execution", async () => {
+    deps.workspace.activeChatId = "chat-ghost";
+    const { dispatchIntent } = await loadStore();
+
+    const result = await dispatchIntent(
+      intent({ action: "sendPrompt", prompt: "ship it", chat: null }),
+      { confirmed: true },
+    );
+
+    expect(result).toEqual({ status: "failed", message: "Active chat is not loaded" });
+    expect(deps.sendAgentMessage).not.toHaveBeenCalled();
   });
 });

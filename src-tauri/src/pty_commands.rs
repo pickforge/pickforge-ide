@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
 use tauri::State;
 
-use crate::fs_commands::{approved_canonical, ApprovedRoots};
+use crate::project_roots::{approved_canonical, ApprovedRoots};
 use crate::remote_commands::ensure_remote_ssh_host_allowed;
 
 /// Side-commands (tmux has-session / set-titles / kill-session) must never hang

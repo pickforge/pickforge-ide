@@ -37,7 +37,7 @@ fn root_widget_summary_tree_params(isolate_id: &str, group_name: &str) -> Value 
     json!({ "isolateId": isolate_id, "objectGroup": group_name })
 }
 
-use crate::fs_commands::{approved_canonical, ApprovedRoots};
+use crate::project_roots::{approved_canonical, ApprovedRoots};
 
 /// One widget property (name + display value) for the inspector details panel.
 #[derive(serde::Serialize)]

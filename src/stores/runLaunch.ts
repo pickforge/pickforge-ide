@@ -205,7 +205,13 @@ function launchContextIsCurrent(projectRoot: string, remote: RemotePty | null): 
 async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
   openConsole();
   setError(null);
+  // Capture this launch's execution facts once, synchronously, before any
+  // await: the Project's remote binding and its saved device selection. Every
+  // later step threads these captured values through instead of re-reading
+  // the live stores, so a Project switch — or just a changed device selection
+  // for the same Project — mid-await can never retarget this launch.
   const remote = remotePtyFor(projectRoot);
+  const capturedSelection = selectedDevice(projectRoot, remote);
 
   let serial: string | null = null;
   let device: DeviceEntry | null = null;
@@ -217,13 +223,12 @@ async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
       setError(state.error ? `Remote device check failed: ${state.error}` : "Remote device check failed");
       return;
     }
-    remoteDevice = resolveRemoteDevice(state.devices, selectedDevice(projectRoot, remote));
+    remoteDevice = resolveRemoteDevice(state.devices, capturedSelection);
     if (!remoteDevice) {
-      const stored = selectedDevice(projectRoot, remote);
       setError(
         state.devices.length === 0
           ? "No supported Flutter devices found on the remote host"
-          : stored
+          : capturedSelection
             ? "Saved remote device is unavailable — choose another device"
             : "Choose a remote device before running",
       );

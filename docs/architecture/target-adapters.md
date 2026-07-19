@@ -1,84 +1,125 @@
 # Target adapters
 
-PickForge is a Flutter-only widget picker that is growing into a multi-framework
-agent workbench. The seam that makes that possible is the **target adapter**: a
-capability-based description of one runnable app family (Flutter, React Native,
-native Android, native iOS, web) plus the detection and tooling that backs it.
+PickForge supports Flutter, React Native, native Android, native iOS, web, and a
+generic project fallback. The adapter seam is the capability-based projection
+that keeps framework detection, launch behavior, device policy, inspector depth,
+and support claims together.
 
-Adapters live in `lib/core/targets/`. The roadmap is
-`plans/001-multi-framework-agent-suite-roadmap.md`.
+The current architecture is Rust core → Tauri IPC adapter → SolidJS client:
+
+```text
+crates/pickforge-core/src/targets/adapters.rs
+                    │
+                    ▼
+src-tauri/src/device_commands.rs
+                    │
+                    ▼
+src/lib/device.ts + src/lib/runTargets.ts
+                    │
+                    ▼
+src/stores/runTargets.ts → src/stores/runLaunch.ts → src/stores/runConsole.ts
+```
+
+The roadmap remains `plans/001-multi-framework-agent-suite-roadmap.md`.
 
 ## Vocabulary
 
-- **Project** — a user-selected repository root.
-- **Target** — a runnable app target inside a project (e.g. Flutter Android).
-- **Adapter** — detects, runs, inspects, and builds context for one target
-  family.
-- **Capability** — one supported operation (launch, screenshot, logs, inspect
-  selection, source mapping, hot reload, MCP tools).
-- **Selection** — the UI element/widget/component/node the user picked.
+- **Project** — a user-selected repository root and, optionally, one bound remote
+  host/root.
+- **Target** — one runnable app target inside a Project, including detected
+  targets and supported `.vscode/launch.json` entries.
+- **Adapter** — framework-specific detection and the run/device/inspector policy
+  projected into a `RunTarget` and `RunProfile`.
+- **Capability** — one earned operation such as launch, screenshot, logs,
+  selection inspection, exact source mapping, or MCP tools.
+- **Selection** — the UI element, widget, component, or accessibility node the
+  user picked.
 
-## Capability model
+## Capability and support model
 
-An adapter only declares the capabilities it actually implements
-(`TargetCapability`, `lib/core/targets/target_capability.dart`). The workbench
-reads those to gate what it offers, so the UI never promises depth an adapter
-doesn't have. `TargetWorkflowPolicy` maps a capability set to a **support
-level** and the agent workflows + prompt certainty tier it earns.
+`Capability` and `TargetDetection` live in
+`crates/pickforge-core/src/targets/adapters.rs`. The Tauri adapter serializes
+those values to the frontend, where `src/lib/runTargets.ts` combines them with a
+`RunProfile`: device convention, inspector kind, and log source. Callers gate
+behavior through that projection instead of re-detecting a framework from a
+command string.
 
-| Support level | Meaning |
+`src/lib/runTargets.ts` maps the declared capabilities to the support tier shown
+by the workbench:
+
+| Support tier | Earned behavior |
 | --- | --- |
-| **Deep** | Exact selection→source mapping (Flutter). |
-| **Useful** | Run/log/screenshot/inspect + best-effort source hints. |
-| **Experimental** | Detection + some tooling; thin runtime. |
-| **Manual-only** | Generic fallback: terminal, attachments, prompts. |
+| **Deep** | Launch + inspect + exact selection-to-source mapping. |
+| **Useful** | Launch + inspect, without an exact source claim. |
+| **Experimental** | Some live tooling, but not the useful/deep combination. |
+| **Manual** | Detection and shell-driven work only. |
 
-The workbench surfaces this with `TargetCapabilityBadges` (lit vs muted per
-operation) and `TargetSupportBadge`, reviewed in
-`test/goldens/baselines/target_panels.png`.
+MCP uses the same capability vector. The protocol and tool gates live in
+`crates/pickforge-core/src/mcp/`, the local socket adapter lives in
+`src-tauri/src/mcp_commands.rs`, and `src/stores/mcp.ts` publishes the active
+`RunTarget`. See `docs/architecture/pickforge-mcp.md`.
 
-## Adapters and current status
+## Current adapters
 
-Detection, command building, and log/hierarchy parsing are **fixture-tested** —
-no device, emulator, or browser is required to run the suite. Anything that
-needs a live runtime (attaching to a process, capturing a real screen, a CDP
-session) is marked **live-pending** and is gated behind the manual smokes in the
-roadmap.
+The core detector chooses the highest-priority match and always falls back to
+`generic`. Detection is fixture-testable without a live device.
 
-| Adapter | Priority | Detects | Fixture-tested | Live-pending |
-| --- | --- | --- | --- | --- |
-| Flutter | 100 | `pubspec.yaml` + Flutter deps | selection→source mapping, MCP aliases | — (already the live reference flow) |
-| React Native (Android) | 80 | `react-native` dep + `android/` | Metro/ADB commands, logcat + UIAutomator parsing, selection context, Metro CDP discovery | Fast Refresh trigger, component tree, device smoke |
-| Native Android | 60 | Gradle settings + app plugin | Gradle/ADB commands, UIAutomator parsing, best-effort source hints | device smoke |
-| Native iOS | 55 | `.xcworkspace`/`.xcodeproj`/app `Package.swift` | `xcodebuild`/`simctl` commands, simctl device-list + `os_log` parsing | live: simulator boot, `simctl` screenshot, `os_log` stream, `xcodebuild` build/launch, and the `idb` accessibility hierarchy — all proven on a real simulator (`idb` must be on `PATH`) |
-| Web | 50 | `package.json` dev/start scripts | dev-server command, CDP discovery, accessibility-tree + source-map parsing, source-candidate search | DOM/console/network capture, screenshots (live CDP session) |
-| Generic | 0 | fallback for any folder | detect only | adapter-mediated terminal/attachments (app-global today) |
+| Adapter | Priority | Detection | Declared depth |
+| --- | ---: | --- | --- |
+| Flutter | 100 | `pubspec.yaml` declaring the Flutter SDK | launch/stop, reload/restart, screenshot, logs, VM Service selection, exact source mapping, MCP tools |
+| React Native (Android) | 80 | `react-native` dependency plus `android/` | launch/stop, screenshot, logs, UIAutomator selection |
+| Native Android | 60 | Gradle settings plus a root build file | launch, screenshot, logs, UIAutomator selection |
+| Native iOS | 55 | Xcode container or iOS `Package.swift` | launch, screenshot, logs, accessibility selection |
+| Web | 40 | `package.json` plus a recognized web entry/config | screenshot, CDP selection, source mapping |
+| Generic | 0 | fallback | detection only |
 
-Source context never claims more than the evidence allows: only Flutter declares
-`mapSelectionToSource`. Every other adapter ships a confidence-ranked
-**source-candidate finder** (text/resource-id/testid search) plus a `SourceMap`
-v3 resolver for the web, and renders a clear disclaimer when exact mapping isn't
-available.
+Framework-specific primitives remain in deep core modules:
 
-## Shared layers
+- Android and React Native share `crates/pickforge-core/src/android/`.
+- Native iOS uses `crates/pickforge-core/src/ios/`.
+- Web inspection uses `crates/pickforge-core/src/cdp.rs` and source maps use
+  `crates/pickforge-core/src/targets/source_map.rs`.
+- Flutter inspection remains protocol-specific in
+  `crates/pickforge-core/src/vm_service.rs`.
+- CDP and VM Service share only generation-safe WebSocket ownership,
+  correlation, timeout cleanup, and loopback admission through
+  `crates/pickforge-core/src/correlated_ws.rs`; their result and event behavior
+  stays in each protocol adapter.
 
-Where two adapters need the same primitive, it's extracted once and the original
-adapter re-exports it via type-alias shims, so the existing test suite stays the
-parity check:
+## One captured execution transaction
 
-- `lib/core/android/` — ADB service, UIAutomator node/parser, UI inspector,
-  logcat parser (Native Android + React Native).
-- `lib/core/cdp/` — generic CDP discovery (web + React Native Metro).
+A launch captures its Project, target, saved device selection, and remote binding
+synchronously before awaited discovery or boot work in
+`src/stores/runLaunch.ts`. `src/stores/runConsole.ts` receives those captured
+facts for PTY launch and history instead of reading the currently active Project
+again.
 
-## Adding an adapter
+`src/lib/remoteContext.ts` is the frontend routing authority:
 
-1. Add a `*ProjectDetector` and a `const *TargetAdapter` under
-   `lib/core/targets/<family>/`; register it in the `get_it`/`injectable`
-   targets module with a priority below the more specific families.
-2. Declare only the capabilities you can back with tested tooling.
-3. Add command builders and log/hierarchy parsers as pure, fixture-tested units
-   — no live device in the test path.
-4. Build selection context through a source-candidate finder; never declare
-   `mapSelectionToSource` without direct evidence.
-5. Keep process/VM-service/filesystem work in `lib/core/`, never in widgets, and
-   never modify the user's project source as part of context preparation.
+- `resolvePtyRemote` makes an explicitly captured local/remote decision win over
+  a later workspace lookup.
+- `executionRemoteFor` keeps a nested target cwd on the captured remote host.
+- `remotePathFor` maps an approved local Project path into its bound remote root.
+
+Remote discovery is performed through `src/lib/remoteHost.ts`; it does not read
+local target/device state as a fallback. The Tauri PTY boundary re-authorizes the
+stored Project/host/root binding in `src-tauri/src/pty_commands.rs`. A remote
+Project's host and root remain authoritative, and its local mirror is excluded
+from filesystem authority by `src-tauri/src/project_roots.rs`. The broader
+transport and credential rules are in `docs/architecture/remote-host-mode.md`.
+
+## Adding or deepening an adapter
+
+1. Add detection and the honest `Capability` set in
+   `crates/pickforge-core/src/targets/adapters.rs`.
+2. Add framework primitives to the appropriate deep core module; keep Tauri in
+   `src-tauri/src/` as an IPC adapter rather than a second implementation.
+3. Add or update the single `RunProfile` mapping in `src/lib/runTargets.ts` so
+   device, inspector, and log policy travel with the target.
+4. Route discovery through `src/lib/runTargets.ts` and launch through the
+   captured transaction in `src/stores/runLaunch.ts`; do not read mutable active
+   Project facts after an await.
+5. Declare exact source mapping or MCP exposure only when the implementation and
+   focused tests earn those capabilities.
+6. Preserve remote authority: a failure on a bound remote Project is an error,
+   never permission to run local discovery, device work, PTYs, or file access.

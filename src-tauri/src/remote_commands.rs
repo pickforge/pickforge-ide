@@ -16,6 +16,7 @@ use pickforge_core::{
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::project_roots::{reconcile_or_log, ApprovedRoots};
 use crate::pty_commands::authorize_remote_pty;
 
 const DEFAULT_REMOTE_HOST: &str = "127.0.0.1";
@@ -140,19 +141,26 @@ pub async fn remote_tailscale_ssh_set(enabled: bool) -> Result<TailscaleStatus, 
 #[tauri::command]
 pub async fn project_remote_set(
     db: State<'_, Arc<Database>>,
+    roots: State<'_, ApprovedRoots>,
     project_root: String,
     host: String,
     remote_root: String,
 ) -> Result<(), String> {
-    let db = Arc::clone(&db);
+    let db_for_write = Arc::clone(&db);
     tauri::async_runtime::spawn_blocking(move || {
         validate_project_remote_root(&remote_root)?;
         ensure_remote_ssh_host_allowed(&host)?;
-        db.projects_set_remote(&project_root, &host, &remote_root)
+        db_for_write
+            .projects_set_remote(&project_root, &host, &remote_root)
             .map_err(|err| err.to_string())
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+    // Binding a project to a remote host means the remote machine becomes the
+    // source of truth for its files; its local root must drop out of the
+    // approved-root registry (see `project_roots`).
+    reconcile_or_log(&roots, &db);
+    Ok(())
 }
 
 fn validate_project_remote_root(remote_root: &str) -> Result<(), String> {
@@ -174,10 +182,14 @@ fn validate_project_remote_root(remote_root: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn project_remote_clear(
     db: State<'_, Arc<Database>>,
+    roots: State<'_, ApprovedRoots>,
     project_root: String,
 ) -> Result<(), String> {
     db.projects_clear_remote(&project_root)
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    // Clearing the binding makes the local root the authority again.
+    reconcile_or_log(&roots, &db);
+    Ok(())
 }
 
 #[tauri::command]

@@ -20,7 +20,7 @@ use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::State;
 
-use crate::fs_commands::{approved_canonical, ApprovedRoots};
+use crate::project_roots::{approved_canonical, ApprovedRoots};
 use crate::pty_commands::authorize_remote_pty;
 #[cfg(test)]
 use crate::pty_commands::authorize_remote_pty_with;

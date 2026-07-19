@@ -11,6 +11,7 @@ mod mirror_commands;
 mod operator_commands;
 mod picklab_commands;
 mod process_commands;
+mod project_roots;
 mod pty_commands;
 mod remote_commands;
 mod shutdown;
@@ -208,11 +209,14 @@ pub fn run() {
 
     let database = open_database();
     // Allowlist of filesystem roots the renderer may browse/read/open: PickForge
-    // home plus every known project root. Seeded from the DB before the app runs;
-    // a new root is added only by the user-mediated `pick_project_dir`, and
-    // `project_delete`/`project_set_archived` reseed it as projects leave the set.
-    let approved_roots = fs_commands::ApprovedRoots::default();
-    fs_commands::seed_approved_roots(&approved_roots, database.as_ref());
+    // home plus every active, local project root. `reconcile` is the one seam
+    // that keeps this in sync with the DB's live Project set (see
+    // `project_roots`); every command that mutates Project state calls it again
+    // after its own write.
+    let approved_roots = project_roots::ApprovedRoots::default();
+    if let Err(err) = approved_roots.reconcile(database.as_ref()) {
+        eprintln!("failed to seed approved project roots at startup: {err}");
+    }
     let manager_database = Arc::clone(&database);
 
     builder

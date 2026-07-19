@@ -8,7 +8,7 @@ use pickforge_core::{
 use std::sync::Arc;
 use tauri::State;
 
-use crate::fs_commands::{ensure_root_approved, register_project_root, ApprovedRoots};
+use crate::project_roots::{ensure_root_approved, reconcile_or_log, ApprovedRoots};
 
 #[tauri::command]
 pub fn projects_list(
@@ -19,23 +19,15 @@ pub fn projects_list(
     let projects = db
         .list_projects(include_archived)
         .map_err(|e| e.to_string())?;
-    register_active_roots(&roots, &projects);
+    // Reconcile the approved-root registry against the DB's live active set on
+    // every list — another process may have added, archived, or deleted a
+    // project since this one last reconciled, and this fully replaces (rather
+    // than merely adds to) the registry, so an externally observed removal
+    // takes effect too. `include_archived` only affects what's RETURNED to the
+    // caller (Settings renders archived projects); `reconcile` always sources
+    // from the active set.
+    reconcile_or_log(&roots, &db);
     Ok(projects)
-}
-
-/// Keep the filesystem allowlist in sync with the live project set (another
-/// instance may have added a project since startup), but register only **active**
-/// rows. `projects_list(include_archived = true)` (Settings renders archived
-/// projects) must not re-approve an archived root — that would let the file
-/// explorer reach a project the user archived until the next reseed. Archived
-/// rows are still RETURNED so Settings can list them; only the registration is
-/// filtered.
-fn register_active_roots(roots: &ApprovedRoots, projects: &[Project]) {
-    for p in projects {
-        if p.archived_at.is_none() {
-            register_project_root(roots, &p.project_root);
-        }
-    }
 }
 
 #[tauri::command]
@@ -53,7 +45,9 @@ pub fn project_upsert(
     // `projects_list`/restart re-seed allowlist that arbitrary path — the row
     // never lands, so re-seeding stays safe.
     ensure_root_approved(&roots, &project.project_root)?;
-    db.upsert_project(&project).map_err(|e| e.to_string())
+    db.upsert_project(&project).map_err(|e| e.to_string())?;
+    reconcile_or_log(&roots, &db);
+    Ok(())
 }
 
 #[tauri::command]
@@ -65,10 +59,9 @@ pub fn project_set_archived(
 ) -> Result<(), String> {
     db.set_project_archived(&root, archived_at)
         .map_err(|e| e.to_string())?;
-    // Archiving drops the project from the active set; reseed so its root is no
-    // longer approved (unarchiving re-adds it). Reseed unconditionally — it's
-    // cheap and keeps the registry exactly in sync with the live set.
-    roots.reseed(db.as_ref());
+    // Archiving drops the project from the active set; reconcile so its root is
+    // no longer approved (unarchiving re-adds it).
+    reconcile_or_log(&roots, &db);
     Ok(())
 }
 
@@ -84,9 +77,9 @@ pub fn project_delete(
     root: String,
 ) -> Result<(), String> {
     db.delete_project(&root).map_err(|e| e.to_string())?;
-    // The registry only grows otherwise; rebuild it from the live project set so
-    // a removed root doesn't stay approved for the rest of the process lifetime.
-    roots.reseed(db.as_ref());
+    // A deleted root must not stay approved for the rest of the process
+    // lifetime; reconcile against the now-updated live project set.
+    reconcile_or_log(&roots, &db);
     Ok(())
 }
 
@@ -311,7 +304,7 @@ pub fn agent_run_insert(db: State<'_, Arc<Database>>, run: AgentRunLog) -> Resul
 #[cfg(test)]
 mod projects_list_tests {
     use super::*;
-    use crate::fs_commands::approved_canonical;
+    use crate::project_roots::approved_canonical;
 
     fn make_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("pf-projlist-{}-{tag}", std::process::id()));
@@ -333,21 +326,24 @@ mod projects_list_tests {
     }
 
     // The `projects_list(include_archived = true)` path (Settings rendering
-    // archived projects) must not re-approve an archived project's root: it
-    // registers only active rows, so a gated read on an archived root stays
-    // rejected while an active root is reachable.
+    // archived projects) must not re-approve an archived project's root:
+    // `reconcile` always sources the registry from the DB's active set
+    // (`list_projects(false)`), independent of what `include_archived` returns
+    // to the caller.
     #[test]
     fn listing_with_archived_does_not_reapprove_an_archived_root() {
+        let db = Database::open_in_memory().expect("in-memory db");
         let active = make_dir("active");
         let archived = make_dir("archived");
-        // `db.list_projects(true)` returns both; only the active one registers.
-        let rows = vec![
-            project(&active, "active", None),
-            project(&archived, "archived", Some(1)),
-        ];
+        db.upsert_project(&project(&active, "active", None)).unwrap();
+        db.upsert_project(&project(&archived, "archived", Some(1)))
+            .unwrap();
 
         let roots = ApprovedRoots::default();
-        register_active_roots(&roots, &rows);
+        // Mirrors `projects_list(include_archived: true)`: the returned rows
+        // include the archived one, but reconciling must not approve it.
+        let _ = db.list_projects(true).unwrap();
+        reconcile_or_log(&roots, &db);
 
         let active_file = active.join("a.txt");
         let archived_file = archived.join("b.txt");

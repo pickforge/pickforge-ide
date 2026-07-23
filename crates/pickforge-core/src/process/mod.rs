@@ -2,12 +2,14 @@
 //! detect binaries on PATH, and run commands. Ports
 //! `lib/core/process/user_shell_environment.dart` + `binary_detector.dart`.
 
+mod askpass;
 mod binary_detector;
 mod containment;
 mod runner;
 mod shell_env;
 mod start_gate;
 
+pub use askpass::{askpass_capability, detect as detect_askpass_capability, AskpassCapability};
 pub use binary_detector::{is_binary_on_path, is_on_user_path, which_in};
 pub use containment::{
     contain_owned_root, guardian_main, guardian_requested, local_crash_containment_enabled,

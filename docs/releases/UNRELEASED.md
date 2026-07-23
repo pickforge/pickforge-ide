@@ -38,6 +38,19 @@ reset this file.
   terminal, emulator, mirror, and device-log managers, and interrupts active
   native agent turns so persisted chats return to idle. Crash/SIGKILL
   containment is not included yet (#208).
+- Linux: agent shells spawned in the embedded terminal (Raw, dtach, and tmux
+  chat sessions alike) now get `SUDO_ASKPASS` propagated automatically when a
+  graphical session and a system askpass helper (the user's own `SUDO_ASKPASS`
+  if executable, else the first of `ksshaskpass`/`ssh-askpass`/
+  `lxqt-openssh-askpass`/a few standard distro paths) are both detected —
+  `sudo -A <command>` shows a graphical password prompt instead of failing or
+  blocking on a terminal password. It's the only environment variable this
+  feature injects, and only for local (non-remote) shells. On a headless
+  session or with no helper installed, a chat pane's title bar shows a small
+  "no sudo helper" / "no graphical session" notice so the human running the
+  agent knows to use a real terminal for privileged commands instead.
+  macOS/Windows are out of scope this release — never `sudo -S`, never
+  password capture, never a bundled helper (#215).
 
 ## Internal/release changes (dark: no default-on behavior change)
 
@@ -56,6 +69,22 @@ reset this file.
 
 ## Validation
 
+- #215: capability-detection unit tests (`process::askpass`) cover a
+  user-executable helper winning over the probe list, a non-executable
+  user-set value falling back to the probe list, no helper resolving, and
+  headless (no `WAYLAND_DISPLAY`/`DISPLAY`) — plus a redaction-boundary test
+  proving an unvalidated `SUDO_ASKPASS` value never reaches the capability's
+  public surface. `pty::session` tests prove `SUDO_ASKPASS` is the ONLY key
+  the injection adds, that it always wins over caller-supplied `extra_env`,
+  and — via a `program_override` spawn (the same seam dtach/tmux use) — that
+  propagation is identical across backends. `cargo test --workspace --locked
+  --all-targets` (534 pickforge-core tests, incl. the new ones) passes; two
+  timing-sensitive `agents::claude_stream`/`agents::manager` tests flaked
+  once under full-suite parallel load and passed individually — pre-existing
+  env-contention flakiness, unrelated to this change (reproduced clean on a
+  second full run). `bun run test:unit` has the 3 known pre-existing
+  `chatTerminalLifecycle` failures (unrelated file, not touched here); `bun
+  run build` passes.
 - Forced-exit regression harness (`crash_containment` integration test):
   child + grandchild trees proven dead after normal close, SIGTERM, panic,
   abort, and forced SIGKILL of the parent.
@@ -94,6 +123,9 @@ reset this file.
 - Real AMD/KDE Wayland A/B smoke (Auto vs. Compatibility vs. Native Wayland,
   persistence across restart, KDE Wayland + AMD one-time recommendation) on
   the affected release-smoke machine (#238).
+- Real Linux `sudo -A -v` smoke from a PickForge-launched agent shell —
+  helper-present success, cancellation, and the headless/no-helper fallback
+  notice — deferred to Elberte-PC (#215).
 
 ### Known limits
 

@@ -15,7 +15,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 
 use super::env::normalize_pty_env;
 use super::shell::{resolve_shell, ShellInvocation};
-use crate::process::{user_shell_environment, StartGate};
+use crate::process::{askpass_capability, user_shell_environment, StartGate};
 use crate::remote::{
     remote_process_command, shell_quote_argv, ssh_base_args, stop_remote_leases_bounded,
     RemoteLeaseHandle, RemoteLeasePayload, SshTarget,
@@ -231,8 +231,17 @@ impl PtyManager {
         // normalise colour vars and merge any caller extras (PICKFORGE_*).
         // env_clear first so removed keys (NO_COLOR, …) really disappear.
         cmd.env_clear();
-        let mut env = normalize_pty_env(user_shell_environment().clone());
-        env.extend(opts.extra_env);
+        let base = normalize_pty_env(user_shell_environment().clone());
+        // Local spawns only: the graphical askpass helper lives on THIS machine,
+        // so SUDO_ASKPASS is meaningless for the remote shell a `ssh` client
+        // attaches to (extra_env already only reaches the local ssh process for
+        // a remote PTY — see SpawnOptions::extra_env).
+        let askpass_helper = opts
+            .remote
+            .is_none()
+            .then(|| askpass_capability().helper())
+            .flatten();
+        let env = build_pty_env(base, opts.extra_env, askpass_helper);
         for (key, value) in env {
             cmd.env(key, value);
         }
@@ -583,6 +592,34 @@ fn remote_pty_command(remote_root: &str, command: Option<&str>) -> String {
     }
 }
 
+/// Merge the resolved+normalised login-shell env, the caller's extra env, and
+/// (when `askpass_helper` is `Some`) the contract-governed `SUDO_ASKPASS`
+/// addition. This is the SINGLE seam every PTY/session backend spawns
+/// through — [`PtyManager::spawn`] picks the program/args per backend (a raw
+/// shell, or the dtach/tmux client via `program_override`) but always builds
+/// the child's env by calling this function, so Raw, dtach, and tmux all get
+/// identical env-propagation behaviour by construction, not by convention.
+///
+/// `SUDO_ASKPASS` is applied LAST so it is never overridable by the caller's
+/// `extra_env` (renderer-supplied `PICKFORGE_*` vars) — per the locked v1
+/// contract, `SUDO_ASKPASS` is the only variable this feature may inject, and
+/// PickForge's own resolved value must always win.
+fn build_pty_env(
+    base: HashMap<String, String>,
+    extra_env: HashMap<String, String>,
+    askpass_helper: Option<&std::path::Path>,
+) -> HashMap<String, String> {
+    let mut env = base;
+    env.extend(extra_env);
+    if let Some(helper) = askpass_helper {
+        env.insert(
+            "SUDO_ASKPASS".to_string(),
+            helper.to_string_lossy().into_owned(),
+        );
+    }
+    env
+}
+
 fn local_spawn_cwd<'a>(remote: Option<&RemotePty>, cwd: Option<&'a str>) -> Option<&'a str> {
     if remote.is_some() {
         None
@@ -729,6 +766,147 @@ mod tests {
             remote_root: remote_root.to_string(),
             remote_process_leases: false,
         }
+    }
+
+    // -- build_pty_env: the SUDO_ASKPASS injection seam (pickforge#215) -----
+    //
+    // Pure, so these prove the contract's "only SUDO_ASKPASS is injected"
+    // requirement deterministically, for every backend at once — Raw, dtach,
+    // and tmux all reach this exact function from `PtyManager::spawn` with
+    // only `program`/`args` differing (see its doc comment).
+
+    #[test]
+    fn build_pty_env_adds_nothing_when_no_askpass_helper_resolved() {
+        let mut base = HashMap::new();
+        base.insert("PATH".to_string(), "/usr/bin".to_string());
+        let mut extra = HashMap::new();
+        extra.insert("PICKFORGE_IPC_ENDPOINT".to_string(), "/tmp/sock".to_string());
+
+        // None models both NoHelper and Headless capability states, and the
+        // remote-spawn case — all three must leave the merged env untouched
+        // beyond the ordinary base+extra merge.
+        let env = build_pty_env(base.clone(), extra.clone(), None);
+
+        let mut expected = base;
+        expected.extend(extra);
+        assert_eq!(env, expected);
+        assert!(!env.contains_key("SUDO_ASKPASS"));
+    }
+
+    #[test]
+    fn build_pty_env_injects_only_sudo_askpass_when_a_helper_is_available() {
+        let mut base = HashMap::new();
+        base.insert("PATH".to_string(), "/usr/bin".to_string());
+        let mut extra = HashMap::new();
+        extra.insert("PICKFORGE_IPC_ENDPOINT".to_string(), "/tmp/sock".to_string());
+
+        let without_helper = build_pty_env(base.clone(), extra.clone(), None);
+        let with_helper = build_pty_env(
+            base,
+            extra,
+            Some(std::path::Path::new("/usr/bin/ksshaskpass")),
+        );
+
+        let mut added: Vec<&str> = with_helper
+            .keys()
+            .filter(|k| !without_helper.contains_key(k.as_str()))
+            .map(String::as_str)
+            .collect();
+        added.sort_unstable();
+        assert_eq!(
+            added,
+            vec!["SUDO_ASKPASS"],
+            "the helper must be the ONLY key the injection adds"
+        );
+        assert_eq!(
+            with_helper.get("SUDO_ASKPASS").map(String::as_str),
+            Some("/usr/bin/ksshaskpass")
+        );
+    }
+
+    #[test]
+    fn build_pty_env_lets_pickforges_resolved_helper_win_over_caller_supplied_extra_env() {
+        // extra_env is renderer-supplied IPC input (PICKFORGE_* vars). A
+        // caller trying to smuggle its own SUDO_ASKPASS through it must never
+        // win over the contract-governed value PickForge itself resolved.
+        let mut extra = HashMap::new();
+        extra.insert(
+            "SUDO_ASKPASS".to_string(),
+            "/tmp/spoofed-askpass".to_string(),
+        );
+
+        let env = build_pty_env(
+            HashMap::new(),
+            extra,
+            Some(std::path::Path::new("/usr/bin/ksshaskpass")),
+        );
+
+        assert_eq!(
+            env.get("SUDO_ASKPASS").map(String::as_str),
+            Some("/usr/bin/ksshaskpass")
+        );
+    }
+
+    /// End-to-end proof that the injection seam is actually wired into a real
+    /// spawn, and identically so for the `program_override` path that dtach
+    /// and tmux both use — not just exercised in isolation above. Uses a
+    /// throwaway shim in place of a real dtach/tmux binary so the test has no
+    /// external dependency; `program_override` is exactly how those backends
+    /// reach `PtyManager::spawn` (see `sessions::dtach_invocation` /
+    /// `tmux_invocation`), so this exercises the same code path they do.
+    #[cfg(unix)]
+    #[test]
+    fn spawn_propagates_extra_env_identically_through_a_program_override_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "pf-pty-env-override-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dump_path = dir.join("env.dump");
+        let wrapper = dir.join("fake-session-wrapper.sh");
+        std::fs::write(
+            &wrapper,
+            format!("#!/bin/sh\nenv > '{}'\n", dump_path.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let manager = PtyManager::new();
+        let mut extra_env = HashMap::new();
+        extra_env.insert(
+            "PICKFORGE_TEST_MARKER".to_string(),
+            "via-override".to_string(),
+        );
+        let opts = SpawnOptions {
+            program_override: Some((wrapper.to_string_lossy().into_owned(), vec![])),
+            extra_env,
+            detach_on_drop: true, // matches how dtach/tmux clients spawn
+            ..Default::default()
+        };
+        let id = manager.spawn(opts, |_| {}).expect("spawn should succeed");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let dumped = loop {
+            if let Ok(contents) = std::fs::read_to_string(&dump_path) {
+                if !contents.is_empty() {
+                    break contents;
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("timed out waiting for the wrapper's env dump");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        let _ = manager.detach(id);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            dumped.lines().any(|l| l == "PICKFORGE_TEST_MARKER=via-override"),
+            "extra_env must reach a program_override spawn exactly like a raw one, got:\n{dumped}"
+        );
     }
 
     #[cfg(unix)]

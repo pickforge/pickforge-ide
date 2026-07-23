@@ -155,6 +155,32 @@ export function ptyKill(id: number): Promise<void> {
   return invoke("pty_kill", { id });
 }
 
+/** Linux graphical `sudo` (askpass) pre-flight status — pickforge#215.
+ *  "available": a graphical session + a resolvable helper were both found —
+ *    agents can run privileged commands via `sudo -A`.
+ *  "noHelper": graphical session, but no helper resolved (user-set
+ *    `SUDO_ASKPASS` wasn't executable, and nothing on the fixed probe list
+ *    exists) — the actionable failure state from the locked v1 contract.
+ *  "headless": no graphical session (SSH, bare TTY, headless CI).
+ *  "unsupportedPlatform": macOS/Windows — out of scope for this release. */
+export type AskpassStatus = "available" | "noHelper" | "headless" | "unsupportedPlatform";
+
+// Cached for the renderer's lifetime, mirroring the Rust-side OnceLock: the
+// capability is resolved once from the process's environment and never
+// changes while the app is running.
+let askpassStatusPromise: Promise<AskpassStatus> | null = null;
+
+/** Query the Rust-resolved askpass capability. Safe to call from every pane —
+ *  the underlying Rust call is itself a cached singleton, and this wrapper
+ *  caches the in-flight/resolved promise too, so repeated calls never
+ *  re-invoke IPC. */
+export function getAskpassStatus(): Promise<AskpassStatus> {
+  if (!askpassStatusPromise) {
+    askpassStatusPromise = invoke<AskpassStatus>("pty_askpass_status");
+  }
+  return askpassStatusPromise;
+}
+
 /** Normalise channel output into a Uint8Array regardless of the IPC encoding. */
 export function toBytes(data: PtyBytes): Uint8Array {
   if (data instanceof Uint8Array) return data;

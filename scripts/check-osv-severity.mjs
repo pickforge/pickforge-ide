@@ -21,6 +21,13 @@ for (const lockfile of expectedLockfiles) {
   }
 }
 
+const vulnerabilitiesById = new Map(
+  report.results.flatMap((result) =>
+    (result.packages ?? []).flatMap(({ vulnerabilities = [] }) =>
+      vulnerabilities.filter(({ id }) => id).map((vulnerability) => [vulnerability.id, vulnerability]),
+    ),
+  ),
+);
 const groups = report.results.flatMap((result) =>
   (result.packages ?? []).flatMap(({ package: pkg, groups: packageGroups = [] }) =>
     packageGroups.map((group) => ({
@@ -30,18 +37,34 @@ const groups = report.results.flatMap((result) =>
     })),
   ),
 );
-const blocking = groups.filter(({ ids, severity }) => {
+function isInformational(vulnerability) {
+  return Boolean(
+    vulnerability?.withdrawn ||
+      vulnerability?.database_specific?.informational ||
+      vulnerability?.affected?.some(({ database_specific: details }) => details?.informational),
+  );
+}
+const skippedInformational = [];
+const blocking = groups.filter((group) => {
+  const { ids, severity } = group;
   if (ids.length === 0) return false;
   const normalized = String(severity ?? "").trim().toUpperCase();
+  const numericSeverity = normalized === "" ? Number.NaN : Number(normalized);
+  if (Number.isFinite(numericSeverity)) return numericSeverity >= 7;
   if (normalized === "HIGH" || normalized === "CRITICAL") return true;
-  if (normalized === "") return true;
-  const numericSeverity = Number(normalized);
-  return !Number.isFinite(numericSeverity) || numericSeverity >= 7;
+  if (ids.every((id) => isInformational(vulnerabilitiesById.get(id)))) {
+    skippedInformational.push(group);
+    return false;
+  }
+  return true;
 });
 
 console.log(
   `OSV dependency audit: ${groups.length} advisories, ${blocking.length} blocking; scanned ${expectedLockfiles.length} lockfiles.`,
 );
+for (const finding of skippedInformational) {
+  console.log(`skipped informational ${finding.ids.join(", ")} (${finding.package})`);
+}
 for (const finding of blocking) {
   console.error(`${finding.severity ?? "missing"} ${finding.ids.join(", ")} (${finding.package})`);
 }

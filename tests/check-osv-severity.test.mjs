@@ -31,6 +31,18 @@ test("blocks an empty severity", () => {
   assert.equal(run("empty-severity.json").status, 1);
 });
 
+test("skips an unscored informational advisory", () => {
+  const result = run("informational-unscored.json");
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /skipped informational RUSTSEC-INFORMATIONAL/);
+});
+
+test("blocks an unscored non-informational advisory", () => {
+  const result = run("non-informational-unscored.json");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /RUSTSEC-UNSCORED/);
+});
+
 test("blocks a CRITICAL severity label", () => {
   assert.equal(run("critical-label.json").status, 1);
 });

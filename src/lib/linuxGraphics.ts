@@ -16,6 +16,12 @@ export const linuxGraphicsGet = () => invoke<LinuxGraphicsConfig>("linux_graphic
 export const linuxGraphicsSet = (mode: LinuxGraphicsMode) =>
   invoke<void>("linux_graphics_set", { mode });
 
+/** The mode actually applied at process boot — independent of any Settings
+ * edit made since. Compare against the live selection to know whether a
+ * restart is still actually required. */
+export const linuxGraphicsBootModeGet = () =>
+  invoke<LinuxGraphicsMode>("linux_graphics_boot_mode_get");
+
 export const linuxGraphicsRecommendationGet = () =>
   invoke<boolean>("linux_graphics_recommendation_get");
 

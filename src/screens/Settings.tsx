@@ -46,6 +46,7 @@ import {
 } from "../stores/windowControls";
 import { hostPlatform } from "../lib/platform";
 import {
+  linuxGraphicsBootModeGet,
   linuxGraphicsGet,
   linuxGraphicsRecommendationDismiss,
   linuxGraphicsRecommendationGet,
@@ -340,9 +341,14 @@ export function SettingsScreen() {
   const [crashReports, setCrashReports] = createSignal(true);
   const [crashReportsError, setCrashReportsError] = createSignal<string | null>(null);
   const [linuxGraphicsMode, setLinuxGraphicsMode] = createSignal<LinuxGraphicsMode>("auto");
+  // What startup actually applied — independent of any edit made this
+  // session. Restart-required is derived by comparing the live selection
+  // against this, so it survives Settings remounts and clears correctly on
+  // an A→B→A round trip instead of "sticking" as a component-lifetime flag.
+  const [linuxGraphicsBootMode, setLinuxGraphicsBootMode] = createSignal<LinuxGraphicsMode>("auto");
   const [linuxGraphicsError, setLinuxGraphicsError] = createSignal<string | null>(null);
-  const [linuxGraphicsRestartRequired, setLinuxGraphicsRestartRequired] = createSignal(false);
   const [linuxGraphicsRecommendation, setLinuxGraphicsRecommendation] = createSignal(false);
+  const linuxGraphicsRestartRequired = () => linuxGraphicsMode() !== linuxGraphicsBootMode();
   const [remoteHost, setRemoteHost] = createSignal<RemoteHostOverview | null>(null);
   const [remotePort, setRemotePort] = createSignal("4747");
   const [remoteLoading, setRemoteLoading] = createSignal(false);
@@ -604,6 +610,13 @@ export function SettingsScreen() {
       setLinuxGraphicsError(errorText(error));
     }
     try {
+      setLinuxGraphicsBootMode(await linuxGraphicsBootModeGet());
+    } catch {
+      // Leave the previous boot-mode guess in place — worst case the
+      // restart notice is briefly wrong until the next successful reload,
+      // never crashes the section.
+    }
+    try {
       setLinuxGraphicsRecommendation(await linuxGraphicsRecommendationGet());
     } catch {
       setLinuxGraphicsRecommendation(false);
@@ -719,10 +732,18 @@ export function SettingsScreen() {
     setLinuxGraphicsError(null);
     try {
       await linuxGraphicsSet(mode);
-      setLinuxGraphicsRestartRequired(true);
     } catch (error) {
       setLinuxGraphicsMode(previous);
       setLinuxGraphicsError(errorText(error));
+      return;
+    }
+    // The persisted mode changed, so the one-time recommendation's
+    // applicability may have too (e.g. it never re-fires once mode != Auto) —
+    // refetch rather than let a stale banner linger until remount.
+    try {
+      setLinuxGraphicsRecommendation(await linuxGraphicsRecommendationGet());
+    } catch {
+      setLinuxGraphicsRecommendation(false);
     }
   };
 

@@ -146,6 +146,11 @@ let MOCK_TELEMETRY = { crash_reports: true };
 // this mock backs it with deterministic fixture data instead of the `null`
 // default fallback (which would render an error state).
 let MOCK_LINUX_GRAPHICS = { mode: "auto" as const, recommendation_dismissed: false };
+// Frozen at its initial value, like the real boot-applied mode is — only a
+// (mocked) relaunch would change what "boot" means, never a plain
+// linux_graphics_set call. Lets a VRT spec exercise the restart-required
+// notice by selecting a mode that differs from this.
+const MOCK_LINUX_GRAPHICS_BOOT_MODE: typeof MOCK_LINUX_GRAPHICS.mode = MOCK_LINUX_GRAPHICS.mode;
 let MOCK_REMOTE_RUNNING = false;
 let MOCK_REMOTE_PAIRING: { code: string; createdAtMs: number; expiresAtMs: number; usedAtMs: number | null }[] = [];
 
@@ -263,6 +268,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     MOCK_LINUX_GRAPHICS = { ...MOCK_LINUX_GRAPHICS, mode: a.mode as typeof MOCK_LINUX_GRAPHICS.mode };
     return null;
   },
+  linux_graphics_boot_mode_get: () => MOCK_LINUX_GRAPHICS_BOOT_MODE,
   linux_graphics_recommendation_get: () => false,
   linux_graphics_recommendation_dismiss: () => {
     MOCK_LINUX_GRAPHICS = { ...MOCK_LINUX_GRAPHICS, recommendation_dismissed: true };

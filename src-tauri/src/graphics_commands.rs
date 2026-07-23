@@ -7,9 +7,9 @@
 use std::path::Path;
 
 use pickforge_core::{
-    amd_gpu_present, kde_wayland_session_detected, load_linux_graphics_config,
-    save_linux_graphics_config, should_recommend_compatibility, LinuxGraphicsConfig,
-    LinuxGraphicsMode,
+    amd_gpu_present, boot_linux_graphics_mode, kde_wayland_session_detected,
+    load_linux_graphics_config, save_linux_graphics_config, should_recommend_compatibility,
+    LinuxGraphicsConfig, LinuxGraphicsMode,
 };
 
 const DRM_ROOT: &str = "/sys/class/drm";
@@ -24,6 +24,16 @@ pub fn linux_graphics_set(mode: LinuxGraphicsMode) -> Result<(), String> {
     let mut config = load_linux_graphics_config();
     config.mode = mode;
     save_linux_graphics_config(&config).map_err(|e| e.to_string())
+}
+
+/// The mode actually applied at process boot (#238 P2) — independent of any
+/// persisted-config edits made since. Settings compares its live selection
+/// against this, not the freshly-reloaded persisted config, to know whether
+/// a restart is still actually required; that survives Settings remounts
+/// and clears correctly on A→B→A without needing a component-lifetime flag.
+#[tauri::command]
+pub fn linux_graphics_boot_mode_get() -> Result<LinuxGraphicsMode, String> {
+    Ok(boot_linux_graphics_mode())
 }
 
 /// Whether Settings should show the one-time, dismissible nudge toward
@@ -105,5 +115,33 @@ mod tests {
         std::env::remove_var("HOME");
 
         assert_eq!(linux_graphics_get().unwrap(), LinuxGraphicsConfig::default());
+    }
+
+    #[test]
+    fn boot_mode_get_reflects_what_startup_recorded_not_the_persisted_config() {
+        // pickforge_core::BOOT_MODE is a real process-global OnceLock (one
+        // boot, one record — by design), so this is the only test in this
+        // binary allowed to call record_boot_linux_graphics_mode.
+        let _lock = PICKFORGE_HOME_ENV_LOCK.lock().unwrap();
+        let _restore = EnvRestore::capture();
+        let home = temp_home("boot-mode");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("PICKFORGE_HOME", &home);
+
+        assert_eq!(linux_graphics_boot_mode_get().unwrap(), LinuxGraphicsMode::Auto);
+
+        pickforge_core::record_boot_linux_graphics_mode(LinuxGraphicsMode::Compatibility);
+        // A Settings edit made after boot must not retroactively change what
+        // boot actually applied.
+        linux_graphics_set(LinuxGraphicsMode::NativeWayland).unwrap();
+
+        assert_eq!(
+            linux_graphics_boot_mode_get().unwrap(),
+            LinuxGraphicsMode::Compatibility,
+        );
+        assert_eq!(linux_graphics_get().unwrap().mode, LinuxGraphicsMode::NativeWayland);
+
+        fs::remove_dir_all(home).ok();
     }
 }

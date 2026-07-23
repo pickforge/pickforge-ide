@@ -347,6 +347,8 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             graphics_commands::linux_graphics_set,
             #[cfg(target_os = "linux")]
+            graphics_commands::linux_graphics_boot_mode_get,
+            #[cfg(target_os = "linux")]
             graphics_commands::linux_graphics_recommendation_get,
             #[cfg(target_os = "linux")]
             graphics_commands::linux_graphics_recommendation_dismiss,

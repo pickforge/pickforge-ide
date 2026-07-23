@@ -768,7 +768,6 @@ const SHELL_BINARIES = new Set<string>([
 export function cleanOscTitle(raw: string): string {
   if (typeof raw !== "string") return "";
   // Strip C0/C1 control chars (some shells wrap the title in them) then trim.
-  // eslint-disable-next-line no-control-regex
   const s = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
   if (!s) return ""; // empty / whitespace / control-only
 

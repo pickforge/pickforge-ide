@@ -4,7 +4,7 @@ export default [
   {
     ignores: ["coverage/**", "dist/**", "node_modules/**", "src-tauri/gen/**"],
     linterOptions: {
-      reportUnusedDisableDirectives: false,
+      reportUnusedDisableDirectives: "error",
     },
   },
   {

@@ -81,7 +81,6 @@ export function DebugConsole() {
     const parts = logCarry.split(/\r?\n/);
     logCarry = parts.pop() ?? ""; // keep the trailing partial line
     const lines = parts
-      // eslint-disable-next-line no-control-regex
       .map((l) => l.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").trimEnd())
       .filter((l) => l.length > 0);
     if (lines.length > 0) pushMcpLogs(lines);

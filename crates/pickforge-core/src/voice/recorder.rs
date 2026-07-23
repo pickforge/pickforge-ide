@@ -3,10 +3,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Child;
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use super::create_private_dir_all;
 use super::{LocalCommandSpec, VoiceError};
 
 const FAST_FAIL_WINDOW: Duration = Duration::from_millis(200);

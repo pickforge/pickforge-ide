@@ -13,13 +13,12 @@ use super::recorder::{ActiveRecording, PwRecordBackend, RecorderBackend};
 use super::segments::{
     read_wav_file, rms_level, write_segment_wav, SegmentConfig, Segmenter, WavData,
 };
-use super::stt::{
-    RunningTranscription, VoiceTranscriber, WhisperCliTranscriber,
-};
-use super::{
-    keep_audio_from_env, VoiceError, VoiceEvent, VoiceSink,
-    DEFAULT_LANGUAGE,
-};
+#[cfg(target_os = "linux")]
+use super::stt::PreparedTranscription;
+use super::stt::{RunningTranscription, VoiceTranscriber, WhisperCliTranscriber};
+#[cfg(target_os = "linux")]
+use super::create_private_dir_all;
+use super::{keep_audio_from_env, VoiceError, VoiceEvent, VoiceSink, DEFAULT_LANGUAGE};
 use crate::process::StartGate;
 
 const STALE_SESSION_AGE: Duration = Duration::from_secs(24 * 60 * 60);

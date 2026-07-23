@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Supabase publishable client keys are public by design"
+regexTarget = "secret"
+regexes = ['''^sb_publishable_''']

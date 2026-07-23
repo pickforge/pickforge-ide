@@ -39,7 +39,7 @@
     "@yume-chan/scrcpy": "2.3.0",
     "@yume-chan/scrcpy-decoder-webcodecs": "2.5.3",
     "@yume-chan/stream-extra": "2.6.1",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "marked": "^18.0.5",
     "solid-js": "^1.9.5",
     "zod": "^4.4.3"

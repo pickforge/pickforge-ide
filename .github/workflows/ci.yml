@@ -25,6 +25,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  dependencies:
+    name: dependency audit
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan all lockfiles
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
+        with:
+          scan-args: |-
+            --recursive
+            --format=json
+            --output-file=osv-results.json
+            ./
+      - name: Block high and critical advisories
+        run: node scripts/check-osv-severity.mjs osv-results.json
+
   checks:
     name: cargo + tsc + build
     runs-on: ubuntu-22.04

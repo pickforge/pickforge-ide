@@ -600,10 +600,14 @@ fn remote_pty_command(remote_root: &str, command: Option<&str>) -> String {
 /// the child's env by calling this function, so Raw, dtach, and tmux all get
 /// identical env-propagation behaviour by construction, not by convention.
 ///
-/// `SUDO_ASKPASS` is applied LAST so it is never overridable by the caller's
-/// `extra_env` (renderer-supplied `PICKFORGE_*` vars) — per the locked v1
-/// contract, `SUDO_ASKPASS` is the only variable this feature may inject, and
-/// PickForge's own resolved value must always win.
+/// `SUDO_ASKPASS` is unconditionally OWNED by this function: the base+extra
+/// merge's value (whether inherited from the resolved login-shell env or
+/// smuggled in through the caller's `extra_env`) is always removed first, then
+/// re-added ONLY when `askpass_helper` is `Some`. Per the locked v1 contract,
+/// `SUDO_ASKPASS` must be PickForge's own resolved value or absent — never a
+/// stray/spoofed pass-through — in every capability state (`Available`,
+/// `NoHelper`, `Headless`, `UnsupportedPlatform`) and for a remote spawn
+/// (which always resolves `askpass_helper` to `None`, see the caller).
 fn build_pty_env(
     base: HashMap<String, String>,
     extra_env: HashMap<String, String>,
@@ -611,6 +615,7 @@ fn build_pty_env(
 ) -> HashMap<String, String> {
     let mut env = base;
     env.extend(extra_env);
+    env.remove("SUDO_ASKPASS");
     if let Some(helper) = askpass_helper {
         env.insert(
             "SUDO_ASKPASS".to_string(),
@@ -847,6 +852,67 @@ mod tests {
         );
     }
 
+    /// The other half of ownership: PickForge's resolved value doesn't just
+    /// WIN over a spoofed `extra_env` `SUDO_ASKPASS` — it strips it outright
+    /// in EVERY state where PickForge itself has no helper to offer, so a
+    /// caller-supplied value can never survive by accident. Exercised through
+    /// the real `AskpassCapability::helper()` accessor (not a bare `None`)
+    /// so this proves the property for the actual enum variants a caller
+    /// could produce, not just an assumption about what `None` means.
+    #[test]
+    fn build_pty_env_strips_a_spoofed_extra_env_sudo_askpass_for_every_unavailable_state() {
+        use crate::process::AskpassCapability;
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "SUDO_ASKPASS".to_string(),
+            "/tmp/spoofed-askpass".to_string(),
+        );
+
+        for state in [
+            AskpassCapability::NoHelper,
+            AskpassCapability::Headless,
+            AskpassCapability::UnsupportedPlatform,
+        ] {
+            let env = build_pty_env(HashMap::new(), extra.clone(), state.helper());
+            assert!(
+                !env.contains_key("SUDO_ASKPASS"),
+                "{state:?} must strip a spoofed SUDO_ASKPASS, never pass it through"
+            );
+        }
+
+        // Remote spawn: PtyManager::spawn always resolves askpass_helper to
+        // None for opts.remote.is_some() regardless of the LOCAL capability —
+        // modelled directly as None here since build_pty_env itself is
+        // remote-agnostic (remote-ness lives entirely in the caller, see
+        // `PtyManager::spawn`).
+        let remote_env = build_pty_env(HashMap::new(), extra, None);
+        assert!(
+            !remote_env.contains_key("SUDO_ASKPASS"),
+            "a remote spawn must strip a spoofed SUDO_ASKPASS too"
+        );
+    }
+
+    /// The stray value doesn't have to come from `extra_env` — it can already
+    /// be sitting in the resolved login-shell environment (e.g. the user's
+    /// own shell rc sets `SUDO_ASKPASS` to something that fails validation,
+    /// or the session is headless). `build_pty_env` must strip that inherited
+    /// value too, not just a caller-supplied one — this is the exact
+    /// regression the security review flagged: `env.extend(extra_env)` alone
+    /// never touches a key already present in `base`.
+    #[test]
+    fn build_pty_env_strips_a_stray_sudo_askpass_inherited_from_the_base_shell_env() {
+        let mut base = HashMap::new();
+        base.insert(
+            "SUDO_ASKPASS".to_string(),
+            "/home/dev/.local/bin/broken-askpass".to_string(),
+        );
+
+        let env = build_pty_env(base, HashMap::new(), None);
+
+        assert!(!env.contains_key("SUDO_ASKPASS"));
+    }
+
     /// End-to-end proof that the injection seam is actually wired into a real
     /// spawn, and identically so for the `program_override` path that dtach
     /// and tmux both use — not just exercised in isolation above. Uses a
@@ -1062,5 +1128,152 @@ mod tests {
                 "{root:?}"
             );
         }
+    }
+
+    // -- Redaction + cancellation (pickforge#215 security review) -----------
+    //
+    // Architectural guarantee this seam relies on: sudo's askpass helper is
+    // invoked by sudo directly (its own pipe), never through the pty this
+    // module spawns — so prompt/credential material structurally never
+    // enters `PtyEvent::Output`. What COULD go wrong here is PickForge's own
+    // code: a filter that mangles pty bytes on the way to the sink, or a
+    // side channel (a log/db/file) that captures them. Both tests below
+    // prove that didn't happen, scoped to what this seam can actually prove
+    // (it has no DB handle and is never given a path to write to).
+
+    fn write_executable_script(path: &std::path::Path, body: &str) {
+        std::fs::write(path, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_delivers_prompt_shaped_output_verbatim_with_no_side_channel_file() {
+        let scratch = std::env::temp_dir().join(format!(
+            "pf-pty-redaction-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let script = scratch.join("fake-askpass-prompt.sh");
+        // Shaped like a real askpass prompt/response, but inert test data —
+        // never a real secret.
+        let prompt = "Password: hunter2-not-a-real-secret";
+        write_executable_script(&script, &format!("#!/bin/sh\nprintf '%s' '{prompt}'\n"));
+
+        let manager = PtyManager::new();
+        let received = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let received_clone = Arc::clone(&received);
+        let opts = SpawnOptions {
+            program_override: Some((script.to_string_lossy().into_owned(), vec![])),
+            ..Default::default()
+        };
+        let id = manager
+            .spawn(opts, move |event| {
+                if let PtyEvent::Output(bytes) = event {
+                    received_clone.lock().unwrap().extend_from_slice(&bytes);
+                }
+            })
+            .expect("spawn should succeed");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if String::from_utf8_lossy(&received.lock().unwrap()).contains(prompt) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("timed out waiting for the fake prompt to reach the sink");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = manager.kill(id);
+
+        // (a) bytes reach the caller's sink byte-for-byte — no filtering,
+        // truncation, or masking on the way through.
+        let captured = String::from_utf8_lossy(&received.lock().unwrap()).into_owned();
+        assert!(
+            captured.contains(prompt),
+            "prompt-shaped output must reach the sink unmodified, got:\n{captured}"
+        );
+
+        // (b) no side channel: this seam has no DB/log handle, so nothing
+        // should ever appear in a directory it was never given beyond the
+        // test's own script.
+        let mut entries: Vec<_> = std::fs::read_dir(&scratch)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
+        entries.sort();
+        assert_eq!(
+            entries,
+            vec![std::ffi::OsString::from("fake-askpass-prompt.sh")],
+            "spawning must write nothing beyond the test's own script"
+        );
+
+        std::fs::remove_dir_all(&scratch).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_surfaces_a_cancelled_sudo_likes_output_and_exit_status_unmodified() {
+        // Stand-in for `sudo -A` when the user cancels the graphical prompt:
+        // sudo itself prints to stderr and exits non-zero. PickForge never
+        // parses this — it's ordinary pty output — so both must reach the
+        // caller exactly as the real shell would produce them.
+        let scratch = std::env::temp_dir().join(format!(
+            "pf-pty-cancel-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let script = scratch.join("fake-sudo-cancel.sh");
+        write_executable_script(
+            &script,
+            "#!/bin/sh\nprintf 'sudo: a password is required\\n' 1>&2\nexit 1\n",
+        );
+
+        let manager = PtyManager::new();
+        let output = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let exit_code: Arc<Mutex<Option<Option<i32>>>> = Arc::new(Mutex::new(None));
+        let output_clone = Arc::clone(&output);
+        let exit_clone = Arc::clone(&exit_code);
+        let opts = SpawnOptions {
+            program_override: Some((script.to_string_lossy().into_owned(), vec![])),
+            ..Default::default()
+        };
+        manager
+            .spawn(opts, move |event| match event {
+                PtyEvent::Output(bytes) => output_clone.lock().unwrap().extend_from_slice(&bytes),
+                PtyEvent::Exit(code) => *exit_clone.lock().unwrap() = Some(code),
+            })
+            .expect("spawn should succeed");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if exit_code.lock().unwrap().is_some() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("timed out waiting for the fake sudo cancellation to exit");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::fs::remove_dir_all(&scratch).ok();
+
+        let captured = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
+        assert!(
+            captured.contains("sudo: a password is required"),
+            "cancellation output must reach the caller unmodified, got:\n{captured}"
+        );
+        assert_eq!(
+            exit_code.lock().unwrap().flatten(),
+            Some(1),
+            "the non-zero exit status must reach the caller unmodified — nothing swallowed"
+        );
     }
 }

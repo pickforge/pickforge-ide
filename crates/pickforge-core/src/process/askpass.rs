@@ -112,9 +112,18 @@ fn is_executable_file(path: &Path) -> bool {
 
 /// The process-lifetime-cached capability, resolved once from
 /// [`crate::process::user_shell_environment`] on first use — mirrors the
-/// caching shape of `user_shell_environment()` itself. Detection is pure
-/// `stat()` calls against a fixed path list (no subprocess), so unlike the
-/// login-shell resolution there is no transient-miss/retry case to model.
+/// caching shape of `user_shell_environment()` itself. Detection here is pure
+/// `stat()` calls against a fixed path list — no subprocess, no retry loop of
+/// its own — but `user_shell_environment()` DOES have a transient-miss/retry
+/// case (a failed login-shell capture isn't cached, so a later call
+/// re-resolves; see its doc comment), and this `OnceLock` reads it only ONCE.
+/// If the very first `askpass_capability()` call lands before that resolution
+/// has settled onto its authoritative (enriched) value, this permanently
+/// caches whatever the still-un-enriched inherited env implies — e.g. a
+/// `SUDO_ASKPASS` set only in a shell rc file could be missed. That's a
+/// FAIL-CLOSED consequence, not a security gap: the worst case is detection
+/// under-reporting (falling back to `Headless`/`NoHelper` when a helper
+/// actually exists), never over-reporting a helper that isn't really there.
 pub fn askpass_capability() -> &'static AskpassCapability {
     static CAPABILITY: OnceLock<AskpassCapability> = OnceLock::new();
     CAPABILITY.get_or_init(|| {

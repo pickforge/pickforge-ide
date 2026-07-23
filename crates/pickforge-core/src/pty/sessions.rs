@@ -33,6 +33,15 @@ use crate::process::{
     is_binary_on_path, run_timeout, user_shell_environment, RunError, StartGate, StartPermit,
 };
 
+// Never reused across a relaunch (pid + random hex, minted once per process),
+// which is also why a spawn can never attach to a stale server/socket from a
+// PREVIOUS process's env: both the tmux server name and the dtach sockets dir
+// below are namespaced under this exact id, and the crash guardian kills the
+// dying instance's tmux server / sweeps its dtach sockets on abrupt exit (see
+// `crate::process::containment`) — so a live server bearing this id can only
+// ever belong to the CURRENT process, spawned with the CURRENT env (incl.
+// pickforge#215's SUDO_ASKPASS resolution), never one attached under a
+// different, possibly stale, environment.
 static PROCESS_INSTANCE_ID: LazyLock<String> =
     LazyLock::new(|| format!("{:x}-{:016x}", std::process::id(), rand::random::<u64>()));
 

@@ -556,6 +556,40 @@ fn dtach_socket_is_stale(socket: &Path) -> bool {
     )
 }
 
+/// Whether a process currently has `socket` bound and listening — the exact
+/// claim [`LegacyDtachSession::live`]'s "Live"/"Stale" hint makes. Deliberately
+/// NOT `!dtach_socket_is_stale(socket)`: that function is tuned for the
+/// DESTRUCTIVE kill path, where "not provably stale" must mean "leave it
+/// alone" — so a path that isn't even a real socket (stray legacy residue:
+/// a leftover regular file, a directory, anything left behind by an unclean
+/// shutdown) comes back `false` (not stale) there, which would invert into a
+/// false "Live" here. Nothing can ever be listening on a non-socket path, so
+/// this treats that case as definitively not live instead. Same fail-safe
+/// direction as `dtach_socket_is_stale` otherwise: only a definitive
+/// "nothing answered" (`ConnectionRefused`/`NotFound`) counts as not live —
+/// every other outcome (a real listener, or an ambiguous error) is reported
+/// live, so the UI never under-warns about a session that might still be in
+/// use.
+#[cfg(target_os = "linux")]
+fn dtach_socket_has_listener(socket: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    let Ok(metadata) = std::fs::symlink_metadata(socket) else {
+        return false;
+    };
+    if !metadata.file_type().is_socket() {
+        return false;
+    }
+    !matches!(
+        std::os::unix::net::UnixStream::connect(socket),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+            )
+    )
+}
+
 #[cfg(target_os = "linux")]
 pub fn kill_dtach_master(socket: &Path) -> Result<usize, DtachKillError> {
     let masters = dtach_master_identities(socket);
@@ -1016,7 +1050,7 @@ pub fn detect_legacy_dtach_sessions(runtime_base: &Path) -> Vec<LegacyDtachSessi
                 .and_then(|n| n.to_str())
                 .and_then(|n| n.strip_suffix(".dtach"))?
                 .to_string();
-            let live = !dtach_socket_is_stale(&socket);
+            let live = dtach_socket_has_listener(&socket);
             Some(LegacyDtachSession { name, socket, live })
         })
         .collect()
@@ -2299,6 +2333,41 @@ mod tests {
         assert_eq!(found[0].name, name);
         assert!(found[0].live, "a listening socket must be reported live");
         drop(listener);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    // Directly pins the bug a real Linux run caught in
+    // `detect_legacy_dtach_sessions_only_scans_the_legacy_dir_by_exact_grammar`:
+    // `dtach_socket_has_listener` must NOT be `!dtach_socket_is_stale`. That
+    // function's "not a real socket → not stale" branch exists so the
+    // DESTRUCTIVE kill path never deletes something it can't prove is
+    // abandoned — inverted naively, the exact same branch would report a
+    // plain (non-socket) file as having a live listener, which is never true.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dtach_socket_has_listener_is_false_for_a_plain_file_even_though_it_is_not_stale() {
+        let base = std::env::temp_dir().join(format!("pf-listener-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let not_a_socket = base.join("pf-plain-file.dtach");
+        std::fs::write(&not_a_socket, b"").unwrap();
+
+        // The pre-fix invariant this test guards: a non-socket path is
+        // simultaneously "not stale" (kill path: leave it alone, don't
+        // delete) AND "no listener" (display path: nothing is live there).
+        // Naively treating those as complements of the same fact is the bug.
+        assert!(
+            !dtach_socket_is_stale(&not_a_socket),
+            "a non-socket path is not provably stale — the kill path must not delete it"
+        );
+        assert!(
+            !dtach_socket_has_listener(&not_a_socket),
+            "a non-socket path can never have a live listener"
+        );
+
+        let missing = base.join("pf-does-not-exist.dtach");
+        assert!(!dtach_socket_has_listener(&missing));
+
         let _ = std::fs::remove_dir_all(base);
     }
 

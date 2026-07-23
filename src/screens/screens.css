@@ -157,9 +157,8 @@
   padding: var(--pf-space-lg);
 }
 
-/* Flagged desktop preference shell. The rail remains stationary while only the
- * active category pane scrolls; the legacy grid above is untouched when the
- * settingsNavigation flag is off. */
+/* Desktop preference shell. The rail remains stationary while only the active
+ * category pane scrolls. */
 .pf-screen--settings-navigation {
   overflow: hidden;
   container: settings-screen / inline-size;

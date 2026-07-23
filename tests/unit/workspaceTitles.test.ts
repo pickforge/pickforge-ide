@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   updateChatAgent: vi.fn(),
   chatUpsert: vi.fn(),
   chats: [] as Array<Record<string, unknown>>,
-  dynamicChatTitles: true,
 }));
 
 vi.mock("../../src/lib/db", () => ({
@@ -37,9 +36,6 @@ vi.mock("../../src/lib/pty", () => ({
 vi.mock("../../src/lib/settingsSyncEdits", () => ({ noteSettingsEdit: vi.fn() }));
 vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: () => false }));
 vi.mock("../../src/stores/chatSessions", () => ({ setChatTmux: vi.fn() }));
-vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: () => mocks.dynamicChatTitles,
-}));
 
 import {
   addChat,
@@ -56,7 +52,6 @@ beforeEach(async () => {
   mocks.updateChatTitleOwnership.mockReset();
   mocks.updateChatAgent.mockReset();
   mocks.chatUpsert.mockReset();
-  mocks.dynamicChatTitles = true;
   mocks.updateChatTitleOwnership.mockResolvedValue(true);
   mocks.updateChatAgent.mockResolvedValue(undefined);
   mocks.chatUpsert.mockImplementation(async (chat: Record<string, unknown>) => {
@@ -208,21 +203,35 @@ describe("automatic chat title persistence", () => {
     });
   });
 
-  it("persists manual ownership for a previously automatic chat while the flag is off", async () => {
-    mocks.dynamicChatTitles = false;
+  it("persists manual ownership for a previously automatic chat", async () => {
     mocks.updateChatTitle.mockResolvedValueOnce(true);
 
-    await renameChat("chat-1", "Manual while disabled");
+    await renameChat("chat-1", "Manual title");
 
     expect(mocks.updateChatTitle).toHaveBeenCalledWith(
       "chat-1",
-      "Manual while disabled",
+      "Manual title",
       expect.objectContaining({ titleSource: "user" }),
     );
     expect(findChat("chat-1")).toMatchObject({
-      title: "Manual while disabled",
+      title: "Manual title",
       titleSource: "user",
     });
+  });
+
+  it("creates chats with durable title ownership metadata", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValueOnce(10_000);
+
+    const chatId = await addChat("New chat", "codex", "/project", "agent");
+
+    expect(mocks.chatUpsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        chatId,
+        titleSource: "default",
+        titleUpdatedAt: 10_000,
+      }),
+    );
+    now.mockRestore();
   });
 
   it("resumes automatic ownership for a legacy default/non-default title", async () => {
@@ -247,44 +256,4 @@ describe("automatic chat title persistence", () => {
     });
   });
 
-  it("persists an adoptable default sentinel while the flag is off in-run and after reload", async () => {
-    const now = vi.spyOn(Date, "now");
-    now
-      .mockReturnValueOnce(10_000)
-      .mockReturnValueOnce(10_001)
-      .mockReturnValueOnce(20_000)
-      .mockReturnValueOnce(20_001);
-
-    mocks.dynamicChatTitles = false;
-    const sameRunId = await addChat("New chat", "codex", "/project", "agent");
-    expect(mocks.chatUpsert).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        chatId: sameRunId,
-        title: "New chat",
-        titleSource: "default",
-        titleUpdatedAt: 0,
-      }),
-    );
-    mocks.dynamicChatTitles = true;
-    mocks.updateChatTitle.mockResolvedValueOnce(true);
-    await expect(setChatTitle(sameRunId!, "Adopted in the same run")).resolves.toBe(true);
-    expect(findChat(sameRunId!)).toMatchObject({
-      title: "Adopted in the same run",
-      titleSource: "auto",
-    });
-
-    mocks.dynamicChatTitles = false;
-    const reloadedId = await addChat("New chat", "codex", "/project", "agent");
-    expect(reloadedId).not.toBe(sameRunId);
-    await loadWorkspace();
-    mocks.dynamicChatTitles = true;
-    mocks.updateChatTitle.mockResolvedValueOnce(true);
-    await expect(setChatTitle(reloadedId!, "Adopted after reload")).resolves.toBe(true);
-
-    expect(findChat(reloadedId!)).toMatchObject({
-      title: "Adopted after reload",
-      titleSource: "auto",
-    });
-    now.mockRestore();
-  });
 });

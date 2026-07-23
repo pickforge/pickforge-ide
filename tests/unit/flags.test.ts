@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("flags", () => {
-  it("registers all feature flags with v0.1.10 ship defaults", async () => {
+  it("registers all active feature flags as default off", async () => {
     const store = await loadStore();
 
     const states = store.flagStates();
@@ -36,14 +36,10 @@ describe("flags", () => {
       "remoteProcessLeases",
       "accounts",
       "settingsSync",
-      "settingsNavigation",
-      "dynamicChatTitles",
     ]);
-    // Shipped in v0.1.10 (#210, #211); everything else stays dark.
-    const shipped = new Set(["settingsNavigation", "dynamicChatTitles"]);
     for (const state of states) {
-      expect(state.defaultValue).toBe(shipped.has(state.key));
-      expect(state.enabled).toBe(shipped.has(state.key));
+      expect(state.defaultValue).toBe(false);
+      expect(state.enabled).toBe(false);
     }
     expect(store.flagEnabled("operator")).toBe(false);
     expect(store.flagEnabled("ompPiAgents")).toBe(false);
@@ -51,8 +47,6 @@ describe("flags", () => {
     expect(store.flagEnabled("remoteProcessLeases")).toBe(false);
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);
-    expect(store.flagEnabled("settingsNavigation")).toBe(true);
-    expect(store.flagEnabled("dynamicChatTitles")).toBe(true);
   });
 
   it("persists an override to localStorage and reflects it", async () => {

@@ -417,7 +417,6 @@ export function SettingsScreen() {
   };
 
   createEffect(() => {
-    if (!flagEnabled("settingsNavigation")) return;
     const context = settingsAvailability();
     const requestedSection = settingsSection();
     const directCategory = settingsCategoryForSection(requestedSection, context);
@@ -1073,12 +1072,8 @@ export function SettingsScreen() {
     onCleanup(() => window.removeEventListener("keydown", handler, true));
   });
 
-  const renderSettings = (navigation: boolean) => (
-      <div
-        class={`pf-settings${navigation
-          ? ` pf-settings--navigation pf-settings--category-${activeCategory()}`
-          : ""}`}
-      >
+  const renderSettings = () => (
+      <div class={`pf-settings pf-settings--navigation pf-settings--category-${activeCategory()}`}>
         <AgentModelsSettingsSection>
           <For each={agentProfiles().filter((agent) => !isConnectorProfile(agent))}>
             {(agent) => (
@@ -2261,27 +2256,19 @@ export function SettingsScreen() {
   );
 
   return (
-    <div
-      class="pf-screen pf-screen--scroll"
-      classList={{ "pf-screen--settings-navigation": flagEnabled("settingsNavigation") }}
-    >
+    <div class="pf-screen pf-screen--scroll pf-screen--settings-navigation">
       <header class="pf-screen-head">
         <MonoEyebrow text="Settings" tick />
       </header>
 
-      <Show
-        when={flagEnabled("settingsNavigation")}
-        fallback={renderSettings(false)}
+      <SettingsNavigation
+        categories={availableCategories()}
+        active={activeCategory()}
+        onSelect={selectCategory}
+        paneRef={(element) => setSettingsPane(element)}
       >
-        <SettingsNavigation
-          categories={availableCategories()}
-          active={activeCategory()}
-          onSelect={selectCategory}
-          paneRef={(element) => setSettingsPane(element)}
-        >
-          {renderSettings(true)}
-        </SettingsNavigation>
-      </Show>
+        {renderSettings()}
+      </SettingsNavigation>
     </div>
   );
 }

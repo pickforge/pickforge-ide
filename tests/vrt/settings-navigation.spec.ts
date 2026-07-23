@@ -1,7 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const ALL_SETTINGS_FLAGS = {
-  settingsNavigation: true,
   operator: true,
   accounts: true,
 };
@@ -85,7 +84,7 @@ async function makeOmpProbeFail(page: Page) {
   });
 }
 
-test.describe("flagged settings navigation", () => {
+test.describe("settings navigation", () => {
   test.describe.configure({ mode: "serial" });
   test("selects, links, remembers, and keyboard-navigates categories", async ({ page }) => {
     await openSettings(page);
@@ -119,7 +118,7 @@ test.describe("flagged settings navigation", () => {
     await page.addInitScript(() => {
       localStorage.setItem("pickforge.settings.category", "agents");
     });
-    await openSettings(page, "account", { settingsNavigation: true });
+    await openSettings(page, "account", {});
 
     await expect(page.getByRole("heading", { level: 1, name: "General" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Account & sync" })).toHaveCount(0);
@@ -128,7 +127,7 @@ test.describe("flagged settings navigation", () => {
   });
 
   test("handles malformed Settings hashes and preserves suffixed route fallback", async ({ page }) => {
-    await openSettings(page, "%E0%A4%A", { settingsNavigation: true });
+    await openSettings(page, "%E0%A4%A", {});
 
     await expect(page.getByRole("heading", { level: 1, name: "General" })).toBeVisible();
     await expect(page).toHaveURL(/#\/settings\/appearance$/);

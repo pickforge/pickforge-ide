@@ -2,14 +2,9 @@ import { expect, test } from "@playwright/test";
 
 test("title-less dropdown labels and keyboard dismissal", async ({ page }) => {
   await page.addInitScript(() => {
-    // Pin the legacy single-pane Settings layout this test was written against;
-    // settingsNavigation is default-on since v0.1.10.
-    localStorage.setItem(
-      "pickforge.flags",
-      JSON.stringify({ operator: true, settingsNavigation: false }),
-    );
+    localStorage.setItem("pickforge.flags", JSON.stringify({ operator: true }));
   });
-  await page.goto("/#/settings");
+  await page.goto("/#/settings/agentModels");
   const trigger = page.locator(".pf-settings-dropdown .pf-dropdown-trigger:not(:disabled)").first();
 
   await expect(trigger).toBeVisible();
@@ -22,12 +17,6 @@ test("title-less dropdown labels and keyboard dismissal", async ({ page }) => {
 });
 
 test("manual chat title menu offers automatic-title resume", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem(
-      "pickforge.flags",
-      JSON.stringify({ dynamicChatTitles: true }),
-    );
-  });
   await page.goto("/#/workbench");
 
   const row = page.locator(".pf-chat-row").filter({ hasText: "Login screen" });

@@ -17,12 +17,7 @@ test.use({
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
 });
 
-const SETTINGS_FLAGS = { settingsNavigation: true };
-
-async function openSettings(page: Page, flags: Record<string, boolean> = SETTINGS_FLAGS) {
-  await page.addInitScript((enabledFlags) => {
-    localStorage.setItem("pickforge.flags", JSON.stringify(enabledFlags));
-  }, flags);
+async function openSettings(page: Page) {
   await page.goto("/#/settings/linuxGraphics");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 }

@@ -94,6 +94,12 @@ keep new UI consistent with it.
   or any unguarded mutation of that state in the same test binary, is a
   known flake class where one test's panic poisons the lock and cascades
   failures into every other test asserting on it (#237 review, PR #257 CI).
+- Code or tests gated `#[cfg(target_os = "linux")]` must be validated on
+  real Linux (a throwaway container is enough) before pushing — macOS runs
+  structurally cannot exercise them, and every one of the last three
+  macOS-only validation passes over such code shipped a bug straight to CI
+  or production (PR #257 graphics tests; PR #259 twice: an inverted
+  liveness hint and an unmatched tmux "never created" phrasing).
 
 Canonical brand assets live in `assets/branding/`.
 

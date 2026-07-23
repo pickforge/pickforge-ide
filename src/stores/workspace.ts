@@ -9,7 +9,6 @@ import { isPrimaryChat } from "../lib/chatLabels";
 import { clearChatKillMark, markChatForKill, ptyDestroyChatSession } from "../lib/pty";
 import { noteSettingsEdit } from "../lib/settingsSyncEdits";
 import { isChatArchived } from "./chatArchive";
-import { flagEnabled } from "./flags";
 import { setChatTmux } from "./chatSessions";
 
 /** First non-archived chat id in a list, or null. The projects tree hides
@@ -340,7 +339,7 @@ export async function addChat(
     projectRoot: root,
     title,
     titleSource: title.trim() === "New chat" ? "default" : "user",
-    titleUpdatedAt: flagEnabled("dynamicChatTitles") ? now : 0,
+    titleUpdatedAt: now,
     kind,
     agentId,
     skillId: null,
@@ -419,16 +418,12 @@ export async function renameChat(chatId: string, title: string) {
   const t = title.trim();
   const c = findChat(chatId);
   if (!c || !t || t === c.title) return;
-  const dynamic = flagEnabled("dynamicChatTitles");
-  // A durable automatic owner from a previous flag-on run must still become
-  // manual while the flag is off, or re-enabling the flag could overwrite it.
-  const persistOwnership = dynamic || c.titleSource === "auto";
   const request = beginTitleRequest(chatId);
   const titleUpdatedAt = nextTitleTimestamp(chatId, c.titleUpdatedAt);
   const applied = await db.updateChatTitle(
     chatId,
     t,
-    persistOwnership ? { titleSource: "user", titleUpdatedAt } : undefined,
+    { titleSource: "user", titleUpdatedAt },
   );
   if (!applied || latestTitleRequestByChat.get(chatId) !== request) return;
   setState("chatsByRoot", c.projectRoot, (list) =>
@@ -437,33 +432,32 @@ export async function renameChat(chatId: string, title: string) {
         ? {
             ...x,
             title: t,
-            ...(persistOwnership ? { titleSource: "user" as const, titleUpdatedAt } : {}),
+            titleSource: "user" as const,
+            titleUpdatedAt,
           }
         : x,
     ),
   );
 }
 
-/** Persist an automatic title via a narrow write. With the release flag off,
- * this intentionally uses the legacy title-only call and state shape. Returns
- * false when a concurrent durable manual owner rejects the automatic CAS. */
+/** Persist an automatic title via a narrow write. Returns false when a
+ * concurrent durable manual owner rejects the automatic CAS. */
 export async function setChatTitle(chatId: string, title: string): Promise<boolean> {
   const t = title.trim();
   const c = findChat(chatId);
   if (!c || !t || t === c.title) return false;
-  const dynamic = flagEnabled("dynamicChatTitles");
   const request = beginTitleRequest(chatId);
   const titleUpdatedAt = nextTitleTimestamp(chatId, c.titleUpdatedAt);
   const applied = await db.updateChatTitle(
     chatId,
     t,
-    dynamic ? { titleSource: "auto", titleUpdatedAt } : undefined,
+    { titleSource: "auto", titleUpdatedAt },
   );
   const current = findChat(chatId);
   if (
     !applied ||
     latestTitleRequestByChat.get(chatId) !== request ||
-    (dynamic && current?.titleSource === "user")
+    current?.titleSource === "user"
   ) {
     return false;
   }
@@ -473,7 +467,8 @@ export async function setChatTitle(chatId: string, title: string): Promise<boole
         ? {
             ...x,
             title: t,
-            ...(dynamic ? { titleSource: "auto" as const, titleUpdatedAt } : {}),
+            titleSource: "auto" as const,
+            titleUpdatedAt,
           }
         : x,
     ),
@@ -482,7 +477,6 @@ export async function setChatTitle(chatId: string, title: string): Promise<boole
 }
 
 export async function resumeAutomaticChatTitles(chatId: string) {
-  if (!flagEnabled("dynamicChatTitles")) return;
   const c = findChat(chatId);
   const resumeEligible =
     c?.titleSource === "user" ||

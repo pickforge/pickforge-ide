@@ -407,22 +407,15 @@ export function chatTitleSourceForPolicy(chat: {
   return "user";
 }
 
-/** True when an auto source may (re)write this chat's title. The flagged path
- * reads durable ownership; the legacy path keeps the existing session-local
- * behavior exactly as before. */
+/** True when an auto source may (re)write this chat's title. */
 export function canAutoOwn(chatId: string): boolean {
   if (manual.has(chatId)) return false;
   const chat = findChat(chatId);
-  if (!chat) return false;
-  if (flagEnabled("dynamicChatTitles")) {
-    return chatTitleSourceForPolicy(chat) !== "user";
-  }
-  return isDefaultChatTitle(chat.title) || autoNamed.has(chatId);
+  return !!chat && chatTitleSourceForPolicy(chat) !== "user";
 }
 
 /** Unlock a persisted manual title without changing its current text. */
 export async function resumeChatTitleAuto(chatId: string) {
-  if (!flagEnabled("dynamicChatTitles")) return;
   await resumeAutomaticChatTitles(chatId);
   manual.delete(chatId);
   autoNamed.add(chatId);
@@ -475,7 +468,7 @@ export function handleOscTitle(chatId: string, paneId: string, rawTitle: string)
   if (titleAuthority.get(chatId) !== paneId) return;
 
   const title = cleanOscTitle(rawTitle);
-  if (!title || (flagEnabled("dynamicChatTitles") && isTrivialAgentChatTitle(title))) return;
+  if (!title || isTrivialAgentChatTitle(title)) return;
 
   const existing = oscPending.get(chatId);
   if (existing) clearTimeout(existing.timer);
@@ -512,39 +505,7 @@ export function maybeAutoNameChat(chatId: string, rawLine: string, paneId: strin
   const line = rawLine.trim();
   if (!line) return; // ignore blank submits; stay armed
 
-  if (flagEnabled("dynamicChatTitles")) {
-    maybeRefreshDynamicTerminalTitle(chatId, line, paneId);
-    return;
-  }
-
-  if (!isDefaultChatTitle(chat.title)) {
-    armed.delete(chatId);
-    if (matchAgentLaunch(line)) markAgentPane(chatId, paneId);
-    return;
-  }
-
-  const armedPane = armed.get(chatId);
-  if (armedPane !== undefined) {
-    // Only the pane that received the launch may supply the title; a submit in
-    // any other split pane leaves the arming intact — but a hand-typed agent
-    // launch there still claims ACTIVITY ownership so its glow/attention work.
-    if (armedPane !== paneId) {
-      if (matchAgentLaunch(line)) markAgentPane(chatId, paneId);
-      return;
-    }
-    armed.delete(chatId);
-    commit(chatId, line);
-    return;
-  }
-
-  // Not armed by a chip — is this a hand-typed agent launch in this pane?
-  const launch = matchAgentLaunch(line);
-  if (!launch) return; // agent-only scope: plain shell commands don't rename
-
-  // This pane now runs an agent — let its OSC titles name the chat.
-  markAgentPane(chatId, paneId);
-  if (launch.prompt) commit(chatId, launch.prompt); // `claude fix the bug`
-  else armed.set(chatId, paneId); // bare `claude` — wait for the in-TUI prompt
+  maybeRefreshDynamicTerminalTitle(chatId, line, paneId);
 }
 
 function maybeRefreshDynamicTerminalTitle(chatId: string, line: string, paneId: string) {
@@ -634,14 +595,7 @@ function commit(chatId: string, message: string) {
   const title = toTitle(message);
   if (!title) return;
   const from = findChat(chatId)?.title ?? "";
-  if (
-    flagEnabled("dynamicChatTitles") &&
-    (isTrivialAgentChatTitle(title) || normalizeTitle(title) === normalizeTitle(from))
-  ) {
-    return;
-  }
-  const dynamic = flagEnabled("dynamicChatTitles");
-  if (!dynamic) autoNamed.add(chatId); // preserve legacy immediate session ownership
+  if (isTrivialAgentChatTitle(title) || normalizeTitle(title) === normalizeTitle(from)) return;
   // Persist via the narrow title update so a live `session_id` write (chat
   // recovery) the full-row `chat_upsert` would carry can't be clobbered.
   void setChatTitle(chatId, title).then((applied) => {

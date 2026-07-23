@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // chat map so the title logic can be exercised with no runtime. solid-js's
 // createSignal is used for the typing-animation overrides; it works under node.
 const flags = vi.hoisted(() => ({
-  dynamicChatTitles: false,
   ompPiAgents: undefined as boolean | undefined,
 }));
 
@@ -21,7 +20,7 @@ const store = vi.hoisted(() => {
       const c = chats.get(id);
       if (c) {
         c.title = title;
-        if (flags.dynamicChatTitles) c.titleSource = "auto";
+        c.titleSource = "auto";
       }
       return true;
     }),
@@ -37,10 +36,7 @@ vi.mock("../../src/stores/workspace", () => ({
   resumeAutomaticChatTitles: store.resumeAutomaticChatTitles,
 }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) =>
-    key === "dynamicChatTitles"
-      ? flags.dynamicChatTitles
-      : key === "ompPiAgents" && (flags.ompPiAgents ?? false),
+  flagEnabled: (key: string) => key === "ompPiAgents" && (flags.ompPiAgents ?? false),
   setFlagOverride: (key: string, enabled: boolean | undefined) => {
     if (key === "ompPiAgents") flags.ompPiAgents = enabled;
   },
@@ -84,7 +80,6 @@ beforeEach(() => {
   } satisfies Storage);
   store.setChatTitle.mockClear();
   store.resumeAutomaticChatTitles.mockClear();
-  flags.dynamicChatTitles = false;
   // Force the non-animated path (commit persists synchronously, no timers).
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
   setFlagOverride("ompPiAgents", undefined);
@@ -199,14 +194,14 @@ describe("handleOscTitle — debounce + ownership", () => {
     expect(store.setChatTitle).toHaveBeenCalledWith(id, "Working on auth");
   });
 
-  it("keeps legacy provenance untouched while the feature flag is off", () => {
+  it("persists automatic provenance with the committed title", () => {
     const id = seed();
-    handleOscTitle(id, "pane-0", "Legacy automatic title");
+    handleOscTitle(id, "pane-0", "Automatic title");
     vi.advanceTimersByTime(1200);
 
     expect(store.chats.get(id)).toMatchObject({
-      title: "Legacy automatic title",
-      titleSource: "default",
+      title: "Automatic title",
+      titleSource: "auto",
     });
   });
 
@@ -734,7 +729,6 @@ describe("dynamic title policy", () => {
   });
 
   it("applies terminal milestones and lets debounced OSC override local fallback", () => {
-    flags.dynamicChatTitles = true;
     const id = "dynamic-terminal";
     store.chats.set(id, {
       chatId: id,
@@ -765,7 +759,6 @@ describe("dynamic title policy", () => {
   });
 
   it("revokes title authority on the PTY lifecycle exit without relying on OSC", () => {
-    flags.dynamicChatTitles = true;
     const id = "dynamic-post-agent-shell";
     store.chats.set(id, {
       chatId: id,
@@ -795,7 +788,6 @@ describe("dynamic title policy", () => {
   });
 
   it("honors a persisted manual lock after restart and can resume automatic titles", async () => {
-    flags.dynamicChatTitles = true;
     const id = "dynamic-restart";
     store.chats.set(id, {
       chatId: id,

@@ -14,11 +14,10 @@ reset this file.
   status, and let users revoke active client access (#241).
 - New section-based Settings navigation: a category sidebar with remembered
   last category, direct section links, keyboard navigation, and layouts that
-  adapt to narrow windows. (`settingsNavigation` now default on, #211)
+  adapt to narrow windows (#211).
 - Chats now get automatic titles from your first prompt, refreshed at
   meaningful milestones. Renaming a chat locks its title until you choose
-  “Resume automatic titles”; manual titles survive restarts.
-  (`dynamicChatTitles` now default on, #210)
+  “Resume automatic titles”; manual titles survive restarts (#210).
 - Linux builds get a persistent graphics compatibility mode in Settings
   (General): Auto (previous behavior), Compatibility (prefer X11/XWayland and
   disable WebKitGTK's DMA-BUF renderer — the verified fast path on affected
@@ -70,6 +69,9 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- Removed the release gates for dynamic chat titles and Settings navigation
+  after both shipped enabled in v0.1.10; their enabled behavior is now
+  unconditional (#210, #211).
 - Local crash containment (#208 PR 2), default off behind the startup-safe
   `PICKFORGE_LOCAL_CRASH_CONTAINMENT` environment variable: on Unix a
   guardian child (the app binary re-executed) holds a private pipe and, on

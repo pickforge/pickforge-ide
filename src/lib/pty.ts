@@ -199,3 +199,76 @@ export function toBytes(data: PtyBytes): Uint8Array {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   return Uint8Array.from(data);
 }
+
+// == pickforge#214: legacy (pre-#209) recoverable-session cleanup ==
+//
+// Sessions created by an older PickForge build live under paths this build no
+// longer reattaches or sweeps — see `pty::sessions`'s module note (Rust side)
+// for why. `listLegacySessions` is read-only and safe to call any time the
+// panel is open; `stopLegacySession` acts on exactly ONE named artifact and
+// must only ever be called with an id this module itself returned. There is
+// no "stop everything" call — a caller wanting to stop several sessions must
+// invoke this once per session the user explicitly selected.
+
+export type LegacySessionKind = "dtach" | "tmux";
+
+export interface LegacyDtachSession {
+  name: string;
+  /** Best-effort: a process is currently listening on this socket. */
+  live: boolean;
+}
+
+export interface LegacyTmuxSession {
+  name: string;
+  /** Whether tmux currently reports a client attached. */
+  attached: boolean;
+}
+
+export interface LegacySessionReport {
+  dtach: LegacyDtachSession[];
+  tmux: LegacyTmuxSession[];
+}
+
+/** Read-only detection of every legacy dtach/tmux artifact PickForge's
+ *  runtime dir currently holds. Never mutates anything. */
+export function listLegacySessions(): Promise<LegacySessionReport> {
+  return invoke<LegacySessionReport>("list_legacy_sessions");
+}
+
+/** Stop exactly ONE legacy session the user selected from
+ *  {@link listLegacySessions}'s result — never a sweep. */
+export function stopLegacySession(kind: LegacySessionKind, name: string): Promise<void> {
+  return invoke("stop_legacy_session", { kind, name });
+}
+
+/** A pending legacy-session stop awaiting confirmation: one named session
+ *  (row-level Stop) or the bulk "everything currently shown" sweep. Both
+ *  scopes go through the SAME confirm dialog — there is exactly one
+ *  confirmation pattern, and neither can execute without it, even for a
+ *  single row. `risky` mirrors the row's own live/attached hint so the
+ *  dialog can call out the exact hard-boundary failure mode (stopping
+ *  another running PickForge instance's active session) instead of a
+ *  generic warning. */
+export type LegacyStopRequest =
+  | { scope: "single"; kind: LegacySessionKind; name: string; risky: boolean }
+  | { scope: "bulk" };
+
+/** The confirm dialog's title for a pending legacy-session stop. Pure so the
+ *  exact copy and the bulk-vs-single branch are unit-testable without
+ *  mounting Settings. */
+export function legacyStopConfirmTitle(request: LegacyStopRequest, totalCount: number): string {
+  if (request.scope === "bulk") {
+    return `Stop ${totalCount} legacy session${totalCount === 1 ? "" : "s"}?`;
+  }
+  return `Stop legacy session ${request.name}?`;
+}
+
+/** Whether the confirm dialog must show the strong live-session warning:
+ *  always for a bulk stop (the shown list may include a live/attached entry
+ *  the user isn't focused on), and for a single row only when THAT row's own
+ *  live/attached hint is set. This is the exact guard pickforge#214's review
+ *  required: a single-item Stop must never be able to terminate a live
+ *  session without the same risk disclosure the bulk action already gets. */
+export function legacyStopIsRisky(request: LegacyStopRequest): boolean {
+  return request.scope === "bulk" || request.risky;
+}

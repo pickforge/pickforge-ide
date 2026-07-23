@@ -53,6 +53,7 @@ export const SETTINGS_SECTIONS = [
   { key: "linuxGraphics", title: "Linux graphics", category: "general", availability: "linux" },
   { key: "fileOpening", title: "File opening", category: "general", availability: "always" },
   { key: "updates", title: "Updates", category: "general", availability: "always" },
+  { key: "legacySessions", title: "Legacy sessions", category: "general", availability: "always" },
   { key: "archivedProjects", title: "Archived projects", category: "projects", availability: "always" },
   { key: "account", title: "Account", category: "account", availability: "accounts" },
   { key: "featureFlags", title: "Feature flags", category: "developer", availability: "development" },

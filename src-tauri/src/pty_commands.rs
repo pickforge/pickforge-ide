@@ -21,11 +21,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pickforge_core::{
-    askpass_capability, begin_recoverable_session_spawn, dtach_master_pids, kill_dtach_master,
-    mark_tmux_server_may_exist, parse_recoverable_session_id, prepare_chat_session, run_timeout,
-    select_backend, sessions_dir, tmux_has_session_args, tmux_kill_session_args,
-    tmux_set_titles_args, validated_dtach_socket_path, AskpassCapability, Database,
-    PreparedSession, PtyError, PtyEvent, PtyManager, RemotePty, SessionBackend, SpawnOptions,
+    askpass_capability, begin_recoverable_session_spawn, detect_legacy_dtach_sessions,
+    detect_legacy_tmux_sessions, dtach_master_pids, kill_dtach_master, mark_tmux_server_may_exist,
+    parse_recoverable_session_id, prepare_chat_session, run_timeout, select_backend, sessions_dir,
+    stop_legacy_dtach_session, stop_legacy_tmux_session, tmux_has_session_args,
+    tmux_kill_session_args, tmux_set_titles_args, validated_dtach_socket_path, AskpassCapability,
+    Database, PreparedSession, PtyError, PtyEvent, PtyManager, RemotePty, SessionBackend,
+    SpawnOptions,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
@@ -619,6 +621,81 @@ pub fn pty_destroy_chat_session(session_id: String) -> Result<(), String> {
     destroy_target(&session_id, &runtime_base()).and_then(destroy_target_now)
 }
 
+// == pickforge#214: legacy (pre-#209) session detection + explicit cleanup ==
+//
+// #209 gave every session backend a private, per-process namespace. Sessions
+// created by an OLDER build still live under the shared paths that predate
+// that change, and this app has no way to prove one isn't the live, actively
+// used session of some OTHER concurrently running old/dev/flavor PickForge
+// instance — see `pty::sessions`'s module note for the full ownership
+// argument. So this stays a read-only "show the user, let them choose" flow:
+// `list_legacy_sessions` never mutates anything, and `stop_legacy_session`
+// only ever acts on ONE exact, caller-named artifact the renderer must have
+// gotten from that same list. Neither is wired into startup or app-exit —
+// there is no automatic path to either of these commands.
+
+/// One legacy dtach artifact, as shown to the user.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyDtachSessionSummary {
+    pub name: String,
+    /// Best-effort: a process is currently listening on this socket.
+    pub live: bool,
+}
+
+/// One legacy tmux artifact, as shown to the user.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacyTmuxSessionSummary {
+    pub name: String,
+    /// Whether tmux currently reports a client attached.
+    pub attached: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LegacySessionReport {
+    pub dtach: Vec<LegacyDtachSessionSummary>,
+    pub tmux: Vec<LegacyTmuxSessionSummary>,
+}
+
+/// Read-only detection of every legacy dtach/tmux artifact this machine's
+/// PickForge runtime dir currently holds. Never signals, kills, or removes
+/// anything — safe to call freely (e.g. every time the settings panel opens).
+#[tauri::command]
+pub fn list_legacy_sessions() -> Result<LegacySessionReport, String> {
+    let dtach = detect_legacy_dtach_sessions(&runtime_base())
+        .into_iter()
+        .map(|session| LegacyDtachSessionSummary {
+            name: session.name,
+            live: session.live,
+        })
+        .collect();
+    let tmux = detect_legacy_tmux_sessions(None)?
+        .into_iter()
+        .map(|session| LegacyTmuxSessionSummary {
+            name: session.name,
+            attached: session.attached,
+        })
+        .collect();
+    Ok(LegacySessionReport { dtach, tmux })
+}
+
+/// Stop exactly ONE legacy session the caller has already named — `kind` is
+/// `"dtach"` or `"tmux"`, `name` must be one of the exact ids
+/// [`list_legacy_sessions`] returned. There is no bulk/sweep verb: a renderer
+/// wanting to stop several sessions calls this once per session the user
+/// selected, so every kill stays traceable to an artifact that was actually
+/// shown and chosen.
+#[tauri::command]
+pub fn stop_legacy_session(kind: String, name: String) -> Result<(), String> {
+    match kind.as_str() {
+        "dtach" => stop_legacy_dtach_session(&runtime_base(), &name),
+        "tmux" => stop_legacy_tmux_session(None, &name),
+        other => Err(format!("unsupported legacy session kind: {other}")),
+    }
+}
+
 #[cfg(test)]
 mod spawn_cwd_tests {
     use super::*;
@@ -944,5 +1021,31 @@ mod spawn_cwd_tests {
         assert!(opts.program_override.is_none());
         assert!(!opts.detach_on_drop);
         assert!(opts.remote.is_some());
+    }
+
+    // == pickforge#214: legacy session IPC dispatch ==
+
+    #[test]
+    fn stop_legacy_session_rejects_an_unsupported_kind() {
+        // There is no bulk/"kind"-less verb: an unrecognized kind must fail
+        // closed rather than falling through to either backend.
+        let error = stop_legacy_session("bogus".to_string(), "pf-anything".to_string())
+            .unwrap_err();
+        assert!(error.contains("unsupported legacy session kind"));
+    }
+
+    #[test]
+    fn stop_legacy_session_propagates_grammar_validation_for_both_kinds() {
+        // Dispatch must reach the same exact-grammar guard core proves in
+        // `pty::sessions` — an IPC caller cannot smuggle a non-owned name
+        // through the Tauri boundary for either backend.
+        for kind in ["dtach", "tmux"] {
+            let error =
+                stop_legacy_session(kind.to_string(), "not-a-pf-session".to_string()).unwrap_err();
+            assert!(
+                error.contains("recoverable session name"),
+                "{kind}: {error}"
+            );
+        }
     }
 }

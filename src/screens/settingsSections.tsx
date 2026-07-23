@@ -30,6 +30,7 @@ export const WorkbenchSettingsSection = createSettingsSection("workbench");
 export const LinuxGraphicsSettingsSection = createSettingsSection("linuxGraphics");
 export const FileOpeningSettingsSection = createSettingsSection("fileOpening");
 export const UpdatesSettingsSection = createSettingsSection("updates");
+export const LegacySessionsSettingsSection = createSettingsSection("legacySessions");
 export const ArchivedProjectsSettingsSection = createSettingsSection("archivedProjects");
 export const AccountSettingsSection = createSettingsSection("account");
 export const FeatureFlagsSettingsSection = createSettingsSection("featureFlags");

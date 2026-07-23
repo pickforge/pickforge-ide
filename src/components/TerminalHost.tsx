@@ -15,7 +15,7 @@ import {
   type CapturedRemotePtys,
   type PaneSpawnMode,
 } from "../lib/remoteContext";
-import type { RemotePty } from "../lib/pty";
+import { askpassNotice, getAskpassStatus, type AskpassStatus, type RemotePty } from "../lib/pty";
 import "./TerminalHost.css";
 
 type Dir = "left" | "right" | "up" | "down";
@@ -235,6 +235,18 @@ export function TerminalHost(props: {
   const [menuFor, setMenuFor] = createSignal<string | null>(null);
   const [paneRemote, setPaneRemote] = createSignal<CapturedRemotePtys>({});
   const [deadPanes, setDeadPanes] = createSignal<string[]>([]);
+  // Linux graphical sudo (askpass) pre-flight status — pickforge#215. Only
+  // relevant to the session-backed (chat) primary pane, where agents run;
+  // `getAskpassStatus()` is itself cached, so this never re-triggers IPC
+  // across hosts/panes. Stays null (no chip) on macOS/Windows and while
+  // agents CAN run `sudo -A` — the chip is only the two actionable failure
+  // states from the locked v1 contract.
+  const [askpassStatus, setAskpassStatus] = createSignal<AskpassStatus | null>(null);
+  if (props.session) {
+    getAskpassStatus()
+      .then(setAskpassStatus)
+      .catch(() => {});
+  }
   const handles = new Map<string, TerminalHandle>();
   const closedPanes = new Set<string>();
   let containerEl!: HTMLDivElement;
@@ -554,6 +566,19 @@ export function TerminalHost(props: {
                     </Show>
                     <Show when={deadPanes().includes(leaf.id)}>
                       <span class="pf-pane-cwd">closed</span>
+                    </Show>
+                    <Show
+                      when={
+                        props.session &&
+                        leaf.id === primaryId() &&
+                        askpassNotice(askpassStatus())
+                      }
+                    >
+                      {(notice) => (
+                        <span class="pf-pane-cwd" title="Graphical sudo (askpass) is unavailable for this session">
+                          {notice()}
+                        </span>
+                      )}
                     </Show>
                   </div>
                   <div class="pf-pane-ctls">

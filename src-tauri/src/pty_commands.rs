@@ -21,11 +21,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pickforge_core::{
-    begin_recoverable_session_spawn, dtach_master_pids, kill_dtach_master,
+    askpass_capability, begin_recoverable_session_spawn, dtach_master_pids, kill_dtach_master,
     mark_tmux_server_may_exist, parse_recoverable_session_id, prepare_chat_session, run_timeout,
     select_backend, sessions_dir, tmux_has_session_args, tmux_kill_session_args,
-    tmux_set_titles_args, validated_dtach_socket_path, Database, PreparedSession, PtyError,
-    PtyEvent, PtyManager, RemotePty, SessionBackend, SpawnOptions,
+    tmux_set_titles_args, validated_dtach_socket_path, AskpassCapability, Database,
+    PreparedSession, PtyError, PtyEvent, PtyManager, RemotePty, SessionBackend, SpawnOptions,
 };
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
@@ -270,6 +270,23 @@ pub fn pty_kill(manager: State<'_, PtyManager>, id: u32) -> Result<(), String> {
 #[tauri::command]
 pub fn pty_detach(manager: State<'_, PtyManager>, id: u32) -> Result<(), String> {
     manager.detach(id).map_err(|e| e.to_string())
+}
+
+/// Linux graphical `sudo` (askpass) pre-flight status — pickforge#215. The
+/// renderer calls this before/alongside spawning an agent chat to decide
+/// whether to show the "no graphical sudo helper" notice per the locked v1
+/// contract's failure semantics (fail fast, actionable, manual-terminal
+/// fallback — never a silent no-op). Injection itself happens inside
+/// `PtyManager::spawn` regardless of whether this was ever called; this
+/// command is UI signal only.
+#[tauri::command]
+pub fn pty_askpass_status() -> &'static str {
+    match askpass_capability() {
+        AskpassCapability::Available { .. } => "available",
+        AskpassCapability::NoHelper => "noHelper",
+        AskpassCapability::Headless => "headless",
+        AskpassCapability::UnsupportedPlatform => "unsupportedPlatform",
+    }
 }
 
 /// The chat-session spawn result handed back to the renderer.

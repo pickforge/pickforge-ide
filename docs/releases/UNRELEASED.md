@@ -38,6 +38,19 @@ reset this file.
   terminal, emulator, mirror, and device-log managers, and interrupts active
   native agent turns so persisted chats return to idle. Crash/SIGKILL
   containment is not included yet (#208).
+- Linux: agent shells spawned in the embedded terminal (Raw, dtach, and tmux
+  chat sessions alike) now get `SUDO_ASKPASS` propagated automatically when a
+  graphical session and a system askpass helper (the user's own `SUDO_ASKPASS`
+  if executable, else the first of `ksshaskpass`/`ssh-askpass`/
+  `lxqt-openssh-askpass`/a few standard distro paths) are both detected —
+  `sudo -A <command>` shows a graphical password prompt instead of failing or
+  blocking on a terminal password. It's the only environment variable this
+  feature injects, and only for local (non-remote) shells. On a headless
+  session or with no helper installed, a chat pane's title bar shows a small
+  "no sudo helper" / "no graphical session" notice so the human running the
+  agent knows to use a real terminal for privileged commands instead.
+  macOS/Windows are out of scope this release — never `sudo -S`, never
+  password capture, never a bundled helper (#215).
 
 ## Internal/release changes (dark: no default-on behavior change)
 
@@ -56,6 +69,44 @@ reset this file.
 
 ## Validation
 
+- #215: capability-detection unit tests (`process::askpass`) cover a
+  user-executable helper winning over the probe list, a non-executable
+  user-set value falling back to the probe list, no helper resolving, and
+  headless (no `WAYLAND_DISPLAY`/`DISPLAY`) — plus a redaction-boundary test
+  proving an unvalidated `SUDO_ASKPASS` value never reaches the capability's
+  public surface. `pty::session` tests prove `SUDO_ASKPASS` is unconditionally
+  OWNED by the injection seam — never present unless PickForge itself
+  resolved a helper, in EVERY capability state and a remote spawn, whether
+  the stray value came from the caller's `extra_env` or was already sitting
+  in the resolved login-shell environment — and, via a `program_override`
+  spawn (the same seam dtach/tmux use), that propagation is identical across
+  backends.
+  **Architectural guarantee (redaction):** the askpass helper's stdin/stdout
+  is never in PickForge's process tree — `sudo` invokes it directly via its
+  own pipe, out-of-band from the pty this module spawns — so prompt/credential
+  material structurally never enters `PtyEvent::Output` in the first place.
+  What a Rust test *can* prove is that PickForge's own code doesn't add a
+  second path: a spawn test with a script emitting a fake "Password:"-style
+  prompt proves the bytes reach the caller's sink byte-for-byte unmodified
+  (no interception/masking) and that spawning writes nothing to any
+  file/DB side-channel (this seam has no such handle to begin with).
+  **Deliberate deviation (cancellation):** unlike PickLab's structured
+  provisioning executor, PickForge's terminal is a generic interactive shell
+  — runtime cancellation/auth-failure at `sudo -A` time is never parsed or
+  specially surfaced; it reaches the user as ordinary pty output (proven by a
+  spawn test asserting a stand-in cancelled-`sudo`'s stderr and non-zero exit
+  status both reach the caller unmodified). The pre-flight chat-pane chip only
+  covers the two states knowable BEFORE a privileged command is ever typed
+  (`noHelper`, `headless`).
+  `cargo test --workspace --locked --all-targets` (post-review: 538
+  pickforge-core tests, incl. all of the above) passes; two timing-sensitive
+  `agents::claude_stream`/`agents::manager` tests flaked once under
+  full-suite parallel load and passed individually — pre-existing
+  env-contention flakiness, unrelated to this change (reproduced clean on a
+  second full run). `bun run test:unit` adds a pure-function test for the
+  chat pane's `askpassNotice()` copy (all four `AskpassStatus` values, exact
+  strings) and otherwise has the 3 known pre-existing `chatTerminalLifecycle`
+  failures (unrelated file, not touched here); `bun run build` passes.
 - Forced-exit regression harness (`crash_containment` integration test):
   child + grandchild trees proven dead after normal close, SIGTERM, panic,
   abort, and forced SIGKILL of the parent.
@@ -94,6 +145,14 @@ reset this file.
 - Real AMD/KDE Wayland A/B smoke (Auto vs. Compatibility vs. Native Wayland,
   persistence across restart, KDE Wayland + AMD one-time recommendation) on
   the affected release-smoke machine (#238).
+- Real Linux `sudo -A -v` smoke from a PickForge-launched agent shell —
+  helper-present success, cancellation, and the headless/no-helper fallback
+  notice — deferred to Elberte-PC (#215).
+- A real-tmux (not `program_override`-shimmed) integration test proving the
+  askpass env reaches an ACTUAL `tmux new-session -A` client, gated behind
+  `#[ignore]` so CI without tmux installed isn't required to run it — deferred,
+  no tracking issue needed; the existing `program_override`-based test already
+  proves the shared code seam is exercised identically (#215).
 
 ### Known limits
 
@@ -103,3 +162,8 @@ reset this file.
   future #208 scope on non-Linux Unix.
 - Remaining #208 scope: stale remote bootstrap reconciliation and the flag
   enablement/removal lifecycle.
+- #215: PickForge cannot inject guidance into a third-party agent CLI's own
+  reasoning — whether an agent actually types `sudo -A` (vs. something else)
+  is the agent's choice; PickForge provides the environment (`SUDO_ASKPASS`)
+  and the chat-pane UI copy, not a guarantee of agent behavior. Programmatic
+  sudo invocation on the agent's behalf is picklab#27's scope, not this one.

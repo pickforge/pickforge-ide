@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "source": { "path": "/workspace/Cargo.lock" },
+      "packages": [
+        {
+          "package": { "ecosystem": "crates.io", "name": "unsafe-crate", "version": "1.0.0" },
+          "groups": [{ "ids": ["OSV-81"], "max_severity": "8.1" }]
+        }
+      ]
+    },
+    { "source": { "path": "/workspace/bun.lock" }, "packages": [] }
+  ]
+}

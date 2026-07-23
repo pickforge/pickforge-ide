@@ -24,6 +24,7 @@ pub struct StartPermit {
 }
 
 impl StartGate {
+    #[allow(clippy::result_unit_err)] // TODO(#263): simplify legacy interface.
     pub fn begin(self: &Arc<Self>) -> Result<StartPermit, ()> {
         let mut state = self.state.lock().expect("start gate poisoned");
         if state.closed {

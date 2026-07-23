@@ -363,6 +363,7 @@ function versionFromOutput(raw: string): string | null {
 
 /** Convert the native probe into UI-safe diagnostics. Exported as the pure test
  * seam for malformed output and partial-command failures. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function diagnosticFromProbe(
   agentId: "omp" | "pi",
   probe: AgentCliProbe,

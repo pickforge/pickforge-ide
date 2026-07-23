@@ -73,6 +73,7 @@ function routeMetaLabel(): string | null {
   return `routed · ${formatCostCents(meta.costCents)}${balance}`;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function OperatorDock() {
   let inputEl!: HTMLInputElement;
   let panelEl!: HTMLDivElement;

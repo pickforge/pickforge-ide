@@ -69,6 +69,7 @@ function findPath(root: DomNode, id: string, acc: DomNode[] = []): DomNode[] | n
   return null;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function CdpTree(props: {
   // Capability gates from the active web target (adapters.rs). Web declares both
   // inspectSelection + mapSelectionToSource, but the props keep the component
@@ -189,6 +190,7 @@ export function CdpTree(props: {
   // capture folder, then launch the agent in a new pane pointed at the markdown.
   // Mirrors A11yTree.send; web nodes carry a source attribute when the dev
   // server injects one (else "no exact source").
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   const send = async () => {
     if (busy()) return;
     const item = composerFor();
@@ -348,6 +350,7 @@ export function CdpTree(props: {
       </Show>
 
       <Show when={selectedNode()}>
+        {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
         {(node) => (
           <div class="pf-inspector-section pf-wd">
             <MonoEyebrow text="Element" tick />

@@ -275,6 +275,7 @@ impl CodexAppClient {
         thread_info_from_result(&result)
     }
 
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
     pub fn turn_start(
         &self,
         thread_id: &str,
@@ -684,6 +685,7 @@ impl Drop for CodexAppClient {
 struct ClientState {
     child: Mutex<Option<Child>>,
     pending: Mutex<HashMap<i64, PendingSender>>,
+    #[allow(clippy::type_complexity)] // TODO(#263): simplify legacy interface.
     subscriptions: Mutex<HashMap<String, Arc<dyn Fn(AgentEvent) + Send + Sync>>>,
     closed: AtomicBool,
     next_id: AtomicI64,

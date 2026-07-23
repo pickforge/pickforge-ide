@@ -350,6 +350,7 @@ function isVisiblePrimaryChat(chat: Chat): boolean {
   return !isChatArchived(chat.chatId) && isPrimaryChat(chat);
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function summaryFor(intent: OperatorIntent): string {
   const action = intent.action;
   switch (action.action) {
@@ -980,6 +981,7 @@ async function takeScreenshotIntent(facts: ExecutionFacts): Promise<DispatchResu
   return { status: "noop", summary: "no device or VM session to capture" };
 }
 
+// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 async function runIntent(
   facts: ExecutionFacts,
   inputText: string | undefined,

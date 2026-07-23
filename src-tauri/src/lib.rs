@@ -146,6 +146,7 @@ fn start_crash_containment() {
     }
 }
 
+#[allow(clippy::too_many_lines)] // TODO(#263): split the legacy Tauri bootstrap.
 pub fn run() {
     start_crash_containment();
     let context = tauri::generate_context!();

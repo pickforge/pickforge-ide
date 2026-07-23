@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "source": { "path": "/workspace/Cargo.lock" },
+      "packages": [
+        {
+          "package": { "ecosystem": "crates.io", "name": "old-crate", "version": "1.0.0" },
+          "vulnerabilities": [
+            {
+              "id": "RUSTSEC-INFORMATIONAL",
+              "affected": [
+                { "database_specific": { "informational": "unmaintained" } }
+              ]
+            },
+            { "id": "OSV-WITHDRAWN", "withdrawn": "2026-01-01T00:00:00Z" }
+          ],
+          "groups": [
+            {
+              "ids": ["RUSTSEC-INFORMATIONAL", "OSV-WITHDRAWN"],
+              "max_severity": ""
+            }
+          ]
+        }
+      ]
+    },
+    { "source": { "path": "/workspace/bun.lock" }, "packages": [] }
+  ]
+}

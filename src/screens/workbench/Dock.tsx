@@ -72,6 +72,7 @@ export function PaneShell(props: { pane: PaneId; actions?: JSX.Element; children
   );
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function DockColumn(props: { dock: DockId; render: (pane: PaneId) => JSX.Element }) {
   const panes = () => layout().docks[props.dock];
   const [dropIndex, setDropIndex] = createSignal<number | null>(null);

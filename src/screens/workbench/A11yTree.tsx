@@ -54,6 +54,7 @@ function findPath(root: A11yNode, id: string, acc: A11yNode[] = []): A11yNode[] 
   return null;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function A11yTree(props: {
   serial: string | null;
   online: boolean;
@@ -331,6 +332,7 @@ export function A11yTree(props: {
       </div>
 
       <Show when={selectedNode()}>
+        {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
         {(node) => (
           <div class="pf-inspector-section pf-wd">
             <MonoEyebrow text="Node" tick />

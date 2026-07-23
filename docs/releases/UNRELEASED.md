@@ -69,6 +69,8 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- CI now blocks complexity regressions, severe dependency advisories, and
+  committed secrets; frontend coverage floors were ratcheted to current results.
 - Removed the release gates for dynamic chat titles and Settings navigation
   after both shipped enabled in v0.1.10; their enabled behavior is now
   unconditional (#210, #211).

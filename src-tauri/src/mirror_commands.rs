@@ -262,7 +262,7 @@ fn validate_control_payload(bytes: &[u8]) -> Result<(), String> {
             if bytes.len() < header {
                 return Err("truncated control message header".into());
             }
-            let body = read_prefix(&bytes, prefix_at, prefix_width)
+            let body = read_prefix(bytes, prefix_at, prefix_width)
                 .ok_or("truncated control message length prefix")?;
             header
                 .checked_add(body)
@@ -273,13 +273,13 @@ fn validate_control_payload(bytes: &[u8]) -> Result<(), String> {
                 return Err("truncated control message header".into());
             }
             // u8 name length, then a u16 descriptor length right after the name.
-            let name = read_prefix(&bytes, first_at, 1)
+            let name = read_prefix(bytes, first_at, 1)
                 .ok_or("truncated control message length prefix")?;
             let desc_at = header
                 .checked_add(name)
                 .ok_or("control message length overflow")?;
             let desc =
-                read_prefix(&bytes, desc_at, 2).ok_or("truncated control message length prefix")?;
+                read_prefix(bytes, desc_at, 2).ok_or("truncated control message length prefix")?;
             desc_at
                 .checked_add(2)
                 .and_then(|n| n.checked_add(desc))

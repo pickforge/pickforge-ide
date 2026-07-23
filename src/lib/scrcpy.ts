@@ -119,6 +119,7 @@ const ACTION = {
 } as const;
 
 /** Start mirroring `serial` onto `canvas`. Throws if WebCodecs is unavailable. */
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export async function startMirror(
   serial: string,
   canvas: HTMLCanvasElement,

@@ -429,6 +429,7 @@ fn apply_rust_migrations(conn: &mut Connection, mut version: u32) -> Result<(), 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
 fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Result<(), DbError> {
     match version {
         12 => {
@@ -1762,6 +1763,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn narrow_chat_updates_touch_only_their_column() {
         let db = Database::open_in_memory().unwrap();
         db.upsert_project(&Project {
@@ -2825,6 +2827,7 @@ mod tests {
         .to_string()
     }
 
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
     fn append_usage(
         db: &Database,
         session_id: &str,
@@ -3041,6 +3044,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn agent_usage_summary_groups_by_provider_and_model() {
         let db = Database::open_in_memory().unwrap();
         seed_agent_chat(&db, "/p1", "c-gpt5-a");
@@ -3208,6 +3212,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn agent_timeline_returns_messages_and_items_ordered_by_seq() {
         let db = Database::open_in_memory().unwrap();
         db.agent_message_append("s1", "c1", "user", "hello")

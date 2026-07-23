@@ -49,35 +49,25 @@ const XDG_SESSION_DESKTOP_ENV: &str = "XDG_SESSION_DESKTOP";
 /// DMA-BUF renderer enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum LinuxGraphicsMode {
+    #[default]
     Auto,
     Compatibility,
     NativeWayland,
 }
 
-impl Default for LinuxGraphicsMode {
-    fn default() -> Self {
-        LinuxGraphicsMode::Auto
-    }
-}
 
 /// Small startup-readable config: the selected mode, plus whether the
 /// one-time KDE Wayland + AMD recommendation has been dismissed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct LinuxGraphicsConfig {
     pub mode: LinuxGraphicsMode,
     pub recommendation_dismissed: bool,
 }
 
-impl Default for LinuxGraphicsConfig {
-    fn default() -> Self {
-        Self {
-            mode: LinuxGraphicsMode::default(),
-            recommendation_dismissed: false,
-        }
-    }
-}
 
 /// What to do with `WEBKIT_DISABLE_DMABUF_RENDERER` (and its
 /// [`LINUX_DMABUF_SYNTHESIZED_MARKER_ENV`] marker) in the process

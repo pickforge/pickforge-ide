@@ -250,6 +250,7 @@ export function iosRunCommand(base: string, udid: string): string {
 /** Convert JSONC (launch.json) to JSON: strip // and /* *​/ comments and
  *  trailing commas, which VS Code accepts. String-aware so commas/slashes
  *  inside quoted values (e.g. URLs, "a,]") are left untouched. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function stripJsonc(src: string): string {
   const out: string[] = [];
   let i = 0;
@@ -349,6 +350,7 @@ export function shquote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function fromLaunchConfig(
   c: LaunchConfig,
   i: number,

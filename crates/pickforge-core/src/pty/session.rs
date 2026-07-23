@@ -144,6 +144,7 @@ pub struct PtyManager {
     shutting_down: AtomicBool,
     start_gate: Arc<StartGate>,
     #[cfg(test)]
+    #[allow(clippy::type_complexity)] // TODO(#263): simplify legacy interface.
     after_child_spawn: Mutex<Option<Arc<dyn Fn(Option<u32>) + Send + Sync>>>,
 }
 
@@ -168,6 +169,7 @@ impl PtyManager {
     /// Spawn a pty and stream its output to `sink`. Without `opts.command` this
     /// is the user's interactive `$SHELL`; with it, a one-shot `$SHELL -c
     /// <command>` that exits when the command does. Returns the session id.
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn<S: PtySink>(&self, opts: SpawnOptions, sink: S) -> Result<u32, PtyError> {
         let _start_permit = self
             .start_gate

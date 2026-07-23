@@ -566,7 +566,7 @@ mod read_text_bounded_tests {
         let (_roots, root) = temp_root("cap");
         let f = root.join("over.txt");
         std::fs::write(&f, vec![b'a'; MAX_TEXT_PREVIEW_BYTES + 4096]).unwrap();
-        let out = read_text_bounded(&f, usize::MAX.min(MAX_TEXT_PREVIEW_BYTES)).expect("read");
+        let out = read_text_bounded(&f, MAX_TEXT_PREVIEW_BYTES).expect("read");
         assert_eq!(out.len(), MAX_TEXT_PREVIEW_BYTES);
     }
 }

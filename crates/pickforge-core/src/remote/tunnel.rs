@@ -273,6 +273,10 @@ impl TunnelManager {
             .len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn with_parts(ssh_program: PathBuf, readiness_probe: ReadinessProbe) -> Self {
         Self {
             state: Arc::new(TunnelState {
@@ -287,6 +291,7 @@ impl TunnelManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
     fn watch_child(
         &self,
         tunnel_id: String,

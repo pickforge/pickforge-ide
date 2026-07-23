@@ -732,7 +732,7 @@ fn collect_file_changes(value: &Value, changes: &mut Vec<FileChangeEntry>) {
             } else {
                 let mut entries = Vec::new();
                 for (path, kind) in map {
-                    let Some(kind) = kind.as_str().and_then(|kind| parse_file_change_kind(kind))
+                    let Some(kind) = kind.as_str().and_then(parse_file_change_kind)
                     else {
                         return;
                     };
@@ -1014,6 +1014,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn parses_command_fixture() {
         let events = fixture_events("codex-exec-command.jsonl");
         assert_eq!(events.len(), 7);
@@ -1198,7 +1199,7 @@ sleep 5
         let events = Arc::new(Mutex::new(Vec::new()));
         let turn = spawn_script_turn(&script, Arc::clone(&events));
         let snapshot = wait_for_events(&events, |events| {
-            events.iter().any(|event| *event == AgentEvent::TurnStarted)
+            events.contains(&AgentEvent::TurnStarted)
         });
         assert_eq!(snapshot, vec![AgentEvent::TurnStarted]);
 

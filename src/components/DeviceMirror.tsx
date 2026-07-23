@@ -9,6 +9,7 @@ import { remotePtyFor } from "../lib/remoteContext";
 import { deviceLabel, resolveSelectedDevice } from "../stores/runLaunch";
 import { workspace } from "../stores/workspace";
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function DeviceMirror() {
   let canvas!: HTMLCanvasElement;
   const [active, setActive] = createSignal(false);

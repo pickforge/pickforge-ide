@@ -5,6 +5,9 @@ edition = { workspace = true }
 license = { workspace = true }
 authors = { workspace = true }
 
+[lints]
+workspace = true
+
 # The stdio MCP adapter the embedded agent spawns. It is a thin, dependency-light
 # byte-pump: read a JSON-RPC line on stdin, forward it to the running PickForge
 # app over the local Unix socket (PICKFORGE_IPC_ENDPOINT), stream the reply to

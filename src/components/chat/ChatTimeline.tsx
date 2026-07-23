@@ -54,6 +54,7 @@ export interface RowExpansion {
   toggle: (key: string) => void;
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function renderItem(
   item: AgentTimelineItem,
   rowKey: string,
@@ -138,6 +139,7 @@ function WorkingRow(): JSX.Element {
   );
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function ChatTimeline(props: {
   items: AgentTimelineItem[];
   working?: boolean;
@@ -259,6 +261,7 @@ export function ChatTimeline(props: {
     });
   };
 
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   const applyRowHeights = (updates: Iterable<[string, number]>, deferAboveViewport: boolean) => {
     const currentLayout = layout();
     const currentTop = scroller.scrollTop;

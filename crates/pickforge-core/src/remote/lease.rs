@@ -45,6 +45,7 @@ struct Bootstrap {
 
 #[derive(Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)] // TODO(#263): simplify legacy interface.
 pub(crate) enum RemoteLeasePayload {
     LoginShell { cwd: String },
     LoginCommand { cwd: String, command: String },
@@ -1703,6 +1704,7 @@ finally:
         std::fs::set_permissions(&lease, std::fs::Permissions::from_mode(0o700)).unwrap();
         let live = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(lease.join("live.lock"))
             .unwrap();

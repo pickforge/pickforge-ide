@@ -313,7 +313,7 @@ fn issue_pairing_code_at(path: &Path, ttl_ms: i64) -> Result<PairingCode, String
 }
 
 fn clients_json_from_path(path: &Path) -> Result<serde_json::Value, String> {
-    let snapshot = RemoteAuthStore::snapshot_from_path(&path).map_err(|err| err.to_string())?;
+    let snapshot = RemoteAuthStore::snapshot_from_path(path).map_err(|err| err.to_string())?;
     Ok(clients_json(snapshot))
 }
 

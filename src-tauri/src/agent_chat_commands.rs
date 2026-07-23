@@ -119,6 +119,7 @@ fn resolve_agent_chat_start_with(
 /// renderer flag and exact OMP probe control native discoverability/dispatch;
 /// Tauri capability/CSP policy controls which app code can invoke this command.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // TODO(#263): replace the legacy IPC parameter list.
 pub async fn agent_chat_start(
     mgr: State<'_, AgentChatManager>,
     roots: State<'_, ApprovedRoots>,

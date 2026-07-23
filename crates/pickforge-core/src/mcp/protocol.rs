@@ -17,7 +17,9 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 /// we model the field explicitly: `Missing` (key absent), `Null` (`id: null`),
 /// `Present` (any other value).
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum RequestId {
+    #[default]
     Missing,
     Null,
     Present(Value),
@@ -42,11 +44,6 @@ impl RequestId {
     }
 }
 
-impl Default for RequestId {
-    fn default() -> Self {
-        RequestId::Missing
-    }
-}
 
 impl<'de> Deserialize<'de> for RequestId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

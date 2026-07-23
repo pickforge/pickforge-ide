@@ -57,16 +57,13 @@ impl FromStr for AgentProvider {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Engine {
     V1,
+    #[default]
     V2,
 }
 
-impl Default for Engine {
-    fn default() -> Self {
-        Self::V2
-    }
-}
 
 impl FromStr for Engine {
     type Err = AgentChatError;
@@ -244,6 +241,7 @@ impl AgentChatManager {
 
     /// Trusted internal capability. Product rollout/UI gating belongs to the
     /// typed renderer flag; callers that reach the manager may start OMP.
+    #[allow(clippy::cognitive_complexity, clippy::too_many_arguments, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn start(
         &self,
         chat_id: &str,
@@ -617,6 +615,7 @@ impl AgentChatManager {
         Ok(session_id)
     }
 
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn send(
         &self,
         session_id: &str,
@@ -2180,6 +2179,7 @@ impl ActiveTurn {
     }
 }
 
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
 fn handle_runner_event(
     db: &Database,
     inner: &Arc<Mutex<HashMap<String, SessionState>>>,
@@ -2498,7 +2498,7 @@ fn normalize_omp_mcp_grants(servers: &[serde_json::Value]) -> Vec<serde_json::Va
             }
             serde_json::Value::Object(object) => {
                 let mut entries = object.iter().collect::<Vec<_>>();
-                entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+                entries.sort_unstable_by_key(|(left, _)| *left);
                 let mut normalized = serde_json::Map::new();
                 for (key, value) in entries {
                     normalized.insert(key.clone(), normalize(value));
@@ -2535,6 +2535,7 @@ fn engine_for_start(engine: Engine, remote: Option<&RemoteExec>) -> Engine {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
 fn v1_turn_overrides(
     provider: AgentProvider,
     remote: bool,
@@ -2837,6 +2838,7 @@ for raw in sys.stdin:
         )
     }
 
+    #[allow(clippy::type_complexity)] // TODO(#263): simplify legacy interface.
     fn event_sink() -> (
         Arc<Mutex<Vec<AgentEvent>>>,
         Arc<dyn Fn(AgentEvent) + Send + Sync>,
@@ -2915,6 +2917,7 @@ for raw in sys.stdin:
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn omp_manager_lifecycle_reuses_live_client_and_resumes_after_dispose() {
         let log = std::env::temp_dir().join(format!(
             "pickforge-omp-manager-{}-{}.log",
@@ -3100,6 +3103,7 @@ done
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn omp_live_reuse_requires_exact_canonical_cwd_and_normalized_mcp_grants() {
         use std::os::unix::fs::symlink;
 
@@ -3252,6 +3256,7 @@ done"#
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn omp_dead_transport_fails_boundedly_idles_and_resumes_on_restart() {
         let log = std::env::temp_dir().join(format!(
             "pickforge-omp-dead-{}-{}.log",
@@ -3961,6 +3966,7 @@ printf invoked > "$0.invoked"
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn v2_codex_start_send_approval_and_idle_flow() {
         let script = test_script(
             "codex-app-flow",
@@ -4357,6 +4363,7 @@ done
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn v2_codex_dead_client_broadcasts_failure_and_next_start_respawns() {
         let script = test_script(
             "codex-app-dead-respawn",
@@ -5613,6 +5620,7 @@ printf '%s\n' \
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn pi_follow_up_drains_inside_one_agent_lifecycle_and_allows_the_next_prompt() {
         let script = pi_rpc_test_script("pi-follow-up-lifecycle");
         let db = Arc::new(Database::open_in_memory().unwrap());

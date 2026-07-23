@@ -253,6 +253,7 @@ function formatK(n: number): string {
   return `${(n / 1000).toFixed(1)}k`;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function OrchestraView(props: {
   projectRoot: string;
   focusChat?: { chatId: string; at: number } | null;

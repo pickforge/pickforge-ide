@@ -253,6 +253,7 @@ export function collectRemoteBindings(projects: RemoteBindingProject[]): Json {
 }
 
 /** Bindings by basename from a v2 (array) or legacy v1 (record) payload. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function readRemoteBindings(
   payload: Json,
 ): Map<string, { remoteHost: string; remoteRoot: string }> | null {

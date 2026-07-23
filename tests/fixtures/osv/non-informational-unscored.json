@@ -1,0 +1,26 @@
+{
+  "results": [
+    {
+      "source": { "path": "/workspace/Cargo.lock" },
+      "packages": [
+        {
+          "package": { "ecosystem": "crates.io", "name": "unsafe-crate", "version": "1.0.0" },
+          "vulnerabilities": [
+            {
+              "id": "RUSTSEC-INFORMATIONAL",
+              "database_specific": { "informational": "notice" }
+            },
+            { "id": "RUSTSEC-UNSCORED", "database_specific": {} }
+          ],
+          "groups": [
+            {
+              "ids": ["RUSTSEC-INFORMATIONAL", "RUSTSEC-UNSCORED"],
+              "max_severity": ""
+            }
+          ]
+        }
+      ]
+    },
+    { "source": { "path": "/workspace/bun.lock" }, "packages": [] }
+  ]
+}

@@ -1,11 +1,17 @@
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))] // TODO(#263): split Linux-only voice implementation.
+
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{create_private_dir_all, LocalCommandSpec, VoiceError};
+#[cfg(target_os = "linux")]
+use super::create_private_dir_all;
+use super::{LocalCommandSpec, VoiceError};
 
 const FAST_FAIL_WINDOW: Duration = Duration::from_millis(200);
 

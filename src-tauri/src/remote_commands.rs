@@ -447,7 +447,7 @@ fn overview_from_parts(
     tailscale: TailscaleStatus,
 ) -> Result<RemoteHostOverview, String> {
     let listener = listener_from_server(server.as_ref());
-    let path = remote_auth_store_path(&home);
+    let path = remote_auth_store_path(home);
     let snapshot = RemoteAuthStore::snapshot_from_path(&path).map_err(|err| err.to_string())?;
     let local_url = server
         .as_ref()

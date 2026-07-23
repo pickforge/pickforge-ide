@@ -6,12 +6,19 @@ const win = vi.hoisted(() => ({
   visible: false,
   focused: false,
   focusListeners: [] as ((event: { payload: boolean }) => void)[],
+  failNextIsVisible: false,
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     label: win.label,
-    isVisible: () => Promise.resolve(win.visible),
+    isVisible: () => {
+      if (win.failNextIsVisible) {
+        win.failNextIsVisible = false;
+        return Promise.reject(new Error("transient IPC failure"));
+      }
+      return Promise.resolve(win.visible);
+    },
     isFocused: () => Promise.resolve(win.focused),
     onFocusChanged: (listener: (event: { payload: boolean }) => void) => {
       win.focusListeners.push(listener);
@@ -27,6 +34,7 @@ function resetWin() {
   win.visible = false;
   win.focused = false;
   win.focusListeners = [];
+  win.failNextIsVisible = false;
 }
 
 async function loadModule() {
@@ -107,6 +115,28 @@ describe("createMainWindowEligibility", () => {
 
     const pending = eligibility.whenEligible();
     await vi.waitFor(() => expect(win.focusListeners.length).toBeGreaterThan(0));
+
+    win.visible = true;
+    win.focused = true;
+    for (const listener of win.focusListeners) listener({ payload: true });
+
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it("swallows a transient isVisible query rejection instead of forfeiting the wait, and still resolves on a later successful focus event", async () => {
+    vi.stubEnv("PROD", true);
+    const mod = await loadModule();
+    const eligibility = mod.createMainWindowEligibility();
+
+    const pending = eligibility.whenEligible();
+    await vi.waitFor(() => expect(win.focusListeners.length).toBeGreaterThan(0));
+
+    // A focus event whose isVisible() query rejects (transient IPC failure)
+    // must not reject `pending` or permanently settle it false — only
+    // consume the injected failure and keep waiting.
+    win.failNextIsVisible = true;
+    for (const listener of win.focusListeners) listener({ payload: true });
+    await vi.waitFor(() => expect(win.failNextIsVisible).toBe(false));
 
     win.visible = true;
     win.focused = true;

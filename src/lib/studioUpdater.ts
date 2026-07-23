@@ -56,19 +56,26 @@ export function createMainWindowEligibility(): UpdateEligibility {
           void win
             .onFocusChanged(({ payload: focused }) => {
               if (!focused) return;
-              void win.isVisible().then((visible) => {
-                if (visible) finish(true);
-              });
+              // A transient IPC failure here shouldn't forfeit the whole wait
+              // — swallow it and keep listening for the next focus event.
+              void win
+                .isVisible()
+                .then((visible) => {
+                  if (visible) finish(true);
+                })
+                .catch(() => {});
             })
             .then((un) => {
               unlisten = un;
               // The window may have become visible/focused while the listener
-              // was being registered.
-              void Promise.all([win.isVisible(), win.isFocused()]).then(
-                ([visible, focused]) => {
+              // was being registered. Same swallow-and-keep-waiting rule: a
+              // transient query failure here must not finish(false) — a later
+              // focus event can still resolve this eligibility check.
+              void Promise.all([win.isVisible(), win.isFocused()])
+                .then(([visible, focused]) => {
                   if (visible && focused) finish(true);
-                },
-              );
+                })
+                .catch(() => {});
             })
             .catch(() => finish(false));
         });

@@ -54,8 +54,7 @@ impl RemoteHttpServer {
         }
         match self.join.await {
             Ok(result) => result,
-            Err(err) => Err(RemoteServerError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(err) => Err(RemoteServerError::Io(std::io::Error::other(
                 err.to_string(),
             ))),
         }
@@ -155,7 +154,7 @@ async fn handle_connection(
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/status") => {
             let body = serde_json::to_vec(&public_status(&state.daemon, now_ms()))
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+                .map_err(|err| std::io::Error::other(err.to_string()))?;
             write_json_response(&mut stream, 200, &body).await?;
         }
         ("POST", "/remote") => {
@@ -210,6 +209,7 @@ fn dispatch_remote_body(state: &ServerState, body: &[u8]) -> String {
     }
 }
 
+#[allow(clippy::result_large_err)] // TODO(#263): simplify legacy interface.
 fn dispatch_request(
     state: &ServerState,
     id: String,

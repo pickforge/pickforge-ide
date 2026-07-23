@@ -590,6 +590,7 @@ function queuePendingDelta(chatId: string, event: AgentDeltaEvent) {
   schedulePendingDeltaFlush(chatId, buffer);
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function reduceUsageEvent(
   chat: AgentChatState,
   event: Extract<AgentEvent, { kind: "usage" }>,
@@ -668,6 +669,7 @@ function reduceUsageEvent(
   );
 }
 
+// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 function reduceAgentEvent(
   chat: AgentChatState,
   event: AgentEvent,
@@ -827,6 +829,7 @@ function reduceAgentEvent(
   }
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function receiveAgentEvent(chatId: string, event: AgentEvent) {
   if (!chats[chatId]) return;
   if (isDeltaEvent(event)) {
@@ -948,6 +951,7 @@ function parseAttachmentPaths(payload: string): string[] {
   }
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function stateFromHistory(
   chatId: string,
   provider: AgentProvider,
@@ -988,6 +992,7 @@ function stateFromHistory(
         const timeline = chat.timeline.slice();
         for (let i = timeline.length - 1; i >= 0; i -= 1) {
           const item = timeline[i];
+          // eslint-disable-next-line max-depth -- TODO(#263): reduce legacy function complexity.
           if (item.type === "userMessage") {
             timeline[i] = { ...item, images: paths };
             break;
@@ -1021,6 +1026,7 @@ function stateFromHistory(
   return chat;
 }
 
+// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export async function ensureAgentChat(
   chatId: string,
   projectRoot: string,
@@ -1064,6 +1070,7 @@ export async function ensureAgentChat(
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
 
   let promise: Promise<void> | undefined;
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   promise = (async () => {
     try {
       if (!chats[chatId].historyLoaded) {
@@ -1138,6 +1145,7 @@ export async function ensureAgentChat(
   return promise;
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function hydrateAgentChatHistory(
   chatId: string,
   projectRoot: string,
@@ -1323,6 +1331,7 @@ export async function switchAgentChatProvider(
   return true;
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function sendAgentMessage(
   chatId: string,
   text: string,

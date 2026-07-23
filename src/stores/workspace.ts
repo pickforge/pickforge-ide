@@ -164,6 +164,7 @@ let refreshing = false;
  *  going stale. Fires the chat-deletion notifiers for chats another instance
  *  removed so their terminal hosts are torn down, and reconciles the active
  *  project/chat if they vanished. Idempotent; wired to window focus. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function refreshFromDb() {
   if (!state.loaded || refreshing) return;
   refreshing = true;

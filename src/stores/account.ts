@@ -314,6 +314,7 @@ function setAccountError(value: unknown) {
   setError(errorText(value));
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 async function refreshFromAuth(options: RefreshOptions = {}) {
   if (!accountsEnabled()) return;
   const generation = ++refreshGeneration;

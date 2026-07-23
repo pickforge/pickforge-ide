@@ -46,6 +46,7 @@ const NAV: { route: Route; label: string }[] = [
 
 const WINDOW_RESIZING_SETTLE_MS = 180;
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function App() {
   const [, setReady] = createSignal(false);
   installAccountStoreBootstrap();

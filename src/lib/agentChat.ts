@@ -181,6 +181,7 @@ async function ompMcpServers(opts: AgentChatStartOptions): Promise<AgentMcpServe
 }
 
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function agentChatStart(opts: AgentChatStartOptions): Promise<string> {
   if (opts.provider === "pi" && !flagEnabled("ompPiAgents")) {
     throw new Error("Pi native chat is disabled by the ompPiAgents rollout flag");

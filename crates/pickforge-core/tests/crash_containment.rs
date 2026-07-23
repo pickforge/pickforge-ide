@@ -98,6 +98,7 @@ mod unix {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
+        #[allow(clippy::zombie_processes)] // TODO(#263): make guardian ownership explicit to Clippy.
         let child = command.spawn().expect("spawn owned tree root");
         pickforge_core::contain_owned_root(child.id());
 

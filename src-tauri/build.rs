@@ -18,6 +18,7 @@ fn main() {
 ///     copy below is a no-op refresh;
 ///   - a bare `cargo build --workspace` builds workspace binaries as members,
 ///     leaving the binary in `target/<profile>/` for this copy.
+///
 /// If neither produced it (e.g. `cargo check`, which never links binaries), we
 /// only warn: `tauri-build`'s own externalBin check still needs the staged file,
 /// so CI runs `bun run sidecar` before the cargo steps.

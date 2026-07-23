@@ -175,6 +175,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn round_trips_all_event_variants() {
         let events = vec![
             AgentEvent::SessionStarted {

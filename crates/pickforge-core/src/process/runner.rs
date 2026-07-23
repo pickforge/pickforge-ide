@@ -45,10 +45,7 @@ fn capture_stream(mut stream: impl Read, limit: Option<usize>) -> CapturedStream
         truncated: false,
     };
     let mut chunk = [0_u8; 8 * 1024];
-    loop {
-        let Ok(read) = stream.read(&mut chunk) else {
-            break;
-        };
+    while let Ok(read) = stream.read(&mut chunk) {
         if read == 0 {
             break;
         }

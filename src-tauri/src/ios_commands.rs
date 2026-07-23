@@ -8,11 +8,15 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use pickforge_core::android::{A11yNode, DeviceEntry, DeviceKind, DeviceState};
+use pickforge_core::android::{A11yNode, DeviceEntry};
+#[cfg(target_os = "macos")]
+use pickforge_core::android::{DeviceKind, DeviceState};
 use pickforge_core::ios::{
     oslog::{parse_oslog_line, OsLogEvent},
-    simctl::{self, SimDevice, SimState},
+    simctl,
 };
+#[cfg(target_os = "macos")]
+use pickforge_core::ios::simctl::{SimDevice, SimState};
 use pickforge_core::{user_shell_environment, StartGate};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, State};
@@ -188,16 +192,11 @@ async fn relay_lines(
     registry: Arc<Mutex<HashMap<String, OsLogSession>>>,
 ) {
     let mut lines = BufReader::new(stdout);
-    loop {
-        match next_bounded_line(&mut lines).await {
-            Ok(Some(line)) => {
-                if let Some(event) = parse_oslog_line(&line) {
-                    if channel.send(event).is_err() {
-                        break;
-                    }
-                }
+    while let Ok(Some(line)) = next_bounded_line(&mut lines).await {
+        if let Some(event) = parse_oslog_line(&line) {
+            if channel.send(event).is_err() {
+                break;
             }
-            Ok(None) | Err(_) => break,
         }
     }
     let mut reg = registry.lock().await;
@@ -269,6 +268,7 @@ pub async fn oslog_stop(manager: State<'_, OsLogManager>, udid: String) -> Resul
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn sim_device_entry(device: SimDevice) -> DeviceEntry {
     DeviceEntry {
         serial: Some(device.udid),

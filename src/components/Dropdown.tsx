@@ -15,6 +15,7 @@ export interface DropdownOption {
   trailing?: JSX.Element;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function Dropdown(props: {
   value: string;
   options: DropdownOption[];

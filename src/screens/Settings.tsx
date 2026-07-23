@@ -338,6 +338,7 @@ const AGENT_BRAND_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = O
   pi: () => <IconIngot size={14} />,
 });
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function SettingsScreen() {
   const [models, setModels] = createSignal(loadAgentModels());
   const [defaultChatKind, setDefaultChatKindSig] = createSignal<DefaultChatKind>(
@@ -1074,6 +1075,7 @@ export function SettingsScreen() {
     onCleanup(() => window.removeEventListener("keydown", handler, true));
   });
 
+  // eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
   const renderSettings = () => (
       <div class={`pf-settings pf-settings--navigation pf-settings--category-${activeCategory()}`}>
         <AgentModelsSettingsSection>
@@ -1132,6 +1134,7 @@ export function SettingsScreen() {
 
             <div class="pf-agent-connector-list">
               <For each={agentProfiles().filter(isConnectorProfile)}>
+                {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
                 {(agent) => {
                   const diagnostic = () => agentDiagnostics()[agent.id];
                   const failure = () => agentDiagnosticErrors()[agent.id];
@@ -2027,6 +2030,7 @@ export function SettingsScreen() {
                   </>
                 }
               >
+                {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
                 {(account) => (
                   <>
                     <div class="pf-settings-row">

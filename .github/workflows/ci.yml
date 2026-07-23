@@ -14,6 +14,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secrets:
+    name: secrets scan
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: docker://ghcr.io/gitleaks/gitleaks:v8.30.1
+        with:
+          args: git /github/workspace --redact --no-banner
+
+  dependencies:
+    name: dependency audit
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test OSV report gate
+        run: node --test tests/check-osv-severity.test.mjs
+      - name: Scan all lockfiles
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.8
+        with:
+          scan-args: |-
+            scan
+            source
+            --recursive
+            --all-packages
+            --format=json
+            --output-file=/github/workspace/osv-results.json
+            ./
+      - name: Block unsafe advisories and verify lockfile coverage
+        run: node scripts/check-osv-severity.mjs osv-results.json Cargo.lock bun.lock
+
   checks:
     name: cargo + tsc + build
     runs-on: ubuntu-22.04
@@ -37,6 +71,9 @@ jobs:
 
       - name: installer smoke
         run: bun run test:installer
+
+      - name: frontend lint
+        run: bun run lint
 
       - name: unit tests
         run: bun run test:unit
@@ -93,9 +130,12 @@ jobs:
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
 
-      # cargo llvm-cov below builds --all-targets with instrumentation and runs
-      # the whole test suite; a separate `cargo test` would compile and run it a
-      # second time for no extra signal.
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked --all-targets
+
+      - name: cargo clippy (workspace)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: rust coverage
         run: |
           mkdir -p target/llvm-cov

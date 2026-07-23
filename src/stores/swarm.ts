@@ -138,6 +138,7 @@ function laneFocus(mode: SwarmRequest["mode"], index: number): [string, string] 
   return list[index % list.length] as [string, string];
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function providerForRequestedModel(requested: string | null): AgentProvider | null {
   const text = requested?.trim().toLowerCase() ?? "";
   if (!text || isTerminalOnlyModelRequest(requested)) return null;
@@ -467,6 +468,7 @@ function synthesisPrompt(run: SwarmRunSnapshot): string {
   ].join("\n");
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function dispatchSynthesis(run: SwarmRunSnapshot) {
   if (!shouldSynthesize(run) || synthesizing.has(run.runId)) return;
   const originChatId = run.originChatId;

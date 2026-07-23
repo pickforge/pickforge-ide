@@ -212,6 +212,7 @@ fn chat_spawn_options(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // TODO(#263): replace the legacy IPC parameter list.
 pub fn pty_spawn(
     manager: State<'_, PtyManager>,
     roots: State<'_, ApprovedRoots>,

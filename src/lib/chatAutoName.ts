@@ -607,6 +607,7 @@ function commit(chatId: string, message: string) {
   });
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function shellWords(line: string): string[] {
   const words: string[] = [];
   let word = "";
@@ -667,6 +668,7 @@ function shellWords(line: string): string[] {
 
 /** If `line` starts with a known agent binary, return the prompt text after the
  *  command and its flags (empty string = bare launch). null if not an agent. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function matchAgentLaunch(line: string): { prompt: string } | null {
   const tokens = shellWords(line);
   const first = tokens[0];
@@ -766,7 +768,6 @@ const SHELL_BINARIES = new Set<string>([
 export function cleanOscTitle(raw: string): string {
   if (typeof raw !== "string") return "";
   // Strip C0/C1 control chars (some shells wrap the title in them) then trim.
-  // eslint-disable-next-line no-control-regex
   const s = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim();
   if (!s) return ""; // empty / whitespace / control-only
 

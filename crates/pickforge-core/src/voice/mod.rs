@@ -194,12 +194,12 @@ pub fn voice_availability(model_path_override: Option<&Path>) -> VoiceAvailabili
         let model_path = model_path_override
             .map(Path::to_path_buf)
             .or_else(|| default_model_path().ok());
-        return VoiceAvailability {
+        VoiceAvailability {
             available: false,
             missing: Vec::new(),
             model_path: model_path.map(|path| path.to_string_lossy().into_owned()),
             error: Some(VoiceError::UnsupportedPlatform.to_string()),
-        };
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -260,7 +260,7 @@ pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<(
             .mode(0o600)
             .open(path)?;
         file.write_all(bytes)?;
-        return tighten_private_file(path);
+        tighten_private_file(path)
     }
 
     #[cfg(not(unix))]

@@ -46,6 +46,7 @@ export interface TerminalHandle {
   focus: () => void;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function TerminalPane(props: {
   cwd?: string;
   projectRoot?: string;
@@ -109,6 +110,7 @@ export function TerminalPane(props: {
   // Lit while an OS file drag hovers this pane (the subtle drop highlight).
   const [dropHover, setDropHover] = createSignal(false);
 
+  // eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
   onMount(() => {
     const term = new Terminal({
       fontFamily: TERMINAL_FONT_FAMILY,
@@ -212,6 +214,7 @@ export function TerminalPane(props: {
     let inputLine = "";
     let inEscape = false;
     let escCSI = false; // the escape is a CSI/SS3 (\x1b[ or \x1bO) multi-char seq
+    // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
     const trackUserInput = (data: string) => {
       for (const ch of data) {
         const code = ch.codePointAt(0)!;

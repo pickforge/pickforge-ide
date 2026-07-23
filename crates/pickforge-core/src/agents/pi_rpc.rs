@@ -303,6 +303,7 @@ pub fn compatible_version_output(raw: &str) -> Result<String, PiRpcError> {
 }
 
 impl PiRpcClient {
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn(
         opts: PiRpcOptions,
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
@@ -2040,12 +2041,12 @@ for raw in sys.stdin.buffer:
                                         "delta": "think"}})
         emit({"type": "message_update", "message": {"role": "assistant"},
               "assistantMessageEvent": {"type": "text_delta", "contentIndex": 1,
-                                        "delta": "A B C🙂"}},
+                                        "delta": "A\u2028B\u2029C🙂"}},
              fragmented=True)
         message = {
             "role": "assistant",
             "content": [{"type": "thinking", "thinking": "think"},
-                        {"type": "text", "text": "A B C🙂"}],
+                        {"type": "text", "text": "A\u2028B\u2029C🙂"}],
             "usage": {"input": 7, "output": 3, "cacheRead": 2,
                       "cost": {"total": 0.25}},
             "stopReason": "stop",

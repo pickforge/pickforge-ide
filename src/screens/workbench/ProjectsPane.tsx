@@ -123,6 +123,7 @@ interface PendingConfirm {
   run: () => void;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function ProjectsPane() {
   // Owns the shared remote-health poller for its lifetime (no-op until a project
   // is bound to a host and the remoteProjects flag is on).

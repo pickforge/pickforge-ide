@@ -54,6 +54,7 @@ function findPath(root: WidgetNode, id: string, acc: WidgetNode[] = []): WidgetN
   return null;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function WidgetTree() {
   const [isolate, setIsolate] = createSignal<string | null>(null);
   const [tree, setTree] = createSignal<WidgetNode | null>(null);
@@ -162,6 +163,7 @@ export function WidgetTree() {
 
   // Capture the widget (screenshot + context md) and launch the agent in a new
   // terminal pane with a short prompt referencing them.
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   const send = async () => {
     const item = composerFor();
     const node = selectedNode();

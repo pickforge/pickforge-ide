@@ -76,6 +76,7 @@ pub fn spawn(opts: ClaudeBridgeOptions) -> Result<ClaudeBridgeClient, ClaudeBrid
 }
 
 impl ClaudeBridgeClient {
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn(opts: ClaudeBridgeOptions) -> Result<Self, ClaudeBridgeError> {
         let ClaudeBridgeOptions {
             runtime,
@@ -196,6 +197,7 @@ impl ClaudeBridgeClient {
         })
     }
 
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
     pub fn chat_start(
         &self,
         chat_id: &str,
@@ -1166,6 +1168,7 @@ done
         )
     }
 
+    #[allow(clippy::type_complexity)] // TODO(#263): simplify legacy interface.
     fn event_sink() -> (
         Arc<Mutex<Vec<AgentEvent>>>,
         Arc<dyn Fn(AgentEvent) + Send + Sync>,
@@ -1230,6 +1233,7 @@ done
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn maps_bridge_events_writes_ops_and_pairs_list_sessions() {
         let script = test_script();
         let client = spawn_test_client(&script);
@@ -1264,9 +1268,7 @@ done
                 provider_session_id
             }) if provider_session_id == "session-1"
         ));
-        assert!(snapshot
-            .iter()
-            .any(|event| *event == AgentEvent::TurnStarted));
+        assert!(snapshot.contains(&AgentEvent::TurnStarted));
         assert!(snapshot
             .iter()
             .any(|event| matches!(event, AgentEvent::TextDelta { text, .. } if text == "hi")));

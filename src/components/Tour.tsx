@@ -21,6 +21,7 @@ const PAD = 6;
 const CARD_W = 320;
 const GAP = 14;
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function Tour() {
   const [rect, setRect] = createSignal<Rect | null>(null);
   const step = () => TOUR_STEPS[tourStep()];

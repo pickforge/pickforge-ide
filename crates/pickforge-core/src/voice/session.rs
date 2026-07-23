@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))] // TODO(#263): split Linux-only voice implementation.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,13 +13,12 @@ use super::recorder::{ActiveRecording, PwRecordBackend, RecorderBackend};
 use super::segments::{
     read_wav_file, rms_level, write_segment_wav, SegmentConfig, Segmenter, WavData,
 };
-use super::stt::{
-    PreparedTranscription, RunningTranscription, VoiceTranscriber, WhisperCliTranscriber,
-};
-use super::{
-    create_private_dir_all, keep_audio_from_env, VoiceError, VoiceEvent, VoiceSink,
-    DEFAULT_LANGUAGE,
-};
+#[cfg(target_os = "linux")]
+use super::stt::PreparedTranscription;
+use super::stt::{RunningTranscription, VoiceTranscriber, WhisperCliTranscriber};
+#[cfg(target_os = "linux")]
+use super::create_private_dir_all;
+use super::{keep_audio_from_env, VoiceError, VoiceEvent, VoiceSink, DEFAULT_LANGUAGE};
 use crate::process::StartGate;
 
 const STALE_SESSION_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -161,7 +162,7 @@ where
         {
             let _ = request;
             let _ = sink;
-            return Err(VoiceError::UnsupportedPlatform);
+            Err(VoiceError::UnsupportedPlatform)
         }
 
         #[cfg(target_os = "linux")]
@@ -763,6 +764,7 @@ fn drain_sessions(sessions: &Mutex<HashMap<String, SessionHandle>>) -> Vec<Sessi
     sessions.drain().map(|(_, handle)| handle).collect()
 }
 
+#[cfg(test)]
 fn shutdown_sessions(
     sessions: &Mutex<HashMap<String, SessionHandle>>,
     timeout: Duration,

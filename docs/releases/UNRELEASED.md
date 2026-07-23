@@ -69,6 +69,8 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- CI now blocks complexity regressions, severe dependency advisories, and
+  committed secrets; frontend coverage floors were ratcheted to current results.
 - Integrated the published `@pickforge/tauri-updater` shared dialog/controller
   behind the `studioUpdateDialog` flag, default off (pickforge/pickforge-platform#36).
   With the flag on, a startup update check runs once per process, only in a

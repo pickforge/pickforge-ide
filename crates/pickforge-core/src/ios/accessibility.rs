@@ -388,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn maps_key_ios_roles() {
         assert_eq!(map_role("Button", ""), A11yRole::Button);
         assert_eq!(map_role("", "AXButton"), A11yRole::Button);

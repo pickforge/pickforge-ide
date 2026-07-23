@@ -22,6 +22,7 @@ export interface TerminalSelection {
   y: number;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function AskAiMenu(props: {
   selection: TerminalSelection;
   onClose: () => void;

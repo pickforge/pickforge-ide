@@ -122,7 +122,7 @@ pub fn parse_uiautomator(xml: &str) -> Result<A11yNode, UiAutomatorError> {
 }
 
 /// The deepest, topmost node whose bounds contain `(x, y)`, or `None`.
-pub fn hit_test<'a>(root: &'a A11yNode, x: f64, y: f64) -> Option<&'a A11yNode> {
+pub fn hit_test(root: &A11yNode, x: f64, y: f64) -> Option<&A11yNode> {
     if !root.bounds.contains(x, y) {
         return None;
     }

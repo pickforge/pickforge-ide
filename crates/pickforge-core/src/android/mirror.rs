@@ -81,6 +81,7 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
     start_session_cancellable(serial, jar_path, Arc::new(AtomicBool::new(false))).await
 }
 
+#[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
 pub async fn start_session_cancellable(
     serial: &str,
     jar_path: &Path,

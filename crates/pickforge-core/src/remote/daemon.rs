@@ -270,12 +270,11 @@ mod tests {
             .bind_target(),
             Err(DaemonConfigError::NonLoopbackBind("0.0.0.0".into()))
         );
-        assert_eq!(
+        assert!(
             serde_json::from_str::<DaemonListener>(
                 r#"{"kind":"loopback","host":"0.0.0.0","port":4747}"#
             )
-            .is_err(),
-            true
+            .is_err()
         );
         assert_eq!(
             serde_json::from_str::<DaemonListener>(

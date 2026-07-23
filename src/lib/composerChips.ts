@@ -218,6 +218,7 @@ function locate(
 ): { node: Node; offset: number } {
   let remaining = target;
   let found: { node: Node; offset: number } | null = null;
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   const walk = (node: Node): boolean => {
     const children = Array.from(node.childNodes);
     for (let i = 0; i < children.length; i++) {

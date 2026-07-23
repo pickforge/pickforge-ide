@@ -8,11 +8,15 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use pickforge_core::android::{A11yNode, DeviceEntry, DeviceKind, DeviceState};
+use pickforge_core::android::{A11yNode, DeviceEntry};
+#[cfg(target_os = "macos")]
+use pickforge_core::android::{DeviceKind, DeviceState};
 use pickforge_core::ios::{
     oslog::{parse_oslog_line, OsLogEvent},
-    simctl::{self, SimDevice, SimState},
+    simctl,
 };
+#[cfg(target_os = "macos")]
+use pickforge_core::ios::simctl::{SimDevice, SimState};
 use pickforge_core::{user_shell_environment, StartGate};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, State};
@@ -264,6 +268,7 @@ pub async fn oslog_stop(manager: State<'_, OsLogManager>, udid: String) -> Resul
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn sim_device_entry(device: SimDevice) -> DeviceEntry {
     DeviceEntry {
         serial: Some(device.udid),

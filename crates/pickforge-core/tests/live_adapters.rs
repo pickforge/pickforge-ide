@@ -662,7 +662,6 @@ fn ios_tier_a_device_roundtrip() {
     #[cfg(not(target_os = "macos"))]
     {
         eprintln!("skipped: ios_tier_a_device_roundtrip — iOS live smokes require macOS");
-        return;
     }
 
     #[cfg(target_os = "macos")]
@@ -676,7 +675,6 @@ fn ios_tier_b_real_launch() {
     #[cfg(not(target_os = "macos"))]
     {
         eprintln!("skipped: ios_tier_b_real_launch — iOS live smokes require macOS");
-        return;
     }
 
     #[cfg(target_os = "macos")]

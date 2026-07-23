@@ -26,6 +26,7 @@
     "@pickforge/brand": "0.2.1",
     "@pickforge/flags": "^0.4.0",
     "@pickforge/sync": "^0.6.0",
+    "@pickforge/tauri-updater": "^0.12.0",
     "@supabase/supabase-js": "^2.110.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-deep-link": "^2.4.9",

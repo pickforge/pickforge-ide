@@ -13,9 +13,11 @@ use std::path::Path;
 
 pub use home::{pickforge_home, PickforgeHomeError};
 pub use linux_graphics::{
-    amd_gpu_present, kde_wayland_session_detected, load_linux_graphics_config,
-    resolve_graphics_backend_plan, save_linux_graphics_config, should_recommend_compatibility,
-    GraphicsBackendPlan, LinuxGraphicsConfig, LinuxGraphicsMode,
+    amd_gpu_present, boot_linux_graphics_mode, kde_wayland_session_detected,
+    load_linux_graphics_config, record_boot_linux_graphics_mode, resolve_graphics_backend_plan,
+    save_linux_graphics_config, should_recommend_compatibility, DmabufAction, GraphicsBackendPlan,
+    LinuxGraphicsConfig, LinuxGraphicsMode, LINUX_DMABUF_SYNTHESIZED_MARKER_ENV,
+    WEBKIT_DISABLE_DMABUF_ENV,
 };
 pub use project_id::project_id;
 pub use service::{ContextStorageService, StorageError};

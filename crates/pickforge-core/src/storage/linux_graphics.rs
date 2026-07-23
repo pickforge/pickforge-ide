@@ -27,7 +27,18 @@ use super::pickforge_home;
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const GDK_BACKEND_ENV: &str = "GDK_BACKEND";
-const WEBKIT_DISABLE_DMABUF_ENV: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+/// WebKitGTK reads this directly from the process environment before it
+/// initializes; there is no in-process API substitute (unlike the GDK
+/// backend preference, which never touches the environment).
+pub const WEBKIT_DISABLE_DMABUF_ENV: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+/// Real process env var PickForge sets alongside `WEBKIT_DISABLE_DMABUF_RENDERER`
+/// whenever *it* (not the user) synthesized that value. Tauri's
+/// `process::restart` re-execs the same binary and inherits the full
+/// environment, so a synthesized DMA-BUF value survives a Settings-triggered
+/// relaunch — without this marker, [`resolve_graphics_backend_plan`] cannot
+/// tell that apart from a genuine user override, and a stale Compatibility
+/// value would silently survive switching back to Auto/Native Wayland (#238).
+pub const LINUX_DMABUF_SYNTHESIZED_MARKER_ENV: &str = "PICKFORGE_DMABUF_SYNTHESIZED";
 const PICKFORGE_WAYLAND_ENV: &str = "PICKFORGE_WAYLAND";
 const XDG_SESSION_TYPE_ENV: &str = "XDG_SESSION_TYPE";
 const XDG_CURRENT_DESKTOP_ENV: &str = "XDG_CURRENT_DESKTOP";
@@ -68,6 +79,26 @@ impl Default for LinuxGraphicsConfig {
     }
 }
 
+/// What to do with `WEBKIT_DISABLE_DMABUF_RENDERER` (and its
+/// [`LINUX_DMABUF_SYNTHESIZED_MARKER_ENV`] marker) in the process
+/// environment, decided by [`resolve_graphics_backend_plan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DmabufAction {
+    /// Leave the environment exactly as-is. Either nothing is set, or a
+    /// genuine user-set value (no PickForge marker present) is already
+    /// there — an explicit override always wins.
+    Leave,
+    /// Remove both `WEBKIT_DISABLE_DMABUF_RENDERER` and the synthesized
+    /// marker: a PickForge-owned value survived a Settings-triggered
+    /// relaunch (#238), but the persisted mode no longer wants DMA-BUF
+    /// disabled.
+    Clear,
+    /// Set `WEBKIT_DISABLE_DMABUF_RENDERER=1` and the synthesized marker —
+    /// either freshly (Compatibility chosen this process) or to re-affirm an
+    /// owned value that survived relaunch.
+    Set,
+}
+
 /// What main() should do before GTK/WebKitGTK initialize, given the
 /// persisted mode and the raw process environment. Pure and deterministic —
 /// no filesystem or GTK access — so it's fully unit-testable.
@@ -78,11 +109,7 @@ pub struct GraphicsBackendPlan {
     /// (`WAYLAND_DISPLAY` and `DISPLAY` both set) — forcing X11 when no
     /// XWayland is running would leave GDK without a working backend.
     pub prefer_x11: bool,
-    /// `Some(value)` means the caller should set `WEBKIT_DISABLE_DMABUF_RENDERER`
-    /// to `value` in the process environment before WebKitGTK initializes.
-    /// `None` means leave it untouched — either an explicit override is
-    /// already present, or the resolved mode keeps DMA-BUF enabled.
-    pub set_dmabuf_disabled: Option<&'static str>,
+    pub dmabuf_action: DmabufAction,
 }
 
 /// Resolve what to apply for `mode`, honoring explicit process-environment
@@ -90,7 +117,12 @@ pub struct GraphicsBackendPlan {
 /// - An explicit `GDK_BACKEND` always wins (GDK itself gives it precedence).
 /// - `PICKFORGE_WAYLAND` is the existing troubleshooting override that opts
 ///   back into native Wayland; preserved as-is.
-/// - An explicit `WEBKIT_DISABLE_DMABUF_RENDERER` always wins for DMA-BUF.
+/// - A genuine user-set `WEBKIT_DISABLE_DMABUF_RENDERER` (no PickForge
+///   marker present) always wins for DMA-BUF.
+/// - A PickForge-owned `WEBKIT_DISABLE_DMABUF_RENDERER` (marker present —
+///   i.e. it survived a Settings-triggered relaunch, #238) is never treated
+///   as an explicit override: it tracks the persisted mode instead, so
+///   switching away from Compatibility and restarting actually clears it.
 pub fn resolve_graphics_backend_plan(
     mode: LinuxGraphicsMode,
     env: &HashMap<String, String>,
@@ -102,26 +134,54 @@ pub fn resolve_graphics_backend_plan(
         .get(PICKFORGE_WAYLAND_ENV)
         .map(|value| !matches!(value.trim(), "" | "0" | "false"))
         .unwrap_or(false);
-    let dmabuf_explicit = env
-        .get(WEBKIT_DISABLE_DMABUF_ENV)
-        .is_some_and(|value| !value.trim().is_empty());
 
     let prefer_x11 = !gdk_backend_explicit
         && !wants_wayland_override
         && matches!(mode, LinuxGraphicsMode::Auto | LinuxGraphicsMode::Compatibility);
 
-    let set_dmabuf_disabled = if dmabuf_explicit {
-        None
+    let owned_by_pickforge = env
+        .get(LINUX_DMABUF_SYNTHESIZED_MARKER_ENV)
+        .is_some_and(|value| !value.trim().is_empty());
+    let dmabuf_explicit = !owned_by_pickforge
+        && env
+            .get(WEBKIT_DISABLE_DMABUF_ENV)
+            .is_some_and(|value| !value.trim().is_empty());
+
+    let dmabuf_action = if dmabuf_explicit {
+        DmabufAction::Leave
     } else if matches!(mode, LinuxGraphicsMode::Compatibility) {
-        Some("1")
+        DmabufAction::Set
+    } else if owned_by_pickforge {
+        DmabufAction::Clear
     } else {
-        None
+        DmabufAction::Leave
     };
 
     GraphicsBackendPlan {
         prefer_x11,
-        set_dmabuf_disabled,
+        dmabuf_action,
     }
+}
+
+static BOOT_MODE: std::sync::OnceLock<LinuxGraphicsMode> = std::sync::OnceLock::new();
+
+/// Records the Linux graphics mode actually applied at process boot (#238),
+/// before GTK/WebKitGTK initialized — independent of any persisted-config
+/// edits made since. Idempotent: only the first call (there is exactly one
+/// boot per process) has any effect.
+pub fn record_boot_linux_graphics_mode(mode: LinuxGraphicsMode) {
+    let _ = BOOT_MODE.set(mode);
+}
+
+/// The Linux graphics mode active for the running process, i.e. what startup
+/// actually applied. Settings compares the live-selected mode against this
+/// (not the freshly-reloaded persisted config, which a Settings edit changes
+/// immediately) to know whether a restart is actually still required — this
+/// is what survives Settings remounts and clears correctly on A→B→A. Falls
+/// back to Auto if boot never recorded a mode (non-Linux, or a call made
+/// before `main()`'s early application, which should not happen).
+pub fn boot_linux_graphics_mode() -> LinuxGraphicsMode {
+    BOOT_MODE.get().copied().unwrap_or_default()
 }
 
 /// True when the session looks like KDE Plasma on Wayland, from session env
@@ -371,21 +431,21 @@ mod tests {
     fn auto_prefers_x11_and_keeps_dmabuf_enabled() {
         let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::Auto, &HashMap::new());
         assert!(plan.prefer_x11);
-        assert_eq!(plan.set_dmabuf_disabled, None);
+        assert_eq!(plan.dmabuf_action, DmabufAction::Leave);
     }
 
     #[test]
     fn compatibility_prefers_x11_and_disables_dmabuf() {
         let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::Compatibility, &HashMap::new());
         assert!(plan.prefer_x11);
-        assert_eq!(plan.set_dmabuf_disabled, Some("1"));
+        assert_eq!(plan.dmabuf_action, DmabufAction::Set);
     }
 
     #[test]
     fn native_wayland_does_not_prefer_x11_and_keeps_dmabuf_enabled() {
         let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::NativeWayland, &HashMap::new());
         assert!(!plan.prefer_x11);
-        assert_eq!(plan.set_dmabuf_disabled, None);
+        assert_eq!(plan.dmabuf_action, DmabufAction::Leave);
     }
 
     #[test]
@@ -403,9 +463,11 @@ mod tests {
 
     #[test]
     fn explicit_webkit_dmabuf_override_wins_over_compatibility() {
+        // No PICKFORGE_DMABUF_SYNTHESIZED marker: this is a genuine user-set
+        // value, so it must be left untouched and propagated (#238 P0).
         let env = env_of(&[("WEBKIT_DISABLE_DMABUF_RENDERER", "0")]);
         let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::Compatibility, &env);
-        assert_eq!(plan.set_dmabuf_disabled, None);
+        assert_eq!(plan.dmabuf_action, DmabufAction::Leave);
     }
 
     #[test]
@@ -434,7 +496,99 @@ mod tests {
         ]);
         let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::Compatibility, &env);
         assert!(plan.prefer_x11);
-        assert_eq!(plan.set_dmabuf_disabled, Some("1"));
+        assert_eq!(plan.dmabuf_action, DmabufAction::Set);
+    }
+
+    // -- relaunch env poisoning (#238 P0) --------------------------------
+    //
+    // Settings' "Restart now" relaunches via Tauri's process::restart, which
+    // re-execs the same binary and inherits the full environment. A prior
+    // process's synthesized WEBKIT_DISABLE_DMABUF_RENDERER must not be
+    // mistaken for a user override on the next boot.
+
+    #[test]
+    fn inherited_owned_var_is_cleared_when_mode_is_no_longer_compatibility() {
+        let env = env_of(&[
+            ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+            ("PICKFORGE_DMABUF_SYNTHESIZED", "1"),
+        ]);
+        for mode in [LinuxGraphicsMode::Auto, LinuxGraphicsMode::NativeWayland] {
+            let plan = resolve_graphics_backend_plan(mode, &env);
+            assert_eq!(
+                plan.dmabuf_action,
+                DmabufAction::Clear,
+                "{mode:?} should clear a stale PickForge-owned DMA-BUF value",
+            );
+        }
+    }
+
+    #[test]
+    fn inherited_owned_var_is_re_set_when_mode_is_still_compatibility() {
+        let env = env_of(&[
+            ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+            ("PICKFORGE_DMABUF_SYNTHESIZED", "1"),
+        ]);
+        let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::Compatibility, &env);
+        assert_eq!(plan.dmabuf_action, DmabufAction::Set);
+    }
+
+    #[test]
+    fn genuinely_user_set_var_without_the_marker_is_left_alone_in_every_mode() {
+        let env = env_of(&[("WEBKIT_DISABLE_DMABUF_RENDERER", "1")]);
+        for mode in [
+            LinuxGraphicsMode::Auto,
+            LinuxGraphicsMode::Compatibility,
+            LinuxGraphicsMode::NativeWayland,
+        ] {
+            let plan = resolve_graphics_backend_plan(mode, &env);
+            assert_eq!(
+                plan.dmabuf_action,
+                DmabufAction::Leave,
+                "{mode:?} must not touch a value it never marked as its own",
+            );
+        }
+    }
+
+    #[test]
+    fn blank_marker_does_not_count_as_owned() {
+        let env = env_of(&[
+            ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+            ("PICKFORGE_DMABUF_SYNTHESIZED", "  "),
+        ]);
+        let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::Auto, &env);
+        assert_eq!(plan.dmabuf_action, DmabufAction::Leave);
+    }
+
+    #[test]
+    fn stray_marker_without_the_webkit_var_is_still_cleared() {
+        // A `remove_var` on an already-absent key is a harmless no-op, so
+        // Clear is the defensively-correct action for a stray marker (e.g.
+        // left behind by a partial failure) — it always leaves both real env
+        // vars absent rather than leaving PICKFORGE_DMABUF_SYNTHESIZED set
+        // with nothing backing it.
+        let env = env_of(&[("PICKFORGE_DMABUF_SYNTHESIZED", "1")]);
+        let plan = resolve_graphics_backend_plan(LinuxGraphicsMode::Auto, &env);
+        assert_eq!(plan.dmabuf_action, DmabufAction::Clear);
+    }
+
+    // -- boot-active mode (#238 P2: restart-required durability) --------
+
+    #[test]
+    fn boot_linux_graphics_mode_records_once_and_is_idempotent() {
+        // BOOT_MODE is a real process-global OnceLock (deliberately: it must
+        // reflect exactly what main() applied at boot, for the process's
+        // whole lifetime), so this is the *only* test in this binary allowed
+        // to call record_boot_linux_graphics_mode — every assertion here
+        // depends on running before anything else could set it.
+        assert_eq!(boot_linux_graphics_mode(), LinuxGraphicsMode::Auto);
+
+        record_boot_linux_graphics_mode(LinuxGraphicsMode::Compatibility);
+        assert_eq!(boot_linux_graphics_mode(), LinuxGraphicsMode::Compatibility);
+
+        // A later call (there should never be one in production — one boot,
+        // one record — but prove it's harmless) must not override it.
+        record_boot_linux_graphics_mode(LinuxGraphicsMode::NativeWayland);
+        assert_eq!(boot_linux_graphics_mode(), LinuxGraphicsMode::Compatibility);
     }
 
     // -- KDE Wayland + AMD recommendation -------------------------------

@@ -71,12 +71,14 @@ pub use remote::{
     TunnelManager, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
 };
 pub use storage::{
-    amd_gpu_present, kde_wayland_session_detected, load_linux_graphics_config,
-    load_telemetry_config, pickforge_env_vars, pickforge_home, project_id,
-    resolve_graphics_backend_plan, save_linux_graphics_config, save_telemetry_config,
-    should_recommend_compatibility, ContextStorageLocation, ContextStorageMode,
-    ContextStorageService, GraphicsBackendPlan, LinuxGraphicsConfig, LinuxGraphicsMode,
-    PickforgeHomeError, ResolvedContextDirectory, StorageError, TelemetryConfig,
+    amd_gpu_present, boot_linux_graphics_mode, kde_wayland_session_detected,
+    load_linux_graphics_config, load_telemetry_config, pickforge_env_vars, pickforge_home,
+    project_id, record_boot_linux_graphics_mode, resolve_graphics_backend_plan,
+    save_linux_graphics_config, save_telemetry_config, should_recommend_compatibility,
+    ContextStorageLocation, ContextStorageMode, ContextStorageService, DmabufAction,
+    GraphicsBackendPlan, LinuxGraphicsConfig, LinuxGraphicsMode, PickforgeHomeError,
+    ResolvedContextDirectory, StorageError, TelemetryConfig, LINUX_DMABUF_SYNTHESIZED_MARKER_ENV,
+    WEBKIT_DISABLE_DMABUF_ENV,
 };
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,

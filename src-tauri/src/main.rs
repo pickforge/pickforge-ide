@@ -13,14 +13,20 @@
 /// WebKitGTK's DMA-BUF renderer) comes from the persisted Linux graphics mode
 /// (#238) — see [`pickforge_core::resolve_graphics_backend_plan`] — which in
 /// turn already accounts for `PICKFORGE_WAYLAND` and explicit `GDK_BACKEND` /
-/// `WEBKIT_DISABLE_DMABUF_RENDERER` overrides. This function only adds the
-/// mixed-session runtime guard: forcing X11 when no XWayland is actually
-/// running (no `WAYLAND_DISPLAY` + `DISPLAY` pair) would leave GDK without a
-/// working backend at all.
+/// `WEBKIT_DISABLE_DMABUF_RENDERER` overrides, and treats a PickForge-owned
+/// DMA-BUF value that survived a Settings-triggered relaunch
+/// (`tauri_plugin_process::restart` re-execs this binary and inherits the
+/// full environment) as *not* an explicit override — otherwise switching
+/// Compatibility → Auto/Native Wayland and restarting would silently keep
+/// DMA-BUF disabled forever. This function only adds the mixed-session
+/// runtime guard: forcing X11 when no XWayland is actually running (no
+/// `WAYLAND_DISPLAY` + `DISPLAY` pair) would leave GDK without a working
+/// backend at all.
 #[cfg(target_os = "linux")]
 fn apply_linux_graphics_mode() {
     let env: std::collections::HashMap<String, String> = std::env::vars().collect();
     let mode = pickforge_core::load_linux_graphics_config().mode;
+    pickforge_core::record_boot_linux_graphics_mode(mode);
     let plan = pickforge_core::resolve_graphics_backend_plan(mode, &env);
 
     let wayland = env.contains_key("WAYLAND_DISPLAY");
@@ -29,15 +35,28 @@ fn apply_linux_graphics_mode() {
         gtk::gdk::set_allowed_backends("x11,wayland");
     }
 
-    if let Some(value) = plan.set_dmabuf_disabled {
-        // WebKitGTK reads this directly from the process environment before
-        // any in-process API can substitute for it, so — unlike the GDK
-        // backend preference above — it must be a real env var. Compatibility
-        // mode must affect PickForge only: mark it as PickForge-synthesized so
-        // `user_shell_environment()` never forwards it to spawned shells or
-        // agents (#238).
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", value);
-        pickforge_core::mark_linux_dmabuf_env_synthesized();
+    match plan.dmabuf_action {
+        pickforge_core::DmabufAction::Leave => {}
+        pickforge_core::DmabufAction::Clear => {
+            // A PickForge-owned value survived relaunch but the mode no
+            // longer wants it — scrub both real env vars so it can't be
+            // mistaken for a user override on any later boot either.
+            std::env::remove_var(pickforge_core::WEBKIT_DISABLE_DMABUF_ENV);
+            std::env::remove_var(pickforge_core::LINUX_DMABUF_SYNTHESIZED_MARKER_ENV);
+        }
+        pickforge_core::DmabufAction::Set => {
+            // WebKitGTK reads WEBKIT_DISABLE_DMABUF_RENDERER directly from the
+            // process environment before any in-process API can substitute
+            // for it, so — unlike the GDK backend preference above — it must
+            // be a real env var, and the marker alongside it must be too (so
+            // both survive a relaunch together). Compatibility mode must
+            // affect PickForge only: mark it as PickForge-synthesized in this
+            // process's own bookkeeping too, so `user_shell_environment()`
+            // never forwards either var to spawned shells or agents (#238).
+            std::env::set_var(pickforge_core::WEBKIT_DISABLE_DMABUF_ENV, "1");
+            std::env::set_var(pickforge_core::LINUX_DMABUF_SYNTHESIZED_MARKER_ENV, "1");
+            pickforge_core::mark_linux_dmabuf_env_synthesized();
+        }
     }
 }
 

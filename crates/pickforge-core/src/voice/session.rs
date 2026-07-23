@@ -764,6 +764,7 @@ fn drain_sessions(sessions: &Mutex<HashMap<String, SessionHandle>>) -> Vec<Sessi
     sessions.drain().map(|(_, handle)| handle).collect()
 }
 
+#[cfg(test)]
 fn shutdown_sessions(
     sessions: &Mutex<HashMap<String, SessionHandle>>,
     timeout: Duration,

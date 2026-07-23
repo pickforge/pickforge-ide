@@ -51,6 +51,19 @@ reset this file.
   agent knows to use a real terminal for privileged commands instead.
   macOS/Windows are out of scope this release — never `sudo -S`, never
   password capture, never a bundled helper (#215).
+- Settings (General) gets a new "Legacy sessions" section: after #209
+  namespaced every dtach/tmux recovery session per PickForge process, a
+  session created by an older build no longer reattaches automatically —
+  it just sits under the old shared paths. This section lists any such
+  session it finds (a live/stale hint for dtach, an attached/detached hint
+  for tmux) and lets you stop one at a time, or all of the currently listed
+  ones behind a confirmation dialog. Nothing is ever swept automatically: a
+  live legacy session may still belong to another PickForge window that
+  happens to be running right now, and there's no way to prove otherwise
+  without asking you. Until you use this (or stop a session manually —
+  `tmux -L pickforge kill-session -t <name>`, or send a dtach master's
+  process a signal), the old session just keeps running alongside the new
+  per-instance ones; it costs nothing but its own memory (#214).
 
 ## Internal/release changes (dark: no default-on behavior change)
 
@@ -69,6 +82,28 @@ reset this file.
 
 ## Validation
 
+- #214: `pty::sessions` unit tests cover legacy-vs-current-instance path
+  separation (the legacy shared dir/tmux server name never equal this
+  process's private ones), the legacy dtach socket path's escape/grammar
+  guard, an unsupported-kind and non-owned-name refusal at both the core and
+  Tauri-command layers, detection scoping to only the legacy dir (a
+  current-instance-dir artifact is never reported as legacy), a live-master
+  detection fixture (a concurrently bound legacy socket is reported live, not
+  silently treated as safe — the exact scenario this issue protects against),
+  a stale-socket no-op cleanup, and a regression guard proving normal
+  exit-time cleanup (`kill_recoverable_sessions_on_exit` /
+  `contain_recoverable_sessions`) never reaches into the legacy namespace.
+  `cargo test --workspace --locked --all-targets` (545 pickforge-core tests
+  after this change) passes; one `agents::claude_stream` test flaked once
+  under full-suite parallel load and passed both individually and on a clean
+  full-suite re-run — pre-existing env-contention flakiness, unrelated to
+  this change. `bun run test:unit` (929 tests) has the same 3 pre-existing
+  `chatTerminalLifecycle` failures present on a clean `main` checkout
+  (unrelated file, not touched here); `bun run build` passes.
+  **No feature flag:** detection is read-only and every mutating action
+  requires an explicit, per-session (or explicitly-confirmed bulk) click —
+  there is no state this ships disabled, matching #208's "corrective
+  lifecycle behavior, no flag" precedent.
 - #215: capability-detection unit tests (`process::askpass`) cover a
   user-executable helper winning over the probe list, a non-executable
   user-set value falling back to the probe list, no helper resolving, and
@@ -140,7 +175,14 @@ reset this file.
   `settings-chromium-linux.png`, and the two new
   `settings-linux-graphics.spec.ts` screenshots need CI regeneration
   (`update-vrt-baselines` workflow) — not generated locally, per repo policy
-  (#238).
+  (#238). The same two `general`-category baselines also need regenerating
+  for the new "Legacy sessions" section (#214).
+- #214: the fixture-level concurrent-old-instance scenario (a live legacy
+  dtach master while this build starts) is covered by a Rust unit test; a
+  real end-to-end smoke — an actual older PickForge build left running,
+  upgrading past it, and confirming the newer build's own sessions/exit
+  cleanup never disturb it while the Settings panel lists and can stop the
+  older build's session by hand — has not been run.
 
 - Real AMD/KDE Wayland A/B smoke (Auto vs. Compatibility vs. Native Wayland,
   persistence across restart, KDE Wayland + AMD one-time recommendation) on

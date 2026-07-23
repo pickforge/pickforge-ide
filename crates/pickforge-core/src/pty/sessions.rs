@@ -935,6 +935,219 @@ pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), Stri
     }
 }
 
+// == Legacy (pre-#209) session detection and explicit cleanup (pickforge#214) ==
+//
+// Before #209, every PickForge instance on a machine shared ONE dtach sockets
+// directory and ONE fixed-name tmux server — there was no per-process
+// namespace. After upgrading past #209, those artifacts are no longer
+// reattached or swept by the code above (which only ever touches THIS
+// process's private `s-<instance-id>` dir and `pickforge-<instance-id>`
+// server) and can outlive the build that made them.
+//
+// A legacy artifact predates instance ids, so unlike everything above we
+// cannot prove exclusive ownership of it: a live legacy dtach master or a
+// session on the shared `pickforge` tmux server MAY be the current, actively
+// used session of some OTHER concurrently running old/dev/flavor PickForge
+// instance (the #209 review that deferred this into #214, and #208's
+// "never kill by name / never assume ownership" decision). There is also no
+// schema that recorded which instance created a given legacy artifact, so
+// provenance cannot be reconstructed — only the exact, named artifact itself
+// can be shown.
+//
+// So this section is deliberately narrow:
+//   * detection is read-only and structural — an exact directory listing and
+//     an exact `tmux list-sessions` on the known legacy paths, NEVER a
+//     command-name-wide process scan;
+//   * there is no "clean up everything" verb. Every stop function acts on
+//     exactly one caller-named artifact, validated against the exact legacy
+//     grammar/namespace the same way the current-instance path is guarded
+//     above;
+//   * a legacy tmux artifact is only ever stopped with `kill-session` on its
+//     exact name — `kill-server` is never called against the shared legacy
+//     server, because doing so could take down another live instance's
+//     session that was never shown to (or chosen by) the user.
+//
+// Callers (the Tauri command layer) are expected to surface the detected list
+// to the user and only invoke a stop function for an item the user explicitly
+// selected — never automatically, never on startup, never on exit.
+
+/// The old, pre-#209 shared dtach sockets dir every instance used:
+/// `<runtime_base>/pickforge/sessions/`. Unlike [`sessions_dir`], a socket
+/// found here is not provably ours — see the module note above.
+pub fn legacy_sessions_dir(runtime_base: &Path) -> PathBuf {
+    runtime_base.join("pickforge").join("sessions")
+}
+
+/// The old, pre-#209 fixed tmux server label every instance shared
+/// (`tmux -L pickforge`). Never pass this to `kill-server`.
+pub const LEGACY_TMUX_SERVER_NAME: &str = "pickforge";
+
+/// One legacy dtach artifact discovered under [`legacy_sessions_dir`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyDtachSession {
+    pub name: String,
+    pub socket: PathBuf,
+    /// Best-effort: `true` when a process is currently listening on this
+    /// socket. `false` means it's stale residue (nothing is listening) —
+    /// informational only, never a gate on what the user is allowed to stop.
+    pub live: bool,
+}
+
+/// One legacy tmux artifact discovered on [`LEGACY_TMUX_SERVER_NAME`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyTmuxSession {
+    pub name: String,
+    /// Whether tmux currently reports a client attached.
+    pub attached: bool,
+}
+
+/// Read-only detection of legacy dtach artifacts: an exact directory listing
+/// of [`legacy_sessions_dir`] using the same owned-name grammar as
+/// [`owned_dtach_sockets`] (regular `pf-*.dtach` files only, never a
+/// symlink), plus a best-effort liveness probe per socket. Never signals or
+/// removes anything.
+#[cfg(target_os = "linux")]
+pub fn detect_legacy_dtach_sessions(runtime_base: &Path) -> Vec<LegacyDtachSession> {
+    owned_dtach_sockets(&legacy_sessions_dir(runtime_base))
+        .into_iter()
+        .filter_map(|socket| {
+            let name = socket
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".dtach"))?
+                .to_string();
+            let live = !dtach_socket_is_stale(&socket);
+            Some(LegacyDtachSession { name, socket, live })
+        })
+        .collect()
+}
+
+/// dtach is only ever selected as a backend on Linux (see
+/// [`select_backend_with`]), so no dtach chat session — legacy or current —
+/// could ever exist on another platform.
+#[cfg(not(target_os = "linux"))]
+pub fn detect_legacy_dtach_sessions(_runtime_base: &Path) -> Vec<LegacyDtachSession> {
+    Vec::new()
+}
+
+fn parse_legacy_tmux_sessions(stdout: &[u8]) -> Vec<LegacyTmuxSession> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|line| {
+            let (name, attached) = line.split_once('\t')?;
+            // Only report artifacts matching our exact session-name grammar —
+            // a stray session someone else created under this server label is
+            // neither ours to report nor ours to ever touch.
+            validate_session_name(name).ok()?;
+            Some(LegacyTmuxSession {
+                name: name.to_string(),
+                attached: attached.trim() == "1",
+            })
+        })
+        .collect()
+}
+
+/// Read-only detection of legacy tmux artifacts:
+/// `tmux -L pickforge list-sessions -F '#{session_name}\t#{session_attached}'`,
+/// bounded so it can never hang a settings UI. A missing server or a missing
+/// `tmux` binary means no legacy tmux artifacts exist — not an error.
+pub fn detect_legacy_tmux_sessions(
+    tmux_program: Option<&Path>,
+) -> Result<Vec<LegacyTmuxSession>, String> {
+    let program = tmux_program
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "tmux".to_string());
+    let args = [
+        "-L",
+        LEGACY_TMUX_SERVER_NAME,
+        "list-sessions",
+        "-F",
+        "#{session_name}\t#{session_attached}",
+    ];
+    match run_timeout(&program, &args, None, None, TMUX_KILL_TIMEOUT) {
+        Ok(outcome) if outcome.success() => Ok(parse_legacy_tmux_sessions(&outcome.stdout)),
+        Ok(outcome) if tmux_server_is_absent(&outcome.stderr) => Ok(Vec::new()),
+        Ok(outcome) => Err(format!(
+            "cannot list legacy tmux sessions: {}",
+            String::from_utf8_lossy(&outcome.stderr).trim()
+        )),
+        Err(RunError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(format!("cannot run tmux: {error}")),
+    }
+}
+
+/// Validate + resolve a legacy dtach socket path the exact same way
+/// [`validated_dtach_socket_path`] guards the current-instance dir — grammar
+/// check plus an escape check against [`legacy_sessions_dir`] — so a
+/// path-traversal attempt in a caller-supplied name can never reach a socket
+/// outside the legacy namespace.
+pub fn validated_legacy_dtach_socket_path(runtime_base: &Path, name: &str) -> Result<PathBuf, String> {
+    validate_session_name(name)?;
+    let dir = legacy_sessions_dir(runtime_base);
+    let socket = dir.join(format!("{name}.dtach"));
+    let relative = socket
+        .strip_prefix(&dir)
+        .map_err(|_| "dtach socket escaped the legacy session namespace".to_string())?;
+    let mut components = relative.components();
+    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+        return Err("dtach socket escaped the legacy session namespace".to_string());
+    }
+    Ok(socket)
+}
+
+/// Stop exactly ONE legacy dtach session the caller has already named —
+/// never a sweep. Finds and terminates the exact owned master bound to this
+/// socket (same exact-argv-match technique as [`kill_dtach_master`]) and then
+/// removes the socket. A master that's already gone (stale socket) is a
+/// no-op success, not an error.
+pub fn stop_legacy_dtach_session(runtime_base: &Path, name: &str) -> Result<(), String> {
+    let socket = validated_legacy_dtach_socket_path(runtime_base, name)?;
+    match kill_dtach_master(&socket) {
+        Ok(_) => {}
+        Err(DtachKillError::MasterNotFound(_)) => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    match std::fs::symlink_metadata(&socket) {
+        Ok(meta) if !meta.file_type().is_symlink() => std::fs::remove_file(&socket)
+            .map_err(|error| format!("cannot remove {}: {error}", socket.display())),
+        Ok(_) => Ok(()), // a symlink here isn't ours to remove
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cannot inspect {}: {error}", socket.display())),
+    }
+}
+
+/// Stop exactly ONE legacy tmux session the caller has already named —
+/// `kill-session` on its exact name, NEVER `kill-server` on the shared legacy
+/// server (see the module note above).
+pub fn stop_legacy_tmux_session(tmux_program: Option<&Path>, name: &str) -> Result<(), String> {
+    validate_session_name(name)?;
+    let program = tmux_program
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "tmux".to_string());
+    let target = format!("={name}");
+    let args = [
+        "-L",
+        LEGACY_TMUX_SERVER_NAME,
+        "kill-session",
+        "-t",
+        target.as_str(),
+    ];
+    match run_timeout(&program, &args, None, None, TMUX_KILL_TIMEOUT) {
+        Ok(outcome) if outcome.success() => Ok(()),
+        Ok(outcome)
+            if tmux_server_is_absent(&outcome.stderr)
+                || String::from_utf8_lossy(&outcome.stderr).contains("can't find session") =>
+        {
+            Ok(())
+        }
+        Ok(outcome) => Err(format!(
+            "cannot stop legacy tmux session: {}",
+            String::from_utf8_lossy(&outcome.stderr).trim()
+        )),
+        Err(error) => Err(format!("cannot run tmux: {error}")),
+    }
+}
+
 /// The "created" vs "attached" hint returned to the UI. Best-effort: it reflects
 /// whether the session's socket/name already existed when we opened, which can
 /// race a simultaneous first-open — treat it as informational, not a guarantee.
@@ -1919,5 +2132,199 @@ mod tests {
             |_| false,
         );
         assert!(none.session_id.is_none());
+    }
+
+    // == pickforge#214: legacy session detection/cleanup ==
+
+    #[test]
+    fn legacy_paths_are_the_pre_209_shared_namespace_never_the_instance_one() {
+        let base = PathBuf::from("/run/user/1000");
+        assert_eq!(
+            legacy_sessions_dir(&base),
+            base.join("pickforge").join("sessions")
+        );
+        assert_ne!(
+            legacy_sessions_dir(&base),
+            sessions_dir(&base),
+            "legacy and current-instance dirs must never collide"
+        );
+        assert_eq!(LEGACY_TMUX_SERVER_NAME, "pickforge");
+        assert_ne!(
+            LEGACY_TMUX_SERVER_NAME,
+            tmux_server_name(),
+            "the legacy server label must never equal this instance's private one"
+        );
+    }
+
+    #[test]
+    fn legacy_dtach_socket_path_rejects_the_owned_grammar_violations() {
+        let base = PathBuf::from("/run/user/1000");
+        let valid = "pf-0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            validated_legacy_dtach_socket_path(&base, valid).unwrap(),
+            legacy_sessions_dir(&base).join(format!("{valid}.dtach"))
+        );
+        for invalid in [
+            "",
+            "pf-abc",
+            "../pf-0123456789abcdef0123456789abcdef",
+            "pf-0123456789abcdef0123456789abcdef/child",
+            "/tmp/pf-0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(
+                validated_legacy_dtach_socket_path(&base, invalid).is_err(),
+                "{invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stop_legacy_dtach_session_refuses_a_path_traversal_name() {
+        let base = std::env::temp_dir().join(format!("pf-legacy-refuse-{}", std::process::id()));
+        let error = stop_legacy_dtach_session(&base, "../escape").unwrap_err();
+        assert!(
+            error.contains("recoverable session name"),
+            "must fail grammar validation before ever touching a path: {error}"
+        );
+    }
+
+    #[test]
+    fn stop_legacy_tmux_session_refuses_a_non_owned_name() {
+        // A name that doesn't match our exact grammar must never reach the
+        // tmux invocation, regardless of what's actually on the (possibly
+        // shared) legacy server.
+        let error = stop_legacy_tmux_session(None, "someone-elses-window").unwrap_err();
+        assert!(error.contains("recoverable session name"));
+    }
+
+    #[test]
+    fn detect_legacy_tmux_sessions_treats_a_missing_binary_as_no_artifacts() {
+        // No tracking-issue-worthy ambiguity here: an absent `tmux` binary
+        // cannot have created a legacy server, so this must be an empty
+        // report, not an error the settings UI would have to surface.
+        let missing = Path::new("/nonexistent/pickforge-test-legacy-tmux");
+        assert_eq!(detect_legacy_tmux_sessions(Some(missing)), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn parse_legacy_tmux_sessions_only_reports_the_owned_name_grammar() {
+        let stdout = b"pf-0123456789abcdef0123456789abcdef\t1\nsomeone-elses-window\t0\npf-fedcba9876543210fedcba9876543210\t0\n";
+        let sessions = parse_legacy_tmux_sessions(stdout);
+        assert_eq!(sessions.len(), 2, "the foreign session must be dropped");
+        assert!(sessions
+            .iter()
+            .all(|s| s.name.starts_with("pf-") && !s.name.contains("someone")));
+        assert!(sessions[0].attached);
+        assert!(!sessions[1].attached);
+    }
+
+    // Binding a real Unix socket under this test's tmp path only reliably
+    // stays within `sockaddr_un`'s length limit on Linux runners; dtach
+    // itself is Linux-only (see `select_backend_with`) so that's the only
+    // platform this needs to prove anyway.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stop_legacy_dtach_session_is_a_noop_when_nothing_is_listening() {
+        // A stale (dead) legacy socket has no live master to prove absent —
+        // it can be removed without ever signalling a process.
+        let base = std::env::temp_dir().join(format!("pfls-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = legacy_sessions_dir(&base);
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = "pf-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let socket = dir.join(format!("{name}.dtach"));
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        drop(listener); // nothing is listening now — stale
+
+        let result = stop_legacy_dtach_session(&base, name);
+
+        assert_eq!(result, Ok(()));
+        assert!(!socket.exists(), "stale legacy socket must be removed");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn detect_legacy_dtach_sessions_only_scans_the_legacy_dir_by_exact_grammar() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("pf-legacy-detect-{}-{nonce}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let legacy_dir = legacy_sessions_dir(&base);
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let current_dir = sessions_dir(&base);
+        std::fs::create_dir_all(&current_dir).unwrap();
+
+        let legacy_name = "pf-11111111111111111111111111111111";
+        std::fs::write(legacy_dir.join(format!("{legacy_name}.dtach")), b"").unwrap();
+        std::fs::write(legacy_dir.join("not-ours.dtach"), b"").unwrap();
+        // Something in the CURRENT-instance dir must never show up as legacy.
+        std::fs::write(
+            current_dir.join("pf-22222222222222222222222222222222.dtach"),
+            b"",
+        )
+        .unwrap();
+
+        let found = detect_legacy_dtach_sessions(&base);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, legacy_name);
+        assert!(!found[0].live, "an empty file is never a live dtach master");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn detect_legacy_dtach_sessions_reports_a_concurrently_live_legacy_master() {
+        // Simulates the exact scenario #214 exists to protect: an old build's
+        // shell is STILL RUNNING (concurrently, under a different — possibly
+        // still-open — PickForge instance) when this build starts up.
+        // Detection must surface it as live, not silently decide it's safe.
+        // Short, nonce-free path: a real `AF_UNIX` bind must stay within
+        // `sockaddr_un`'s length limit, which a nested temp dir + a 32-hex
+        // session name can otherwise exceed.
+        let base = std::env::temp_dir().join(format!("pfll-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let legacy_dir = legacy_sessions_dir(&base);
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let name = "pf-33333333333333333333333333333333";
+        let socket = legacy_dir.join(format!("{name}.dtach"));
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        let found = detect_legacy_dtach_sessions(&base);
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, name);
+        assert!(found[0].live, "a listening socket must be reported live");
+        drop(listener);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn normal_exit_cleanup_never_touches_the_legacy_namespace() {
+        // Regression guard: `kill_recoverable_sessions_on_exit` /
+        // `contain_recoverable_sessions` must stay scoped to THIS instance's
+        // private dir. A legacy artifact placed alongside it must survive
+        // untouched — automatic cleanup must never reach the shared namespace.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("pf-legacy-exit-{}-{nonce}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let legacy_dir = legacy_sessions_dir(&base);
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_socket = legacy_dir.join("pf-44444444444444444444444444444444.dtach");
+        std::fs::write(&legacy_socket, b"").unwrap();
+
+        let _ = contain_recoverable_sessions(&sessions_dir(&base), None, None);
+
+        assert!(
+            legacy_socket.exists(),
+            "exit-time cleanup must never remove a legacy artifact"
+        );
+        let _ = std::fs::remove_dir_all(base);
     }
 }

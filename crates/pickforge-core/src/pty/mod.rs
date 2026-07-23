@@ -14,11 +14,14 @@ pub use env::normalize_pty_env;
 pub use session::{PtyError, PtyEvent, PtyManager, PtySink, RemotePty, SpawnOptions};
 pub use sessions::{
     begin_recoverable_session_spawn, close_recoverable_session_spawn_gate,
-    contain_recoverable_sessions, dtach_master_pids, dtach_socket_path, kill_dtach_master,
-    kill_recoverable_sessions_on_exit, mark_tmux_server_may_exist, parse_recoverable_session_id,
+    contain_recoverable_sessions, detect_legacy_dtach_sessions, detect_legacy_tmux_sessions,
+    dtach_master_pids, dtach_socket_path, kill_dtach_master, kill_recoverable_sessions_on_exit,
+    legacy_sessions_dir, mark_tmux_server_may_exist, parse_recoverable_session_id,
     prepare_chat_session, recoverable_tmux_server_name, select_backend, session_name, sessions_dir,
-    terminate_owned_process_trees, tmux_has_session_args, tmux_kill_session_args,
-    tmux_set_titles_args, validate_session_name, validated_dtach_socket_path, DtachKillError,
-    OwnedProcessIdentity, PreparedSession, RecoverableSpawnPermit, SessionBackend, SessionStatus,
+    stop_legacy_dtach_session, stop_legacy_tmux_session, terminate_owned_process_trees,
+    tmux_has_session_args, tmux_kill_session_args, tmux_set_titles_args, validate_session_name,
+    validated_dtach_socket_path, validated_legacy_dtach_socket_path, DtachKillError,
+    LegacyDtachSession, LegacyTmuxSession, OwnedProcessIdentity, PreparedSession,
+    RecoverableSpawnPermit, SessionBackend, SessionStatus, LEGACY_TMUX_SERVER_NAME,
 };
 pub use shell::{resolve_shell, ShellInvocation};

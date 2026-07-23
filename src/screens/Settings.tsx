@@ -145,6 +145,12 @@ import {
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import * as db from "../lib/db";
 import {
+  listLegacySessions,
+  stopLegacySession,
+  type LegacySessionKind,
+  type LegacySessionReport,
+} from "../lib/pty";
+import {
   AccountSettingsSection,
   AgentModelsSettingsSection,
   AppearanceSettingsSection,
@@ -153,6 +159,7 @@ import {
   DictationSettingsSection,
   FeatureFlagsSettingsSection,
   FileOpeningSettingsSection,
+  LegacySessionsSettingsSection,
   LinuxGraphicsSettingsSection,
   OperatorRouterSettingsSection,
   PickLabSettingsSection,
@@ -335,6 +342,17 @@ export function SettingsScreen() {
   const [agentEngine, setAgentEngineSig] = createSignal<AgentEngine>(loadAgentEngine());
   const [askChatTitle, setAskChatTitleSig] = createSignal(loadAskChatTitle());
   const [archived, setArchived] = createSignal<db.Project[]>([]);
+  const [legacySessions, setLegacySessions] = createSignal<LegacySessionReport>({
+    dtach: [],
+    tmux: [],
+  });
+  const [legacyLoading, setLegacyLoading] = createSignal(false);
+  const [legacyError, setLegacyError] = createSignal<string | null>(null);
+  // The exact "<kind>:<name>" currently being stopped, so only that row's
+  // button shows a busy state while the rest of the list stays interactive.
+  const [stoppingLegacyId, setStoppingLegacyId] = createSignal<string | null>(null);
+  const [legacyBulkConfirmOpen, setLegacyBulkConfirmOpen] = createSignal(false);
+  const [legacyBulkBusy, setLegacyBulkBusy] = createSignal(false);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
   const [pickLab, setPickLab] = createSignal<PickLabStatus | null>(null);
   const [pickLabLoading, setPickLabLoading] = createSignal(false);
@@ -670,6 +688,7 @@ export function SettingsScreen() {
     void reloadPickLab();
     void reloadTelemetry();
     void reloadRemoteHost();
+    void reloadLegacySessions();
     if (hostPlatform() === "linux") void reloadLinuxGraphics();
     if (flagEnabled("operator")) void reloadVoice();
     if (flagEnabled("ompPiAgents")) void reloadAgentDiagnostics();
@@ -764,6 +783,66 @@ export function SettingsScreen() {
   const restore = async (root: string) => {
     await db.projectSetArchived(root, null);
     await reloadArchived();
+  };
+
+  // pickforge#214 — read-only; safe to call any time the panel is open.
+  const reloadLegacySessions = async () => {
+    setLegacyLoading(true);
+    setLegacyError(null);
+    try {
+      setLegacySessions(await listLegacySessions());
+    } catch (error) {
+      setLegacyError(errorText(error));
+    } finally {
+      setLegacyLoading(false);
+    }
+  };
+
+  const legacyTotalCount = () =>
+    legacySessions().dtach.length + legacySessions().tmux.length;
+
+  // Stops exactly the one artifact the user clicked — never a sweep.
+  const stopLegacy = async (kind: LegacySessionKind, name: string) => {
+    const id = `${kind}:${name}`;
+    setStoppingLegacyId(id);
+    setLegacyError(null);
+    try {
+      await stopLegacySession(kind, name);
+      await reloadLegacySessions();
+    } catch (error) {
+      setLegacyError(errorText(error));
+    } finally {
+      setStoppingLegacyId(null);
+    }
+  };
+
+  // The bulk action only ever acts on the EXACT list the user is currently
+  // looking at (captured before the confirm dialog opens) — never a generic
+  // "clean up everything" call. One failure doesn't abort the rest; every
+  // failure is collected and shown.
+  const stopAllLegacySessions = async () => {
+    const { dtach, tmux } = legacySessions();
+    setLegacyBulkBusy(true);
+    setLegacyError(null);
+    const failures: string[] = [];
+    for (const session of dtach) {
+      try {
+        await stopLegacySession("dtach", session.name);
+      } catch (error) {
+        failures.push(`${session.name}: ${errorText(error)}`);
+      }
+    }
+    for (const session of tmux) {
+      try {
+        await stopLegacySession("tmux", session.name);
+      } catch (error) {
+        failures.push(`${session.name}: ${errorText(error)}`);
+      }
+    }
+    await reloadLegacySessions();
+    setLegacyBulkBusy(false);
+    setLegacyBulkConfirmOpen(false);
+    if (failures.length > 0) setLegacyError(failures.join("; "));
   };
 
   const updateLabel = () => {
@@ -1756,6 +1835,89 @@ export function SettingsScreen() {
         <Show when={updateError()}>
           <div class="pf-vm-error">{updateError()}</div>
         </Show></UpdatesSettingsSection>
+
+        <LegacySessionsSettingsSection>
+          <span class="pf-settings-muted">
+            Recoverable terminal sessions left behind by an older PickForge
+            build. A live one may still belong to another running PickForge
+            window — review each before stopping it; nothing here is stopped
+            automatically.
+          </span>
+          <Show when={legacyError()}>
+            <div class="pf-vm-error">{legacyError()}</div>
+          </Show>
+          <Show
+            when={legacyTotalCount() > 0}
+            fallback={
+              <span class="pf-settings-muted">
+                {legacyLoading() ? "Checking…" : "No legacy sessions detected"}
+              </span>
+            }
+          >
+            <For each={legacySessions().dtach}>
+              {(session) => (
+                <div class="pf-settings-row">
+                  <span class="pf-settings-label">
+                    {session.name}
+                    <StatusPill
+                      label={session.live ? "Live" : "Stale"}
+                      intent={session.live ? "live" : "neutral"}
+                    />
+                  </span>
+                  <button
+                    class="pf-text-btn"
+                    disabled={stoppingLegacyId() === `dtach:${session.name}`}
+                    onClick={() => void stopLegacy("dtach", session.name)}
+                  >
+                    {stoppingLegacyId() === `dtach:${session.name}` ? "Stopping…" : "Stop"}
+                  </button>
+                </div>
+              )}
+            </For>
+            <For each={legacySessions().tmux}>
+              {(session) => (
+                <div class="pf-settings-row">
+                  <span class="pf-settings-label">
+                    {session.name}
+                    <StatusPill
+                      label={session.attached ? "Attached" : "Detached"}
+                      intent={session.attached ? "live" : "neutral"}
+                    />
+                  </span>
+                  <button
+                    class="pf-text-btn"
+                    disabled={stoppingLegacyId() === `tmux:${session.name}`}
+                    onClick={() => void stopLegacy("tmux", session.name)}
+                  >
+                    {stoppingLegacyId() === `tmux:${session.name}` ? "Stopping…" : "Stop"}
+                  </button>
+                </div>
+              )}
+            </For>
+            <div class="pf-settings-row">
+              <button class="pf-text-btn" onClick={() => setLegacyBulkConfirmOpen(true)}>
+                Stop all {legacyTotalCount()} shown
+              </button>
+            </div>
+          </Show>
+        </LegacySessionsSettingsSection>
+
+        <ConfirmDialog
+          open={legacyBulkConfirmOpen()}
+          eyebrow="Legacy sessions"
+          title={`Stop ${legacyTotalCount()} legacy session${legacyTotalCount() === 1 ? "" : "s"}?`}
+          confirmLabel={legacyBulkBusy() ? "Stopping…" : "Stop all"}
+          destructive
+          busy={legacyBulkBusy()}
+          onConfirm={() => void stopAllLegacySessions()}
+          onCancel={() => setLegacyBulkConfirmOpen(false)}
+        >
+          <p class="pf-confirm-para">
+            This stops every legacy session currently listed above. A live one
+            may belong to another running PickForge window — only confirm if
+            you're sure nothing else needs it.
+          </p>
+        </ConfirmDialog>
 
         <ArchivedProjectsSettingsSection><Show
           when={archived().length > 0}

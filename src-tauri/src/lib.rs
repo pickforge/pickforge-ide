@@ -272,6 +272,8 @@ pub fn run() {
             pty_commands::pty_spawn_chat,
             pty_commands::pty_destroy_chat_session,
             pty_commands::pty_askpass_status,
+            pty_commands::list_legacy_sessions,
+            pty_commands::stop_legacy_session,
             process_commands::detect_binaries,
             process_commands::probe_agent_cli,
             remote_commands::remote_host_status,

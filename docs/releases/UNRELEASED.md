@@ -69,6 +69,16 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- Integrated the published `@pickforge/tauri-updater` shared dialog/controller
+  behind the `studioUpdateDialog` flag, default off (pickforge/pickforge-platform#36).
+  With the flag on, a startup update check runs once per process, only in a
+  packaged build, deferred until the main window is visible and focused;
+  startup feed/network failures stay silent and non-blocking. The titlebar
+  availability badge and the Settings "Check for updates" action now drive
+  the same shared controller (a manual check always calls
+  `controller.check({ manual: true })`), replacing the app-local updater
+  store for that path. With the flag off, the existing app-local updater
+  store, titlebar badge, and Settings check are unchanged.
 - Removed the release gates for dynamic chat titles and Settings navigation
   after both shipped enabled in v0.1.10; their enabled behavior is now
   unconditional (#210, #211).
@@ -87,6 +97,30 @@ reset this file.
 
 ## Validation
 
+- pickforge/pickforge-platform#36 (PR 3, PickForge integration): focused unit
+  tests drive the controller/eligibility/store/view/fixture seams entirely
+  through the package's injected adapters — no mocks in production code
+  paths — covering packaged+PROD gating, main-window visible/focused
+  eligibility (immediate and focus-event paths), non-main-window rejection,
+  the shared store's reactive mirroring/unsubscribe-on-replace/idle-reset,
+  badge flag-gating (legacy vs. shared state, dismissed-with-update still
+  surfacing), Settings label/busy/error mapping for every controller status,
+  and the dialog component binding metadata/controller onto the mounted
+  custom element. `bun run test:unit` (971 tests) has the same 3
+  pre-existing `chatTerminalLifecycle` failures present on a clean `main`
+  checkout (unrelated file, not touched here — reproduced by stashing this
+  change and rerunning); `bun run test:coverage` thresholds pass (new files:
+  `studioUpdate.ts` 82%, `studioUpdater.ts` 68%, `studioUpdateView.ts` 100%,
+  `studioUpdateFixture.ts` 71%, `StudioUpdateDialog.tsx` 100% statements).
+  `bun run build` (`tsc --noEmit && vite build`) passes. A VRT spec
+  (`tests/vrt/update-dialog.spec.ts`) drives the real flag + mount path
+  through a VRT-only fixture seam (`src/lib/studioUpdateFixture.ts`,
+  reachable only from the `VITE_PICKFORGE_VRT` branch) at PickForge's
+  minimum 880×600 and the default 1280×820, asserting heading/version/notes
+  text, initial focus on "Update & restart", and download-progress text for
+  the available-with-notes and downloading states; baselines are CI-canonical
+  via `update-vrt-baselines`, not generated locally, per repo policy (#238).
+  No Rust changes.
 - #214: `pty::sessions` unit tests cover legacy-vs-current-instance path
   separation (the legacy shared dir/tmux server name never equal this
   process's private ones), the legacy dtach socket path's escape/grammar
@@ -170,6 +204,12 @@ reset this file.
   macOS, where it is cfg'd out entirely.
 
 ### Not tested yet — release gates
+
+- pickforge/pickforge-platform#36 (PR 3): an owner-gated packaged
+  signed-update smoke (old build → staged newer build → prompt → download →
+  install → relaunch) with `studioUpdateDialog` on, plus flipping the flag
+  on for real on `main` per the issue's rollout checklist. Deferred to
+  PR 6+ per the issue's PR plan.
 
 - Windows Job Object containment compiles behind `cfg(windows)` but needs
   Windows CI validation; the macOS guardian birth-identity path needs macOS

@@ -2303,11 +2303,19 @@ mod tests {
     }
 
     #[test]
-    fn normal_exit_cleanup_never_touches_the_legacy_namespace() {
-        // Regression guard: `kill_recoverable_sessions_on_exit` /
-        // `contain_recoverable_sessions` must stay scoped to THIS instance's
-        // private dir. A legacy artifact placed alongside it must survive
-        // untouched — automatic cleanup must never reach the shared namespace.
+    fn contain_recoverable_sessions_never_touches_the_legacy_namespace() {
+        // Regression guard for the crash-guardian's real sweep entrypoint,
+        // `contain_recoverable_sessions`: it must stay scoped to exactly the
+        // instance dir it's handed, never the shared legacy namespace. A
+        // legacy artifact placed alongside that dir must survive untouched.
+        //
+        // The app-side normal-exit entrypoint, `kill_recoverable_sessions_on_exit`,
+        // is pinned by its OWN test against this same fixture in
+        // `tests/legacy_session_exit_cleanup.rs` — a separate integration
+        // binary, because that function permanently closes the process-global
+        // recoverable-spawn gate (`close_recoverable_session_spawn_gate`),
+        // which would poison every other test in this file's shared process
+        // if called here.
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

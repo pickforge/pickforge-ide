@@ -145,10 +145,12 @@ import {
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import * as db from "../lib/db";
 import {
+  legacyStopConfirmTitle,
+  legacyStopIsRisky,
   listLegacySessions,
   stopLegacySession,
-  type LegacySessionKind,
   type LegacySessionReport,
+  type LegacyStopRequest,
 } from "../lib/pty";
 import {
   AccountSettingsSection,
@@ -348,11 +350,12 @@ export function SettingsScreen() {
   });
   const [legacyLoading, setLegacyLoading] = createSignal(false);
   const [legacyError, setLegacyError] = createSignal<string | null>(null);
-  // The exact "<kind>:<name>" currently being stopped, so only that row's
-  // button shows a busy state while the rest of the list stays interactive.
-  const [stoppingLegacyId, setStoppingLegacyId] = createSignal<string | null>(null);
-  const [legacyBulkConfirmOpen, setLegacyBulkConfirmOpen] = createSignal(false);
-  const [legacyBulkBusy, setLegacyBulkBusy] = createSignal(false);
+  // A pending stop the user has NOT yet confirmed — either one named session
+  // or the bulk "everything currently listed" sweep. Both go through the
+  // SAME confirm dialog below: there is only ever one confirmation pattern,
+  // and neither path can execute without it, even for a single row.
+  const [legacyConfirm, setLegacyConfirm] = createSignal<LegacyStopRequest | null>(null);
+  const [legacyConfirmBusy, setLegacyConfirmBusy] = createSignal(false);
   const [capturingId, setCapturingId] = createSignal<string | null>(null);
   const [pickLab, setPickLab] = createSignal<PickLabStatus | null>(null);
   const [pickLabLoading, setPickLabLoading] = createSignal(false);
@@ -801,48 +804,50 @@ export function SettingsScreen() {
   const legacyTotalCount = () =>
     legacySessions().dtach.length + legacySessions().tmux.length;
 
-  // Stops exactly the one artifact the user clicked — never a sweep.
-  const stopLegacy = async (kind: LegacySessionKind, name: string) => {
-    const id = `${kind}:${name}`;
-    setStoppingLegacyId(id);
-    setLegacyError(null);
-    try {
-      await stopLegacySession(kind, name);
-      await reloadLegacySessions();
-    } catch (error) {
-      setLegacyError(errorText(error));
-    } finally {
-      setStoppingLegacyId(null);
-    }
+  const legacyConfirmSingleName = () => {
+    const request = legacyConfirm();
+    return request?.scope === "single" ? request.name : "";
   };
 
-  // The bulk action only ever acts on the EXACT list the user is currently
-  // looking at (captured before the confirm dialog opens) — never a generic
-  // "clean up everything" call. One failure doesn't abort the rest; every
-  // failure is collected and shown.
-  const stopAllLegacySessions = async () => {
-    const { dtach, tmux } = legacySessions();
-    setLegacyBulkBusy(true);
+  // Executes whichever request the user just confirmed — one named session
+  // or the bulk "everything currently listed" sweep — captured from the list
+  // as it stood when the button was clicked. Neither path can run without
+  // going through this confirmation first, even for a single row. One
+  // failure in the bulk path doesn't abort the rest; every failure is
+  // collected and shown.
+  const confirmLegacyStop = async () => {
+    const request = legacyConfirm();
+    if (!request) return;
+    setLegacyConfirmBusy(true);
     setLegacyError(null);
-    const failures: string[] = [];
-    for (const session of dtach) {
+    if (request.scope === "single") {
       try {
-        await stopLegacySession("dtach", session.name);
+        await stopLegacySession(request.kind, request.name);
       } catch (error) {
-        failures.push(`${session.name}: ${errorText(error)}`);
+        setLegacyError(errorText(error));
       }
-    }
-    for (const session of tmux) {
-      try {
-        await stopLegacySession("tmux", session.name);
-      } catch (error) {
-        failures.push(`${session.name}: ${errorText(error)}`);
+    } else {
+      const { dtach, tmux } = legacySessions();
+      const failures: string[] = [];
+      for (const session of dtach) {
+        try {
+          await stopLegacySession("dtach", session.name);
+        } catch (error) {
+          failures.push(`${session.name}: ${errorText(error)}`);
+        }
       }
+      for (const session of tmux) {
+        try {
+          await stopLegacySession("tmux", session.name);
+        } catch (error) {
+          failures.push(`${session.name}: ${errorText(error)}`);
+        }
+      }
+      if (failures.length > 0) setLegacyError(failures.join("; "));
     }
     await reloadLegacySessions();
-    setLegacyBulkBusy(false);
-    setLegacyBulkConfirmOpen(false);
-    if (failures.length > 0) setLegacyError(failures.join("; "));
+    setLegacyConfirmBusy(false);
+    setLegacyConfirm(null);
   };
 
   const updateLabel = () => {
@@ -1866,10 +1871,16 @@ export function SettingsScreen() {
                   </span>
                   <button
                     class="pf-text-btn"
-                    disabled={stoppingLegacyId() === `dtach:${session.name}`}
-                    onClick={() => void stopLegacy("dtach", session.name)}
+                    onClick={() =>
+                      setLegacyConfirm({
+                        scope: "single",
+                        kind: "dtach",
+                        name: session.name,
+                        risky: session.live,
+                      })
+                    }
                   >
-                    {stoppingLegacyId() === `dtach:${session.name}` ? "Stopping…" : "Stop"}
+                    Stop
                   </button>
                 </div>
               )}
@@ -1886,16 +1897,22 @@ export function SettingsScreen() {
                   </span>
                   <button
                     class="pf-text-btn"
-                    disabled={stoppingLegacyId() === `tmux:${session.name}`}
-                    onClick={() => void stopLegacy("tmux", session.name)}
+                    onClick={() =>
+                      setLegacyConfirm({
+                        scope: "single",
+                        kind: "tmux",
+                        name: session.name,
+                        risky: session.attached,
+                      })
+                    }
                   >
-                    {stoppingLegacyId() === `tmux:${session.name}` ? "Stopping…" : "Stop"}
+                    Stop
                   </button>
                 </div>
               )}
             </For>
             <div class="pf-settings-row">
-              <button class="pf-text-btn" onClick={() => setLegacyBulkConfirmOpen(true)}>
+              <button class="pf-text-btn" onClick={() => setLegacyConfirm({ scope: "bulk" })}>
                 Stop all {legacyTotalCount()} shown
               </button>
             </div>
@@ -1903,20 +1920,39 @@ export function SettingsScreen() {
         </LegacySessionsSettingsSection>
 
         <ConfirmDialog
-          open={legacyBulkConfirmOpen()}
+          open={legacyConfirm() !== null}
           eyebrow="Legacy sessions"
-          title={`Stop ${legacyTotalCount()} legacy session${legacyTotalCount() === 1 ? "" : "s"}?`}
-          confirmLabel={legacyBulkBusy() ? "Stopping…" : "Stop all"}
+          title={
+            legacyConfirm()
+              ? legacyStopConfirmTitle(legacyConfirm()!, legacyTotalCount())
+              : ""
+          }
+          confirmLabel={
+            legacyConfirmBusy() ? "Stopping…" : legacyConfirm()?.scope === "bulk" ? "Stop all" : "Stop"
+          }
           destructive
-          busy={legacyBulkBusy()}
-          onConfirm={() => void stopAllLegacySessions()}
-          onCancel={() => setLegacyBulkConfirmOpen(false)}
+          busy={legacyConfirmBusy()}
+          onConfirm={() => void confirmLegacyStop()}
+          onCancel={() => setLegacyConfirm(null)}
         >
-          <p class="pf-confirm-para">
-            This stops every legacy session currently listed above. A live one
-            may belong to another running PickForge window — only confirm if
-            you're sure nothing else needs it.
-          </p>
+          <Show
+            when={legacyConfirm()?.scope === "bulk"}
+            fallback={
+              <p class="pf-confirm-para">
+                This stops the legacy session <strong>{legacyConfirmSingleName()}</strong>.
+                <Show when={legacyConfirm() !== null && legacyStopIsRisky(legacyConfirm()!)}>
+                  {" "}A live session may belong to another running PickForge
+                  window — only confirm if you're sure nothing else needs it.
+                </Show>
+              </p>
+            }
+          >
+            <p class="pf-confirm-para">
+              This stops every legacy session currently listed above. A live
+              one may belong to another running PickForge window — only
+              confirm if you're sure nothing else needs it.
+            </p>
+          </Show>
         </ConfirmDialog>
 
         <ArchivedProjectsSettingsSection><Show

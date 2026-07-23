@@ -57,10 +57,13 @@ reset this file.
   it just sits under the old shared paths. This section lists any such
   session it finds (a live/stale hint for dtach, an attached/detached hint
   for tmux) and lets you stop one at a time, or all of the currently listed
-  ones behind a confirmation dialog. Nothing is ever swept automatically: a
-  live legacy session may still belong to another PickForge window that
-  happens to be running right now, and there's no way to prove otherwise
-  without asking you. Until you use this (or stop a session manually —
+  ones at once — either way through the same confirmation dialog, which
+  calls out the risk by name when the session you're stopping is live or
+  attached. Nothing is ever stopped without that confirmation, and nothing
+  is ever swept automatically: a live legacy session may still belong to
+  another PickForge window that happens to be running right now, and
+  there's no way to prove otherwise without asking you. Until you use this
+  (or stop a session manually —
   `tmux -L pickforge kill-session -t <name>`, or send a dtach master's
   process a signal), the old session just keeps running alongside the new
   per-instance ones; it costs nothing but its own memory (#214).

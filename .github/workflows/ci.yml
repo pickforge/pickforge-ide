@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Test OSV report gate
+        run: node --test tests/check-osv-severity.test.mjs
       - name: Scan all lockfiles
         continue-on-error: true
         uses: google/osv-scanner-action/osv-scanner-action@v2.3.8

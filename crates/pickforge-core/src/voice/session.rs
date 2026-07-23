@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))] // TODO(#263): split Linux-only voice implementation.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,10 +14,10 @@ use super::segments::{
     read_wav_file, rms_level, write_segment_wav, SegmentConfig, Segmenter, WavData,
 };
 use super::stt::{
-    PreparedTranscription, RunningTranscription, VoiceTranscriber, WhisperCliTranscriber,
+    RunningTranscription, VoiceTranscriber, WhisperCliTranscriber,
 };
 use super::{
-    create_private_dir_all, keep_audio_from_env, VoiceError, VoiceEvent, VoiceSink,
+    keep_audio_from_env, VoiceError, VoiceEvent, VoiceSink,
     DEFAULT_LANGUAGE,
 };
 use crate::process::StartGate;
@@ -161,7 +163,7 @@ where
         {
             let _ = request;
             let _ = sink;
-            return Err(VoiceError::UnsupportedPlatform);
+            Err(VoiceError::UnsupportedPlatform)
         }
 
         #[cfg(target_os = "linux")]

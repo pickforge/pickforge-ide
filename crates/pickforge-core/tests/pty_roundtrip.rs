@@ -372,6 +372,7 @@ fn resize_and_kill_are_idempotent_enough() {
 
 #[cfg(unix)]
 #[test]
+#[allow(clippy::too_many_lines)] // TODO(#263): split the legacy integration test.
 fn remote_pty_spawn_uses_ssh_argv_and_keeps_pty_io_and_resize() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

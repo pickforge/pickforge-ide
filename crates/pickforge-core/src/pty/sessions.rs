@@ -46,7 +46,7 @@ static PROCESS_INSTANCE_ID: LazyLock<String> =
     LazyLock::new(|| format!("{:x}-{:016x}", std::process::id(), rand::random::<u64>()));
 
 static TMUX_SERVER_NAME: LazyLock<String> =
-    LazyLock::new(|| format!("pickforge-{}", &*PROCESS_INSTANCE_ID));
+    LazyLock::new(|| format!("pickforge-{}", *PROCESS_INSTANCE_ID));
 static RECOVERABLE_SPAWN_GATE: LazyLock<Arc<StartGate>> =
     LazyLock::new(|| Arc::new(StartGate::default()));
 static TMUX_SERVER_MAY_EXIST: AtomicBool = AtomicBool::new(false);
@@ -934,11 +934,9 @@ pub fn contain_recoverable_sessions(
         let program = tmux_program
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "tmux".to_string());
-        let args = vec![
-            "-L".to_string(),
+        let args = ["-L".to_string(),
             server.to_string(),
-            "kill-server".to_string(),
-        ];
+            "kill-server".to_string()];
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let result = run_timeout(&program, &refs, None, None, TMUX_KILL_TIMEOUT);
         // The guardian cannot know whether the dead instance ever started its
@@ -970,7 +968,7 @@ pub fn kill_recoverable_sessions_on_exit(runtime_base: &Path) -> Result<(), Stri
     let args = tmux_kill_server_args();
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let environment = user_shell_environment();
-    let result = run_timeout("tmux", &refs, None, Some(&environment), TMUX_KILL_TIMEOUT);
+    let result = run_timeout("tmux", &refs, None, Some(environment), TMUX_KILL_TIMEOUT);
     if let Err(error) =
         validate_tmux_cleanup_result(result, TMUX_SERVER_MAY_EXIST.load(Ordering::SeqCst))
     {

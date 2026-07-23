@@ -234,7 +234,7 @@ fn child_nodes(node: &Value) -> impl Iterator<Item = &Value> {
 
 /// Decode a `DOM.getDocument` (or a node within it) into our [`DomNode`]. Pure
 /// + fixture-testable. Element nodes (`nodeType == 1`) become rows; text nodes
-/// fold their content into the parent's `text`; everything else is skipped.
+///   fold their content into the parent's `text`; everything else is skipped.
 ///
 /// `DOM.getDocument` returns the `#document` node (`nodeType == 9`), not the
 /// `<html>` element, so a document — or a document fragment / shadow root

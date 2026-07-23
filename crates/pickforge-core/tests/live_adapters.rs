@@ -962,6 +962,7 @@ fn ios_tier_a_device_roundtrip_macos() {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_lines)] // TODO(#263): split the legacy integration test.
 fn ios_tier_b_real_launch_macos() {
     let test = "ios_tier_b_real_launch";
     if !launch_enabled() {

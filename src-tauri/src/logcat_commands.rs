@@ -147,16 +147,11 @@ async fn relay_lines(
     registry: Arc<Mutex<HashMap<String, LogcatSession>>>,
 ) {
     let mut lines = BufReader::new(stdout).lines();
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => {
-                if let Some(event) = logcat_event(&line) {
-                    if channel.send(event).is_err() {
-                        break; // the webview dropped the channel
-                    }
-                }
+    while let Ok(Some(line)) = lines.next_line().await {
+        if let Some(event) = logcat_event(&line) {
+            if channel.send(event).is_err() {
+                break; // the webview dropped the channel
             }
-            Ok(None) | Err(_) => break, // EOF or read error → device gone / stopped
         }
     }
     // Only tear down + signal if THIS session is still registered — a quick

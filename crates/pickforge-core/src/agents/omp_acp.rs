@@ -151,6 +151,7 @@ enum WriterMessage {
 }
 
 impl OmpAcpClient {
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn(options: OmpAcpOptions) -> Result<Self, OmpAcpError> {
         if !options.project_root.is_absolute() {
             return Err(OmpAcpError::Protocol(
@@ -1754,6 +1755,7 @@ mod tests {
     use std::path::Path;
     use std::sync::{Barrier, Mutex};
     #[cfg(any(unix, windows))]
+    #[cfg(windows)]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
@@ -2106,6 +2108,7 @@ done"#,
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn late_duplicate_and_unknown_responses_do_not_close_an_active_prompt() {
         let marker_sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let slow_requested = std::env::temp_dir().join(format!(
@@ -2240,6 +2243,7 @@ done"#
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn crash_during_prompt_closes_transport_drains_races_and_reaps_child() {
         let fixture = standard_script("exit 9");
         let events = Arc::new(Mutex::new(Vec::new()));

@@ -188,16 +188,11 @@ async fn relay_lines(
     registry: Arc<Mutex<HashMap<String, OsLogSession>>>,
 ) {
     let mut lines = BufReader::new(stdout);
-    loop {
-        match next_bounded_line(&mut lines).await {
-            Ok(Some(line)) => {
-                if let Some(event) = parse_oslog_line(&line) {
-                    if channel.send(event).is_err() {
-                        break;
-                    }
-                }
+    while let Ok(Some(line)) = next_bounded_line(&mut lines).await {
+        if let Some(event) = parse_oslog_line(&line) {
+            if channel.send(event).is_err() {
+                break;
             }
-            Ok(None) | Err(_) => break,
         }
     }
     let mut reg = registry.lock().await;

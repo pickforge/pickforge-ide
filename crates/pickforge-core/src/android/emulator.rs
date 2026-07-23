@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -564,7 +564,7 @@ mod tests {
             pid
         };
 
-        let begun = Instant::now();
+        let begun = std::time::Instant::now();
         manager.shutdown();
         assert!(begun.elapsed() < Duration::from_secs(2));
         assert!(!process_alive(pid), "provisional emulator child survived");

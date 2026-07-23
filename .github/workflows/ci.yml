@@ -96,9 +96,12 @@ jobs:
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
 
-      # cargo llvm-cov below builds --all-targets with instrumentation and runs
-      # the whole test suite; a separate `cargo test` would compile and run it a
-      # second time for no extra signal.
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked --all-targets
+
+      - name: cargo clippy (workspace)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: rust coverage
         run: |
           mkdir -p target/llvm-cov

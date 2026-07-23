@@ -16,6 +16,8 @@ mod pty_commands;
 mod remote_commands;
 mod shutdown;
 mod telemetry_commands;
+#[cfg(test)]
+mod test_support;
 mod voice_commands;
 mod vm_commands;
 mod watch_commands;
@@ -413,12 +415,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
-    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-
-    static PICKFORGE_HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::test_support::{EnvRestore, PICKFORGE_HOME_ENV_LOCK};
 
     struct TempHome {
         path: PathBuf,
@@ -467,17 +467,12 @@ mod tests {
     #[test]
     fn open_database_writes_under_home_not_launch_directory() {
         let _guard = PICKFORGE_HOME_ENV_LOCK.lock().unwrap();
+        let _restore = EnvRestore::capture();
         let temp_home = TempHome::new("smoke");
         let launch_dir = std::env::current_dir().unwrap();
-        let old_override = std::env::var_os("PICKFORGE_HOME");
         std::env::set_var("PICKFORGE_HOME", &temp_home.path);
 
         let database = open_database();
-
-        match old_override {
-            Some(value) => std::env::set_var("PICKFORGE_HOME", value),
-            None => std::env::remove_var("PICKFORGE_HOME"),
-        }
         drop(database);
 
         assert!(temp_home.path.join("pickforge.db").exists());

@@ -36,6 +36,7 @@ describe("flags", () => {
       "remoteProcessLeases",
       "accounts",
       "settingsSync",
+      "studioUpdateDialog",
     ]);
     for (const state of states) {
       expect(state.defaultValue).toBe(false);
@@ -47,6 +48,14 @@ describe("flags", () => {
     expect(store.flagEnabled("remoteProcessLeases")).toBe(false);
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);
+    expect(store.flagEnabled("studioUpdateDialog")).toBe(false);
+  });
+
+  it("describes the shared updater flag with its tracking issue", async () => {
+    const store = await loadStore();
+
+    const state = store.flagStates().find((s) => s.key === "studioUpdateDialog");
+    expect(state?.description).toContain("pickforge/pickforge-platform#36");
   });
 
   it("persists an override to localStorage and reflects it", async () => {

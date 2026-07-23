@@ -10,6 +10,7 @@
         "@pickforge/brand": "0.2.1",
         "@pickforge/flags": "^0.4.0",
         "@pickforge/sync": "^0.6.0",
+        "@pickforge/tauri-updater": "^0.12.0",
         "@supabase/supabase-js": "^2.110.0",
         "@tauri-apps/api": "^2",
         "@tauri-apps/plugin-deep-link": "^2.4.9",
@@ -208,6 +209,8 @@
     "@pickforge/sync": ["@pickforge/sync@0.6.0", "", {}, "sha512-sImQLFKg76EWs0b69fyElHKKugoIhiu4ctxtKeUzCSzBZTHC4jCJf/ggRBYT5UHHa/E2ZMeZDppEWHByJEdeJw=="],
 
     "@pickforge/tauri-release": ["@pickforge/tauri-release@0.3.0", "", { "bin": { "pickforge-tauri-release": "dist/cli.js" } }, "sha512-LTpsp6+zB9WU9eflvWH8tRFGNCJmiQW7ULYNnffQYCgfZ3fSqF33yDBKW38WdXdlyDBEcYpFnYjkw0+YnLob8Q=="],
+
+    "@pickforge/tauri-updater": ["@pickforge/tauri-updater@0.12.0", "", {}, "sha512-3q5SgSAJBV/ctpxFGKUvKOHZ6uIszhgO3BPajgA+BrffulARzrW9Uv4fXRy4TFWoV83LNlSy9GVnCi6dYWnJBw=="],
 
     "@playwright/test": ["@playwright/test@1.61.0", "", { "dependencies": { "playwright": "1.61.0" }, "bin": { "playwright": "cli.js" } }, "sha512-cKA5B6lpFEMyMGjxF54QihfYpB4FkEGH+qZhtArDEG+wezQAJY8Pq6C7T1SjWz+FFzt3TbyoXBQYk/0292TdJA=="],
 

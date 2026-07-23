@@ -5,6 +5,9 @@ import { applyPersistedZoom, currentZoom, handleZoomKey, zoomReset } from "./lib
 import { appVersion, loadAppVersion } from "./lib/appInfo";
 import { initTheme } from "./stores/theme";
 import { checkForUpdate, updateAvailable } from "./lib/updater";
+import { startStudioUpdateCheck, studioUpdateState } from "./stores/studioUpdate";
+import { activeUpdateInfo } from "./lib/studioUpdateView";
+import { StudioUpdateDialog } from "./components/StudioUpdateDialog";
 import { MonoEyebrow, StatusPill } from "./components/ui";
 import { WindowControls } from "./components/WindowControls";
 import { ResizeHandles } from "./components/ResizeHandles";
@@ -69,14 +72,22 @@ export function App() {
           Dev
         </span>
       </Show>
-      <Show when={updateAvailable()}>
-        <button
-          class="pf-update-badge"
-          title={`Update available: v${updateAvailable()!.version}`}
-          onClick={() => navigateSettingsSection("updates")}
-        >
-          <span class="pf-update-dot" /> Update
-        </button>
+      <Show
+        when={activeUpdateInfo(
+          flagEnabled("studioUpdateDialog"),
+          studioUpdateState(),
+          updateAvailable(),
+        )}
+      >
+        {(info) => (
+          <button
+            class="pf-update-badge"
+            title={`Update available: v${info().version}`}
+            onClick={() => navigateSettingsSection("updates")}
+          >
+            <span class="pf-update-dot" /> Update
+          </button>
+        )}
       </Show>
     </div>
   );
@@ -126,7 +137,11 @@ export function App() {
     });
 
     void loadAppVersion();
-    void checkForUpdate(true);
+    if (flagEnabled("studioUpdateDialog")) {
+      startStudioUpdateCheck();
+    } else {
+      void checkForUpdate(true);
+    }
     startSwarmBridge();
     onCleanup(installSettingsSyncBootstrap());
     onCleanup(installCreditsBootstrap());
@@ -162,6 +177,9 @@ export function App() {
   return (
     <div class="pf-app">
       <ResizeHandles />
+      <Show when={flagEnabled("studioUpdateDialog")}>
+        <StudioUpdateDialog />
+      </Show>
       {/* Drag starts only after the pointer moves so the second primary press
           remains available to toggle maximize before Tauri takes over. */}
       <header

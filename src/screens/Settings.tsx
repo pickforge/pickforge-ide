@@ -82,6 +82,8 @@ import {
   type FlagKey,
 } from "../stores/flags";
 import { checkForUpdate, installUpdate, updateAvailable, updateError, updateStatus } from "../lib/updater";
+import { checkForStudioUpdate, studioUpdateState } from "../stores/studioUpdate";
+import { isStudioUpdateBusy, studioUpdateErrorMessage, studioUpdateLabel } from "../lib/studioUpdateView";
 import { pickLabStatus, type PickLabStatus } from "../lib/picklab";
 import {
   operatorRouterSettings,
@@ -1810,33 +1812,55 @@ export function SettingsScreen() {
           <span class="pf-settings-label">Current version</span>
           <span class="pf-settings-muted">v{appVersion()}</span>
         </div>
-        <div class="pf-settings-row">
-          <span class="pf-settings-label">{updateLabel()}</span>
-          <Show
-            when={updateAvailable()}
-            fallback={
-              <button
-                class="pf-ql-add"
-                disabled={updateStatus() === "checking"}
-                onClick={() => void checkForUpdate(false)}
+        <Show
+          when={flagEnabled("studioUpdateDialog")}
+          fallback={<>
+            <div class="pf-settings-row">
+              <span class="pf-settings-label">{updateLabel()}</span>
+              <Show
+                when={updateAvailable()}
+                fallback={
+                  <button
+                    class="pf-ql-add"
+                    disabled={updateStatus() === "checking"}
+                    onClick={() => void checkForUpdate(false)}
+                  >
+                    Check for updates
+                  </button>
+                }
               >
-                Check for updates
-              </button>
-            }
-          >
+                <button
+                  class="pf-text-btn"
+                  disabled={updateStatus() === "downloading"}
+                  onClick={() => void installUpdate()}
+                >
+                  {updateStatus() === "downloading"
+                    ? "Installing…"
+                    : `Install v${updateAvailable()!.version}`}
+                </button>
+              </Show>
+            </div>
+            <Show when={updateError()}>
+              <div class="pf-vm-error">{updateError()}</div>
+            </Show>
+          </>}
+        >
+          {/* Update & restart / Later / Retry live in the shared
+              pickforge-update-dialog (mounted in App.tsx) once the controller
+              has an update — this row only drives the shared manual check. */}
+          <div class="pf-settings-row">
+            <span class="pf-settings-label">{studioUpdateLabel(studioUpdateState())}</span>
             <button
-              class="pf-text-btn"
-              disabled={updateStatus() === "downloading"}
-              onClick={() => void installUpdate()}
+              class="pf-ql-add"
+              disabled={isStudioUpdateBusy(studioUpdateState())}
+              onClick={() => checkForStudioUpdate()}
             >
-              {updateStatus() === "downloading"
-                ? "Installing…"
-                : `Install v${updateAvailable()!.version}`}
+              Check for updates
             </button>
+          </div>
+          <Show when={studioUpdateErrorMessage(studioUpdateState())}>
+            <div class="pf-vm-error">{studioUpdateErrorMessage(studioUpdateState())}</div>
           </Show>
-        </div>
-        <Show when={updateError()}>
-          <div class="pf-vm-error">{updateError()}</div>
         </Show></UpdatesSettingsSection>
 
         <LegacySessionsSettingsSection>

@@ -48,6 +48,9 @@ const definitions = {
   remoteProcessLeases: { description: "Exact remote process cleanup leases (#208)" },
   accounts: { description: "Accounts and Pro entitlements (#132)" },
   settingsSync: { description: "Settings sync for signed-in users (#151)" },
+  studioUpdateDialog: {
+    description: "Shared @pickforge/tauri-updater dialog/controller (pickforge/pickforge-platform#36)",
+  },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

@@ -71,8 +71,8 @@ pub use remote::{
 };
 pub use storage::{
     load_telemetry_config, pickforge_env_vars, pickforge_home, project_id, save_telemetry_config,
-    ContextStorageLocation, ContextStorageMode, ContextStorageService, ResolvedContextDirectory,
-    StorageError, TelemetryConfig,
+    ContextStorageLocation, ContextStorageMode, ContextStorageService, PickforgeHomeError,
+    ResolvedContextDirectory, StorageError, TelemetryConfig,
 };
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,

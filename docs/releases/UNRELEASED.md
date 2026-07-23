@@ -6,6 +6,10 @@ reset this file.
 
 ## User-facing changes
 
+- PickForge no longer silently creates its database in the launch directory
+  when the home directory cannot be resolved: startup now fails fast with an
+  actionable error, and the `PICKFORGE_HOME` override keeps working (#237).
+  Surfacing that error graphically in packaged builds is tracked in #255.
 - Remote host settings now list paired clients with pairing dates and revoked
   status, and let users revoke active client access (#241).
 - New section-based Settings navigation: a category sidebar with remembered

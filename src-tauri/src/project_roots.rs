@@ -418,6 +418,10 @@ mod tests {
 
     #[test]
     fn reconcile_seeds_the_home_root_even_when_the_db_read_fails() {
+        // `pickforge_home(None)` reads the process-global `PICKFORGE_HOME`
+        // env var, which other tests mutate; serialize on the shared lock so
+        // this read can't observe a torn value.
+        let _guard = crate::test_support::PICKFORGE_HOME_ENV_LOCK.lock().unwrap();
         let roots = ApprovedRoots::default();
         let err = roots.reconcile_from(&FailingSource);
         assert!(err.is_err());

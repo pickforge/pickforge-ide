@@ -16,16 +16,19 @@ mod pty_commands;
 mod remote_commands;
 mod shutdown;
 mod telemetry_commands;
+#[cfg(test)]
+mod test_support;
 mod voice_commands;
 mod vm_commands;
 mod watch_commands;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pickforge_core::{
     agents::AgentChatManager, load_telemetry_config, pickforge_home, CdpClient, Database,
-    PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
+    PickforgeHomeError, PtyManager, TunnelManager, VmServiceClient, VoiceSessionManager,
 };
 use tauri::{path::BaseDirectory, Manager, RunEvent};
 #[cfg(any(target_os = "linux", all(target_os = "windows", debug_assertions)))]
@@ -34,10 +37,15 @@ use tauri_plugin_deep_link::DeepLinkExt;
 const SENTRY_DSN: &str =
     "https://14e43b283ec20c3174df7b690d812d1c@o4511699702317056.ingest.us.sentry.io/4511699813728261";
 
+fn resolve_database_path(
+    env: Option<&HashMap<String, String>>,
+) -> Result<PathBuf, PickforgeHomeError> {
+    pickforge_home(env).map(|home| PathBuf::from(home).join("pickforge.db"))
+}
+
 fn open_database() -> Arc<Database> {
-    let path = pickforge_home(None)
-        .map(|home| PathBuf::from(home).join("pickforge.db"))
-        .unwrap_or_else(|_| PathBuf::from("pickforge.db"));
+    let path = resolve_database_path(None)
+        .expect("resolve PickForge home directory (set PICKFORGE_HOME to override)");
     Arc::new(Database::open(&path).expect("failed to open pickforge database"))
 }
 
@@ -407,8 +415,71 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use crate::test_support::{EnvRestore, PICKFORGE_HOME_ENV_LOCK};
+
+    struct TempHome {
+        path: PathBuf,
+    }
+
+    impl TempHome {
+        fn new(name: &str) -> Self {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "pickforge-open-database-{name}-{}-{stamp}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn resolve_database_path_honours_pickforge_home_override() {
+        let mut env = HashMap::new();
+        env.insert("PICKFORGE_HOME".to_string(), "/custom/home".to_string());
+
+        assert_eq!(
+            resolve_database_path(Some(&env)).unwrap(),
+            PathBuf::from("/custom/home/pickforge.db")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_database_path_errors_instead_of_falling_back_to_launch_dir() {
+        let env = HashMap::new();
+
+        assert!(resolve_database_path(Some(&env)).is_err());
+    }
+
+    #[test]
+    fn open_database_writes_under_home_not_launch_directory() {
+        let _guard = PICKFORGE_HOME_ENV_LOCK.lock().unwrap();
+        let _restore = EnvRestore::capture();
+        let temp_home = TempHome::new("smoke");
+        let launch_dir = std::env::current_dir().unwrap();
+        std::env::set_var("PICKFORGE_HOME", &temp_home.path);
+
+        let database = open_database();
+        drop(database);
+
+        assert!(temp_home.path.join("pickforge.db").exists());
+        assert!(!launch_dir.join("pickforge.db").exists());
+        assert!(!launch_dir.join("pickforge.db-shm").exists());
+        assert!(!launch_dir.join("pickforge.db-wal").exists());
+    }
 
     #[test]
     fn scrub_event_clears_server_name_and_breadcrumbs() {

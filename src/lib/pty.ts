@@ -181,6 +181,18 @@ export function getAskpassStatus(): Promise<AskpassStatus> {
   return askpassStatusPromise;
 }
 
+/** The chat pane's askpass notice copy — `null` renders nothing. Only the two
+ *  actionable failure states from the locked v1 contract get a notice;
+ *  "available" (agents can already run `sudo -A`) and "unsupportedPlatform"
+ *  (macOS/Windows — out of scope this release) stay silent. Pure so the exact
+ *  copy strings and the "only these two states render" rule are both
+ *  unit-testable without mounting `TerminalHost`. */
+export function askpassNotice(status: AskpassStatus | null): string | null {
+  if (status === "noHelper") return "no sudo helper — run sudo in a terminal";
+  if (status === "headless") return "no graphical session — run sudo in a terminal";
+  return null;
+}
+
 /** Normalise channel output into a Uint8Array regardless of the IPC encoding. */
 export function toBytes(data: PtyBytes): Uint8Array {
   if (data instanceof Uint8Array) return data;

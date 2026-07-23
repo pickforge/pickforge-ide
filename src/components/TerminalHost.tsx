@@ -15,7 +15,7 @@ import {
   type CapturedRemotePtys,
   type PaneSpawnMode,
 } from "../lib/remoteContext";
-import { getAskpassStatus, type AskpassStatus, type RemotePty } from "../lib/pty";
+import { askpassNotice, getAskpassStatus, type AskpassStatus, type RemotePty } from "../lib/pty";
 import "./TerminalHost.css";
 
 type Dir = "left" | "right" | "up" | "down";
@@ -247,11 +247,6 @@ export function TerminalHost(props: {
       .then(setAskpassStatus)
       .catch(() => {});
   }
-  const askpassNotice = (status: AskpassStatus | null): string | null => {
-    if (status === "noHelper") return "no sudo helper — run sudo in a terminal";
-    if (status === "headless") return "no graphical session — run sudo in a terminal";
-    return null;
-  };
   const handles = new Map<string, TerminalHandle>();
   const closedPanes = new Set<string>();
   let containerEl!: HTMLDivElement;

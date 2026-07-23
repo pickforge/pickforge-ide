@@ -140,6 +140,12 @@ const MOCK_USAGE_SUMMARY = [
   { provider: "codex", model: "gpt-5.3-codex-spark", chats: 1, turns: null, inputTokens: 22400, cachedInputTokens: 8000, outputTokens: 4120, costUsd: 0 },
 ];
 let MOCK_TELEMETRY = { crash_reports: true };
+// hostPlatform() resolves "linux" for the plain-Chromium userAgent Playwright
+// runs under (no Macintosh/Windows markers), so the Linux-only graphics
+// section (#238) renders in VRT the same as it would on a real Linux build —
+// this mock backs it with deterministic fixture data instead of the `null`
+// default fallback (which would render an error state).
+let MOCK_LINUX_GRAPHICS = { mode: "auto" as const, recommendation_dismissed: false };
 let MOCK_REMOTE_RUNNING = false;
 let MOCK_REMOTE_PAIRING: { code: string; createdAtMs: number; expiresAtMs: number; usedAtMs: number | null }[] = [];
 
@@ -250,6 +256,16 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   telemetry_get: () => MOCK_TELEMETRY,
   telemetry_set: (a) => {
     MOCK_TELEMETRY = { crash_reports: a.crashReports !== false };
+    return null;
+  },
+  linux_graphics_get: () => MOCK_LINUX_GRAPHICS,
+  linux_graphics_set: (a) => {
+    MOCK_LINUX_GRAPHICS = { ...MOCK_LINUX_GRAPHICS, mode: a.mode as typeof MOCK_LINUX_GRAPHICS.mode };
+    return null;
+  },
+  linux_graphics_recommendation_get: () => false,
+  linux_graphics_recommendation_dismiss: () => {
+    MOCK_LINUX_GRAPHICS = { ...MOCK_LINUX_GRAPHICS, recommendation_dismissed: true };
     return null;
   },
   detect_binaries: (a) => (a.names as string[]).map(() => true),

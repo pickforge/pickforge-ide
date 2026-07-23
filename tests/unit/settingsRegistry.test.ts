@@ -20,6 +20,7 @@ const CURRENT_SETTINGS_ORDER = [
   "quickLaunch",
   "appearance",
   "workbench",
+  "linuxGraphics",
   "fileOpening",
   "updates",
   "archivedProjects",
@@ -40,6 +41,7 @@ describe("settings section registry", () => {
       "Quick launch",
       "Appearance",
       "Workbench",
+      "Linux graphics",
       "File opening",
       "Updates",
       "Archived projects",
@@ -70,11 +72,11 @@ describe("settings section registry", () => {
     ]);
   });
 
-  it("preserves operator, account, and development gating", () => {
-    const visible = (operator: boolean, accounts: boolean, development: boolean) =>
+  it("preserves operator, account, development, and linux gating", () => {
+    const visible = (operator: boolean, accounts: boolean, development: boolean, linux = true) =>
       SETTINGS_SECTIONS
         .filter((section) =>
-          isSettingsSectionAvailable(section, { operator, accounts, development }),
+          isSettingsSectionAvailable(section, { operator, accounts, development, linux }),
         )
         .map(({ key }) => key);
 
@@ -89,20 +91,24 @@ describe("settings section registry", () => {
     );
     expect(visible(false, true, false)).toContain("account");
     expect(visible(false, false, true)).toContain("featureFlags");
+    expect(visible(true, true, true, true)).toContain("linuxGraphics");
+    expect(visible(true, true, true, false)).not.toContain("linuxGraphics");
   });
 
   it("resolves direct section keys and rejects hidden sections", () => {
-    const all = { operator: true, accounts: true, development: true };
-    const limited = { operator: false, accounts: false, development: false };
+    const all = { operator: true, accounts: true, development: true, linux: true };
+    const limited = { operator: false, accounts: false, development: false, linux: false };
 
     expect(settingsCategoryForSection("quickLaunch", all)).toBe("agents");
     expect(settingsCategoryForSection("account", all)).toBe("account");
     expect(settingsCategoryForSection("account", limited)).toBeNull();
     expect(settingsCategoryForSection("missing", all)).toBeNull();
+    expect(settingsCategoryForSection("linuxGraphics", all)).toBe("general");
+    expect(settingsCategoryForSection("linuxGraphics", limited)).toBeNull();
   });
 
   it("falls back from unavailable remembered categories", () => {
-    const limited = { operator: false, accounts: false, development: false };
+    const limited = { operator: false, accounts: false, development: false, linux: false };
 
     expect(availableSettingsCategories(limited).map(({ key }) => key)).toEqual([
       "general",

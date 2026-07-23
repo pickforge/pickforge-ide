@@ -3,6 +3,7 @@
 //! SQLite in Phase 3; for now resolution is explicit-or-auto-detect.
 
 mod home;
+mod linux_graphics;
 mod project_id;
 mod service;
 mod telemetry;
@@ -11,6 +12,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub use home::{pickforge_home, PickforgeHomeError};
+pub use linux_graphics::{
+    amd_gpu_present, kde_wayland_session_detected, load_linux_graphics_config,
+    resolve_graphics_backend_plan, save_linux_graphics_config, should_recommend_compatibility,
+    GraphicsBackendPlan, LinuxGraphicsConfig, LinuxGraphicsMode,
+};
 pub use project_id::project_id;
 pub use service::{ContextStorageService, StorageError};
 pub use telemetry::{load_telemetry_config, save_telemetry_config, TelemetryConfig};

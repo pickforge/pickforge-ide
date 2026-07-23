@@ -38,7 +38,7 @@ export const SETTINGS_CATEGORIES = [
 
 export type SettingsCategoryKey = (typeof SETTINGS_CATEGORIES)[number]["key"];
 
-export type SettingsSectionAvailability = "always" | "operator" | "accounts" | "development";
+export type SettingsSectionAvailability = "always" | "operator" | "accounts" | "development" | "linux";
 
 export const SETTINGS_SECTIONS = [
   { key: "agentModels", title: "Agent models", category: "agents", availability: "always" },
@@ -50,6 +50,7 @@ export const SETTINGS_SECTIONS = [
   { key: "quickLaunch", title: "Quick launch", category: "agents", availability: "always" },
   { key: "appearance", title: "Appearance", category: "general", availability: "always" },
   { key: "workbench", title: "Workbench", category: "general", availability: "always" },
+  { key: "linuxGraphics", title: "Linux graphics", category: "general", availability: "linux" },
   { key: "fileOpening", title: "File opening", category: "general", availability: "always" },
   { key: "updates", title: "Updates", category: "general", availability: "always" },
   { key: "archivedProjects", title: "Archived projects", category: "projects", availability: "always" },
@@ -72,6 +73,7 @@ export interface SettingsSectionAvailabilityContext {
   operator: boolean;
   accounts: boolean;
   development: boolean;
+  linux: boolean;
 }
 
 export function isSettingsSectionAvailable(

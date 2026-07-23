@@ -4,6 +4,8 @@ mod db_commands;
 mod device_commands;
 mod fs_commands;
 mod git_commands;
+#[cfg(target_os = "linux")]
+mod graphics_commands;
 mod ios_commands;
 mod logcat_commands;
 mod mcp_commands;
@@ -340,6 +342,14 @@ pub fn run() {
             voice_commands::voice_status,
             telemetry_commands::telemetry_get,
             telemetry_commands::telemetry_set,
+            #[cfg(target_os = "linux")]
+            graphics_commands::linux_graphics_get,
+            #[cfg(target_os = "linux")]
+            graphics_commands::linux_graphics_set,
+            #[cfg(target_os = "linux")]
+            graphics_commands::linux_graphics_recommendation_get,
+            #[cfg(target_os = "linux")]
+            graphics_commands::linux_graphics_recommendation_dismiss,
             db_commands::picks_list,
             db_commands::pick_insert,
             db_commands::runs_list,

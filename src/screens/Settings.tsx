@@ -45,6 +45,13 @@ import {
   type ControlsSide,
 } from "../stores/windowControls";
 import { hostPlatform } from "../lib/platform";
+import {
+  linuxGraphicsGet,
+  linuxGraphicsRecommendationDismiss,
+  linuxGraphicsRecommendationGet,
+  linuxGraphicsSet,
+  type LinuxGraphicsMode,
+} from "../lib/linuxGraphics";
 import { layout, resetLayout, setDockVisible } from "../stores/workbenchLayout";
 import { startTour } from "../stores/tour";
 import { navigate, navigateSettingsSection, settingsSection } from "../router";
@@ -145,6 +152,7 @@ import {
   DictationSettingsSection,
   FeatureFlagsSettingsSection,
   FileOpeningSettingsSection,
+  LinuxGraphicsSettingsSection,
   OperatorRouterSettingsSection,
   PickLabSettingsSection,
   QuickLaunchSettingsSection,
@@ -180,6 +188,12 @@ const SYNC_GROUP_LABELS: Record<SyncFieldGroup, { title: string; hint: string }>
   operatorConfig: { title: "Operator & dictation", hint: "router backend, models, mic toggles" },
   keybindings: { title: "Quick launch", hint: "chips, commands, and shortcuts" },
   remoteBindings: { title: "Remote bindings", hint: "per-project remote host, matched by name" },
+};
+
+const LINUX_GRAPHICS_MODE_DESCRIPTIONS: Record<LinuxGraphicsMode, string> = {
+  auto: "Prefer X11/XWayland in a mixed session; keep the WebKitGTK DMA-BUF renderer on.",
+  compatibility: "Prefer X11/XWayland and disable the WebKitGTK DMA-BUF renderer — the verified fast path on affected AMD/KDE systems.",
+  "native-wayland": "Opt into native Wayland; keep the WebKitGTK DMA-BUF renderer on.",
 };
 
 const SETTINGS_CATEGORY_STORAGE_KEY = "pickforge.settings.category";
@@ -325,6 +339,10 @@ export function SettingsScreen() {
   const [pickLabLoading, setPickLabLoading] = createSignal(false);
   const [crashReports, setCrashReports] = createSignal(true);
   const [crashReportsError, setCrashReportsError] = createSignal<string | null>(null);
+  const [linuxGraphicsMode, setLinuxGraphicsMode] = createSignal<LinuxGraphicsMode>("auto");
+  const [linuxGraphicsError, setLinuxGraphicsError] = createSignal<string | null>(null);
+  const [linuxGraphicsRestartRequired, setLinuxGraphicsRestartRequired] = createSignal(false);
+  const [linuxGraphicsRecommendation, setLinuxGraphicsRecommendation] = createSignal(false);
   const [remoteHost, setRemoteHost] = createSignal<RemoteHostOverview | null>(null);
   const [remotePort, setRemotePort] = createSignal("4747");
   const [remoteLoading, setRemoteLoading] = createSignal(false);
@@ -355,6 +373,7 @@ export function SettingsScreen() {
     operator: flagEnabled("operator"),
     accounts: flagEnabled("accounts"),
     development: import.meta.env.DEV,
+    linux: hostPlatform() === "linux",
   });
   const availableCategories = () => availableSettingsCategories(settingsAvailability());
 
@@ -576,6 +595,20 @@ export function SettingsScreen() {
       setCrashReportsError(errorText(error));
     }
   };
+  const reloadLinuxGraphics = async () => {
+    try {
+      const config = await linuxGraphicsGet();
+      setLinuxGraphicsMode(config.mode);
+      setLinuxGraphicsError(null);
+    } catch (error) {
+      setLinuxGraphicsError(errorText(error));
+    }
+    try {
+      setLinuxGraphicsRecommendation(await linuxGraphicsRecommendationGet());
+    } catch {
+      setLinuxGraphicsRecommendation(false);
+    }
+  };
   const reloadRemoteHost = async () => {
     setRemoteLoading(true);
     setRemoteError(null);
@@ -624,6 +657,7 @@ export function SettingsScreen() {
     void reloadPickLab();
     void reloadTelemetry();
     void reloadRemoteHost();
+    if (hostPlatform() === "linux") void reloadLinuxGraphics();
     if (flagEnabled("operator")) void reloadVoice();
     if (flagEnabled("ompPiAgents")) void reloadAgentDiagnostics();
   });
@@ -676,6 +710,34 @@ export function SettingsScreen() {
       setCrashReports(previous);
       setCrashReportsError(errorText(error));
     }
+  };
+
+  const changeLinuxGraphicsMode = async (mode: LinuxGraphicsMode) => {
+    const previous = linuxGraphicsMode();
+    if (mode === previous) return;
+    setLinuxGraphicsMode(mode);
+    setLinuxGraphicsError(null);
+    try {
+      await linuxGraphicsSet(mode);
+      setLinuxGraphicsRestartRequired(true);
+    } catch (error) {
+      setLinuxGraphicsMode(previous);
+      setLinuxGraphicsError(errorText(error));
+    }
+  };
+
+  const dismissLinuxGraphicsRecommendation = async () => {
+    setLinuxGraphicsRecommendation(false);
+    try {
+      await linuxGraphicsRecommendationDismiss();
+    } catch (error) {
+      setLinuxGraphicsError(errorText(error));
+    }
+  };
+
+  const restartPickforge = async () => {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
   };
 
   const restore = async (root: string) => {
@@ -1572,6 +1634,46 @@ export function SettingsScreen() {
           </span>
           <button class="pf-text-btn" onClick={() => { navigate("workbench"); startTour(); }}>Replay tour</button>
         </div></WorkbenchSettingsSection>
+
+        <Show when={hostPlatform() === "linux"}>
+          <LinuxGraphicsSettingsSection><div class="pf-settings-row">
+            <span class="pf-settings-label">
+              Graphics compatibility
+              <span class="pf-settings-hint-inline">GTK/WebKitGTK rendering backend (restart required)</span>
+            </span>
+            <div class="pf-seg">
+              <button
+                classList={{ active: linuxGraphicsMode() === "auto" }}
+                onClick={() => void changeLinuxGraphicsMode("auto")}
+              >Auto</button>
+              <button
+                classList={{ active: linuxGraphicsMode() === "compatibility" }}
+                onClick={() => void changeLinuxGraphicsMode("compatibility")}
+              >Compatibility</button>
+              <button
+                classList={{ active: linuxGraphicsMode() === "native-wayland" }}
+                onClick={() => void changeLinuxGraphicsMode("native-wayland")}
+              >Native Wayland</button>
+            </div>
+          </div>
+          <div class="pf-settings-hint-inline">{LINUX_GRAPHICS_MODE_DESCRIPTIONS[linuxGraphicsMode()]}</div>
+          <Show when={linuxGraphicsError()}>
+            <div class="pf-ql-warn">{linuxGraphicsError()}</div>
+          </Show>
+          <Show when={linuxGraphicsRestartRequired()}>
+            <div class="pf-ql-warn">
+              Restart PickForge to apply the new graphics mode.{" "}
+              <button class="pf-text-btn" onClick={() => void restartPickforge()}>Restart now</button>
+            </div>
+          </Show>
+          <Show when={linuxGraphicsRecommendation()}>
+            <div class="pf-ql-warn">
+              KDE Plasma on Wayland with an AMD GPU often renders faster in Compatibility mode.{" "}
+              <button class="pf-text-btn" onClick={() => void changeLinuxGraphicsMode("compatibility")}>Try Compatibility</button>{" "}
+              <button class="pf-text-btn" onClick={() => void dismissLinuxGraphicsRecommendation()}>Dismiss</button>
+            </div>
+          </Show></LinuxGraphicsSettingsSection>
+        </Show>
 
         <FileOpeningSettingsSection><div class="pf-settings-row">
           <span class="pf-settings-label">Open files with</span>

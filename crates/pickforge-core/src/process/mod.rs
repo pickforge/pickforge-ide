@@ -16,5 +16,5 @@ pub use containment::{
 pub use runner::{
     run, run_timeout, run_timeout_capped, CommandOutcome, OutputTruncation, RunError,
 };
-pub use shell_env::user_shell_environment;
+pub use shell_env::{mark_linux_dmabuf_env_synthesized, user_shell_environment};
 pub use start_gate::{StartGate, StartPermit};

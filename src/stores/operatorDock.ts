@@ -124,6 +124,7 @@ export async function refreshRecent(): Promise<void> {
   }
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function submitOperatorCommand(): Promise<void> {
   if (busy()) return;
   const text = input().trim();

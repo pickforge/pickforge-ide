@@ -6,6 +6,7 @@ import "./ConfirmDialog.css";
 /** A centered confirmation modal following the operator dock's Portal + backdrop
  *  pattern. The parent owns the body and confirm-gating; this handles the
  *  overlay, focus, Escape, and the cancel/confirm controls. */
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function ConfirmDialog(props: {
   open: boolean;
   eyebrow: string;

@@ -52,6 +52,7 @@ const REDUCED_MOTION =
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
     : null;
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function AgentChatView(props: {
   chatId: string;
   projectRoot: string;

@@ -38,6 +38,9 @@ jobs:
       - name: installer smoke
         run: bun run test:installer
 
+      - name: frontend lint
+        run: bun run lint
+
       - name: unit tests
         run: bun run test:unit
 

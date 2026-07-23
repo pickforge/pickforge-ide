@@ -70,6 +70,7 @@ const STREAMS: Record<LogViewSource, StreamWiring> = {
   },
 };
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function LogcatView(props: { source?: LogViewSource }) {
   const wiring = () => STREAMS[props.source ?? "logcat"];
   let scroller!: HTMLDivElement;

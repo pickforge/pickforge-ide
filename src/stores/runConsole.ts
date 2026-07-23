@@ -173,6 +173,7 @@ function finishRunRecord(exitReason: string) {
 
 /** Launch a target: open the console and mount a fresh pty that runs the
  *  command directly. Guards against stacking a run on top of a live one. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function startRun(
   t: RunTarget,
   projectRoot: string | null,

@@ -189,6 +189,7 @@ export function parseOperatorIntent(json: string): OperatorIntentParseResult {
   return { ok: true, intent: parsed.data };
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function riskTier(action: OperatorAction): 0 | 1 {
   switch (action.action) {
     case "openProject":

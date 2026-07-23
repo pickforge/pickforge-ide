@@ -207,6 +207,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     else SAMPLE_CHATS.push({ ...chat });
     return null;
   },
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   update_chat_title: (a) => {
     const chat = SAMPLE_CHATS.find((item) => item.chatId === a.chatId);
     if (!chat) return false;

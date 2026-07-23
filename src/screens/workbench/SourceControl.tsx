@@ -37,6 +37,7 @@ interface RepoStatus {
   status: GitStatus;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function SourceControl() {
   const [repos, setRepos] = createSignal<RepoStatus[]>([]);
   const [loading, setLoading] = createSignal(false);

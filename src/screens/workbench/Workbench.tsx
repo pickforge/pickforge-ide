@@ -79,6 +79,7 @@ interface MountedHost {
   projectRoot: string;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function WorkbenchScreen() {
   const [mounted, setMounted] = createSignal<MountedHost[]>([]);
   const [available, setAvailable] = createSignal<Record<string, boolean>>({});
@@ -249,6 +250,7 @@ export function WorkbenchScreen() {
 
     // Global quick-launch hotkeys. Capture phase so they win over the shell;
     // ignored while typing in a real form field (but not in the terminal).
+    // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
     const onKey = (e: KeyboardEvent) => {
       if (route() !== "workbench") return; // hotkeys only act on the workbench
       const t = e.target as HTMLElement | null;
@@ -342,6 +344,7 @@ export function WorkbenchScreen() {
           {/* All visited chats stay mounted; only the active one is shown. */}
           <div class="pf-term-mounts" classList={{ "pf-term-mounts--hidden": orchestraOpen() }}>
           <For each={mounted()}>
+            {/* eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity. */}
             {(h) => {
               const chat = findChat(h.chatId);
               const agentId = chat?.agentId ?? "";

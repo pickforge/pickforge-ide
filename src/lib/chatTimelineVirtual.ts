@@ -58,6 +58,7 @@ export function timelineVirtualRowKey(row: TimelineVirtualRow): string {
   return row.kind === "working" ? "working" : `${row.item.type}:${row.item.seq}`;
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
   if (row.kind === "working") return 40;
   const item = row.item;

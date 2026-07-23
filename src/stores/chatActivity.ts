@@ -128,6 +128,7 @@ const DCS_ESC = 6; // saw ESC inside a DCS-class string
 const scanStates = new Map<string, Scan>();
 const scanKey = (chatId: string, paneId: string) => `${chatId}\u0000${paneId}`;
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function countVisibleChars(chatId: string, paneId: string, chunk: string): number {
   const key = scanKey(chatId, paneId);
   let state: Scan = scanStates.get(key) ?? GROUND;

@@ -56,6 +56,7 @@ export function renderChatMarkdown(
   return renderMarkdown(source, { cache: !streaming });
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function ChatBubble(props: {
   role: "user" | "assistant";
   text: string;

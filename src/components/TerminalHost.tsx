@@ -179,6 +179,7 @@ export interface TerminalHostHandle {
   primaryRemotePty: () => RemotePty | null;
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function TerminalHost(props: {
   onReady?: (handle: TerminalHostHandle) => void;
   cwd?: string;
@@ -524,6 +525,7 @@ export function TerminalHost(props: {
   return (
     <div class="pf-term-host" ref={containerEl}>
       <For each={leaves()}>
+        {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
         {(leaf) => {
           const rect = () => layout().map.get(leaf.id) ?? { x: 0, y: 0, w: 1, h: 1 };
           const focused = () => focusedId() === leaf.id;

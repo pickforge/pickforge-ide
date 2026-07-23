@@ -95,6 +95,7 @@ function LocalRunDeviceControl(props: {
   );
 }
 
+// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function InspectorPanel() {
   // Which inspector the rail shows, branched on the active target's capability:
   // a LIVE run wins (it's what's on the device), else the selected launcher

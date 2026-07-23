@@ -6,6 +6,7 @@ export type ParsedSwarmCommand = {
   mode: "scout" | "review";
 };
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function parseSwarmCommand(text: string): ParsedSwarmCommand | null {
   const trimmed = text.trim();
   const slash = /^\/swarm(\s|$)/i.test(trimmed);

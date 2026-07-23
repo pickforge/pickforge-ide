@@ -202,6 +202,7 @@ function launchContextIsCurrent(projectRoot: string, remote: RemotePty | null): 
   return workspace.activeRoot === projectRoot && sameRemote(remotePtyFor(projectRoot), remote);
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 async function launchTarget(t: RunTarget, projectRoot: string): Promise<void> {
   openConsole();
   setError(null);

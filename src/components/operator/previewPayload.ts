@@ -1,5 +1,6 @@
 import type { OperatorIntent } from "../../lib/operatorIntent";
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function previewPayloadLines(intent: OperatorIntent): string[] {
   const lines: string[] = [];
   if (intent.projectRef) lines.push(`project: ${intent.projectRef}`);

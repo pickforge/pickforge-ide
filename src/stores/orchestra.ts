@@ -369,6 +369,7 @@ function normalizeChatIds(chatIds: unknown[]): string[] {
 // Sanitize whatever we load: drop unknown shapes, prune duplicate/empty chat
 // ids, clamp ratios, and cap the lane count — collapsing splits whose children
 // were dropped. `seen` enforces dedup + the lane cap across the whole tree.
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function sanitizeLaneNode(raw: unknown, seen: Set<string>, depth: number): LaneNode | null {
   if (!raw || typeof raw !== "object") return null;
   const node = raw as Record<string, unknown>;

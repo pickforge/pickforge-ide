@@ -33,6 +33,7 @@ interface LayoutRow {
 /** Assign each commit a lane and the connectors between adjacent rows. Lane
  *  indices are stable (slots are reused, never compacted) so pass-through lanes
  *  draw as straight vertical lines. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function layout(commits: GraphCommit[]): { rows: LayoutRow[]; lanes: number } {
   const lanes: (string | null)[] = []; // lanes[i] = hash expected next at lane i
   const laneColor: number[] = [];

@@ -187,6 +187,7 @@ type Suggestion =
   | { kind: "template"; template: PromptTemplate }
   | { kind: "skill"; skill: AgentSkill };
 
+// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function Composer(props: {
   provider: AgentProvider;
   engine: AgentEngine;
@@ -857,6 +858,7 @@ export function Composer(props: {
       });
   };
 
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   const onPaste = (event: ClipboardEvent) => {
     const data = event.clipboardData;
     if (!data) return;
@@ -1078,6 +1080,7 @@ export function Composer(props: {
     dispatchSend();
   };
 
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     if (event.isComposing) return;

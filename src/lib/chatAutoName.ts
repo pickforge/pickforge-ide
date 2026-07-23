@@ -607,6 +607,7 @@ function commit(chatId: string, message: string) {
   });
 }
 
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function shellWords(line: string): string[] {
   const words: string[] = [];
   let word = "";
@@ -667,6 +668,7 @@ function shellWords(line: string): string[] {
 
 /** If `line` starts with a known agent binary, return the prompt text after the
  *  command and its flags (empty string = bare launch). null if not an agent. */
+// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function matchAgentLaunch(line: string): { prompt: string } | null {
   const tokens = shellWords(line);
   const first = tokens[0];

@@ -875,7 +875,21 @@ fn cleanup_owned_dtach_sockets(
 
 fn tmux_server_is_absent(stderr: &[u8]) -> bool {
     let stderr = String::from_utf8_lossy(stderr);
-    stderr.contains("no server running") || stderr.contains("failed to connect to server")
+    // "no server running on <path>" is what a real tmux (verified: 3.2a on
+    // Ubuntu 22.04) prints when the socket path EXISTS but nothing is
+    // listening (a stale/abandoned socket, ECONNREFUSED). But this instance's
+    // private, freshly-random server name means the far more common case —
+    // no chat ever used the tmux backend this run, so the socket was NEVER
+    // CREATED (ENOENT) — hits a DIFFERENT real message from the same tmux:
+    // "error connecting to <path> (No such file or directory)". Missing that
+    // second phrasing made `kill_recoverable_sessions_on_exit` report a false
+    // failure on every ordinary exit where tmux was installed but unused —
+    // caught by `tests/legacy_session_exit_cleanup.rs` on real Linux CI
+    // (pickforge#214), never locally, since no earlier test ever ran this
+    // entrypoint against a real tmux binary.
+    stderr.contains("no server running")
+        || stderr.contains("failed to connect to server")
+        || (stderr.contains("error connecting to") && stderr.contains("No such file or directory"))
 }
 
 fn validate_tmux_cleanup_result(
@@ -1523,7 +1537,22 @@ mod tests {
         assert!(tmux_server_is_absent(
             b"failed to connect to server: Connection refused"
         ));
+        // Real tmux 3.2a (Ubuntu 22.04) verbatim, captured from a socket path
+        // that was never created — the common case for this instance's
+        // freshly-random per-process server name — and again from a CI
+        // failure this exact message caused (pickforge#214). This is a
+        // DIFFERENT phrasing than the "no server running on ..." case above:
+        // that one is what the same tmux prints for a stale (existed, nothing
+        // listening) socket instead.
+        assert!(tmux_server_is_absent(
+            b"error connecting to /tmp/tmux-1001/pickforge-1f26-890bcc1cf8282f49 (No such file or directory)"
+        ));
         assert!(!tmux_server_is_absent(b"permission denied"));
+        // A real connection error for an unrelated reason must still surface
+        // as a genuine failure, not be swallowed as "no server".
+        assert!(!tmux_server_is_absent(
+            b"error connecting to /tmp/tmux-1001/pickforge-abc (Permission denied)"
+        ));
     }
 
     #[test]

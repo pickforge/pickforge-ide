@@ -37,7 +37,6 @@ const activity = vi.hoisted(() => ({
 }));
 const flags = vi.hoisted(() => ({
   remoteProjects: false,
-  dynamicChatTitles: false,
   ompPiAgents: false,
 }));
 const workspace = vi.hoisted(() => ({
@@ -73,7 +72,7 @@ const workspace = vi.hoisted(() => ({
     const chat = workspace.chats.get(id);
     if (chat) {
       chat.title = title;
-      if (flags.dynamicChatTitles) chat.titleSource = "auto";
+      chat.titleSource = "auto";
     }
   }),
   setChatAgent: vi.fn(async (id: string, agentId: string, kind = "agent") => {
@@ -106,7 +105,6 @@ vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isCha
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: (key: string) =>
     (key === "remoteProjects" && flags.remoteProjects) ||
-    (key === "dynamicChatTitles" && flags.dynamicChatTitles) ||
     (key === "ompPiAgents" && flags.ompPiAgents),
   subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
@@ -264,7 +262,6 @@ beforeEach(() => {
   workspace.isChatArchived.mockReset().mockReturnValue(false);
   workspace.projects = [];
   flags.remoteProjects = false;
-  flags.dynamicChatTitles = false;
   flags.ompPiAgents = false;
   settings.clear();
   setAgentEngine("v2");
@@ -2004,7 +2001,10 @@ describe("steerAgentChat", () => {
 describe("agent chat auto-rename", () => {
   it("renames a default-titled chat once after the first completed turn", async () => {
     const chatId = nextChatId();
-    workspace.chats.set(chatId, workspace.makeChat(chatId, { title: "New chat" }));
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
     mockInvoke();
     await ensureAgentChat(chatId, "/project", "codex", null);
     const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
@@ -2035,7 +2035,10 @@ describe("agent chat auto-rename", () => {
 
   it("does not rename from a hidden internal prompt", async () => {
     const chatId = nextChatId();
-    workspace.chats.set(chatId, workspace.makeChat(chatId, { title: "New chat" }));
+    workspace.chats.set(
+      chatId,
+      workspace.makeChat(chatId, { title: "New chat", titleSource: "default" }),
+    );
     mockInvoke();
     await ensureAgentChat(chatId, "/project", "codex", null);
     const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
@@ -2174,7 +2177,6 @@ describe("agentChat → chatActivity wiring", () => {
 
 describe("dynamic native chat titles", () => {
   it("ignores greetings and names from the first meaningful completed task", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2199,7 +2201,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("refreshes from the fourth meaningful completed user turn", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2233,7 +2234,6 @@ describe("dynamic native chat titles", () => {
     );
   });
   it("ties a completed title milestone to the prompt that started the turn", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2256,7 +2256,6 @@ describe("dynamic native chat titles", () => {
 
 
   it("counts only successful turns when failures come first or intervene", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2292,7 +2291,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("stages provider plans during streaming and gives them precedence at turn end", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2323,7 +2321,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("commits OMP session title events only at a successful durable ownership boundary", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2350,7 +2347,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("discards a staged provider title when its turn fails", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2383,7 +2379,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("does not let interrupted turns rename or advance title milestones", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2437,7 +2432,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("does not hydrate interrupted turns into the successful title cadence", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2489,7 +2483,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("never stages or commits provider plans from hidden internal turns", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2519,7 +2512,6 @@ describe("dynamic native chat titles", () => {
   });
 
   it("never refreshes a persisted user-owned title", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,
@@ -2542,7 +2534,6 @@ describe("dynamic native chat titles", () => {
     expect(workspace.setChatTitle).not.toHaveBeenCalled();
   });
   it("locks immediately when a manual rename races an active turn", async () => {
-    flags.dynamicChatTitles = true;
     const chatId = nextChatId();
     workspace.chats.set(
       chatId,

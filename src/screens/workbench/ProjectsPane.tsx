@@ -688,7 +688,6 @@ export function ProjectsPane() {
       <button class="pf-menu-item" onClick={() => { setRenaming(p.id); closeMenu(); }}>Rename</button>
       <Show
         when={
-          flagEnabled("dynamicChatTitles") &&
           !!findChat(p.id) &&
           chatTitleSourceForPolicy(findChat(p.id)!) === "user"
         }

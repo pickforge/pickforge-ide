@@ -26,8 +26,6 @@ import { isSwarmWorkerChat } from "../lib/chatLabels";
 import {
   canAutoOwn,
   chatTitleSourceForPolicy,
-  deriveAgentChatTitle,
-  isDefaultChatTitle,
   selectDynamicAgentTitle,
 } from "../lib/chatAutoName";
 import { estimateCostUsd } from "../lib/agentPricing";
@@ -37,7 +35,6 @@ import { errorText } from "../lib/errors";
 import { agentTurnCleared, agentTurnDone, agentTurnStarted } from "./chatActivity";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
-import { flagEnabled } from "./flags";
 import { remotePtyFor } from "../lib/remoteContext";
 
 export type AgentTimelineItem =
@@ -141,7 +138,6 @@ const pendingSetModelByChat = new Map<string, { promise: Promise<void>; sequence
 const setModelRequestSeqByChat = new Map<string, number>();
 // Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
 const ensureGenerations = new Map<string, number>();
-const autoRenameChecked = new Set<string>();
 const pendingProviderTitleByChat = new Map<string, string>();
 // Successful, visible user turns only. Timeline messages include failed turns,
 // so title cadence must use this completion ledger rather than recounting them.
@@ -843,8 +839,7 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
   const activeTitleTurn = activeTitleTurnByChat.get(chatId);
   if (
-    flagEnabled("dynamicChatTitles")
-    && event.kind === "sessionTitle"
+    event.kind === "sessionTitle"
     && activeTitleTurn
     && !activeTitleTurn.hidden
     && event.title.trim()
@@ -853,7 +848,7 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     // boundary through canAutoOwn/setChatTitle so a durable manual owner wins.
     pendingProviderTitleByChat.set(chatId, event.title);
   }
-  if (flagEnabled("dynamicChatTitles") && event.kind === "planUpdate") {
+  if (event.kind === "planUpdate") {
     const candidate =
       event.items.find((item) => !item.completed)?.text ?? event.items[0]?.text ?? "";
     if (activeTitleTurn && !activeTitleTurn.hidden && candidate) {
@@ -876,8 +871,7 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
           ]);
         }
       }
-      if (flagEnabled("dynamicChatTitles")) maybeRefreshDynamicTitle(chatId);
-      else maybeAutoRenameAfterFirstTurn(chatId);
+      maybeRefreshDynamicTitle(chatId);
     } else {
       pendingProviderTitleByChat.delete(chatId);
     }
@@ -914,26 +908,6 @@ function queueAgentChatSetModel(chatId: string, sessionId: string, model: string
       setModelRequestSeqByChat.delete(chatId);
     }
   });
-}
-
-function maybeAutoRenameAfterFirstTurn(chatId: string) {
-  if (autoRenameChecked.has(chatId)) return;
-  autoRenameChecked.add(chatId);
-
-  const row = findChat(chatId);
-  if (!row || typeof row.title !== "string" || !isDefaultChatTitle(row.title)) return;
-
-  const chat = chats[chatId];
-  if (!chat) return;
-  const userMessages = chat.timeline.filter(
-    (item): item is Extract<AgentTimelineItem, { type: "userMessage" }> =>
-      item.type === "userMessage" && !item.hidden,
-  );
-  if (userMessages.length !== 1) return;
-  const firstAssistant = chat.timeline.find((item) => item.type === "assistantText");
-  const title = deriveAgentChatTitle(userMessages[0].text, firstAssistant?.text);
-  if (!title || isDefaultChatTitle(title)) return;
-  void setChatTitle(chatId, title).catch(() => undefined);
 }
 
 function maybeRefreshDynamicTitle(chatId: string) {

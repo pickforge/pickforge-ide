@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -23,6 +24,22 @@ static CACHE: OnceLock<HashMap<String, String>> = OnceLock::new();
 /// only one shell spawns at a time and a failed attempt can never cache the
 /// fallback while another thread is still capturing an authoritative env.
 static RESOLVE_LOCK: Mutex<u32> = Mutex::new(0);
+/// Set when PickForge itself injects `WEBKIT_DISABLE_DMABUF_RENDERER` into
+/// the process environment for the persisted Linux Compatibility graphics
+/// mode (#238). WebKitGTK needs that as a real process env var before it
+/// initializes, but PickForge must not forward a mode-synthesized value to
+/// shells/agents it spawns — only to explicit values the user already set
+/// before launching PickForge. Must be called (if at all) before the first
+/// `user_shell_environment()` call.
+static DMABUF_ENV_SYNTHESIZED: AtomicBool = AtomicBool::new(false);
+
+/// Marks that `WEBKIT_DISABLE_DMABUF_RENDERER` in the current process
+/// environment was set by PickForge's Linux graphics mode, not the user, so
+/// [`user_shell_environment`] strips it before handing an environment to
+/// spawned shells or agents.
+pub fn mark_linux_dmabuf_env_synthesized() {
+    DMABUF_ENV_SYNTHESIZED.store(true, Ordering::SeqCst);
+}
 
 /// How many times we re-spawn the login shell before giving up and caching the
 /// un-enriched inherited environment. A packaged GUI app's first resolution can
@@ -62,11 +79,40 @@ pub fn user_shell_environment() -> &'static HashMap<String, String> {
     Box::leak(Box::new(env))
 }
 
+/// Strips PickForge-owned Linux-graphics-mode (#238) bookkeeping from `env`
+/// before it's handed to a spawned shell or agent:
+/// - [`crate::LINUX_DMABUF_SYNTHESIZED_MARKER_ENV`] is always internal-only
+///   and never forwarded, regardless of `synthesized`.
+/// - `WEBKIT_DISABLE_DMABUF_RENDERER` is stripped only when `synthesized` is
+///   true — i.e. *this* process (or one it inherited env from across a
+///   Settings-triggered relaunch) set it, not the user.
+///
+/// Pure — no global state — so every input combination is directly
+/// testable without touching [`DMABUF_ENV_SYNTHESIZED`], which keeps the
+/// process-global flag "integration-touched" in exactly one place below.
+fn strip_dmabuf_env(mut env: HashMap<String, String>, synthesized: bool) -> HashMap<String, String> {
+    env.remove(crate::LINUX_DMABUF_SYNTHESIZED_MARKER_ENV);
+    if synthesized {
+        env.remove(crate::WEBKIT_DISABLE_DMABUF_ENV);
+    }
+    env
+}
+
 /// Resolve the environment and report whether the result is *authoritative*.
 /// `false` means the login-shell capture was skipped or failed (no `SHELL`, or a
 /// spawn/timeout miss) and the caller should retry — not that enrichment is
 /// impossible. Windows and the explicit inherited-only flag are authoritative.
 fn resolve(base: HashMap<String, String>) -> (HashMap<String, String>, bool) {
+    let (env, authoritative) = resolve_inner(base);
+    // Strip last, after any login-shell merge: the spawned login shell also
+    // inherits the ambient process env, so a mode-synthesized
+    // WEBKIT_DISABLE_DMABUF_RENDERER would otherwise round-trip right back in
+    // via its own `env` output (#238).
+    let env = strip_dmabuf_env(env, DMABUF_ENV_SYNTHESIZED.load(Ordering::SeqCst));
+    (env, authoritative)
+}
+
+fn resolve_inner(base: HashMap<String, String>) -> (HashMap<String, String>, bool) {
     if cfg!(windows) || base.get("PICKFORGE_INHERITED_ENV_ONLY").map(String::as_str) == Some("1") {
         return (base, true);
     }
@@ -266,6 +312,93 @@ mod tests {
         let (env, resolved) = resolve(base);
         assert!(!resolved);
         assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
+    }
+
+    // -- strip_dmabuf_env: pure, no global state (#238 P2) --------------
+    //
+    // The actual filtering decision lives in a pure helper so every input
+    // combination is directly testable without ever touching the
+    // process-global DMABUF_ENV_SYNTHESIZED flag — which every concurrent
+    // `resolve()` / `user_shell_environment()` call in this binary reads, so
+    // mutating it from a test would be a race against unrelated tests.
+
+    #[test]
+    fn strip_dmabuf_env_always_removes_the_marker() {
+        let mut env = HashMap::new();
+        env.insert("PICKFORGE_DMABUF_SYNTHESIZED".to_string(), "1".to_string());
+        env.insert("PATH".to_string(), "/usr/bin".to_string());
+
+        let stripped = strip_dmabuf_env(env, false);
+
+        assert!(!stripped.contains_key("PICKFORGE_DMABUF_SYNTHESIZED"));
+        assert_eq!(stripped.get("PATH").map(String::as_str), Some("/usr/bin"));
+    }
+
+    #[test]
+    fn strip_dmabuf_env_leaves_the_webkit_var_when_not_synthesized() {
+        // A value the *user* set before launch must survive untouched — only
+        // a mode-synthesized value is stripped.
+        let mut env = HashMap::new();
+        env.insert(
+            "WEBKIT_DISABLE_DMABUF_RENDERER".to_string(),
+            "1".to_string(),
+        );
+
+        let stripped = strip_dmabuf_env(env, false);
+
+        assert_eq!(
+            stripped.get("WEBKIT_DISABLE_DMABUF_RENDERER").map(String::as_str),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn strip_dmabuf_env_removes_both_when_synthesized() {
+        let mut env = HashMap::new();
+        env.insert(
+            "WEBKIT_DISABLE_DMABUF_RENDERER".to_string(),
+            "1".to_string(),
+        );
+        env.insert("PICKFORGE_DMABUF_SYNTHESIZED".to_string(), "1".to_string());
+        env.insert("PATH".to_string(), "/usr/bin".to_string());
+
+        let stripped = strip_dmabuf_env(env, true);
+
+        assert!(!stripped.contains_key("WEBKIT_DISABLE_DMABUF_RENDERER"));
+        assert!(!stripped.contains_key("PICKFORGE_DMABUF_SYNTHESIZED"));
+        assert_eq!(stripped.get("PATH").map(String::as_str), Some("/usr/bin"));
+    }
+
+    /// The one place `DMABUF_ENV_SYNTHESIZED` (the process-global flag) is
+    /// touched by a test: proves `resolve()` actually reads it and feeds it
+    /// to `strip_dmabuf_env` (already exhaustively tested above in
+    /// isolation), so this needs only one case, not the full input matrix.
+    /// Locked and reset on drop (incl. panic) so it can never race or leak
+    /// into any other test that happens to call `resolve()` concurrently.
+    #[test]
+    fn resolve_wires_the_global_synthesized_flag_into_strip_dmabuf_env() {
+        static LOCK: Mutex<()> = Mutex::new(());
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                DMABUF_ENV_SYNTHESIZED.store(false, Ordering::SeqCst);
+            }
+        }
+
+        let _lock = LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = ResetGuard;
+        DMABUF_ENV_SYNTHESIZED.store(true, Ordering::SeqCst);
+
+        let mut base = HashMap::new();
+        base.insert("PICKFORGE_INHERITED_ENV_ONLY".to_string(), "1".to_string());
+        base.insert(
+            "WEBKIT_DISABLE_DMABUF_RENDERER".to_string(),
+            "1".to_string(),
+        );
+
+        let (env, resolved) = resolve(base);
+        assert!(resolved);
+        assert!(!env.contains_key("WEBKIT_DISABLE_DMABUF_RENDERER"));
     }
 
     #[cfg(unix)]

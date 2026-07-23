@@ -43,9 +43,10 @@ pub use db::{
 
 pub use process::{
     contain_owned_root, guardian_main, guardian_requested, is_binary_on_path, is_on_user_path,
-    local_crash_containment_enabled, run, run_timeout, run_timeout_capped,
-    start_local_crash_containment, user_shell_environment, which_in, CommandOutcome,
-    ContainmentContext, OutputTruncation, StartGate, StartPermit, GUARDIAN_ARG, GUARDIAN_ENV,
+    local_crash_containment_enabled, mark_linux_dmabuf_env_synthesized, run, run_timeout,
+    run_timeout_capped, start_local_crash_containment, user_shell_environment, which_in,
+    CommandOutcome, ContainmentContext, OutputTruncation, StartGate, StartPermit, GUARDIAN_ARG,
+    GUARDIAN_ENV,
 };
 pub use pty::{
     begin_recoverable_session_spawn, close_recoverable_session_spawn_gate,
@@ -70,9 +71,14 @@ pub use remote::{
     TunnelManager, REMOTE_FRAME_MAX_BYTES, REMOTE_PROTOCOL_NAME, REMOTE_PROTOCOL_VERSION,
 };
 pub use storage::{
-    load_telemetry_config, pickforge_env_vars, pickforge_home, project_id, save_telemetry_config,
-    ContextStorageLocation, ContextStorageMode, ContextStorageService, PickforgeHomeError,
-    ResolvedContextDirectory, StorageError, TelemetryConfig,
+    amd_gpu_present, boot_linux_graphics_mode, kde_wayland_session_detected,
+    load_linux_graphics_config, load_telemetry_config, pickforge_env_vars, pickforge_home,
+    project_id, record_boot_linux_graphics_mode, resolve_graphics_backend_plan,
+    save_linux_graphics_config, save_telemetry_config, should_recommend_compatibility,
+    ContextStorageLocation, ContextStorageMode, ContextStorageService, DmabufAction,
+    GraphicsBackendPlan, LinuxGraphicsConfig, LinuxGraphicsMode, PickforgeHomeError,
+    ResolvedContextDirectory, StorageError, TelemetryConfig, LINUX_DMABUF_SYNTHESIZED_MARKER_ENV,
+    WEBKIT_DISABLE_DMABUF_ENV,
 };
 pub use transcript::{
     parse_ansi, strip_ansi, AnsiResult, AnsiSpan, TranscriptRecorder, TranscriptReplayer,

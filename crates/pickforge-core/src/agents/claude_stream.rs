@@ -617,7 +617,16 @@ where
         .args(&turn_command.args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .env_clear();
+    // Rebuild from the enriched login-shell env like the other agent
+    // runners (codex_exec.rs, claude_bridge.rs) — both so a packaged GUI
+    // app's `claude` is actually on PATH, and so PickForge-internal-only
+    // bookkeeping (e.g. the Linux graphics mode's synthesized
+    // WEBKIT_DISABLE_DMABUF_RENDERER, #238) never reaches this spawn.
+    for (key, value) in crate::process::user_shell_environment().clone() {
+        command.env(key, value);
+    }
     if let Some(cwd) = turn_command.cwd.as_ref() {
         command.current_dir(cwd);
     }
@@ -1110,6 +1119,77 @@ mod tests {
         assert_eq!(
             command.args.last().unwrap(),
             "cd '/Users/dev/it'\\''s $root' && exec \"$SHELL\" -lc ''\\''claude'\\'' '\\''-p'\\'' '\\''say it'\\''\\'\\'''\\''s $HOME'\\'' '\\''--output-format'\\'' '\\''stream-json'\\'' '\\''--include-partial-messages'\\'' '\\''--verbose'\\'' '\\''--permission-mode'\\'' '\\''plan'\\'' '\\''--allowedTools'\\'' '\\''Read,Bash(git status)'\\'' '\\''--model'\\'' '\\''model with spaces'\\'' '\\''--effort'\\'' '\\''high'\\'' '\\''--resume'\\'' '\\''session'\\''\\'\\'''\\''one'\\'''"
+        );
+    }
+
+    // `user_shell_environment()` is a process-lifetime-cached singleton
+    // shared by every test in this binary, so this can't force a specific
+    // key (e.g. a mode-synthesized WEBKIT_DISABLE_DMABUF_RENDERER, #238) to
+    // be present or absent from it — some other test may have primed the
+    // cache first. What it *can* prove deterministically is the actual
+    // regression: before this fix, `spawn_claude_turn` used `Command::new()`
+    // with no `env_clear()`, so it inherited the raw ambient process
+    // environment unfiltered — bypassing whatever `user_shell_environment()`
+    // (and therefore PickForge's own env hygiene, including the #238
+    // DMA-BUF-marker stripping) had already decided to exclude. A sentinel
+    // set *after* the cache is primed can never appear in the cached map, so
+    // if it reaches the child, `spawn_claude_turn` is leaking raw ambient
+    // env again — including whatever the DMA-BUF marker was covering.
+    #[cfg(unix)]
+    fn poll_file_nonempty(path: &Path, timeout: Duration) -> String {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Ok(contents) = fs::read_to_string(path) {
+                if !contents.is_empty() {
+                    return contents;
+                }
+            }
+            if Instant::now() >= deadline {
+                panic!("timed out waiting for {} to be written", path.display());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_rebuilds_env_from_user_shell_environment_not_raw_ambient() {
+        let cached = crate::process::user_shell_environment().clone();
+        assert!(
+            cached.contains_key("PATH"),
+            "PATH should already be present in the cached shell environment"
+        );
+
+        let sentinel_key = format!("PF_TEST_CLAUDE_STREAM_AMBIENT_ONLY_{}", std::process::id());
+        std::env::set_var(&sentinel_key, "leaked");
+        let dump_dir = std::env::temp_dir().join(format!(
+            "pf-claude-stream-env-dump-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dump_dir);
+        fs::create_dir_all(&dump_dir).unwrap();
+        let dump_path = dump_dir.join("env.dump");
+
+        let script = test_script(&format!("#!/bin/sh\nenv > '{}'\n", dump_path.display()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let _turn = spawn_test_turn(&script, &events);
+
+        // A generous budget: under a full-suite parallel `cargo test` run,
+        // process scheduling can lag well past the 2s budget other spawn
+        // tests in this module use (matches this repo's existing pattern of
+        // pre-existing, environment-specific flakiness in that class of
+        // test — see docs/releases/UNRELEASED.md).
+        let dumped = poll_file_nonempty(&dump_path, Duration::from_secs(10));
+        std::env::remove_var(&sentinel_key);
+        fs::remove_dir_all(&dump_dir).ok();
+
+        assert!(
+            dumped.lines().any(|line| line.starts_with("PATH=")),
+            "expected the rebuilt env to carry PATH through, got:\n{dumped}"
+        );
+        assert!(
+            !dumped.contains(&sentinel_key),
+            "ambient-only env leaked into the claude turn unfiltered:\n{dumped}"
         );
     }
 

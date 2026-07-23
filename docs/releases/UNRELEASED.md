@@ -19,6 +19,18 @@ reset this file.
   meaningful milestones. Renaming a chat locks its title until you choose
   “Resume automatic titles”; manual titles survive restarts.
   (`dynamicChatTitles` now default on, #210)
+- Linux builds get a persistent graphics compatibility mode in Settings
+  (General): Auto (previous behavior), Compatibility (prefer X11/XWayland and
+  disable WebKitGTK's DMA-BUF renderer — the verified fast path on affected
+  AMD/KDE Wayland systems), or Native Wayland. Changing it shows a
+  restart-required notice — accurate across Settings remounts and an
+  A→B→A round trip, not just "you touched this" — with a restart action.
+  Applied before GTK/WebKitGTK initialize; explicit `GDK_BACKEND` /
+  `WEBKIT_DISABLE_DMABUF_RENDERER` environment overrides still win, and the
+  existing `PICKFORGE_WAYLAND` troubleshooting override is unchanged.
+  Restarting via the notice's own action correctly re-evaluates the mode
+  instead of a stale synthesized value silently surviving the relaunch. Not
+  shown or applied on non-Linux builds (#238).
 - Double-clicking empty titlebar space now maximizes or restores the window.
 - Launching PickForge again now focuses the running window instead of opening
   a duplicate.
@@ -51,6 +63,20 @@ reset this file.
   production build pass. One pre-existing `pty_roundtrip` shared-grace timing
   failure reproduces identically on clean main on this machine
   (environment-specific, unrelated to this change).
+- #238: mode→env resolution precedence (including a PickForge-owned DMA-BUF
+  value that survived a Settings-triggered relaunch never being mistaken for
+  a user override), persisted-config round-trip, malformed/missing-config
+  fallback to Auto, `WEBKIT_DISABLE_DMABUF_RENDERER` and its synthesized
+  marker never leaking into spawned shells/agents (including the
+  claude-turn spawn path, which previously bypassed that hygiene entirely),
+  and KDE Wayland + AMD detection fixtures are covered by focused Rust unit
+  tests; a VRT spec covers the mode segments and restart-required notice
+  (incl. clearing on an A→B→A round trip) with a real (behavioral-only,
+  no local baseline) Playwright run. `cargo test --workspace --locked
+  --all-targets`, `bun run test:unit`, and `bun run build` pass. The
+  Linux-only backend code (early-boot application, IPC commands) only
+  compiles/runs on the `ubuntu-22.04` CI job — this change was authored on
+  macOS, where it is cfg'd out entirely.
 
 ### Not tested yet — release gates
 
@@ -59,6 +85,15 @@ reset this file.
   CI validation.
 - Real Linux/macOS/Windows forced-exit smoke with the env flag enabled before
   enabling containment by default (#208).
+- VRT baselines for `settings-navigation-general-chromium-linux.png`,
+  `settings-chromium-linux.png`, and the two new
+  `settings-linux-graphics.spec.ts` screenshots need CI regeneration
+  (`update-vrt-baselines` workflow) — not generated locally, per repo policy
+  (#238).
+
+- Real AMD/KDE Wayland A/B smoke (Auto vs. Compatibility vs. Native Wayland,
+  persistence across restart, KDE Wayland + AMD one-time recommendation) on
+  the affected release-smoke machine (#238).
 
 ### Known limits
 

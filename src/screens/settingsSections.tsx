@@ -27,6 +27,7 @@ export const RemoteHostSettingsSection = createSettingsSection("remoteHost");
 export const QuickLaunchSettingsSection = createSettingsSection("quickLaunch");
 export const AppearanceSettingsSection = createSettingsSection("appearance");
 export const WorkbenchSettingsSection = createSettingsSection("workbench");
+export const LinuxGraphicsSettingsSection = createSettingsSection("linuxGraphics");
 export const FileOpeningSettingsSection = createSettingsSection("fileOpening");
 export const UpdatesSettingsSection = createSettingsSection("updates");
 export const ArchivedProjectsSettingsSection = createSettingsSection("archivedProjects");

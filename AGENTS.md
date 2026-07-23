@@ -87,6 +87,13 @@ keep new UI consistent with it.
 - Rust: unit tests live beside their modules in `crates/pickforge-core/`;
   integration tests in `crates/pickforge-core/tests/`.
 - Frontend: Playwright VRT specs and baselines live under `tests/vrt/`.
+- Any Rust test that mutates process-level home/env state (`HOME`,
+  `PICKFORGE_HOME`) must take `test_support::PICKFORGE_HOME_ENV_LOCK` for
+  its whole mutation scope and restore every var it touched via an
+  `EnvRestore`/`EnvRestore::capture_many` RAII guard — two independent locks,
+  or any unguarded mutation of that state in the same test binary, is a
+  known flake class where one test's panic poisons the lock and cascades
+  failures into every other test asserting on it (#237 review, PR #257 CI).
 
 Canonical brand assets live in `assets/branding/`.
 

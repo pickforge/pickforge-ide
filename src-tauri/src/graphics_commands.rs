@@ -110,7 +110,11 @@ mod tests {
     #[test]
     fn missing_pickforge_home_falls_back_to_auto() {
         let _lock = PICKFORGE_HOME_ENV_LOCK.lock().unwrap();
-        let _restore = EnvRestore::capture();
+        // Removes HOME too (to exercise the no-override fallback), so both
+        // vars must be captured — a bare `EnvRestore::capture()` only ever
+        // restores PICKFORGE_HOME, leaving HOME removed for every test that
+        // runs after this one.
+        let _restore = EnvRestore::capture_many(["PICKFORGE_HOME", "HOME"]);
         std::env::remove_var("PICKFORGE_HOME");
         std::env::remove_var("HOME");
 

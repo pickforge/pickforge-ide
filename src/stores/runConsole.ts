@@ -171,9 +171,38 @@ function finishRunRecord(exitReason: string) {
   void recordRunFinish(runSessionId, Date.now(), exitReason, null);
 }
 
+/** Best-effort run-history row for a fresh launch (a write failure must
+ * never block the run). */
+function buildRunStartRecord(
+  sessionId: string,
+  projectRoot: string,
+  t: RunTarget,
+  ctx: RunRecordContext,
+): Parameters<typeof recordRunStart>[0] {
+  return {
+    sessionId,
+    projectRoot,
+    startedAt: Date.now(),
+    endedAt: null,
+    avdId: ctx.avdId ?? null,
+    avdName: ctx.avdName ?? null,
+    serial: ctx.serial ?? null,
+    vmServiceUrl: null,
+    // The target has no entry-file field; its label ("Flutter", "Config 1") is
+    // the readable identifier RunHistory shows in the target_file slot.
+    targetFile: t.label || null,
+    connectionMode: ctx.connectionMode ?? "auto",
+    exitReason: null,
+    exitCode: null,
+    hotReloadCount: 0,
+    hotRestartCount: 0,
+    errorCount: 0,
+    lastError: null,
+  };
+}
+
 /** Launch a target: open the console and mount a fresh pty that runs the
  *  command directly. Guards against stacking a run on top of a live one. */
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function startRun(
   t: RunTarget,
   projectRoot: string | null,
@@ -207,26 +236,7 @@ export function startRun(
   runFinishRecorded = false;
   runSessionId = projectRoot ? newSessionId() : null;
   if (runSessionId && projectRoot) {
-    void recordRunStart({
-      sessionId: runSessionId,
-      projectRoot,
-      startedAt: Date.now(),
-      endedAt: null,
-      avdId: ctx.avdId ?? null,
-      avdName: ctx.avdName ?? null,
-      serial: ctx.serial ?? null,
-      vmServiceUrl: null,
-      // The target has no entry-file field; its label ("Flutter", "Config 1") is
-      // the readable identifier RunHistory shows in the target_file slot.
-      targetFile: t.label || null,
-      connectionMode: ctx.connectionMode ?? "auto",
-      exitReason: null,
-      exitCode: null,
-      hotReloadCount: 0,
-      hotRestartCount: 0,
-      errorCount: 0,
-      lastError: null,
-    });
+    void recordRunStart(buildRunStartRecord(runSessionId, projectRoot, t, ctx));
   }
   return run;
 }

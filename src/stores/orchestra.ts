@@ -366,32 +366,38 @@ function normalizeChatIds(chatIds: unknown[]): string[] {
   return next;
 }
 
+function sanitizeLeafNode(node: Record<string, unknown>, seen: Set<string>): LaneNode | null {
+  const chatId = node.chatId;
+  if (typeof chatId !== "string" || chatId.length === 0 || seen.has(chatId)) return null;
+  if (seen.size >= MAX_LANES) return null;
+  seen.add(chatId);
+  return { kind: "leaf", chatId };
+}
+
+function sanitizeSplitNode(
+  node: Record<string, unknown>,
+  seen: Set<string>,
+  depth: number,
+): LaneNode | null {
+  const dir = node.dir === "col" ? "col" : node.dir === "row" ? "row" : null;
+  if (!dir) return null;
+  const a = sanitizeLaneNode(node.a, seen, depth + 1);
+  const b = sanitizeLaneNode(node.b, seen, depth + 1);
+  if (!a) return b; // collapse into the surviving child
+  if (!b) return a;
+  const ratio =
+    typeof node.ratio === "number" && Number.isFinite(node.ratio) ? clampRatio(node.ratio) : 0.5;
+  return { kind: "split", id: newLaneSplitId(), dir, ratio, a, b };
+}
+
 // Sanitize whatever we load: drop unknown shapes, prune duplicate/empty chat
 // ids, clamp ratios, and cap the lane count — collapsing splits whose children
 // were dropped. `seen` enforces dedup + the lane cap across the whole tree.
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 function sanitizeLaneNode(raw: unknown, seen: Set<string>, depth: number): LaneNode | null {
   if (!raw || typeof raw !== "object") return null;
   const node = raw as Record<string, unknown>;
-  if (node.kind === "leaf") {
-    const chatId = node.chatId;
-    if (typeof chatId !== "string" || chatId.length === 0 || seen.has(chatId)) return null;
-    if (seen.size >= MAX_LANES) return null;
-    seen.add(chatId);
-    return { kind: "leaf", chatId };
-  }
-  if (node.kind === "split" && depth < MAX_LANE_DEPTH) {
-    const dir = node.dir === "col" ? "col" : node.dir === "row" ? "row" : null;
-    if (!dir) return null;
-    const a = sanitizeLaneNode(node.a, seen, depth + 1);
-    const b = sanitizeLaneNode(node.b, seen, depth + 1);
-    if (!a) return b; // collapse into the surviving child
-    if (!b) return a;
-    const ratio = typeof node.ratio === "number" && Number.isFinite(node.ratio)
-      ? clampRatio(node.ratio)
-      : 0.5;
-    return { kind: "split", id: newLaneSplitId(), dir, ratio, a, b };
-  }
+  if (node.kind === "leaf") return sanitizeLeafNode(node, seen);
+  if (node.kind === "split" && depth < MAX_LANE_DEPTH) return sanitizeSplitNode(node, seen, depth);
   return null;
 }
 

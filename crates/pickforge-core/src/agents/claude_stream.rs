@@ -10,8 +10,8 @@ use std::thread::JoinHandle;
 use serde_json::Value;
 
 use super::event::{
-    AgentEvent, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem, ToolCallStatus,
-    TurnStatus,
+    AgentEvent, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem, PlanItemStatus,
+    ToolCallStatus, TurnStatus,
 };
 use super::remote_exec::{remote_ssh_exit_error, RemoteExec, RemoteExecError};
 use crate::remote::RemoteLeaseHandle;
@@ -948,13 +948,29 @@ fn todo_items(input: &Value) -> Vec<PlanItem> {
         .map(|todos| {
             todos
                 .iter()
-                .map(|todo| PlanItem {
-                    text: input_string(todo, &["content", "activeForm"]).unwrap_or_default(),
-                    completed: string_at(todo, "status") == Some("completed"),
+                .filter_map(|todo| {
+                    let text = input_string(todo, &["content", "activeForm"])?;
+                    if text.trim().is_empty() {
+                        return None;
+                    }
+                    let status = claude_todo_status(string_at(todo, "status"));
+                    Some(PlanItem { text, status })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Claude's TodoWrite tool reports plan-step status as exactly
+/// `pending | in_progress | completed`; any other value (including missing)
+/// degrades to pending rather than being inferred as done.
+fn claude_todo_status(raw: Option<&str>) -> PlanItemStatus {
+    match raw {
+        Some("pending") => PlanItemStatus::Pending,
+        Some("in_progress") => PlanItemStatus::InProgress,
+        Some("completed") => PlanItemStatus::Completed,
+        _ => PlanItemStatus::Pending,
+    }
 }
 
 fn mcp_parts(name: &str) -> Option<(&str, &str)> {
@@ -1358,6 +1374,43 @@ mod tests {
             )
         }));
         assert!(!has_noise(&events));
+    }
+
+    #[test]
+    fn todo_items_map_status_exactly_and_drop_blank_content() {
+        let input = serde_json::json!({
+            "todos": [
+                {"content": "pending step", "status": "pending"},
+                {"content": "active step", "status": "in_progress"},
+                {"content": "second active step", "status": "in_progress"},
+                {"content": "done step", "status": "completed"},
+                {"content": "unknown status", "status": "blocked"},
+                {"content": "missing status"},
+                {"content": "   "},
+                {"activeForm": "", "content": ""},
+            ],
+        });
+
+        assert_eq!(
+            todo_items(&input),
+            vec![
+                PlanItem { text: "pending step".to_string(), status: PlanItemStatus::Pending },
+                PlanItem { text: "active step".to_string(), status: PlanItemStatus::InProgress },
+                PlanItem {
+                    text: "second active step".to_string(),
+                    status: PlanItemStatus::InProgress,
+                },
+                PlanItem { text: "done step".to_string(), status: PlanItemStatus::Completed },
+                PlanItem { text: "unknown status".to_string(), status: PlanItemStatus::Pending },
+                PlanItem { text: "missing status".to_string(), status: PlanItemStatus::Pending },
+            ]
+        );
+    }
+
+    #[test]
+    fn todo_items_empty_todos_is_empty() {
+        assert_eq!(todo_items(&serde_json::json!({"todos": []})), Vec::new());
+        assert_eq!(todo_items(&serde_json::json!({})), Vec::new());
     }
 
     #[test]

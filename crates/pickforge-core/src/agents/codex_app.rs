@@ -12,7 +12,7 @@ use serde_json::{json, Map, Number, Value};
 
 use super::event::{
     AgentEvent, ApprovalKind, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem,
-    ToolCallStatus, TurnStatus,
+    PlanItemStatus, ToolCallStatus, TurnStatus,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1660,14 +1660,27 @@ fn plan_items(params: &Value) -> Vec<PlanItem> {
             plan.iter()
                 .filter_map(|item| {
                     let text = string_field(item, &["step", "text"])?;
-                    let completed = string_field(item, &["status"])
-                        .map(|status| status == "completed")
-                        .unwrap_or(false);
-                    Some(PlanItem { text, completed })
+                    if text.trim().is_empty() {
+                        return None;
+                    }
+                    let status = codex_app_plan_status(string_field(item, &["status"]).as_deref());
+                    Some(PlanItem { text, status })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Codex app-server reports plan-step status as exactly
+/// `pending | inProgress | completed`; any other value (including missing)
+/// degrades to pending rather than being inferred as done.
+fn codex_app_plan_status(raw: Option<&str>) -> PlanItemStatus {
+    match raw {
+        Some("pending") => PlanItemStatus::Pending,
+        Some("inProgress") => PlanItemStatus::InProgress,
+        Some("completed") => PlanItemStatus::Completed,
+        _ => PlanItemStatus::Pending,
+    }
 }
 
 fn reasoning_text(item: &Value) -> String {
@@ -2039,8 +2052,8 @@ mod tests {
                     if matches!(
                         items.as_slice(),
                         [
-                            PlanItem { text: first, completed: true },
-                            PlanItem { text: second, completed: false },
+                            PlanItem { text: first, status: PlanItemStatus::Completed },
+                            PlanItem { text: second, status: PlanItemStatus::Pending },
                         ] if first == "ship it" && second == "verify"
                     )
             )
@@ -2078,6 +2091,45 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| { matches!(event, AgentEvent::TurnFailed { error } if error == "boom") }));
+    }
+
+    #[test]
+    fn plan_items_map_status_exactly_and_drop_blank_text() {
+        let params = json!({
+            "plan": [
+                {"step": "pending step", "status": "pending"},
+                {"step": "active step", "status": "inProgress"},
+                {"step": "second active step", "status": "inProgress"},
+                {"step": "done step", "status": "completed"},
+                {"step": "unknown status", "status": "blocked"},
+                {"step": "missing status"},
+                {"step": "   "},
+                {"step": ""},
+            ],
+        });
+
+        let items = plan_items(&params);
+
+        assert_eq!(
+            items,
+            vec![
+                PlanItem { text: "pending step".to_string(), status: PlanItemStatus::Pending },
+                PlanItem { text: "active step".to_string(), status: PlanItemStatus::InProgress },
+                PlanItem {
+                    text: "second active step".to_string(),
+                    status: PlanItemStatus::InProgress,
+                },
+                PlanItem { text: "done step".to_string(), status: PlanItemStatus::Completed },
+                PlanItem { text: "unknown status".to_string(), status: PlanItemStatus::Pending },
+                PlanItem { text: "missing status".to_string(), status: PlanItemStatus::Pending },
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_items_empty_plan_is_empty() {
+        assert_eq!(plan_items(&json!({"plan": []})), Vec::new());
+        assert_eq!(plan_items(&json!({})), Vec::new());
     }
 
     #[test]

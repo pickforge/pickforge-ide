@@ -9,8 +9,8 @@ use std::thread::JoinHandle;
 use serde_json::Value;
 
 use super::event::{
-    AgentEvent, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem, ToolCallStatus,
-    TurnStatus,
+    AgentEvent, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem, PlanItemStatus,
+    ToolCallStatus, TurnStatus,
 };
 use super::remote_exec::{remote_ssh_exit_error, RemoteExec, RemoteExecError};
 use crate::remote::RemoteLeaseHandle;
@@ -788,10 +788,11 @@ fn plan_items(item: &Value) -> Vec<PlanItem> {
         .and_then(Value::as_array);
     let Some(list) = list else {
         return string_field(item, &["text"])
+            .filter(|text| !text.trim().is_empty())
             .map(|text| {
                 vec![PlanItem {
                     text,
-                    completed: false,
+                    status: PlanItemStatus::Pending,
                 }]
             })
             .unwrap_or_default();
@@ -801,26 +802,62 @@ fn plan_items(item: &Value) -> Vec<PlanItem> {
 
 fn plan_item(value: &Value) -> Option<PlanItem> {
     match value {
-        Value::String(text) => Some(PlanItem {
-            text: text.clone(),
-            completed: false,
-        }),
+        Value::String(text) => {
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(PlanItem {
+                text: text.clone(),
+                status: PlanItemStatus::Pending,
+            })
+        }
         Value::Object(_) => {
             let text = string_field(value, &["text", "content", "title", "description"])?;
-            let completed = value
+            if text.trim().is_empty() {
+                return None;
+            }
+            // Bool-first precedence over the string status is pre-existing
+            // behavior carried from main (unrelated to this contract change):
+            // a dual-field payload like {"completed": false, "status":
+            // "in_progress"} intentionally resolves via the bool (to
+            // pending). This is unproven on the real codex exec wire — kept
+            // for compatibility with whatever previously relied on it.
+            let status = value
                 .get("completed")
                 .and_then(Value::as_bool)
+                .map(|completed| {
+                    if completed {
+                        PlanItemStatus::Completed
+                    } else {
+                        PlanItemStatus::Pending
+                    }
+                })
                 .unwrap_or_else(|| {
-                    string_field(value, &["status"])
-                        .map(|status| {
-                            status.eq_ignore_ascii_case("completed")
-                                || status.eq_ignore_ascii_case("done")
-                        })
-                        .unwrap_or(false)
+                    codex_exec_plan_status(string_field(value, &["status"]).as_deref())
                 });
-            Some(PlanItem { text, completed })
+            Some(PlanItem { text, status })
         }
         _ => None,
+    }
+}
+
+/// Codex exec's legacy `todo_list` item reports plan-step status as
+/// `done | completed` (completed) or `in_progress | inProgress` (in
+/// progress), case-insensitively; any other value degrades to pending.
+fn codex_exec_plan_status(raw: Option<&str>) -> PlanItemStatus {
+    match raw {
+        Some(status)
+            if status.eq_ignore_ascii_case("completed") || status.eq_ignore_ascii_case("done") =>
+        {
+            PlanItemStatus::Completed
+        }
+        Some(status)
+            if status.eq_ignore_ascii_case("in_progress")
+                || status.eq_ignore_ascii_case("inProgress") =>
+        {
+            PlanItemStatus::InProgress
+        }
+        _ => PlanItemStatus::Pending,
     }
 }
 
@@ -1089,6 +1126,67 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn todo_list_maps_legacy_status_vocabulary_and_drops_blank_text() {
+        let event = parse_codex_exec_line(
+            r#"{"type":"item.updated","item":{"id":"todo-1","type":"todo_list","items":[
+                {"text":"done via completed","status":"completed"},
+                {"text":"done via done","status":"done"},
+                {"text":"active via in_progress","status":"in_progress"},
+                {"text":"active via inProgress","status":"inProgress"},
+                {"text":"unknown status","status":"blocked"},
+                {"text":"legacy boolean true","completed":true},
+                {"text":"legacy boolean false","completed":false},
+                {"text":"   "},
+                {"text":""}
+            ]}}"#,
+        );
+
+        assert_eq!(
+            event,
+            Some(AgentEvent::PlanUpdate {
+                items: vec![
+                    PlanItem {
+                        text: "done via completed".to_string(),
+                        status: PlanItemStatus::Completed,
+                    },
+                    PlanItem {
+                        text: "done via done".to_string(),
+                        status: PlanItemStatus::Completed,
+                    },
+                    PlanItem {
+                        text: "active via in_progress".to_string(),
+                        status: PlanItemStatus::InProgress,
+                    },
+                    PlanItem {
+                        text: "active via inProgress".to_string(),
+                        status: PlanItemStatus::InProgress,
+                    },
+                    PlanItem {
+                        text: "unknown status".to_string(),
+                        status: PlanItemStatus::Pending,
+                    },
+                    PlanItem {
+                        text: "legacy boolean true".to_string(),
+                        status: PlanItemStatus::Completed,
+                    },
+                    PlanItem {
+                        text: "legacy boolean false".to_string(),
+                        status: PlanItemStatus::Pending,
+                    },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn todo_list_empty_items_clears_plan() {
+        let event = parse_codex_exec_line(
+            r#"{"type":"item.updated","item":{"id":"todo-1","type":"todo_list","items":[]}}"#,
+        );
+        assert_eq!(event, Some(AgentEvent::PlanUpdate { items: Vec::new() }));
     }
 
     #[test]

@@ -816,6 +816,14 @@
   color: var(--pf-text-low);
   text-decoration: line-through;
 }
+.pf-chat-plan-item--active .pf-chat-plan-mark {
+  color: var(--pf-ember);
+  font-weight: 600;
+}
+.pf-chat-plan-item--active .pf-chat-plan-text {
+  color: var(--pf-text-hi);
+  font-weight: 600;
+}
 
 /* ---- Token usage ---- */
 .pf-chat-tokens {

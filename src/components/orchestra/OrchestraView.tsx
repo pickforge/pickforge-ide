@@ -11,6 +11,7 @@ import {
   untrack,
 } from "solid-js";
 import { AgentChatView } from "../chat/AgentChatView";
+import { PLAN_ITEM_MARK } from "../chat/PlanCard";
 import { FloatingMenu } from "../FloatingMenu";
 import { ForgeEmptyState, MonoEyebrow } from "../ui";
 import {
@@ -25,7 +26,7 @@ import {
   IconSplit,
   IconSplitTrigger,
 } from "../icons";
-import { type AgentProvider } from "../../lib/agentChat";
+import { type AgentProvider, type PlanItem } from "../../lib/agentChat";
 import {
   agentProfiles,
   defaultNativeAgentProvider,
@@ -235,7 +236,7 @@ type PinnedPlan = {
   title: string;
   projectRoot: string;
   provider: AgentProvider;
-  items: { text: string; completed: boolean }[];
+  items: PlanItem[];
 };
 
 const LEDGER_MIN_WIDTH = 220;
@@ -1015,10 +1016,14 @@ export function OrchestraView(props: {
                           {(item) => (
                             <li
                               class="pf-orch-pin-item"
-                              classList={{ "pf-orch-pin-item--done": item.completed }}
+                              classList={{
+                                "pf-orch-pin-item--done": item.status === "completed",
+                                "pf-orch-pin-item--active": item.status === "inProgress",
+                              }}
+                              aria-current={item.status === "inProgress" ? "step" : undefined}
                             >
                               <span class="pf-orch-pin-step" aria-hidden="true">
-                                {item.completed ? "[x]" : "[ ]"}
+                                {PLAN_ITEM_MARK[item.status]}
                               </span>
                               <span class="pf-orch-pin-text">{item.text}</span>
                             </li>

@@ -148,9 +148,10 @@ const AGENT_CHAT_HISTORY: AgentTimelineEntry[] = [
   item(9, {
     kind: "planUpdate",
     items: [
-      { text: "Mock a representative persisted timeline", completed: true },
-      { text: "Capture the idle composer state", completed: true },
-      { text: "Run the full validation gate", completed: false },
+      { text: "Mock a representative persisted timeline", status: "completed" },
+      { text: "Capture the idle composer state", status: "completed" },
+      { text: "Run the full validation gate", status: "inProgress" },
+      { text: "Write up the release notes", status: "pending" },
     ],
   }),
   item(10, {

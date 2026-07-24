@@ -9,11 +9,13 @@ import {
   agentChatSetModel,
   agentChatStart,
   agentChatSteer,
+  normalizePlanItems,
   type AgentApprovalDecision,
   type AgentEngine,
   type AgentEvent,
   type AgentProvider,
   type AgentTimelineEntry,
+  type PlanItem,
 } from "../lib/agentChat";
 import {
   agentBackendDescriptor,
@@ -67,7 +69,7 @@ export type AgentTimelineItem =
   | { type: "toolUse"; seq: number; itemId: string; name: string; detail: string | null }
   | { type: "mcpToolCall"; seq: number; itemId: string; server: string; tool: string }
   | { type: "webSearch"; seq: number; itemId: string; query: string }
-  | { type: "plan"; seq: number; items: { text: string; completed: boolean }[] }
+  | { type: "plan"; seq: number; items: PlanItem[] }
   | {
       type: "usage";
       seq: number;
@@ -810,11 +812,23 @@ function reduceAgentEvent(
         },
       ]);
     case "planUpdate": {
+      // This is the single decode boundary both the live Channel path and
+      // history replay funnel through (reduceAgentEvent), so legacy rows and
+      // malformed siblings normalize identically regardless of source.
+      const items = normalizePlanItems(event.items);
       const index = lastPlanIndex(chat.timeline);
+      // An empty plan update clears the current plan card and pinned
+      // projection instead of leaving stale steps around.
+      if (items.length === 0) {
+        if (index < 0) return chat;
+        const timeline = chat.timeline.slice();
+        timeline.splice(index, 1);
+        return withTimeline(chat, timeline);
+      }
       const plan = {
         type: "plan" as const,
         seq: index >= 0 ? chat.timeline[index].seq : nextSeq(),
-        items: event.items.map((item) => ({ ...item })),
+        items,
       };
       if (index < 0) return withTimeline(chat, [...chat.timeline, plan]);
       const timeline = chat.timeline.slice();
@@ -863,8 +877,8 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
     pendingProviderTitleByChat.set(chatId, event.title);
   }
   if (event.kind === "planUpdate") {
-    const candidate =
-      event.items.find((item) => !item.completed)?.text ?? event.items[0]?.text ?? "";
+    const items = normalizePlanItems(event.items);
+    const candidate = items.find((item) => item.status !== "completed")?.text ?? items[0]?.text ?? "";
     if (activeTitleTurn && !activeTitleTurn.hidden && candidate) {
       pendingProviderTitleByChat.set(chatId, candidate);
     }

@@ -8,6 +8,7 @@ reset this file.
 
 - Pi native chat is now always available when compatible Pi is installed (>=0.79.10 and <0.82.0).
 - Fixed OMP 17.1.1 native chat being incorrectly reported as unavailable.
+- Stopped OMP turns now retain the user prompt, partial response, and interrupted status in chat history.
 
 ## Internal/release changes (dark: no default-on behavior change)
 

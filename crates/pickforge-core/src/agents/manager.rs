@@ -2319,6 +2319,9 @@ fn handle_runner_event(
             if terminal_should_skip(inner, session_id) {
                 return;
             }
+            if let Err(err) = append_item(db, session_id, chat_id, &event) {
+                errors.push(err);
+            }
             if let Err(err) = db.agent_session_set_status(session_id, "idle") {
                 errors.push(err.to_string());
             }
@@ -3099,6 +3102,96 @@ done
         assert!(log_contents.contains("\"mcpServers\":[]"));
         manager.dispose(&resumed);
         let _ = std::fs::remove_file(log);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_interrupt_sends_cancel_and_persists_partial_turn() {
+        let script = test_script(
+            "omp-interrupt",
+            r#"#!/bin/sh
+log="$0.stdin"
+: > "$log"
+prompt_id=
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      ;;
+    *'"method":"session/new"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-interrupt-provider-session"}}'
+      ;;
+    *'"method":"session/prompt"'*)
+      prompt_id=${line#*\"id\":}
+      prompt_id=${prompt_id%%,*}
+      printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-interrupt-provider-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial answer"}}}}'
+      ;;
+    *'"method":"session/cancel"'*)
+      printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$prompt_id,\"result\":{\"stopReason\":\"cancelled\"}}"
+      ;;
+    *'"method":"session/close"'*)
+      exit 0
+      ;;
+  esac
+done
+"#,
+        );
+        let log = script.path.with_file_name("fake-agent.stdin");
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let manager = omp_manager(Arc::clone(&db), &script);
+        let (events, sink) = event_sink();
+        let session_id = manager
+            .start(
+                "omp-interrupt-chat",
+                script.dir.clone(),
+                AgentProvider::Omp,
+                Engine::V2,
+                None,
+                AgentStartOverrides::default(),
+                sink,
+            )
+            .unwrap();
+
+        manager
+            .send(&session_id, "keep this prompt", None, None, None)
+            .unwrap();
+        wait_for_events(&events, |events| {
+            events.iter().any(|event| {
+                matches!(event, AgentEvent::TextDelta { text, .. } if text == "partial answer")
+            })
+        });
+        manager.interrupt(&session_id).unwrap();
+
+        let log = wait_for_file(&log, |text| text.contains(r#""method":"session/cancel""#));
+        assert!(log.contains(r#""sessionId":"omp-interrupt-provider-session""#));
+        wait_for_events(&events, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    AgentEvent::TurnDone {
+                        status: TurnStatus::Interrupted
+                    }
+                )
+            })
+        });
+        wait_for_status(&db, "omp-interrupt-chat", "idle");
+
+        let timeline = db.agent_timeline_for_chat("omp-interrupt-chat").unwrap();
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
+                if role == "user" && content == "keep this prompt")
+        }));
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Message { role, content, .. }
+                if role == "assistant" && content == "partial answer")
+        }));
+        assert!(timeline.iter().any(|entry| {
+            matches!(entry, AgentTimelineEntry::Item { kind, payload, .. }
+                if kind == "turnDone" && payload.contains("interrupted"))
+        }));
+
+        manager.dispose(&session_id);
     }
 
     #[cfg(unix)]

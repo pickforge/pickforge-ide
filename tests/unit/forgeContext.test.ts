@@ -234,6 +234,65 @@ describe("forgeContext store", () => {
     expect(env.invoke).not.toHaveBeenCalled();
   });
 
+  it("flushes a pending clear immediately on disposal instead of dropping it", async () => {
+    vi.useFakeTimers();
+    const { flags, store } = await loadStore();
+    flags.setFlagOverride("pikitContext", true);
+    // No active project — the effect arms a debounced CLEAR.
+    setWorkspace(null);
+
+    const dispose = install(store);
+    // Tear down before the debounce elapses (e.g. the app quitting right
+    // after the last project closed). A dropped clear here would leave a
+    // stale context.json behind for pi-kit to keep reading.
+    dispose();
+    await vi.waitFor(() => expect(env.invoke).toHaveBeenCalledWith("clear_forge_context"));
+
+    // The (already-cancelled) debounce timer firing later must not clear a
+    // second time.
+    env.invoke.mockClear();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(env.invoke).not.toHaveBeenCalled();
+  });
+
+  it("serializes IPC calls so a slow write settling after a later clear cannot resurrect the file", async () => {
+    vi.useFakeTimers();
+    const { flags, store } = await loadStore();
+
+    let resolveWrite: (() => void) | undefined;
+    env.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "write_forge_context") {
+        return new Promise((resolve) => {
+          resolveWrite = () => resolve(null);
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    flags.setFlagOverride("pikitContext", true);
+    setWorkspace("/home/dev/acme", [{ projectRoot: "/home/dev/acme", displayName: "Acme" }]);
+    install(store);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(env.invoke).toHaveBeenCalledWith("write_forge_context", expect.anything());
+    expect(resolveWrite).toBeDefined();
+
+    // The write's IPC call is in flight (held). Before it settles, the
+    // project closes: a clear is scheduled and its own debounce elapses too.
+    setWorkspace(null);
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    // The clear action has FIRED (its debounce elapsed) but must not have
+    // reached invoke yet — it's queued behind the still-pending write.
+    expect(env.invoke).not.toHaveBeenCalledWith("clear_forge_context");
+
+    // Now let the slow write settle.
+    resolveWrite?.();
+    await vi.waitFor(() => expect(env.invoke).toHaveBeenCalledWith("clear_forge_context"));
+
+    const order = env.invoke.mock.calls.map(([cmd]) => cmd);
+    expect(order).toEqual(["write_forge_context", "clear_forge_context"]);
+  });
+
   it("is idempotent — a second install call returns the same disposer and does not double-write", async () => {
     vi.useFakeTimers();
     const { flags, store } = await loadStore();

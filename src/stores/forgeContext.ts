@@ -32,12 +32,41 @@ export function noteFileOpened(root: string, path: string): void {
   setLastOpenedInternal({ root, path });
 }
 
-let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+// Serializes the actual write_forge_context/clear_forge_context IPC calls:
+// each enqueued call awaits the previous one's settlement before firing.
+// Without this, a slow write's promise resolving AFTER a later clear's
+// promise would recreate context.json right after the user opted out or
+// closed the project — the debounce alone only dedupes SCHEDULING, not the
+// in-flight IPC calls it eventually fires.
+let ipcQueue: Promise<void> = Promise.resolve();
 
-function schedule(action: () => void): void {
+function enqueueIpc(action: () => Promise<void>): void {
+  ipcQueue = ipcQueue.then(action);
+}
+
+let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+// The IPC action a debounce cycle currently has armed, but ONLY when it's a
+// clear — set so bootstrap disposal can flush it immediately instead of
+// silently dropping it (a dropped clear right before teardown, e.g. the
+// project closing as the app quits, would leave context.json behind). A
+// pending WRITE is intentionally left unset here: disposal cancels it.
+let pendingClear: (() => void) | undefined;
+
+function scheduleWrite(action: () => void): void {
   if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+  pendingClear = undefined;
   debounceTimer = setTimeout(() => {
     debounceTimer = undefined;
+    action();
+  }, DEBOUNCE_MS);
+}
+
+function scheduleClear(action: () => void): void {
+  if (debounceTimer !== undefined) clearTimeout(debounceTimer);
+  pendingClear = action;
+  debounceTimer = setTimeout(() => {
+    debounceTimer = undefined;
+    pendingClear = undefined;
     action();
   }, DEBOUNCE_MS);
 }
@@ -46,18 +75,22 @@ function writeContextFor(root: string): void {
   const opened = lastOpened();
   const lastOpenedFile = opened && opened.root === root ? opened.path : null;
   const displayName = activeProject()?.displayName ?? null;
-  schedule(() => {
-    void writeForgeContext(root, lastOpenedFile, displayName).catch((error) => {
-      console.error("[pickforge] write_forge_context failed", error);
-    });
+  scheduleWrite(() => {
+    enqueueIpc(() =>
+      writeForgeContext(root, lastOpenedFile, displayName).catch((error) => {
+        console.error("[pickforge] write_forge_context failed", error);
+      }),
+    );
   });
 }
 
 function clearContext(): void {
-  schedule(() => {
-    void clearForgeContext().catch((error) => {
-      console.error("[pickforge] clear_forge_context failed", error);
-    });
+  scheduleClear(() => {
+    enqueueIpc(() =>
+      clearForgeContext().catch((error) => {
+        console.error("[pickforge] clear_forge_context failed", error);
+      }),
+    );
   });
 }
 
@@ -88,6 +121,14 @@ export function installForgeContextBootstrap(): () => void {
     if (debounceTimer !== undefined) {
       clearTimeout(debounceTimer);
       debounceTimer = undefined;
+    }
+    // A pending clear must still happen — dropping it would leave a stale
+    // context.json behind. A pending write is cancelled: it's fine (and
+    // safer) for a write to simply not happen on teardown.
+    if (pendingClear) {
+      const clear = pendingClear;
+      pendingClear = undefined;
+      clear();
     }
     bootstrapDisposed = null;
   };

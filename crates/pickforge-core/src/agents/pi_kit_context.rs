@@ -62,7 +62,13 @@ pub fn write_forge_context(
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     let final_path = dir.join(CONTEXT_FILE_NAME);
     let tmp_path = tmp_path(dir);
-    fs::write(&tmp_path, body)?;
+    if let Err(error) = fs::write(&tmp_path, body) {
+        // Best-effort cleanup of a partial tmp file (it can carry the same
+        // paths/display name the write was meant to publish) — mirrors the
+        // rename-failure cleanup below.
+        let _ = fs::remove_file(&tmp_path);
+        return Err(error);
+    }
     match replace_file(&tmp_path, &final_path) {
         Ok(()) => Ok(()),
         Err(error) => {
@@ -199,6 +205,33 @@ mod tests {
             .filter_map(|e| e.file_name().into_string().ok())
             .collect();
         assert_eq!(entries, vec!["context.json".to_string()]);
+    }
+
+    /// A directory without write permission makes `fs::write` fail outright
+    /// (nothing is ever created there to leave behind), which exercises the
+    /// same cleanup branch a genuinely partial write further along would hit
+    /// — proving the function never reports success or dangles a tmp file on
+    /// a write failure. Skipped when running as root (root ignores directory
+    /// permission bits, which would make the setup a no-op).
+    #[cfg(unix)]
+    #[test]
+    fn write_failure_leaves_no_partial_tmp_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+
+        let root = TempDir::new("write-fail");
+        std::fs::set_permissions(&root.path, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = write_forge_context(&root.path, "/home/dev/acme-app", None, None);
+
+        // Restore write permission so TempDir's Drop can clean up.
+        std::fs::set_permissions(&root.path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! Phase 0 exit criterion expressed as an automatable test (no GUI needed).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::mpsc;
@@ -371,9 +372,20 @@ fn resize_and_kill_are_idempotent_enough() {
 }
 
 #[cfg(unix)]
-#[test]
-#[allow(clippy::too_many_lines)] // TODO(#263): split the legacy integration test.
-fn remote_pty_spawn_uses_ssh_argv_and_keeps_pty_io_and_resize() {
+struct FakeSshHarness {
+    dir: PathBuf,
+    argv_log: PathBuf,
+    size_before: PathBuf,
+    size_after: PathBuf,
+    missing_cwd: PathBuf,
+    extra_env: HashMap<String, String>,
+}
+
+/// Writes a fake `ssh` binary that logs its argv, reports pty size before and
+/// after a resize, echoes one line of stdin, then exits — and a PATH/env map
+/// that makes the PTY manager's `ssh` spawn resolve to it.
+#[cfg(unix)]
+fn setup_fake_ssh_harness() -> FakeSshHarness {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock before unix epoch")
@@ -427,6 +439,57 @@ stty size > "$PF_FAKE_SSH_SIZE_AFTER" 2>/dev/null || true
         size_after.to_string_lossy().into_owned(),
     );
 
+    FakeSshHarness {
+        dir,
+        argv_log,
+        size_before,
+        size_after,
+        missing_cwd,
+        extra_env,
+    }
+}
+
+/// Drains PTY events into `seen`, stopping when `stop(seen)` becomes true, an
+/// `Exit` event arrives (returns `true`), or `deadline` passes.
+#[cfg(unix)]
+fn drain_pty_events(
+    rx: &mpsc::Receiver<PtyEvent>,
+    seen: &mut String,
+    deadline: Instant,
+    stop: impl Fn(&str) -> bool,
+) -> bool {
+    let mut exited = false;
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(PtyEvent::Output(bytes)) => {
+                seen.push_str(&String::from_utf8_lossy(&bytes));
+                if stop(seen) {
+                    break;
+                }
+            }
+            Ok(PtyEvent::Exit(_)) => {
+                exited = true;
+                break;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    exited
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_pty_spawn_uses_ssh_argv_and_keeps_pty_io_and_resize() {
+    let FakeSshHarness {
+        dir,
+        argv_log,
+        size_before,
+        size_after,
+        missing_cwd,
+        extra_env,
+    } = setup_fake_ssh_harness();
+
     let manager = PtyManager::new();
     let (tx, rx) = mpsc::channel::<PtyEvent>();
     let id = manager
@@ -450,15 +513,9 @@ stty size > "$PF_FAKE_SSH_SIZE_AFTER" 2>/dev/null || true
         .expect("spawn remote pty");
 
     let mut seen = String::new();
-    let deadline = Instant::now() + Duration::from_secs(6);
-    while Instant::now() < deadline && !seen.contains("PF_FAKE_SSH_READY") {
-        match rx.recv_timeout(Duration::from_millis(250)) {
-            Ok(PtyEvent::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
-            Ok(PtyEvent::Exit(_)) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
+    drain_pty_events(&rx, &mut seen, Instant::now() + Duration::from_secs(6), |s| {
+        s.contains("PF_FAKE_SSH_READY")
+    });
     assert!(
         seen.contains("PF_FAKE_SSH_READY"),
         "fake ssh did not start: {seen:?}"
@@ -469,19 +526,9 @@ stty size > "$PF_FAKE_SSH_SIZE_AFTER" 2>/dev/null || true
         .write(id, b"pf_remote_input\n")
         .expect("write remote pty");
 
-    let mut exited = false;
-    let deadline = Instant::now() + Duration::from_secs(6);
-    while Instant::now() < deadline {
-        match rx.recv_timeout(Duration::from_millis(250)) {
-            Ok(PtyEvent::Output(bytes)) => seen.push_str(&String::from_utf8_lossy(&bytes)),
-            Ok(PtyEvent::Exit(_)) => {
-                exited = true;
-                break;
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
+    let exited = drain_pty_events(&rx, &mut seen, Instant::now() + Duration::from_secs(6), |_| {
+        false
+    });
     manager.kill(id).ok();
 
     let argv = std::fs::read_to_string(&argv_log).expect("read argv log");

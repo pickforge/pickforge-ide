@@ -20,9 +20,14 @@ export function parseSwarmCommand(text: string): ParsedSwarmCommand | null {
   if (!slash && !natural) return null;
   const body = slash ? trimmed.replace(/^\/swarm\s*/i, "").trim() : trimmed;
   // Model names carry version digits ("opus 5", "gpt-5.5") that must not be
-  // read as lane counts; strip model phrases before count matching so
-  // "of three opus 5 agents" parses count from "of three agents".
-  const countBody = body.replace(/\b(?:opus|sonnet|haiku|fable|gpt|glm)[-\s]*\d*(?:\.\d+)?\s*/gi, "");
+  // read as lane counts; strip version-shaped model phrases before count
+  // matching so "of three opus 5 agents" parses count from "of three agents".
+  // Only version shapes are stripped ("opus 5", "haiku 4.5") — a bare family
+  // name before a count ("haiku 2 agents") keeps its count.
+  const countBody = body.replace(
+    /\b(?:opus|sonnet|fable)[-\s]*5(?:\.\d+)?\b|\b(?:gpt|glm|haiku)[-\s]*\d+[.-]\d+(?::\w+)?/gi,
+    "",
+  );
   const countMatch =
     countBody.match(/\bswarm\s+(?:of\s+)?([1-5])\b/i) ??
     countBody.match(/\bswarm\s+(?:of\s+)?(one|two|three|four|five)\b/i) ??
@@ -49,9 +54,9 @@ export function parseSwarmCommand(text: string): ParsedSwarmCommand | null {
   const model =
     lower.includes("glm-5.2") || lower.includes("ollama")
       ? "glm-5.2:cloud"
-      : lower.includes("opus") && lower.includes("5")
+      : /\bopus[-\s]*5(?:\.\d+)?\b/.test(lower)
         ? "opus 5"
-        : lower.includes("sonnet") && lower.includes("5")
+        : /\bsonnet[-\s]*5(?:\.\d+)?\b/.test(lower)
           ? "sonnet 5"
           : lower.includes("gpt-5.5") || lower.includes("gpt 5.5")
             ? "gpt-5.5"

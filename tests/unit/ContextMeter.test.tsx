@@ -72,12 +72,27 @@ describe("ContextMeter", () => {
     expect(label?.getAttribute("title")).toContain("200,000");
   });
 
+  it("exposes the overflow warning to assistive tech, not just a title tooltip", () => {
+    // title alone is invisible to keyboard/touch/AT users; pair it with
+    // role="img" + aria-label like the repo's other compact-status precedent
+    // (src/components/ui.tsx's StatusPill compact mode).
+    mount({ contextUsed: 230_000, contextWindow: 200_000 });
+
+    const label = root.querySelector(".pf-chat-context-frac");
+    expect(label?.getAttribute("role")).toBe("img");
+    expect(label?.getAttribute("aria-label")).toContain("230,000");
+    expect(label?.getAttribute("aria-label")).toContain("200,000");
+  });
+
   it("does not warn when used is within the window", () => {
     mount({ contextUsed: 199_999, contextWindow: 200_000 });
 
     const container = root.querySelector(".pf-chat-context");
     expect(container?.classList.contains("pf-chat-context--warn")).toBe(false);
-    expect(root.querySelector(".pf-chat-context-frac")?.getAttribute("title")).toBeNull();
+    const label = root.querySelector(".pf-chat-context-frac");
+    expect(label?.getAttribute("title")).toBeNull();
+    expect(label?.getAttribute("role")).toBeNull();
+    expect(label?.getAttribute("aria-label")).toBeNull();
   });
 
   it("hides the context block entirely when no window is known, even with cost", () => {

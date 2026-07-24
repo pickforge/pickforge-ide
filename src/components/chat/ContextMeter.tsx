@@ -45,7 +45,12 @@ export function ContextMeter(props: {
     <Show when={visible()}>
       <div class="pf-chat-context" classList={{ "pf-chat-context--warn": overflow() }}>
         <Show when={hasContext()}>
-          <span class="pf-chat-context-frac" title={overflow() ? overflowTitle() : undefined}>
+          <span
+            class="pf-chat-context-frac"
+            title={overflow() ? overflowTitle() : undefined}
+            role={overflow() ? "img" : undefined}
+            aria-label={overflow() ? overflowTitle() : undefined}
+          >
             {compact(displayedUsed())} / {compact(window())}
           </span>
           <span class="pf-chat-context-track" aria-hidden="true">

@@ -6,6 +6,10 @@ import type { Chat } from "./db";
 
 const now = 1_750_000_000_000;
 const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
+// Swaps the fixture's usage row to a used > window reading, without touching
+// the default fixture's numbers (and its pinned golden) — see #307's
+// ContextMeter overflow warning state.
+const VRT_AGENT_CHAT_CONTEXT_OVERFLOW_KEY = "pickforge.vrt.agentChatContextOverflow";
 const VRT_REMOTE_DEVICE_FIXTURE_KEY = "pickforge.vrt.remoteDeviceFixture";
 const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
 
@@ -81,6 +85,28 @@ function agentChatFixtureEnabled(): boolean {
   } catch {
     return false;
   }
+}
+
+function agentChatContextOverflowFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_AGENT_CHAT_CONTEXT_OVERFLOW_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** The default fixture's usage row, with contextUsed pushed past
+ * contextWindow — renders ContextMeter's warn state (#307). */
+function agentChatHistoryForFixture(): AgentTimelineEntry[] {
+  if (!agentChatContextOverflowFixtureEnabled()) return AGENT_CHAT_HISTORY;
+  return AGENT_CHAT_HISTORY.map((entry) => {
+    if (entry.entryType !== "item" || entry.kind !== "usage") return entry;
+    const usage = JSON.parse(entry.payload) as AgentEvent;
+    return {
+      ...entry,
+      payload: JSON.stringify({ ...usage, contextUsed: 1_230_000, contextWindow: 1_000_000 }),
+    };
+  });
 }
 
 function chatsForProject(projectRoot: unknown) {
@@ -487,7 +513,8 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     args.agentId === "codex"
       ? { state: "authenticated" }
       : { state: "notAuthenticated" },
-  agent_chat_history: (a) => a.chatId === AGENT_CHAT_FIXTURE.chatId ? AGENT_CHAT_HISTORY : [],
+  agent_chat_history: (a) =>
+    a.chatId === AGENT_CHAT_FIXTURE.chatId ? agentChatHistoryForFixture() : [],
   agent_chat_start: (a) => `vrt-session-${a.chatId}`,
   agent_chat_send: () => null,
   agent_chat_interrupt: () => null,

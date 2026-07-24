@@ -6,6 +6,8 @@ reset this file.
 
 ## User-facing changes
 
+- Fixed OMP 17.1.1 native chat being incorrectly reported as unavailable.
+
 ## Internal/release changes (dark: no default-on behavior change)
 
 ## Validation

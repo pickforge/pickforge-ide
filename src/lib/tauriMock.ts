@@ -425,7 +425,11 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
       return {
         installed: true,
         versionOutput: "omp 17.1.1",
-        helpOutput: "omp [--profile <name>] [--provider <id>] acp --no-extensions",
+        helpOutput: [
+          "Usage: omp [options] [command] [prompt...]",
+          "      --no-extensions                 Disable extension discovery",
+          "  acp           Run Oh My Pi as an ACP (Agent Client Protocol) server over stdio",
+        ].join("\n"),
         modelsOutput: "",
         errors: [],
       };

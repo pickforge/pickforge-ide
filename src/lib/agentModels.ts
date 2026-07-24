@@ -173,7 +173,7 @@ export interface AgentCliDiagnostic {
 
 export const OMP_ACP_VERSION_RANGE = ">=17.1.1 and <18.0.0";
 export const OMP_MODEL_CATALOG_ADVISORY =
-  "OMP models unavailable: no enforced offline/cache-only catalog probe";
+  "OMP models unavailable: catalog query failed or returned nothing";
 export type OmpNativeCompatibility = "unprobed" | "probing" | "compatible" | "incompatible";
 const [ompNativeCompatibility, setOmpNativeCompatibility] =
   createSignal<OmpNativeCompatibility>("unprobed");
@@ -370,6 +370,40 @@ export function parsePiModelCatalog(raw: string): AgentModelOption[] {
   return uniqueModels(models);
 }
 
+function ompModelFromEntry(entry: unknown): AgentModelOption | null {
+  if (!entry || typeof entry !== "object") return null;
+  const record = entry as Record<string, unknown>;
+  const selector = record.selector;
+  const provider = record.provider;
+  if (typeof selector !== "string" || !selector) return null;
+  if (typeof provider !== "string" || !provider) return null;
+  const name = typeof record.name === "string" && record.name ? record.name : selector;
+  return { id: selector, label: `${name} · ${provider}` };
+}
+
+/** Parse the JSON catalog emitted by `omp models --json --no-extensions`, e.g.
+ * `{"models":[{"provider":"ollama-cloud","id":"...","selector":"provider/id",
+ * "name":"...","contextWindow":...},...]}`. */
+export function parseOmpModelCatalog(raw: string): AgentModelOption[] {
+  let models: AgentModelOption[] = [];
+  if (raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw) as { models?: unknown };
+      if (Array.isArray(parsed.models)) {
+        models = parsed.models
+          .map(ompModelFromEntry)
+          .filter((model): model is AgentModelOption => model !== null);
+      }
+    } catch {
+      // Falls through to the empty-catalog check below, which throws.
+    }
+  }
+  if (models.length === 0 && raw.trim()) {
+    throw new Error("OMP returned an unsupported model catalog");
+  }
+  return uniqueModels(models);
+}
+
 function versionFromOutput(raw: string): string | null {
   return raw.match(/\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
 }
@@ -389,7 +423,15 @@ export function diagnosticFromProbe(
 
   let models: AgentModelOption[] = [];
   if (agentId === "omp" && probe.installed) {
-    errors.push(OMP_MODEL_CATALOG_ADVISORY);
+    if (probe.modelsOutput.trim()) {
+      try {
+        models = parseOmpModelCatalog(probe.modelsOutput);
+      } catch {
+        errors.push(OMP_MODEL_CATALOG_ADVISORY);
+      }
+    } else {
+      errors.push(OMP_MODEL_CATALOG_ADVISORY);
+    }
   } else if (probe.installed && probe.modelsOutput.trim()) {
     try {
       models = parsePiModelCatalog(probe.modelsOutput);

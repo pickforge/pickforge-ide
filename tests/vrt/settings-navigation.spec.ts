@@ -335,7 +335,14 @@ test.describe("settings navigation", () => {
     const pi = page.locator("[data-agent-connector=pi]");
     await expect(omp).toContainText("Installed · omp 17.1.1");
     await expect(omp).toContainText("Native chat ready");
-    await expect(omp).toContainText("Not queried · offline safety");
+    await expect(omp).toContainText("3 discovered offline");
+    const ompModelPicker = omp.getByRole("button", { name: /Oh My Pi \(OMP\) model: 3 discovered/ });
+    await expect(ompModelPicker).toBeVisible();
+    await ompModelPicker.click();
+    await expect(omp.getByRole("option", { name: "cogito-2.1:671b · ollama-cloud" }))
+      .toBeVisible();
+    await expect(omp.getByRole("option", { name: "GPT-5.4 · openai-codex" })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(omp).toContainText("ACP integration is available");
 
     await expect(pi).toContainText("Installed · pi 0.79.10");

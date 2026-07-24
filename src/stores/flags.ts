@@ -52,6 +52,7 @@ const definitions = {
     description: "Shared @pickforge/tauri-updater dialog/controller (pickforge/pickforge-platform#36)",
   },
   pikitLanes: { description: "Pi-kit lanes visibility in Settings (#274 slice 3, #288)" },
+  pikitContext: { description: "PickForge context surfaced in Pi sessions (#299 slice 4)" },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

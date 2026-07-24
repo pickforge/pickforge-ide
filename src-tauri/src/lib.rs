@@ -281,6 +281,8 @@ pub fn run() {
             process_commands::probe_agent_auth,
             process_commands::list_pi_kit_runs,
             process_commands::abandon_pi_kit_lane,
+            process_commands::write_forge_context,
+            process_commands::clear_forge_context,
             remote_commands::remote_host_status,
             remote_commands::remote_host_start,
             remote_commands::remote_host_stop,

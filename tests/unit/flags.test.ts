@@ -38,6 +38,7 @@ describe("flags", () => {
       "settingsSync",
       "studioUpdateDialog",
       "pikitLanes",
+      "pikitContext",
     ]);
     for (const state of states) {
       expect(state.defaultValue).toBe(false);
@@ -51,6 +52,7 @@ describe("flags", () => {
     expect(store.flagEnabled("settingsSync")).toBe(false);
     expect(store.flagEnabled("studioUpdateDialog")).toBe(false);
     expect(store.flagEnabled("pikitLanes")).toBe(false);
+    expect(store.flagEnabled("pikitContext")).toBe(false);
   });
 
   it("describes the shared updater flag with its tracking issue", async () => {

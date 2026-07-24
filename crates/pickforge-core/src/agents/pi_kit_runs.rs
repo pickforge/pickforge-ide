@@ -47,17 +47,22 @@ const STATUS_SUFFIX: &str = ".status.json";
 /// same directory pi-kit actually writes to.
 pub const PIKIT_DATA_DIR_ENV: &str = "PIKIT_DATA_DIR";
 
-/// Resolves the pi-kit runs directory the same way pi-kit's own
-/// `journalDir()` does: `env` (typically `$PIKIT_DATA_DIR`) when set and
-/// non-blank, else `<home>/.pickforge/pi-kit`, then the `runs` subdirectory.
-/// Pure and does not touch the filesystem — a missing directory is handled
-/// by the reader, not here.
-pub fn pi_kit_runs_dir(home: &Path, env: Option<&str>) -> PathBuf {
-    let data_dir = match env {
+/// Resolves the root pi-kit data directory the same way pi-kit's own
+/// `dataDir()` does: `env` (typically `$PIKIT_DATA_DIR`) when set and
+/// non-blank, else `<home>/.pickforge/pi-kit`. Every reader/writer that
+/// anchors a path off this root (runs, the forge-context writer) shares this
+/// resolution. Pure and does not touch the filesystem.
+pub fn pi_kit_data_dir(home: &Path, env: Option<&str>) -> PathBuf {
+    match env {
         Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir),
         _ => home.join(".pickforge").join("pi-kit"),
-    };
-    data_dir.join("runs")
+    }
+}
+
+/// Resolves the pi-kit runs directory: [`pi_kit_data_dir`] plus the `runs`
+/// subdirectory. A missing directory is handled by the reader, not here.
+pub fn pi_kit_runs_dir(home: &Path, env: Option<&str>) -> PathBuf {
+    pi_kit_data_dir(home, env).join("runs")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -618,6 +623,14 @@ mod tests {
             pi_kit_runs_dir(home, Some("  ")),
             PathBuf::from("/home/user/.pickforge/pi-kit/runs"),
         );
+    }
+
+    #[test]
+    fn pi_kit_data_dir_prefers_env_override_over_home_default() {
+        let home = Path::new("/home/user");
+        assert_eq!(pi_kit_data_dir(home, Some("/custom/data")), PathBuf::from("/custom/data"));
+        assert_eq!(pi_kit_data_dir(home, None), PathBuf::from("/home/user/.pickforge/pi-kit"));
+        assert_eq!(pi_kit_data_dir(home, Some("  ")), PathBuf::from("/home/user/.pickforge/pi-kit"));
     }
 
     #[test]

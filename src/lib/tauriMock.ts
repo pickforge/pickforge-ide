@@ -445,6 +445,8 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   mcp_stop: () => null,
   list_pi_kit_runs: () => [],
   abandon_pi_kit_lane: () => ({ requested: true, consumed: false }),
+  write_forge_context: () => null,
+  clear_forge_context: () => null,
   picklab_status: () => ({
     cliAvailable: true,
     mcpAvailable: true,

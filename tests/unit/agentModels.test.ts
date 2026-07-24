@@ -289,6 +289,44 @@ describe("OMP/Pi discovery parsing and failures", () => {
     );
   });
 
+  it("gives an agent's own catalog membership priority over foreign-id rejection", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("piAgents", true);
+    models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "",
+      modelsOutput: [
+        "provider model context max-out thinking images",
+        "openai-codex gpt-5.6-sol 272K 128K yes yes",
+      ].join("\n"),
+      errors: [],
+    }));
+
+    // "glm-5.2:cloud" is a real id shared by BOTH claudeCode's and codex's
+    // static catalogs today, but it is terminal-only in both, so it alone
+    // can't distinguish "rejected as foreign" from "rejected as terminal
+    // -only" through the public nativeChatModel API. Simulate the general
+    // case a shared, natively-selectable id would hit: own-catalog
+    // membership must win over foreign-id rejection, not be short-circuited
+    // by it.
+    const claudeCode = models.AGENTS.find((agent) => agent.id === "claudeCode")!;
+    const codex = models.AGENTS.find((agent) => agent.id === "codex")!;
+    claudeCode.models.push({ id: "shared-native-model", label: "Shared" });
+    codex.models.push({ id: "shared-native-model", label: "Shared" });
+
+    expect(models.nativeChatModel("claudeCode", "shared-native-model")).toBe(
+      "shared-native-model",
+    );
+    expect(models.nativeChatModel("codex", "shared-native-model")).toBe("shared-native-model");
+    // A truly foreign, provider-exclusive id is still rejected under Pi.
+    expect(models.nativeChatModel("pi", "gpt-5.6-sol")).toBeNull();
+    // The real terminal-only shared id keeps being excluded by that gate,
+    // independent of the foreign-id check.
+    expect(models.nativeChatModel("claudeCode", "glm-5.2:cloud")).toBeNull();
+    expect(models.nativeChatModel("codex", "glm-5.2:cloud")).toBeNull();
+  });
+
   it("rejects Pi diagnostics that omit the catalog header", async () => {
     const { models } = await loadModules();
     const diagnostic = models.diagnosticFromProbe("pi", {

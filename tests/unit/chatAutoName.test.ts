@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // chat map so the title logic can be exercised with no runtime. solid-js's
 // createSignal is used for the typing-animation overrides; it works under node.
 const flags = vi.hoisted(() => ({
-  ompPiAgents: undefined as boolean | undefined,
+  ompAgents: undefined as boolean | undefined,
 }));
 
 const store = vi.hoisted(() => {
@@ -36,9 +36,9 @@ vi.mock("../../src/stores/workspace", () => ({
   resumeAutomaticChatTitles: store.resumeAutomaticChatTitles,
 }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) => key === "ompPiAgents" && (flags.ompPiAgents ?? false),
+  flagEnabled: (key: string) => key === "ompAgents" && (flags.ompAgents ?? false),
   setFlagOverride: (key: string, enabled: boolean | undefined) => {
-    if (key === "ompPiAgents") flags.ompPiAgents = enabled;
+    if (key === "ompAgents") flags.ompAgents = enabled;
   },
 }));
 import { setFlagOverride } from "../../src/stores/flags";
@@ -82,7 +82,7 @@ beforeEach(() => {
   store.resumeAutomaticChatTitles.mockClear();
   // Force the non-animated path (commit persists synchronously, no timers).
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
-  setFlagOverride("ompPiAgents", undefined);
+  setFlagOverride("ompAgents", undefined);
 });
 
 afterEach(() => {
@@ -338,7 +338,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("recognises OMP activity and strips its value flags only when enabled", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
     maybeAutoNameChat(
       id,
@@ -352,7 +352,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("keeps OMP continuation boolean when deriving the prompt title", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
 
     maybeAutoNameChat(id, "omp -c fix parser", "pane-omp");
@@ -361,7 +361,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("never persists quoted OMP credentials, prompts, profiles, or config paths", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
     maybeAutoNameChat(
       id,
@@ -375,7 +375,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("never persists values from unknown OMP extension flags", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
     maybeAutoNameChat(
       id,
@@ -388,7 +388,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("never persists Pi credentials, prompts, sessions, templates, or MCP paths", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
     maybeAutoNameChat(
       id,
@@ -404,7 +404,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it.each(["omp", "pi"])("skips %s file attachments before deriving a title", (binary) => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
 
     maybeAutoNameChat(id, `${binary} @/Users/me/PRIVATE.md fix attachments`, `pane-${binary}`);
@@ -419,7 +419,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
     ["pi", "install PRIVATE_PACKAGE"],
     ["pi", "--export session.jsonl /tmp/PRIVATE.html"],
   ])("does not treat %s utility invocation as an agent prompt", (binary, args) => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
     const paneId = `pane-${binary}`;
 
@@ -452,7 +452,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
     ["omp fix parser\nprintf SHELL_TAIL", "Fix parser"],
     ["omp fix parser # PRIVATE_COMMENT", "Fix parser"],
   ])("stops OMP title extraction before shell syntax in %s", (command, expected) => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
 
     maybeAutoNameChat(id, command, "pane-omp");
@@ -462,7 +462,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("preserves shell syntax that is quoted as prompt text", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
 
     maybeAutoNameChat(id, "omp 'fix ; # > | parser' && echo SHELL_TAIL", "pane-omp");
@@ -471,7 +471,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("consumes every current OMP string flag in separated and equals forms", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const id = mkChat();
     const flags = [
       "--cwd",
@@ -519,7 +519,7 @@ describe("isAgentPane — agent ownership for the live-session glow", () => {
   });
 
   it("consumes OMP optional session values without swallowing a following flag", () => {
-    setFlagOverride("ompPiAgents", true);
+    setFlagOverride("ompAgents", true);
     const valued = mkChat();
     const bare = mkChat();
 

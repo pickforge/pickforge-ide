@@ -338,7 +338,7 @@ const PI_CAPABILITIES = Object.freeze({
   ),
   modeSelection: unsupported("Pi RPC exposes thinking level, not a native sandbox or approval mode"),
   modeSwitching: unsupported("Pi RPC exposes thinking level, not a native sandbox or approval mode"),
-  planEvents: unsupported("Pi RPC 0.79.10 does not emit typed plan or todo events"),
+  planEvents: unsupported("Pi RPC does not emit typed plan or todo events (assumption verified through 0.81)"),
   toolEvents: NATIVE_V2,
   fileEvents: capability(
     "supported",
@@ -346,13 +346,13 @@ const PI_CAPABILITIES = Object.freeze({
     V2_ENGINE,
     "File activity is inferred from successful mutating tool arguments; Pi has no typed file event",
   ),
-  approvalEvents: unsupported("Pi RPC 0.79.10 has no native approval protocol"),
+  approvalEvents: unsupported("Pi RPC has no native approval protocol (assumption verified through 0.81)"),
   mcpConfiguration: unsupported(
     "PickForge does not inject per-session MCP configuration; native Pi sessions still load the user's installed extensions and tools",
   ),
   usageReporting: NATIVE_V2,
   contextReporting: unsupported("Pi context usage requires explicit session-stat polling"),
-  rateLimitReporting: unsupported("Pi RPC 0.79.10 does not emit rate-limit events"),
+  rateLimitReporting: unsupported("Pi RPC does not emit rate-limit events (assumption verified through 0.81)"),
   titleEvents: unsupported(
     "Pi session names are not connected to durable PickForge chat title ownership",
   ),
@@ -460,19 +460,26 @@ export const AGENT_BACKENDS = Object.freeze({
 const AGENT_BACKEND_IDS = new Set<string>(Object.keys(AGENT_BACKENDS));
 export const NATIVE_AGENT_BACKENDS = Object.freeze([CLAUDE_BACKEND, CODEX_BACKEND]);
 
+/** Pi RPC's wire protocol was certified as a compatible superset from 0.79.10
+ * (the original adapter contract) through 0.81 (empirically verified). */
 export function isCompatiblePiRpcVersion(version: string | null | undefined): boolean {
   if (!version) return false;
-  const match = version.trim().match(/^v?(0)\.(79)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/);
-  return match !== null && Number(match[3]) >= 10;
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (major !== 0 || minor < 79 || minor > 81) return false;
+  return minor > 79 || patch >= 10;
 }
 
 /** Pi is selectable only after the default-off rollout flag and the installed
  * version gate both pass. Claude/Codex remain unchanged. */
 export function selectableNativeAgentBackends(
-  ompPiEnabled: boolean,
+  piEnabled: boolean,
   piVersion: string | null | undefined,
 ): readonly AgentBackendDescriptor[] {
-  return ompPiEnabled && isCompatiblePiRpcVersion(piVersion)
+  return piEnabled && isCompatiblePiRpcVersion(piVersion)
     ? Object.freeze([...NATIVE_AGENT_BACKENDS, PI_BACKEND])
     : NATIVE_AGENT_BACKENDS;
 }
@@ -486,7 +493,8 @@ export function isAgentBackendId(value: string): value is AgentBackendId {
 export function isNativeAgentProvider(value: string): value is AgentProvider {
   return value === "claudeCode"
     || value === "codex"
-    || ((value === "omp" || value === "pi") && flagEnabled("ompPiAgents"));
+    || (value === "omp" && flagEnabled("ompAgents"))
+    || (value === "pi" && flagEnabled("piAgents"));
 }
 
 export function normalizeAgentProvider(value: string): AgentProvider | null {

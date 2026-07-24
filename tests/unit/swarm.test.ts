@@ -104,7 +104,7 @@ vi.mock("../../src/lib/agentModels", () => ({
   piNativeChatAvailable: vi.fn(() => true),
 }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) => key === "ompPiAgents",
+  flagEnabled: (key: string) => key === "ompAgents" || key === "piAgents",
   subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 vi.mock("../../src/lib/chatDefaults", () => ({ loadAgentEngine: deps.loadAgentEngine }));
@@ -301,7 +301,7 @@ describe("swarm dispatch", () => {
       runId: completed.runId,
       synthesisStatus: "failed",
       synthesisError: expect.stringContaining(
-        "requires the ompPiAgents flag and compatible OMP 16.4.8 probe",
+        "requires the ompAgents flag and compatible OMP 16.4.8 probe",
       ),
     });
   });

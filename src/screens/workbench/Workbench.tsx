@@ -90,10 +90,8 @@ export function WorkbenchScreen() {
   // The availability reason itself comes from the shared reactive registry used
   // by every native-provider creation surface.
   createEffect(() => {
-    if (flagEnabled("ompPiAgents")) {
-      void untrack(() => ensureOmpNativeCompatibility());
-      void untrack(() => ensurePiNativeCompatibility());
-    }
+    if (flagEnabled("ompAgents")) void untrack(() => ensureOmpNativeCompatibility());
+    if (flagEnabled("piAgents")) void untrack(() => ensurePiNativeCompatibility());
   });
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch

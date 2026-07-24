@@ -303,7 +303,7 @@ function connectorNativeState(
     label: "Native chat unavailable",
     intent: "warning",
     reason: !isCompatiblePiRpcVersion(diagnostic.version)
-      ? `Native Pi RPC requires >=0.79.10 and <0.80.0; found ${diagnostic.version ?? "an unknown version"}. Terminal launch remains available.`
+      ? `Native Pi RPC requires >=0.79.10 and <0.82.0; found ${diagnostic.version ?? "an unknown version"}. Terminal launch remains available.`
       : diagnostic.errors.length > 0
         ? `Pi compatibility probe did not qualify: ${diagnostic.errors.join("; ")}. Terminal launch remains available.`
         : "The Pi compatibility probe did not report native RPC support. Terminal launch remains available.",
@@ -670,14 +670,19 @@ export function SettingsScreen() {
       });
     }
   };
+  const enabledAgentDiagnosticIds = () =>
+    AGENT_DIAGNOSTIC_IDS.filter((agentId) =>
+      agentId === "omp" ? flagEnabled("ompAgents") : flagEnabled("piAgents"),
+    );
   const reloadAgentDiagnostics = async () => {
-    if (!flagEnabled("ompPiAgents") || agentDiagnosticsLoading()) return;
+    const ids = enabledAgentDiagnosticIds();
+    if (ids.length === 0 || agentDiagnosticsLoading()) return;
     setAgentDiagnostics(() => ({}));
     setAgentDiagnosticErrors(() => ({}));
     setAgentDiagnosticsLoading(true);
     const next: Record<string, AgentCliDiagnostic> = {};
     const failures: Record<string, string> = {};
-    await Promise.all(AGENT_DIAGNOSTIC_IDS.map(async (agentId) => {
+    await Promise.all(ids.map(async (agentId) => {
       try {
         next[agentId] = await discoverAgentCli(agentId);
       } catch (error) {
@@ -696,7 +701,7 @@ export function SettingsScreen() {
     void reloadLegacySessions();
     if (hostPlatform() === "linux") void reloadLinuxGraphics();
     if (flagEnabled("operator")) void reloadVoice();
-    if (flagEnabled("ompPiAgents")) void reloadAgentDiagnostics();
+    if (enabledAgentDiagnosticIds().length > 0) void reloadAgentDiagnostics();
   });
   // Flipping a rollout flag on while Settings is open loads status that
   // onMount deliberately skipped while the feature was hidden.
@@ -704,7 +709,7 @@ export function SettingsScreen() {
     subscribeToFlagChanges(() => {
       if (flagEnabled("operator") && voiceState() === null) void reloadVoice();
       if (
-        flagEnabled("ompPiAgents")
+        enabledAgentDiagnosticIds().length > 0
         && Object.keys(agentDiagnostics()).length === 0
         && Object.keys(agentDiagnosticErrors()).length === 0
       ) {
@@ -1107,7 +1112,7 @@ export function SettingsScreen() {
             )}
           </For>
 
-          <Show when={flagEnabled("ompPiAgents")}>
+          <Show when={flagEnabled("ompAgents") || flagEnabled("piAgents")}>
             <div class="pf-agent-diagnostics-head">
               <div class="pf-agent-diagnostics-copy">
                 <MonoEyebrow text="Connector diagnostics" />

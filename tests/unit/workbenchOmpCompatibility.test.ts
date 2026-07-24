@@ -121,7 +121,9 @@ vi.mock("../../src/lib/chatAutoName", () => ({
 }));
 vi.mock("../../src/router", () => ({ route: () => "settings" }));
 vi.mock("../../src/stores/runConsole", () => ({ runConsole: { open: () => false } }));
-vi.mock("../../src/stores/flags", () => ({ flagEnabled: (flag: string) => flag === "ompPiAgents" }));
+vi.mock("../../src/stores/flags", () => ({
+  flagEnabled: (flag: string) => flag === "ompAgents" || flag === "piAgents",
+}));
 vi.mock("../../src/stores/operatorDock", () => ({ operatorDockOpen: () => false, toggleOperatorDock: vi.fn() }));
 vi.mock("../../src/components/operator/OperatorDock", () => ({ OperatorDock: () => null }));
 vi.mock("../../src/components/Tour", () => ({ Tour: () => null }));

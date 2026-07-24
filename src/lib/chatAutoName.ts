@@ -40,7 +40,7 @@ const AGENT_BINARIES = new Set<string>([
 
 function isAgentBinary(binary: string): boolean {
   return AGENT_BINARIES.has(binary)
-    || (binary === "omp" && flagEnabled("ompPiAgents"));
+    || (binary === "omp" && flagEnabled("ompAgents"));
 }
 
 // OMP's string-valued launch flags come from its installed primary source

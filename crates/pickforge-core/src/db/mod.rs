@@ -429,122 +429,134 @@ fn apply_rust_migrations(conn: &mut Connection, mut version: u32) -> Result<(), 
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
 fn run_rust_migration(tx: &mut rusqlite::Transaction<'_>, version: u32) -> Result<(), DbError> {
     match version {
-        12 => {
-            if !has_column(tx, "chats", "kind")? {
-                tx.execute_batch(
-                    "ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'terminal';",
-                )?;
-            }
-            tx.execute_batch(
-                "CREATE TABLE IF NOT EXISTS agent_sessions (
-                   id                  TEXT NOT NULL PRIMARY KEY,
-                   chat_id             TEXT NOT NULL,
-                   provider            TEXT NOT NULL,
-                   provider_session_id TEXT,
-                   model               TEXT,
-                   status              TEXT NOT NULL,
-                   created_at          INTEGER NOT NULL
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_agent_sessions_chat
-                   ON agent_sessions(chat_id);
-                 CREATE TABLE IF NOT EXISTS agent_messages (
-                   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                   session_id TEXT NOT NULL,
-                   chat_id    TEXT NOT NULL,
-                   seq        INTEGER NOT NULL,
-                   role       TEXT NOT NULL,
-                   content    TEXT NOT NULL,
-                   created_at INTEGER NOT NULL
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_agent_messages_chat
-                   ON agent_messages(chat_id, seq);
-                 CREATE TABLE IF NOT EXISTS agent_items (
-                   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                   session_id TEXT NOT NULL,
-                   chat_id    TEXT NOT NULL,
-                   seq        INTEGER NOT NULL,
-                   kind       TEXT NOT NULL,
-                   payload    TEXT NOT NULL,
-                   created_at INTEGER NOT NULL
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_agent_items_chat
-                   ON agent_items(chat_id, seq);",
-            )?;
-            Ok(())
-        }
-        13 => {
-            tx.execute_batch(
-                "CREATE TABLE IF NOT EXISTS orchestra_tasks (
-                   id               TEXT PRIMARY KEY,
-                   project_root     TEXT NOT NULL,
-                   title            TEXT NOT NULL,
-                   status           TEXT NOT NULL,
-                   builder_chat_id  TEXT,
-                   reviewer_chat_id TEXT,
-                   note             TEXT,
-                   sort_order       INTEGER NOT NULL DEFAULT 0,
-                   created_at       INTEGER NOT NULL,
-                   updated_at       INTEGER NOT NULL
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_orchestra_tasks_project
-                   ON orchestra_tasks(project_root, sort_order);",
-            )?;
-            Ok(())
-        }
-        14 => {
-            tx.execute_batch(
-                "CREATE TABLE IF NOT EXISTS operator_audit (
-                   id           TEXT NOT NULL PRIMARY KEY,
-                   created_at   INTEGER NOT NULL,
-                   project_root TEXT,
-                   input_text   TEXT NOT NULL,
-                   intent_json  TEXT NOT NULL,
-                   risk_tier    INTEGER NOT NULL,
-                   status       TEXT NOT NULL,
-                   result       TEXT
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_operator_audit_created
-                   ON operator_audit(created_at DESC);",
-            )?;
-            Ok(())
-        }
-        15 => {
-            if !has_column(tx, "projects", "remote_host")? {
-                tx.execute_batch("ALTER TABLE projects ADD COLUMN remote_host TEXT;")?;
-            }
-            if !has_column(tx, "projects", "remote_root")? {
-                tx.execute_batch("ALTER TABLE projects ADD COLUMN remote_root TEXT;")?;
-            }
-            Ok(())
-        }
-        16 => {
-            if !has_column(tx, "chats", "title_source")? {
-                tx.execute_batch(
-                    "ALTER TABLE chats ADD COLUMN title_source TEXT NOT NULL DEFAULT 'user'
-                     CHECK (title_source IN ('default', 'auto', 'user'));",
-                )?;
-            }
-            if !has_column(tx, "chats", "title_updated_at")? {
-                tx.execute_batch(
-                    "ALTER TABLE chats ADD COLUMN title_updated_at INTEGER NOT NULL DEFAULT 0;",
-                )?;
-            }
-            tx.execute_batch(
-                "UPDATE chats
-                    SET title_source = CASE
-                        WHEN trim(title) = 'New chat' THEN 'default'
-                        ELSE 'user'
-                      END,
-                        title_updated_at = created_at
-                  WHERE title_updated_at = 0;",
-            )?;
-            Ok(())
-        }
+        12 => migrate_v12_agent_sessions(tx),
+        13 => migrate_v13_orchestra_tasks(tx),
+        14 => migrate_v14_operator_audit(tx),
+        15 => migrate_v15_project_remote_columns(tx),
+        16 => migrate_v16_chat_title_source(tx),
         _ => Err(DbError::Other(format!("no Rust migration for version {version}"))),
     }
+}
+
+/// v12: adds `chats.kind` and the agent-session/message/item tables.
+fn migrate_v12_agent_sessions(tx: &mut rusqlite::Transaction<'_>) -> Result<(), DbError> {
+    if !has_column(tx, "chats", "kind")? {
+        tx.execute_batch("ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'terminal';")?;
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS agent_sessions (
+           id                  TEXT NOT NULL PRIMARY KEY,
+           chat_id             TEXT NOT NULL,
+           provider            TEXT NOT NULL,
+           provider_session_id TEXT,
+           model               TEXT,
+           status              TEXT NOT NULL,
+           created_at          INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_agent_sessions_chat
+           ON agent_sessions(chat_id);
+         CREATE TABLE IF NOT EXISTS agent_messages (
+           id         INTEGER PRIMARY KEY AUTOINCREMENT,
+           session_id TEXT NOT NULL,
+           chat_id    TEXT NOT NULL,
+           seq        INTEGER NOT NULL,
+           role       TEXT NOT NULL,
+           content    TEXT NOT NULL,
+           created_at INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_agent_messages_chat
+           ON agent_messages(chat_id, seq);
+         CREATE TABLE IF NOT EXISTS agent_items (
+           id         INTEGER PRIMARY KEY AUTOINCREMENT,
+           session_id TEXT NOT NULL,
+           chat_id    TEXT NOT NULL,
+           seq        INTEGER NOT NULL,
+           kind       TEXT NOT NULL,
+           payload    TEXT NOT NULL,
+           created_at INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_agent_items_chat
+           ON agent_items(chat_id, seq);",
+    )?;
+    Ok(())
+}
+
+/// v13: adds the `orchestra_tasks` table.
+fn migrate_v13_orchestra_tasks(tx: &mut rusqlite::Transaction<'_>) -> Result<(), DbError> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS orchestra_tasks (
+           id               TEXT PRIMARY KEY,
+           project_root     TEXT NOT NULL,
+           title            TEXT NOT NULL,
+           status           TEXT NOT NULL,
+           builder_chat_id  TEXT,
+           reviewer_chat_id TEXT,
+           note             TEXT,
+           sort_order       INTEGER NOT NULL DEFAULT 0,
+           created_at       INTEGER NOT NULL,
+           updated_at       INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_orchestra_tasks_project
+           ON orchestra_tasks(project_root, sort_order);",
+    )?;
+    Ok(())
+}
+
+/// v14: adds the `operator_audit` table.
+fn migrate_v14_operator_audit(tx: &mut rusqlite::Transaction<'_>) -> Result<(), DbError> {
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS operator_audit (
+           id           TEXT NOT NULL PRIMARY KEY,
+           created_at   INTEGER NOT NULL,
+           project_root TEXT,
+           input_text   TEXT NOT NULL,
+           intent_json  TEXT NOT NULL,
+           risk_tier    INTEGER NOT NULL,
+           status       TEXT NOT NULL,
+           result       TEXT
+         );
+         CREATE INDEX IF NOT EXISTS idx_operator_audit_created
+           ON operator_audit(created_at DESC);",
+    )?;
+    Ok(())
+}
+
+/// v15: adds `projects.remote_host`/`remote_root`.
+fn migrate_v15_project_remote_columns(tx: &mut rusqlite::Transaction<'_>) -> Result<(), DbError> {
+    if !has_column(tx, "projects", "remote_host")? {
+        tx.execute_batch("ALTER TABLE projects ADD COLUMN remote_host TEXT;")?;
+    }
+    if !has_column(tx, "projects", "remote_root")? {
+        tx.execute_batch("ALTER TABLE projects ADD COLUMN remote_root TEXT;")?;
+    }
+    Ok(())
+}
+
+/// v16: adds `chats.title_source`/`title_updated_at` and backfills them.
+fn migrate_v16_chat_title_source(tx: &mut rusqlite::Transaction<'_>) -> Result<(), DbError> {
+    if !has_column(tx, "chats", "title_source")? {
+        tx.execute_batch(
+            "ALTER TABLE chats ADD COLUMN title_source TEXT NOT NULL DEFAULT 'user'
+             CHECK (title_source IN ('default', 'auto', 'user'));",
+        )?;
+    }
+    if !has_column(tx, "chats", "title_updated_at")? {
+        tx.execute_batch(
+            "ALTER TABLE chats ADD COLUMN title_updated_at INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    tx.execute_batch(
+        "UPDATE chats
+            SET title_source = CASE
+                WHEN trim(title) = 'New chat' THEN 'default'
+                ELSE 'user'
+              END,
+                title_updated_at = created_at
+          WHERE title_updated_at = 0;",
+    )?;
+    Ok(())
 }
 
 /// Reconcile the on-disk schema with the current desired schema, choosing the
@@ -1762,8 +1774,159 @@ mod tests {
         assert_eq!(db.list_chats("/p").unwrap().len(), 0);
     }
 
+    /// Legacy title-only writes preserve provenance/timestamp exactly, and a
+    /// non-default legacy title with default provenance stays locked (only
+    /// the exact untouched sentinel is adoptable).
+    fn assert_legacy_title_writes_preserve_provenance(db: &Database) {
+        db.update_chat_title("c1", "Legacy auto title").unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title_source, "default");
+        assert_eq!(c.title_updated_at, 1);
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Must not reclassify legacy", "auto", 4)
+            .unwrap());
+        db.update_chat_title("c1", "New chat").unwrap();
+    }
+
+    /// A flagged title metadata update leaves session_id (and everything
+    /// else untouched by it) alone.
+    fn assert_metadata_update_is_narrow(db: &Database) {
+        db.update_chat_session_id("c1", Some("dtach:pf-abc123")).unwrap();
+        db.update_chat_title_with_metadata("c1", "Fix the login bug", "auto", 4)
+            .unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Fix the login bug");
+        assert_eq!(c.title_source, "auto");
+        assert_eq!(c.title_updated_at, 4);
+        assert_eq!(c.session_id.as_deref(), Some("dtach:pf-abc123"));
+        assert_eq!(c.last_activity_at, 3); // untouched
+    }
+
+    /// Automatic and manual title writes are each monotonic: an older/equal
+    /// request of the same provenance cannot replace a newer title even when
+    /// it reaches SQLite later.
+    fn assert_title_writes_are_monotonic(db: &Database) {
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Older provider title", "auto", 3)
+            .unwrap());
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Equal-time provider title", "auto", 4)
+            .unwrap());
+        assert!(db
+            .update_chat_title_with_metadata("c1", "Newest provider title", "auto", 6)
+            .unwrap());
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Newest provider title");
+        assert_eq!(c.title_updated_at, 6);
+
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Stale manual title", "user", 6)
+            .unwrap());
+        assert!(db
+            .update_chat_title_with_metadata("c1", "My deliberate title", "user", 7)
+            .unwrap());
+    }
+
+    /// Ownership can be resumed without rewriting the visible title, but an
+    /// older/equal resume request cannot unlock a newer manual title; a
+    /// later manual rename takes ownership back.
+    fn assert_ownership_resume_is_monotonic(db: &Database) {
+        assert!(!db.update_chat_title_ownership("c1", "auto", 6).unwrap());
+        assert!(!db.update_chat_title_ownership("c1", "auto", 7).unwrap());
+        assert!(db.update_chat_title_ownership("c1", "auto", 8).unwrap());
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "My deliberate title");
+        assert_eq!(c.title_source, "auto");
+        assert_eq!(c.title_updated_at, 8);
+
+        assert!(db
+            .update_chat_title_with_metadata("c1", "Newest deliberate title", "user", 9)
+            .unwrap());
+    }
+
+    /// A provider switch is a narrow write: title/provenance from a newer
+    /// manual update survive even if the switch began from an older
+    /// snapshot, and a stale automatic write cannot then clobber it.
+    fn assert_provider_switch_preserves_title_ownership(db: &Database) {
+        db.update_chat_agent("c1", "codex", "agent").unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.agent_id, "codex");
+        assert_eq!(c.kind, "agent");
+        assert_eq!(c.title, "Newest deliberate title");
+        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_updated_at, 9);
+
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Stale provider title", "auto", 10)
+            .unwrap());
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Newest deliberate title");
+        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_updated_at, 9);
+    }
+
+    /// session_id and sort_order updates each leave the title (and each
+    /// other) alone — the reorder path relies on this so it can't race a
+    /// recovery-handle write.
+    fn assert_session_id_and_sort_order_are_narrow(db: &Database) {
+        db.update_chat_session_id("c1", None).unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Newest deliberate title");
+        assert!(c.session_id.is_none());
+
+        db.update_chat_session_id("c1", Some("tmux:pf-keepme")).unwrap();
+        db.update_chat_sort_order("c1", 7).unwrap();
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.sort_order, 7);
+        assert_eq!(c.session_id.as_deref(), Some("tmux:pf-keepme"));
+        assert_eq!(c.title, "Newest deliberate title");
+    }
+
+    /// Simulates pre-flag rows written before monotonic metadata existed.
+    /// The untouched sentinel (user/0/exact default) is adoptable, while a
+    /// non-default legacy user title remains locked.
+    fn assert_legacy_sentinel_adoption(db: &Database) {
+        db.lock()
+            .execute(
+                "UPDATE chats
+                    SET title = 'New chat', title_source = 'user', title_updated_at = 0
+                  WHERE chat_id = 'c1'",
+                [],
+            )
+            .unwrap();
+        assert!(db
+            .update_chat_title_with_metadata("c1", "Adopted automatic title", "auto", 10)
+            .unwrap());
+        db.lock()
+            .execute(
+                "UPDATE chats
+                    SET title = 'Legacy custom title', title_source = 'user', title_updated_at = 0
+                  WHERE chat_id = 'c1'",
+                [],
+            )
+            .unwrap();
+        assert!(!db
+            .update_chat_title_with_metadata("c1", "Must not replace custom", "auto", 11)
+            .unwrap());
+        let c = &db.list_chats("/p").unwrap()[0];
+        assert_eq!(c.title, "Legacy custom title");
+        assert_eq!(c.title_source, "user");
+        assert_eq!(c.title_updated_at, 0);
+    }
+
+    /// All narrow chat-update writes are silent no-ops for an unknown chat.
+    fn assert_narrow_writes_are_noops_for_unknown_chat(db: &Database) {
+        assert!(!db
+            .update_chat_title_with_metadata("nope", "x", "user", 9)
+            .unwrap());
+        assert!(!db.update_chat_title_ownership("nope", "auto", 10).unwrap());
+        db.update_chat_session_id("nope", Some("y")).unwrap();
+        db.update_chat_agent("nope", "codex", "agent").unwrap();
+        db.update_chat_sort_order("nope", 3).unwrap();
+        assert_eq!(db.list_chats("/p").unwrap().len(), 1);
+    }
+
     #[test]
-    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     fn narrow_chat_updates_touch_only_their_column() {
         let db = Database::open_in_memory().unwrap();
         db.upsert_project(&Project {
@@ -1796,141 +1959,14 @@ mod tests {
         })
         .unwrap();
 
-        // Legacy title-only writes preserve provenance/timestamp exactly.
-        db.update_chat_title("c1", "Legacy auto title").unwrap();
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title_source, "default");
-        assert_eq!(c.title_updated_at, 1);
-        // A non-default legacy title with default provenance is ambiguous and
-        // therefore locked; only the exact untouched sentinel may be adopted.
-        assert!(!db
-            .update_chat_title_with_metadata("c1", "Must not reclassify legacy", "auto", 4)
-            .unwrap());
-        db.update_chat_title("c1", "New chat").unwrap();
-
-        // Flagged title metadata update leaves session_id (and everything else) alone.
-        db.update_chat_session_id("c1", Some("dtach:pf-abc123")).unwrap();
-        db.update_chat_title_with_metadata("c1", "Fix the login bug", "auto", 4)
-            .unwrap();
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "Fix the login bug");
-        assert_eq!(c.title_source, "auto");
-        assert_eq!(c.title_updated_at, 4);
-        assert_eq!(c.session_id.as_deref(), Some("dtach:pf-abc123"));
-        assert_eq!(c.last_activity_at, 3); // untouched
-
-        // Automatic writes are monotonic: an older/equal request cannot replace
-        // a newer provider title even when it reaches SQLite later.
-        assert!(!db
-            .update_chat_title_with_metadata("c1", "Older provider title", "auto", 3)
-            .unwrap());
-        assert!(!db
-            .update_chat_title_with_metadata("c1", "Equal-time provider title", "auto", 4)
-            .unwrap());
-        assert!(db
-            .update_chat_title_with_metadata("c1", "Newest provider title", "auto", 6)
-            .unwrap());
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "Newest provider title");
-        assert_eq!(c.title_updated_at, 6);
-
-        // Manual title writes are monotonic too: stale/equal requests cannot
-        // replace a newer automatic title merely because they arrive later.
-        assert!(!db
-            .update_chat_title_with_metadata("c1", "Stale manual title", "user", 6)
-            .unwrap());
-        assert!(db
-            .update_chat_title_with_metadata("c1", "My deliberate title", "user", 7)
-            .unwrap());
-
-        // Ownership can be resumed without rewriting the visible title, but an
-        // older/equal resume request cannot unlock a newer manual title.
-        assert!(!db.update_chat_title_ownership("c1", "auto", 6).unwrap());
-        assert!(!db.update_chat_title_ownership("c1", "auto", 7).unwrap());
-        assert!(db.update_chat_title_ownership("c1", "auto", 8).unwrap());
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "My deliberate title");
-        assert_eq!(c.title_source, "auto");
-        assert_eq!(c.title_updated_at, 8);
-
-        // A later manual rename takes ownership back.
-        assert!(db
-            .update_chat_title_with_metadata("c1", "Newest deliberate title", "user", 9)
-            .unwrap());
-
-        // A provider switch is a narrow write: title/provenance from a newer
-        // manual update survive even if the switch began from an older snapshot.
-        db.update_chat_agent("c1", "codex", "agent").unwrap();
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.agent_id, "codex");
-        assert_eq!(c.kind, "agent");
-        assert_eq!(c.title, "Newest deliberate title");
-        assert_eq!(c.title_source, "user");
-        assert_eq!(c.title_updated_at, 9);
-
-        // A stale automatic write cannot clobber manual ownership that won the race.
-        assert!(!db
-            .update_chat_title_with_metadata("c1", "Stale provider title", "auto", 10)
-            .unwrap());
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "Newest deliberate title");
-        assert_eq!(c.title_source, "user");
-        assert_eq!(c.title_updated_at, 9);
-
-        // session_id update leaves the title alone; None clears it.
-        db.update_chat_session_id("c1", None).unwrap();
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "Newest deliberate title");
-        assert!(c.session_id.is_none());
-
-        // sort_order update leaves a live session_id (and title) alone — the
-        // reorder path relies on this so it can't race a recovery-handle write.
-        db.update_chat_session_id("c1", Some("tmux:pf-keepme")).unwrap();
-        db.update_chat_sort_order("c1", 7).unwrap();
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.sort_order, 7);
-        assert_eq!(c.session_id.as_deref(), Some("tmux:pf-keepme"));
-        assert_eq!(c.title, "Newest deliberate title");
-
-        // Simulate pre-flag rows written before monotonic metadata existed. The
-        // untouched sentinel (user/0/exact default) is adoptable, while a
-        // non-default legacy user title remains locked.
-        db.lock()
-            .execute(
-                "UPDATE chats
-                    SET title = 'New chat', title_source = 'user', title_updated_at = 0
-                  WHERE chat_id = 'c1'",
-                [],
-            )
-            .unwrap();
-        assert!(db
-            .update_chat_title_with_metadata("c1", "Adopted automatic title", "auto", 10)
-            .unwrap());
-        db.lock()
-            .execute(
-                "UPDATE chats
-                    SET title = 'Legacy custom title', title_source = 'user', title_updated_at = 0
-                  WHERE chat_id = 'c1'",
-                [],
-            )
-            .unwrap();
-        assert!(!db
-            .update_chat_title_with_metadata("c1", "Must not replace custom", "auto", 11)
-            .unwrap());
-        let c = &db.list_chats("/p").unwrap()[0];
-        assert_eq!(c.title, "Legacy custom title");
-        assert_eq!(c.title_source, "user");
-        assert_eq!(c.title_updated_at, 0);
-
-        // All narrow writes are silent no-ops for an unknown chat.
-        assert!(!db
-            .update_chat_title_with_metadata("nope", "x", "user", 9)
-            .unwrap());
-        assert!(!db.update_chat_title_ownership("nope", "auto", 10).unwrap());
-        db.update_chat_session_id("nope", Some("y")).unwrap();
-        db.update_chat_agent("nope", "codex", "agent").unwrap();
-        db.update_chat_sort_order("nope", 3).unwrap();
-        assert_eq!(db.list_chats("/p").unwrap().len(), 1);
+        assert_legacy_title_writes_preserve_provenance(&db);
+        assert_metadata_update_is_narrow(&db);
+        assert_title_writes_are_monotonic(&db);
+        assert_ownership_resume_is_monotonic(&db);
+        assert_provider_switch_preserves_title_ownership(&db);
+        assert_session_id_and_sort_order_are_narrow(&db);
+        assert_legacy_sentinel_adoption(&db);
+        assert_narrow_writes_are_noops_for_unknown_chat(&db);
     }
 
     #[test]
@@ -3043,8 +3079,45 @@ mod tests {
         assert!((codex.cost_usd - 0.23).abs() < 1e-9);
     }
 
+    /// Asserts the `/p1`-scoped summary groups the two `gpt-5` chats
+    /// together, keeps `gpt-5-mini` in its own row, and excludes `/p2`.
+    fn assert_project_scoped_usage_summary(db: &Database) {
+        let project = db.agent_usage_summary(Some("/p1")).unwrap();
+        assert_eq!(project.len(), 2);
+        let codex = summary_for(&project, "codex", Some("gpt-5"));
+        assert_eq!(codex.chats, 2);
+        assert_eq!(codex.turns, Some(2));
+        assert_eq!(codex.input_tokens, 15);
+        assert_eq!(codex.cached_input_tokens, 1);
+        assert_eq!(codex.output_tokens, 3);
+        assert!((codex.cost_usd - 0.15).abs() < 1e-9);
+
+        let mini = summary_for(&project, "codex", Some("gpt-5-mini"));
+        assert_eq!(mini.chats, 1);
+        assert_eq!(mini.turns, Some(1));
+        assert_eq!(mini.input_tokens, 7);
+        assert_eq!(mini.cached_input_tokens, 0);
+        assert_eq!(mini.output_tokens, 3);
+        assert!((mini.cost_usd - 0.07).abs() < 1e-9);
+    }
+
+    /// Asserts the global (no project filter) summary rolls up all three
+    /// `gpt-5` chats across both projects, and an unknown project returns
+    /// an empty summary.
+    fn assert_global_usage_summary(db: &Database) {
+        let global = db.agent_usage_summary(None).unwrap();
+        let codex = summary_for(&global, "codex", Some("gpt-5"));
+        assert_eq!(codex.chats, 3);
+        assert_eq!(codex.turns, Some(3));
+        assert_eq!(codex.input_tokens, 115);
+        assert_eq!(codex.cached_input_tokens, 11);
+        assert_eq!(codex.output_tokens, 23);
+        assert!((codex.cost_usd - 1.15).abs() < 1e-9);
+
+        assert!(db.agent_usage_summary(Some("/missing")).unwrap().is_empty());
+    }
+
     #[test]
-    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn agent_usage_summary_groups_by_provider_and_model() {
         let db = Database::open_in_memory().unwrap();
         seed_agent_chat(&db, "/p1", "c-gpt5-a");
@@ -3077,34 +3150,8 @@ mod tests {
             None,
         );
 
-        let project = db.agent_usage_summary(Some("/p1")).unwrap();
-        assert_eq!(project.len(), 2);
-        let codex = summary_for(&project, "codex", Some("gpt-5"));
-        assert_eq!(codex.chats, 2);
-        assert_eq!(codex.turns, Some(2));
-        assert_eq!(codex.input_tokens, 15);
-        assert_eq!(codex.cached_input_tokens, 1);
-        assert_eq!(codex.output_tokens, 3);
-        assert!((codex.cost_usd - 0.15).abs() < 1e-9);
-
-        let mini = summary_for(&project, "codex", Some("gpt-5-mini"));
-        assert_eq!(mini.chats, 1);
-        assert_eq!(mini.turns, Some(1));
-        assert_eq!(mini.input_tokens, 7);
-        assert_eq!(mini.cached_input_tokens, 0);
-        assert_eq!(mini.output_tokens, 3);
-        assert!((mini.cost_usd - 0.07).abs() < 1e-9);
-
-        let global = db.agent_usage_summary(None).unwrap();
-        let codex = summary_for(&global, "codex", Some("gpt-5"));
-        assert_eq!(codex.chats, 3);
-        assert_eq!(codex.turns, Some(3));
-        assert_eq!(codex.input_tokens, 115);
-        assert_eq!(codex.cached_input_tokens, 11);
-        assert_eq!(codex.output_tokens, 23);
-        assert!((codex.cost_usd - 1.15).abs() < 1e-9);
-
-        assert!(db.agent_usage_summary(Some("/missing")).unwrap().is_empty());
+        assert_project_scoped_usage_summary(&db);
+        assert_global_usage_summary(&db);
     }
 
     #[test]
@@ -3211,8 +3258,41 @@ mod tests {
         assert_eq!(other, 1);
     }
 
+    fn assert_timeline_message(entry: &AgentTimelineEntry, seq: i64, role: &str, content: &str) {
+        match entry {
+            AgentTimelineEntry::Message {
+                seq: actual_seq,
+                role: actual_role,
+                content: actual_content,
+                created_at,
+            } => {
+                assert_eq!(*actual_seq, seq);
+                assert_eq!(actual_role, role);
+                assert_eq!(actual_content, content);
+                assert!(*created_at > 0);
+            }
+            _ => panic!("expected message"),
+        }
+    }
+
+    fn assert_timeline_item(entry: &AgentTimelineEntry, seq: i64, kind: &str, payload: &str) {
+        match entry {
+            AgentTimelineEntry::Item {
+                seq: actual_seq,
+                kind: actual_kind,
+                payload: actual_payload,
+                created_at,
+            } => {
+                assert_eq!(*actual_seq, seq);
+                assert_eq!(actual_kind, kind);
+                assert_eq!(actual_payload, payload);
+                assert!(*created_at > 0);
+            }
+            _ => panic!("expected item"),
+        }
+    }
+
     #[test]
-    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
     fn agent_timeline_returns_messages_and_items_ordered_by_seq() {
         let db = Database::open_in_memory().unwrap();
         db.agent_message_append("s1", "c1", "user", "hello")
@@ -3224,48 +3304,9 @@ mod tests {
 
         let timeline = db.agent_timeline_for_chat("c1").unwrap();
         assert_eq!(timeline.len(), 3);
-        match &timeline[0] {
-            AgentTimelineEntry::Message {
-                seq,
-                role,
-                content,
-                created_at,
-            } => {
-                assert_eq!(*seq, 1);
-                assert_eq!(role, "user");
-                assert_eq!(content, "hello");
-                assert!(*created_at > 0);
-            }
-            _ => panic!("expected message"),
-        }
-        match &timeline[1] {
-            AgentTimelineEntry::Item {
-                seq,
-                kind,
-                payload,
-                created_at,
-            } => {
-                assert_eq!(*seq, 2);
-                assert_eq!(kind, "toolCall");
-                assert_eq!(payload, r#"{"name":"build"}"#);
-                assert!(*created_at > 0);
-            }
-            _ => panic!("expected item"),
-        }
-        match &timeline[2] {
-            AgentTimelineEntry::Item {
-                seq,
-                kind,
-                payload,
-                created_at,
-            } => {
-                assert_eq!(*seq, 3);
-                assert_eq!(kind, "toolResult");
-                assert_eq!(payload, r#"{"ok":true}"#);
-                assert!(*created_at > 0);
-            }
-            _ => panic!("expected item"),
-        }
+        assert_timeline_message(&timeline[0], 1, "user", "hello");
+        assert_timeline_item(&timeline[1], 2, "toolCall", r#"{"name":"build"}"#);
+        assert_timeline_item(&timeline[2], 3, "toolResult", r#"{"ok":true}"#);
     }
 
     /// A DB stamped one past LATEST (a genuine downgrade / newer schema) is

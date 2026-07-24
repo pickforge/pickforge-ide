@@ -1377,6 +1377,59 @@ describe("ensureAgentChat", () => {
     expect(agentChat(chatId)?.model).toBe("claude-new");
   });
 
+  it("reverts a live model switch and surfaces the error when the backend rejects it (#285)", async () => {
+    const chatId = nextChatId();
+    const setModel = deferred<void>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_chat_set_model") return setModel.promise;
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "claudeCode", "claude-old");
+    setAgentChatModel(chatId, "claude-mid");
+    expect(agentChat(chatId)?.model).toBe("claude-mid");
+
+    setModel.reject(new Error("OMP rejected the model selector"));
+    await flushPromises();
+
+    expect(agentChat(chatId)?.model).toBe("claude-old");
+    expect(agentChat(chatId)?.error).toBe("OMP rejected the model selector");
+  });
+
+  it("does not clobber a newer selection when an older live model switch fails", async () => {
+    const chatId = nextChatId();
+    const setModels: Array<{
+      promise: Promise<void>;
+      resolve: (value: void) => void;
+      reject: (reason?: unknown) => void;
+    }> = [];
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_chat_set_model") {
+        const next = deferred<void>();
+        setModels.push(next);
+        return next.promise;
+      }
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "claudeCode", "claude-old");
+    setAgentChatModel(chatId, "claude-mid");
+    setAgentChatModel(chatId, "claude-new");
+    await flushPromises();
+
+    // Reject the in-flight request for the now-superseded "claude-mid"
+    // selection — the touch guard must keep the newer "claude-new" in place.
+    setModels[0].reject(new Error("stale set-model rejected"));
+    await flushPromises();
+
+    expect(agentChat(chatId)?.model).toBe("claude-new");
+    expect(agentChat(chatId)?.error).toBe("stale set-model rejected");
+  });
+
   it("updates the selected model in frontend state only", async () => {
     const { chatId } = await startChat([], "gpt-old");
 

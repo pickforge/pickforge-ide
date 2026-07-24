@@ -896,10 +896,19 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   }
 }
 
-function queueAgentChatSetModel(chatId: string, sessionId: string, model: string | null) {
+// `previousModel` is the last model the backend session is known to be
+// running under (the session-start model, or the last successfully applied
+// selection) — what a failed live switch reverts to.
+function queueAgentChatSetModel(
+  chatId: string,
+  sessionId: string,
+  model: string | null,
+  previousModel: string | null,
+) {
   const generation = ensureGenerations.get(chatId) ?? 0;
   const sequence = (setModelRequestSeqByChat.get(chatId) ?? 0) + 1;
   setModelRequestSeqByChat.set(chatId, sequence);
+  const touch = modelTouchByChat.get(chatId) ?? 0;
   const previous = pendingSetModelByChat.get(chatId)?.promise ?? Promise.resolve();
   const promise = previous
     .catch(() => undefined)
@@ -913,7 +922,16 @@ function queueAgentChatSetModel(chatId: string, sessionId: string, model: string
       ) return;
       await agentChatSetModel(sessionId, model);
     })
-    .catch(() => undefined);
+    .catch((error) => {
+      if ((ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId]) return;
+      // A newer user selection landed while this request was in flight —
+      // reverting now would clobber it, so only the error surfaces.
+      if ((modelTouchByChat.get(chatId) ?? 0) === touch) {
+        setChats(chatId, { model: previousModel, error: errorText(error) });
+      } else {
+        setChats(chatId, { error: errorText(error) });
+      }
+    });
   pendingSetModelByChat.set(chatId, { promise, sequence });
   void promise.then(() => {
     const pending = pendingSetModelByChat.get(chatId);
@@ -1168,7 +1186,7 @@ export async function ensureAgentChat(
         agentBackendDescriptor(provider).nativePayload.model === "sessionState" &&
         currentModel !== startModel
       ) {
-        queueAgentChatSetModel(chatId, sessionId, currentModel);
+        queueAgentChatSetModel(chatId, sessionId, currentModel, startModel);
       }
       // A mode picked while the start was in flight never reached the backend
       // (the start captured the old overrides) — reconcile it now.
@@ -1266,6 +1284,9 @@ export async function hydrateAgentChatHistory(
 export function setAgentChatModel(chatId: string, model: string | null) {
   const chat = chats[chatId];
   if (!chat) return;
+  // `chat` is a reactive store proxy — snapshot the pre-update model now, or
+  // reading it after setChats below would return the just-written value.
+  const previousModel = chat.model;
   modelTouchByChat.set(chatId, (modelTouchByChat.get(chatId) ?? 0) + 1);
   const safeModel = nativeChatModel(chat.provider, model);
   setChats(chatId, { model: safeModel });
@@ -1275,7 +1296,7 @@ export function setAgentChatModel(chatId: string, model: string | null) {
     agentBackendDescriptor(chat.provider).nativePayload.model === "sessionState" &&
     chat.sessionId
   ) {
-    queueAgentChatSetModel(chatId, chat.sessionId, safeModel);
+    queueAgentChatSetModel(chatId, chat.sessionId, safeModel, previousModel);
   }
 }
 

@@ -551,4 +551,33 @@ describe("OMP/Pi discovery parsing and failures", () => {
     expect(diagnostic.capabilities.dynamicModels).toBe(false);
     expect(diagnostic.errors).toEqual([models.OMP_MODEL_CATALOG_ADVISORY]);
   });
+
+  it("keeps native chat available when only the model-discovery probe step fails (#285)", async () => {
+    const { models } = await loadModules();
+    const diagnostic = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: ["model discovery failed (1): omp exited unexpectedly"],
+    });
+
+    expect(diagnostic.capabilities.nativeChat).toBe(true);
+    expect(diagnostic.capabilities.dynamicModels).toBe(false);
+    expect(diagnostic.errors).toContain(models.OMP_MODEL_CATALOG_ADVISORY);
+    expect(diagnostic.errors).toContain("model discovery failed (1): omp exited unexpectedly");
+  });
+
+  it("still withholds native chat when a non-catalog probe step fails", async () => {
+    const { models } = await loadModules();
+    const diagnostic = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: ["capability check failed (1): omp exited unexpectedly"],
+    });
+
+    expect(diagnostic.capabilities.nativeChat).toBe(false);
+  });
 });

@@ -416,6 +416,12 @@ export function diagnosticFromProbe(
   probe: AgentCliProbe,
 ): AgentCliDiagnostic {
   const errors = [...probe.errors];
+  // The model-discovery probe step is catalog-only: a failure there degrades
+  // to the advisory below and must not withhold native chat, which only
+  // needs the CLI to be installed with a compatible version and help output.
+  const nativeChatErrorCount = agentId === "omp"
+    ? probe.errors.filter((error) => !error.startsWith("model discovery")).length
+    : probe.errors.length;
   const version = versionFromOutput(probe.versionOutput);
   if (probe.installed && probe.versionOutput.trim() && !version) {
     errors.push("Version output was not recognized");
@@ -453,7 +459,7 @@ export function diagnosticFromProbe(
       profiles: installed && /--profile(?:=|\s|<)/.test(help),
       providerSelection: installed && /--provider(?:=|\s|<)/.test(help),
       nativeChat: installed
-        && probe.errors.length === 0
+        && nativeChatErrorCount === 0
         && (
           (agentId === "omp"
             && isCompatibleOmpAcpVersion(version)

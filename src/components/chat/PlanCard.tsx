@@ -4,7 +4,10 @@ import { IconPin } from "../icons";
 import type { PlanItem } from "../../lib/agentChat";
 import "./chat.css";
 
-const PLAN_MARK: Record<PlanItem["status"], string> = {
+/** The `[ ]` / `[>]` / `[x]` marker glyphs shared by every plan-item
+ *  renderer (this card, the pinned Orchestra plan) so the three visual
+ *  states stay byte-identical across surfaces. */
+export const PLAN_ITEM_MARK: Record<PlanItem["status"], string> = {
   pending: "[ ]",
   inProgress: "[>]",
   completed: "[x]",
@@ -52,7 +55,7 @@ export function PlanCard(props: {
               aria-current={item.status === "inProgress" ? "step" : undefined}
             >
               <span class="pf-chat-plan-mark" aria-hidden="true">
-                {PLAN_MARK[item.status]}
+                {PLAN_ITEM_MARK[item.status]}
               </span>
               <span class="pf-chat-plan-text">{item.text}</span>
             </li>

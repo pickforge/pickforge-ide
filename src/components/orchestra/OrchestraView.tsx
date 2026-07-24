@@ -11,6 +11,7 @@ import {
   untrack,
 } from "solid-js";
 import { AgentChatView } from "../chat/AgentChatView";
+import { PLAN_ITEM_MARK } from "../chat/PlanCard";
 import { FloatingMenu } from "../FloatingMenu";
 import { ForgeEmptyState, MonoEyebrow } from "../ui";
 import {
@@ -236,12 +237,6 @@ type PinnedPlan = {
   projectRoot: string;
   provider: AgentProvider;
   items: PlanItem[];
-};
-
-const PINNED_PLAN_MARK: Record<PlanItem["status"], string> = {
-  pending: "[ ]",
-  inProgress: "[>]",
-  completed: "[x]",
 };
 
 const LEDGER_MIN_WIDTH = 220;
@@ -1028,7 +1023,7 @@ export function OrchestraView(props: {
                               aria-current={item.status === "inProgress" ? "step" : undefined}
                             >
                               <span class="pf-orch-pin-step" aria-hidden="true">
-                                {PINNED_PLAN_MARK[item.status]}
+                                {PLAN_ITEM_MARK[item.status]}
                               </span>
                               <span class="pf-orch-pin-text">{item.text}</span>
                             </li>

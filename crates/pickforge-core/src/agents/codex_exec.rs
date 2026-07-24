@@ -816,6 +816,12 @@ fn plan_item(value: &Value) -> Option<PlanItem> {
             if text.trim().is_empty() {
                 return None;
             }
+            // Bool-first precedence over the string status is pre-existing
+            // behavior carried from main (unrelated to this contract change):
+            // a dual-field payload like {"completed": false, "status":
+            // "in_progress"} intentionally resolves via the bool (to
+            // pending). This is unproven on the real codex exec wire — kept
+            // for compatibility with whatever previously relied on it.
             let status = value
                 .get("completed")
                 .and_then(Value::as_bool)

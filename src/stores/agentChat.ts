@@ -22,6 +22,7 @@ import {
 } from "../lib/agentBackends";
 import { modeOverrides } from "../lib/agentModes";
 import { nativeChatModel } from "../lib/agentModels";
+import { agentSessionLatestForChat } from "../lib/db";
 import { isSwarmWorkerChat } from "../lib/chatLabels";
 import {
   canAutoOwn,
@@ -649,6 +650,10 @@ function reduceUsageEvent(
   return withTimeline(
     {
       ...chat,
+      // Persisted usage rows carry the model that actually served the turn —
+      // the only per-chat record of a model that was never explicitly
+      // changed via the picker (no "sessionUpdated" event exists for it).
+      model: event.model ?? chat.model,
       contextUsed,
       contextWindow,
       totals,
@@ -1026,6 +1031,30 @@ function stateFromHistory(
   return chat;
 }
 
+/**
+ * A chatId with no live entry in `chats` yet may still be a chat that
+ * already ran in a previous app session (resumed after quit/relaunch), not
+ * a genuinely new one — `chats` is purely in-memory and starts empty on
+ * every launch. Its actual starting model lives in the `agent_sessions`
+ * table, keyed by chatId, independent of the global per-provider "last
+ * selected model" preference the caller's fallback carries. A chat that
+ * never had a session yet (truly new) has no row, so this is a no-op and
+ * the caller's fallback (the global preference) is used, matching intent.
+ */
+async function resolveResumedModel(
+  chatId: string,
+  provider: AgentProvider,
+  fallbackModel: string | null,
+): Promise<string | null> {
+  try {
+    const session = await agentSessionLatestForChat(chatId);
+    const resumedModel = session?.model ? nativeChatModel(provider, session.model) : null;
+    return resumedModel ?? fallbackModel;
+  } catch {
+    return fallbackModel;
+  }
+}
+
 // eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export async function ensureAgentChat(
   chatId: string,
@@ -1073,6 +1102,13 @@ export async function ensureAgentChat(
   // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   promise = (async () => {
     try {
+      if (created) {
+        const resumedModel = await resolveResumedModel(chatId, provider, safeModel);
+        if (stale()) return;
+        if (resumedModel !== safeModel && chats[chatId].model === safeModel) {
+          setChats(chatId, { model: resumedModel });
+        }
+      }
       if (!chats[chatId].historyLoaded) {
         const previous = chats[chatId];
         const history = await agentChatHistory(chatId);
@@ -1187,8 +1223,16 @@ export async function hydrateAgentChatHistory(
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
 
   let promise: Promise<void> | undefined;
+  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   promise = (async () => {
     try {
+      if (created) {
+        const resumedModel = await resolveResumedModel(chatId, provider, safeModel);
+        if (stale()) return;
+        if (resumedModel !== safeModel && chats[chatId].model === safeModel) {
+          setChats(chatId, { model: resumedModel });
+        }
+      }
       const previous = chats[chatId];
       const history = await agentChatHistory(chatId);
       if (stale() || chats[chatId].historyLoaded) return;

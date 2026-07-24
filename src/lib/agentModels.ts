@@ -528,10 +528,35 @@ export function launchBinary(agentId: string): string | null {
   return profileForAgent(agentId)?.binary ?? null;
 }
 
+let foreignStaticModelIdsCache: Map<string, Set<string>> | undefined;
+
+/** Model ids that belong to another agent's static catalog (Claude/Codex).
+ * `modelOption` can only validate against a profile's own static catalog, so
+ * it is a no-op for providers whose catalog is discovered at runtime (Pi,
+ * OMP) — this closes that gap by rejecting ids that are unambiguously
+ * another provider's, guarding against a stale/misrouted id bleeding across
+ * providers in the composer's model label. */
+function foreignStaticModelIds(agentId: string): Set<string> {
+  if (!foreignStaticModelIdsCache) {
+    foreignStaticModelIdsCache = new Map();
+  }
+  let ids = foreignStaticModelIdsCache.get(agentId);
+  if (!ids) {
+    ids = new Set<string>();
+    for (const agent of AGENTS) {
+      if (agent.id === agentId) continue;
+      for (const option of agent.models) ids.add(option.id);
+    }
+    foreignStaticModelIdsCache.set(agentId, ids);
+  }
+  return ids;
+}
+
 export function nativeChatModel(agentId: string, modelId: string | null): string | null {
   if (!isNativeAgentProvider(agentId) || (agentId === "omp" && !ompNativeChatAvailable())) {
     return null;
   }
+  if (modelId && foreignStaticModelIds(agentId).has(modelId)) return null;
   const option = modelOption(agentId, modelId);
   return option?.terminalOnly ? null : modelId;
 }

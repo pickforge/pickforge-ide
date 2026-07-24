@@ -264,6 +264,31 @@ describe("OMP/Pi discovery parsing and failures", () => {
     expect(models.nativeChatModel("pi", catalog[1].id)).toBe("openai-codex/gpt-5.5");
   });
 
+  it("rejects a bare Claude/Codex catalog id bleeding into Pi's model slot (#272)", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("piAgents", true);
+    models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "",
+      modelsOutput: [
+        "provider model context max-out thinking images",
+        "openai-codex gpt-5.6-sol 272K 128K yes yes",
+      ].join("\n"),
+      errors: [],
+    }));
+
+    // A Codex-shaped bare id (no "provider/model" prefix) is unambiguously
+    // another provider's catalog entry, even though it happens to share
+    // wording with a legitimate Pi-discovered "openai-codex/..." selector.
+    expect(models.nativeChatModel("pi", "gpt-5.6-sol")).toBeNull();
+    expect(models.nativeChatModel("pi", "claude-sonnet-5")).toBeNull();
+    // The Pi-shaped selector for the same underlying model stays valid.
+    expect(models.nativeChatModel("pi", "openai-codex/gpt-5.6-sol")).toBe(
+      "openai-codex/gpt-5.6-sol",
+    );
+  });
+
   it("rejects Pi diagnostics that omit the catalog header", async () => {
     const { models } = await loadModules();
     const diagnostic = models.diagnosticFromProbe("pi", {

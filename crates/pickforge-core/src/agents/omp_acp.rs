@@ -15,7 +15,7 @@ use super::event::{
 };
 
 const ACP_PROTOCOL_VERSION: u64 = 1;
-const SUPPORTED_OMP_VERSION: &str = "16.4.8";
+const OMP_ACP_VERSION_RANGE: &str = ">=17.1.1 <18.0.0";
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_REQUESTS: usize = 128;
 const MAX_RETIRED_REQUESTS: usize = 256;
@@ -741,6 +741,37 @@ fn advertised_models(opened: &Value) -> HashSet<String> {
         .collect()
 }
 
+fn is_compatible_omp_acp_version(version: &str) -> bool {
+    let version = version.trim().strip_prefix('v').unwrap_or(version.trim());
+    let without_build = match version.split_once('+') {
+        Some((core, suffix)) if valid_semver_suffix(suffix) && !suffix.contains('+') => core,
+        Some(_) => return false,
+        None => version,
+    };
+    let core = match without_build.split_once('-') {
+        Some((core, suffix)) if valid_semver_suffix(suffix) => core,
+        Some(_) => return false,
+        None => without_build,
+    };
+    let mut parts = core.split('.');
+    let Some(major) = parts.next().and_then(|part| part.parse::<u64>().ok()) else {
+        return false;
+    };
+    let Some(minor) = parts.next().and_then(|part| part.parse::<u64>().ok()) else {
+        return false;
+    };
+    let Some(patch) = parts.next().and_then(|part| part.parse::<u64>().ok()) else {
+        return false;
+    };
+    parts.next().is_none() && major == 17 && (minor > 1 || (minor == 1 && patch >= 1))
+}
+
+fn valid_semver_suffix(suffix: &str) -> bool {
+    !suffix.is_empty()
+        && suffix
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-'))
+}
 
 fn validate_initialize(value: &Value) -> Result<OmpAcpHandshake, OmpAcpError> {
     let protocol = value.get("protocolVersion").and_then(Value::as_u64);
@@ -765,9 +796,9 @@ fn validate_initialize(value: &Value) -> Result<OmpAcpHandshake, OmpAcpError> {
         .get("version")
         .and_then(Value::as_str)
         .ok_or_else(|| OmpAcpError::Protocol("initialize omitted OMP version".to_string()))?;
-    if version != SUPPORTED_OMP_VERSION {
+    if !is_compatible_omp_acp_version(version) {
         return Err(OmpAcpError::Protocol(format!(
-            "unsupported OMP ACP version {version}; expected {SUPPORTED_OMP_VERSION}"
+            "unsupported OMP ACP version {version}; expected {OMP_ACP_VERSION_RANGE}"
         )));
     }
     let capabilities = value
@@ -1810,7 +1841,7 @@ mod tests {
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"oh-my-pi","title":"Oh My Pi","version":"16.4.8"}},"agentCapabilities":{{"loadSession":true,"sessionCapabilities":{{"resume":{{}},"close":{{}}}}}},"_meta":{{"fixture":true}}}}}}'
+      printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"oh-my-pi","title":"Oh My Pi","version":"17.1.1"}},"agentCapabilities":{{"loadSession":true,"sessionCapabilities":{{"resume":{{}},"close":{{}}}}}},"_meta":{{"fixture":true}}}}}}'
       ;;
     *'"method":"session/new"'*)
       printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"omp-session-1","modes":{{"availableModes":[{{"id":"default"}},{{"id":"plan"}}]}},"configOptions":[{{"id":"model","options":[{{"value":"openai/gpt-test"}}]}}]}}}}'
@@ -1912,6 +1943,30 @@ done"#
         panic!("event not received");
     }
 
+    #[test]
+    fn version_gate_accepts_only_certified_omp_line() {
+        for version in ["17.1.1", "17.999.999", "17.2.0-rc.1+build"] {
+            assert!(is_compatible_omp_acp_version(version), "{version}");
+        }
+        for version in ["17.1.0", "18.0.0", "18.0.0-rc.1", "16.4.8"] {
+            assert!(!is_compatible_omp_acp_version(version), "{version}");
+        }
+    }
+
+    #[test]
+    fn rejected_version_reports_certified_range() {
+        let error = validate_initialize(&json!({
+            "protocolVersion": 1,
+            "agentInfo": { "name": "oh-my-pi", "version": "17.1.0" },
+        }))
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            OmpAcpError::Protocol(message)
+                if message == "unsupported OMP ACP version 17.1.0; expected >=17.1.1 <18.0.0"
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn handshake_streams_updates_and_preserves_raw_payloads() {
@@ -1929,7 +1984,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage"
         );
         let events = Arc::new(Mutex::new(Vec::new()));
         let client = spawn_fixture(options(&fixture, Arc::clone(&events), None)).unwrap();
-        assert_eq!(client.handshake().unwrap().agent_version, "16.4.8");
+        assert_eq!(client.handshake().unwrap().agent_version, "17.1.1");
         client.prompt("hello", &[]).unwrap();
         wait_for(&events, |event| matches!(event, AgentEvent::TurnDone { .. }));
         let events = events.lock().unwrap();
@@ -2077,7 +2132,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage"
         let fixture = fixture(
             r#"while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":2,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
+    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":2,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
   esac
 done"#,
         );
@@ -2124,7 +2179,7 @@ done"#,
         let fixture = fixture(
             &r#"while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
+    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
     *'"method":"session/new"'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-session-1"}}' ;;
     *'"method":"test/slow"'*)
       request_id=${line#*\"id\":}; request_id=${request_id%%,*}
@@ -2537,7 +2592,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":93,"method":"unstable_createElicitation","p
         let fixture = fixture(
             r#"while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
+    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
     *'"method":"session/resume"'*|*'"method":"session/load"'*) printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"wrong-session"}}' ;;
   esac
 done"#,
@@ -2563,7 +2618,7 @@ done"#,
             let fixture = fixture(&format!(
                 r#"while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"oh-my-pi","version":"16.4.8"}},"agentCapabilities":{{"loadSession":true,"sessionCapabilities":{{"resume":{{}},"close":{{}}}}}}}}}}' ;;
+    *'"method":"initialize"'*) printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"agentInfo":{{"name":"oh-my-pi","version":"17.1.1"}},"agentCapabilities":{{"loadSession":true,"sessionCapabilities":{{"resume":{{}},"close":{{}}}}}}}}}}' ;;
     *'"method":"session/new"'*) printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{result}}}' ;;
   esac
 done"#
@@ -2605,7 +2660,7 @@ done"#
             r#"survivor="$log.survived"
 while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
+    *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}' ;;
     *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-session-1"}}'
       (sleep 0.4; printf survived > "$survivor") &

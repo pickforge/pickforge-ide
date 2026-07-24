@@ -79,12 +79,12 @@ describe("OMP/Pi rollout gating and commands", () => {
     );
   });
 
-  it("selects OMP native chat only after the exact compatible probe", async () => {
+  it("selects OMP native chat only after a compatible bounded-range probe", async () => {
     const { flags, models } = await loadModules();
     flags.setFlagOverride("ompAgents", true);
 
     expect(models.ompNativeChatUnavailableReason()).toBe(
-      `Checking for compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      `Checking for compatible OMP ${models.OMP_ACP_VERSION_RANGE}`,
     );
     expect(models.isOmpNativeCompatibilityPending()).toBe(true);
     expect(models.defaultNativeAgentProvider("omp")).toBe("claudeCode");
@@ -97,7 +97,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
     const incompatible = models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: "omp 16.4.9",
+      versionOutput: "omp 17.1.0",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],
@@ -105,7 +105,7 @@ describe("OMP/Pi rollout gating and commands", () => {
     models.recordAgentCliDiagnostic(incompatible);
     expect(models.nativeAgentProfiles().some((profile) => profile.id === "omp")).toBe(false);
     expect(models.ompNativeChatUnavailableReason()).toBe(
-      `OMP native chat requires an installed, compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      `OMP native chat requires an installed OMP ${models.OMP_ACP_VERSION_RANGE}`,
     );
     expect(models.isOmpNativeCompatibilityPending()).toBe(false);
     models.recordAgentCliDiagnostic({
@@ -116,7 +116,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
     const compatible = models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: `omp ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      versionOutput: "omp 17.1.1",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],
@@ -158,7 +158,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
     models.recordAgentCliDiagnostic(models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: `omp ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      versionOutput: "omp 17.1.1",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],
@@ -177,6 +177,17 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(
       models.defaultNativeAgentProvider(chatDefaults.loadLastAgentProvider()),
     ).toBe("claudeCode");
+  });
+
+  it("accepts only the certified OMP ACP version range", async () => {
+    const { models } = await loadModules();
+
+    for (const version of ["17.1.1", "17.999.999", "17.2.0-rc.1+build"]) {
+      expect(models.isCompatibleOmpAcpVersion(version), version).toBe(true);
+    }
+    for (const version of ["17.1.0", "18.0.0", "18.0.0-rc.1", "16.4.8"]) {
+      expect(models.isCompatibleOmpAcpVersion(version), version).toBe(false);
+    }
   });
 
   it("offers optional chips without changing defaults or duplicating an agent", async () => {
@@ -264,6 +275,69 @@ describe("OMP/Pi discovery parsing and failures", () => {
     expect(models.nativeChatModel("pi", catalog[1].id)).toBe("openai-codex/gpt-5.5");
   });
 
+  it("rejects a bare Claude/Codex catalog id bleeding into Pi's model slot (#272)", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("piAgents", true);
+    models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "",
+      modelsOutput: [
+        "provider model context max-out thinking images",
+        "openai-codex gpt-5.6-sol 272K 128K yes yes",
+      ].join("\n"),
+      errors: [],
+    }));
+
+    // A Codex-shaped bare id (no "provider/model" prefix) is unambiguously
+    // another provider's catalog entry, even though it happens to share
+    // wording with a legitimate Pi-discovered "openai-codex/..." selector.
+    expect(models.nativeChatModel("pi", "gpt-5.6-sol")).toBeNull();
+    expect(models.nativeChatModel("pi", "claude-sonnet-5")).toBeNull();
+    // The Pi-shaped selector for the same underlying model stays valid.
+    expect(models.nativeChatModel("pi", "openai-codex/gpt-5.6-sol")).toBe(
+      "openai-codex/gpt-5.6-sol",
+    );
+  });
+
+  it("gives an agent's own catalog membership priority over foreign-id rejection", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("piAgents", true);
+    models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
+      installed: true,
+      versionOutput: "pi 0.79.10",
+      helpOutput: "",
+      modelsOutput: [
+        "provider model context max-out thinking images",
+        "openai-codex gpt-5.6-sol 272K 128K yes yes",
+      ].join("\n"),
+      errors: [],
+    }));
+
+    // "glm-5.2:cloud" is a real id shared by BOTH claudeCode's and codex's
+    // static catalogs today, but it is terminal-only in both, so it alone
+    // can't distinguish "rejected as foreign" from "rejected as terminal
+    // -only" through the public nativeChatModel API. Simulate the general
+    // case a shared, natively-selectable id would hit: own-catalog
+    // membership must win over foreign-id rejection, not be short-circuited
+    // by it.
+    const claudeCode = models.AGENTS.find((agent) => agent.id === "claudeCode")!;
+    const codex = models.AGENTS.find((agent) => agent.id === "codex")!;
+    claudeCode.models.push({ id: "shared-native-model", label: "Shared" });
+    codex.models.push({ id: "shared-native-model", label: "Shared" });
+
+    expect(models.nativeChatModel("claudeCode", "shared-native-model")).toBe(
+      "shared-native-model",
+    );
+    expect(models.nativeChatModel("codex", "shared-native-model")).toBe("shared-native-model");
+    // A truly foreign, provider-exclusive id is still rejected under Pi.
+    expect(models.nativeChatModel("pi", "gpt-5.6-sol")).toBeNull();
+    // The real terminal-only shared id keeps being excluded by that gate,
+    // independent of the foreign-id check.
+    expect(models.nativeChatModel("claudeCode", "glm-5.2:cloud")).toBeNull();
+    expect(models.nativeChatModel("codex", "glm-5.2:cloud")).toBeNull();
+  });
+
   it("rejects Pi diagnostics that omit the catalog header", async () => {
     const { models } = await loadModules();
     const diagnostic = models.diagnosticFromProbe("pi", {
@@ -305,13 +379,13 @@ describe("OMP/Pi discovery parsing and failures", () => {
     const { models } = await loadModules();
     const diagnostic = models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: "omp v16.4.8",
+      versionOutput: "omp v17.2.0-rc.1+build",
       helpOutput: "--no-extensions  Disable extensions\n--provider=<value>  --profile=<value>\n  acp  Run ACP server",
       modelsOutput: "",
       errors: [],
     });
 
-    expect(diagnostic.version).toBe("16.4.8");
+    expect(diagnostic.version).toBe("17.2.0-rc.1+build");
     expect(diagnostic.models).toEqual([]);
     expect(diagnostic.capabilities).toMatchObject({
       terminal: true,

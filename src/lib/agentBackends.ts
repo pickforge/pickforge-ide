@@ -285,7 +285,7 @@ const OMP_CAPABILITIES = Object.freeze({
   interruptTurn: OMP_NATIVE,
   closeSession: OMP_NATIVE,
   resumeSession: OMP_NATIVE,
-  steerTurn: unsupported("OMP 16.4.8 ACP does not advertise turn steering"),
+  steerTurn: unsupported("OMP ACP does not advertise turn steering"),
   textInput: OMP_BOTH,
   imageInput: OMP_NATIVE,
   modelSelection: OMP_BOTH,

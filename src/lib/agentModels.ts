@@ -171,7 +171,7 @@ export interface AgentCliDiagnostic {
   errors: string[];
 }
 
-export const SUPPORTED_OMP_ACP_VERSION = "16.4.8";
+export const OMP_ACP_VERSION_RANGE = ">=17.1.1 and <18.0.0";
 export const OMP_MODEL_CATALOG_ADVISORY =
   "OMP models unavailable: no enforced offline/cache-only catalog probe";
 export type OmpNativeCompatibility = "unprobed" | "probing" | "compatible" | "incompatible";
@@ -181,10 +181,20 @@ export type PiNativeCompatibility = "unprobed" | "probing" | "compatible" | "inc
 const [piNativeCompatibility, setPiNativeCompatibility] =
   createSignal<PiNativeCompatibility>("unprobed");
 
+export function isCompatibleOmpAcpVersion(version: string | null | undefined): boolean {
+  if (!version) return false;
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  return major === 17 && (minor > 1 || (minor === 1 && patch >= 1));
+}
+
 export function isCompatibleOmpAcpProbe(probe: AgentCliDiagnostic): boolean {
   return probe.agentId === "omp"
     && probe.installed
-    && probe.version === SUPPORTED_OMP_ACP_VERSION
+    && isCompatibleOmpAcpVersion(probe.version)
     && probe.capabilities.nativeChat;
 }
 
@@ -223,10 +233,10 @@ export function ompNativeChatUnavailableReason(): string | null {
     case "compatible":
       return null;
     case "incompatible":
-      return `OMP native chat requires an installed, compatible OMP ${SUPPORTED_OMP_ACP_VERSION}`;
+      return `OMP native chat requires an installed OMP ${OMP_ACP_VERSION_RANGE}`;
     case "unprobed":
     case "probing":
-      return `Checking for compatible OMP ${SUPPORTED_OMP_ACP_VERSION}`;
+      return `Checking for compatible OMP ${OMP_ACP_VERSION_RANGE}`;
   }
 }
 
@@ -366,7 +376,7 @@ export function parsePiModelCatalog(raw: string): AgentModelOption[] {
 }
 
 function versionFromOutput(raw: string): string | null {
-  return raw.match(/\bv?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
+  return raw.match(/\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
 }
 
 /** Convert the native probe into UI-safe diagnostics. Exported as the pure test
@@ -409,7 +419,7 @@ export function diagnosticFromProbe(
         && probe.errors.length === 0
         && (
           (agentId === "omp"
-            && version === SUPPORTED_OMP_ACP_VERSION
+            && isCompatibleOmpAcpVersion(version)
             && /\bacp\b/.test(help)
             && /--no-extensions(?:\s|$|,)/.test(help))
           || (agentId === "pi" && isCompatiblePiRpcVersion(version))
@@ -528,10 +538,41 @@ export function launchBinary(agentId: string): string | null {
   return profileForAgent(agentId)?.binary ?? null;
 }
 
+let foreignStaticModelIdsCache: Map<string, Set<string>> | undefined;
+
+/** Model ids that belong to another agent's static catalog (Claude/Codex) and
+ * are NOT also present in `agentId`'s own catalog. `modelOption` can only
+ * validate against a profile's own static catalog, so it is a no-op for
+ * providers whose catalog is discovered at runtime (Pi, OMP) — this closes
+ * that gap by rejecting ids that are unambiguously another provider's,
+ * guarding against a stale/misrouted id bleeding across providers in the
+ * composer's model label. A few ids (e.g. "glm-5.2:cloud") are intentionally
+ * shared across catalogs, so ownership of the id by the agent's own catalog
+ * always wins over the foreign-set rejection. */
+function foreignStaticModelIds(agentId: string): Set<string> {
+  if (!foreignStaticModelIdsCache) {
+    foreignStaticModelIdsCache = new Map();
+  }
+  let ids = foreignStaticModelIdsCache.get(agentId);
+  if (!ids) {
+    const ownIds = new Set(profileForAgent(agentId)?.models.map((option) => option.id) ?? []);
+    ids = new Set<string>();
+    for (const agent of AGENTS) {
+      if (agent.id === agentId) continue;
+      for (const option of agent.models) {
+        if (!ownIds.has(option.id)) ids.add(option.id);
+      }
+    }
+    foreignStaticModelIdsCache.set(agentId, ids);
+  }
+  return ids;
+}
+
 export function nativeChatModel(agentId: string, modelId: string | null): string | null {
   if (!isNativeAgentProvider(agentId) || (agentId === "omp" && !ompNativeChatAvailable())) {
     return null;
   }
+  if (modelId && foreignStaticModelIds(agentId).has(modelId)) return null;
   const option = modelOption(agentId, modelId);
   return option?.terminalOnly ? null : modelId;
 }

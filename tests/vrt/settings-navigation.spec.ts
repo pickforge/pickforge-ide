@@ -334,7 +334,7 @@ test.describe("settings navigation", () => {
 
     const omp = page.locator("[data-agent-connector=omp]");
     const pi = page.locator("[data-agent-connector=pi]");
-    await expect(omp).toContainText("Installed · omp 16.4.8");
+    await expect(omp).toContainText("Installed · omp 17.1.1");
     await expect(omp).toContainText("Native chat ready");
     await expect(omp).toContainText("Not queried · offline safety");
     await expect(omp).toContainText("ACP integration is available");

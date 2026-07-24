@@ -493,7 +493,7 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
   if (provider === "omp" && !ompNativeChatAvailable()) {
     updateRun(run.runId, {
       synthesisStatus: "failed",
-      synthesisError: "OMP native chat requires the ompAgents flag and compatible OMP 16.4.8 probe.",
+      synthesisError: "OMP native chat requires the ompAgents flag and compatible OMP >=17.1.1 and <18.0.0 probe.",
     });
     return;
   }

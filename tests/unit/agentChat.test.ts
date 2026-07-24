@@ -138,7 +138,6 @@ import {
 import {
   diagnosticFromProbe,
   recordAgentCliDiagnostic,
-  SUPPORTED_OMP_ACP_VERSION,
 } from "../../src/lib/agentModels";
 import { markChatTitleManual } from "../../src/lib/chatAutoName";
 import { setAgentEngine } from "../../src/lib/chatDefaults";
@@ -310,7 +309,7 @@ describe("agentChat IPC wrappers", () => {
     flags.ompAgents = true;
     recordAgentCliDiagnostic(diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: `omp ${SUPPORTED_OMP_ACP_VERSION}`,
+      versionOutput: "omp 17.1.1",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],
@@ -1089,6 +1088,41 @@ describe("agentChat history", () => {
     expect(agentChat(chatId)?.contextUsed).toBe(1_000);
     expect(agentChat(chatId)?.contextWindow).toBe(100_000);
   });
+
+  it("folds a persisted usage row's model into chat.model during history replay (#272)", async () => {
+    flags.piAgents = true;
+    const history = historyFromEvents([
+      {
+        kind: "usage",
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 5,
+        costUsd: 0.01,
+        model: "anthropic/claude-sonnet-4-6",
+      },
+    ]);
+
+    // No model was passed at start, and no "sessionUpdated" event exists in
+    // this history — the persisted usage row's model is the only per-chat
+    // record of what actually served the turn.
+    const { chatId } = await startChat(history, null, "pi");
+
+    expect(agentChat(chatId)?.model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  it("leaves chat.model untouched when a live usage event omits model", async () => {
+    const { chatId, emit } = await startChat([], "gpt-5.5", "codex");
+
+    emit({
+      kind: "usage",
+      inputTokens: 10,
+      cachedInputTokens: 0,
+      outputTokens: 5,
+      costUsd: 0.01,
+    });
+
+    expect(agentChat(chatId)?.model).toBe("gpt-5.5");
+  });
 });
 
 describe("hydrateAgentChatHistory", () => {
@@ -1253,8 +1287,7 @@ describe("ensureAgentChat", () => {
     const first = ensureAgentChat(chatId, "/project", "codex", null);
     const second = ensureAgentChat(chatId, "/project", "codex", null);
     history.resolve([]);
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushPromises();
 
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(1);
 
@@ -1370,6 +1403,110 @@ describe("ensureAgentChat", () => {
 
     expect(agentChat(chatId)?.model).toBe("gpt-new");
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(1);
+  });
+});
+
+describe("resumed chat model resolution (#272)", () => {
+  function mockInvokeWithSession(
+    session: { model: string | null } | null,
+    history: AgentTimelineEntry[] = [],
+  ) {
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve(history);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_session_latest_for_chat") return Promise.resolve(session);
+      return Promise.resolve(null);
+    });
+  }
+
+  it("shows the resumed session's persisted model, not the global per-provider default", async () => {
+    const chatId = nextChatId();
+    flags.piAgents = true;
+    // The global "last selected Pi model" preference (what a fresh page load
+    // seeds AgentChatView's `model` prop with) has since drifted to a
+    // different model than the one this chat's session actually started
+    // with — the exact #272 scenario after quit/relaunch.
+    mockInvokeWithSession({ model: "anthropic/claude-sonnet-4-6" });
+
+    await ensureAgentChat(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
+
+    expect(agentChat(chatId)?.model).toBe("anthropic/claude-sonnet-4-6");
+    const startCall = tauri.invoke.mock.calls.find((call) => call[0] === "agent_chat_start");
+    expect(startCall?.[1]).toEqual(expect.objectContaining({ model: "anthropic/claude-sonnet-4-6" }));
+  });
+
+  it("still seeds a brand-new chat (no persisted session row) from the global default", async () => {
+    const chatId = nextChatId();
+    flags.piAgents = true;
+    mockInvokeWithSession(null);
+
+    await ensureAgentChat(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
+
+    expect(agentChat(chatId)?.model).toBe("openai-codex/gpt-5.6-sol");
+  });
+
+  it("ignores a persisted session model that isn't valid for the resumed provider", async () => {
+    const chatId = nextChatId();
+    flags.piAgents = true;
+    // A session row carrying another provider's bare catalog id must not
+    // bleed into this chat's displayed/started model.
+    mockInvokeWithSession({ model: "gpt-5.6-sol" });
+
+    await ensureAgentChat(chatId, "/project", "pi", "openai-codex/gpt-5.5");
+
+    expect(agentChat(chatId)?.model).toBe("openai-codex/gpt-5.5");
+  });
+
+  it("does not clobber a model already changed while the session lookup was in flight", async () => {
+    const chatId = nextChatId();
+    flags.piAgents = true;
+    const sessionLookup = deferred<{ model: string | null } | null>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_session_latest_for_chat") return sessionLookup.promise;
+      return Promise.resolve(null);
+    });
+
+    const ensuring = ensureAgentChat(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
+    setAgentChatModel(chatId, "openai-codex/gpt-5.5");
+    sessionLookup.resolve({ model: "anthropic/claude-sonnet-4-6" });
+    await ensuring;
+
+    expect(agentChat(chatId)?.model).toBe("openai-codex/gpt-5.5");
+  });
+
+  it("does not clobber the placeholder value even when re-picked to the same id in flight", async () => {
+    // A plain `model === safeModel` value-equality guard cannot tell
+    // "untouched" apart from "user explicitly re-picked the placeholder
+    // value" — this pins the explicit touch-counter fix for that gap.
+    const chatId = nextChatId();
+    flags.piAgents = true;
+    const sessionLookup = deferred<{ model: string | null } | null>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_session_latest_for_chat") return sessionLookup.promise;
+      return Promise.resolve(null);
+    });
+
+    const ensuring = ensureAgentChat(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
+    setAgentChatModel(chatId, "openai-codex/gpt-5.6-sol");
+    sessionLookup.resolve({ model: "anthropic/claude-sonnet-4-6" });
+    await ensuring;
+
+    expect(agentChat(chatId)?.model).toBe("openai-codex/gpt-5.6-sol");
+  });
+
+  it("resolves the same way for hydrateAgentChatHistory (no live session started)", async () => {
+    const chatId = nextChatId();
+    flags.piAgents = true;
+    mockInvokeWithSession({ model: "anthropic/claude-sonnet-4-6" });
+
+    await hydrateAgentChatHistory(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
+
+    expect(agentChat(chatId)?.model).toBe("anthropic/claude-sonnet-4-6");
+    expect(agentChat(chatId)?.sessionId).toBeNull();
   });
 });
 

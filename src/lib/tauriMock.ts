@@ -8,6 +8,38 @@ const now = 1_750_000_000_000;
 const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
 const VRT_REMOTE_DEVICE_FIXTURE_KEY = "pickforge.vrt.remoteDeviceFixture";
 const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
+
+// A trimmed, representative slice of `omp models --json --no-extensions`
+// output (captured from a real omp 17.1.1 install, truncated to a handful of
+// models across providers).
+const OMP_MODELS_FIXTURE = JSON.stringify({
+  models: [
+    {
+      provider: "ollama-cloud",
+      id: "cogito-2.1:671b",
+      selector: "ollama-cloud/cogito-2.1:671b",
+      name: "cogito-2.1:671b",
+      contextWindow: 163840,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+    {
+      provider: "openai-codex",
+      id: "gpt-5.4",
+      selector: "openai-codex/gpt-5.4",
+      name: "GPT-5.4",
+      contextWindow: 1000000,
+      cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
+    },
+    {
+      provider: "xai-oauth",
+      id: "grok-4.20-0309-reasoning",
+      selector: "xai-oauth/grok-4.20-0309-reasoning",
+      name: "Grok 4.20 (Reasoning)",
+      contextWindow: 2000000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  ],
+});
 const VRT_REMOTE_ROOT = "/Users/elberte/Projects/Personal/sample_flutter_app";
 
 const AGENT_CHAT_FIXTURE: Chat = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
@@ -430,7 +462,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
           "      --no-extensions                 Disable extension discovery",
           "  acp           Run Oh My Pi as an ACP (Agent Client Protocol) server over stdio",
         ].join("\n"),
-        modelsOutput: "",
+        modelsOutput: OMP_MODELS_FIXTURE,
         errors: [],
       };
     }

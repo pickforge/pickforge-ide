@@ -428,7 +428,156 @@ describe("OMP/Pi discovery parsing and failures", () => {
     expect(diagnostic.capabilities).not.toHaveProperty("rpc");
     expect(diagnostic.capabilities.nativeChat).toBe(true);
     expect(diagnostic.errors).toEqual([
-      "OMP models unavailable: no enforced offline/cache-only catalog probe",
+      "OMP models unavailable: catalog query failed or returned nothing",
     ]);
+  });
+
+  it("parses omp's JSON model catalog into provider/selector options", async () => {
+    const { models } = await loadModules();
+    const raw = JSON.stringify({
+      models: [
+        {
+          provider: "ollama-cloud",
+          id: "cogito-2.1:671b",
+          selector: "ollama-cloud/cogito-2.1:671b",
+          name: "cogito-2.1:671b",
+          contextWindow: 163840,
+        },
+        {
+          provider: "openai-codex",
+          id: "gpt-5.4",
+          selector: "openai-codex/gpt-5.4",
+          name: "GPT-5.4",
+          contextWindow: 1000000,
+        },
+      ],
+    });
+
+    expect(models.parseOmpModelCatalog(raw)).toEqual([
+      { id: "ollama-cloud/cogito-2.1:671b", label: "cogito-2.1:671b · ollama-cloud" },
+      { id: "openai-codex/gpt-5.4", label: "GPT-5.4 · openai-codex" },
+    ]);
+  });
+
+  it("falls back to the selector as the label when omp omits a model name", async () => {
+    const { models } = await loadModules();
+    const raw = JSON.stringify({
+      models: [
+        { provider: "ollama-cloud", id: "m", selector: "ollama-cloud/m" },
+      ],
+    });
+
+    expect(models.parseOmpModelCatalog(raw)).toEqual([
+      { id: "ollama-cloud/m", label: "ollama-cloud/m · ollama-cloud" },
+    ]);
+  });
+
+  it("dedupes omp catalog entries that share a selector", async () => {
+    const { models } = await loadModules();
+    const raw = JSON.stringify({
+      models: [
+        { provider: "ollama-cloud", id: "m", selector: "ollama-cloud/m", name: "M" },
+        { provider: "ollama-cloud", id: "m", selector: "ollama-cloud/m", name: "M" },
+      ],
+    });
+
+    expect(models.parseOmpModelCatalog(raw)).toEqual([
+      { id: "ollama-cloud/m", label: "M · ollama-cloud" },
+    ]);
+  });
+
+  it("returns an empty omp catalog for empty input without throwing", async () => {
+    const { models } = await loadModules();
+    expect(models.parseOmpModelCatalog("")).toEqual([]);
+    expect(models.parseOmpModelCatalog("   ")).toEqual([]);
+  });
+
+  it("throws on unparseable non-empty omp catalog output", async () => {
+    const { models } = await loadModules();
+    expect(() => models.parseOmpModelCatalog("not json")).toThrow(
+      "OMP returned an unsupported model catalog",
+    );
+    expect(() => models.parseOmpModelCatalog(JSON.stringify({ models: "nope" }))).toThrow(
+      "OMP returned an unsupported model catalog",
+    );
+    expect(() => models.parseOmpModelCatalog(JSON.stringify({ models: [] }))).toThrow(
+      "OMP returned an unsupported model catalog",
+    );
+    expect(() => models.parseOmpModelCatalog(JSON.stringify({ models: [{}] }))).toThrow(
+      "OMP returned an unsupported model catalog",
+    );
+  });
+
+  it("populates the omp diagnostic catalog from a successful probe", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("ompAgents", true);
+    const raw = JSON.stringify({
+      models: [
+        {
+          provider: "ollama-cloud",
+          id: "cogito-2.1:671b",
+          selector: "ollama-cloud/cogito-2.1:671b",
+          name: "cogito-2.1:671b",
+        },
+      ],
+    });
+
+    const diagnostic = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: raw,
+      errors: [],
+    });
+
+    expect(diagnostic.models).toEqual([
+      { id: "ollama-cloud/cogito-2.1:671b", label: "cogito-2.1:671b · ollama-cloud" },
+    ]);
+    expect(diagnostic.capabilities.dynamicModels).toBe(true);
+    expect(diagnostic.errors).toEqual([]);
+  });
+
+  it("advises when the omp probe returns output that fails to parse", async () => {
+    const { models } = await loadModules();
+    const diagnostic = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "not json",
+      errors: [],
+    });
+
+    expect(diagnostic.models).toEqual([]);
+    expect(diagnostic.capabilities.dynamicModels).toBe(false);
+    expect(diagnostic.errors).toEqual([models.OMP_MODEL_CATALOG_ADVISORY]);
+  });
+
+  it("keeps native chat available when only the model-discovery probe step fails (#285)", async () => {
+    const { models } = await loadModules();
+    const diagnostic = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: ["model discovery failed (1): omp exited unexpectedly"],
+    });
+
+    expect(diagnostic.capabilities.nativeChat).toBe(true);
+    expect(diagnostic.capabilities.dynamicModels).toBe(false);
+    expect(diagnostic.errors).toContain(models.OMP_MODEL_CATALOG_ADVISORY);
+    expect(diagnostic.errors).toContain("model discovery failed (1): omp exited unexpectedly");
+  });
+
+  it("still withholds native chat when a non-catalog probe step fails", async () => {
+    const { models } = await loadModules();
+    const diagnostic = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: "acp --no-extensions",
+      modelsOutput: "",
+      errors: ["capability check failed (1): omp exited unexpectedly"],
+    });
+
+    expect(diagnostic.capabilities.nativeChat).toBe(false);
   });
 });

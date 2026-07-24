@@ -44,9 +44,10 @@ fn probe_spec(agent_id: &str) -> Option<ProbeSpec> {
             binary: "omp",
             version_args: &["--version"],
             help_args: &["--help"],
-            // OMP has no documented switch that enforces offline/cache-only
-            // model listing, so PR1 deliberately does not probe its catalog.
-            models_args: None,
+            // `omp models --json` reads the local model cache (~/.omp/models.db)
+            // rather than making a network call, so this stays read-only like
+            // the other probe steps.
+            models_args: Some(&["models", "--json", "--no-extensions"]),
         }),
         "pi" => Some(ProbeSpec {
             binary: "pi",
@@ -173,7 +174,10 @@ mod tests {
         let omp = probe_spec("omp").expect("OMP probe");
         assert_eq!(omp.binary, "omp");
         assert_eq!(omp.help_args, ["--help"]);
-        assert!(omp.models_args.is_none());
+        assert_eq!(
+            omp.models_args,
+            Some(["models", "--json", "--no-extensions"].as_slice())
+        );
 
         let pi = probe_spec("pi").expect("Pi probe");
         assert_eq!(pi.binary, "pi");

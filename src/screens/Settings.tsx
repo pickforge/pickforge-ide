@@ -1241,9 +1241,7 @@ export function SettingsScreen() {
                                     : diagnostic()
                                       ? !diagnostic()!.installed
                                         ? "Unavailable · CLI not installed"
-                                        : agent.id === "omp"
-                                          ? "Not queried · offline safety"
-                                          : diagnostic()!.errors.length > 0
+                                        : diagnostic()!.errors.length > 0
                                           ? `Unavailable · ${diagnostic()!.errors.join("; ")}`
                                           : "No models reported"
                                       : "Not checked"}

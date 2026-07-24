@@ -210,14 +210,20 @@ export function Composer(props: {
 }): JSX.Element {
   const [text, setText] = createSignal("");
   const [piModels, setPiModels] = createSignal<AgentProfile["models"]>([]);
+  const [ompModels, setOmpModels] = createSignal<AgentProfile["models"]>([]);
   const providers = createMemo(() =>
-    nativeAgentProfiles().map((profile) =>
-      profile.id === "pi" ? profileWithDiscoveredModels(profile, piModels()) : profile
-    )
+    nativeAgentProfiles().map((profile) => {
+      if (profile.id === "pi") return profileWithDiscoveredModels(profile, piModels());
+      if (profile.id === "omp") return profileWithDiscoveredModels(profile, ompModels());
+      return profile;
+    })
   );
   onMount(() => {
     void discoverAgentCli("pi")
       .then((diagnostic) => setPiModels(diagnostic.models))
+      .catch(() => undefined);
+    void discoverAgentCli("omp")
+      .then((diagnostic) => setOmpModels(diagnostic.models))
       .catch(() => undefined);
   });
   const [dismissed, setDismissed] = createSignal(false);

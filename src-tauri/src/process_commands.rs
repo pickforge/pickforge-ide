@@ -4,8 +4,11 @@
 
 use std::time::Duration;
 
+use pickforge_core::agents::{detect_pi_kit, PiKitDetection};
 use pickforge_core::{is_on_user_path, run_timeout_capped};
 use serde::Serialize;
+
+use crate::project_roots::user_home_dir;
 
 const PROBE_CAPTURE_LIMIT_BYTES: usize = 64 * 1024;
 
@@ -136,6 +139,26 @@ pub async fn probe_agent_cli(agent_id: String) -> Result<AgentCliProbe, String> 
             models_output,
             errors,
         }
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// Probe-only pi-kit detection: reads the user's Pi extensions directory and,
+/// when a pi-kit shim is linked, the resolved checkout's `package.json`.
+/// Never writes to the Pi install and never reads auth/credential files.
+#[tauri::command]
+pub async fn probe_pi_kit() -> Result<PiKitDetection, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Some(home) = user_home_dir() else {
+            return PiKitDetection {
+                detected: false,
+                version: None,
+                linked_extension_count: 0,
+                checkout_path: None,
+            };
+        };
+        detect_pi_kit(&home.join(".pi").join("agent").join("extensions"))
     })
     .await
     .map_err(|error| error.to_string())

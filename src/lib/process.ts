@@ -18,3 +18,17 @@ export interface AgentCliProbe {
 export function probeAgentCli(agentId: "omp" | "pi"): Promise<AgentCliProbe> {
   return invoke<AgentCliProbe>("probe_agent_cli", { agentId });
 }
+
+export interface PiKitDetection {
+  detected: boolean;
+  version: string | null;
+  linkedExtensionCount: number;
+  checkoutPath: string | null;
+}
+
+/** Probe-only pi-kit detection: scans `~/.pi/agent/extensions` for linked
+ * pi-kit shims. Never reads Pi auth/credential files and never mutates the
+ * install; absence is a neutral result, not an error. */
+export function probePiKit(): Promise<PiKitDetection> {
+  return invoke<PiKitDetection>("probe_pi_kit");
+}

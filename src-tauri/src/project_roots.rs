@@ -206,7 +206,7 @@ fn is_too_broad_to_approve(dir: &Path) -> bool {
 /// The user's OS home directory (`$HOME`, or `%USERPROFILE%`/`%HOMEDRIVE%%HOMEPATH%`
 /// on Windows) — distinct from the PickForge home (`~/.pickforge`), which is an
 /// approved root. Used only to reject approving the home directory itself.
-fn user_home_dir() -> Option<PathBuf> {
+pub(crate) fn user_home_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         if let Ok(profile) = std::env::var("USERPROFILE") {

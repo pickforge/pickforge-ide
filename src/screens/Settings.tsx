@@ -13,6 +13,7 @@ import {
   isCompatiblePiRpcVersion,
   type AgentEngine,
 } from "../lib/agentBackends";
+import { probePiKit, type PiKitDetection } from "../lib/process";
 import {
   addQuickLaunchItem,
   addOptionalQuickLaunch,
@@ -327,6 +328,24 @@ function connectorCapabilitySummary(
   return `Available: ${capabilities.join(" · ")}`;
 }
 
+const PI_KIT_INSTALL_HINT = "Not installed · optional Pi extension pack (github.com/ElbertePlinio/pi-kit)";
+
+/** Fact-row text for the pi-kit shim probe. Absence is neutral, never an
+ * error: it is an optional personal extension pack, not part of Pi itself. */
+function piKitFactLabel(
+  loading: boolean,
+  failure: string | null,
+  detection: PiKitDetection | null,
+): string {
+  if (loading) return "Checking…";
+  if (failure) return "Unavailable · local probe failed";
+  if (!detection) return "Not checked";
+  if (!detection.detected) return PI_KIT_INSTALL_HINT;
+  const version = detection.version ? `v${detection.version}` : "unknown version";
+  const count = detection.linkedExtensionCount;
+  return `Detected · ${version} · ${count} extension${count === 1 ? "" : "s"}`;
+}
+
 function isConnectorProfile(agent: AgentProfile): boolean {
   return agent.id === "omp" || agent.id === "pi";
 }
@@ -385,6 +404,8 @@ export function SettingsScreen() {
   const [agentDiagnosticErrors, setAgentDiagnosticErrors] =
     createSignal<Record<string, string>>({});
   const [agentDiagnosticsLoading, setAgentDiagnosticsLoading] = createSignal(false);
+  const [piKitDetection, setPiKitDetection] = createSignal<PiKitDetection | null>(null);
+  const [piKitError, setPiKitError] = createSignal<string | null>(null);
   const [exporting, setExporting] = createSignal(false);
   const [exportStatus, setExportStatus] = createSignal<
     { kind: "ok" | "error"; text: string } | null
@@ -679,16 +700,23 @@ export function SettingsScreen() {
     if (ids.length === 0 || agentDiagnosticsLoading()) return;
     setAgentDiagnostics(() => ({}));
     setAgentDiagnosticErrors(() => ({}));
+    setPiKitDetection(null);
+    setPiKitError(null);
     setAgentDiagnosticsLoading(true);
     const next: Record<string, AgentCliDiagnostic> = {};
     const failures: Record<string, string> = {};
-    await Promise.all(ids.map(async (agentId) => {
-      try {
-        next[agentId] = await discoverAgentCli(agentId);
-      } catch (error) {
-        failures[agentId] = errorText(error);
-      }
-    }));
+    await Promise.all([
+      ...ids.map(async (agentId) => {
+        try {
+          next[agentId] = await discoverAgentCli(agentId);
+        } catch (error) {
+          failures[agentId] = errorText(error);
+        }
+      }),
+      ...(ids.includes("pi")
+        ? [probePiKit().then(setPiKitDetection).catch((error) => setPiKitError(errorText(error)))]
+        : []),
+    ]);
     setAgentDiagnostics(() => next);
     setAgentDiagnosticErrors(() => failures);
     setAgentDiagnosticsLoading(false);
@@ -1243,6 +1271,14 @@ export function SettingsScreen() {
                             </div>
                           </Show>
                         </div>
+                        <Show when={agent.id === "pi"}>
+                          <div class="pf-agent-connector-fact">
+                            <span class="pf-agent-connector-key">pi-kit</span>
+                            <span class="pf-agent-connector-value">
+                              {piKitFactLabel(agentDiagnosticsLoading(), piKitError(), piKitDetection())}
+                            </span>
+                          </div>
+                        </Show>
                       </div>
 
                       <Show

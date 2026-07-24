@@ -20,11 +20,13 @@ import {
 } from "../../stores/pikitLanes";
 import {
   abandonDisabledReason,
+  abandonHint,
   formatCost,
   formatDuration,
   formatTokens,
   laneDetail,
   laneStatusTone,
+  orphanNote,
   runLabel,
   runStatusTone,
 } from "./pikitLaneDisplay";
@@ -50,6 +52,7 @@ function RunCard(props: {
   const entry = () => props.entry;
   const status = () => entry().status;
   const runAbandonReason = () => abandonDisabledReason(entry());
+  const runAbandonHint = () => abandonHint(entry());
 
   return (
     <section class="pf-pikit-card" aria-label="pi-kit run">
@@ -91,6 +94,7 @@ function RunCard(props: {
                 <For each={s().lanes}>
                   {(lane) => {
                     const reason = () => abandonDisabledReason(entry(), lane);
+                    const hint = () => abandonHint(entry());
                     return (
                       <div class="pf-pikit-lane">
                         <span
@@ -113,7 +117,7 @@ function RunCard(props: {
                           type="button"
                           class="pf-text-btn pf-pikit-abandon"
                           disabled={reason() !== null}
-                          title={reason() ?? "Request that pi-kit abandon this lane"}
+                          title={reason() ?? hint() ?? "Request that pi-kit abandon this lane"}
                           onClick={() =>
                             props.onAbandon({ run: entry().run, lane: lane.lane, label: lane.lane })
                           }
@@ -127,17 +131,19 @@ function RunCard(props: {
               </div>
             )}
           </Show>
-          <Show when={entry().orphaned}>
-            <div class="pf-pikit-orphan-note">
-              Orphaned — no lane process appears alive and the run never ended cleanly.
-            </div>
+          <Show when={orphanNote(entry())}>
+            {(note) => <div class="pf-pikit-orphan-note">{note()}</div>}
           </Show>
           <Show when={status() && status()!.lanes.length > 0}>
             <button
               type="button"
               class="pf-text-btn"
               disabled={runAbandonReason() !== null}
-              title={runAbandonReason() ?? "Request that pi-kit abandon every active lane in this run"}
+              title={
+                runAbandonReason() ??
+                runAbandonHint() ??
+                "Request that pi-kit abandon every active lane in this run"
+              }
               onClick={() => props.onAbandon({ run: entry().run, lane: null, label: "all lanes" })}
             >
               Abandon all lanes

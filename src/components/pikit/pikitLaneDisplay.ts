@@ -57,17 +57,35 @@ export function laneDetail(lane: PiKitLaneStatus): string {
 }
 
 /** Why the abandon action is disabled for this lane (or the whole run when
- * `lane` is omitted), or `null` when it's actionable. */
+ * `lane` is omitted), or `null` when it's actionable. An orphaned-but-active
+ * run is deliberately NOT disabled here — the abandon-request file is
+ * harmless if nothing is left alive to consume it, and blocking the action
+ * would defeat its one recovery purpose. See `abandonHint` for the honest
+ * caveat shown alongside an orphaned run's still-enabled button. */
 export function abandonDisabledReason(entry: PiKitRunEntry, lane?: PiKitLaneStatus): string | null {
   if (!entry.supported) return "Unsupported pi-kit schema version — cannot request abandonment.";
   const status = entry.status;
   if (!status) return "Run status unavailable.";
   if (status.state === "ended") return "Run already ended.";
-  if (entry.orphaned) {
-    return "Owner process appears gone — nothing left to consume the request.";
-  }
   if (lane && lane.state !== "queued" && lane.state !== "running") {
     return `Lane already ${lane.state}.`;
   }
   return null;
+}
+
+/** Honest caveat for an orphaned, still-active run's abandon action (which
+ * stays enabled — see `abandonDisabledReason`). Says "lane process(es)",
+ * not "owner", because the orphan heuristic probes running-lane pids, not
+ * pi-kit's own runner process. */
+export function abandonHint(entry: PiKitRunEntry): string | null {
+  if (entry.orphaned && entry.status?.state !== "ended") {
+    return "Lane process(es) appear gone — the request only applies if pi-kit is still running.";
+  }
+  return null;
+}
+
+/** Copy for the orphaned-run note shown in the expanded run card. */
+export function orphanNote(entry: PiKitRunEntry): string | null {
+  if (!entry.orphaned) return null;
+  return "Orphaned — lane process(es) appear gone and the run never ended cleanly.";
 }

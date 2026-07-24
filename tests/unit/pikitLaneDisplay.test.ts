@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { PiKitRunEntry, PiKitRunStatus } from "../../src/lib/process";
 import {
   abandonDisabledReason,
+  abandonHint,
   formatCost,
   formatDuration,
   formatTokens,
+  orphanNote,
   runLabel,
   runStatusTone,
 } from "../../src/components/pikit/pikitLaneDisplay";
@@ -78,8 +80,14 @@ describe("abandonDisabledReason", () => {
     expect(abandonDisabledReason(entry({ status: status({ state: "ended" }) }))).toMatch(/already ended/i);
   });
 
-  it("blocks orphaned runs — nothing left to consume the request", () => {
-    expect(abandonDisabledReason(entry({ orphaned: true }))).toMatch(/owner process appears gone/i);
+  it("does NOT block an orphaned-but-active run — the request is harmless if nothing consumes it", () => {
+    expect(abandonDisabledReason(entry({ orphaned: true }))).toBeNull();
+  });
+
+  it("still blocks an orphaned run that also already ended", () => {
+    expect(
+      abandonDisabledReason(entry({ orphaned: true, status: status({ state: "ended" }) })),
+    ).toMatch(/already ended/i);
   });
 
   it("blocks a lane that already reached a terminal state", () => {
@@ -111,5 +119,33 @@ describe("abandonDisabledReason", () => {
     };
     expect(abandonDisabledReason(entry(), running)).toBeNull();
     expect(abandonDisabledReason(entry())).toBeNull();
+  });
+});
+
+describe("abandonHint", () => {
+  it("gives an honest caveat for an orphaned, still-active run without saying the owner is gone", () => {
+    const hint = abandonHint(entry({ orphaned: true }));
+    expect(hint).toMatch(/lane process\(es\) appear gone/i);
+    expect(hint).not.toMatch(/owner/i);
+  });
+
+  it("has nothing to say for a non-orphaned run", () => {
+    expect(abandonHint(entry())).toBeNull();
+  });
+
+  it("has nothing to say once an orphaned run has also ended (already blocked, not just hinted)", () => {
+    expect(abandonHint(entry({ orphaned: true, status: status({ state: "ended" }) }))).toBeNull();
+  });
+});
+
+describe("orphanNote", () => {
+  it("describes lane processes, not the owner, as gone", () => {
+    const note = orphanNote(entry({ orphaned: true }));
+    expect(note).toMatch(/lane process\(es\) appear gone/i);
+    expect(note).not.toMatch(/owner/i);
+  });
+
+  it("is null for a non-orphaned run", () => {
+    expect(orphanNote(entry())).toBeNull();
   });
 });

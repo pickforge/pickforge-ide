@@ -219,12 +219,24 @@ fn is_orphaned(status: &PiKitRunStatus, now_ms: i64) -> bool {
     }
 }
 
-/// `Some(true)` if any lane pid is confirmed alive, `Some(false)` if at least
-/// one pid was present and every one is confirmed dead, `None` when no
-/// liveness signal is available (no lane carried a pid, or the platform has
-/// no probe) — the staleness fallback in [`is_orphaned`] then applies.
+/// `Some(true)` if any *running* lane's pid is confirmed alive, `Some(false)`
+/// if at least one running-lane pid was present and every one is confirmed
+/// dead, `None` when no liveness signal is available — the staleness
+/// fallback in [`is_orphaned`] then applies.
+///
+/// Only `state == "running"` lane pids count. pi-kit keeps a lane's pid in
+/// the snapshot after `lane_end` (it's the last pid that lane ever had, not
+/// a live one), so between waves — one lane just finished, its process
+/// already exited, and the next lane hasn't started yet — every *present*
+/// pid can be dead while the run and its runner are both perfectly alive.
+/// Restricting the probe to running lanes avoids reading that as "no lane
+/// pid alive" and misreporting a healthy in-between-waves run as orphaned.
 fn lane_liveness(lanes: &[PiKitLaneStatus]) -> Option<bool> {
-    let pids: Vec<i32> = lanes.iter().filter_map(|lane| lane.pid).collect();
+    let pids: Vec<i32> = lanes
+        .iter()
+        .filter(|lane| lane.state == "running")
+        .filter_map(|lane| lane.pid)
+        .collect();
     if pids.is_empty() {
         return None;
     }
@@ -289,12 +301,37 @@ pub fn abandon_pi_kit_lane(
     Ok(PiKitAbandonOutcome { requested: true, consumed })
 }
 
+/// pi-kit run/lane ids are ASCII alphanumerics and `-` only (`run-`
+/// compact-timestamp-`-`hex, `lane-1`, or a caller-chosen lane name of the
+/// same shape). `run` is joined straight into a filesystem path below, and
+/// it can arrive here from IPC or a parsed status file rather than a value
+/// this process minted itself — so anything outside that allowlist
+/// (separators, `.` for `..`-style traversal, anything non-ASCII) is
+/// rejected before any path is built. `lane` never touches a path but is
+/// checked the same way as defense in depth, since it's written verbatim
+/// into the request file body.
+fn is_valid_pi_kit_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+fn invalid_id_error(kind: &str, id: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("invalid pi-kit {kind}: {id:?}"))
+}
+
 fn write_abandon_request(
     runs_dir: &Path,
     run: &str,
     lane: Option<&str>,
     reason: Option<&str>,
 ) -> std::io::Result<()> {
+    if !is_valid_pi_kit_id(run) {
+        return Err(invalid_id_error("run id", run));
+    }
+    if let Some(name) = lane {
+        if !is_valid_pi_kit_id(name) {
+            return Err(invalid_id_error("lane name", name));
+        }
+    }
     std::fs::create_dir_all(runs_dir)?;
     let body = serde_json::to_string(&AbandonRequest { lane, reason })
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
@@ -460,6 +497,29 @@ mod tests {
         assert!(!runs[0].orphaned);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn dead_pid_on_a_finished_lane_does_not_orphan_a_fresh_between_waves_run() {
+        let root = TempDir::new("between-waves");
+        let dead_pid = dead_pid();
+        // A lane that already finished keeps its last (now-dead) pid in the
+        // snapshot; a queued lane has none yet. Neither is "running", so
+        // neither should count against liveness — only staleness should.
+        let lanes = [
+            lane_json("lane-1", "done", Some(dead_pid)),
+            lane_json("lane-2", "queued", None),
+        ];
+        root.write(
+            "run-between-waves.status.json",
+            &status_json("run-between-waves", "active", now_ms(), &lanes),
+        );
+
+        let runs = list_pi_kit_runs(&root.path);
+
+        assert_eq!(runs.len(), 1);
+        assert!(!runs[0].orphaned);
+    }
+
     #[test]
     fn unsupported_schema_version_is_listed_but_not_parsed() {
         let root = TempDir::new("unsupported");
@@ -564,6 +624,55 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
         assert!(parsed.get("lane").is_none());
         assert!(parsed.get("reason").is_none());
+    }
+
+    #[test]
+    fn is_valid_pi_kit_id_allows_pi_kit_shaped_ids_and_rejects_everything_else() {
+        assert!(is_valid_pi_kit_id("run-20260101000000-ab12"));
+        assert!(is_valid_pi_kit_id("lane-1"));
+        assert!(is_valid_pi_kit_id("RUN123"));
+
+        assert!(!is_valid_pi_kit_id(""));
+        assert!(!is_valid_pi_kit_id(".."));
+        assert!(!is_valid_pi_kit_id("../evil"));
+        assert!(!is_valid_pi_kit_id("a/b"));
+        assert!(!is_valid_pi_kit_id("a\\b"));
+        assert!(!is_valid_pi_kit_id("a.b"));
+        assert!(!is_valid_pi_kit_id("a b"));
+        assert!(!is_valid_pi_kit_id("a$b"));
+    }
+
+    #[test]
+    fn write_abandon_request_rejects_a_traversal_run_id_without_touching_the_filesystem() {
+        let root = TempDir::new("abandon-traversal-run");
+
+        let result = write_abandon_request(&root.path, "../evil", None, None);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
+        let escaped = root.path.parent().unwrap().join("evil.abandon.json");
+        assert!(!escaped.exists());
+    }
+
+    #[test]
+    fn write_abandon_request_rejects_a_traversal_lane_name_without_touching_the_filesystem() {
+        let root = TempDir::new("abandon-traversal-lane");
+
+        let result = write_abandon_request(&root.path, "run-1", Some("../evil"), None);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn abandon_pi_kit_lane_rejects_a_traversal_run_id_before_writing_or_polling() {
+        let root = TempDir::new("abandon-lane-traversal");
+
+        let result = abandon_pi_kit_lane(&root.path, "../evil", None, None);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
     }
 
     #[test]

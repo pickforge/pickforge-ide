@@ -8,6 +8,7 @@
 pub mod agents;
 pub mod android;
 pub mod cdp;
+pub mod changes;
 mod correlated_ws;
 pub mod db;
 pub mod git;

@@ -1198,7 +1198,11 @@ mod tests {
     where
         F: Fn(&[AgentEvent]) -> bool,
     {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // 2s was too tight under workspace-parallel `cargo test`: the fixture
+        // shell script can take longer than that just to get its first
+        // scheduler slice when many other tests are spawning processes
+        // concurrently (observed as "timed out waiting for events: []").
+        let deadline = Instant::now() + Duration::from_secs(8);
         loop {
             let snapshot = events.lock().unwrap().clone();
             if predicate(&snapshot) {
@@ -1538,21 +1542,25 @@ exit 3
     #[cfg(unix)]
     #[test]
     fn runner_kill_terminates_descendants_too() {
-        let marker = std::env::temp_dir().join(format!(
-            "pickforge-claude-killtree-{}-{}",
+        let stamp = format!(
+            "{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
+        );
+        let started = std::env::temp_dir().join(format!("pickforge-claude-killtree-started-{stamp}"));
+        let marker = std::env::temp_dir().join(format!("pickforge-claude-killtree-{stamp}"));
+        let _ = fs::remove_file(&started);
         let _ = fs::remove_file(&marker);
         let script = test_script(&format!(
             r#"#!/bin/sh
 printf '%s\n' '{{"type":"system","subtype":"init","session_id":"runner-tree"}}'
-sh -c 'sleep 3; : > {}' &
+sh -c ': > {}; sleep 3; : > {}' &
 exec sleep 5
 "#,
+            started.display(),
             marker.display()
         ));
         let (turn, events) = collected_runner_events(&script);
@@ -1561,16 +1569,27 @@ exec sleep 5
                 .iter()
                 .any(|event| matches!(event, AgentEvent::SessionStarted { .. }))
         });
-        thread::sleep(Duration::from_millis(200)); // let the grandchild fork
+        // Bounded poll for the grandchild to actually exist (not a guessed
+        // fixed sleep) before killing, so the kill race is deterministic:
+        // either the tree is up and must die, or it never started at all.
+        let fork_deadline = Instant::now() + Duration::from_secs(2);
+        while !started.exists() && Instant::now() < fork_deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(started.exists(), "grandchild never started");
 
         turn.kill().unwrap();
         drop(turn); // joins the readers; the child is reaped
 
+        // The grandchild writes its marker 3s after `started`; wait past
+        // that with margin instead of guessing a total budget from process
+        // launch.
         thread::sleep(Duration::from_secs(4));
         assert!(
             !marker.exists(),
             "descendant survived the turn kill (marker was written)"
         );
+        let _ = fs::remove_file(&started);
         let _ = fs::remove_file(&marker);
     }
 

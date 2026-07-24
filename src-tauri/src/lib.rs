@@ -1,5 +1,6 @@
 mod agent_chat_commands;
 mod cdp_commands;
+mod changes_commands;
 mod db_commands;
 mod device_commands;
 mod fs_commands;
@@ -323,6 +324,10 @@ pub fn run() {
             git_commands::git_diff,
             git_commands::git_discover_repos,
             git_commands::git_log_graph,
+            changes_commands::changes_list_turn_change_sets,
+            changes_commands::changes_turn_file_diff,
+            changes_commands::changes_working_tree,
+            changes_commands::changes_working_tree_file_diff,
             db_commands::projects_list,
             db_commands::project_upsert,
             db_commands::project_set_archived,

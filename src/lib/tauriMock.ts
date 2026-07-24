@@ -2,6 +2,7 @@
 // window.__TAURI_INTERNALS__ so the app renders with sample data in a plain
 // browser (Playwright), with no Tauri runtime.
 import type { AgentEvent, AgentTimelineEntry } from "./agentChat";
+import type { ChangeSet, WorkingTreeChanges } from "./changes";
 import type { Chat } from "./db";
 
 const now = 1_750_000_000_000;
@@ -47,6 +48,98 @@ const OMP_MODELS_FIXTURE = JSON.stringify({
 const VRT_REMOTE_ROOT = "/Users/elberte/Projects/Personal/sample_flutter_app";
 
 const AGENT_CHAT_FIXTURE: Chat = { chatId: "chat-agent-vrt", projectRoot: "/home/dev/acme-app", title: "Structured chat fixture", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 };
+
+// #231 PR2 fixtures: one completed turn's ChangeSet, the live working-tree
+// ChangeSet, and a shared unified-diff body for the lazy per-file fetch.
+const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
+  id: `turn:${AGENT_CHAT_FIXTURE.chatId}:1`,
+  scope: "turn",
+  source: "providerSnapshot",
+  chatId: AGENT_CHAT_FIXTURE.chatId,
+  turnSeq: 1,
+  repoRoot: projectRoot,
+  capturedAt: now,
+  stale: false,
+  truncated: false,
+  files: [
+    {
+      path: "lib/login.dart",
+      oldPath: null,
+      status: "modify",
+      // Provider/turn source: staged/unstaged doesn't apply.
+      staged: null,
+      unstaged: null,
+      additions: 4,
+      deletions: 1,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+    },
+  ],
+  totals: { files: 1, additions: 4, deletions: 1 },
+});
+
+const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges => ({
+  state: "ready",
+  changeSet: {
+    id: `workingTree:${projectRoot}`,
+    scope: "workingTree",
+    source: "gitLive",
+    chatId: null,
+    turnSeq: null,
+    repoRoot: projectRoot,
+    capturedAt: now,
+    stale: false,
+    truncated: false,
+    files: [
+      {
+        path: "lib/login.dart",
+        oldPath: null,
+        status: "modify",
+        // Git-live source: staged/unstaged is always known, never null.
+        staged: false,
+        unstaged: true,
+        additions: 4,
+        deletions: 1,
+        binary: false,
+        truncated: false,
+        diffAvailable: true,
+      },
+      {
+        path: "lib/new_widget.dart",
+        oldPath: null,
+        status: "add",
+        staged: false,
+        unstaged: true,
+        additions: null,
+        deletions: null,
+        binary: false,
+        truncated: false,
+        diffAvailable: true,
+      },
+      {
+        path: "README.md",
+        oldPath: null,
+        status: "add",
+        staged: true,
+        unstaged: false,
+        additions: 12,
+        deletions: 0,
+        binary: false,
+        truncated: false,
+        diffAvailable: true,
+      },
+    ],
+    totals: { files: 3, additions: 16, deletions: 1 },
+  },
+});
+
+const CHANGES_DIFF_FIXTURE = {
+  diff: "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",
+  binary: false,
+  truncated: false,
+  available: true,
+};
 
 const SAMPLE_PROJECTS = [
   { projectRoot: "/home/dev/acme-app", displayName: "acme-app", createdAt: now, lastOpenedAt: now, sortOrder: 0, archivedAt: null, remoteHost: null, remoteRoot: null },
@@ -533,6 +626,11 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   git_diff: () =>
     "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",
   git_discover_repos: (a) => [a.projectRoot],
+  changes_list_turn_change_sets: (a) =>
+    a.chatId === AGENT_CHAT_FIXTURE.chatId ? [CHANGES_TURN_FIXTURE(a.projectRoot as string)] : [],
+  changes_turn_file_diff: () => CHANGES_DIFF_FIXTURE,
+  changes_working_tree: (a) => CHANGES_WORKING_TREE_FIXTURE(a.projectRoot as string),
+  changes_working_tree_file_diff: () => CHANGES_DIFF_FIXTURE,
 };
 
 export function installTauriMock() {

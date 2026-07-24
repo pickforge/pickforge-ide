@@ -27,14 +27,21 @@ use crate::changes::{ChangeFileStatus, ChangedFile};
 /// Hard cap on numstat/name-status records parsed from one git invocation. A
 /// pathological change (a rebase touching a vendored tree, a bad
 /// `.gitignore`) could otherwise make the parser walk unbounded memory; no
-/// single reviewable change-set needs more than this many rows.
-const MAX_DIFF_STAT_ENTRIES: usize = 20_000;
+/// single reviewable change-set needs more than this many rows. `pub(crate)`
+/// so `crate::git::working_tree`'s fixture test can build a real repo with
+/// exactly this many changed files to exercise `ChangeSet::truncated`
+/// end-to-end, rather than duplicating the number.
+pub(crate) const MAX_DIFF_STAT_ENTRIES: usize = 20_000;
 
 /// Hard cap on raw bytes scanned per invocation, ahead of the entry-count cap
 /// tripping (e.g. one absurdly long path). Bytes beyond this are never
 /// scanned — the crate bounds every git-derived input the same way it bounds
-/// git command time.
-const MAX_DIFF_STAT_BYTES: usize = 8 * 1024 * 1024;
+/// git command time. `pub(crate)` so the git-live command layer
+/// (`crate::git::working_tree`, #231 PR2) can cap the *process capture* of a
+/// `--numstat`/`--name-status` invocation at the same limit this module
+/// already applies when parsing it — one number governs both layers instead
+/// of two independently-chosen ones drifting apart.
+pub(crate) const MAX_DIFF_STAT_BYTES: usize = 8 * 1024 * 1024;
 
 /// A numstat count field above this is not a plausible line count (no real
 /// text file — or even a generated one — legitimately reaches it); treat it
@@ -44,11 +51,15 @@ const MAX_PLAUSIBLE_LINE_COUNT: u64 = 50_000_000;
 /// Hard cap on unified-diff body lines hand-counted by
 /// [`count_unified_diff_stat`] (provider-supplied diffs, which unlike `git
 /// --numstat` are not pre-counted by Git). Mirrors [`MAX_DIFF_STAT_ENTRIES`]'s
-/// rationale for the line-scanning path.
-const MAX_DIFF_BODY_LINES: usize = 200_000;
+/// rationale for the line-scanning path. `pub(crate)` — also the display-text
+/// line bound for [`bound_diff_display`] (#231 PR2), so a lazily-fetched
+/// per-file diff's returned text and its stat-counting pass are bounded by
+/// the same number.
+pub(crate) const MAX_DIFF_BODY_LINES: usize = 200_000;
 
-/// Byte-length counterpart to [`MAX_DIFF_BODY_LINES`].
-const MAX_DIFF_BODY_BYTES: usize = 8 * 1024 * 1024;
+/// Byte-length counterpart to [`MAX_DIFF_BODY_LINES`]; also reused by
+/// [`bound_diff_display`], see that constant's doc comment.
+pub(crate) const MAX_DIFF_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 /// Enforces the crate's "unknown stats stay unknown" invariant at every
 /// construction site in this module (and in `crate::changes::turn`'s fold,
@@ -465,6 +476,43 @@ pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
         binary: false,
         truncated: false,
     }
+}
+
+/// Bounds a unified-diff body being returned to the renderer for DISPLAY —
+/// distinct from [`count_unified_diff_stat`], which bounds a body being
+/// scanned for STATS. Used by the lazy per-file diff fetch (#231 PR2, both
+/// the git-live and turn-snapshot sources): a diff big enough to blow the
+/// stat-counting bound is also too big to hand to the renderer whole.
+///
+/// Cuts at [`MAX_DIFF_BODY_BYTES`] first, walking back to the nearest UTF-8
+/// character boundary so the cut never splits a multi-byte character, then at
+/// [`MAX_DIFF_BODY_LINES`] lines (kept together with their trailing `\n` via
+/// `split_inclusive`, so re-joining the returned lines reproduces valid diff
+/// text). Either bound tripping sets the returned flag; neither ever panics
+/// on a pathological input (empty text, a single line longer than the byte
+/// bound, text with no trailing newline).
+pub(crate) fn bound_diff_display(text: &str) -> (String, bool) {
+    let mut truncated = false;
+    let bytes_bounded: &str = if text.len() > MAX_DIFF_BODY_BYTES {
+        truncated = true;
+        let mut end = MAX_DIFF_BODY_BYTES;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        &text[..end]
+    } else {
+        text
+    };
+
+    let mut out = String::with_capacity(bytes_bounded.len());
+    for (lines, line) in bytes_bounded.split_inclusive('\n').enumerate() {
+        if lines >= MAX_DIFF_BODY_LINES {
+            truncated = true;
+            break;
+        }
+        out.push_str(line);
+    }
+    (out, truncated)
 }
 
 /// Recognizes both binary shapes Git's diff output can contain: the plain
@@ -1004,5 +1052,44 @@ deadbeefdata\n";
         assert_eq!(stat.additions, Some(1));
         assert_eq!(stat.deletions, Some(2));
         assert!(!stat.binary);
+    }
+
+    #[test]
+    fn bound_diff_display_passes_through_small_text_untouched() {
+        let (text, truncated) = bound_diff_display("+a\n-b\n context\n");
+        assert_eq!(text, "+a\n-b\n context\n");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn bound_diff_display_cuts_at_the_line_bound() {
+        let mut diff = String::new();
+        for i in 0..(MAX_DIFF_BODY_LINES + 5) {
+            diff.push_str(&format!("+line {i}\n"));
+        }
+        let (text, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert_eq!(text.lines().count(), MAX_DIFF_BODY_LINES);
+    }
+
+    #[test]
+    fn bound_diff_display_cuts_at_the_byte_bound_without_splitting_a_utf8_char() {
+        // Pad the text so the byte cap lands mid multi-byte character
+        // ("é" is 2 bytes); the cut must back off to a valid boundary rather
+        // than panicking or producing invalid UTF-8.
+        let mut diff = "x".repeat(MAX_DIFF_BODY_BYTES - 1);
+        diff.push('é');
+        diff.push('\n');
+        let (text, truncated) = bound_diff_display(&diff);
+        assert!(truncated);
+        assert!(text.len() <= MAX_DIFF_BODY_BYTES);
+        assert!(std::str::from_utf8(text.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn bound_diff_display_handles_empty_input() {
+        let (text, truncated) = bound_diff_display("");
+        assert_eq!(text, "");
+        assert!(!truncated);
     }
 }

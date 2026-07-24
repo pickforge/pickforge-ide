@@ -22,16 +22,14 @@
 //! than its first file change; it is not required for correct grouping.
 //!
 //! The one-open-`stale:true`-turn fallback (all `FileChange` rows collapse
-//! into a single trailing turn) now only bites in three narrower cases: (1)
-//! history recorded before #290, which has no persisted `TurnDone` rows to
-//! close on; (2) a turn whose terminal event was `TurnFailed` rather than
-//! `TurnDone` — this fold does not currently treat `TurnFailed` as a closing
-//! event (only `AgentEvent::TurnDone` closes an accumulator), even though
-//! `TurnFailed` has been persisted unconditionally all along, so that
-//! turn's changes leak into whatever follows it; and (3) a turn that never
-//! received any terminal event (e.g. a hard crash mid-turn). (2) is a
-//! same-shape one-line follow-up (fold `TurnFailed` the same as `TurnDone`
-//! in the match below) if failed-turn receipts turn out to matter for PR2.
+//! into a single trailing turn) now only bites in two narrower cases: (1)
+//! history recorded before #290, which has no persisted `TurnDone`/
+//! `TurnFailed` rows to close on; and (2) a turn that never received any
+//! terminal event at all (e.g. a hard crash mid-turn). A turn whose terminal
+//! event was `TurnFailed` rather than `TurnDone` closes the same way `TurnDone`
+//! does (#231 PR2) — `TurnFailed` has been persisted unconditionally since
+//! #290, same as `TurnDone`, so treating only one of the two as a boundary
+//! would leak a failed turn's changes into whatever follows it.
 
 use std::collections::HashMap;
 
@@ -56,12 +54,14 @@ pub struct TimelineTurnEvent {
 }
 
 /// Folds `events` (already ordered by `seq`) into one [`ChangeSet`] per
-/// turn. A turn opens on `TurnStarted` and closes on the next `TurnDone`;
-/// `FileChange` entries between them are deduplicated per path and folded in
-/// arrival order: status is last-write-wins, but stats are first-known-wins
-/// and either sticky `binary`/`truncated` flag clears both counts to `None`
-/// even if one was already known (see [`TurnAccumulator::fold_one`]). A turn
-/// with no closing `TurnDone` yet (still running, or interrupted with no
+/// turn. A turn opens on `TurnStarted` and closes on the next `TurnDone` OR
+/// `TurnFailed` — both are terminal events persisted unconditionally (#290),
+/// so either one closes the accumulator identically; `FileChange` entries
+/// between them are deduplicated per path and folded in arrival order:
+/// status is last-write-wins, but stats are first-known-wins and either
+/// sticky `binary`/`truncated` flag clears both counts to `None` even if one
+/// was already known (see [`TurnAccumulator::fold_one`]). A turn with no
+/// closing terminal event yet (still running, or interrupted with no
 /// terminal event at all) is still emitted, marked `stale: true`.
 pub fn group_turn_change_sets(
     chat_id: &str,
@@ -84,7 +84,7 @@ pub fn group_turn_change_sets(
                     .get_or_insert_with(|| TurnAccumulator::new(item.seq, item.captured_at))
                     .fold_changes(changes, item.captured_at);
             }
-            AgentEvent::TurnDone { .. } => {
+            AgentEvent::TurnDone { .. } | AgentEvent::TurnFailed { .. } => {
                 if let Some(mut acc) = current.take() {
                     acc.captured_at = item.captured_at;
                     turns.push(acc.finish(false));
@@ -202,10 +202,93 @@ impl TurnAccumulator {
             repo_root: String::new(),
             captured_at: self.captured_at,
             stale,
+            // Turn folding has no listing-level cap to hit (see
+            // `ChangeSet::truncated`'s doc comment).
+            truncated: false,
             files,
             totals,
         }
     }
+}
+
+/// Decodes a chat's full persisted timeline — as returned by
+/// `Database::agent_timeline_for_chat`, the real `agent_items`/`agent_messages`
+/// read path — into the ordered [`TimelineTurnEvent`] slice
+/// [`group_turn_change_sets`] expects (#231 PR2). `AgentTimelineEntry::Message`
+/// rows carry no `AgentEvent` and are skipped. An `Item` row whose JSON
+/// `payload` doesn't deserialize as `AgentEvent` — a wire-shape drift this
+/// crate doesn't control, e.g. a future provider event kind this build
+/// predates — is skipped rather than failing the whole read: one bad
+/// historical row must not black out a chat's entire change history.
+pub fn decode_timeline_events(entries: &[crate::db::AgentTimelineEntry]) -> Vec<TimelineTurnEvent> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            crate::db::AgentTimelineEntry::Item {
+                seq,
+                payload,
+                created_at,
+                ..
+            } => serde_json::from_str::<AgentEvent>(payload)
+                .ok()
+                .map(|event| TimelineTurnEvent {
+                    seq: *seq,
+                    captured_at: *created_at,
+                    event,
+                }),
+            crate::db::AgentTimelineEntry::Message { .. } => None,
+        })
+        .collect()
+}
+
+/// Returns the raw provider diff text `FileChange` events carried for `path`
+/// within the requested `turn_seq`'s window (#231 PR2) — the lazy per-file
+/// diff fetch's turn-snapshot source. Turn boundaries are detected the same
+/// way [`group_turn_change_sets`] detects them (explicit `TurnStarted` or an
+/// implicit open on the first `FileChange` with no turn open, closed by the
+/// next `TurnStarted`/`TurnDone`/`TurnFailed`), so the same `turn_seq` a
+/// listing call returned resolves to the same window here.
+///
+/// Last-write-wins: the most recent `FileChange` event carrying a diff body
+/// for `path` in that window is returned, mirroring the fold's status
+/// semantics (the final state of the file this turn) — unlike stats, which
+/// are first-known-wins for a different reason (avoiding double-counting
+/// across a dedup fold, not picking "the" representative value). Returns
+/// `None` when the turn has no diff-bearing event for `path` at all.
+pub fn turn_file_diff<'a>(
+    events: &'a [TimelineTurnEvent],
+    turn_seq: i64,
+    path: &str,
+) -> Option<&'a str> {
+    let mut open_seq: Option<i64> = None;
+    let mut found: Option<&str> = None;
+
+    for item in events {
+        match &item.event {
+            AgentEvent::TurnStarted => {
+                open_seq = Some(item.seq);
+            }
+            AgentEvent::FileChange { changes, .. } => {
+                if open_seq.is_none() {
+                    open_seq = Some(item.seq); // implicit turn open
+                }
+                if open_seq == Some(turn_seq) {
+                    for change in changes {
+                        if change.path == path {
+                            if let Some(diff) = change.diff.as_deref() {
+                                found = Some(diff);
+                            }
+                        }
+                    }
+                }
+            }
+            AgentEvent::TurnDone { .. } | AgentEvent::TurnFailed { .. } => {
+                open_seq = None;
+            }
+            _ => {}
+        }
+    }
+    found
 }
 
 /// Provider `FileChangeEntry.kind` maps 1:1 onto the locked status
@@ -239,6 +322,16 @@ mod tests {
             captured_at: at,
             event: AgentEvent::TurnDone {
                 status: TurnStatus::Completed,
+            },
+        }
+    }
+
+    fn failed(seq: i64, at: i64) -> TimelineTurnEvent {
+        TimelineTurnEvent {
+            seq,
+            captured_at: at,
+            event: AgentEvent::TurnFailed {
+                error: "boom".to_string(),
             },
         }
     }
@@ -495,5 +588,110 @@ mod tests {
         let turns = group_turn_change_sets("chat-1", "/repo", &events);
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].files.len(), 1);
+    }
+
+    #[test]
+    fn turn_failed_closes_a_turn_the_same_as_turn_done() {
+        let events = vec![
+            started(1, 100),
+            file_change(2, 105, "a.rs", FileChangeKind::Add, None),
+            failed(3, 110),
+            started(4, 200),
+            file_change(5, 205, "b.rs", FileChangeKind::Add, None),
+            done(6, 210),
+        ];
+        let turns = group_turn_change_sets("chat-1", "/repo", &events);
+        assert_eq!(turns.len(), 2, "TurnFailed must close the first turn, not merge into the second");
+        assert!(!turns[0].stale, "closed by TurnFailed, so not still-open");
+        assert_eq!(turns[0].files[0].path, "a.rs");
+        assert_eq!(turns[1].files[0].path, "b.rs");
+    }
+
+    #[test]
+    fn decode_timeline_events_reads_the_real_agent_items_path_and_folds_correctly() {
+        use crate::db::Database;
+
+        let db = Database::open_in_memory().unwrap();
+        let chat_id = "chat-decode";
+        let session_id = "sess-1";
+
+        for event in [
+            AgentEvent::TurnStarted,
+            AgentEvent::FileChange {
+                item_id: "item-1".to_string(),
+                changes: vec![FileChangeEntry {
+                    path: "src/lib.rs".to_string(),
+                    kind: FileChangeKind::Modify,
+                    diff: Some("+a\n-b\n".to_string()),
+                }],
+            },
+            AgentEvent::TurnDone {
+                status: TurnStatus::Completed,
+            },
+        ] {
+            let payload = serde_json::to_string(&event).unwrap();
+            let kind = serde_json::to_value(&event)
+                .unwrap()
+                .get("kind")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string();
+            db.agent_item_append(session_id, chat_id, &kind, &payload)
+                .unwrap();
+        }
+        // A plain chat message must be skipped, not choke the decode.
+        db.agent_message_append(session_id, chat_id, "user", "hello")
+            .unwrap();
+
+        let entries = db.agent_timeline_for_chat(chat_id).unwrap();
+        let events = decode_timeline_events(&entries);
+        let turns = group_turn_change_sets(chat_id, "/repo", &events);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].files.len(), 1);
+        assert_eq!(turns[0].files[0].path, "src/lib.rs");
+        assert_eq!(turns[0].files[0].additions, Some(1));
+        assert!(!turns[0].stale);
+    }
+
+    #[test]
+    fn turn_file_diff_returns_the_last_diff_seen_for_the_path_in_that_turn() {
+        let events = vec![
+            started(1, 100),
+            file_change(2, 110, "a.rs", FileChangeKind::Modify, Some("+one\n")),
+            file_change(3, 115, "a.rs", FileChangeKind::Modify, Some("+two\n+three\n")),
+            done(4, 120),
+        ];
+        assert_eq!(
+            turn_file_diff(&events, 1, "a.rs"),
+            Some("+two\n+three\n"),
+            "last event's diff wins, unlike stats which are first-known-wins"
+        );
+    }
+
+    #[test]
+    fn turn_file_diff_returns_none_for_a_path_with_no_diff_body() {
+        let events = vec![
+            started(1, 100),
+            file_change(2, 105, "a.rs", FileChangeKind::Add, None),
+            done(3, 110),
+        ];
+        assert_eq!(turn_file_diff(&events, 1, "a.rs"), None);
+    }
+
+    #[test]
+    fn turn_file_diff_scopes_to_the_requested_turn_only() {
+        let events = vec![
+            started(1, 100),
+            file_change(2, 105, "a.rs", FileChangeKind::Add, Some("+first turn\n")),
+            done(3, 110),
+            started(4, 200),
+            file_change(5, 205, "a.rs", FileChangeKind::Modify, Some("+second turn\n")),
+            done(6, 210),
+        ];
+        assert_eq!(turn_file_diff(&events, 1, "a.rs"), Some("+first turn\n"));
+        assert_eq!(turn_file_diff(&events, 4, "a.rs"), Some("+second turn\n"));
+        assert_eq!(turn_file_diff(&events, 999, "a.rs"), None);
     }
 }

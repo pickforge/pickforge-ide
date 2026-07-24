@@ -81,12 +81,16 @@ pub async fn start_session(serial: &str, jar_path: &Path) -> Result<MirrorSessio
     start_session_cancellable(serial, jar_path, Arc::new(AtomicBool::new(false))).await
 }
 
-#[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
-pub async fn start_session_cancellable(
+/// Pushes the bundled server jar and opens the adb reverse tunnel the
+/// scrcpy server will connect its video/control sockets back through.
+/// Returns the bound local listener, its port, the generated scid, and the
+/// `localabstract:` socket name (needed later to tear the reverse tunnel
+/// down).
+async fn prepare_reverse_tunnel(
     serial: &str,
     jar_path: &Path,
-    cancelled: Arc<AtomicBool>,
-) -> Result<MirrorSession, MirrorError> {
+    cancelled: &Arc<AtomicBool>,
+) -> Result<(TcpListener, u16, String, String), MirrorError> {
     if cancelled.load(Ordering::SeqCst) {
         return Err(MirrorError::Cancelled);
     }
@@ -111,8 +115,19 @@ pub async fn start_session_cancellable(
         remove_reverse(serial.to_string(), socket_name).await;
         return Err(MirrorError::Cancelled);
     }
+    Ok((listener, port, scid, socket_name))
+}
 
-    // app_process runs the server jar's main. Reverse tunnel ⇒ no dummy byte.
+/// Launches the scrcpy server jar over `adb shell app_process` (reverse
+/// tunnel ⇒ no dummy byte), registers it for crash containment, and rolls
+/// the reverse tunnel + process back if spawn fails or `cancelled` fires
+/// before the caller can accept its sockets.
+async fn spawn_scrcpy_server_process(
+    serial: &str,
+    scid: &str,
+    socket_name: String,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<Child, MirrorError> {
     let scid_arg = format!("scid={scid}");
     let mut cmd = Command::new("adb");
     cmd.args([
@@ -162,6 +177,18 @@ pub async fn start_session_cancellable(
         remove_reverse(serial.to_string(), socket_name).await;
         return Err(MirrorError::Cancelled);
     }
+    Ok(child)
+}
+
+pub async fn start_session_cancellable(
+    serial: &str,
+    jar_path: &Path,
+    cancelled: Arc<AtomicBool>,
+) -> Result<MirrorSession, MirrorError> {
+    let (listener, _port, scid, socket_name) =
+        prepare_reverse_tunnel(serial, jar_path, &cancelled).await?;
+    let mut child =
+        spawn_scrcpy_server_process(serial, &scid, socket_name.clone(), &cancelled).await?;
 
     // The server connects video first, then control (audio disabled).
     let accept = async {

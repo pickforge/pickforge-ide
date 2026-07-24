@@ -58,6 +58,9 @@ pub struct PiRpcClient {
     stderr_thread: Mutex<Option<JoinHandle<()>>>,
 }
 
+/// The writer/reader/stderr thread handles started for a client's stdio pipes.
+type IoThreadHandles = (JoinHandle<()>, JoinHandle<()>, JoinHandle<()>);
+
 struct ClientState {
     child: Mutex<Option<ManagedChild>>,
     session_root: PathBuf,
@@ -306,7 +309,6 @@ pub fn compatible_version_output(raw: &str) -> Result<String, PiRpcError> {
 }
 
 impl PiRpcClient {
-    #[allow(clippy::too_many_lines)] // TODO(#263): reduce legacy function complexity.
     pub fn spawn(
         opts: PiRpcOptions,
         sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
@@ -321,7 +323,70 @@ impl PiRpcClient {
         // path-only CLI contract.
         prepare_session_paths(&opts.session_root, &opts.session_dir, &opts.session_path)?;
 
-        let mut command = Command::new(&binary);
+        let (child, stdin, stdout, stderr) =
+            Self::spawn_child_process(&binary, &opts, environment)?;
+
+        let (writer_tx, writer_rx) = mpsc::channel();
+        let state = Arc::new(ClientState {
+            child: Mutex::new(Some(child)),
+            session_root: opts.session_root.clone(),
+            session_dir: opts.session_dir.clone(),
+            session_mutation: Mutex::new(()),
+            pending: Mutex::new(HashMap::new()),
+            writer_tx: Mutex::new(Some(writer_tx.clone())),
+            sink,
+            closed: AtomicBool::new(false),
+            shutting_down: AtomicBool::new(false),
+            active: AtomicBool::new(false),
+            stderr_done: AtomicBool::new(false),
+            terminal_sent: AtomicBool::new(false),
+            pending_failure: Mutex::new(None),
+            turn_sequence: AtomicU64::new(0),
+            message_sequence: AtomicU64::new(0),
+            next_id: AtomicU64::new(1),
+            stderr_tail: Mutex::new(Vec::new()),
+            tool_args: Mutex::new(HashMap::new()),
+            dialogs: Mutex::new(HashMap::new()),
+        });
+
+        let (writer_thread, reader_thread, stderr_thread) =
+            Self::spawn_io_threads(&state, stdin, stdout, stderr, writer_rx, writer_tx)?;
+
+        let client = Self {
+            state,
+            writer_thread: Mutex::new(Some(writer_thread)),
+            reader_thread: Mutex::new(Some(reader_thread)),
+            stderr_thread: Mutex::new(Some(stderr_thread)),
+        };
+        match client.get_state() {
+            Ok(session_state) => {
+                client.emit_session_state(&session_state);
+                Ok(client)
+            }
+            Err(error) => {
+                let _ = client.shutdown();
+                Err(error)
+            }
+        }
+    }
+
+    /// Builds the Pi RPC command, spawns it (crash-contained; suspended on
+    /// Windows so it coexists with Pi's own per-child job), and takes
+    /// ownership of its stdio pipes.
+    fn spawn_child_process(
+        binary: &Path,
+        opts: &PiRpcOptions,
+        environment: HashMap<String, String>,
+    ) -> Result<
+        (
+            ManagedChild,
+            std::process::ChildStdin,
+            std::process::ChildStdout,
+            std::process::ChildStderr,
+        ),
+        PiRpcError,
+    > {
+        let mut command = Command::new(binary);
         command
             .arg("--mode")
             .arg("rpc")
@@ -382,49 +447,40 @@ impl PiRpcClient {
             kill_and_wait_child(child);
             return Err(PiRpcError::MissingPipe("stderr"));
         };
+        Ok((child, stdin, stdout, stderr))
+    }
 
-        let (writer_tx, writer_rx) = mpsc::channel();
-        let state = Arc::new(ClientState {
-            child: Mutex::new(Some(child)),
-            session_root: opts.session_root.clone(),
-            session_dir: opts.session_dir.clone(),
-            session_mutation: Mutex::new(()),
-            pending: Mutex::new(HashMap::new()),
-            writer_tx: Mutex::new(Some(writer_tx.clone())),
-            sink,
-            closed: AtomicBool::new(false),
-            shutting_down: AtomicBool::new(false),
-            active: AtomicBool::new(false),
-            stderr_done: AtomicBool::new(false),
-            terminal_sent: AtomicBool::new(false),
-            pending_failure: Mutex::new(None),
-            turn_sequence: AtomicU64::new(0),
-            message_sequence: AtomicU64::new(0),
-            next_id: AtomicU64::new(1),
-            stderr_tail: Mutex::new(Vec::new()),
-            tool_args: Mutex::new(HashMap::new()),
-            dialogs: Mutex::new(HashMap::new()),
-        });
-
+    /// Starts the writer/reader/stderr threads over the RPC child's stdio
+    /// pipes, unwinding (killing the child, draining already-started
+    /// threads) if any `Builder::spawn` fails.
+    #[allow(clippy::too_many_arguments)] // TODO(#263): simplify legacy interface.
+    fn spawn_io_threads(
+        state: &Arc<ClientState>,
+        stdin: std::process::ChildStdin,
+        stdout: std::process::ChildStdout,
+        stderr: std::process::ChildStderr,
+        writer_rx: mpsc::Receiver<WriterMessage>,
+        writer_tx: mpsc::Sender<WriterMessage>,
+    ) -> Result<IoThreadHandles, PiRpcError> {
         let writer_thread = std::thread::Builder::new()
             .name("pi-rpc-writer".to_string())
             .spawn({
-                let state = Arc::clone(&state);
+                let state = Arc::clone(state);
                 move || write_loop(stdin, writer_rx, state)
             })
             .map_err(|error| {
-                kill_state_child(&state);
+                kill_state_child(state);
                 PiRpcError::Thread(error)
             })?;
         let reader_thread = match std::thread::Builder::new()
             .name("pi-rpc-reader".to_string())
             .spawn({
-                let state = Arc::clone(&state);
+                let state = Arc::clone(state);
                 move || read_loop(stdout, state)
             }) {
             Ok(thread) => thread,
             Err(error) => {
-                kill_state_child(&state);
+                kill_state_child(state);
                 let _ = writer_tx.send(WriterMessage::Shutdown);
                 let _ = writer_thread.join();
                 return Err(PiRpcError::Thread(error));
@@ -433,35 +489,19 @@ impl PiRpcClient {
         let stderr_thread = match std::thread::Builder::new()
             .name("pi-rpc-stderr".to_string())
             .spawn({
-                let state = Arc::clone(&state);
+                let state = Arc::clone(state);
                 move || stderr_loop(stderr, state)
             }) {
             Ok(thread) => thread,
             Err(error) => {
-                kill_state_child(&state);
+                kill_state_child(state);
                 let _ = writer_tx.send(WriterMessage::Shutdown);
                 let _ = writer_thread.join();
                 let _ = reader_thread.join();
                 return Err(PiRpcError::Thread(error));
             }
         };
-
-        let client = Self {
-            state,
-            writer_thread: Mutex::new(Some(writer_thread)),
-            reader_thread: Mutex::new(Some(reader_thread)),
-            stderr_thread: Mutex::new(Some(stderr_thread)),
-        };
-        match client.get_state() {
-            Ok(session_state) => {
-                client.emit_session_state(&session_state);
-                Ok(client)
-            }
-            Err(error) => {
-                let _ = client.shutdown();
-                Err(error)
-            }
-        }
+        Ok((writer_thread, reader_thread, stderr_thread))
     }
 
     pub fn is_closed(&self) -> bool {

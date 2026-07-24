@@ -1050,21 +1050,17 @@ mod tests {
         );
     }
 
-    #[test]
-    #[allow(clippy::cognitive_complexity)] // TODO(#263): reduce legacy function complexity.
-    fn parses_command_fixture() {
-        let events = fixture_events("codex-exec-command.jsonl");
-        assert_eq!(events.len(), 7);
-        assert!(matches!(events[0], AgentEvent::SessionStarted { .. }));
-        assert_eq!(events[1], AgentEvent::TurnStarted);
-        assert!(matches!(events[2], AgentEvent::TextFinal { .. }));
-        match &events[3] {
+    fn assert_command_started_event(event: &AgentEvent) {
+        match event {
             AgentEvent::CommandStarted { command, .. } => {
                 assert!(command.contains("pickforge-fixture"));
             }
             event => panic!("expected CommandStarted, got {event:?}"),
         }
-        match &events[4] {
+    }
+
+    fn assert_command_done_event(event: &AgentEvent) {
+        match event {
             AgentEvent::CommandDone {
                 exit_code, status, ..
             } => {
@@ -1073,6 +1069,17 @@ mod tests {
             }
             event => panic!("expected CommandDone, got {event:?}"),
         }
+    }
+
+    #[test]
+    fn parses_command_fixture() {
+        let events = fixture_events("codex-exec-command.jsonl");
+        assert_eq!(events.len(), 7);
+        assert!(matches!(events[0], AgentEvent::SessionStarted { .. }));
+        assert_eq!(events[1], AgentEvent::TurnStarted);
+        assert!(matches!(events[2], AgentEvent::TextFinal { .. }));
+        assert_command_started_event(&events[3]);
+        assert_command_done_event(&events[4]);
         assert!(matches!(events[5], AgentEvent::TextFinal { .. }));
         assert!(matches!(events[6], AgentEvent::Usage { .. }));
     }

@@ -1614,6 +1614,16 @@ mod tests {
         ));
         assert_eq!(compatible_version_output("pi 0.79.10\n").unwrap(), "0.79.10");
         assert_eq!(compatible_version_output("0.81.1").unwrap(), "0.81.1");
+        // Suffix grammar must match the TS gate: prerelease and build
+        // segments are each optional and may appear together.
+        assert_eq!(
+            compatible_version_output("0.81.999-rc.1+build.7").unwrap(),
+            "0.81.999-rc.1+build.7"
+        );
+        assert!(matches!(
+            compatible_version_output("0.82.0-rc.1"),
+            Err(PiRpcError::UnsupportedVersion(_))
+        ));
         assert!(matches!(
             compatible_version_output("0.82.0"),
             Err(PiRpcError::UnsupportedVersion(_))

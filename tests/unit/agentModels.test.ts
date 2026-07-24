@@ -33,7 +33,9 @@ beforeEach(() => {
 
 describe("OMP/Pi rollout gating and commands", () => {
   it("keeps profiles, commands, and quick launch unchanged while the flag is off", async () => {
-    const { models, quickLaunch } = await loadModules();
+    const { flags, models, quickLaunch } = await loadModules();
+    // piAgents ships default-on; this test pins the explicit opt-out state.
+    flags.setFlagOverride("piAgents", false);
 
     expect(models.agentProfiles()).toEqual(models.AGENTS);
     expect(models.launchCommand("claudeCode")).toBe("claude --model claude-haiku-4-5 ");

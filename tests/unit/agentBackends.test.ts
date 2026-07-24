@@ -318,5 +318,12 @@ describe("agent backend capability registry", () => {
     expect(backends.isCompatiblePiRpcVersion("0.82.0")).toBe(false);
     expect(backends.isCompatiblePiRpcVersion("1.0.0")).toBe(false);
     expect(backends.isCompatiblePiRpcVersion("garbage")).toBe(false);
+    // Suffix grammar must match the Rust gate: prerelease and build
+    // segments are each optional and may appear together.
+    expect(backends.isCompatiblePiRpcVersion("v0.81.2")).toBe(true);
+    expect(backends.isCompatiblePiRpcVersion("0.81.999-rc.1")).toBe(true);
+    expect(backends.isCompatiblePiRpcVersion("0.81.999+build.7")).toBe(true);
+    expect(backends.isCompatiblePiRpcVersion("0.81.999-rc.1+build.7")).toBe(true);
+    expect(backends.isCompatiblePiRpcVersion("0.82.0-rc.1")).toBe(false);
   });
 });

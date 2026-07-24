@@ -1619,6 +1619,7 @@ finally:
         let supervisor = LocalSupervisor::launch(command, 5.0);
         wait_until(Duration::from_secs(3), || {
             supervisor.state_path().exists()
+                && supervisor.state()["payload_pid"].as_i64().is_some()
                 && payload_file.exists()
                 && grandchild_file.exists()
         });

@@ -536,16 +536,23 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        // Stage-then-rename so a test polling `marker.exists()` can never
+        // observe a created-but-empty file (matches the pi_rpc fixture pid
+        // file fix: rename is atomic, plain `>` redirection is not).
         let fake = fake_ssh(&format!(
-            "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nwhile :; do sleep 1; done\n",
-            marker.display()
+            "#!/bin/sh\nprintf '%s' \"$$\" > '{marker}.tmp' && mv '{marker}.tmp' '{marker}'\nwhile :; do sleep 1; done\n",
+            marker = marker.display()
         ));
         let manager = TunnelManager::with_parts(fake.clone(), Arc::new(|_, _| Ok(())));
         manager
             .open("mac-mini", 8181, "run-1", |_| {})
             .expect("open tunnel");
 
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // 2s was too tight under workspace-parallel `cargo test`: the fake
+        // ssh script can take longer than that just to get its first
+        // scheduler slice when many other tests are spawning processes
+        // concurrently.
+        let deadline = Instant::now() + Duration::from_secs(8);
         while !marker.exists() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }
@@ -556,7 +563,7 @@ mod tests {
 
         drop(manager);
 
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(8);
         while process_exists(pid) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
         }

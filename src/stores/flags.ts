@@ -43,7 +43,12 @@ const localStorageStore: FlagOverrideStore = {
 
 const definitions = {
   operator: { description: "Operator command layer (epic #118)" },
-  piAgents: { description: "Pi native chat and terminal profiles (#212/#270)" },
+  piAgents: {
+    description: "Pi native chat and terminal profiles (#212/#270)",
+    // Launch-flipped after the Phase 0 evidence gate: Pi 0.81 RPC certification
+    // plus the in-app dogfood (streaming, cancel, resume) on 2026-07-24.
+    default: true,
+  },
   ompAgents: { description: "OMP native chat and terminal profiles (#212)" },
   remoteProjects: { description: "Per-project remote hosts (epic #144)" },
   remoteProcessLeases: { description: "Exact remote process cleanup leases (#208)" },

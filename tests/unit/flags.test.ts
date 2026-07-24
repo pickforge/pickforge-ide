@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("flags", () => {
-  it("registers all active feature flags as default off", async () => {
+  it("registers all active feature flags with their ship-time defaults", async () => {
     const store = await loadStore();
 
     const states = store.flagStates();
@@ -40,11 +40,12 @@ describe("flags", () => {
       "studioUpdateDialog",
     ]);
     for (const state of states) {
-      expect(state.defaultValue).toBe(false);
-      expect(state.enabled).toBe(false);
+      const expected = state.key === "piAgents";
+      expect(state.defaultValue).toBe(expected);
+      expect(state.enabled).toBe(expected);
     }
     expect(store.flagEnabled("operator")).toBe(false);
-    expect(store.flagEnabled("piAgents")).toBe(false);
+    expect(store.flagEnabled("piAgents")).toBe(true);
     expect(store.flagEnabled("ompAgents")).toBe(false);
     expect(store.flagEnabled("remoteProjects")).toBe(false);
     expect(store.flagEnabled("remoteProcessLeases")).toBe(false);

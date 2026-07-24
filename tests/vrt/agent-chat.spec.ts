@@ -66,3 +66,33 @@ test("agent chat fixture", async ({ page }) => {
     animations: "disabled",
   });
 });
+
+// #307: contextUsed > contextWindow must not render an unclamped >100%
+// label — the meter clamps the label like the bar and surfaces a distinct,
+// assistive-tech-visible warning instead of silently hiding the disagreement.
+test("agent chat context meter overflow warning", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.vrt.agentChatFixture", "1");
+    localStorage.setItem("pickforge.vrt.agentChatContextOverflow", "1");
+  });
+
+  await page.goto("/#/workbench");
+  await page.getByText("Built a deterministic VRT fixture").waitFor();
+
+  const meter = page.locator(".pf-chat-context");
+  await expect(meter).toHaveClass(/pf-chat-context--warn/);
+
+  const label = meter.locator(".pf-chat-context-frac");
+  await expect(label).toHaveText("1M / 1M");
+  await expect(label).toHaveAttribute("role", "img");
+  await expect(label).toHaveAttribute("aria-label", /1,230,000.*1,000,000/);
+  await expect(label).toHaveAttribute("title", /1,230,000.*1,000,000/);
+
+  const fill = meter.locator(".pf-chat-context-fill");
+  await expect(fill).toHaveAttribute("style", /width:\s*100%/);
+
+  await expect(meter).toHaveScreenshot("agent-chat-context-overflow.png", {
+    maxDiffPixelRatio: 0.025,
+    animations: "disabled",
+  });
+});

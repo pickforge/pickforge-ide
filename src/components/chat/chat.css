@@ -1079,6 +1079,16 @@
   color: var(--pf-text-med);
   white-space: nowrap;
 }
+/* A raw contextUsed/contextWindow reading above 100% means the meter's two
+ * numbers disagreed upstream — warn quietly (amber, like pf-chat-dd--warn)
+ * rather than letting the clamped bar hide the inconsistency. */
+.pf-chat-context--warn .pf-chat-context-frac {
+  color: color-mix(in srgb, var(--pf-warning) 70%, var(--pf-text-low));
+  cursor: help;
+}
+.pf-chat-context--warn .pf-chat-context-fill {
+  background: var(--pf-warning);
+}
 /* Narrow composer (the pickers wrap onto a second row): stack the meter —
  * fraction, full-width track, cost — instead of one long strip. The breakpoint
  * is the measured wrap point of a typical picker set. */

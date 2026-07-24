@@ -15,8 +15,123 @@ export interface DropdownOption {
   trailing?: JSX.Element;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function Dropdown(props: {
+/** One option row in the open menu. A child component (not inlined in the
+ * `<For>` callback) so its per-row reactive attributes (`selected`/`active`,
+ * derived from the parent's `value`/`activeIndex` signals) update
+ * independently without re-running the whole list callback — the props are
+ * read directly here, not destructured, so Solid keeps them reactive. */
+function DropdownOptionRow(props: {
+  option: DropdownOption;
+  index: number;
+  selected: boolean;
+  active: boolean;
+  optionsLength: number;
+  onRef: (element: HTMLButtonElement) => void;
+  onFocus: () => void;
+  onChoose: () => void;
+  onFocusOption: (index: number) => void;
+  onClose: (restoreFocus?: boolean) => void;
+}): JSX.Element {
+  return (
+    <button
+      ref={props.onRef}
+      class="pf-dropdown-option"
+      classList={{ "pf-dropdown-option--on": props.selected }}
+      role="option"
+      tabIndex={props.active ? 0 : -1}
+      aria-selected={props.selected}
+      onFocus={props.onFocus}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          props.onFocusOption(props.index + 1);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          props.onFocusOption(props.index - 1);
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          props.onFocusOption(0);
+        } else if (event.key === "End") {
+          event.preventDefault();
+          props.onFocusOption(props.optionsLength - 1);
+        } else if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          props.onChoose();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onClose(true);
+        }
+      }}
+      onClick={props.onChoose}
+    >
+      <span class="pf-dropdown-check" aria-hidden="true">
+        <Show when={props.selected}>
+          <IconCheck size={11} />
+        </Show>
+      </span>
+      <Show when={props.option.icon}>
+        {(icon) => <span class="pf-dropdown-icon">{icon()()}</span>}
+      </Show>
+      <span class="pf-dropdown-option-label">{props.option.label}</span>
+      {props.option.trailing}
+    </button>
+  );
+}
+
+/** The trigger button. A child component so it can carry its own aria/label
+ * reactivity; `open`/`currentLabel`/`selectedIcon` are passed as accessor
+ * functions (not called until read inside this component's JSX), which
+ * keeps them tracked exactly as if read in the parent. */
+function DropdownTrigger(props: {
+  onRef: (element: HTMLButtonElement) => void;
+  disabled?: boolean;
+  title?: string;
+  bracket?: boolean;
+  triggerTrailing?: JSX.Element;
+  listboxId: string;
+  open: () => boolean;
+  currentLabel: () => string;
+  selectedIcon: () => (() => JSX.Element) | undefined;
+  onToggleOpen: () => void;
+  onArrowDown: () => void;
+  onArrowUp: () => void;
+}): JSX.Element {
+  return (
+    <button
+      ref={props.onRef}
+      class="pf-dropdown-trigger"
+      disabled={props.disabled}
+      aria-haspopup="listbox"
+      aria-expanded={props.open()}
+      aria-controls={props.open() ? props.listboxId : undefined}
+      aria-label={props.title ? `${props.title}: ${props.currentLabel()}` : props.currentLabel()}
+      title={props.title}
+      onClick={props.onToggleOpen}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          props.onArrowDown();
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          props.onArrowUp();
+        }
+      }}
+    >
+      <Show when={props.bracket !== false}>
+        <span class="pf-dropdown-bracket" aria-hidden="true" />
+      </Show>
+      <Show when={props.selectedIcon()}>
+        {(icon) => <span class="pf-dropdown-icon">{icon()()}</span>}
+      </Show>
+      <span class="pf-dropdown-trigger-label">{props.currentLabel()}</span>
+      {props.triggerTrailing}
+      <IconChevronDown size={12} class="pf-dropdown-chevron" />
+    </button>
+  );
+}
+
+interface DropdownProps {
   value: string;
   options: DropdownOption[];
   onChange: (value: string) => void;
@@ -31,15 +146,23 @@ export function Dropdown(props: {
   up?: boolean;
   /** Extra class on the wrapper (e.g. to size it in a horizontal toolbar). */
   class?: string;
-}) {
+}
+
+/** All of the dropdown's open/active-option state and interaction logic, as
+ * a composable — called synchronously from `Dropdown`'s own setup, so its
+ * `createEffect`/`onCleanup` calls run under the same reactive owner as if
+ * written inline. `getRoot`/`getTrigger` are getters (not the elements
+ * themselves) because they close over `Dropdown`'s ref variables, which are
+ * still unset when this runs — reading them later, at interaction time,
+ * sees the mounted elements. */
+function createDropdownController(
+  props: DropdownProps,
+  getRoot: () => HTMLDivElement,
+  getTrigger: () => HTMLButtonElement,
+  optionRefs: HTMLButtonElement[],
+) {
   const [open, setOpen] = createSignal(false);
   const [activeIndex, setActiveIndex] = createSignal(0);
-  const selected = () => props.options.find((o) => o.value === props.value);
-  const currentLabel = () => selected()?.label ?? props.placeholder ?? "Select";
-  let root!: HTMLDivElement;
-  let trigger!: HTMLButtonElement;
-  const optionRefs: HTMLButtonElement[] = [];
-  const listboxId = createUniqueId();
 
   const selectedIndex = () => {
     const index = props.options.findIndex((option) => option.value === props.value);
@@ -53,7 +176,7 @@ export function Dropdown(props: {
   };
   const close = (restoreFocus = false) => {
     setOpen(false);
-    if (restoreFocus) queueMicrotask(() => trigger.focus());
+    if (restoreFocus) queueMicrotask(() => getTrigger().focus());
   };
   const choose = (index: number) => {
     const option = props.options[index];
@@ -63,7 +186,7 @@ export function Dropdown(props: {
   };
 
   const onPointer = (e: PointerEvent) => {
-    if (!root.contains(e.target as Node)) close();
+    if (!getRoot().contains(e.target as Node)) close();
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") close(true);
@@ -90,6 +213,19 @@ export function Dropdown(props: {
     window.removeEventListener("keydown", onKey);
   });
 
+  return { open, setOpen, activeIndex, setActiveIndex, selectedIndex, focusOption, close, choose };
+}
+
+export function Dropdown(props: DropdownProps) {
+  let root!: HTMLDivElement;
+  let trigger!: HTMLButtonElement;
+  const optionRefs: HTMLButtonElement[] = [];
+  const listboxId = createUniqueId();
+  const { open, setOpen, activeIndex, setActiveIndex, selectedIndex, focusOption, close, choose } =
+    createDropdownController(props, () => root, () => trigger, optionRefs);
+  const selected = () => props.options.find((o) => o.value === props.value);
+  const currentLabel = () => selected()?.label ?? props.placeholder ?? "Select";
+
   return (
     <div
       ref={root}
@@ -101,44 +237,33 @@ export function Dropdown(props: {
         close();
       }}
     >
-      <button
-        ref={trigger}
-        class="pf-dropdown-trigger"
+      <DropdownTrigger
+        onRef={(element) => { trigger = element; }}
         disabled={props.disabled}
-        aria-haspopup="listbox"
-        aria-expanded={open()}
-        aria-controls={open() ? listboxId : undefined}
-        aria-label={props.title ? `${props.title}: ${currentLabel()}` : currentLabel()}
         title={props.title}
-        onClick={() => {
+        bracket={props.bracket}
+        triggerTrailing={props.triggerTrailing}
+        listboxId={listboxId}
+        open={open}
+        currentLabel={currentLabel}
+        selectedIcon={() => selected()?.icon}
+        onToggleOpen={() => {
           if (props.disabled) return;
           if (open()) return close();
           setActiveIndex(selectedIndex());
           setOpen(true);
         }}
-        onKeyDown={(event) => {
+        onArrowDown={() => {
           if (props.disabled || open()) return;
-          if (event.key === "ArrowDown") {
-            event.preventDefault();
-            setActiveIndex(selectedIndex());
-            setOpen(true);
-          } else if (event.key === "ArrowUp") {
-            event.preventDefault();
-            setActiveIndex(Math.max(0, props.options.length - 1));
-            setOpen(true);
-          }
+          setActiveIndex(selectedIndex());
+          setOpen(true);
         }}
-      >
-        <Show when={props.bracket !== false}>
-          <span class="pf-dropdown-bracket" aria-hidden="true" />
-        </Show>
-        <Show when={selected()?.icon}>
-          {(icon) => <span class="pf-dropdown-icon">{icon()()}</span>}
-        </Show>
-        <span class="pf-dropdown-trigger-label">{currentLabel()}</span>
-        {props.triggerTrailing}
-        <IconChevronDown size={12} class="pf-dropdown-chevron" />
-      </button>
+        onArrowUp={() => {
+          if (props.disabled || open()) return;
+          setActiveIndex(Math.max(0, props.options.length - 1));
+          setOpen(true);
+        }}
+      />
       <Show when={open()}>
         <div
           id={listboxId}
@@ -148,49 +273,18 @@ export function Dropdown(props: {
         >
           <For each={props.options}>
             {(o, index) => (
-              <button
-                ref={(element) => { optionRefs[index()] = element; }}
-                class="pf-dropdown-option"
-                classList={{ "pf-dropdown-option--on": o.value === props.value }}
-                role="option"
-                tabIndex={index() === activeIndex() ? 0 : -1}
-                aria-selected={o.value === props.value}
+              <DropdownOptionRow
+                option={o}
+                index={index()}
+                selected={o.value === props.value}
+                active={index() === activeIndex()}
+                optionsLength={props.options.length}
+                onRef={(element) => { optionRefs[index()] = element; }}
                 onFocus={() => setActiveIndex(index())}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    focusOption(index() + 1);
-                  } else if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    focusOption(index() - 1);
-                  } else if (event.key === "Home") {
-                    event.preventDefault();
-                    focusOption(0);
-                  } else if (event.key === "End") {
-                    event.preventDefault();
-                    focusOption(props.options.length - 1);
-                  } else if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    choose(index());
-                  } else if (event.key === "Escape") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    close(true);
-                  }
-                }}
-                onClick={() => choose(index())}
-              >
-                <span class="pf-dropdown-check" aria-hidden="true">
-                  <Show when={o.value === props.value}>
-                    <IconCheck size={11} />
-                  </Show>
-                </span>
-                <Show when={o.icon}>
-                  {(icon) => <span class="pf-dropdown-icon">{icon()()}</span>}
-                </Show>
-                <span class="pf-dropdown-option-label">{o.label}</span>
-                {o.trailing}
-              </button>
+                onChoose={() => choose(index())}
+                onFocusOption={focusOption}
+                onClose={close}
+              />
             )}
           </For>
         </div>

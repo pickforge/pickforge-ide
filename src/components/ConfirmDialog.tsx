@@ -3,10 +3,42 @@ import { Portal } from "solid-js/web";
 import { MonoEyebrow } from "./ui";
 import "./ConfirmDialog.css";
 
+/** Keeps Tab/Shift+Tab cycling within `panelEl`'s focusable controls instead
+ * of letting focus fall through to the page behind the dialog. While busy
+ * every control is disabled, so focus pins to the panel itself. */
+function trapDialogFocus(panelEl: HTMLDivElement | undefined, e: KeyboardEvent) {
+  if (e.key !== "Tab" || !panelEl) return;
+  const focusables = Array.from(
+    panelEl.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  );
+  if (focusables.length === 0) {
+    e.preventDefault();
+    panelEl.focus();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement;
+  // Focus drifted off a just-disabled control — pull it back into the set.
+  if (!(active instanceof HTMLElement) || !focusables.includes(active)) {
+    e.preventDefault();
+    first.focus();
+    return;
+  }
+  if (e.shiftKey && active === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 /** A centered confirmation modal following the operator dock's Portal + backdrop
  *  pattern. The parent owns the body and confirm-gating; this handles the
  *  overlay, focus, Escape, and the cancel/confirm controls. */
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
 export function ConfirmDialog(props: {
   open: boolean;
   eyebrow: string;
@@ -42,38 +74,6 @@ export function ConfirmDialog(props: {
     queueMicrotask(() => (cancelEl ?? panelEl)?.focus());
   });
 
-  const trapFocus = (e: KeyboardEvent) => {
-    if (e.key !== "Tab" || !panelEl) return;
-    const focusables = Array.from(
-      panelEl.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    );
-    // While busy every control is disabled — keep focus pinned to the dialog
-    // itself rather than letting Tab fall through to the page behind it.
-    if (focusables.length === 0) {
-      e.preventDefault();
-      panelEl.focus();
-      return;
-    }
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    const active = document.activeElement;
-    // Focus drifted off a just-disabled control — pull it back into the set.
-    if (!(active instanceof HTMLElement) || !focusables.includes(active)) {
-      e.preventDefault();
-      first.focus();
-      return;
-    }
-    if (e.shiftKey && active === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
   return (
     <Show when={props.open}>
       <Portal>
@@ -91,7 +91,7 @@ export function ConfirmDialog(props: {
             aria-label={props.title}
             tabindex="-1"
             onPointerDown={(e) => e.stopPropagation()}
-            onKeyDown={trapFocus}
+            onKeyDown={(e) => trapDialogFocus(panelEl, e)}
           >
             <MonoEyebrow text={props.eyebrow} tick={props.destructive} />
             <h2 class="pf-confirm-title">{props.title}</h2>

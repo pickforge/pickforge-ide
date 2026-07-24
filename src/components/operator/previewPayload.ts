@@ -1,6 +1,11 @@
 import type { OperatorIntent } from "../../lib/operatorIntent";
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+// OperatorAction's discriminated union has 16 "action" variants and every case body is already a
+// short, non-branching push sequence — there is no internal complexity left to extract. A switch
+// is the standard exhaustiveness-checked way to dispatch a TS discriminated union (ESLint counts
+// every case uniformly regardless of body size); a lookup-table dispatch would trade
+// compiler-enforced exhaustiveness for a runtime lookup plus an unsafe cast for no real gain here.
+// eslint-disable-next-line complexity -- TODO(#263): see comment above.
 export function previewPayloadLines(intent: OperatorIntent): string[] {
   const lines: string[] = [];
   if (intent.projectRef) lines.push(`project: ${intent.projectRef}`);

@@ -27,7 +27,11 @@
 //! shape [`diff_stat::merge_changed_files`] already commits to (each call
 //! sets exactly one of `staged`/`unstaged`), and matches the issue's own
 //! acceptance criterion that "staged + unstaged changes on the same file" is
-//! a state to render, not collapse.
+//! a state to render, not collapse. `merge_changed_files` leaves the OTHER
+//! flag `None` (PR1's "not meaningful for this source" case); this module
+//! tightens that to `Some(false)` on assembly, since for a git-live row the
+//! opposite flag IS a known fact, not an inapplicable concept — see
+//! `ChangedFile::staged`'s doc comment.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -70,7 +74,11 @@ fn git_capped(root: &str, args: &[&str]) -> (Vec<u8>, bool) {
 /// rather than an empty change-set.
 pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
     let top = super::toplevel(root)?;
-    let status = super::status(&top);
+    // Bounded the same way every other invocation here is (P2-1): an
+    // `--untracked-files=all` tree can otherwise materialize unbounded
+    // stdout. `crate::git::status`'s own callers are untouched — this calls
+    // the dedicated capped variant instead.
+    let (status, status_truncated) = super::status_capped(&top, MAX_DIFF_STAT_BYTES);
     if !status.is_repo {
         return None;
     }
@@ -78,22 +86,50 @@ pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
     // `--find-renames` is explicit rather than relying on the user's
     // `diff.renames` git config, so rename detection behaves the same on
     // every install regardless of that config's value.
-    let (staged_name_raw, _) =
+    let (staged_name_raw, staged_name_cap_truncated) =
         git_capped(&top, &["diff", "--cached", "--find-renames", "--name-status", "-z"]);
-    let (staged_num_raw, _) =
+    let (staged_num_raw, staged_num_cap_truncated) =
         git_capped(&top, &["diff", "--cached", "--find-renames", "--numstat", "-z"]);
-    let (unstaged_name_raw, _) =
+    let (unstaged_name_raw, unstaged_name_cap_truncated) =
         git_capped(&top, &["diff", "--find-renames", "--name-status", "-z"]);
-    let (unstaged_num_raw, _) =
+    let (unstaged_num_raw, unstaged_num_cap_truncated) =
         git_capped(&top, &["diff", "--find-renames", "--numstat", "-z"]);
 
-    let staged_name = diff_stat::parse_name_status_z(&staged_name_raw).entries;
-    let staged_num = diff_stat::parse_numstat_z(&staged_num_raw).entries;
-    let unstaged_name = diff_stat::parse_name_status_z(&unstaged_name_raw).entries;
-    let unstaged_num = diff_stat::parse_numstat_z(&unstaged_num_raw).entries;
+    let staged_name_parse = diff_stat::parse_name_status_z(&staged_name_raw);
+    let staged_num_parse = diff_stat::parse_numstat_z(&staged_num_raw);
+    let unstaged_name_parse = diff_stat::parse_name_status_z(&unstaged_name_raw);
+    let unstaged_num_parse = diff_stat::parse_numstat_z(&unstaged_num_raw);
 
-    let mut files = diff_stat::merge_changed_files(&staged_name, &staged_num, true);
-    files.extend(diff_stat::merge_changed_files(&unstaged_name, &unstaged_num, false));
+    // (P2-2) An over-cap listing — either the process-capture byte cap or
+    // the parsers' own entry-count/byte cap tripping — must never silently
+    // return a prefix with no signal; OR every truncation source into the
+    // change-set's honest `truncated` flag.
+    let truncated = status_truncated
+        || staged_name_cap_truncated
+        || staged_num_cap_truncated
+        || unstaged_name_cap_truncated
+        || unstaged_num_cap_truncated
+        || staged_name_parse.truncated
+        || staged_num_parse.truncated
+        || unstaged_name_parse.truncated
+        || unstaged_num_parse.truncated;
+
+    let mut files =
+        diff_stat::merge_changed_files(&staged_name_parse.entries, &staged_num_parse.entries, true);
+    // A row from the staged merge is never itself an unstaged row — that's a
+    // known `false`, not an inapplicable concept, for a git-live source (P3).
+    for file in files.iter_mut() {
+        file.unstaged = Some(false);
+    }
+    let mut unstaged_files = diff_stat::merge_changed_files(
+        &unstaged_name_parse.entries,
+        &unstaged_num_parse.entries,
+        false,
+    );
+    for file in unstaged_files.iter_mut() {
+        file.staged = Some(false);
+    }
+    files.extend(unstaged_files);
 
     for entry in status.files.iter().filter(|f| f.untracked) {
         files.push(ChangedFile {
@@ -138,8 +174,10 @@ pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
             path: entry.path.clone(),
             old_path: None,
             status: ChangeFileStatus::Conflict,
-            staged: None,
-            unstaged: None,
+            // Absent from both the staged and unstaged diff merges above —
+            // known `false` on both counts (P3), not "not applicable".
+            staged: Some(false),
+            unstaged: Some(false),
             additions: None,
             deletions: None,
             binary: false,
@@ -162,6 +200,7 @@ pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
         // #231 PR2 TS side) tracks ITS OWN freshness against this capture,
         // independent of this field.
         stale: false,
+        truncated,
         files,
         totals,
     })
@@ -169,9 +208,14 @@ pub fn working_tree_change_set(root: &str) -> Option<ChangeSet> {
 
 /// Resolves a repo-relative `candidate` against an already-canonical
 /// `repo_root`, rejecting anything unsafe: an absolute path, any `..`
-/// component, or — once joined — a path whose deepest EXISTING ancestor
-/// canonicalizes outside `repo_root` (a symlinked escape). Existence is
-/// checked ancestor-by-ancestor rather than requiring the leaf itself to
+/// component, a Windows drive prefix or root component (`C:foo` is
+/// drive-RELATIVE and so isn't caught by `is_absolute()`; `\foo` is
+/// root-relative to the current drive and isn't caught by it either —
+/// defense in depth, harmless on non-Windows where `Component::Prefix`
+/// never occurs), or — once joined — a path whose deepest EXISTING ancestor
+/// canonicalizes outside `repo_root` (a symlinked escape, including one
+/// several directories up from a leaf that doesn't itself exist). Existence
+/// is checked ancestor-by-ancestor rather than requiring the leaf itself to
 /// exist, so a path `git status` reports as deleted (which no longer exists
 /// on disk) still resolves correctly for a `git diff -- path` invocation.
 fn resolve_repo_relative(repo_root: &Path, candidate: &str) -> Result<PathBuf, String> {
@@ -182,11 +226,13 @@ fn resolve_repo_relative(repo_root: &Path, candidate: &str) -> Result<PathBuf, S
     if candidate_path.is_absolute() {
         return Err("path must be repo-relative".to_string());
     }
-    if candidate_path
-        .components()
-        .any(|c| matches!(c, Component::ParentDir))
-    {
-        return Err("path must not contain parent-directory traversal".to_string());
+    if candidate_path.components().any(|c| {
+        matches!(c, Component::ParentDir | Component::Prefix(_) | Component::RootDir)
+    }) {
+        return Err(
+            "path must not contain parent-directory traversal or a drive/root component"
+                .to_string(),
+        );
     }
 
     let joined = repo_root.join(candidate_path);
@@ -326,10 +372,13 @@ mod tests {
         assert!(!cs.stale);
         let file = cs.files.iter().find(|f| f.path == "a.txt").expect("a.txt row");
         assert_eq!(file.status, ChangeFileStatus::Modify);
-        assert_eq!(file.staged, None);
+        // Known false, not "not applicable" — staged/unstaged is always
+        // meaningful for a git-live row (P3).
+        assert_eq!(file.staged, Some(false));
         assert_eq!(file.unstaged, Some(true));
         assert_eq!(file.additions, Some(1));
         assert_eq!(file.deletions, Some(0));
+        assert!(!cs.truncated);
     }
 
     #[test]
@@ -344,8 +393,10 @@ mod tests {
         let cs = working_tree_change_set(repo.to_str().unwrap()).expect("repo");
         let rows: Vec<_> = cs.files.iter().filter(|f| f.path == "a.txt").collect();
         assert_eq!(rows.len(), 2, "staged and unstaged changes on one file are two rows");
-        assert!(rows.iter().any(|f| f.staged == Some(true) && f.unstaged.is_none()));
-        assert!(rows.iter().any(|f| f.unstaged == Some(true) && f.staged.is_none()));
+        // Each row's OWN opposite flag is a known `false`, not `None` — a
+        // staged row is definitively not itself an unstaged row (P3).
+        assert!(rows.iter().any(|f| f.staged == Some(true) && f.unstaged == Some(false)));
+        assert!(rows.iter().any(|f| f.unstaged == Some(true) && f.staged == Some(false)));
     }
 
     #[test]
@@ -518,5 +569,104 @@ mod tests {
     fn resolve_repo_relative_rejects_empty_path() {
         let repo = init_repo("resolve-empty");
         assert!(resolve_repo_relative(&repo, "").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_diff_rejects_a_deleted_leaf_under_a_symlinked_ancestor_dir() {
+        use std::os::unix::fs::symlink;
+        let repo = init_repo("diff-symlink-deleted-leaf");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        let outside = std::env::temp_dir()
+            .join(format!("pf-workingtree-outside-deleted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&outside).unwrap();
+        let link = repo.join("escape2");
+        let _ = std::fs::remove_file(&link);
+        symlink(&outside, &link).unwrap();
+
+        // "gone.txt" never existed under `outside` — the LEAF doesn't exist
+        // (same shape as a deleted file), but its ancestor directory is a
+        // symlink resolving outside the repo. The deepest-existing-ancestor
+        // walk must still find that symlinked dir (which DOES exist) and
+        // reject on its resolved, out-of-root target.
+        let err = file_diff(repo.to_str().unwrap(), "escape2/gone.txt", false).unwrap_err();
+        assert!(err.contains("escapes"));
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn file_diff_rejects_a_candidate_that_resolves_to_the_repo_root_itself() {
+        let repo = init_repo("diff-dot");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        // "." is repo-relative and contains no `..`/prefix/root component, so
+        // it passes the component check, but it resolves to the repo root
+        // itself — an empty repo-relative string once the root prefix is
+        // stripped, which is not a file `git diff -- <path>` can target.
+        let err = file_diff(repo.to_str().unwrap(), ".", false).unwrap_err();
+        assert!(err.contains("empty"));
+    }
+
+    #[test]
+    fn file_diff_fails_closed_on_a_nul_byte_in_the_path() {
+        let repo = init_repo("diff-nul-byte");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+        let secret_outside = std::env::temp_dir()
+            .join(format!("pf-workingtree-nul-secret-{}.txt", std::process::id()));
+        std::fs::write(&secret_outside, "TOP SECRET CONTENT").unwrap();
+
+        // A NUL byte can never appear in a real OS path; `git`/the OS will
+        // refuse it. The primitive must not panic and must never leak
+        // content from outside the repo — either an explicit rejection, or
+        // a diff whose text (if any) never contains the outside secret.
+        let candidate = "a.txt\0../../../../../../etc/passwd";
+        let result = file_diff(repo.to_str().unwrap(), candidate, false);
+        if let Ok(diff) = result {
+            let text = diff.diff.unwrap_or_default();
+            assert!(
+                !text.contains("TOP SECRET"),
+                "a NUL-byte path must never leak content from outside the repo"
+            );
+        }
+        let _ = std::fs::remove_file(&secret_outside);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn file_diff_rejects_a_drive_relative_path_component() {
+        // "C:a.txt" is drive-RELATIVE (relative to the current directory on
+        // the C: drive), not absolute — `Path::is_absolute()` alone would
+        // let it through. The explicit `Component::Prefix` rejection is the
+        // only thing catching this shape.
+        let repo = init_repo("diff-drive-relative");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "init");
+
+        let err = file_diff(repo.to_str().unwrap(), "C:a.txt", false).unwrap_err();
+        assert!(err.contains("drive") || err.contains("root"));
+    }
+
+    #[test]
+    fn working_tree_change_set_marks_truncated_when_the_entry_count_bound_is_exceeded() {
+        let repo = init_repo("truncated-entries");
+        let count = super::diff_stat::MAX_DIFF_STAT_ENTRIES + 5;
+        for i in 0..count {
+            std::fs::write(repo.join(format!("f{i}.txt")), "a\n").unwrap();
+        }
+        commit_all(&repo, "init many files");
+        for i in 0..count {
+            std::fs::write(repo.join(format!("f{i}.txt")), "a\nb\n").unwrap();
+        }
+
+        let cs = working_tree_change_set(repo.to_str().unwrap()).expect("repo");
+        assert!(
+            cs.truncated,
+            "an over-cap listing must surface truncated=true, never a silent prefix"
+        );
     }
 }

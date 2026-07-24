@@ -210,7 +210,41 @@ pub fn status(root: &str) -> GitStatus {
     // rename/copy entries are followed by their original path as a second token.
     let raw = git_ok(&top, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         .unwrap_or_default();
+    GitStatus { is_repo: true, branch, files: parse_porcelain_status_z(&raw) }
+}
 
+/// Same porcelain status invocation as [`status`], but with stdout bounded
+/// to `max_bytes` (`run_timeout_capped` instead of the unbounded
+/// `git_ok`/`run_timeout` every other caller here uses) — an
+/// `--untracked-files=all` tree can otherwise materialize unbounded output.
+/// Used only by `crate::git::working_tree` (#231 PR2), which already bounds
+/// every other git invocation it makes the same way; [`status`]'s other
+/// callers are unaffected. Returns the parsed status plus whether stdout was
+/// truncated, the same shape `run_timeout_capped` itself reports.
+pub(crate) fn status_capped(root: &str, max_bytes: usize) -> (GitStatus, bool) {
+    let top = match toplevel(root) {
+        Some(t) => t,
+        None => return (GitStatus { is_repo: false, branch: None, files: Vec::new() }, false),
+    };
+    let branch = current_branch(&top);
+    let (raw, truncated) = match crate::process::run_timeout_capped(
+        "git",
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        Some(&top),
+        None,
+        GIT_TIMEOUT,
+        max_bytes,
+    ) {
+        Ok((outcome, truncation)) => (outcome.stdout_utf8().into_owned(), truncation.stdout),
+        Err(_) => (String::new(), false),
+    };
+    (
+        GitStatus { is_repo: true, branch, files: parse_porcelain_status_z(&raw) },
+        truncated,
+    )
+}
+
+fn parse_porcelain_status_z(raw: &str) -> Vec<GitFileStatus> {
     let mut files = Vec::new();
     let mut tokens = raw.split('\0');
     while let Some(entry) = tokens.next() {
@@ -234,7 +268,7 @@ pub fn status(root: &str) -> GitStatus {
             untracked,
         });
     }
-    GitStatus { is_repo: true, branch, files }
+    files
 }
 
 fn is_tracked(root: &str, path: &str) -> bool {

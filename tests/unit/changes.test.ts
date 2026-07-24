@@ -19,6 +19,7 @@ const TURN_CHANGE_SET: ChangeSet = {
   repoRoot: "/repo",
   capturedAt: 1_000,
   stale: false,
+  truncated: false,
   files: [
     {
       path: "src/lib.rs",
@@ -49,12 +50,13 @@ const WORKING_TREE_READY: WorkingTreeChanges = {
     repoRoot: "/repo",
     capturedAt: 2_000,
     stale: false,
+    truncated: false,
     files: [
       {
         path: "a.txt",
         oldPath: null,
         status: "modify",
-        staged: null,
+        staged: false,
         unstaged: true,
         additions: 1,
         deletions: 0,

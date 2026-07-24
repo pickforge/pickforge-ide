@@ -56,11 +56,13 @@ const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
   repoRoot: projectRoot,
   capturedAt: now,
   stale: false,
+  truncated: false,
   files: [
     {
       path: "lib/login.dart",
       oldPath: null,
       status: "modify",
+      // Provider/turn source: staged/unstaged doesn't apply.
       staged: null,
       unstaged: null,
       additions: 4,
@@ -84,12 +86,14 @@ const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges =
     repoRoot: projectRoot,
     capturedAt: now,
     stale: false,
+    truncated: false,
     files: [
       {
         path: "lib/login.dart",
         oldPath: null,
         status: "modify",
-        staged: null,
+        // Git-live source: staged/unstaged is always known, never null.
+        staged: false,
         unstaged: true,
         additions: 4,
         deletions: 1,
@@ -114,7 +118,7 @@ const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges =
         oldPath: null,
         status: "add",
         staged: true,
-        unstaged: null,
+        unstaged: false,
         additions: 12,
         deletions: 0,
         binary: false,

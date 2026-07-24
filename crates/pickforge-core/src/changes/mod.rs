@@ -43,10 +43,14 @@ pub struct ChangedFile {
     pub path: String,
     pub old_path: Option<String>,
     pub status: ChangeFileStatus,
-    /// `None` when staged/unstaged is not a meaningful concept for this
-    /// change-set's source (e.g. a provider turn snapshot); `Some(true)`
-    /// when this file has that kind of change, `Some(false)` when the
-    /// producing Git call is known to have found none of that kind.
+    /// `None` ONLY when staged/unstaged is not a meaningful concept for
+    /// this change-set's source — a provider/turn snapshot, which has no
+    /// index to speak of. For a git-live (working-tree) row the concept
+    /// always applies and is always `Some`: `Some(true)` when this row has
+    /// that kind of change, `Some(false)` when the producing Git call (or,
+    /// for a synthesized row, the absence of one) is known to have found
+    /// none of that kind — never left `None` to mean "unknown" for a
+    /// git-live row.
     pub staged: Option<bool>,
     pub unstaged: Option<bool>,
     pub additions: Option<u64>,
@@ -116,6 +120,16 @@ pub struct ChangeSet {
     /// snapshot is known out of date relative to the live Git state; PR2
     /// owns computing that.
     pub stale: bool,
+    /// `true` when `files` is a bounded PREFIX of the true changed-file set
+    /// — a git listing invocation (numstat/name-status/porcelain status)
+    /// hit its entry-count or byte bound (#231 PR2 contract extension: the
+    /// issue's "large/truncated diffs with an honest limit message" rule
+    /// applies at the listing level, not only per-file). Always `false` for
+    /// turn scope — folding a chat's persisted timeline has no such
+    /// listing-level cap. Additive field; existing constructors that
+    /// predate it are `false` by construction (nothing to be honest about
+    /// yet).
+    pub truncated: bool,
     pub files: Vec<ChangedFile>,
     pub totals: ChangeTotals,
 }

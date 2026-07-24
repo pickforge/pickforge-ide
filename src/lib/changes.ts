@@ -24,11 +24,13 @@ export interface ChangedFile {
   path: string;
   oldPath: string | null;
   status: ChangeFileStatus;
-  /** `null` when staged/unstaged isn't meaningful for this change-set's
-   *  source (a turn snapshot); `true`/`false` when the producing Git call
-   *  knows one way or the other. A file with BOTH a staged and an unstaged
-   *  change appears as two separate rows (one per call), not one row with
-   *  both flags set. */
+  /** `null` ONLY when staged/unstaged isn't meaningful for this change-set's
+   *  source — a turn/provider snapshot, which has no index. For a git-live
+   *  (working-tree) row the concept always applies and is always non-null:
+   *  `true` when this row has that kind of change, `false` when it's known
+   *  not to. A file with BOTH a staged and an unstaged change appears as two
+   *  separate rows (one per call), each with its own flags — never one row
+   *  with both `true`. */
   staged: boolean | null;
   unstaged: boolean | null;
   additions: number | null;
@@ -60,6 +62,11 @@ export interface ChangeSet {
    *  cached-copy freshness separately (see `stores/changes.ts`), not via
    *  this field. */
   stale: boolean;
+  /** `true` when `files` is a bounded PREFIX of the true changed-file set —
+   *  a git listing invocation (numstat/name-status/porcelain status) hit its
+   *  entry-count or byte bound. Always `false` for turn scope (folding a
+   *  persisted timeline has no such listing-level cap). */
+  truncated: boolean;
   files: ChangedFile[];
   totals: ChangeTotals;
 }

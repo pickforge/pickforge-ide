@@ -202,6 +202,9 @@ impl TurnAccumulator {
             repo_root: String::new(),
             captured_at: self.captured_at,
             stale,
+            // Turn folding has no listing-level cap to hit (see
+            // `ChangeSet::truncated`'s doc comment).
+            truncated: false,
             files,
             totals,
         }

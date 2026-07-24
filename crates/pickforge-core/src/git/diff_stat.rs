@@ -27,8 +27,11 @@ use crate::changes::{ChangeFileStatus, ChangedFile};
 /// Hard cap on numstat/name-status records parsed from one git invocation. A
 /// pathological change (a rebase touching a vendored tree, a bad
 /// `.gitignore`) could otherwise make the parser walk unbounded memory; no
-/// single reviewable change-set needs more than this many rows.
-const MAX_DIFF_STAT_ENTRIES: usize = 20_000;
+/// single reviewable change-set needs more than this many rows. `pub(crate)`
+/// so `crate::git::working_tree`'s fixture test can build a real repo with
+/// exactly this many changed files to exercise `ChangeSet::truncated`
+/// end-to-end, rather than duplicating the number.
+pub(crate) const MAX_DIFF_STAT_ENTRIES: usize = 20_000;
 
 /// Hard cap on raw bytes scanned per invocation, ahead of the entry-count cap
 /// tripping (e.g. one absurdly long path). Bytes beyond this are never

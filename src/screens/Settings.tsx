@@ -1123,7 +1123,7 @@ export function SettingsScreen() {
                   aria-atomic="true"
                 >
                   {agentDiagnosticsLoading()
-                    ? "Checking OMP and Pi on the local PATH…"
+                    ? "Checking enabled connectors on the local PATH…"
                     : "Read-only local probes; extensions stay disabled during compatibility checks."}
                 </span>
               </div>

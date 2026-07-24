@@ -9,7 +9,7 @@ reset this file.
 - Pi native chat is now enabled by default (`piAgents` ship-time default flipped
   on). Evidence gate: Pi 0.81 RPC re-certification plus the in-app dogfood on
   macOS hardware — streamed turn, mid-stream cancel, and history-preserving
-  resume across an app restart (pickforge#270 Phase 0). Users can still opt out
+  resume across an app restart (pickforge#270 Phase 0). Dev builds can opt out
   from Settings → Feature Flags; OMP remains default-off pending its 16.5.0
   ACP contract work.
 - PickForge no longer silently creates its database in the launch directory

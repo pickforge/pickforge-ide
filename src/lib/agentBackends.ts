@@ -464,7 +464,7 @@ export const NATIVE_AGENT_BACKENDS = Object.freeze([CLAUDE_BACKEND, CODEX_BACKEN
  * (the original adapter contract) through 0.81 (empirically verified). */
 export function isCompatiblePiRpcVersion(version: string | null | undefined): boolean {
   if (!version) return false;
-  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?$/);
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
   if (!match) return false;
   const major = Number(match[1]);
   const minor = Number(match[2]);

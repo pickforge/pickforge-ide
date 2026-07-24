@@ -31,7 +31,6 @@ describe("flags", () => {
     const states = store.flagStates();
     expect(states.map((s) => s.key)).toEqual([
       "operator",
-      "piAgents",
       "ompAgents",
       "remoteProjects",
       "remoteProcessLeases",
@@ -40,12 +39,10 @@ describe("flags", () => {
       "studioUpdateDialog",
     ]);
     for (const state of states) {
-      const expected = state.key === "piAgents";
-      expect(state.defaultValue).toBe(expected);
-      expect(state.enabled).toBe(expected);
+      expect(state.defaultValue).toBe(false);
+      expect(state.enabled).toBe(false);
     }
     expect(store.flagEnabled("operator")).toBe(false);
-    expect(store.flagEnabled("piAgents")).toBe(true);
     expect(store.flagEnabled("ompAgents")).toBe(false);
     expect(store.flagEnabled("remoteProjects")).toBe(false);
     expect(store.flagEnabled("remoteProcessLeases")).toBe(false);

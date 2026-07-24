@@ -183,14 +183,11 @@ async function ompMcpServers(opts: AgentChatStartOptions): Promise<AgentMcpServe
 
 // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function agentChatStart(opts: AgentChatStartOptions): Promise<string> {
-  if (opts.provider === "pi" && !flagEnabled("piAgents")) {
-    throw new Error("Pi native chat is disabled by the piAgents rollout flag");
-  }
   const provider = normalizeAgentProvider(opts.provider);
   const engine = opts.engine ?? "v2";
   if (provider === "omp" && flagEnabled("ompAgents")) {
     await ensureOmpNativeCompatibility();
-  } else if (provider === "pi" && flagEnabled("piAgents")) {
+  } else if (provider === "pi") {
     await ensurePiNativeCompatibility();
   }
   if (
@@ -203,7 +200,7 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
       provider === "omp" && !ompNativeChatAvailable()
         ? "OMP native chat requires the ompAgents flag and compatible OMP >=17.1.1 and <18.0.0 probe"
         : provider === "pi" && !piNativeChatAvailable()
-          ? "Pi native chat requires the piAgents flag and compatible Pi >=0.79.10 and <0.82.0 probe"
+          ? "Pi native chat requires compatible Pi >=0.79.10 and <0.82.0"
           : (nativeChatUnavailableReason(provider ?? opts.provider, engine)
               ?? "Agent backend does not support native chat"),
     );

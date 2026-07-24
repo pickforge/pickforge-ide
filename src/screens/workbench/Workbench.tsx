@@ -86,12 +86,11 @@ export function WorkbenchScreen() {
   const [laneFocus, setLaneFocus] = createSignal<{ chatId: string; at: number } | null>(null);
   const [pendingOrchestraCleanup, setPendingOrchestraCleanup] = createSignal<MountedHost[]>([]);
 
-  // Trigger the exact-version probe reactively when the rollout flag turns on.
-  // The availability reason itself comes from the shared reactive registry used
-  // by every native-provider creation surface.
+  // Trigger exact-version probes reactively. The availability reason itself
+  // comes from the shared reactive registry used by every creation surface.
   createEffect(() => {
     if (flagEnabled("ompAgents")) void untrack(() => ensureOmpNativeCompatibility());
-    if (flagEnabled("piAgents")) void untrack(() => ensurePiNativeCompatibility());
+    void untrack(() => ensurePiNativeCompatibility());
   });
 
   // Fire a quick-launch item into the active chat and run it. An AGENT launch

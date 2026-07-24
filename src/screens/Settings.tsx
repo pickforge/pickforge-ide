@@ -693,9 +693,7 @@ export function SettingsScreen() {
     }
   };
   const enabledAgentDiagnosticIds = () =>
-    AGENT_DIAGNOSTIC_IDS.filter((agentId) =>
-      agentId === "omp" ? flagEnabled("ompAgents") : flagEnabled("piAgents"),
-    );
+    AGENT_DIAGNOSTIC_IDS.filter((agentId) => agentId === "pi" || flagEnabled("ompAgents"));
   const reloadAgentDiagnostics = async () => {
     const ids = enabledAgentDiagnosticIds();
     if (ids.length === 0 || agentDiagnosticsLoading()) return;
@@ -1141,8 +1139,7 @@ export function SettingsScreen() {
             )}
           </For>
 
-          <Show when={flagEnabled("ompAgents") || flagEnabled("piAgents")}>
-            <div class="pf-agent-diagnostics-head">
+          <div class="pf-agent-diagnostics-head">
               <div class="pf-agent-diagnostics-copy">
                 <MonoEyebrow text="Connector diagnostics" />
                 <span
@@ -1313,7 +1310,6 @@ export function SettingsScreen() {
                 }}
               </For>
             </div>
-          </Show>
         </AgentModelsSettingsSection>
 
         <Show when={flagEnabled("operator")}>

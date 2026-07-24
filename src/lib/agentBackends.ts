@@ -473,13 +473,12 @@ export function isCompatiblePiRpcVersion(version: string | null | undefined): bo
   return minor > 79 || patch >= 10;
 }
 
-/** Pi is selectable only after the default-off rollout flag and the installed
- * version gate both pass. Claude/Codex remain unchanged. */
+/** Pi is selectable only after the installed version gate passes.
+ * Claude/Codex remain unchanged. */
 export function selectableNativeAgentBackends(
-  piEnabled: boolean,
   piVersion: string | null | undefined,
 ): readonly AgentBackendDescriptor[] {
-  return piEnabled && isCompatiblePiRpcVersion(piVersion)
+  return isCompatiblePiRpcVersion(piVersion)
     ? Object.freeze([...NATIVE_AGENT_BACKENDS, PI_BACKEND])
     : NATIVE_AGENT_BACKENDS;
 }
@@ -488,13 +487,13 @@ export function isAgentBackendId(value: string): value is AgentBackendId {
   return AGENT_BACKEND_IDS.has(value);
 }
 
-/** Flag-gated native-provider predicate. OMP's exact probe compatibility is
- * additionally enforced by `nativeAgentProfiles`/`nativeChatModel`. */
+/** Native-provider predicate. OMP's exact probe compatibility is additionally
+ * enforced by `nativeAgentProfiles`/`nativeChatModel`. */
 export function isNativeAgentProvider(value: string): value is AgentProvider {
   return value === "claudeCode"
     || value === "codex"
-    || (value === "omp" && flagEnabled("ompAgents"))
-    || (value === "pi" && flagEnabled("piAgents"));
+    || value === "pi"
+    || (value === "omp" && flagEnabled("ompAgents"));
 }
 
 export function normalizeAgentProvider(value: string): AgentProvider | null {

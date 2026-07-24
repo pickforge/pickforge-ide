@@ -31,30 +31,30 @@ beforeEach(() => {
   memory.clear();
 });
 
-describe("OMP/Pi rollout gating and commands", () => {
-  it("keeps profiles, commands, and quick launch unchanged while the flag is off", async () => {
-    const { flags, models, quickLaunch } = await loadModules();
-    // piAgents ships default-on; this test pins the explicit opt-out state.
-    flags.setFlagOverride("piAgents", false);
+describe("OMP rollout gating and Pi commands", () => {
+  it("keeps Pi unconditionally available while OMP is off", async () => {
+    const { models, quickLaunch } = await loadModules();
 
-    expect(models.agentProfiles()).toEqual(models.AGENTS);
+    expect(models.agentProfiles().map((agent) => agent.id)).toEqual([
+      ...models.AGENTS.map((agent) => agent.id),
+      "pi",
+    ]);
     expect(models.launchCommand("claudeCode")).toBe("claude --model claude-haiku-4-5 ");
     expect(models.launchCommand("codex")).toBe("codex --model gpt-5.3-codex-spark ");
     expect(models.launchCommand("omp")).toBe("");
-    expect(models.launchBinary("pi")).toBeNull();
+    expect(models.launchBinary("pi")).toBe("pi");
     expect(quickLaunch.quickLaunchItems().map((item) => item.id)).toEqual([
       "agent-claude",
       "agent-codex",
       "tool-flutter-doctor",
       "tool-adb-devices",
     ]);
-    expect(quickLaunch.optionalQuickLaunchChoices()).toEqual([]);
+    expect(quickLaunch.optionalQuickLaunchChoices().map((item) => item.agentId)).toEqual(["pi"]);
   });
 
   it("uses supported terminal flags without implying deferred MCP wiring", async () => {
     const { flags, models } = await loadModules();
     flags.setFlagOverride("ompAgents", true);
-    flags.setFlagOverride("piAgents", true);
 
     expect(models.agentProfiles().slice(-2).map((agent) => ({
       id: agent.id,
@@ -193,7 +193,6 @@ describe("OMP/Pi rollout gating and commands", () => {
   it("offers optional chips without changing defaults or duplicating an agent", async () => {
     const { flags, quickLaunch } = await loadModules();
     flags.setFlagOverride("ompAgents", true);
-    flags.setFlagOverride("piAgents", true);
 
     expect(quickLaunch.optionalQuickLaunchChoices().map((item) => item.agentId)).toEqual([
       "omp",
@@ -219,7 +218,6 @@ describe("OMP/Pi rollout gating and commands", () => {
   it("keeps UI profile labels aligned with the backend registry", async () => {
     const { flags, models, backends } = await loadModules();
     flags.setFlagOverride("ompAgents", true);
-    flags.setFlagOverride("piAgents", true);
 
     for (const descriptor of Object.values(backends.AGENT_BACKENDS)) {
       expect(models.agentProfiles().find((profile) => profile.id === descriptor.id)?.label)
@@ -245,8 +243,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
   });
 
   it("attaches Pi probe models to the native picker and preserves provider/model selection", async () => {
-    const { flags, models } = await loadModules();
-    flags.setFlagOverride("piAgents", true);
+    const { models } = await loadModules();
     expect(models.isPiNativeCompatibilityPending()).toBe(true);
     models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
       installed: true,
@@ -276,8 +273,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
   });
 
   it("rejects a bare Claude/Codex catalog id bleeding into Pi's model slot (#272)", async () => {
-    const { flags, models } = await loadModules();
-    flags.setFlagOverride("piAgents", true);
+    const { models } = await loadModules();
     models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
       installed: true,
       versionOutput: "pi 0.79.10",
@@ -301,8 +297,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
   });
 
   it("gives an agent's own catalog membership priority over foreign-id rejection", async () => {
-    const { flags, models } = await loadModules();
-    flags.setFlagOverride("piAgents", true);
+    const { models } = await loadModules();
     models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
       installed: true,
       versionOutput: "pi 0.79.10",

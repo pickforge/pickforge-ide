@@ -590,6 +590,9 @@ describe("retired model migration", () => {
     );
     const { models } = await loadModules();
     expect(models.loadAgentModels().claudeCode).toBe("claude-opus-5");
+  });
+});
+
 describe("Codex/Claude auth-presence diagnostics mapping", () => {
   it("reports loading and probe-failure states before any probe result exists", async () => {
     const { models } = await loadModules();

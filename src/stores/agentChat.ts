@@ -139,6 +139,12 @@ const pendingSetModelByChat = new Map<string, { promise: Promise<void>; sequence
 const setModelRequestSeqByChat = new Map<string, number>();
 // Bumped by disposeAgentChat to invalidate in-flight ensures for a chat.
 const ensureGenerations = new Map<string, number>();
+// Bumped on every explicit user model pick (setAgentChatModel), including a
+// re-pick of the same value — a plain `model === safeModel` check cannot
+// tell "untouched" from "user re-picked the placeholder value" apart. The
+// resumed-model DB lookup captures this before awaiting and skips its write
+// if it changed underneath it.
+const modelTouchByChat = new Map<string, number>();
 const pendingProviderTitleByChat = new Map<string, string>();
 // Successful, visible user turns only. Timeline messages include failed turns,
 // so title cadence must use this completion ledger rather than recounting them.
@@ -1103,9 +1109,10 @@ export async function ensureAgentChat(
   promise = (async () => {
     try {
       if (created) {
+        const touch = modelTouchByChat.get(chatId) ?? 0;
         const resumedModel = await resolveResumedModel(chatId, provider, safeModel);
         if (stale()) return;
-        if (resumedModel !== safeModel && chats[chatId].model === safeModel) {
+        if (resumedModel !== safeModel && (modelTouchByChat.get(chatId) ?? 0) === touch) {
           setChats(chatId, { model: resumedModel });
         }
       }
@@ -1227,9 +1234,10 @@ export async function hydrateAgentChatHistory(
   promise = (async () => {
     try {
       if (created) {
+        const touch = modelTouchByChat.get(chatId) ?? 0;
         const resumedModel = await resolveResumedModel(chatId, provider, safeModel);
         if (stale()) return;
-        if (resumedModel !== safeModel && chats[chatId].model === safeModel) {
+        if (resumedModel !== safeModel && (modelTouchByChat.get(chatId) ?? 0) === touch) {
           setChats(chatId, { model: resumedModel });
         }
       }
@@ -1258,6 +1266,7 @@ export async function hydrateAgentChatHistory(
 export function setAgentChatModel(chatId: string, model: string | null) {
   const chat = chats[chatId];
   if (!chat) return;
+  modelTouchByChat.set(chatId, (modelTouchByChat.get(chatId) ?? 0) + 1);
   const safeModel = nativeChatModel(chat.provider, model);
   setChats(chatId, { model: safeModel });
   // Session-state model backends need an explicit update; turn-payload
@@ -1614,6 +1623,7 @@ export async function disposeAgentChat(chatId: string): Promise<void> {
   pendingSetModelByChat.delete(chatId);
   pendingSetModeByChat.delete(chatId);
   setModelRequestSeqByChat.delete(chatId);
+  modelTouchByChat.delete(chatId);
   dropPendingDeltas(chatId);
   if (chats[chatId]) setChats(produce((all) => { delete all[chatId]; }));
   await dispose;

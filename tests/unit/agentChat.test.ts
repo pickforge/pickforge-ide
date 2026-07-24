@@ -1089,6 +1089,41 @@ describe("agentChat history", () => {
     expect(agentChat(chatId)?.contextUsed).toBe(1_000);
     expect(agentChat(chatId)?.contextWindow).toBe(100_000);
   });
+
+  it("folds a persisted usage row's model into chat.model during history replay (#272)", async () => {
+    flags.piAgents = true;
+    const history = historyFromEvents([
+      {
+        kind: "usage",
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 5,
+        costUsd: 0.01,
+        model: "anthropic/claude-sonnet-4-6",
+      },
+    ]);
+
+    // No model was passed at start, and no "sessionUpdated" event exists in
+    // this history — the persisted usage row's model is the only per-chat
+    // record of what actually served the turn.
+    const { chatId } = await startChat(history, null, "pi");
+
+    expect(agentChat(chatId)?.model).toBe("anthropic/claude-sonnet-4-6");
+  });
+
+  it("leaves chat.model untouched when a live usage event omits model", async () => {
+    const { chatId, emit } = await startChat([], "gpt-5.5", "codex");
+
+    emit({
+      kind: "usage",
+      inputTokens: 10,
+      cachedInputTokens: 0,
+      outputTokens: 5,
+      costUsd: 0.01,
+    });
+
+    expect(agentChat(chatId)?.model).toBe("gpt-5.5");
+  });
 });
 
 describe("hydrateAgentChatHistory", () => {
@@ -1440,6 +1475,28 @@ describe("resumed chat model resolution (#272)", () => {
     await ensuring;
 
     expect(agentChat(chatId)?.model).toBe("openai-codex/gpt-5.5");
+  });
+
+  it("does not clobber the placeholder value even when re-picked to the same id in flight", async () => {
+    // A plain `model === safeModel` value-equality guard cannot tell
+    // "untouched" apart from "user explicitly re-picked the placeholder
+    // value" — this pins the explicit touch-counter fix for that gap.
+    const chatId = nextChatId();
+    flags.piAgents = true;
+    const sessionLookup = deferred<{ model: string | null } | null>();
+    tauri.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") return Promise.resolve("session-1");
+      if (cmd === "agent_session_latest_for_chat") return sessionLookup.promise;
+      return Promise.resolve(null);
+    });
+
+    const ensuring = ensureAgentChat(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
+    setAgentChatModel(chatId, "openai-codex/gpt-5.6-sol");
+    sessionLookup.resolve({ model: "anthropic/claude-sonnet-4-6" });
+    await ensuring;
+
+    expect(agentChat(chatId)?.model).toBe("openai-codex/gpt-5.6-sol");
   });
 
   it("resolves the same way for hydrateAgentChatHistory (no live session started)", async () => {

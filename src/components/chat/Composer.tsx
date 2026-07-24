@@ -217,7 +217,7 @@ export function Composer(props: {
     )
   );
   onMount(() => {
-    if (!flagEnabled("ompPiAgents")) return;
+    if (!flagEnabled("piAgents")) return;
     void discoverAgentCli("pi")
       .then((diagnostic) => setPiModels(diagnostic.models))
       .catch(() => undefined);

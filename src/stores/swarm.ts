@@ -493,7 +493,7 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
   if (provider === "omp" && !ompNativeChatAvailable()) {
     updateRun(run.runId, {
       synthesisStatus: "failed",
-      synthesisError: "OMP native chat requires the ompPiAgents flag and compatible OMP 16.4.8 probe.",
+      synthesisError: "OMP native chat requires the ompAgents flag and compatible OMP 16.4.8 probe.",
     });
     return;
   }
@@ -501,7 +501,7 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
     updateRun(run.runId, {
       synthesisStatus: "failed",
       synthesisError:
-        "Pi native chat requires the ompPiAgents flag and compatible Pi >=0.79.10 and <0.80.0 probe.",
+        "Pi native chat requires the piAgents flag and compatible Pi >=0.79.10 and <0.82.0 probe.",
     });
     return;
   }

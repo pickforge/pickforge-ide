@@ -235,7 +235,7 @@ enum WriterMessage {
 pub enum PiRpcError {
     #[error("failed to resolve Pi executable: {0}")]
     Binary(String),
-    #[error("unsupported Pi RPC version {0}; PickForge requires >=0.79.10 and <0.80.0")]
+    #[error("unsupported Pi RPC version {0}; PickForge requires >=0.79.10 and <0.82.0")]
     UnsupportedVersion(String),
     #[error("failed to probe Pi version: {0}")]
     VersionProbe(String),
@@ -295,7 +295,10 @@ pub fn compatible_version_output(raw: &str) -> Result<String, PiRpcError> {
             "version output did not contain semver".to_string(),
         ));
     };
-    if version.1 == 0 && version.2 == 79 && version.3 >= 10 {
+    let compatible = version.1 == 0
+        && (79..=81).contains(&version.2)
+        && (version.2 > 79 || version.3 >= 10);
+    if compatible {
         Ok(version.0)
     } else {
         Err(PiRpcError::UnsupportedVersion(version.0))
@@ -1605,16 +1608,21 @@ mod tests {
 
     #[test]
     fn version_gate_accepts_only_certified_pi_line() {
-        assert_eq!(compatible_version_output("pi 0.79.10\n").unwrap(), "0.79.10");
-        assert_eq!(compatible_version_output("v0.79.99").unwrap(), "0.79.99");
         assert!(matches!(
             compatible_version_output("0.79.9"),
             Err(PiRpcError::UnsupportedVersion(_))
         ));
+        assert_eq!(compatible_version_output("pi 0.79.10\n").unwrap(), "0.79.10");
+        assert_eq!(compatible_version_output("0.81.1").unwrap(), "0.81.1");
         assert!(matches!(
-            compatible_version_output("0.80.0"),
+            compatible_version_output("0.82.0"),
             Err(PiRpcError::UnsupportedVersion(_))
         ));
+        assert!(matches!(
+            compatible_version_output("1.0.0"),
+            Err(PiRpcError::UnsupportedVersion(_))
+        ));
+        assert!(compatible_version_output("garbage").is_err());
     }
 
     #[cfg(windows)]

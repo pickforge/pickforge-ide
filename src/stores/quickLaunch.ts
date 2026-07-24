@@ -62,9 +62,11 @@ const [items, setItems] = createSignal<QuickLaunchItem[]>(load());
 /** Raw persisted items for sync; rollout-gated items remain stored while hidden. */
 export const allQuickLaunchItems = items;
 /** Items currently exposed to chips, hotkeys, Ask AI, and Settings. */
-export const quickLaunchItems = () => flagEnabled("ompPiAgents")
-  ? items()
-  : items().filter((item) => item.agentId !== "omp" && item.agentId !== "pi");
+export const quickLaunchItems = () => items().filter((item) => {
+  if (item.agentId === "omp") return flagEnabled("ompAgents");
+  if (item.agentId === "pi") return flagEnabled("piAgents");
+  return true;
+});
 
 function persist(next: QuickLaunchItem[]) {
   setItems(next);
@@ -95,14 +97,21 @@ export function resetQuickLaunchItems() {
 
 /** Optional rollout-gated agent chips not inserted into existing or default
  * layouts. Settings offers only choices that have not already been added. */
+function optionalAgentFlagEnabled(agentId: OptionalAgentId): boolean {
+  return agentId === "omp" ? flagEnabled("ompAgents") : flagEnabled("piAgents");
+}
+
 export function optionalQuickLaunchChoices(): OptionalQuickLaunchItem[] {
-  if (!flagEnabled("ompPiAgents")) return [];
   const existing = new Set(items().map((item) => item.agentId));
-  return clone(OPTIONAL_OMP_PI_QUICK_LAUNCH.filter((item) => !existing.has(item.agentId)));
+  return clone(
+    OPTIONAL_OMP_PI_QUICK_LAUNCH.filter(
+      (item) => optionalAgentFlagEnabled(item.agentId) && !existing.has(item.agentId),
+    ),
+  );
 }
 
 export function addOptionalQuickLaunch(agentId: OptionalAgentId) {
-  if (!flagEnabled("ompPiAgents") || items().some((item) => item.agentId === agentId)) return;
+  if (!optionalAgentFlagEnabled(agentId) || items().some((item) => item.agentId === agentId)) return;
   const choice = OPTIONAL_OMP_PI_QUICK_LAUNCH.find((item) => item.agentId === agentId);
   if (choice) persist([...items(), { ...choice }]);
 }

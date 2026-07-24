@@ -37,7 +37,8 @@ const activity = vi.hoisted(() => ({
 }));
 const flags = vi.hoisted(() => ({
   remoteProjects: false,
-  ompPiAgents: false,
+  ompAgents: false,
+  piAgents: false,
 }));
 const workspace = vi.hoisted(() => ({
   chats: new Map<string, {
@@ -105,7 +106,8 @@ vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isCha
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: (key: string) =>
     (key === "remoteProjects" && flags.remoteProjects) ||
-    (key === "ompPiAgents" && flags.ompPiAgents),
+    (key === "ompAgents" && flags.ompAgents) ||
+    (key === "piAgents" && flags.piAgents),
   subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 
@@ -262,7 +264,8 @@ beforeEach(() => {
   workspace.isChatArchived.mockReset().mockReturnValue(false);
   workspace.projects = [];
   flags.remoteProjects = false;
-  flags.ompPiAgents = false;
+  flags.ompAgents = false;
+  flags.piAgents = false;
   settings.clear();
   setAgentEngine("v2");
 });
@@ -291,20 +294,20 @@ describe("agentChat IPC wrappers", () => {
     expect(tauri.invoke).toHaveBeenCalledWith("agent_skills_list", { provider: "codex" });
   });
 
-  it("rejects OMP before IPC while ompPiAgents is off", async () => {
+  it("rejects OMP before IPC while ompAgents is off", async () => {
     await expect(agentChatStart({
       chatId: "chat-omp",
       projectRoot: "/project",
       provider: "omp",
       onEvent: () => undefined,
-    })).rejects.toThrow("requires the ompPiAgents flag and compatible");
+    })).rejects.toThrow("requires the ompAgents flag and compatible");
 
     expect(tauri.invoke).not.toHaveBeenCalled();
     expect(tauri.channels).toHaveLength(0);
   });
 
   it("creates a session-scoped PickForge MCP grant for compatible OMP", async () => {
-    flags.ompPiAgents = true;
+    flags.ompAgents = true;
     recordAgentCliDiagnostic(diagnosticFromProbe("omp", {
       installed: true,
       versionOutput: `omp ${SUPPORTED_OMP_ACP_VERSION}`,
@@ -352,7 +355,7 @@ describe("agentChat IPC wrappers", () => {
     const startPayload = tauri.invoke.mock.calls.find(
       (call) => call[0] === "agent_chat_start",
     )?.[1];
-    expect(startPayload).not.toHaveProperty("ompPiAgentsEnabled");
+    expect(startPayload).not.toHaveProperty("ompAgentsEnabled");
     expect(tauri.invoke).not.toHaveBeenCalledWith("agent_chat_set_omp_enabled", expect.anything());
   });
 
@@ -363,14 +366,14 @@ describe("agentChat IPC wrappers", () => {
       projectRoot: "/project",
       provider: "pi",
       onEvent: () => undefined,
-    })).rejects.toThrow("ompPiAgents rollout flag");
+    })).rejects.toThrow("piAgents rollout flag");
 
     expect(tauri.invoke).not.toHaveBeenCalled();
     expect(tauri.channels).toHaveLength(0);
   });
 
   it("starts Pi through the native IPC seam while the rollout flag is on", async () => {
-    flags.ompPiAgents = true;
+    flags.piAgents = true;
     recordAgentCliDiagnostic(diagnosticFromProbe("pi", {
       installed: true,
       versionOutput: "pi 0.79.10",
@@ -453,7 +456,7 @@ describe("agentChat store reducer", () => {
   });
 
   it("does not treat Pi thinking metadata as a selectable effort", async () => {
-    flags.ompPiAgents = true;
+    flags.piAgents = true;
     const { chatId, emit } = await startChat([], "test/model", "pi");
 
     emit({
@@ -720,7 +723,7 @@ describe("agentChat store reducer", () => {
 
   it("rejects Pi approval actions before IPC", async () => {
     const chatId = nextChatId();
-    flags.ompPiAgents = true;
+    flags.piAgents = true;
     mockInvoke(historyFromEvents([{
       kind: "approvalRequest",
       approvalId: "not-a-pi-protocol-event",
@@ -1620,7 +1623,8 @@ describe("sendAgentMessage", () => {
   it.each(["omp", "pi"] as const)(
     "clears a dead %s session and restarts before the next send",
     async (provider) => {
-      flags.ompPiAgents = true;
+      flags.ompAgents = true;
+      flags.piAgents = true;
       const chatId = nextChatId();
       let startCount = 0;
       let sendCount = 0;
@@ -1660,7 +1664,8 @@ describe("sendAgentMessage", () => {
   it.each(["omp", "pi"] as const)(
     "replaces a failed live %s session on explicit retry",
     async (provider) => {
-      flags.ompPiAgents = true;
+      flags.ompAgents = true;
+      flags.piAgents = true;
       const chatId = nextChatId();
       let startCount = 0;
       let emit: ((event: AgentEvent) => void) | undefined;
@@ -1694,7 +1699,7 @@ describe("sendAgentMessage", () => {
   );
 
   it("keeps the recovery error visible while a dead live session is being replaced", async () => {
-    flags.ompPiAgents = true;
+    flags.ompAgents = true;
     const chatId = nextChatId();
     const dispose = deferred<void>();
     let startCount = 0;
@@ -1726,7 +1731,7 @@ describe("sendAgentMessage", () => {
   });
 
   it("does not let an OMP retry completion overwrite a provider switch", async () => {
-    flags.ompPiAgents = true;
+    flags.ompAgents = true;
     const chatId = nextChatId();
     workspace.chats.set(chatId, workspace.makeChat(chatId, { agentId: "omp" }));
     const dispose = deferred<void>();

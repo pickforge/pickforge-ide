@@ -119,7 +119,7 @@ export const AGENTS: AgentProfile[] = [
   { id: "gemini", label: "Gemini", binary: "gemini", defaultModel: null, models: [] },
 ];
 
-const OMP_PI_AGENTS: AgentProfile[] = [
+const OMP_AGENTS: AgentProfile[] = [
   {
     id: "omp",
     label: AGENT_BACKENDS.omp.label,
@@ -127,6 +127,9 @@ const OMP_PI_AGENTS: AgentProfile[] = [
     defaultModel: null,
     models: [],
   },
+];
+
+const PI_AGENTS: AgentProfile[] = [
   {
     id: "pi",
     label: AGENT_BACKENDS.pi.label,
@@ -140,7 +143,11 @@ const OMP_PI_AGENTS: AgentProfile[] = [
 /** Profiles exposed by the current build flags. The base AGENTS export remains
  * stable for native-chat callers, which only support Claude and Codex. */
 export function agentProfiles(): AgentProfile[] {
-  return flagEnabled("ompPiAgents") ? [...AGENTS, ...OMP_PI_AGENTS] : AGENTS;
+  return [
+    ...AGENTS,
+    ...(flagEnabled("ompAgents") ? OMP_AGENTS : []),
+    ...(flagEnabled("piAgents") ? PI_AGENTS : []),
+  ];
 }
 
 function profileForAgent(agentId: string): AgentProfile | undefined {
@@ -199,18 +206,18 @@ export function recordAgentCliDiagnostic(diagnostic: AgentCliDiagnostic) {
 }
 
 export function ompNativeChatAvailable(): boolean {
-  return flagEnabled("ompPiAgents") && ompNativeCompatibility() === "compatible";
+  return flagEnabled("ompAgents") && ompNativeCompatibility() === "compatible";
 }
 
 export function isOmpNativeCompatibilityPending(): boolean {
-  if (!flagEnabled("ompPiAgents")) return false;
+  if (!flagEnabled("ompAgents")) return false;
   const compatibility = ompNativeCompatibility();
   return compatibility === "unprobed" || compatibility === "probing";
 }
 
 export function ompNativeChatUnavailableReason(): string | null {
-  if (!flagEnabled("ompPiAgents")) {
-    return "OMP native chat is disabled by the ompPiAgents feature flag";
+  if (!flagEnabled("ompAgents")) {
+    return "OMP native chat is disabled by the ompAgents feature flag";
   }
   switch (ompNativeCompatibility()) {
     case "compatible":
@@ -226,7 +233,7 @@ export function ompNativeChatUnavailableReason(): string | null {
 let ompCompatibilityProbe: Promise<boolean> | null = null;
 
 export function ensureOmpNativeCompatibility(force = false): Promise<boolean> {
-  if (!flagEnabled("ompPiAgents")) return Promise.resolve(false);
+  if (!flagEnabled("ompAgents")) return Promise.resolve(false);
   if (!force && ompNativeCompatibility() === "compatible") return Promise.resolve(true);
   if (!force && ompCompatibilityProbe) return ompCompatibilityProbe;
   setOmpNativeCompatibility("probing");
@@ -243,34 +250,34 @@ export function ensureOmpNativeCompatibility(force = false): Promise<boolean> {
 }
 
 export function piNativeChatAvailable(): boolean {
-  return flagEnabled("ompPiAgents") && piNativeCompatibility() === "compatible";
+  return flagEnabled("piAgents") && piNativeCompatibility() === "compatible";
 }
 
 export function isPiNativeCompatibilityPending(): boolean {
-  if (!flagEnabled("ompPiAgents")) return false;
+  if (!flagEnabled("piAgents")) return false;
   const compatibility = piNativeCompatibility();
   return compatibility === "unprobed" || compatibility === "probing";
 }
 
 export function piNativeChatUnavailableReason(): string | null {
-  if (!flagEnabled("ompPiAgents")) {
-    return "Pi native chat is disabled by the ompPiAgents rollout flag";
+  if (!flagEnabled("piAgents")) {
+    return "Pi native chat is disabled by the piAgents rollout flag";
   }
   switch (piNativeCompatibility()) {
     case "compatible":
       return null;
     case "incompatible":
-      return "Pi native chat requires an installed, compatible Pi >=0.79.10 and <0.80.0";
+      return "Pi native chat requires an installed, compatible Pi >=0.79.10 and <0.82.0";
     case "unprobed":
     case "probing":
-      return "Checking for compatible Pi >=0.79.10 and <0.80.0";
+      return "Checking for compatible Pi >=0.79.10 and <0.82.0";
   }
 }
 
 let piCompatibilityProbe: Promise<boolean> | null = null;
 
 export function ensurePiNativeCompatibility(force = false): Promise<boolean> {
-  if (!flagEnabled("ompPiAgents")) return Promise.resolve(false);
+  if (!flagEnabled("piAgents")) return Promise.resolve(false);
   if (!force && piNativeCompatibility() === "compatible") return Promise.resolve(true);
   if (!force && piCompatibilityProbe) return piCompatibilityProbe;
   setPiNativeCompatibility("probing");

@@ -51,10 +51,8 @@ export function App() {
   const [, setReady] = createSignal(false);
   installAccountStoreBootstrap();
   const probeNativeCompatibility = () => {
-    if (flagEnabled("ompPiAgents")) {
-      void ensureOmpNativeCompatibility(true);
-      void ensurePiNativeCompatibility(true);
-    }
+    if (flagEnabled("ompAgents")) void ensureOmpNativeCompatibility(true);
+    if (flagEnabled("piAgents")) void ensurePiNativeCompatibility(true);
   };
   probeNativeCompatibility();
   onCleanup(subscribeToFlagChanges(probeNativeCompatibility));

@@ -51,7 +51,8 @@ describe("OMP/Pi rollout gating and commands", () => {
 
   it("uses supported terminal flags without implying deferred MCP wiring", async () => {
     const { flags, models } = await loadModules();
-    flags.setFlagOverride("ompPiAgents", true);
+    flags.setFlagOverride("ompAgents", true);
+    flags.setFlagOverride("piAgents", true);
 
     expect(models.agentProfiles().slice(-2).map((agent) => ({
       id: agent.id,
@@ -78,7 +79,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
   it("selects OMP native chat only after the exact compatible probe", async () => {
     const { flags, models } = await loadModules();
-    flags.setFlagOverride("ompPiAgents", true);
+    flags.setFlagOverride("ompAgents", true);
 
     expect(models.ompNativeChatUnavailableReason()).toBe(
       `Checking for compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
@@ -130,21 +131,21 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(models.defaultNativeAgentProvider("omp")).toBe("omp");
     expect(models.launchCommand("omp")).toBe("omp ");
 
-    flags.setFlagOverride("ompPiAgents", false);
+    flags.setFlagOverride("ompAgents", false);
     expect(models.nativeAgentProfiles().some((profile) => profile.id === "omp")).toBe(false);
     expect(models.nativeChatModel("omp", "openai/gpt-test")).toBeNull();
     expect(models.launchCommand("omp")).toBe("");
     expect(models.nativeAgentProfile("omp")).toBeNull();
     expect(models.defaultNativeAgentProvider("omp")).toBe("claudeCode");
     expect(models.ompNativeChatUnavailableReason()).toBe(
-      "OMP native chat is disabled by the ompPiAgents feature flag",
+      "OMP native chat is disabled by the ompAgents feature flag",
     );
     expect(models.isOmpNativeCompatibilityPending()).toBe(false);
   });
 
   it("gates Orchestra menu and persisted default through the reactive native registry", async () => {
     const { flags, models, chatDefaults } = await loadModules();
-    flags.setFlagOverride("ompPiAgents", true);
+    flags.setFlagOverride("ompAgents", true);
     chatDefaults.setLastAgentProvider("omp");
 
     expect(chatDefaults.loadLastAgentProvider()).toBe("omp");
@@ -169,7 +170,7 @@ describe("OMP/Pi rollout gating and commands", () => {
       models.defaultNativeAgentProvider(chatDefaults.loadLastAgentProvider()),
     ).toBe("omp");
 
-    flags.setFlagOverride("ompPiAgents", false);
+    flags.setFlagOverride("ompAgents", false);
     expect(chatDefaults.loadLastAgentProvider()).toBe("claudeCode");
     expect(
       models.defaultNativeAgentProvider(chatDefaults.loadLastAgentProvider()),
@@ -178,7 +179,8 @@ describe("OMP/Pi rollout gating and commands", () => {
 
   it("offers optional chips without changing defaults or duplicating an agent", async () => {
     const { flags, quickLaunch } = await loadModules();
-    flags.setFlagOverride("ompPiAgents", true);
+    flags.setFlagOverride("ompAgents", true);
+    flags.setFlagOverride("piAgents", true);
 
     expect(quickLaunch.optionalQuickLaunchChoices().map((item) => item.agentId)).toEqual([
       "omp",
@@ -194,16 +196,17 @@ describe("OMP/Pi rollout gating and commands", () => {
       ai: true,
     });
 
-    flags.setFlagOverride("ompPiAgents", false);
+    flags.setFlagOverride("ompAgents", false);
     expect(quickLaunch.quickLaunchItems().some((item) => item.agentId === "omp")).toBe(false);
     expect(quickLaunch.allQuickLaunchItems().some((item) => item.agentId === "omp")).toBe(true);
-    flags.setFlagOverride("ompPiAgents", true);
+    flags.setFlagOverride("ompAgents", true);
     expect(quickLaunch.quickLaunchItems().some((item) => item.agentId === "omp")).toBe(true);
   });
 
   it("keeps UI profile labels aligned with the backend registry", async () => {
     const { flags, models, backends } = await loadModules();
-    flags.setFlagOverride("ompPiAgents", true);
+    flags.setFlagOverride("ompAgents", true);
+    flags.setFlagOverride("piAgents", true);
 
     for (const descriptor of Object.values(backends.AGENT_BACKENDS)) {
       expect(models.agentProfiles().find((profile) => profile.id === descriptor.id)?.label)
@@ -230,7 +233,7 @@ describe("OMP/Pi discovery parsing and failures", () => {
 
   it("attaches Pi probe models to the native picker and preserves provider/model selection", async () => {
     const { flags, models } = await loadModules();
-    flags.setFlagOverride("ompPiAgents", true);
+    flags.setFlagOverride("piAgents", true);
     expect(models.isPiNativeCompatibilityPending()).toBe(true);
     models.recordAgentCliDiagnostic(models.diagnosticFromProbe("pi", {
       installed: true,

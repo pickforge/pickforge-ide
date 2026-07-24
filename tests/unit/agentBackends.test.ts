@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const rollout = vi.hoisted(() => ({ ompPiAgents: false }));
+const rollout = vi.hoisted(() => ({ ompAgents: false, piAgents: false }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) => key === "ompPiAgents" && rollout.ompPiAgents,
+  flagEnabled: (key: string) =>
+    (key === "ompAgents" && rollout.ompAgents) || (key === "piAgents" && rollout.piAgents),
 }));
 
 beforeEach(() => {
-  rollout.ompPiAgents = false;
+  rollout.ompAgents = false;
+  rollout.piAgents = false;
 });
 
 
@@ -175,7 +177,7 @@ describe("agent backend capability registry", () => {
       .toContain("Agent SDK");
   });
 
-  it("gates OMP and Pi native predicates without adding them to ungated lists", async () => {
+  it("gates OMP and Pi native predicates independently without adding them to ungated lists", async () => {
     const { backends } = await loadBackends();
 
     expect(backends.normalizeAgentProvider("claude")).toBe("claudeCode");
@@ -185,8 +187,12 @@ describe("agent backend capability registry", () => {
     expect(backends.normalizeAgentProvider("pi")).toBeNull();
     expect(backends.isNativeAgentProvider("omp")).toBe(false);
     expect(backends.isNativeAgentProvider("pi")).toBe(false);
-    rollout.ompPiAgents = true;
+
+    rollout.ompAgents = true;
     expect(backends.isNativeAgentProvider("omp")).toBe(true);
+    expect(backends.isNativeAgentProvider("pi")).toBe(false);
+
+    rollout.piAgents = true;
     expect(backends.isNativeAgentProvider("pi")).toBe(true);
     expect(backends.normalizeAgentProvider("pi")).toBe("pi");
     expect(backends.NATIVE_AGENT_BACKENDS.map(({ id }) => id)).toEqual(["claudeCode", "codex"]);
@@ -291,11 +297,26 @@ describe("agent backend capability registry", () => {
       .toEqual(["claudeCode", "codex"]);
     expect(backends.selectableNativeAgentBackends(true, "0.79.9").map((item) => item.id))
       .toEqual(["claudeCode", "codex"]);
-    expect(backends.selectableNativeAgentBackends(true, "0.80.0").map((item) => item.id))
+    expect(backends.selectableNativeAgentBackends(true, "0.82.0").map((item) => item.id))
+      .toEqual(["claudeCode", "codex"]);
+    expect(backends.selectableNativeAgentBackends(true, "1.0.0").map((item) => item.id))
       .toEqual(["claudeCode", "codex"]);
     expect(backends.selectableNativeAgentBackends(true, "0.79.10").map((item) => item.id))
       .toEqual(["claudeCode", "codex", "pi"]);
+    expect(backends.selectableNativeAgentBackends(true, "0.81.1").map((item) => item.id))
+      .toEqual(["claudeCode", "codex", "pi"]);
     expect(backends.selectableNativeAgentBackends(true, "v0.79.99").map((item) => item.id))
       .toEqual(["claudeCode", "codex", "pi"]);
+  });
+
+  it("widens the Pi RPC version gate through the 0.81 certification", async () => {
+    const { backends } = await loadBackends();
+
+    expect(backends.isCompatiblePiRpcVersion("0.79.9")).toBe(false);
+    expect(backends.isCompatiblePiRpcVersion("0.79.10")).toBe(true);
+    expect(backends.isCompatiblePiRpcVersion("0.81.1")).toBe(true);
+    expect(backends.isCompatiblePiRpcVersion("0.82.0")).toBe(false);
+    expect(backends.isCompatiblePiRpcVersion("1.0.0")).toBe(false);
+    expect(backends.isCompatiblePiRpcVersion("garbage")).toBe(false);
   });
 });

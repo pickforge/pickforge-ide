@@ -69,6 +69,17 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- Split the shared `ompPiAgents` rollout flag into independent `piAgents` and
+  `ompAgents` flags (both default off), so Pi native chat/terminal profiles
+  can ship ahead of OMP's own ACP pin (#212, #270). Every previously shared
+  gate site (profiles, quick-launch chips, connector diagnostics, native
+  compatibility probes, error copy) now checks the flag for its own provider;
+  a stored override under the removed `ompPiAgents` key is simply ignored, no
+  migration. Pi's RPC wire protocol was empirically certified today as a
+  compatible superset from 0.79.10 (the original adapter contract) through
+  0.81, so `isCompatiblePiRpcVersion`/`compatible_version_output` now accept
+  `>=0.79.10` and `<0.82.0` (previously `<0.80.0`). OMP stays pinned to its
+  own 16.4.8 ACP version gate, untouched.
 - CI now blocks complexity regressions, severe dependency advisories, and
   committed secrets; frontend coverage floors were ratcheted to current results.
 - Integrated the published `@pickforge/tauri-updater` shared dialog/controller
@@ -99,6 +110,15 @@ reset this file.
 
 ## Validation
 
+- #212/#270 (`piAgents`/`ompAgents` flag split + Pi 0.81 certification):
+  `bun run test:unit` (973 tests) has the same 3 pre-existing
+  `chatTerminalLifecycle` failures present on a clean `main` checkout
+  (unrelated file, not touched here — reproduced by stashing this change and
+  rerunning); `bun run build` (`tsc --noEmit && vite build`) passes.
+  `cargo test -p pickforge-core` (545 tests) passes; two `agents::claude_stream`
+  tests flaked once under full-suite parallel load and passed individually —
+  pre-existing env-contention flakiness, unrelated to this change. `cargo
+  clippy --workspace --all-targets -- -D warnings` passes clean.
 - pickforge/pickforge-platform#36 (PR 3, PickForge integration): focused unit
   tests drive the controller/eligibility/store/view/fixture seams entirely
   through the package's injected adapters — no mocks in production code

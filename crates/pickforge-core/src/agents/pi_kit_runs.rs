@@ -47,17 +47,27 @@ const STATUS_SUFFIX: &str = ".status.json";
 /// same directory pi-kit actually writes to.
 pub const PIKIT_DATA_DIR_ENV: &str = "PIKIT_DATA_DIR";
 
-/// Resolves the pi-kit runs directory the same way pi-kit's own
-/// `journalDir()` does: `env` (typically `$PIKIT_DATA_DIR`) when set and
-/// non-blank, else `<home>/.pickforge/pi-kit`, then the `runs` subdirectory.
-/// Pure and does not touch the filesystem — a missing directory is handled
-/// by the reader, not here.
+/// Resolves the root pi-kit data directory the same way pi-kit's own
+/// `dataDir()` does (`journal-core.ts`: `process.env[DATA_DIR_ENV] ??
+/// join(homedir(), ...)`): a PRESENT `env` value is used verbatim — even
+/// empty or whitespace-only, since `??` only falls back on `undefined`, not
+/// on an empty string — and only an ABSENT env falls back to
+/// `<home>/.pickforge/pi-kit`. Every reader/writer that anchors a path off
+/// this root (runs, the forge-context writer) must share this exact rule, or
+/// a writer and pi-kit's own reader would resolve different directories
+/// under the same `PIKIT_DATA_DIR=""` process. Pure and does not touch the
+/// filesystem.
+pub fn pi_kit_data_dir(home: &Path, env: Option<&str>) -> PathBuf {
+    match env {
+        Some(dir) => PathBuf::from(dir),
+        None => home.join(".pickforge").join("pi-kit"),
+    }
+}
+
+/// Resolves the pi-kit runs directory: [`pi_kit_data_dir`] plus the `runs`
+/// subdirectory. A missing directory is handled by the reader, not here.
 pub fn pi_kit_runs_dir(home: &Path, env: Option<&str>) -> PathBuf {
-    let data_dir = match env {
-        Some(dir) if !dir.trim().is_empty() => PathBuf::from(dir),
-        _ => home.join(".pickforge").join("pi-kit"),
-    };
-    data_dir.join("runs")
+    pi_kit_data_dir(home, env).join("runs")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -614,10 +624,35 @@ mod tests {
             pi_kit_runs_dir(home, None),
             PathBuf::from("/home/user/.pickforge/pi-kit/runs"),
         );
-        assert_eq!(
-            pi_kit_runs_dir(home, Some("  ")),
-            PathBuf::from("/home/user/.pickforge/pi-kit/runs"),
-        );
+    }
+
+    /// Pins parity with pi-kit's own `dataDir()` (`process.env[VAR] ??
+    /// fallback`): a PRESENT env value is used verbatim, even when blank —
+    /// only an ABSENT env falls back to the home default. A writer that
+    /// instead special-cased blank envs as "unset" would resolve a different
+    /// directory than pi-kit's reader under the same `PIKIT_DATA_DIR=""`.
+    #[test]
+    fn pi_kit_runs_dir_uses_a_present_blank_env_verbatim_never_falling_back() {
+        let home = Path::new("/home/user");
+        assert_eq!(pi_kit_runs_dir(home, Some("")), PathBuf::from("runs"));
+        assert_eq!(pi_kit_runs_dir(home, Some("  ")), PathBuf::from("  /runs"));
+    }
+
+    #[test]
+    fn pi_kit_data_dir_prefers_env_override_over_home_default() {
+        let home = Path::new("/home/user");
+        assert_eq!(pi_kit_data_dir(home, Some("/custom/data")), PathBuf::from("/custom/data"));
+        assert_eq!(pi_kit_data_dir(home, None), PathBuf::from("/home/user/.pickforge/pi-kit"));
+    }
+
+    /// Same parity rule as [`pi_kit_runs_dir_uses_a_present_blank_env_verbatim_never_falling_back`],
+    /// pinned directly on `pi_kit_data_dir` since it's the function that
+    /// actually implements the env resolution both readers/writers share.
+    #[test]
+    fn pi_kit_data_dir_uses_a_present_blank_env_verbatim_never_falling_back() {
+        let home = Path::new("/home/user");
+        assert_eq!(pi_kit_data_dir(home, Some("")), PathBuf::from(""));
+        assert_eq!(pi_kit_data_dir(home, Some("  ")), PathBuf::from("  "));
     }
 
     #[test]

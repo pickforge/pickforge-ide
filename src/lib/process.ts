@@ -124,3 +124,24 @@ export function abandonPiKitLane(
 ): Promise<PiKitAbandonOutcome> {
   return invoke<PiKitAbandonOutcome>("abandon_pi_kit_lane", { run, lane, reason });
 }
+
+/** Writes PickForge's context file (`<dataDir>/context.json`, schemaVersion
+ * 1) for pi-kit's `/forge` command and `forge_context` tool to read on
+ * demand — the active project root plus, optionally, the last file opened in
+ * it and the project's display name. Path/identity only, never file
+ * contents; the caller (the `pikitContext`-gated store) is responsible for
+ * debouncing. */
+export function writeForgeContext(
+  projectRoot: string,
+  lastOpenedFile: string | null,
+  displayName: string | null,
+): Promise<void> {
+  return invoke<void>("write_forge_context", { projectRoot, lastOpenedFile, displayName });
+}
+
+/** Removes PickForge's context file — call when the `pikitContext` flag
+ * turns off or no project is active. pi-kit's reader treats absence as a
+ * normal degrade. */
+export function clearForgeContext(): Promise<void> {
+  return invoke<void>("clear_forge_context");
+}

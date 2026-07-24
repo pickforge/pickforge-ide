@@ -16,6 +16,7 @@ import { type PaneSpawnMode, remotePathFor } from "../lib/remoteContext";
 import { armChatAutoName } from "../lib/chatAutoName";
 import { openPathSystem } from "../lib/opener";
 import { editorCommand } from "./fileOpenSettings";
+import { noteFileOpened } from "./forgeContext";
 
 const hosts = new Map<string, TerminalHostHandle>();
 
@@ -90,6 +91,11 @@ export function openFileInChat(
   path: string,
   projectRoot: string | null | undefined,
 ): void {
+  // Path only, never contents — feeds the "last opened file" field the
+  // forge-context writer reports when the (default-off) `pikitContext` flag
+  // is on (#299). Cheap to call unconditionally; the writer itself decides
+  // whether the flag gates an actual write.
+  if (projectRoot) noteFileOpened(projectRoot, path);
   const host = getTerminalHost(chatId);
   if (!host) {
     void openPathSystem(path).catch((e) => console.error("[pickforge] open_path failed", e));

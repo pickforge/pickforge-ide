@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use pickforge_core::agents::{
     claude_auth_status_authenticated, codex_login_status_authenticated, detect_pi_kit,
-    pi_kit_runs_dir, AuthPresenceProbe, AuthPresenceUnknownReason, PiKitAbandonOutcome,
-    PiKitDetection, PiKitRunEntry, PIKIT_DATA_DIR_ENV,
+    pi_kit_data_dir, pi_kit_runs_dir, AuthPresenceProbe, AuthPresenceUnknownReason,
+    PiKitAbandonOutcome, PiKitDetection, PiKitRunEntry, PIKIT_DATA_DIR_ENV,
 };
 use pickforge_core::process::RunError;
 use pickforge_core::{is_on_user_path, run_timeout_capped, CommandOutcome, OutputTruncation};
@@ -240,6 +240,16 @@ fn resolve_pi_kit_runs_dir() -> Option<PathBuf> {
     Some(pi_kit_runs_dir(&home, env.as_deref()))
 }
 
+/// Resolves pi-kit's root data directory (`$PIKIT_DATA_DIR` override, else
+/// `~/.pickforge/pi-kit`) the same way [`resolve_pi_kit_runs_dir`] resolves
+/// its `runs` subdirectory — the forge-context file lives at this root, not
+/// under `runs`.
+fn resolve_pi_kit_data_dir() -> Option<PathBuf> {
+    let home = user_home_dir()?;
+    let env = std::env::var(PIKIT_DATA_DIR_ENV).ok();
+    Some(pi_kit_data_dir(&home, env.as_deref()))
+}
+
 /// Lists pi-kit's external run status files — never the raw `*.jsonl`
 /// journals, which carry unredacted task/cwd/rationale. A missing runs
 /// directory (pi-kit absent, or no runs yet) yields an empty list, not an
@@ -298,6 +308,47 @@ pub async fn abandon_pi_kit_lane(
             .ok_or_else(|| "could not resolve the user's home directory".to_string())?;
         pickforge_core::agents::abandon_pi_kit_lane(&dir, &run, lane.as_deref(), reason.as_deref())
             .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Writes PickForge's context file (`<dataDir>/context.json`) for pi-kit's
+/// `/forge` command and `forge_context` tool to read — the active project
+/// root plus, optionally, the last file opened in it and the project's
+/// display name. Path/identity only, never file contents; the frontend gates
+/// this behind the default-off `pikitContext` flag and debounces calls, so
+/// every invocation here is expected to actually write.
+#[tauri::command]
+pub async fn write_forge_context(
+    project_root: String,
+    last_opened_file: Option<String>,
+    display_name: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = resolve_pi_kit_data_dir()
+            .ok_or_else(|| "could not resolve the user's home directory".to_string())?;
+        pickforge_core::agents::write_forge_context(
+            &dir,
+            &project_root,
+            last_opened_file.as_deref(),
+            display_name.as_deref(),
+        )
+        .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Removes PickForge's context file — called when the writer's flag turns
+/// off or no project is active. pi-kit's reader treats absence as a normal
+/// degrade, so a missing file is success, not an error.
+#[tauri::command]
+pub async fn clear_forge_context() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let dir = resolve_pi_kit_data_dir()
+            .ok_or_else(|| "could not resolve the user's home directory".to_string())?;
+        pickforge_core::agents::clear_forge_context(&dir).map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?

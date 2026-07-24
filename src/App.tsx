@@ -19,6 +19,7 @@ import { runConsole, toggleConsole } from "./stores/runConsole";
 import { startSwarmBridge } from "./stores/swarm";
 import { installAccountStoreBootstrap } from "./stores/account";
 import { installCreditsBootstrap } from "./stores/credits";
+import { installForgeContextBootstrap } from "./stores/forgeContext";
 import { installSettingsSyncBootstrap } from "./stores/settingsSyncStore";
 import {
   handleTitlebarMouseDown,
@@ -143,6 +144,7 @@ export function App() {
     startSwarmBridge();
     onCleanup(installSettingsSyncBootstrap());
     onCleanup(installCreditsBootstrap());
+    onCleanup(installForgeContextBootstrap());
 
     // Dev + release share one DB (~/.pickforge/pickforge.db); re-read it whenever
     // this window regains focus so the other instance's chat/project edits don't

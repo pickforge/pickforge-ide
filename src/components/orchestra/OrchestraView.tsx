@@ -25,7 +25,7 @@ import {
   IconSplit,
   IconSplitTrigger,
 } from "../icons";
-import { type AgentProvider } from "../../lib/agentChat";
+import { type AgentProvider, type PlanItem } from "../../lib/agentChat";
 import {
   agentProfiles,
   defaultNativeAgentProvider,
@@ -235,7 +235,13 @@ type PinnedPlan = {
   title: string;
   projectRoot: string;
   provider: AgentProvider;
-  items: { text: string; completed: boolean }[];
+  items: PlanItem[];
+};
+
+const PINNED_PLAN_MARK: Record<PlanItem["status"], string> = {
+  pending: "[ ]",
+  inProgress: "[>]",
+  completed: "[x]",
 };
 
 const LEDGER_MIN_WIDTH = 220;
@@ -1015,10 +1021,14 @@ export function OrchestraView(props: {
                           {(item) => (
                             <li
                               class="pf-orch-pin-item"
-                              classList={{ "pf-orch-pin-item--done": item.completed }}
+                              classList={{
+                                "pf-orch-pin-item--done": item.status === "completed",
+                                "pf-orch-pin-item--active": item.status === "inProgress",
+                              }}
+                              aria-current={item.status === "inProgress" ? "step" : undefined}
                             >
                               <span class="pf-orch-pin-step" aria-hidden="true">
-                                {item.completed ? "[x]" : "[ ]"}
+                                {PINNED_PLAN_MARK[item.status]}
                               </span>
                               <span class="pf-orch-pin-text">{item.text}</span>
                             </li>

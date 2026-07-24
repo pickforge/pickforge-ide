@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use super::event::{
     AgentEvent, ApprovalKind, CommandStatus, FileChangeEntry, FileChangeKind, PlanItem,
-    ToolCallStatus, TurnStatus,
+    PlanItemStatus, ToolCallStatus, TurnStatus,
 };
 
 const ACP_PROTOCOL_VERSION: u64 = 1;
@@ -1232,25 +1232,7 @@ fn handle_session_update(state: &Arc<ClientState>, params: Value) {
         Some("tool_call") => emit_tool_start(state, update),
         Some("tool_call_update") => emit_tool_update(state, update),
         Some("plan") => {
-            let items = update
-                .get("entries")
-                .and_then(Value::as_array)
-                .map(|entries| {
-                    entries
-                        .iter()
-                        .filter_map(|entry| {
-                            Some(PlanItem {
-                                text: entry.get("content")?.as_str()?.to_string(),
-                                completed: matches!(
-                                    entry.get("status").and_then(Value::as_str),
-                                    Some("completed")
-                                ),
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            emit(state, AgentEvent::PlanUpdate { items });
+            emit(state, AgentEvent::PlanUpdate { items: omp_plan_items(update.get("entries")) });
         }
         Some("usage_update") => {
             let size = update.get("size").and_then(Value::as_u64);
@@ -1272,6 +1254,38 @@ fn handle_session_update(state: &Arc<ClientState>, params: Value) {
             }
         }
         _ => {}
+    }
+}
+
+fn omp_plan_items(entries: Option<&Value>) -> Vec<PlanItem> {
+    entries
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let text = entry.get("content")?.as_str()?;
+                    if text.trim().is_empty() {
+                        return None;
+                    }
+                    let status = omp_plan_status(entry.get("status").and_then(Value::as_str));
+                    Some(PlanItem { text: text.to_string(), status })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The Agent Client Protocol reports plan-entry status as exactly
+/// `pending | in_progress | completed` (see `PlanEntryStatus` in the ACP
+/// schema); any other value (including missing, or the `other` extension
+/// variant) degrades to pending rather than being inferred as done.
+fn omp_plan_status(raw: Option<&str>) -> PlanItemStatus {
+    match raw {
+        Some("pending") => PlanItemStatus::Pending,
+        Some("in_progress") => PlanItemStatus::InProgress,
+        Some("completed") => PlanItemStatus::Completed,
+        _ => PlanItemStatus::Pending,
     }
 }
 
@@ -1791,6 +1805,35 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn omp_plan_items_maps_status_exactly_and_drops_blank_text() {
+        let entries = json!([
+            {"content": "pending step", "status": "pending"},
+            {"content": "active step", "status": "in_progress"},
+            {"content": "done step", "status": "completed"},
+            {"content": "unknown status", "status": "blocked"},
+            {"content": "missing status"},
+            {"content": "   "},
+        ]);
+
+        assert_eq!(
+            omp_plan_items(Some(&entries)),
+            vec![
+                PlanItem { text: "pending step".to_string(), status: PlanItemStatus::Pending },
+                PlanItem { text: "active step".to_string(), status: PlanItemStatus::InProgress },
+                PlanItem { text: "done step".to_string(), status: PlanItemStatus::Completed },
+                PlanItem { text: "unknown status".to_string(), status: PlanItemStatus::Pending },
+                PlanItem { text: "missing status".to_string(), status: PlanItemStatus::Pending },
+            ]
+        );
+    }
+
+    #[test]
+    fn omp_plan_items_empty_or_missing_entries_clears_plan() {
+        assert_eq!(omp_plan_items(Some(&json!([]))), Vec::new());
+        assert_eq!(omp_plan_items(None), Vec::new());
+    }
+
     #[cfg(unix)]
     struct Fixture {
         dir: PathBuf,
@@ -1973,7 +2016,7 @@ done"#
         let fixture = standard_script(
             r#"printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-session-1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"think"}}}}'
 printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-session-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}'
-printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-session-1","update":{"sessionUpdate":"plan","entries":[{"content":"ship","priority":"medium","status":"completed"}]}}}'
+printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-session-1","update":{"sessionUpdate":"plan","entries":[{"content":"ship","priority":"medium","status":"completed"},{"content":"verify","priority":"medium","status":"in_progress"},{"content":"announce","priority":"low","status":"pending"},{"content":"blocked step","priority":"low","status":"blocked"},{"content":"   ","priority":"low","status":"pending"}]}}}'
 printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-session-1","update":{"sessionUpdate":"usage_update","size":100,"used":25,"cost":0.01}}}'
 printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-session-1","update":{"sessionUpdate":"session_info_update","title":"Fixture title","updatedAt":"now"}}}'
 printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"omp-session-1","update":{"sessionUpdate":"tool_call","toolCallId":"edit-1","title":"Edit file","kind":"edit","status":"pending","locations":[{"path":"/tmp/project/src/lib.rs"}]}}}'
@@ -1990,7 +2033,19 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn","usage"
         let events = events.lock().unwrap();
         assert!(events.iter().any(|event| matches!(event, AgentEvent::ThinkingDelta { text, .. } if text == "think")));
         assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta { text, .. } if text == "hello")));
-        assert!(events.iter().any(|event| matches!(event, AgentEvent::PlanUpdate { items } if items[0].completed)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentEvent::PlanUpdate { items }
+                if *items == vec![
+                    PlanItem { text: "ship".to_string(), status: PlanItemStatus::Completed },
+                    PlanItem { text: "verify".to_string(), status: PlanItemStatus::InProgress },
+                    PlanItem { text: "announce".to_string(), status: PlanItemStatus::Pending },
+                    PlanItem {
+                        text: "blocked step".to_string(),
+                        status: PlanItemStatus::Pending,
+                    },
+                ]
+        )));
         assert!(events.iter().any(|event| matches!(
             event,
             AgentEvent::FileChange { item_id, changes }

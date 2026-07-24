@@ -1,19 +1,21 @@
 import { type JSX, For, Show } from "solid-js";
 import { HairlinePanel, MonoEyebrow } from "../ui";
 import { IconPin } from "../icons";
+import type { PlanItem } from "../../lib/agentChat";
 import "./chat.css";
 
-export interface PlanItem {
-  text: string;
-  completed: boolean;
-}
+const PLAN_MARK: Record<PlanItem["status"], string> = {
+  pending: "[ ]",
+  inProgress: "[>]",
+  completed: "[x]",
+};
 
 export function PlanCard(props: {
   items: PlanItem[];
   pinned?: boolean;
   onTogglePin?: () => void;
 }): JSX.Element {
-  const done = () => props.items.filter((i) => i.completed).length;
+  const done = () => props.items.filter((i) => i.status === "completed").length;
   const pinTitle = () => (props.pinned ? "Unpin plan" : "Pin plan");
   return (
     <HairlinePanel class="pf-chat-card pf-chat-plan">
@@ -43,10 +45,14 @@ export function PlanCard(props: {
           {(item) => (
             <li
               class="pf-chat-plan-item"
-              classList={{ "pf-chat-plan-item--done": item.completed }}
+              classList={{
+                "pf-chat-plan-item--done": item.status === "completed",
+                "pf-chat-plan-item--active": item.status === "inProgress",
+              }}
+              aria-current={item.status === "inProgress" ? "step" : undefined}
             >
               <span class="pf-chat-plan-mark" aria-hidden="true">
-                {item.completed ? "[x]" : "[ ]"}
+                {PLAN_MARK[item.status]}
               </span>
               <span class="pf-chat-plan-text">{item.text}</span>
             </li>

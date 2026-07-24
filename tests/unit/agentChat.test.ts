@@ -522,12 +522,89 @@ describe("agentChat store reducer", () => {
   it("replaces the latest plan item", async () => {
     const { chatId, emit } = await startChat();
 
-    emit({ kind: "planUpdate", items: [{ text: "draft", completed: false }] });
-    emit({ kind: "planUpdate", items: [{ text: "done", completed: true }] });
+    emit({ kind: "planUpdate", items: [{ text: "draft", status: "pending" }] });
+    emit({ kind: "planUpdate", items: [{ text: "done", status: "completed" }] });
 
     expect(timeline(chatId)).toEqual([
-      { type: "plan", seq: 1, items: [{ text: "done", completed: true }] },
+      { type: "plan", seq: 1, items: [{ text: "done", status: "completed" }] },
     ]);
+  });
+
+  it("preserves every valid in-progress item without inventing a single-active invariant", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "planUpdate",
+      items: [
+        { text: "first active", status: "inProgress" },
+        { text: "second active", status: "inProgress" },
+      ],
+    });
+
+    expect(timeline(chatId)).toEqual([
+      {
+        type: "plan",
+        seq: 1,
+        items: [
+          { text: "first active", status: "inProgress" },
+          { text: "second active", status: "inProgress" },
+        ],
+      },
+    ]);
+  });
+
+  it("degrades an unknown or missing live plan status to pending, never completed", async () => {
+    const { chatId, emit } = await startChat();
+
+    // Runtime data can arrive shaped outside the TS contract (a future
+    // provider status, or a field simply missing) — the live path must
+    // normalize it the same deterministic way persisted rows do.
+    emit({
+      kind: "planUpdate",
+      items: [
+        { text: "unknown status", status: "blocked" },
+        { text: "missing status" },
+      ],
+    } as unknown as AgentEvent);
+
+    expect(timeline(chatId)).toEqual([
+      {
+        type: "plan",
+        seq: 1,
+        items: [
+          { text: "unknown status", status: "pending" },
+          { text: "missing status", status: "pending" },
+        ],
+      },
+    ]);
+  });
+
+  it("drops blank-text plan items instead of creating blank rows", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "planUpdate",
+      items: [
+        { text: "keep me", status: "pending" },
+        { text: "   ", status: "completed" },
+      ],
+    });
+
+    expect(timeline(chatId)).toEqual([
+      { type: "plan", seq: 1, items: [{ text: "keep me", status: "pending" }] },
+    ]);
+  });
+
+  it("clears the plan card when a live update reports no items", async () => {
+    const { chatId, emit } = await startChat();
+
+    emit({ kind: "planUpdate", items: [{ text: "draft", status: "inProgress" }] });
+    expect(timeline(chatId)).toHaveLength(1);
+
+    emit({ kind: "planUpdate", items: [] });
+
+    expect(timeline(chatId)).toEqual([]);
+    expect(latestPlanForChat(chatId)).toBeNull();
   });
 
   it("clears active turn and stores the error on turn failure", async () => {
@@ -829,14 +906,14 @@ describe("latestPlanForChat", () => {
 
     expect(latestPlanForChat(chatId)).toBeNull();
 
-    emit({ kind: "planUpdate", items: [{ text: "draft", completed: false }] });
+    emit({ kind: "planUpdate", items: [{ text: "draft", status: "pending" }] });
     emit({ kind: "textFinal", itemId: null, text: "working" });
-    emit({ kind: "planUpdate", items: [{ text: "done", completed: true }] });
+    emit({ kind: "planUpdate", items: [{ text: "done", status: "completed" }] });
 
     expect(latestPlanForChat(chatId)).toEqual({
       type: "plan",
       seq: 1,
-      items: [{ text: "done", completed: true }],
+      items: [{ text: "done", status: "completed" }],
     });
   });
 
@@ -970,6 +1047,123 @@ describe("agentChat history", () => {
 
     expect(timeline(chatId)).toMatchObject([
       { type: "assistantText", seq: 2, text: "still loads", streaming: false },
+    ]);
+  });
+
+  it("maps legacy persisted { completed } plan items to pending/completed status", async () => {
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "item",
+        seq: 1,
+        kind: "planUpdate",
+        payload: JSON.stringify({
+          kind: "planUpdate",
+          items: [
+            { text: "legacy done", completed: true },
+            { text: "legacy todo", completed: false },
+            { text: "legacy missing flag" },
+          ],
+        }),
+        createdAt: 1,
+      },
+    ];
+
+    const { chatId } = await startChat(history);
+
+    expect(latestPlanForChat(chatId)).toEqual({
+      type: "plan",
+      seq: 1,
+      items: [
+        { text: "legacy done", status: "completed" },
+        { text: "legacy todo", status: "pending" },
+        { text: "legacy missing flag", status: "pending" },
+      ],
+    });
+  });
+
+  it("prefers a valid persisted status over a conflicting legacy completed flag", async () => {
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "item",
+        seq: 1,
+        kind: "planUpdate",
+        payload: JSON.stringify({
+          kind: "planUpdate",
+          items: [{ text: "conflicting", status: "inProgress", completed: true }],
+        }),
+        createdAt: 1,
+      },
+    ];
+
+    const { chatId } = await startChat(history);
+
+    expect(latestPlanForChat(chatId)).toEqual({
+      type: "plan",
+      seq: 1,
+      items: [{ text: "conflicting", status: "inProgress" }],
+    });
+  });
+
+  it("degrades an unrecognized persisted plan status to pending", async () => {
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "item",
+        seq: 1,
+        kind: "planUpdate",
+        payload: JSON.stringify({
+          kind: "planUpdate",
+          items: [{ text: "future status", status: "blocked" }],
+        }),
+        createdAt: 1,
+      },
+    ];
+
+    const { chatId } = await startChat(history);
+
+    expect(latestPlanForChat(chatId)).toEqual({
+      type: "plan",
+      seq: 1,
+      items: [{ text: "future status", status: "pending" }],
+    });
+  });
+
+  it("hydrates valid plan siblings even when a malformed item shares the payload", async () => {
+    const history: AgentTimelineEntry[] = [
+      {
+        entryType: "item",
+        seq: 1,
+        kind: "planUpdate",
+        payload: JSON.stringify({
+          kind: "planUpdate",
+          items: [
+            { text: "valid step", status: "completed" },
+            { text: "   " },
+            { status: "pending" },
+            null,
+            "not an object",
+          ],
+        }),
+        createdAt: 1,
+      },
+      {
+        entryType: "message",
+        seq: 2,
+        role: "assistant",
+        content: "still loads",
+        createdAt: 2,
+      },
+    ];
+
+    const { chatId } = await startChat(history);
+
+    expect(latestPlanForChat(chatId)).toEqual({
+      type: "plan",
+      seq: 1,
+      items: [{ text: "valid step", status: "completed" }],
+    });
+    expect(timeline(chatId)).toMatchObject([
+      { type: "plan" },
+      { type: "assistantText", seq: 2, text: "still loads" },
     ]);
   });
 
@@ -1133,7 +1327,7 @@ describe("hydrateAgentChatHistory", () => {
     const chatId = nextChatId();
     mockInvoke(
       historyFromEvents([
-        { kind: "planUpdate", items: [{ text: "step", completed: false }] },
+        { kind: "planUpdate", items: [{ text: "step", status: "pending" }] },
       ]),
     );
 
@@ -1142,7 +1336,7 @@ describe("hydrateAgentChatHistory", () => {
     expect(latestPlanForChat(chatId)).toEqual({
       type: "plan",
       seq: 1,
-      items: [{ text: "step", completed: false }],
+      items: [{ text: "step", status: "pending" }],
     });
     expect(agentChat(chatId)?.sessionId).toBeNull();
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "agent_chat_start")).toHaveLength(
@@ -2476,8 +2670,8 @@ describe("dynamic native chat titles", () => {
     emit({
       kind: "planUpdate",
       items: [
-        { text: "Rework OAuth session recovery", completed: false },
-        { text: "Run focused tests", completed: false },
+        { text: "Rework OAuth session recovery", status: "pending" },
+        { text: "Run focused tests", status: "pending" },
       ],
     });
     expect(workspace.setChatTitle).not.toHaveBeenCalled();
@@ -2528,7 +2722,7 @@ describe("dynamic native chat titles", () => {
     await sendAgentMessage(chatId, "first task will fail");
     emit({
       kind: "planUpdate",
-      items: [{ text: "Stale provider plan title", completed: false }],
+      items: [{ text: "Stale provider plan title", status: "pending" }],
     });
     emit({ kind: "turnFailed", error: "provider failed" });
     expect(workspace.setChatTitle).not.toHaveBeenCalled();
@@ -2559,7 +2753,7 @@ describe("dynamic native chat titles", () => {
 
     const interruptWithPlan = async (task: string, plan: string) => {
       await sendAgentMessage(chatId, task);
-      emit({ kind: "planUpdate", items: [{ text: plan, completed: false }] });
+      emit({ kind: "planUpdate", items: [{ text: plan, status: "pending" }] });
       emit({ kind: "turnDone", status: "interrupted" });
     };
     const complete = async (task: string) => {
@@ -2619,7 +2813,7 @@ describe("dynamic native chat titles", () => {
         kind: "planUpdate",
         payload: JSON.stringify({
           kind: "planUpdate",
-          items: [{ text: "Stale persisted provider plan", completed: false }],
+          items: [{ text: "Stale persisted provider plan", status: "pending" }],
         }),
         createdAt: 2,
       },
@@ -2666,7 +2860,7 @@ describe("dynamic native chat titles", () => {
     });
     emit({
       kind: "planUpdate",
-      items: [{ text: "Sensitive internal synthesis plan", completed: false }],
+      items: [{ text: "Sensitive internal synthesis plan", status: "pending" }],
     });
     emit({ kind: "turnDone", status: "completed" });
     expect(workspace.setChatTitle).not.toHaveBeenCalled();
@@ -2695,7 +2889,7 @@ describe("dynamic native chat titles", () => {
     await sendAgentMessage(chatId, "replace the title from this task");
     startCall?.[1].onEvent.onmessage({
       kind: "planUpdate",
-      items: [{ text: "Provider title suggestion", completed: false }],
+      items: [{ text: "Provider title suggestion", status: "pending" }],
     });
     startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });
 
@@ -2717,7 +2911,7 @@ describe("dynamic native chat titles", () => {
     await sendAgentMessage(chatId, "replace the task");
     startCall?.[1].onEvent.onmessage({
       kind: "planUpdate",
-      items: [{ text: "Provider replacement title", completed: false }],
+      items: [{ text: "Provider replacement title", status: "pending" }],
     });
     markChatTitleManual(chatId);
     startCall?.[1].onEvent.onmessage({ kind: "turnDone", status: "completed" });

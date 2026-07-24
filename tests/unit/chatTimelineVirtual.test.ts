@@ -165,7 +165,7 @@ describe("chat timeline virtualization helpers", () => {
       }),
       estimateTimelineRowHeight({
         kind: "item",
-        item: { type: "plan", seq: 6, items: [{ text: "Fix scroll", completed: false }] },
+        item: { type: "plan", seq: 6, items: [{ text: "Fix scroll", status: "pending" }] },
       }),
       estimateTimelineRowHeight({
         kind: "item",

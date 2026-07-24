@@ -58,13 +58,16 @@ export function timelineVirtualRowKey(row: TimelineVirtualRow): string {
   return row.kind === "working" ? "working" : `${row.item.type}:${row.item.seq}`;
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+function userMessageBaseHeight(hasImages: boolean): number {
+  return hasImages ? 190 : 84;
+}
+
 export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
   if (row.kind === "working") return 40;
   const item = row.item;
   switch (item.type) {
     case "userMessage":
-      return estimateTextHeight(item.text, item.images?.length ? 190 : 84);
+      return estimateTextHeight(item.text, userMessageBaseHeight(!!item.images?.length));
     case "assistantText":
     case "thinking":
       return estimateTextHeight(item.text, 96);

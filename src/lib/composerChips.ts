@@ -211,68 +211,102 @@ export function caretOffset(
   return selectionOffsets(root, attachmentModels)?.start ?? null;
 }
 
+interface LocateState {
+  remaining: number;
+  found: { node: Node; offset: number } | null;
+}
+
+/** Consumes a text node's non-filler characters toward `state.remaining`;
+ * sets `state.found` and returns `true` once it's exhausted inside this node. */
+function locateInTextNode(child: Text, state: LocateState): boolean {
+  const data = child.data;
+  let at = 0;
+  while (at < data.length && state.remaining > 0) {
+    if (data[at] !== CARET_FILLER) state.remaining -= 1;
+    at += 1;
+  }
+  if (state.remaining <= 0) {
+    state.found = { node: child, offset: at };
+    return true;
+  }
+  return false;
+}
+
+/** A chip counts as its marker's length; the target may land before, inside
+ * (snapped past), or after it. */
+function locateAtChip(
+  node: Node,
+  children: ChildNode[],
+  i: number,
+  el: Element,
+  attachmentModels: readonly ComposerChipModel[],
+  state: LocateState,
+): boolean {
+  if (state.remaining <= 0) {
+    state.found = { node, offset: i };
+    return true;
+  }
+  const info = chipIndex(attachmentModels, Number(el.getAttribute(CHIP_ATTR)));
+  state.remaining -= info ? markerLength(info.kind, info.index) : 0;
+  if (state.remaining <= 0) {
+    const next = children[i + 1];
+    state.found = next?.nodeType === 3 ? { node: next, offset: 0 } : { node, offset: i + 1 };
+    return true;
+  }
+  return false;
+}
+
+/** A `<br>` counts as one character (a newline). */
+function locateAtBreak(node: Node, i: number, state: LocateState): boolean {
+  if (state.remaining <= 0) {
+    state.found = { node, offset: i };
+    return true;
+  }
+  state.remaining -= 1;
+  if (state.remaining <= 0) {
+    state.found = { node, offset: i + 1 };
+    return true;
+  }
+  return false;
+}
+
+function walkLocate(
+  node: Node,
+  attachmentModels: readonly ComposerChipModel[],
+  state: LocateState,
+): boolean {
+  const children = Array.from(node.childNodes);
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (child.nodeType === 3) {
+      if (locateInTextNode(child as Text, state)) return true;
+      continue;
+    }
+    if (child.nodeType !== 1) continue;
+    const el = child as Element;
+    if (el.hasAttribute(CHIP_ATTR)) {
+      if (locateAtChip(node, children, i, el, attachmentModels, state)) return true;
+      continue;
+    }
+    if (el.tagName === "BR") {
+      if (locateAtBreak(node, i, state)) return true;
+      continue;
+    }
+    if (walkLocate(el, attachmentModels, state)) return true;
+  }
+  return false;
+}
+
 function locate(
   root: HTMLElement,
   target: number,
   attachmentModels: readonly ComposerChipModel[],
 ): { node: Node; offset: number } {
-  let remaining = target;
-  let found: { node: Node; offset: number } | null = null;
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-  const walk = (node: Node): boolean => {
-    const children = Array.from(node.childNodes);
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i];
-      if (child.nodeType === 3) {
-        const data = (child as Text).data;
-        let at = 0;
-        while (at < data.length && remaining > 0) {
-          if (data[at] !== CARET_FILLER) remaining -= 1;
-          at += 1;
-        }
-        if (remaining <= 0) {
-          found = { node: child, offset: at };
-          return true;
-        }
-        continue;
-      }
-      if (child.nodeType !== 1) continue;
-      const el = child as Element;
-      if (el.hasAttribute(CHIP_ATTR)) {
-        if (remaining <= 0) {
-          found = { node, offset: i };
-          return true;
-        }
-        const info = chipIndex(attachmentModels, Number(el.getAttribute(CHIP_ATTR)));
-        remaining -= info ? markerLength(info.kind, info.index) : 0;
-        if (remaining <= 0) {
-          const next = children[i + 1];
-          found =
-            next?.nodeType === 3
-              ? { node: next, offset: 0 }
-              : { node, offset: i + 1 };
-          return true;
-        }
-        continue;
-      }
-      if (el.tagName === "BR") {
-        if (remaining <= 0) {
-          found = { node, offset: i };
-          return true;
-        }
-        remaining -= 1;
-        if (remaining <= 0) {
-          found = { node, offset: i + 1 };
-          return true;
-        }
-        continue;
-      }
-      if (walk(el)) return true;
-    }
-    return false;
-  };
-  if (!walk(root)) found = { node: root, offset: root.childNodes.length };
-  return found!;
+  const state: LocateState = { remaining: target, found: null };
+  if (!walkLocate(root, attachmentModels, state)) {
+    state.found = { node: root, offset: root.childNodes.length };
+  }
+  return state.found!;
 }
 
 /** Place the caret at a string offset (inverse of `caretOffset`). Snaps to chip

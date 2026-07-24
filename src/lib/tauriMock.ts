@@ -350,6 +350,18 @@ function remoteOverview() {
   };
 }
 
+/** Mirrors the Rust DB's monotonic title-ownership rule: an automatic
+ * (provider) title may replace the current one only if the chat is already
+ * auto-owned, or still carries the untouched "New chat" default/legacy
+ * sentinel. */
+function autoTitleMayReplace(chat: Chat): boolean {
+  return (
+    chat.titleSource === "auto" ||
+    (chat.titleSource === "default" && chat.title === "New chat") ||
+    (chat.titleSource === "user" && chat.titleUpdatedAt === 0 && chat.title === "New chat")
+  );
+}
+
 const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   orchestra_task_upsert: (a) => {
     const task = a.task as { id: string; projectRoot: string };
@@ -375,7 +387,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     else SAMPLE_CHATS.push({ ...chat });
     return null;
   },
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
   update_chat_title: (a) => {
     const chat = SAMPLE_CHATS.find((item) => item.chatId === a.chatId);
     if (!chat) return false;
@@ -392,20 +403,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
       throw new Error("titleSource and titleUpdatedAt must be supplied together");
     }
     if (updatedAt <= chat.titleUpdatedAt) return false;
-    if (
-      source === "auto" &&
-      !(
-        chat.titleSource === "auto" ||
-        (chat.titleSource === "default" && chat.title === "New chat") ||
-        (
-          chat.titleSource === "user" &&
-          chat.titleUpdatedAt === 0 &&
-          chat.title === "New chat"
-        )
-      )
-    ) {
-      return false;
-    }
+    if (source === "auto" && !autoTitleMayReplace(chat)) return false;
     chat.title = String(a.title);
     chat.titleSource = source;
     chat.titleUpdatedAt = updatedAt;

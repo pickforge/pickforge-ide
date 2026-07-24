@@ -189,7 +189,13 @@ export function parseOperatorIntent(json: string): OperatorIntentParseResult {
   return { ok: true, intent: parsed.data };
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+// OperatorAction's discriminated union has 16 "action" variants; a switch is the standard
+// exhaustiveness-checked way to classify one in TypeScript (the `const exhaustive: never`
+// fallthrough below fails the build if a new action variant isn't classified here). A
+// Set-membership check would collapse this to near-zero complexity but would silently default an
+// unclassified future action to risk tier 0 (no confirmation) instead of failing the build — a
+// real safety regression for a confirmation-gating function, not just more extraction effort.
+// eslint-disable-next-line complexity -- TODO(#263): see comment above.
 export function riskTier(action: OperatorAction): 0 | 1 {
   switch (action.action) {
     case "openProject":

@@ -1163,7 +1163,7 @@ export function SettingsScreen() {
             )}
           </For>
 
-          <div class="pf-agent-diagnostics-head">
+          <div class="pf-agent-diagnostics-head" data-agent-diagnostics-head="connectors">
               <div class="pf-agent-diagnostics-copy">
                 <MonoEyebrow text="Connector diagnostics" />
                 <span
@@ -1333,7 +1333,7 @@ export function SettingsScreen() {
               </For>
             </div>
 
-            <div class="pf-agent-diagnostics-head">
+            <div class="pf-agent-diagnostics-head" data-agent-diagnostics-head="auth">
               <div class="pf-agent-diagnostics-copy">
                 <MonoEyebrow text="CLI authentication" />
                 <span class="pf-settings-muted">

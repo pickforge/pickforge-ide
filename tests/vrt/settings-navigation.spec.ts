@@ -84,6 +84,35 @@ async function makeOmpProbeFail(page: Page) {
   });
 }
 
+/** Makes the next `probe_agent_auth("codex")` call resolve "unknown" (a
+ * command-failed shape), exercising the third auth-presence state the
+ * default tauriMock fixture doesn't otherwise reach. */
+async function makeNextCodexAuthProbeUnknown(page: Page) {
+  await page.evaluate(() => {
+    const internals: unknown = Reflect.get(window, "__TAURI_INTERNALS__");
+    if (
+      !internals
+      || typeof internals !== "object"
+      || !("invoke" in internals)
+      || typeof internals.invoke !== "function"
+    ) {
+      throw new Error("Missing Tauri VRT invoke mock");
+    }
+
+    const originalInvoke = internals.invoke;
+    Reflect.set(
+      internals,
+      "invoke",
+      (command: string, args: Record<string, unknown> = {}) => {
+        if (command === "probe_agent_auth" && args.agentId === "codex") {
+          return Promise.resolve({ state: "unknown", unknownReason: "commandFailed" });
+        }
+        return Reflect.apply(originalInvoke, internals, [command, args]);
+      },
+    );
+  });
+}
+
 test.describe("settings navigation", () => {
   test.describe.configure({ mode: "serial" });
   test("selects, links, remembers, and keyboard-navigates categories", async ({ page }) => {
@@ -372,6 +401,34 @@ test.describe("settings navigation", () => {
     await expect(omp).not.toContainText("until the CLI is installed");
   });
 
+  test("shows Codex/Claude Code auth-presence diagnostics", async ({ page }) => {
+    await openSettings(page, "agentModels");
+
+    const codex = page.locator("[data-agent-auth-connector=codex]");
+    const claudeCode = page.locator("[data-agent-auth-connector=claudeCode]");
+    await expect(codex).toContainText("Authenticated");
+    await expect(codex).toContainText(
+      "Signed in, per the CLI's own status command. PickForge never reads credential files.",
+    );
+    await expect(claudeCode).toContainText("Not authenticated");
+    await expect(claudeCode).toContainText("Run `claude auth login` to authenticate.");
+
+    const refresh = page.getByRole("button", { name: "Refresh connector status" });
+    await refresh.click();
+    await expect(codex).toHaveAttribute("aria-busy", "false");
+    await expect(claudeCode).toHaveAttribute("aria-busy", "false");
+    await expect(codex).toContainText("Authenticated");
+
+    await makeNextCodexAuthProbeUnknown(page);
+    await refresh.click();
+    await expect(codex).toContainText("Unknown");
+    await expect(codex).toContainText(
+      "Sign-in status is unknown: the status command failed to run.",
+    );
+    // The other row's probe is untouched by the codex-only override.
+    await expect(claudeCode).toContainText("Not authenticated");
+  });
+
   test("honors reduced motion in connector controls", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await openSettings(page, "agentModels", CONNECTOR_SETTINGS_FLAGS);
@@ -394,7 +451,7 @@ test.describe("settings navigation", () => {
       await page.setViewportSize({ width: state.width, height: state.height });
       await openSettings(page, "agentModels", CONNECTOR_SETTINGS_FLAGS);
       await expect(page.getByText("Native chat ready")).toHaveCount(2);
-      await page.locator(".pf-agent-diagnostics-head").evaluate((element) => {
+      await page.locator("[data-agent-diagnostics-head=connectors]").evaluate((element) => {
         element.scrollIntoView({ block: "start" });
       });
       await expect(page).toHaveScreenshot(

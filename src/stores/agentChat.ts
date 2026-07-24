@@ -41,6 +41,7 @@ import { flagEnabled, subscribeToFlagChanges } from "./flags";
 import { isChatArchived } from "./chatArchive";
 import { findChat, setChatAgent, setChatTitle } from "./workspace";
 import { remotePtyFor } from "../lib/remoteContext";
+import type { RemotePty } from "../lib/pty";
 
 export type AgentTimelineItem =
   | {
@@ -652,10 +653,57 @@ function queuePendingDelta(chatId: string, event: AgentDeltaEvent) {
   schedulePendingDeltaFlush(chatId, buffer);
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+type UsageEvent = Extract<AgentEvent, { kind: "usage" }>;
+
+/// Positive-delta semantics: each field grows by what the running counter
+// gained since the last snapshot. A counter that DECREASED means the
+// provider thread restarted — count the new value as a fresh run's start.
+function usageDeltaTotals(
+  chat: AgentChatState,
+  event: UsageEvent,
+  costUsd: number,
+): { totals: AgentChatTotals; cumulativeUsage: CumulativeUsageSnapshot } {
+  const snapshot: CumulativeUsageSnapshot = {
+    inputTokens: event.inputTokens,
+    cachedInputTokens: event.cachedInputTokens,
+    outputTokens: event.outputTokens,
+    costUsd,
+  };
+  const previous = chat.cumulativeUsage;
+  const gained = (current: number, before: number) =>
+    current >= before ? current - before : current;
+  const totals: AgentChatTotals = {
+    inputTokens:
+      chat.totals.inputTokens + gained(snapshot.inputTokens, previous?.inputTokens ?? 0),
+    cachedInputTokens:
+      chat.totals.cachedInputTokens +
+      gained(snapshot.cachedInputTokens, previous?.cachedInputTokens ?? 0),
+    outputTokens:
+      chat.totals.outputTokens + gained(snapshot.outputTokens, previous?.outputTokens ?? 0),
+    costUsd: chat.totals.costUsd + gained(snapshot.costUsd, previous?.costUsd ?? 0),
+    estimated: chat.totals.estimated || event.costUsd == null,
+  };
+  return { totals, cumulativeUsage: snapshot };
+}
+
+function usageRunningTotals(
+  chat: AgentChatState,
+  event: UsageEvent,
+  costUsd: number,
+  estimatedCostUsd: number | null,
+): AgentChatTotals {
+  return {
+    inputTokens: chat.totals.inputTokens + event.inputTokens,
+    cachedInputTokens: chat.totals.cachedInputTokens + event.cachedInputTokens,
+    outputTokens: chat.totals.outputTokens + event.outputTokens,
+    costUsd: chat.totals.costUsd + costUsd,
+    estimated: chat.totals.estimated || estimatedCostUsd !== null,
+  };
+}
+
 function reduceUsageEvent(
   chat: AgentChatState,
-  event: Extract<AgentEvent, { kind: "usage" }>,
+  event: UsageEvent,
   nextSeq: () => number,
 ): AgentChatState {
   const estimatedCostUsd =
@@ -676,42 +724,12 @@ function reduceUsageEvent(
   const contextUsed = event.contextUsed == null ? chat.contextUsed : event.contextUsed;
   const contextWindow = event.contextWindow == null ? chat.contextWindow : event.contextWindow;
   const cumulative = event.contextUsed != null;
-  let totals: AgentChatTotals;
-  let cumulativeUsage = chat.cumulativeUsage;
-  if (cumulative) {
-    // Positive-delta semantics: each field grows by what the running counter
-    // gained since the last snapshot. A counter that DECREASED means the
-    // provider thread restarted — count the new value as a fresh run's start.
-    const snapshot: CumulativeUsageSnapshot = {
-      inputTokens: event.inputTokens,
-      cachedInputTokens: event.cachedInputTokens,
-      outputTokens: event.outputTokens,
-      costUsd,
-    };
-    const previous = chat.cumulativeUsage;
-    const gained = (current: number, before: number) =>
-      current >= before ? current - before : current;
-    totals = {
-      inputTokens:
-        chat.totals.inputTokens + gained(snapshot.inputTokens, previous?.inputTokens ?? 0),
-      cachedInputTokens:
-        chat.totals.cachedInputTokens +
-        gained(snapshot.cachedInputTokens, previous?.cachedInputTokens ?? 0),
-      outputTokens:
-        chat.totals.outputTokens + gained(snapshot.outputTokens, previous?.outputTokens ?? 0),
-      costUsd: chat.totals.costUsd + gained(snapshot.costUsd, previous?.costUsd ?? 0),
-      estimated: chat.totals.estimated || event.costUsd == null,
-    };
-    cumulativeUsage = snapshot;
-  } else {
-    totals = {
-      inputTokens: chat.totals.inputTokens + event.inputTokens,
-      cachedInputTokens: chat.totals.cachedInputTokens + event.cachedInputTokens,
-      outputTokens: chat.totals.outputTokens + event.outputTokens,
-      costUsd: chat.totals.costUsd + costUsd,
-      estimated: chat.totals.estimated || estimatedCostUsd !== null,
-    };
-  }
+  const { totals, cumulativeUsage } = cumulative
+    ? usageDeltaTotals(chat, event, costUsd)
+    : {
+        totals: usageRunningTotals(chat, event, costUsd, estimatedCostUsd),
+        cumulativeUsage: chat.cumulativeUsage,
+      };
 
   return withTimeline(
     {
@@ -740,7 +758,124 @@ function reduceUsageEvent(
   );
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+function reduceCommandDone(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "commandDone" }>,
+  nextSeq: () => number,
+): AgentChatState {
+  let matched = false;
+  const timeline = chat.timeline.map((item) => {
+    if (item.type !== "command" || item.itemId !== event.itemId) return item;
+    matched = true;
+    return {
+      ...item,
+      status: event.status,
+      exitCode: event.exitCode,
+      outputTail: event.outputTail,
+    };
+  });
+  if (matched) return withTimeline(chat, timeline);
+  return withTimeline(chat, [
+    ...chat.timeline,
+    {
+      type: "command",
+      seq: nextSeq(),
+      itemId: event.itemId,
+      command: event.outputTail?.trim() || event.itemId,
+      status: event.status,
+      exitCode: event.exitCode,
+      outputTail: event.outputTail,
+    },
+  ]);
+}
+
+function reduceToolUse(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "toolUse" }>,
+  nextSeq: () => number,
+): AgentChatState {
+  let matched = false;
+  const timeline = chat.timeline.map((item) => {
+    if (item.type !== "toolUse" || item.itemId !== event.itemId) return item;
+    matched = true;
+    return {
+      ...item,
+      name: event.name,
+      detail: event.detail,
+    };
+  });
+  if (matched) return withTimeline(chat, timeline);
+  return withTimeline(chat, [
+    ...chat.timeline,
+    {
+      type: "toolUse",
+      seq: nextSeq(),
+      itemId: event.itemId,
+      name: event.name,
+      detail: event.detail,
+    },
+  ]);
+}
+
+function reducePlanUpdate(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "planUpdate" }>,
+  nextSeq: () => number,
+): AgentChatState {
+  // This is the single decode boundary both the live Channel path and
+  // history replay funnel through (reduceAgentEvent), so legacy rows and
+  // malformed siblings normalize identically regardless of source.
+  const items = normalizePlanItems(event.items);
+  const index = lastPlanIndex(chat.timeline);
+  // An empty plan update clears the current plan card and pinned
+  // projection instead of leaving stale steps around.
+  if (items.length === 0) {
+    if (index < 0) return chat;
+    const timeline = chat.timeline.slice();
+    timeline.splice(index, 1);
+    return withTimeline(chat, timeline);
+  }
+  const plan = {
+    type: "plan" as const,
+    seq: index >= 0 ? chat.timeline[index].seq : nextSeq(),
+    items,
+  };
+  if (index < 0) return withTimeline(chat, [...chat.timeline, plan]);
+  const timeline = chat.timeline.slice();
+  timeline[index] = plan;
+  return withTimeline(chat, timeline);
+}
+
+function reduceSessionUpdated(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "sessionUpdated" }>,
+): AgentChatState {
+  return {
+    ...chat,
+    model: event.model ?? chat.model,
+    effort: supportsBackendCapability(chat.provider, "effortSelection", "nativeChat", chat.engine)
+      ? (event.thinkingLevel ?? chat.effort)
+      : chat.effort,
+  };
+}
+
+function reduceApprovalRequest(
+  chat: AgentChatState,
+  event: Extract<AgentEvent, { kind: "approvalRequest" }>,
+): AgentChatState {
+  if (!supportsBackendCapability(chat.provider, "approvalEvents", "nativeChat", chat.engine)) {
+    return chat;
+  }
+  return { ...chat, approvals: [...chat.approvals, approvalFromEvent(event)] };
+}
+
+// AgentEvent's discriminated union has 24 "kind" variants; a switch is the standard
+// exhaustiveness-checked way to dispatch one in TypeScript (each case adds +1 to ESLint's
+// cyclomatic count regardless of body size), and every case body with real branching is already
+// extracted into its own reducer above/below. Replacing this with a lookup-table dispatch would
+// trade compiler-enforced exhaustiveness for a runtime lookup plus an unsafe cast — a real design
+// tradeoff, not just more extraction effort.
+// eslint-disable-next-line complexity -- TODO(#263): see comment above.
 function reduceAgentEvent(
   chat: AgentChatState,
   event: AgentEvent,
@@ -750,18 +885,7 @@ function reduceAgentEvent(
     case "sessionStarted":
       return chat;
     case "sessionUpdated":
-      return {
-        ...chat,
-        model: event.model ?? chat.model,
-        effort: supportsBackendCapability(
-          chat.provider,
-          "effortSelection",
-          "nativeChat",
-          chat.engine,
-        )
-          ? (event.thinkingLevel ?? chat.effort)
-          : chat.effort,
-      };
+      return reduceSessionUpdated(chat, event);
     case "sessionTitle":
     case "providerPayload":
     case "providerEvent":
@@ -789,32 +913,8 @@ function reduceAgentEvent(
           outputTail: null,
         },
       ]);
-    case "commandDone": {
-      let matched = false;
-      const timeline = chat.timeline.map((item) => {
-        if (item.type !== "command" || item.itemId !== event.itemId) return item;
-        matched = true;
-        return {
-          ...item,
-          status: event.status,
-          exitCode: event.exitCode,
-          outputTail: event.outputTail,
-        };
-      });
-      if (matched) return withTimeline(chat, timeline);
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "command",
-          seq: nextSeq(),
-          itemId: event.itemId,
-          command: event.outputTail?.trim() || event.itemId,
-          status: event.status,
-          exitCode: event.exitCode,
-          outputTail: event.outputTail,
-        },
-      ]);
-    }
+    case "commandDone":
+      return reduceCommandDone(chat, event, nextSeq);
     case "fileChange": {
       // Flag off (#231 `changesReview`, default off): keep pushing one raw
       // item per event, exactly the pre-#231-PR3 behavior — no folding, no
@@ -863,29 +963,8 @@ function reduceAgentEvent(
         openChangesReceiptItemId: event.itemId,
       };
     }
-    case "toolUse": {
-      let matched = false;
-      const timeline = chat.timeline.map((item) => {
-        if (item.type !== "toolUse" || item.itemId !== event.itemId) return item;
-        matched = true;
-        return {
-          ...item,
-          name: event.name,
-          detail: event.detail,
-        };
-      });
-      if (matched) return withTimeline(chat, timeline);
-      return withTimeline(chat, [
-        ...chat.timeline,
-        {
-          type: "toolUse",
-          seq: nextSeq(),
-          itemId: event.itemId,
-          name: event.name,
-          detail: event.detail,
-        },
-      ]);
-    }
+    case "toolUse":
+      return reduceToolUse(chat, event, nextSeq);
     case "mcpToolCall":
       return withTimeline(chat, [
         ...chat.timeline,
@@ -907,30 +986,8 @@ function reduceAgentEvent(
           query: event.query,
         },
       ]);
-    case "planUpdate": {
-      // This is the single decode boundary both the live Channel path and
-      // history replay funnel through (reduceAgentEvent), so legacy rows and
-      // malformed siblings normalize identically regardless of source.
-      const items = normalizePlanItems(event.items);
-      const index = lastPlanIndex(chat.timeline);
-      // An empty plan update clears the current plan card and pinned
-      // projection instead of leaving stale steps around.
-      if (items.length === 0) {
-        if (index < 0) return chat;
-        const timeline = chat.timeline.slice();
-        timeline.splice(index, 1);
-        return withTimeline(chat, timeline);
-      }
-      const plan = {
-        type: "plan" as const,
-        seq: index >= 0 ? chat.timeline[index].seq : nextSeq(),
-        items,
-      };
-      if (index < 0) return withTimeline(chat, [...chat.timeline, plan]);
-      const timeline = chat.timeline.slice();
-      timeline[index] = plan;
-      return withTimeline(chat, timeline);
-    }
+    case "planUpdate":
+      return reducePlanUpdate(chat, event, nextSeq);
     case "usage":
       return reduceUsageEvent(chat, event, nextSeq);
     case "rateLimits":
@@ -945,17 +1002,80 @@ function reduceAgentEvent(
         approvals: [],
       };
     case "approvalRequest":
-      if (!supportsBackendCapability(chat.provider, "approvalEvents", "nativeChat", chat.engine)) {
-        return chat;
-      }
-      return { ...chat, approvals: [...chat.approvals, approvalFromEvent(event)] };
+      return reduceApprovalRequest(chat, event);
     case "commandOutput":
     case "noise":
       return chat;
   }
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+type ActiveTitleTurn = { seq: number; text: string; hidden: boolean };
+
+/** Provider titles (and plan-derived candidates) are only candidates. Commit
+ * at the completed-turn boundary through canAutoOwn/setChatTitle so a
+ * durable manual owner wins. */
+function trackPendingProviderTitle(
+  chatId: string,
+  event: AgentEvent,
+  activeTitleTurn: ActiveTitleTurn | undefined,
+) {
+  if (event.kind === "sessionTitle" && activeTitleTurn && !activeTitleTurn.hidden && event.title.trim()) {
+    pendingProviderTitleByChat.set(chatId, event.title);
+  }
+  if (event.kind === "planUpdate") {
+    const items = normalizePlanItems(event.items);
+    const candidate = items.find((item) => item.status !== "completed")?.text ?? items[0]?.text ?? "";
+    if (activeTitleTurn && !activeTitleTurn.hidden && candidate) {
+      pendingProviderTitleByChat.set(chatId, candidate);
+    }
+  }
+}
+
+function trackTurnLifecycle(
+  chatId: string,
+  event: AgentEvent,
+  activeTitleTurn: ActiveTitleTurn | undefined,
+) {
+  if (event.kind === "turnStarted") {
+    interruptedByUser.delete(chatId);
+    if (activityEligible(chatId)) agentTurnStarted(chatId);
+    return;
+  }
+  if (event.kind !== "turnDone" && event.kind !== "turnFailed") return;
+  activeTitleTurnByChat.delete(chatId);
+  // #231 review fix: a `changesReview` flip while this turn was active
+  // deferred its reflow (replacing the whole timeline from persisted
+  // history mid-stream would wipe live-only rows/buffered deltas). The
+  // terminal event above already closed the receipt group and set
+  // `turnActive: false`, so it's now safe to run the deferred re-fold.
+  if (pendingChangesReceiptReflow.delete(chatId)) void reflowChangesReceiptFold(chatId);
+  // #231 PR3: a live turn just closed — if this chat's changes-review store
+  // target is already pointed at it, refresh it. Live-only (not called from
+  // `stateFromHistory`'s replay), same as the activity-glow calls below.
+  // Gated: with `changesReview` off nothing ever sets a review target, so
+  // this would be a guaranteed no-op — skip it rather than call it anyway.
+  if (flagEnabled("changesReview")) notifyChangesReviewTurnCompleted(chatId);
+  const titleEligible = event.kind === "turnDone" && event.status === "completed";
+  if (titleEligible) {
+    if (activeTitleTurn && !activeTitleTurn.hidden) {
+      const completed = completedTitleTurnsByChat.get(chatId) ?? [];
+      if (!completed.some((turn) => turn.seq === activeTitleTurn.seq)) {
+        completedTitleTurnsByChat.set(chatId, [
+          ...completed,
+          { seq: activeTitleTurn.seq, text: activeTitleTurn.text },
+        ]);
+      }
+    }
+    maybeRefreshDynamicTitle(chatId);
+  } else {
+    pendingProviderTitleByChat.delete(chatId);
+  }
+  const wasInterrupted = interruptedByUser.delete(chatId);
+  if (!activityEligible(chatId)) return;
+  if (wasInterrupted) agentTurnCleared(chatId);
+  else agentTurnDone(chatId);
+}
+
 function receiveAgentEvent(chatId: string, event: AgentEvent) {
   if (!chats[chatId]) return;
   if (isDeltaEvent(event)) {
@@ -967,60 +1087,8 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   if (!chat) return;
   setChats(chatId, reduceAgentEvent(chat, event, () => takeSeq(chatId)));
   const activeTitleTurn = activeTitleTurnByChat.get(chatId);
-  if (
-    event.kind === "sessionTitle"
-    && activeTitleTurn
-    && !activeTitleTurn.hidden
-    && event.title.trim()
-  ) {
-    // Provider titles are only candidates. Commit at the completed-turn
-    // boundary through canAutoOwn/setChatTitle so a durable manual owner wins.
-    pendingProviderTitleByChat.set(chatId, event.title);
-  }
-  if (event.kind === "planUpdate") {
-    const items = normalizePlanItems(event.items);
-    const candidate = items.find((item) => item.status !== "completed")?.text ?? items[0]?.text ?? "";
-    if (activeTitleTurn && !activeTitleTurn.hidden && candidate) {
-      pendingProviderTitleByChat.set(chatId, candidate);
-    }
-  }
-  if (event.kind === "turnStarted") {
-    interruptedByUser.delete(chatId);
-    if (activityEligible(chatId)) agentTurnStarted(chatId);
-  } else if (event.kind === "turnDone" || event.kind === "turnFailed") {
-    activeTitleTurnByChat.delete(chatId);
-    // #231 review fix: a `changesReview` flip while this turn was active
-    // deferred its reflow (replacing the whole timeline from persisted
-    // history mid-stream would wipe live-only rows/buffered deltas). The
-    // terminal event above already closed the receipt group and set
-    // `turnActive: false`, so it's now safe to run the deferred re-fold.
-    if (pendingChangesReceiptReflow.delete(chatId)) void reflowChangesReceiptFold(chatId);
-    // #231 PR3: a live turn just closed — if this chat's changes-review store
-    // target is already pointed at it, refresh it. Live-only (not called from
-    // `stateFromHistory`'s replay), same as the activity-glow calls below.
-    // Gated: with `changesReview` off nothing ever sets a review target, so
-    // this would be a guaranteed no-op — skip it rather than call it anyway.
-    if (flagEnabled("changesReview")) notifyChangesReviewTurnCompleted(chatId);
-    const titleEligible = event.kind === "turnDone" && event.status === "completed";
-    if (titleEligible) {
-      if (activeTitleTurn && !activeTitleTurn.hidden) {
-        const completed = completedTitleTurnsByChat.get(chatId) ?? [];
-        if (!completed.some((turn) => turn.seq === activeTitleTurn.seq)) {
-          completedTitleTurnsByChat.set(chatId, [
-            ...completed,
-            { seq: activeTitleTurn.seq, text: activeTitleTurn.text },
-          ]);
-        }
-      }
-      maybeRefreshDynamicTitle(chatId);
-    } else {
-      pendingProviderTitleByChat.delete(chatId);
-    }
-    const wasInterrupted = interruptedByUser.delete(chatId);
-    if (!activityEligible(chatId)) return;
-    if (wasInterrupted) agentTurnCleared(chatId);
-    else agentTurnDone(chatId);
-  }
+  trackPendingProviderTitle(chatId, event, activeTitleTurn);
+  trackTurnLifecycle(chatId, event, activeTitleTurn);
 }
 
 // `previousModel` is the last model the backend session is known to be
@@ -1107,7 +1175,65 @@ function parseAttachmentPaths(payload: string): string[] {
   }
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+function applyMessageHistoryEntry(
+  chat: AgentChatState,
+  entry: Extract<AgentTimelineEntry, { entryType: "message" }>,
+): AgentChatState {
+  if (entry.role === "user") {
+    return {
+      ...withTimeline(chat, [
+        ...chat.timeline,
+        {
+          type: "userMessage",
+          seq: entry.seq,
+          text: entry.content,
+          ...(isInternalSwarmSynthesisPrompt(entry.content) ? { hidden: true } : {}),
+        },
+      ]),
+      error: null,
+    };
+  }
+  if (entry.role === "assistant") {
+    return withTimeline(chat, [
+      ...chat.timeline,
+      { type: "assistantText", seq: entry.seq, text: entry.content, streaming: false },
+    ]);
+  }
+  return chat;
+}
+
+/** Attaches a persisted "attachments" item's image paths to the most recent
+ * user message in the timeline (the prompt they shipped with). */
+function applyAttachmentsHistoryEntry(
+  chat: AgentChatState,
+  payload: string,
+): AgentChatState {
+  const paths = parseAttachmentPaths(payload);
+  if (paths.length === 0) return chat;
+  const timeline = chat.timeline.slice();
+  for (let i = timeline.length - 1; i >= 0; i -= 1) {
+    const item = timeline[i];
+    if (item.type === "userMessage") {
+      timeline[i] = { ...item, images: paths };
+      break;
+    }
+  }
+  return withTimeline(chat, timeline);
+}
+
+/** Records a completed turn's latest (non-hidden) user prompt as a title
+ * candidate, deduped by seq. */
+function trackCompletedTitleTurn(chatId: string, chat: AgentChatState) {
+  const latestUser = [...chat.timeline].reverse().find((item) => item.type === "userMessage");
+  if (!latestUser || latestUser.type !== "userMessage" || latestUser.hidden) return;
+  const completed = completedTitleTurnsByChat.get(chatId) ?? [];
+  if (completed.some((turn) => turn.seq === latestUser.seq)) return;
+  completedTitleTurnsByChat.set(chatId, [
+    ...completed,
+    { seq: latestUser.seq, text: latestUser.text },
+  ]);
+}
+
 function stateFromHistory(
   chatId: string,
   provider: AgentProvider,
@@ -1121,41 +1247,11 @@ function stateFromHistory(
   for (const entry of [...entries].sort((a, b) => a.seq - b.seq)) {
     maxSeq = Math.max(maxSeq, entry.seq);
     if (entry.entryType === "message") {
-      if (entry.role === "user") {
-        chat = {
-          ...withTimeline(chat, [
-            ...chat.timeline,
-            {
-              type: "userMessage",
-              seq: entry.seq,
-              text: entry.content,
-              ...(isInternalSwarmSynthesisPrompt(entry.content) ? { hidden: true } : {}),
-            },
-          ]),
-          error: null,
-        };
-      } else if (entry.role === "assistant") {
-        chat = withTimeline(chat, [
-          ...chat.timeline,
-          { type: "assistantText", seq: entry.seq, text: entry.content, streaming: false },
-        ]);
-      }
+      chat = applyMessageHistoryEntry(chat, entry);
       continue;
     }
     if (entry.kind === "attachments") {
-      const paths = parseAttachmentPaths(entry.payload);
-      if (paths.length > 0) {
-        const timeline = chat.timeline.slice();
-        for (let i = timeline.length - 1; i >= 0; i -= 1) {
-          const item = timeline[i];
-          // eslint-disable-next-line max-depth -- TODO(#263): reduce legacy function complexity.
-          if (item.type === "userMessage") {
-            timeline[i] = { ...item, images: paths };
-            break;
-          }
-        }
-        chat = withTimeline(chat, timeline);
-      }
+      chat = applyAttachmentsHistoryEntry(chat, entry.payload);
       continue;
     }
     const event = parseAgentEvent(entry.payload);
@@ -1163,18 +1259,7 @@ function stateFromHistory(
     if (event.kind === "thinkingFinal" && isBlankText(event.text)) continue;
     chat = reduceAgentEvent(chat, event, () => entry.seq);
     if (event.kind === "turnDone" && event.status === "completed") {
-      const latestUser = [...chat.timeline]
-        .reverse()
-        .find((item) => item.type === "userMessage");
-      if (latestUser?.type === "userMessage" && !latestUser.hidden) {
-        const completed = completedTitleTurnsByChat.get(chatId) ?? [];
-        if (!completed.some((turn) => turn.seq === latestUser.seq)) {
-          completedTitleTurnsByChat.set(chatId, [
-            ...completed,
-            { seq: latestUser.seq, text: latestUser.text },
-          ]);
-        }
-      }
+      trackCompletedTitleTurn(chatId, chat);
     }
     if (event.kind === "turnDone") chat = { ...chat, error: null };
   }
@@ -1286,7 +1371,194 @@ async function resolveResumedModel(
   }
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+/** The body of `ensureAgentChat`'s in-flight session-establishment promise:
+ * resolves the resumed model (new chat only), loads history if not already
+ * loaded, and starts the provider session if one isn't already live.
+ * `disposeAgentChat` bumps the generation; a stale run (per `stale()`) must
+ * stop writing — its awaited continuations would otherwise resurrect the old
+ * provider's session into a disposed or re-created chat entry. */
+/** For a brand-new chat, resolves its resumed model (from a previous app
+ * session's `agent_sessions` row) and applies it if a newer user selection
+ * hasn't since touched the model. Returns `false` if a stale check fired
+ * mid-await, telling the caller to stop without starting a session. */
+async function resolveEnsuredModel(
+  chatId: string,
+  provider: AgentProvider,
+  safeModel: string | null,
+  created: boolean,
+  stale: () => boolean,
+): Promise<boolean> {
+  if (!created) return true;
+  const touch = modelTouchByChat.get(chatId) ?? 0;
+  const resumedModel = await resolveResumedModel(chatId, provider, safeModel);
+  if (stale()) return false;
+  if (resumedModel !== safeModel && (modelTouchByChat.get(chatId) ?? 0) === touch) {
+    setChats(chatId, { model: resumedModel });
+  }
+  return true;
+}
+
+/** Loads the chat's persisted timeline if it hasn't been loaded yet. Returns
+ * `false` if a stale check fired mid-await, telling the caller to stop
+ * without starting a session. */
+async function loadEnsuredHistory(
+  chatId: string,
+  projectRoot: string,
+  provider: AgentProvider,
+  safeModel: string | null,
+  engine: AgentEngine,
+  remote: RemotePty | null,
+  stale: () => boolean,
+): Promise<boolean> {
+  if (chats[chatId].historyLoaded) return true;
+  const previous = chats[chatId];
+  const history = await agentChatHistory(chatId);
+  if (stale()) return false;
+  const loadedModel = chats[chatId]?.model ?? safeModel;
+  const loaded = stateFromHistory(chatId, provider, loadedModel, engine, history);
+  setChats(chatId, {
+    ...loaded,
+    projectRoot,
+    remoteHost: remote?.host ?? null,
+    effort: previous?.effort ?? loaded.effort,
+    mode: previous?.mode ?? loaded.mode,
+    providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
+  });
+  return true;
+}
+
+/** Resolves the resumed model (new chat only) and loads history if not
+ * already loaded. Returns `false` if a stale check fired mid-await, telling
+ * the caller to stop without starting a session. */
+async function resolveEnsuredModelAndHistory(
+  chatId: string,
+  projectRoot: string,
+  provider: AgentProvider,
+  safeModel: string | null,
+  engine: AgentEngine,
+  remote: RemotePty | null,
+  created: boolean,
+  stale: () => boolean,
+): Promise<boolean> {
+  if (!(await resolveEnsuredModel(chatId, provider, safeModel, created, stale))) return false;
+  return loadEnsuredHistory(chatId, projectRoot, provider, safeModel, engine, remote, stale);
+}
+
+/** Starts the provider session if one isn't already live, then reconciles
+ * any model/mode picked by the caller while the start was in flight. */
+async function startEnsuredSession(
+  chatId: string,
+  projectRoot: string,
+  provider: AgentProvider,
+  safeModel: string | null,
+  engine: AgentEngine,
+  options: EnsureAgentChatOptions,
+  remote: RemotePty | null,
+  stale: () => boolean,
+): Promise<void> {
+  if (stale() || chats[chatId].sessionId) return;
+  const startModel = chats[chatId]?.model ?? safeModel;
+  const startMode = chats[chatId].mode;
+  const overrides = modeOverrides(provider, startMode);
+  const sessionId = await agentChatStart({
+    chatId,
+    projectRoot,
+    provider,
+    model: startModel,
+    sandbox: overrides.sandbox,
+    approvalPolicy: overrides.approvalPolicy,
+    permissionMode: overrides.permissionMode,
+    ...options,
+    engine,
+    effort: chats[chatId].effort,
+    remote,
+    onEvent: (event) => receiveAgentEvent(chatId, event),
+  });
+  if (stale()) {
+    // Started for a chat that was disposed mid-flight — release it.
+    void agentChatDispose(sessionId).catch(() => undefined);
+    return;
+  }
+  const currentModel = chats[chatId]?.model ?? startModel;
+  setChats(chatId, {
+    sessionId,
+    projectRoot,
+    provider,
+    engine,
+    model: currentModel,
+    error: null,
+    remoteHost: remote?.host ?? null,
+  });
+  if (
+    agentBackendDescriptor(provider).nativePayload.model === "sessionState" &&
+    currentModel !== startModel
+  ) {
+    queueAgentChatSetModel(chatId, sessionId, currentModel, startModel);
+  }
+  // A mode picked while the start was in flight never reached the backend
+  // (the start captured the old overrides) — reconcile it now.
+  const currentMode = chats[chatId]?.mode ?? null;
+  if (currentMode !== startMode) {
+    queueAgentChatSetMode(chatId, sessionId, provider, currentMode);
+  }
+}
+
+async function runEnsureAgentChatSession(
+  chatId: string,
+  projectRoot: string,
+  provider: AgentProvider,
+  safeModel: string | null,
+  engine: AgentEngine,
+  options: EnsureAgentChatOptions,
+  remote: RemotePty | null,
+  created: boolean,
+  stale: () => boolean,
+  isCurrentPromise: () => boolean,
+): Promise<void> {
+  try {
+    const shouldContinue = await resolveEnsuredModelAndHistory(
+      chatId,
+      projectRoot,
+      provider,
+      safeModel,
+      engine,
+      remote,
+      created,
+      stale,
+    );
+    if (!shouldContinue) return;
+    await startEnsuredSession(chatId, projectRoot, provider, safeModel, engine, options, remote, stale);
+  } catch (error) {
+    if (!stale() && chats[chatId]) setChats(chatId, { error: errorText(error) });
+    throw error;
+  } finally {
+    if (isCurrentPromise()) ensurePromises.delete(chatId);
+  }
+}
+
+/** Applies caller-supplied effort/mode overrides on top of a freshly
+ * (re)ensured chat: always for a brand-new chat, otherwise only when the
+ * live session hasn't started yet and the field is still unset (a live
+ * session's effort/mode must go through the explicit set* actions instead). */
+function applyEnsureOverrides(
+  chatId: string,
+  options: Pick<EnsureAgentChatOptions, "effort" | "mode">,
+  created: boolean,
+) {
+  if (
+    options.effort !== undefined &&
+    (created || (!chats[chatId].sessionId && chats[chatId].effort === null))
+  ) {
+    setChats(chatId, { effort: options.effort?.trim() || null });
+  }
+  if (
+    options.mode !== undefined &&
+    (created || (!chats[chatId].sessionId && chats[chatId].mode === null))
+  ) {
+    setChats(chatId, { mode: options.mode || null });
+  }
+}
+
 export async function ensureAgentChat(
   chatId: string,
   projectRoot: string,
@@ -1310,18 +1582,7 @@ export async function ensureAgentChat(
     model: safeModel,
     remoteHost: remote?.host ?? null,
   });
-  if (
-    options.effort !== undefined &&
-    (created || (!chats[chatId].sessionId && chats[chatId].effort === null))
-  ) {
-    setChats(chatId, { effort: options.effort?.trim() || null });
-  }
-  if (
-    options.mode !== undefined &&
-    (created || (!chats[chatId].sessionId && chats[chatId].mode === null))
-  ) {
-    setChats(chatId, { mode: options.mode || null });
-  }
+  applyEnsureOverrides(chatId, options, created);
 
   // disposeAgentChat bumps the generation; a stale ensure must stop writing —
   // its awaited continuations would otherwise resurrect the old provider's
@@ -1330,90 +1591,68 @@ export async function ensureAgentChat(
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
 
   let promise: Promise<void> | undefined;
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-  promise = (async () => {
-    try {
-      if (created) {
-        const touch = modelTouchByChat.get(chatId) ?? 0;
-        const resumedModel = await resolveResumedModel(chatId, provider, safeModel);
-        if (stale()) return;
-        if (resumedModel !== safeModel && (modelTouchByChat.get(chatId) ?? 0) === touch) {
-          setChats(chatId, { model: resumedModel });
-        }
-      }
-      if (!chats[chatId].historyLoaded) {
-        const previous = chats[chatId];
-        const history = await agentChatHistory(chatId);
-        if (stale()) return;
-        const loadedModel = chats[chatId]?.model ?? safeModel;
-        const loaded = stateFromHistory(chatId, provider, loadedModel, engine, history);
-        setChats(chatId, {
-          ...loaded,
-          projectRoot,
-          remoteHost: remote?.host ?? null,
-          effort: previous?.effort ?? loaded.effort,
-          mode: previous?.mode ?? loaded.mode,
-          providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
-        });
-      }
-      if (stale() || chats[chatId].sessionId) return;
-      const startModel = chats[chatId]?.model ?? safeModel;
-      const startMode = chats[chatId].mode;
-      const overrides = modeOverrides(provider, startMode);
-      const sessionId = await agentChatStart({
-        chatId,
-        projectRoot,
-        provider,
-        model: startModel,
-        sandbox: overrides.sandbox,
-        approvalPolicy: overrides.approvalPolicy,
-        permissionMode: overrides.permissionMode,
-        ...options,
-        engine,
-        effort: chats[chatId].effort,
-        remote,
-        onEvent: (event) => receiveAgentEvent(chatId, event),
-      });
-      if (stale()) {
-        // Started for a chat that was disposed mid-flight — release it.
-        void agentChatDispose(sessionId).catch(() => undefined);
-        return;
-      }
-      const currentModel = chats[chatId]?.model ?? startModel;
-      setChats(chatId, {
-        sessionId,
-        projectRoot,
-        provider,
-        engine,
-        model: currentModel,
-        error: null,
-        remoteHost: remote?.host ?? null,
-      });
-      if (
-        agentBackendDescriptor(provider).nativePayload.model === "sessionState" &&
-        currentModel !== startModel
-      ) {
-        queueAgentChatSetModel(chatId, sessionId, currentModel, startModel);
-      }
-      // A mode picked while the start was in flight never reached the backend
-      // (the start captured the old overrides) — reconcile it now.
-      const currentMode = chats[chatId]?.mode ?? null;
-      if (currentMode !== startMode) {
-        queueAgentChatSetMode(chatId, sessionId, provider, currentMode);
-      }
-    } catch (error) {
-      if (!stale() && chats[chatId]) setChats(chatId, { error: errorText(error) });
-      throw error;
-    } finally {
-      if (ensurePromises.get(chatId) === promise) ensurePromises.delete(chatId);
-    }
-  })();
+  promise = runEnsureAgentChatSession(
+    chatId,
+    projectRoot,
+    provider,
+    safeModel,
+    engine,
+    options,
+    remote,
+    created,
+    stale,
+    () => ensurePromises.get(chatId) === promise,
+  );
 
   ensurePromises.set(chatId, promise);
   return promise;
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+/** The body of `hydrateAgentChatHistory`'s in-flight promise: resolves the
+ * resumed model (new chat only), then loads history unless something else
+ * already loaded it or a stale check fired mid-await. */
+async function runHydrateAgentChatHistorySession(
+  chatId: string,
+  projectRoot: string,
+  provider: AgentProvider,
+  safeModel: string | null,
+  engine: AgentEngine,
+  remote: RemotePty | null,
+  created: boolean,
+  stale: () => boolean,
+  isCurrentPromise: () => boolean,
+): Promise<void> {
+  try {
+    if (!(await resolveEnsuredModel(chatId, provider, safeModel, created, stale))) return;
+    const previous = chats[chatId];
+    const history = await agentChatHistory(chatId);
+    if (stale() || chats[chatId].historyLoaded) return;
+    const loadedModel = chats[chatId]?.model ?? safeModel;
+    const loaded = stateFromHistory(chatId, provider, loadedModel, engine, history);
+    setChats(chatId, {
+      ...loaded,
+      projectRoot,
+      remoteHost: remote?.host ?? null,
+      effort: previous?.effort ?? loaded.effort,
+      mode: previous?.mode ?? loaded.mode,
+      providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
+    });
+  } finally {
+    if (isCurrentPromise()) hydratePromises.delete(chatId);
+  }
+}
+
+/** A remote project always runs v1; otherwise the caller's override, then
+ * the chat's own engine if it's already live, then the configured default. */
+function resolveHydrateEngine(
+  remote: RemotePty | null,
+  options: Pick<EnsureAgentChatOptions, "engine">,
+  live: AgentChatState | undefined,
+): AgentEngine {
+  if (remote) return "v1";
+  return options.engine ?? live?.engine ?? loadAgentEngine();
+}
+
 export async function hydrateAgentChatHistory(
   chatId: string,
   projectRoot: string,
@@ -1425,7 +1664,7 @@ export async function hydrateAgentChatHistory(
   if (live?.sessionId) return;
   const safeModel = nativeChatModel(provider, model);
   const remote = remotePtyFor(projectRoot);
-  const engine: AgentEngine = remote ? "v1" : (options.engine ?? live?.engine ?? loadAgentEngine());
+  const engine = resolveHydrateEngine(remote, options, live);
   const created = !live;
   if (created) setChats(chatId, emptyState(provider, safeModel, engine));
   setChats(chatId, {
@@ -1435,18 +1674,7 @@ export async function hydrateAgentChatHistory(
     model: chats[chatId]?.model ?? safeModel,
     remoteHost: remote?.host ?? null,
   });
-  if (
-    options.effort !== undefined &&
-    (created || (!chats[chatId].sessionId && chats[chatId].effort === null))
-  ) {
-    setChats(chatId, { effort: options.effort?.trim() || null });
-  }
-  if (
-    options.mode !== undefined &&
-    (created || (!chats[chatId].sessionId && chats[chatId].mode === null))
-  ) {
-    setChats(chatId, { mode: options.mode || null });
-  }
+  applyEnsureOverrides(chatId, options, created);
   if (chats[chatId].historyLoaded) return;
   const existing = hydratePromises.get(chatId);
   if (existing) return existing;
@@ -1455,34 +1683,17 @@ export async function hydrateAgentChatHistory(
   const stale = () => (ensureGenerations.get(chatId) ?? 0) !== generation || !chats[chatId];
 
   let promise: Promise<void> | undefined;
-  // eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-  promise = (async () => {
-    try {
-      if (created) {
-        const touch = modelTouchByChat.get(chatId) ?? 0;
-        const resumedModel = await resolveResumedModel(chatId, provider, safeModel);
-        if (stale()) return;
-        if (resumedModel !== safeModel && (modelTouchByChat.get(chatId) ?? 0) === touch) {
-          setChats(chatId, { model: resumedModel });
-        }
-      }
-      const previous = chats[chatId];
-      const history = await agentChatHistory(chatId);
-      if (stale() || chats[chatId].historyLoaded) return;
-      const loadedModel = chats[chatId]?.model ?? safeModel;
-      const loaded = stateFromHistory(chatId, provider, loadedModel, engine, history);
-      setChats(chatId, {
-        ...loaded,
-        projectRoot,
-        remoteHost: remote?.host ?? null,
-        effort: previous?.effort ?? loaded.effort,
-        mode: previous?.mode ?? loaded.mode,
-        providerSwitched: previous?.providerSwitched ?? loaded.providerSwitched,
-      });
-    } finally {
-      if (hydratePromises.get(chatId) === promise) hydratePromises.delete(chatId);
-    }
-  })();
+  promise = runHydrateAgentChatHistorySession(
+    chatId,
+    projectRoot,
+    provider,
+    safeModel,
+    engine,
+    remote,
+    created,
+    stale,
+    () => hydratePromises.get(chatId) === promise,
+  );
 
   hydratePromises.set(chatId, promise);
   return promise;
@@ -1612,7 +1823,105 @@ export async function switchAgentChatProvider(
   return true;
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+/** Starts the session for a not-yet-started chat's first send, replaying the
+ * optimistic user message under the resolved seq if history-load raced it
+ * away. Returns `null` if a stale check fired mid-await, telling the caller
+ * to stop silently. */
+async function ensureSendableSession(
+  chatId: string,
+  chat: AgentChatState,
+  projectRoot: string | null,
+  text: string,
+  imageList: string[],
+  optimisticSeq: number,
+  options: SendAgentMessageOptions,
+  stale: () => boolean,
+): Promise<{ sessionId: string; optimisticSeq: number } | null> {
+  if (!projectRoot) throw new Error("Agent chat is not started");
+  await ensureAgentChat(chatId, projectRoot, chat.provider, chat.model, {
+    engine: chat.engine,
+    effort: chat.effort,
+  });
+  if (stale()) return null;
+  const sessionId = chats[chatId]?.sessionId ?? null;
+  if (!sessionId) throw new Error("Agent chat is not started");
+  const hasOptimisticMessage = chats[chatId]?.timeline.some(
+    (item) => item.type === "userMessage" && item.optimistic && item.seq === optimisticSeq,
+  );
+  if (!hasOptimisticMessage) {
+    optimisticSeq = takeSeq(chatId);
+    appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
+    activeTitleTurnByChat.set(chatId, { seq: optimisticSeq, text, hidden: options.hidden === true });
+  } else {
+    setChats(chatId, { error: null });
+  }
+  return { sessionId, optimisticSeq };
+}
+
+/** Resolves the live chat/session to send into, waiting out any in-flight
+ * model or mode change first — the backend reads session-state model/mode at
+ * send time, so a send racing ahead of one would run the turn under the old
+ * value. Returns `null` if the session moved out from under it (stale check,
+ * or the session id changed) at any point, telling the caller to stop
+ * silently. */
+async function resolveSendTarget(
+  chatId: string,
+  sessionId: string,
+  stale: () => boolean,
+): Promise<{ chat: AgentChatState; sessionId: string } | null> {
+  const sendTarget = () => {
+    const current = chats[chatId];
+    const currentSessionId = current?.sessionId ?? null;
+    if (!current || !currentSessionId || currentSessionId !== sessionId) return null;
+    return { chat: current, sessionId: currentSessionId };
+  };
+
+  let target = sendTarget();
+  if (!target) return null;
+  if (agentBackendDescriptor(target.chat.provider).nativePayload.model === "sessionState") {
+    await pendingSetModelByChat.get(chatId)?.promise;
+    if (stale()) return null;
+    target = sendTarget();
+    if (!target) return null;
+  }
+  const pendingMode = pendingSetModeByChat.get(chatId);
+  if (pendingMode) {
+    await pendingMode;
+    if (stale()) return null;
+    target = sendTarget();
+    if (!target) return null;
+  }
+  return target;
+}
+
+/** Rolls an optimistic send back out of the timeline/seq counter/active
+ * title turn on failure, and (for OMP/Pi, whose transports can die between
+ * turns) forgets the dead native session handle so the next send re-enters
+ * `ensureAgentChat`, which resumes the persisted provider session instead of
+ * dispatching into a dead one. */
+function rollbackFailedSend(
+  chatId: string,
+  chat: AgentChatState,
+  optimisticSeq: number,
+  error: unknown,
+) {
+  if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
+    nextSeqByChat.set(chatId, optimisticSeq);
+  }
+  if (activeTitleTurnByChat.get(chatId)?.seq === optimisticSeq) {
+    activeTitleTurnByChat.delete(chatId);
+  }
+  setChats(chatId, {
+    ...((chat.provider === "omp" || chat.provider === "pi") ? { sessionId: null } : {}),
+    turnActive: false,
+    error: errorText(error),
+    timeline: (chats[chatId]?.timeline ?? []).filter(
+      (item) => item.type !== "userMessage" || !item.optimistic || item.seq !== optimisticSeq,
+    ),
+  });
+  if (activityEligible(chatId)) agentTurnCleared(chatId);
+}
+
 export async function sendAgentMessage(
   chatId: string,
   text: string,
@@ -1639,78 +1948,30 @@ export async function sendAgentMessage(
   if (activityEligible(chatId)) agentTurnStarted(chatId);
   try {
     if (!sessionId) {
-      if (!projectRoot) throw new Error("Agent chat is not started");
-      await ensureAgentChat(chatId, projectRoot, chat.provider, chat.model, {
-        engine: chat.engine,
-        effort: chat.effort,
-      });
-      if (stale()) return;
-      sessionId = chats[chatId]?.sessionId ?? null;
-      if (!sessionId) throw new Error("Agent chat is not started");
-      const hasOptimisticMessage = chats[chatId]?.timeline.some(
-        (item) => item.type === "userMessage" && item.optimistic && item.seq === optimisticSeq,
+      const resolved = await ensureSendableSession(
+        chatId,
+        chat,
+        projectRoot,
+        text,
+        imageList,
+        optimisticSeq,
+        options,
+        stale,
       );
-      if (!hasOptimisticMessage) {
-        optimisticSeq = takeSeq(chatId);
-        appendOptimisticUserMessage(chatId, optimisticSeq, text, imageList, options);
-        activeTitleTurnByChat.set(chatId, {
-          seq: optimisticSeq,
-          text,
-          hidden: options.hidden === true,
-        });
-      } else {
-        setChats(chatId, { error: null });
-      }
+      if (!resolved) return;
+      sessionId = resolved.sessionId;
+      optimisticSeq = resolved.optimisticSeq;
     }
 
-    const sendTarget = () => {
-      const current = chats[chatId];
-      const currentSessionId = current?.sessionId ?? null;
-      if (!current || !currentSessionId || currentSessionId !== sessionId) return null;
-      return { chat: current, sessionId: currentSessionId };
-    };
-
-    let target = sendTarget();
+    const target = await resolveSendTarget(chatId, sessionId, stale);
     if (!target) return;
-    if (agentBackendDescriptor(target.chat.provider).nativePayload.model === "sessionState") {
-      await pendingSetModelByChat.get(chatId)?.promise;
-      if (stale()) return;
-      target = sendTarget();
-      if (!target) return;
-    }
-    // The backend reads the session's mode at send time — let an in-flight
-    // mode change land first or this turn runs under the old sandbox.
-    const pendingMode = pendingSetModeByChat.get(chatId);
-    if (pendingMode) {
-      await pendingMode;
-      if (stale()) return;
-      target = sendTarget();
-      if (!target) return;
-    }
     // ensureAgentChat can force a remote session onto v1 after the first
     // capability check. Gate the live state that will actually dispatch.
     assertImageInputSupported(target.chat, imageList);
     await agentChatSend(target.sessionId, text, sendOptions(target.chat, imageList));
   } catch (error) {
     if (stale()) throw error;
-    if ((nextSeqByChat.get(chatId) ?? 1) === optimisticSeq + 1) {
-      nextSeqByChat.set(chatId, optimisticSeq);
-    }
-    if (activeTitleTurnByChat.get(chatId)?.seq === optimisticSeq) {
-      activeTitleTurnByChat.delete(chatId);
-    }
-    setChats(chatId, {
-      // OMP/Pi transports can die between turns. Forget the dead native handle
-      // so the next user send re-enters ensureAgentChat, which resumes (or
-      // creates) the persisted provider session instead of dispatching into it.
-      ...((chat.provider === "omp" || chat.provider === "pi") ? { sessionId: null } : {}),
-      turnActive: false,
-      error: errorText(error),
-      timeline: (chats[chatId]?.timeline ?? []).filter(
-        (item) => item.type !== "userMessage" || !item.optimistic || item.seq !== optimisticSeq,
-      ),
-    });
-    if (activityEligible(chatId)) agentTurnCleared(chatId);
+    rollbackFailedSend(chatId, chat, optimisticSeq, error);
     throw error;
   }
 }

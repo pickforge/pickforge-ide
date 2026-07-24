@@ -581,3 +581,14 @@ describe("OMP/Pi discovery parsing and failures", () => {
     expect(diagnostic.capabilities.nativeChat).toBe(false);
   });
 });
+
+describe("retired model migration", () => {
+  it("migrates a persisted claude-opus-4-8 selection to claude-opus-5", async () => {
+    memory.set(
+      "pickforge.agentModels",
+      JSON.stringify({ claudeCode: "claude-opus-4-8" }),
+    );
+    const { models } = await loadModules();
+    expect(models.loadAgentModels().claudeCode).toBe("claude-opus-5");
+  });
+});

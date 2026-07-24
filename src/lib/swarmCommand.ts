@@ -19,11 +19,20 @@ export function parseSwarmCommand(text: string): ParsedSwarmCommand | null {
   const natural = hasSwarm && hasAction && (hasWorkerNoun || hasSwarmCount);
   if (!slash && !natural) return null;
   const body = slash ? trimmed.replace(/^\/swarm\s*/i, "").trim() : trimmed;
+  // Model names carry version digits ("opus 5", "gpt-5.5") that must not be
+  // read as lane counts; strip version-shaped model phrases before count
+  // matching so "of three opus 5 agents" parses count from "of three agents".
+  // Only version shapes are stripped ("opus 5", "haiku 4.5") — a bare family
+  // name before a count ("haiku 2 agents") keeps its count.
+  const countBody = body.replace(
+    /\b(?:opus|sonnet|fable)[-\s]*5(?:\.\d+)?\b|\b(?:gpt|glm|haiku)[-\s]*\d+[.-]\d+(?::\w+)?/gi,
+    "",
+  );
   const countMatch =
-    body.match(/\bswarm\s+(?:of\s+)?([1-5])\b/i) ??
-    body.match(/\bswarm\s+(?:of\s+)?(one|two|three|four|five)\b/i) ??
-    body.match(/\b([1-5])\s*(?:agents?|sub-?agents?|workers?|lanes?)\b/i) ??
-    body.match(/\b(one|two|three|four|five)\s*(?:agents?|sub-?agents?|workers?|lanes?)\b/i);
+    countBody.match(/\bswarm\s+(?:of\s+)?([1-5])\b/i) ??
+    countBody.match(/\bswarm\s+(?:of\s+)?(one|two|three|four|five)\b/i) ??
+    countBody.match(/\b([1-5])\s*(?:agents?|sub-?agents?|workers?|lanes?)\b/i) ??
+    countBody.match(/\b(one|two|three|four|five)\s*(?:agents?|sub-?agents?|workers?|lanes?)\b/i);
   const countWords: Record<string, number> = {
     one: 1,
     two: 2,
@@ -45,9 +54,9 @@ export function parseSwarmCommand(text: string): ParsedSwarmCommand | null {
   const model =
     lower.includes("glm-5.2") || lower.includes("ollama")
       ? "glm-5.2:cloud"
-      : lower.includes("opus") && lower.includes("4.8")
-        ? "opus 4.8"
-        : lower.includes("sonnet") && lower.includes("5")
+      : /\bopus[-\s]*5(?:\.\d+)?\b/.test(lower)
+        ? "opus 5"
+        : /\bsonnet[-\s]*5(?:\.\d+)?\b/.test(lower)
           ? "sonnet 5"
           : lower.includes("gpt-5.5") || lower.includes("gpt 5.5")
             ? "gpt-5.5"

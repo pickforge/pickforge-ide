@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn builds_claude_argv() {
-        let req = RouteRequest::new("claudeCode", "claude-opus-4-8", "open project App", None)
+        let req = RouteRequest::new("claudeCode", "claude-opus-5", "open project App", None)
             .unwrap();
         let cwd = Path::new("/tmp/pickforge-router-empty");
         let cmd = req.cli_command(cwd).unwrap();
@@ -485,7 +485,7 @@ mod tests {
                 "plan",
                 "--no-session-persistence",
                 "--model",
-                "claude-opus-4-8"
+                "claude-opus-5"
             ]
         );
     }

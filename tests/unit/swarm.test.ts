@@ -72,15 +72,15 @@ const deps = vi.hoisted(() => {
       this.agentChat.mockClear();
       this.sendAgentMessage.mockClear();
       this.loadAgentModels.mockReset().mockReturnValue({
-        claudeCode: "claude-opus-4-8",
+        claudeCode: "claude-opus-5",
         codex: "gpt-5.5",
       });
       this.modelOption.mockReset().mockImplementation((provider: string, modelId: string | null) => {
         if (modelId === "glm-5.2:cloud") return { id: modelId, terminalOnly: true };
         if (provider === "codex" && modelId === "gpt-5.5") return { id: "gpt-5.5" };
         if (provider === "codex" && modelId === "gpt-5.4") return { id: "gpt-5.4" };
-        if (provider === "claudeCode" && modelId === "claude-opus-4-8") {
-          return { id: "claude-opus-4-8" };
+        if (provider === "claudeCode" && modelId === "claude-opus-5") {
+          return { id: "claude-opus-5" };
         }
         if (provider === "claudeCode" && modelId === "claude-sonnet-5") {
           return { id: "claude-sonnet-5" };
@@ -196,9 +196,9 @@ describe("swarm dispatch", () => {
       "codex",
     ]);
     expect(deps.ensureAgentChat.mock.calls.map((call) => call[3])).toEqual([
-      "claude-opus-4-8",
+      "claude-opus-5",
       "gpt-5.5",
-      "claude-opus-4-8",
+      "claude-opus-5",
       "gpt-5.5",
     ]);
     expect(deps.ensureAgentChat.mock.calls[0][4]).toMatchObject({
@@ -218,7 +218,7 @@ describe("swarm dispatch", () => {
 
     await startSwarm("/project", "ask stronger Claude workers", {
       count: 2,
-      model: "opus 4.8",
+      model: "opus 5",
       providerPreference: "mixed",
       originChatId: "chat-main",
     });
@@ -228,10 +228,10 @@ describe("swarm dispatch", () => {
       "claudeCode",
     ]);
     expect(deps.ensureAgentChat.mock.calls.map((call) => call[3])).toEqual([
-      "claude-opus-4-8",
-      "claude-opus-4-8",
+      "claude-opus-5",
+      "claude-opus-5",
     ]);
-    expect(deps.sendAgentMessage.mock.calls[0][1]).toContain("Requested model: opus 4.8");
+    expect(deps.sendAgentMessage.mock.calls[0][1]).toContain("Requested model: opus 5");
   });
 
   it("fails fast for terminal-only Ollama Cloud models in structured swarms", async () => {
@@ -380,7 +380,7 @@ describe("swarm dispatch", () => {
         id: "lane-1",
         chatId: "worker-1",
         provider: "future-backend",
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         title: "Review",
         status: "completed",
         summary: "The review passed.",
@@ -402,7 +402,7 @@ describe("swarm dispatch", () => {
       { hidden: true },
     );
     expect(deps.sendAgentMessage.mock.calls[0][1]).toContain(
-      "future-backend / claude-opus-4-8",
+      "future-backend / claude-opus-5",
     );
     expect(deps.ensureAgentChat).toHaveBeenCalledWith(
       "chat-legacy-claude",

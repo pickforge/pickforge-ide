@@ -147,7 +147,7 @@ function providerForRequestedModel(requested: string | null): AgentProvider | nu
   const codexOption = modelOption("codex", requested);
   if (codexOption && !codexOption.terminalOnly) return "codex";
   if (
-    (text.includes("opus") && text.includes("4.8")) ||
+    (text.includes("opus") && text.includes("5")) ||
     (text.includes("sonnet") && text.includes("5")) ||
     text.includes("haiku")
   ) {
@@ -167,7 +167,7 @@ const MODEL_ALIASES: Readonly<
   Record<AgentProvider, readonly Readonly<{ terms: readonly string[]; model: string }>[]>
 > = Object.freeze({
   claudeCode: Object.freeze([
-    { terms: ["opus", "4.8"], model: "claude-opus-4-8" },
+    { terms: ["opus", "5"], model: "claude-opus-5" },
     { terms: ["sonnet", "5"], model: "claude-sonnet-5" },
     { terms: ["haiku"], model: "claude-haiku-4-5" },
   ]),

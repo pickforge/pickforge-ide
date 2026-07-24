@@ -66,8 +66,8 @@ export const AGENTS: AgentProfile[] = [
         defaultEffort: "high",
       },
       {
-        id: "claude-opus-4-8",
-        label: "Opus 4.8",
+        id: "claude-opus-5",
+        label: "Opus 5",
         efforts: CLAUDE_EFFORTS_XHIGH,
         defaultEffort: "high",
       },
@@ -487,9 +487,19 @@ function defaults(): Record<string, string | null> {
   return Object.fromEntries(agentProfiles().map((a) => [a.id, a.defaultModel]));
 }
 
+/** Saved selections of retired model ids migrate to their replacement. */
+const RETIRED_MODELS: Record<string, string> = {
+  "claude-opus-4-8": "claude-opus-5",
+};
+
 export function loadAgentModels(): Record<string, string | null> {
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? "{}");
+    for (const [agentId, model] of Object.entries(saved)) {
+      if (typeof model === "string" && RETIRED_MODELS[model]) {
+        saved[agentId] = RETIRED_MODELS[model];
+      }
+    }
     return { ...defaults(), ...saved };
   } catch {
     return defaults();

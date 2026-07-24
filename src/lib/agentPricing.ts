@@ -7,7 +7,7 @@ export interface ModelPricing {
 export const MODEL_PRICING: Record<string, ModelPricing> = {
   "claude-haiku-4-5": { inputPerM: 1.0, cachedPerM: 0.1, outputPerM: 5.0 },
   "claude-sonnet-4-6": { inputPerM: 3.0, cachedPerM: 0.3, outputPerM: 15.0 },
-  "claude-opus-4-8": { inputPerM: 5.0, cachedPerM: 0.5, outputPerM: 25.0 },
+  "claude-opus-5": { inputPerM: 5.0, cachedPerM: 0.5, outputPerM: 25.0 },
   "gpt-5.5": { inputPerM: 1.25, cachedPerM: 0.125, outputPerM: 10.0 },
   "gpt-5.4-mini": { inputPerM: 0.25, cachedPerM: 0.025, outputPerM: 2.0 },
   "gpt-5.3-codex-spark": { inputPerM: 0.25, cachedPerM: 0.025, outputPerM: 2.0 },

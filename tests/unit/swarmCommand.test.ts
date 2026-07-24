@@ -18,11 +18,19 @@ describe("parseSwarmCommand", () => {
   });
 
   it("keeps slash swarm commands and word counts working", () => {
-    expect(parseSwarmCommand("/swarm of three opus 4.8 agents review auth")).toMatchObject({
+    expect(parseSwarmCommand("/swarm of three opus 5 agents review auth")).toMatchObject({
       count: 3,
-      model: "opus 4.8",
+      model: "opus 5",
       providerPreference: "claudeCode",
       mode: "review",
+    });
+  });
+
+  it("does not read model version digits as lane counts", () => {
+    expect(parseSwarmCommand("/swarm of two sonnet 5 workers")).toMatchObject({
+      count: 2,
+      model: "sonnet 5",
+      providerPreference: "claudeCode",
     });
   });
 

@@ -226,7 +226,7 @@ const deps = vi.hoisted(() => {
       activeTargetId = "";
       this.flagEnabled.mockReset().mockReturnValue(true);
       this.loadAgentModels.mockReset().mockReturnValue({
-        claudeCode: "claude-opus-4-8",
+        claudeCode: "claude-opus-5",
         codex: "gpt-5.5",
       });
       this.loadAgentEfforts.mockReset().mockReturnValue({

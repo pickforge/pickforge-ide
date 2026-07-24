@@ -476,7 +476,10 @@
   font-size: var(--pf-size-body-md);
   color: var(--pf-text-hi);
 }
-/* Provider brand mark beside the label — monochrome, in the text palette. */
+/* Provider brand mark beside the label — official brand color on the mark
+ * itself; text-med here only tints the marks that ship currentColor
+ * (Codex, Pi) and has no effect on the ones with a fixed brand fill/gradient
+ * (Claude, OMP). */
 .pf-settings-brand {
   display: inline-flex;
   vertical-align: -2px;

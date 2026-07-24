@@ -35,7 +35,9 @@ import {
   IconClaude,
   IconClose,
   IconIngot,
+  IconOmp,
   IconOpenAI,
+  IconPi,
   IconPlus,
   IconRefresh,
 } from "../components/icons";
@@ -359,8 +361,8 @@ const AGENT_AUTH_DIAGNOSTIC_IDS = ["codex", "claudeCode"] as const;
 const AGENT_BRAND_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Object.freeze({
   claudeCode: () => <IconClaude size={14} />,
   codex: () => <IconOpenAI size={14} />,
-  omp: () => <IconIngot size={14} />,
-  pi: () => <IconIngot size={14} />,
+  omp: () => <IconOmp size={14} />,
+  pi: () => <IconPi size={14} />,
 });
 
 // eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.

@@ -15,6 +15,10 @@
 //! used by `crate::changes::turn` when a provider event carries a diff body).
 //! Diff/index/hunk header lines and the "no newline" marker never count as
 //! content lines in either path.
+//!
+//! Every stat-bearing type in this module obeys one invariant, enforced by
+//! [`known_counts`] at every construction site: `binary || truncated` means
+//! `additions`/`deletions` are `None`, never a partial or stale count.
 
 use std::collections::HashMap;
 
@@ -46,11 +50,39 @@ const MAX_DIFF_BODY_LINES: usize = 200_000;
 /// Byte-length counterpart to [`MAX_DIFF_BODY_LINES`].
 const MAX_DIFF_BODY_BYTES: usize = 8 * 1024 * 1024;
 
+/// Enforces the crate's "unknown stats stay unknown" invariant at every
+/// construction site in this module (and in `crate::changes::turn`'s fold,
+/// which shares it): whenever content is binary or a parse/count was
+/// bounded/truncated, neither count may carry a partial or stale value —
+/// both collapse to `None`. Never call this only for the branches that
+/// "look" unknown; call it unconditionally so the invariant holds by
+/// construction, not by convention.
+pub(crate) fn known_counts(
+    additions: Option<u64>,
+    deletions: Option<u64>,
+    binary: bool,
+    truncated: bool,
+) -> (Option<u64>, Option<u64>) {
+    if binary || truncated {
+        (None, None)
+    } else {
+        (additions, deletions)
+    }
+}
+
 /// One `--numstat -z` record: exact added/deleted line counts, or unknown for
 /// binary content or an unparsable/out-of-range field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffStatEntry {
     pub path: String,
+    /// Raw path bytes exactly as git emitted them, kept alongside the
+    /// lossily-decoded `path` purely so [`merge_changed_files`] can join two
+    /// parses by exact byte identity. Two distinct invalid-UTF-8 paths can
+    /// lossily decode to the *same* `String` (both collapse to the same run
+    /// of U+FFFD replacement characters), which would otherwise silently
+    /// conflate their stats. This never leaves the parser layer — the
+    /// contract-facing [`ChangedFile::path`] stays the lossy display string.
+    pub path_bytes: Vec<u8>,
     pub old_path: Option<String>,
     pub additions: Option<u64>,
     pub deletions: Option<u64>,
@@ -74,6 +106,8 @@ pub struct DiffStatParse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NameStatusEntry {
     pub path: String,
+    /// See [`DiffStatEntry::path_bytes`] — same rationale, same join use.
+    pub path_bytes: Vec<u8>,
     pub old_path: Option<String>,
     pub status: ChangeFileStatus,
 }
@@ -130,6 +164,7 @@ fn parse_numstat_record<'a>(
         let new_tok = tokens.next()?;
         return Some(DiffStatEntry {
             path: lossy_path(new_tok),
+            path_bytes: new_tok.to_vec(),
             old_path: Some(lossy_path(old_tok)),
             additions,
             deletions,
@@ -140,6 +175,7 @@ fn parse_numstat_record<'a>(
 
     Some(DiffStatEntry {
         path: lossy_path(path_raw),
+        path_bytes: path_raw.to_vec(),
         old_path: None,
         additions,
         deletions,
@@ -150,7 +186,10 @@ fn parse_numstat_record<'a>(
 
 /// Decodes added/deleted numstat fields: `-`/`-` means binary (no line
 /// stats, ever); otherwise each field must be a plain decimal integer within
-/// [`MAX_PLAUSIBLE_LINE_COUNT`], else it's treated as unparsable/truncated.
+/// [`MAX_PLAUSIBLE_LINE_COUNT`]. If *either* field fails to parse or is out
+/// of range, the record is untrustworthy as a whole — both counts become
+/// `None`, never "one known, one unknown" (a single bad field must not leave
+/// a half-correct row).
 fn parse_stat_pair(added: &[u8], deleted: &[u8]) -> (Option<u64>, Option<u64>, bool, bool) {
     if added == b"-" && deleted == b"-" {
         return (None, None, true, false);
@@ -158,6 +197,7 @@ fn parse_stat_pair(added: &[u8], deleted: &[u8]) -> (Option<u64>, Option<u64>, b
     let additions = parse_line_count(added);
     let deletions = parse_line_count(deleted);
     let truncated = additions.is_none() || deletions.is_none();
+    let (additions, deletions) = known_counts(additions, deletions, false, truncated);
     (additions, deletions, false, truncated)
 }
 
@@ -204,6 +244,7 @@ fn parse_name_status_record<'a>(
         let new_tok = tokens.next()?;
         return Some(NameStatusEntry {
             path: lossy_path(new_tok),
+            path_bytes: new_tok.to_vec(),
             old_path: Some(lossy_path(old_tok)),
             status,
         });
@@ -212,6 +253,7 @@ fn parse_name_status_record<'a>(
     let path_tok = tokens.next()?;
     Some(NameStatusEntry {
         path: lossy_path(path_tok),
+        path_bytes: path_tok.to_vec(),
         old_path: None,
         status,
     })
@@ -266,20 +308,26 @@ pub fn classify_porcelain_status(code: &str) -> ChangeFileStatus {
 /// invocation produced both inputs (`--cached` vs. not) — a file with both
 /// staged and unstaged changes requires the caller to merge two calls, which
 /// is a live working-tree (PR2) concern, not this pure join.
+///
+/// Joins on [`DiffStatEntry::path_bytes`] / [`NameStatusEntry::path_bytes`]
+/// — the raw bytes git emitted — never on the lossily-decoded `path`
+/// `String`. Two distinct invalid-UTF-8 paths can decode to an identical
+/// lossy string; joining on that string would silently pair one file's
+/// status with a different file's stats.
 pub fn merge_changed_files(
     name_status: &[NameStatusEntry],
     numstat: &[DiffStatEntry],
     staged: bool,
 ) -> Vec<ChangedFile> {
-    let stats_by_path: HashMap<&str, &DiffStatEntry> = numstat
+    let stats_by_path: HashMap<&[u8], &DiffStatEntry> = numstat
         .iter()
-        .map(|entry| (entry.path.as_str(), entry))
+        .map(|entry| (entry.path_bytes.as_slice(), entry))
         .collect();
 
     name_status
         .iter()
         .map(|entry| {
-            let stat = stats_by_path.get(entry.path.as_str()).copied();
+            let stat = stats_by_path.get(entry.path_bytes.as_slice()).copied();
             build_changed_file(entry, stat, staged)
         })
         .collect()
@@ -290,6 +338,14 @@ fn build_changed_file(
     stat: Option<&DiffStatEntry>,
     staged: bool,
 ) -> ChangedFile {
+    let binary = stat.is_some_and(|s| s.binary);
+    let truncated = stat.is_some_and(|s| s.truncated);
+    let (additions, deletions) = known_counts(
+        stat.and_then(|s| s.additions),
+        stat.and_then(|s| s.deletions),
+        binary,
+        truncated,
+    );
     ChangedFile {
         path: entry.path.clone(),
         old_path: entry
@@ -299,20 +355,32 @@ fn build_changed_file(
         status: entry.status,
         staged: staged.then_some(true),
         unstaged: (!staged).then_some(true),
-        additions: stat.and_then(|s| s.additions),
-        deletions: stat.and_then(|s| s.deletions),
-        binary: stat.is_some_and(|s| s.binary),
-        truncated: stat.is_some_and(|s| s.truncated),
+        additions,
+        deletions,
+        binary,
+        truncated,
         diff_available: true,
     }
 }
 
 /// Additions/deletions hand-counted from a full unified-diff body (as
 /// opposed to Git's own pre-counted `--numstat`). Used for provider-supplied
-/// diff text, which has no separate numeric stat channel. `diff --git`,
-/// `index`, mode/rename/copy metadata, `---`/`+++` file headers, `@@` hunk
-/// headers and the "no newline" marker are all skipped — only body lines
-/// starting with `+`/`-` count.
+/// diff text, which has no separate numeric stat channel and, unlike a git
+/// invocation's output, is not guaranteed to include `diff --git`/`---`/
+/// `+++` file headers at all — some providers hand over a bare hunk, or even
+/// bare `+`/`-` lines with no `@@` header either.
+///
+/// Tracks hunk state rather than matching header prefixes unconditionally:
+/// `---`/`+++` file headers and other metadata only ever appear *outside* a
+/// hunk (before the first `@@`); once inside a hunk, only the line's leading
+/// marker character (`+`, `-`, or context/other) classifies it. This matters
+/// because a *removed* content line whose own text starts with `-- ` (a
+/// SQL/Lua comment, say) renders as `--- ...` once the diff's leading `-`
+/// marker is prepended — indistinguishable from a `--- a/file` header by
+/// prefix alone. Matching by hunk state instead of prefix gets this right.
+/// When the text contains no `@@` line at all, there is no header/hunk
+/// structure to speak of, so every line is treated as hunk content from the
+/// start (a bare patch fragment, not a headerless-but-real unified diff).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiffBodyStat {
     pub additions: Option<u64>,
@@ -323,47 +391,67 @@ pub struct DiffBodyStat {
 
 pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
     if diff_text.len() > MAX_DIFF_BODY_BYTES {
+        let (additions, deletions) = known_counts(None, None, false, true);
         return DiffBodyStat {
-            additions: None,
-            deletions: None,
+            additions,
+            deletions,
             binary: false,
             truncated: true,
         };
     }
 
+    let has_hunk_header = diff_text.lines().any(|line| line.starts_with("@@"));
     let mut additions: u64 = 0;
     let mut deletions: u64 = 0;
+    let mut in_hunk = !has_hunk_header;
     for (lines_seen, line) in diff_text.lines().enumerate() {
         if lines_seen >= MAX_DIFF_BODY_LINES {
+            // Never report the partial count scanned so far as if it were
+            // exact (P1-1) — a bounded scan means the true total is unknown.
+            let (additions, deletions) = known_counts(None, None, false, true);
             return DiffBodyStat {
-                additions: Some(additions),
-                deletions: Some(deletions),
+                additions,
+                deletions,
                 binary: false,
                 truncated: true,
             };
         }
 
+        if line.starts_with("diff --git") {
+            in_hunk = false; // a new file section's headers follow.
+            continue;
+        }
+        if line.starts_with("@@") {
+            in_hunk = true; // the hunk header itself never counts.
+            continue;
+        }
+        if in_hunk {
+            match line.as_bytes().first() {
+                Some(b'+') => additions += 1,
+                Some(b'-') => deletions += 1,
+                // Context lines and the "\ No newline at end of file"
+                // marker (which starts with `\`) never count.
+                _ => {}
+            }
+            continue;
+        }
         if is_binary_marker_line(line) {
+            let (additions, deletions) = known_counts(None, None, true, false);
             return DiffBodyStat {
-                additions: None,
-                deletions: None,
+                additions,
+                deletions,
                 binary: true,
                 truncated: false,
             };
         }
-        if is_diff_metadata_line(line) {
-            continue;
-        }
-        if line.starts_with('+') {
-            additions += 1;
-        } else if line.starts_with('-') {
-            deletions += 1;
-        }
+        // Outside a hunk: header/metadata lines (---, +++, index, mode,
+        // rename/copy, similarity) are all skipped — nothing here is content.
     }
 
+    let (additions, deletions) = known_counts(Some(additions), Some(deletions), false, false);
     DiffBodyStat {
-        additions: Some(additions),
-        deletions: Some(deletions),
+        additions,
+        deletions,
         binary: false,
         truncated: false,
     }
@@ -371,26 +459,6 @@ pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
 
 fn is_binary_marker_line(line: &str) -> bool {
     line.starts_with("Binary files ") && line.contains(" differ")
-}
-
-/// Unified-diff header/metadata lines that must never count toward
-/// additions/deletions even though several start with `+`/`-`.
-fn is_diff_metadata_line(line: &str) -> bool {
-    line.starts_with("diff --git")
-        || line.starts_with("index ")
-        || line.starts_with("--- ")
-        || line.starts_with("+++ ")
-        || line.starts_with("@@")
-        || line.starts_with("\\ No newline at end of file")
-        || line.starts_with("old mode")
-        || line.starts_with("new mode")
-        || line.starts_with("new file mode")
-        || line.starts_with("deleted file mode")
-        || line.starts_with("similarity index")
-        || line.starts_with("rename from")
-        || line.starts_with("rename to")
-        || line.starts_with("copy from")
-        || line.starts_with("copy to")
 }
 
 /// Bounds raw `-z` output to [`MAX_DIFF_STAT_BYTES`], reporting whether that
@@ -422,6 +490,18 @@ mod tests {
     }
 
     #[test]
+    fn known_counts_enforces_binary_or_truncated_implies_both_none() {
+        assert_eq!(
+            known_counts(Some(3), Some(4), false, false),
+            (Some(3), Some(4))
+        );
+        assert_eq!(known_counts(Some(3), Some(4), true, false), (None, None));
+        assert_eq!(known_counts(Some(3), Some(4), false, true), (None, None));
+        assert_eq!(known_counts(Some(3), None, true, true), (None, None));
+        assert_eq!(known_counts(None, None, false, false), (None, None));
+    }
+
+    #[test]
     fn numstat_parses_add_modify_delete() {
         let raw = joined(&[b"5\t0\tnew.rs", b"2\t3\tlib.rs", b"0\t7\told.rs"]);
         let parse = parse_numstat_z(&raw);
@@ -431,6 +511,7 @@ mod tests {
             vec![
                 DiffStatEntry {
                     path: "new.rs".into(),
+                    path_bytes: b"new.rs".to_vec(),
                     old_path: None,
                     additions: Some(5),
                     deletions: Some(0),
@@ -439,6 +520,7 @@ mod tests {
                 },
                 DiffStatEntry {
                     path: "lib.rs".into(),
+                    path_bytes: b"lib.rs".to_vec(),
                     old_path: None,
                     additions: Some(2),
                     deletions: Some(3),
@@ -447,6 +529,7 @@ mod tests {
                 },
                 DiffStatEntry {
                     path: "old.rs".into(),
+                    path_bytes: b"old.rs".to_vec(),
                     old_path: None,
                     additions: Some(0),
                     deletions: Some(7),
@@ -469,6 +552,7 @@ mod tests {
             parse.entries,
             vec![DiffStatEntry {
                 path: "ZZZZ_dest.txt".into(),
+                path_bytes: b"ZZZZ_dest.txt".to_vec(),
                 old_path: Some("AAAA_source.txt".into()),
                 additions: Some(0),
                 deletions: Some(0),
@@ -506,13 +590,17 @@ mod tests {
     }
 
     #[test]
-    fn numstat_out_of_range_count_is_truncated_not_invented() {
+    fn numstat_one_bad_field_makes_both_counts_none_not_half_known() {
+        // added is unparsable (out of range); deleted is a perfectly valid
+        // `1`. The record as a whole must be untrusted — never "one known,
+        // one unknown" (P2-1).
         let raw = joined(&[b"999999999999999999999\t1\tbig.rs"]);
         let parse = parse_numstat_z(&raw);
         let entry = &parse.entries[0];
         assert!(entry.truncated);
         assert!(!entry.binary);
         assert_eq!(entry.additions, None);
+        assert_eq!(entry.deletions, None);
     }
 
     #[test]
@@ -542,9 +630,12 @@ mod tests {
         assert_eq!(entry.additions, Some(3));
         assert_eq!(entry.deletions, Some(2));
         // ...and the lossily-decoded path never panics and carries a
-        // replacement character rather than the raw invalid bytes.
+        // replacement character rather than the raw invalid bytes, while the
+        // raw bytes are preserved separately for joins.
         assert!(entry.path.contains('\u{FFFD}'));
         assert!(entry.path.ends_with("badpath.txt"));
+        assert_eq!(entry.path_bytes[0], 0xFF);
+        assert_eq!(entry.path_bytes[1], 0xFE);
     }
 
     #[test]
@@ -557,16 +648,19 @@ mod tests {
             vec![
                 NameStatusEntry {
                     path: "new.rs".into(),
+                    path_bytes: b"new.rs".to_vec(),
                     old_path: None,
                     status: ChangeFileStatus::Add,
                 },
                 NameStatusEntry {
                     path: "lib.rs".into(),
+                    path_bytes: b"lib.rs".to_vec(),
                     old_path: None,
                     status: ChangeFileStatus::Modify,
                 },
                 NameStatusEntry {
                     path: "old.rs".into(),
+                    path_bytes: b"old.rs".to_vec(),
                     old_path: None,
                     status: ChangeFileStatus::Delete,
                 },
@@ -582,6 +676,7 @@ mod tests {
             parse.entries,
             vec![NameStatusEntry {
                 path: "new.txt".into(),
+                path_bytes: b"new.txt".to_vec(),
                 old_path: Some("old.txt".into()),
                 status: ChangeFileStatus::Rename,
             }]
@@ -619,11 +714,13 @@ mod tests {
     fn merge_joins_status_and_stats_by_path() {
         let statuses = vec![NameStatusEntry {
             path: "lib.rs".into(),
+            path_bytes: b"lib.rs".to_vec(),
             old_path: None,
             status: ChangeFileStatus::Modify,
         }];
         let stats = vec![DiffStatEntry {
             path: "lib.rs".into(),
+            path_bytes: b"lib.rs".to_vec(),
             old_path: None,
             additions: Some(4),
             deletions: Some(1),
@@ -642,6 +739,7 @@ mod tests {
     fn merge_carries_rename_old_path_and_marks_unstaged() {
         let statuses = vec![NameStatusEntry {
             path: "new.txt".into(),
+            path_bytes: b"new.txt".to_vec(),
             old_path: Some("old.txt".into()),
             status: ChangeFileStatus::Rename,
         }];
@@ -651,6 +749,70 @@ mod tests {
         assert_eq!(files[0].staged, None);
         // No matching numstat entry: stats stay unknown, never zero.
         assert_eq!(files[0].additions, None);
+    }
+
+    #[test]
+    fn merge_keys_on_raw_bytes_not_lossy_path_to_avoid_conflating_distinct_paths() {
+        // Two different invalid leading bytes that each collapse to a single
+        // U+FFFD replacement character under lossy decoding, followed by an
+        // identical suffix: both entries display the same `path` string but
+        // must never be treated as the same file (P2-3).
+        let path_a_bytes = [&[0xFFu8][..], b"file.txt"].concat();
+        let path_b_bytes = [&[0xFEu8][..], b"file.txt"].concat();
+        let lossy_a = String::from_utf8_lossy(&path_a_bytes).into_owned();
+        let lossy_b = String::from_utf8_lossy(&path_b_bytes).into_owned();
+        assert_eq!(
+            lossy_a, lossy_b,
+            "fixture must actually collide under lossy decoding"
+        );
+
+        let statuses = vec![
+            NameStatusEntry {
+                path: lossy_a.clone(),
+                path_bytes: path_a_bytes.clone(),
+                old_path: None,
+                status: ChangeFileStatus::Modify,
+            },
+            NameStatusEntry {
+                path: lossy_b.clone(),
+                path_bytes: path_b_bytes.clone(),
+                old_path: None,
+                status: ChangeFileStatus::Modify,
+            },
+        ];
+        let stats = vec![
+            DiffStatEntry {
+                path: lossy_a,
+                path_bytes: path_a_bytes,
+                old_path: None,
+                additions: Some(1),
+                deletions: Some(1),
+                binary: false,
+                truncated: false,
+            },
+            DiffStatEntry {
+                path: lossy_b,
+                path_bytes: path_b_bytes,
+                old_path: None,
+                additions: Some(9),
+                deletions: Some(9),
+                binary: false,
+                truncated: false,
+            },
+        ];
+
+        let files = merge_changed_files(&statuses, &stats, true);
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            files[0].additions,
+            Some(1),
+            "first path keeps its own stats"
+        );
+        assert_eq!(
+            files[1].additions,
+            Some(9),
+            "second path keeps its own stats, not the first's"
+        );
     }
 
     #[test]
@@ -715,21 +877,73 @@ Binary files a/img.png and b/img.png differ\n";
     }
 
     #[test]
-    fn diff_body_truncates_at_line_bound() {
-        let mut diff = String::new();
+    fn diff_body_truncates_at_line_bound_never_reports_a_partial_count() {
+        let mut diff = String::from(
+            "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -0,0 +1,999999 @@\n",
+        );
         for _ in 0..(MAX_DIFF_BODY_LINES + 5) {
             diff.push_str("+line\n");
         }
         let stat = count_unified_diff_stat(&diff);
         assert!(stat.truncated);
-        assert_eq!(stat.additions, Some(MAX_DIFF_BODY_LINES as u64));
+        // P1-1: a bounded/truncated scan must never report the partial count
+        // it happened to reach as if it were the true total.
+        assert_eq!(stat.additions, None);
+        assert_eq!(stat.deletions, None);
     }
 
     #[test]
-    fn diff_body_truncates_at_byte_bound() {
+    fn diff_body_truncates_at_byte_bound_never_reports_a_partial_count() {
         let diff = "+".repeat(MAX_DIFF_BODY_BYTES + 1);
         let stat = count_unified_diff_stat(&diff);
         assert!(stat.truncated);
         assert_eq!(stat.additions, None);
+        assert_eq!(stat.deletions, None);
+    }
+
+    #[test]
+    fn diff_body_in_hunk_removed_line_starting_with_double_dash_counts_as_content() {
+        // A removed line whose own text is `-- x` (e.g. a SQL/Lua comment)
+        // renders as `--- x` once the diff's leading `-` marker is
+        // prepended — identical in shape to a `--- a/file` header line.
+        // Hunk-state tracking must still count it as one deletion (P2-2).
+        let diff = "diff --git a/f.sql b/f.sql\n\
+--- a/f.sql\n\
++++ b/f.sql\n\
+@@ -1,1 +0,0 @@\n\
+--- x\n";
+        let stat = count_unified_diff_stat(diff);
+        assert_eq!(stat.deletions, Some(1));
+        assert_eq!(stat.additions, Some(0));
+        assert!(!stat.binary);
+    }
+
+    #[test]
+    fn diff_body_in_hunk_added_line_starting_with_double_plus_counts_as_content() {
+        // An added line whose own text is `++ y` renders as `+++ y` once the
+        // diff's leading `+` marker is prepended — identical in shape to a
+        // `+++ b/file` header line.
+        let diff = "diff --git a/f.c b/f.c\n\
+--- a/f.c\n\
++++ b/f.c\n\
+@@ -0,0 +1,1 @@\n\
++++ y\n";
+        let stat = count_unified_diff_stat(diff);
+        assert_eq!(stat.additions, Some(1));
+        assert_eq!(stat.deletions, Some(0));
+        assert!(!stat.binary);
+    }
+
+    #[test]
+    fn diff_body_with_no_hunk_header_at_all_treats_every_line_as_content() {
+        // Some providers hand over a bare patch fragment with no `diff
+        // --git`/`---`/`+++`/`@@` structure at all — just `+`/`-` lines. With
+        // no `@@` anywhere, there is no header/hunk boundary to speak of, so
+        // every line must still count (this is what `changes::turn`'s fold
+        // relies on for provider-supplied `FileChangeEntry.diff` text).
+        let stat = count_unified_diff_stat("+a\n-b\n-c\n");
+        assert_eq!(stat.additions, Some(1));
+        assert_eq!(stat.deletions, Some(2));
+        assert!(!stat.binary);
     }
 }

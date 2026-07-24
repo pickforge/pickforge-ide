@@ -39,7 +39,7 @@ use crate::agents::{AgentEvent, FileChangeEntry, FileChangeKind};
 use crate::changes::{
     ChangeFileStatus, ChangeScope, ChangeSet, ChangeSource, ChangeTotals, ChangedFile,
 };
-use crate::git::diff_stat::count_unified_diff_stat;
+use crate::git::diff_stat::{count_unified_diff_stat, known_counts, DiffBodyStat};
 
 /// One timeline event already anchored to its persisted ordering/timing —
 /// the shape of `AgentTimelineEntry::Item { seq, created_at, .. }` decoded
@@ -58,10 +58,11 @@ pub struct TimelineTurnEvent {
 /// Folds `events` (already ordered by `seq`) into one [`ChangeSet`] per
 /// turn. A turn opens on `TurnStarted` and closes on the next `TurnDone`;
 /// `FileChange` entries between them are deduplicated per path and folded in
-/// arrival order (last status wins, stats only ever gain — never lose — a
-/// known value; see [`TurnAccumulator::fold_one`]). A turn with no closing
-/// `TurnDone` yet (still running, or interrupted with no terminal event at
-/// all) is still emitted, marked `stale: true`.
+/// arrival order: status is last-write-wins, but stats are first-known-wins
+/// and either sticky `binary`/`truncated` flag clears both counts to `None`
+/// even if one was already known (see [`TurnAccumulator::fold_one`]). A turn
+/// with no closing `TurnDone` yet (still running, or interrupted with no
+/// terminal event at all) is still emitted, marked `stale: true`.
 pub fn group_turn_change_sets(
     chat_id: &str,
     repo_root: &str,
@@ -131,17 +132,21 @@ impl TurnAccumulator {
 
     /// Dedup/fold rule for repeated events on the same path within one turn:
     /// status is last-write-wins (the most recent event is the path's final
-    /// state this turn); additions/deletions only ever move from unknown to
-    /// known, never the reverse, so a later event with no diff attached
-    /// cannot erase an earlier known count; binary/truncated are sticky once
-    /// observed; a file is diff-available as soon as any one event for it
-    /// carried a diff body.
+    /// state this turn); additions/deletions are first-known-wins — the
+    /// first event to report a known count keeps it, a later event's known
+    /// count never overwrites it (avoids picking an arbitrary "more
+    /// correct" one across dedup-folded events); binary/truncated are
+    /// sticky once observed, and per the crate-wide invariant
+    /// (`crate::git::diff_stat::known_counts`), whenever either sticky flag
+    /// is true both counts are `None` even if a count was already known
+    /// before this event; a file is diff-available as soon as any one event
+    /// for it carried a diff body.
     fn fold_one(&mut self, change: &FileChangeEntry) {
         let stat = change
             .diff
             .as_deref()
             .map(count_unified_diff_stat)
-            .unwrap_or(crate::git::diff_stat::DiffBodyStat {
+            .unwrap_or(DiffBodyStat {
                 additions: None,
                 deletions: None,
                 binary: false,
@@ -151,14 +156,18 @@ impl TurnAccumulator {
 
         if let Some(existing) = self.files.get_mut(&change.path) {
             existing.status = status;
-            existing.additions = stat.additions.or(existing.additions);
-            existing.deletions = stat.deletions.or(existing.deletions);
             existing.binary |= stat.binary;
             existing.truncated |= stat.truncated;
             existing.diff_available |= change.diff.is_some();
+            let additions = existing.additions.or(stat.additions);
+            let deletions = existing.deletions.or(stat.deletions);
+            (existing.additions, existing.deletions) =
+                known_counts(additions, deletions, existing.binary, existing.truncated);
             return;
         }
 
+        let (additions, deletions) =
+            known_counts(stat.additions, stat.deletions, stat.binary, stat.truncated);
         self.order.push(change.path.clone());
         self.files.insert(
             change.path.clone(),
@@ -168,8 +177,8 @@ impl TurnAccumulator {
                 status,
                 staged: None,
                 unstaged: None,
-                additions: stat.additions,
-                deletions: stat.deletions,
+                additions,
+                deletions,
                 binary: stat.binary,
                 truncated: stat.truncated,
                 diff_available: change.diff.is_some(),
@@ -302,9 +311,59 @@ mod tests {
         assert_eq!(turns[0].files.len(), 1, "same path folds to one row");
         let file = &turns[0].files[0];
         assert_eq!(file.status, ChangeFileStatus::Modify, "last event wins");
-        // Latest event's own stats replace the prior known value (it's the
-        // freshest count for that path), not summed across events.
-        assert_eq!(file.additions, Some(2));
+        // Stats are first-known-wins, not last-known-wins: the first event's
+        // count (1 addition from "+one\n") is kept, not overwritten by the
+        // second event's count (2 additions).
+        assert_eq!(file.additions, Some(1));
+    }
+
+    #[test]
+    fn dedup_first_known_stat_wins_over_a_later_different_known_value() {
+        let events = vec![
+            started(1, 100),
+            file_change(2, 110, "src/lib.rs", FileChangeKind::Modify, Some("+one\n")),
+            file_change(
+                3,
+                115,
+                "src/lib.rs",
+                FileChangeKind::Modify,
+                Some("+a\n+b\n+c\n"),
+            ),
+            done(4, 120),
+        ];
+        let turns = group_turn_change_sets("chat-1", "/repo", &events);
+        let file = &turns[0].files[0];
+        assert_eq!(
+            file.additions,
+            Some(1),
+            "first known count is never overwritten"
+        );
+        assert_eq!(file.deletions, Some(0));
+    }
+
+    #[test]
+    fn dedup_sticky_binary_clears_previously_known_counts() {
+        let events = vec![
+            started(1, 100),
+            file_change(2, 110, "img.png", FileChangeKind::Modify, Some("+a\n-b\n")),
+            file_change(
+                3,
+                115,
+                "img.png",
+                FileChangeKind::Modify,
+                Some(
+                    "diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n",
+                ),
+            ),
+            done(4, 120),
+        ];
+        let turns = group_turn_change_sets("chat-1", "/repo", &events);
+        let file = &turns[0].files[0];
+        assert!(file.binary);
+        // The invariant `binary || truncated => both counts None` holds even
+        // though an earlier event in the same turn had a known count.
+        assert_eq!(file.additions, None);
+        assert_eq!(file.deletions, None);
     }
 
     #[test]

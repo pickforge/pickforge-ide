@@ -443,6 +443,8 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   mcp_update_swarm_run: () => null,
   mcp_swarm_status: () => ({ runs: [] }),
   mcp_stop: () => null,
+  list_pi_kit_runs: () => [],
+  abandon_pi_kit_lane: () => ({ requested: true, consumed: false }),
   picklab_status: () => ({
     cliAvailable: true,
     mcpAvailable: true,

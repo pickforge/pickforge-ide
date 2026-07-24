@@ -38,7 +38,13 @@ export const SETTINGS_CATEGORIES = [
 
 export type SettingsCategoryKey = (typeof SETTINGS_CATEGORIES)[number]["key"];
 
-export type SettingsSectionAvailability = "always" | "operator" | "accounts" | "development" | "linux";
+export type SettingsSectionAvailability =
+  | "always"
+  | "operator"
+  | "accounts"
+  | "development"
+  | "linux"
+  | "pikitLanes";
 
 export const SETTINGS_SECTIONS = [
   { key: "agentModels", title: "Agent models", category: "agents", availability: "always" },
@@ -46,6 +52,7 @@ export const SETTINGS_SECTIONS = [
   { key: "dictation", title: "Dictation", category: "operator", availability: "operator" },
   { key: "chats", title: "Chats", category: "agents", availability: "always" },
   { key: "pickLab", title: "PickLab companion", category: "agents", availability: "always" },
+  { key: "pikitLanes", title: "Pi-kit lanes", category: "agents", availability: "pikitLanes" },
   { key: "remoteHost", title: "Remote host", category: "remote", availability: "always" },
   { key: "quickLaunch", title: "Quick launch", category: "agents", availability: "always" },
   { key: "appearance", title: "Appearance", category: "general", availability: "always" },
@@ -75,6 +82,7 @@ export interface SettingsSectionAvailabilityContext {
   accounts: boolean;
   development: boolean;
   linux: boolean;
+  pikitLanes: boolean;
 }
 
 export function isSettingsSectionAvailable(

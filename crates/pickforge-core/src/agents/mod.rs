@@ -7,6 +7,7 @@ pub mod event;
 pub mod omp_acp;
 pub mod manager;
 pub mod pi_kit;
+pub mod pi_kit_runs;
 pub mod pi_rpc;
 pub mod remote_exec;
 pub mod skills;
@@ -22,5 +23,9 @@ pub use omp_acp::{
     OmpAcpSessionOpen,
 };
 pub use pi_kit::{detect_pi_kit, PiKitDetection};
+pub use pi_kit_runs::{
+    abandon_pi_kit_lane, list_pi_kit_runs, pi_kit_runs_dir, PiKitAbandonOutcome, PiKitLaneStatus,
+    PiKitRunEntry, PiKitRunStatus, PiKitRunTotals, PIKIT_DATA_DIR_ENV,
+};
 pub use remote_exec::{RemoteExec, RemoteExecError};
 pub use skills::{list_agent_skills, AgentSkill};

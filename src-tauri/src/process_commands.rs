@@ -2,11 +2,13 @@
 //! the first time (potentially slow), so it runs on a blocking thread to keep
 //! the UI responsive.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use pickforge_core::agents::{
     claude_auth_status_authenticated, codex_login_status_authenticated, detect_pi_kit,
-    AuthPresenceProbe, AuthPresenceUnknownReason, PiKitDetection,
+    pi_kit_runs_dir, AuthPresenceProbe, AuthPresenceUnknownReason, PiKitAbandonOutcome,
+    PiKitDetection, PiKitRunEntry, PIKIT_DATA_DIR_ENV,
 };
 use pickforge_core::process::RunError;
 use pickforge_core::{is_on_user_path, run_timeout_capped, CommandOutcome, OutputTruncation};
@@ -228,6 +230,31 @@ pub async fn probe_agent_auth(agent_id: String) -> Result<AuthPresenceProbe, Str
     .map_err(|error| error.to_string())
 }
 
+/// Resolves pi-kit's runs directory (`$PIKIT_DATA_DIR` override, else
+/// `~/.pickforge/pi-kit`, then `runs`) the same way pi-kit's own
+/// `journalDir()` does. `None` only when the home directory itself can't be
+/// resolved.
+fn resolve_pi_kit_runs_dir() -> Option<PathBuf> {
+    let home = user_home_dir()?;
+    let env = std::env::var(PIKIT_DATA_DIR_ENV).ok();
+    Some(pi_kit_runs_dir(&home, env.as_deref()))
+}
+
+/// Lists pi-kit's external run status files — never the raw `*.jsonl`
+/// journals, which carry unredacted task/cwd/rationale. A missing runs
+/// directory (pi-kit absent, or no runs yet) yields an empty list, not an
+/// error.
+#[tauri::command]
+pub async fn list_pi_kit_runs() -> Result<Vec<PiKitRunEntry>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        resolve_pi_kit_runs_dir()
+            .map(|dir| pickforge_core::agents::list_pi_kit_runs(&dir))
+            .unwrap_or_default()
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// Reduce a completed (or failed) status-command run to a tri-state signal.
 /// Split out from [`probe_agent_auth`] as a pure function so the "logged in"
 /// / "logged out" / "command missing" / "timeout" shapes are unit-testable
@@ -254,6 +281,26 @@ fn classify_auth_probe_result(
         Err(RunError::Timeout(_)) => AuthPresenceProbe::unknown(AuthPresenceUnknownReason::Timeout),
         Err(RunError::Io(_)) => AuthPresenceProbe::unknown(AuthPresenceUnknownReason::CommandFailed),
     }
+}
+
+/// Requests that pi-kit abandon one lane (or, with `lane` omitted, every
+/// active lane) of `run`, by writing `<run>.abandon.json` for the owning
+/// runner to consume. Never signals the lane pid directly — see
+/// `pickforge_core::agents::pi_kit_runs` module docs.
+#[tauri::command]
+pub async fn abandon_pi_kit_lane(
+    run: String,
+    lane: Option<String>,
+    reason: Option<String>,
+) -> Result<PiKitAbandonOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = resolve_pi_kit_runs_dir()
+            .ok_or_else(|| "could not resolve the user's home directory".to_string())?;
+        pickforge_core::agents::abandon_pi_kit_lane(&dir, &run, lane.as_deref(), reason.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]

@@ -23,7 +23,6 @@ export interface PiKitDetection {
   detected: boolean;
   version: string | null;
   linkedExtensionCount: number;
-  checkoutPath: string | null;
 }
 
 /** Probe-only pi-kit detection: scans `~/.pi/agent/extensions` for linked

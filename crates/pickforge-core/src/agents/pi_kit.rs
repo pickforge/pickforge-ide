@@ -6,9 +6,16 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
-/// The re-export path segment that marks an extension shim as belonging to
+/// The exact path segment that marks an extension shim as belonging to
 /// pi-kit, e.g. `export { default } from "../../../pi-kit/extensions/x.ts"`.
-const PI_KIT_MARKER: &str = "pi-kit/";
+/// Matched as a whole `/`-delimited segment, not a substring, so sibling
+/// directories like `not-pi-kit/` or `somepi-kit/` never qualify.
+const PI_KIT_SEGMENT: &str = "pi-kit";
+
+/// Shim files are tiny hand-written re-exports; anything past this is not a
+/// shim we care to parse. Mirrors the read-size discipline in
+/// `process_commands::PROBE_CAPTURE_LIMIT_BYTES`.
+const SHIM_READ_LIMIT_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +26,9 @@ pub struct PiKitDetection {
     /// "pi-kit".
     pub version: Option<String>,
     pub linked_extension_count: usize,
+    /// Internal to the probe (tests, future slices); not part of the IPC
+    /// payload — the UI has no consumer for it yet.
+    #[serde(skip_serializing)]
     pub checkout_path: Option<PathBuf>,
 }
 
@@ -51,7 +61,7 @@ pub fn detect_pi_kit(extensions_dir: &Path) -> PiKitDetection {
     let mut linked_extension_count = 0usize;
     let mut checkout_path: Option<PathBuf> = None;
     for path in shim_paths {
-        let Ok(contents) = std::fs::read_to_string(&path) else {
+        let Some(contents) = read_shim_capped(&path) else {
             continue;
         };
         let Some(export_target) = pi_kit_shim_target(&contents) else {
@@ -76,8 +86,19 @@ pub fn detect_pi_kit(extensions_dir: &Path) -> PiKitDetection {
     }
 }
 
+/// Reads a shim candidate, refusing anything past `SHIM_READ_LIMIT_BYTES` so
+/// a mislabeled large `.ts` file can't be fully buffered into memory.
+fn read_shim_capped(path: &Path) -> Option<String> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if metadata.len() > SHIM_READ_LIMIT_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 /// Finds a bare `export { default } from "<path>"` re-export whose target
-/// contains the `pi-kit/` marker segment, and returns that target path.
+/// contains the `pi-kit` marker as a whole `/`-delimited path segment, and
+/// returns that target path.
 fn pi_kit_shim_target(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -92,7 +113,7 @@ fn pi_kit_shim_target(contents: &str) -> Option<String> {
         let rest = &after_from[quote.len_utf8()..];
         let end = rest.find(quote)?;
         let target = &rest[..end];
-        if target.contains(PI_KIT_MARKER) {
+        if target.split('/').any(|segment| segment == PI_KIT_SEGMENT) {
             return Some(target.to_string());
         }
     }
@@ -208,6 +229,35 @@ mod tests {
         root.write(
             ".pi/agent/extensions/other-shim.ts",
             "export { default } from \"../../../Projects/Personal/other-kit/extensions/x.ts\";\n",
+        );
+        let result = detect_pi_kit(&root.path.join(".pi/agent/extensions"));
+        assert_eq!(result, PiKitDetection::absent());
+    }
+
+    #[test]
+    fn lookalike_directory_names_do_not_match_the_pi_kit_segment() {
+        let root = TempDir::new("lookalike");
+        root.write(
+            ".pi/agent/extensions/not-shim.ts",
+            "export { default } from \"../../../Projects/Personal/not-pi-kit/extensions/x.ts\";\n",
+        );
+        root.write(
+            ".pi/agent/extensions/prefixed-shim.ts",
+            "export { default } from \"../../../Projects/Personal/somepi-kit/extensions/x.ts\";\n",
+        );
+        let result = detect_pi_kit(&root.path.join(".pi/agent/extensions"));
+        assert_eq!(result, PiKitDetection::absent());
+    }
+
+    #[test]
+    fn oversized_shim_candidate_is_skipped() {
+        let root = TempDir::new("oversized");
+        let padding = "// filler\n".repeat((SHIM_READ_LIMIT_BYTES as usize / 10) + 100);
+        root.write(
+            ".pi/agent/extensions/huge.ts",
+            &format!(
+                "{padding}export {{ default }} from \"../../../pi-kit/extensions/huge.ts\";\n"
+            ),
         );
         let result = detect_pi_kit(&root.path.join(".pi/agent/extensions"));
         assert_eq!(result, PiKitDetection::absent());

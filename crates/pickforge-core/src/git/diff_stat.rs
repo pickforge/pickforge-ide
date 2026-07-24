@@ -417,6 +417,25 @@ pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
             };
         }
 
+        // Checked unconditionally, regardless of hunk state: a real binary
+        // marker is never itself hunk content (it replaces the hunk
+        // entirely, standing alone with no leading +/-/space marker
+        // character), so checking it before the in-hunk short-circuit can
+        // never misfire on genuine `+`/`-`/context lines — those always
+        // carry that leading character and so never literally start with
+        // "Binary files " or "GIT binary patch". This also covers a bare
+        // diff with no `@@`/`diff --git` at all (the no-hunk-header
+        // fallback below would otherwise treat the marker line itself as
+        // content and never detect it).
+        if is_binary_marker_line(line) {
+            let (additions, deletions) = known_counts(None, None, true, false);
+            return DiffBodyStat {
+                additions,
+                deletions,
+                binary: true,
+                truncated: false,
+            };
+        }
         if line.starts_with("diff --git") {
             in_hunk = false; // a new file section's headers follow.
             continue;
@@ -435,15 +454,6 @@ pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
             }
             continue;
         }
-        if is_binary_marker_line(line) {
-            let (additions, deletions) = known_counts(None, None, true, false);
-            return DiffBodyStat {
-                additions,
-                deletions,
-                binary: true,
-                truncated: false,
-            };
-        }
         // Outside a hunk: header/metadata lines (---, +++, index, mode,
         // rename/copy, similarity) are all skipped — nothing here is content.
     }
@@ -457,8 +467,16 @@ pub fn count_unified_diff_stat(diff_text: &str) -> DiffBodyStat {
     }
 }
 
+/// Recognizes both binary shapes Git's diff output can contain: the plain
+/// `Binary files a/x and b/x differ` summary line, and the `GIT binary
+/// patch` section header that precedes a base85-encoded literal/delta patch
+/// (emitted with `--binary`). Anchored on line start so a genuine content
+/// line that merely *mentions* either phrase mid-sentence — which, inside a
+/// real hunk, always carries a leading `+`/`-`/space marker character first
+/// — can never match.
 fn is_binary_marker_line(line: &str) -> bool {
-    line.starts_with("Binary files ") && line.contains(" differ")
+    (line.starts_with("Binary files ") && line.contains(" differ"))
+        || line.starts_with("GIT binary patch")
 }
 
 /// Bounds raw `-z` output to [`MAX_DIFF_STAT_BYTES`], reporting whether that
@@ -857,6 +875,47 @@ Binary files a/img.png and b/img.png differ\n";
         assert!(stat.binary);
         assert_eq!(stat.additions, None);
         assert_eq!(stat.deletions, None);
+    }
+
+    #[test]
+    fn diff_body_bare_binary_marker_with_no_hunk_header_is_detected() {
+        // No `@@`/`diff --git` at all: the no-hunk-header fallback treats
+        // every line as content, so binary detection must be checked before
+        // that fallback ever gets a chance to swallow the marker line.
+        let stat = count_unified_diff_stat("Binary files a/img.png and b/img.png differ\n");
+        assert!(stat.binary);
+        assert_eq!(stat.additions, None);
+        assert_eq!(stat.deletions, None);
+    }
+
+    #[test]
+    fn diff_body_git_binary_patch_section_with_headers_is_detected() {
+        let diff = "diff --git a/img.bin b/img.bin\n\
+index 111..222 100644\n\
+GIT binary patch\n\
+literal 12\n\
+deadbeefdata\n";
+        let stat = count_unified_diff_stat(diff);
+        assert!(stat.binary);
+        assert_eq!(stat.additions, None);
+        assert_eq!(stat.deletions, None);
+    }
+
+    #[test]
+    fn diff_body_content_line_mentioning_binary_files_mid_hunk_does_not_trigger() {
+        // An added line whose own text happens to mention "Binary files"
+        // mid-sentence renders with a leading `+` marker, so it never
+        // literally starts with "Binary files " — must count as ordinary
+        // content, not be misdetected as the binary summary line.
+        let diff = "diff --git a/notes.md b/notes.md\n\
+--- a/notes.md\n\
++++ b/notes.md\n\
+@@ -0,0 +1,1 @@\n\
++note: Binary files are skipped by this importer\n";
+        let stat = count_unified_diff_stat(diff);
+        assert!(!stat.binary);
+        assert_eq!(stat.additions, Some(1));
+        assert_eq!(stat.deletions, Some(0));
     }
 
     #[test]

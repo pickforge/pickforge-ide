@@ -52,3 +52,75 @@ export interface AgentAuthProbe {
 export function probeAgentAuth(agentId: "codex" | "claudeCode"): Promise<AgentAuthProbe> {
   return invoke<AgentAuthProbe>("probe_agent_auth", { agentId });
 }
+
+/** One lane row from a pi-kit `<run>.status.json` file (pi-kit's
+ * `LaneSnapshotDto` plus `pid`). `pid` exists only for the orphan/liveness
+ * heuristic — never used to signal the lane's process directly. */
+export interface PiKitLaneStatus {
+  lane: string;
+  model: string;
+  effort: string;
+  mode: string;
+  state: string;
+  currentTool?: string | null;
+  lastStatus?: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  cost: number;
+  context: number;
+  answer?: string | null;
+  durationMs?: number | null;
+  abandonReason?: string | null;
+  pid?: number | null;
+}
+
+/** Parsed `<run>.status.json` body (schemaVersion 1). A best-effort,
+ * non-authoritative projection of pi-kit's journal — never replay it as a
+ * second source of truth. */
+export interface PiKitRunStatus {
+  schemaVersion: number;
+  revision: number;
+  updatedAtMs: number;
+  run: string;
+  state: "active" | "ended";
+  ok?: boolean | null;
+  durationMs: number;
+  totals: { cost: number; tokensIn: number; tokensOut: number };
+  lanes: PiKitLaneStatus[];
+}
+
+/** One run as PickForge sees it. `supported` is false when the file's
+ * `schemaVersion` isn't one this reader understands (honest degrade: listed,
+ * not dropped) — `status` is then `null`. */
+export interface PiKitRunEntry {
+  run: string;
+  supported: boolean;
+  status: PiKitRunStatus | null;
+  orphaned: boolean;
+}
+
+/** Lists pi-kit's external run status files — never the raw `*.jsonl`
+ * journals, which carry unredacted task/cwd/rationale. No pi-kit runs dir
+ * (pi-kit absent, or no runs yet) is a neutral empty list, not an error. */
+export function listPiKitRuns(): Promise<PiKitRunEntry[]> {
+  return invoke<PiKitRunEntry[]>("list_pi_kit_runs");
+}
+
+export interface PiKitAbandonOutcome {
+  requested: boolean;
+  /** Best-effort: whether the owning pi-kit runner appeared to consume the
+   * request within a short bounded poll. `false` is not necessarily a
+   * failure — the runner may still be mid-poll past that window. */
+  consumed: boolean;
+}
+
+/** Requests that pi-kit abandon one lane (or, with `lane` omitted, every
+ * active lane) of `run` by writing `<run>.abandon.json` for the owning
+ * runner to consume. Never signals the lane's process directly. */
+export function abandonPiKitLane(
+  run: string,
+  lane: string | null,
+  reason: string | null,
+): Promise<PiKitAbandonOutcome> {
+  return invoke<PiKitAbandonOutcome>("abandon_pi_kit_lane", { run, lane, reason });
+}

@@ -16,6 +16,7 @@ const CURRENT_SETTINGS_ORDER = [
   "dictation",
   "chats",
   "pickLab",
+  "pikitLanes",
   "remoteHost",
   "quickLaunch",
   "appearance",
@@ -38,6 +39,7 @@ describe("settings section registry", () => {
       "Dictation",
       "Chats",
       "PickLab companion",
+      "Pi-kit lanes",
       "Remote host",
       "Quick launch",
       "Appearance",
@@ -74,11 +76,17 @@ describe("settings section registry", () => {
     ]);
   });
 
-  it("preserves operator, account, development, and linux gating", () => {
-    const visible = (operator: boolean, accounts: boolean, development: boolean, linux = true) =>
+  it("preserves operator, account, development, linux, and pikitLanes gating", () => {
+    const visible = (
+      operator: boolean,
+      accounts: boolean,
+      development: boolean,
+      linux = true,
+      pikitLanes = true,
+    ) =>
       SETTINGS_SECTIONS
         .filter((section) =>
-          isSettingsSectionAvailable(section, { operator, accounts, development, linux }),
+          isSettingsSectionAvailable(section, { operator, accounts, development, linux, pikitLanes }),
         )
         .map(({ key }) => key);
 
@@ -95,11 +103,19 @@ describe("settings section registry", () => {
     expect(visible(false, false, true)).toContain("featureFlags");
     expect(visible(true, true, true, true)).toContain("linuxGraphics");
     expect(visible(true, true, true, false)).not.toContain("linuxGraphics");
+    expect(visible(true, true, true, true, true)).toContain("pikitLanes");
+    expect(visible(true, true, true, true, false)).not.toContain("pikitLanes");
   });
 
   it("resolves direct section keys and rejects hidden sections", () => {
-    const all = { operator: true, accounts: true, development: true, linux: true };
-    const limited = { operator: false, accounts: false, development: false, linux: false };
+    const all = { operator: true, accounts: true, development: true, linux: true, pikitLanes: true };
+    const limited = {
+      operator: false,
+      accounts: false,
+      development: false,
+      linux: false,
+      pikitLanes: false,
+    };
 
     expect(settingsCategoryForSection("quickLaunch", all)).toBe("agents");
     expect(settingsCategoryForSection("account", all)).toBe("account");
@@ -107,10 +123,18 @@ describe("settings section registry", () => {
     expect(settingsCategoryForSection("missing", all)).toBeNull();
     expect(settingsCategoryForSection("linuxGraphics", all)).toBe("general");
     expect(settingsCategoryForSection("linuxGraphics", limited)).toBeNull();
+    expect(settingsCategoryForSection("pikitLanes", all)).toBe("agents");
+    expect(settingsCategoryForSection("pikitLanes", limited)).toBeNull();
   });
 
   it("falls back from unavailable remembered categories", () => {
-    const limited = { operator: false, accounts: false, development: false, linux: false };
+    const limited = {
+      operator: false,
+      accounts: false,
+      development: false,
+      linux: false,
+      pikitLanes: false,
+    };
 
     expect(availableSettingsCategories(limited).map(({ key }) => key)).toEqual([
       "general",

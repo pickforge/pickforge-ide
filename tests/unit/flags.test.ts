@@ -37,18 +37,21 @@ describe("flags", () => {
       "accounts",
       "settingsSync",
       "studioUpdateDialog",
+      "pikitLanes",
     ]);
     for (const state of states) {
-      expect(state.defaultValue).toBe(false);
-      expect(state.enabled).toBe(false);
+      const expected = state.key === "ompAgents";
+      expect(state.defaultValue).toBe(expected);
+      expect(state.enabled).toBe(expected);
     }
     expect(store.flagEnabled("operator")).toBe(false);
-    expect(store.flagEnabled("ompAgents")).toBe(false);
+    expect(store.flagEnabled("ompAgents")).toBe(true);
     expect(store.flagEnabled("remoteProjects")).toBe(false);
     expect(store.flagEnabled("remoteProcessLeases")).toBe(false);
     expect(store.flagEnabled("accounts")).toBe(false);
     expect(store.flagEnabled("settingsSync")).toBe(false);
     expect(store.flagEnabled("studioUpdateDialog")).toBe(false);
+    expect(store.flagEnabled("pikitLanes")).toBe(false);
   });
 
   it("describes the shared updater flag with its tracking issue", async () => {

@@ -43,7 +43,7 @@ const localStorageStore: FlagOverrideStore = {
 
 const definitions = {
   operator: { description: "Operator command layer (epic #118)" },
-  ompAgents: { description: "OMP native chat and terminal profiles (#212)" },
+  ompAgents: { description: "OMP native chat and terminal profiles (#212)", default: true },
   remoteProjects: { description: "Per-project remote hosts (epic #144)" },
   remoteProcessLeases: { description: "Exact remote process cleanup leases (#208)" },
   accounts: { description: "Accounts and Pro entitlements (#132)" },
@@ -51,6 +51,7 @@ const definitions = {
   studioUpdateDialog: {
     description: "Shared @pickforge/tauri-updater dialog/controller (pickforge/pickforge-platform#36)",
   },
+  pikitLanes: { description: "Pi-kit lanes visibility in Settings (#274 slice 3, #288)" },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

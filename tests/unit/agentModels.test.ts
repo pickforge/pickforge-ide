@@ -33,7 +33,8 @@ beforeEach(() => {
 
 describe("OMP rollout gating and Pi commands", () => {
   it("keeps Pi unconditionally available while OMP is off", async () => {
-    const { models, quickLaunch } = await loadModules();
+    const { flags, models, quickLaunch } = await loadModules();
+    flags.setFlagOverride("ompAgents", false);
 
     expect(models.agentProfiles().map((agent) => agent.id)).toEqual([
       ...models.AGENTS.map((agent) => agent.id),

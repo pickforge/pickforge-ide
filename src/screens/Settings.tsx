@@ -150,6 +150,7 @@ import {
   performAccountDeletion,
 } from "../lib/accountData";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PiKitLanesPanel } from "../components/pikit/PiKitLanesPanel";
 import * as db from "../lib/db";
 import {
   legacyStopConfirmTitle,
@@ -172,6 +173,7 @@ import {
   LinuxGraphicsSettingsSection,
   OperatorRouterSettingsSection,
   PickLabSettingsSection,
+  PiKitLanesSettingsSection,
   QuickLaunchSettingsSection,
   RemoteHostSettingsSection,
   UpdatesSettingsSection,
@@ -437,6 +439,7 @@ export function SettingsScreen() {
     accounts: flagEnabled("accounts"),
     development: import.meta.env.DEV,
     linux: hostPlatform() === "linux",
+    pikitLanes: flagEnabled("pikitLanes"),
   });
   const availableCategories = () => availableSettingsCategories(settingsAvailability());
 
@@ -1550,6 +1553,12 @@ export function SettingsScreen() {
           </button>
           <span class="pf-settings-muted">Managed as an external Pickforge tool</span>
         </div></PickLabSettingsSection>
+
+        <Show when={flagEnabled("pikitLanes")}>
+          <PiKitLanesSettingsSection>
+            <PiKitLanesPanel />
+          </PiKitLanesSettingsSection>
+        </Show>
 
         <RemoteHostSettingsSection><div class="pf-settings-row">
           <span class="pf-settings-label">

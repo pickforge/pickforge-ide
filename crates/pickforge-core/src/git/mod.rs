@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::process::{run_timeout, CommandOutcome};
 
 pub mod diff_stat;
+pub mod working_tree;
 
 /// Bound every git one-shot so a hung git (a credential/SSH prompt, a stalled
 /// fetch) can't wedge the calling Tauri blocking task. These are local

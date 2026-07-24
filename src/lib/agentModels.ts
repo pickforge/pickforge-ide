@@ -146,7 +146,7 @@ export function agentProfiles(): AgentProfile[] {
   return [
     ...AGENTS,
     ...(flagEnabled("ompAgents") ? OMP_AGENTS : []),
-    ...(flagEnabled("piAgents") ? PI_AGENTS : []),
+    ...PI_AGENTS,
   ];
 }
 
@@ -260,19 +260,15 @@ export function ensureOmpNativeCompatibility(force = false): Promise<boolean> {
 }
 
 export function piNativeChatAvailable(): boolean {
-  return flagEnabled("piAgents") && piNativeCompatibility() === "compatible";
+  return piNativeCompatibility() === "compatible";
 }
 
 export function isPiNativeCompatibilityPending(): boolean {
-  if (!flagEnabled("piAgents")) return false;
   const compatibility = piNativeCompatibility();
   return compatibility === "unprobed" || compatibility === "probing";
 }
 
 export function piNativeChatUnavailableReason(): string | null {
-  if (!flagEnabled("piAgents")) {
-    return "Pi native chat is disabled by the piAgents rollout flag";
-  }
   switch (piNativeCompatibility()) {
     case "compatible":
       return null;
@@ -287,7 +283,6 @@ export function piNativeChatUnavailableReason(): string | null {
 let piCompatibilityProbe: Promise<boolean> | null = null;
 
 export function ensurePiNativeCompatibility(force = false): Promise<boolean> {
-  if (!flagEnabled("piAgents")) return Promise.resolve(false);
   if (!force && piNativeCompatibility() === "compatible") return Promise.resolve(true);
   if (!force && piCompatibilityProbe) return piCompatibilityProbe;
   setPiNativeCompatibility("probing");

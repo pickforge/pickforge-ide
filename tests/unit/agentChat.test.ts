@@ -38,7 +38,6 @@ const activity = vi.hoisted(() => ({
 const flags = vi.hoisted(() => ({
   remoteProjects: false,
   ompAgents: false,
-  piAgents: false,
 }));
 const workspace = vi.hoisted(() => ({
   chats: new Map<string, {
@@ -106,8 +105,7 @@ vi.mock("../../src/stores/chatArchive", () => ({ isChatArchived: workspace.isCha
 vi.mock("../../src/stores/flags", () => ({
   flagEnabled: (key: string) =>
     (key === "remoteProjects" && flags.remoteProjects) ||
-    (key === "ompAgents" && flags.ompAgents) ||
-    (key === "piAgents" && flags.piAgents),
+    (key === "ompAgents" && flags.ompAgents),
   subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 
@@ -264,7 +262,6 @@ beforeEach(() => {
   workspace.projects = [];
   flags.remoteProjects = false;
   flags.ompAgents = false;
-  flags.piAgents = false;
   settings.clear();
   setAgentEngine("v2");
 });
@@ -359,20 +356,7 @@ describe("agentChat IPC wrappers", () => {
   });
 
 
-  it("rejects Pi before IPC while the rollout flag is off", async () => {
-    await expect(agentChatStart({
-      chatId: "chat-pi",
-      projectRoot: "/project",
-      provider: "pi",
-      onEvent: () => undefined,
-    })).rejects.toThrow("piAgents rollout flag");
-
-    expect(tauri.invoke).not.toHaveBeenCalled();
-    expect(tauri.channels).toHaveLength(0);
-  });
-
-  it("starts Pi through the native IPC seam while the rollout flag is on", async () => {
-    flags.piAgents = true;
+  it("starts Pi through the native IPC seam unconditionally", async () => {
     recordAgentCliDiagnostic(diagnosticFromProbe("pi", {
       installed: true,
       versionOutput: "pi 0.79.10",
@@ -455,7 +439,6 @@ describe("agentChat store reducer", () => {
   });
 
   it("does not treat Pi thinking metadata as a selectable effort", async () => {
-    flags.piAgents = true;
     const { chatId, emit } = await startChat([], "test/model", "pi");
 
     emit({
@@ -722,7 +705,6 @@ describe("agentChat store reducer", () => {
 
   it("rejects Pi approval actions before IPC", async () => {
     const chatId = nextChatId();
-    flags.piAgents = true;
     mockInvoke(historyFromEvents([{
       kind: "approvalRequest",
       approvalId: "not-a-pi-protocol-event",
@@ -1090,7 +1072,6 @@ describe("agentChat history", () => {
   });
 
   it("folds a persisted usage row's model into chat.model during history replay (#272)", async () => {
-    flags.piAgents = true;
     const history = historyFromEvents([
       {
         kind: "usage",
@@ -1421,7 +1402,6 @@ describe("resumed chat model resolution (#272)", () => {
 
   it("shows the resumed session's persisted model, not the global per-provider default", async () => {
     const chatId = nextChatId();
-    flags.piAgents = true;
     // The global "last selected Pi model" preference (what a fresh page load
     // seeds AgentChatView's `model` prop with) has since drifted to a
     // different model than the one this chat's session actually started
@@ -1437,7 +1417,6 @@ describe("resumed chat model resolution (#272)", () => {
 
   it("still seeds a brand-new chat (no persisted session row) from the global default", async () => {
     const chatId = nextChatId();
-    flags.piAgents = true;
     mockInvokeWithSession(null);
 
     await ensureAgentChat(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
@@ -1447,7 +1426,6 @@ describe("resumed chat model resolution (#272)", () => {
 
   it("ignores a persisted session model that isn't valid for the resumed provider", async () => {
     const chatId = nextChatId();
-    flags.piAgents = true;
     // A session row carrying another provider's bare catalog id must not
     // bleed into this chat's displayed/started model.
     mockInvokeWithSession({ model: "gpt-5.6-sol" });
@@ -1459,7 +1437,6 @@ describe("resumed chat model resolution (#272)", () => {
 
   it("does not clobber a model already changed while the session lookup was in flight", async () => {
     const chatId = nextChatId();
-    flags.piAgents = true;
     const sessionLookup = deferred<{ model: string | null } | null>();
     tauri.invoke.mockImplementation((cmd: string) => {
       if (cmd === "agent_chat_history") return Promise.resolve([]);
@@ -1481,7 +1458,6 @@ describe("resumed chat model resolution (#272)", () => {
     // "untouched" apart from "user explicitly re-picked the placeholder
     // value" — this pins the explicit touch-counter fix for that gap.
     const chatId = nextChatId();
-    flags.piAgents = true;
     const sessionLookup = deferred<{ model: string | null } | null>();
     tauri.invoke.mockImplementation((cmd: string) => {
       if (cmd === "agent_chat_history") return Promise.resolve([]);
@@ -1500,7 +1476,6 @@ describe("resumed chat model resolution (#272)", () => {
 
   it("resolves the same way for hydrateAgentChatHistory (no live session started)", async () => {
     const chatId = nextChatId();
-    flags.piAgents = true;
     mockInvokeWithSession({ model: "anthropic/claude-sonnet-4-6" });
 
     await hydrateAgentChatHistory(chatId, "/project", "pi", "openai-codex/gpt-5.6-sol");
@@ -1761,7 +1736,6 @@ describe("sendAgentMessage", () => {
     "clears a dead %s session and restarts before the next send",
     async (provider) => {
       flags.ompAgents = true;
-      flags.piAgents = true;
       const chatId = nextChatId();
       let startCount = 0;
       let sendCount = 0;
@@ -1802,7 +1776,6 @@ describe("sendAgentMessage", () => {
     "replaces a failed live %s session on explicit retry",
     async (provider) => {
       flags.ompAgents = true;
-      flags.piAgents = true;
       const chatId = nextChatId();
       let startCount = 0;
       let emit: ((event: AgentEvent) => void) | undefined;

@@ -35,7 +35,6 @@ import {
   isNativeAgentProvider,
   type AgentEngine,
 } from "../../lib/agentBackends";
-import { flagEnabled } from "../../stores/flags";
 import { defaultMode, isDangerMode, modeOptions } from "../../lib/agentModes";
 import {
   type ComposerAttachment,
@@ -217,7 +216,6 @@ export function Composer(props: {
     )
   );
   onMount(() => {
-    if (!flagEnabled("piAgents")) return;
     void discoverAgentCli("pi")
       .then((diagnostic) => setPiModels(diagnostic.models))
       .catch(() => undefined);

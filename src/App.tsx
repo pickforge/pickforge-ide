@@ -52,7 +52,7 @@ export function App() {
   installAccountStoreBootstrap();
   const probeNativeCompatibility = () => {
     if (flagEnabled("ompAgents")) void ensureOmpNativeCompatibility(true);
-    if (flagEnabled("piAgents")) void ensurePiNativeCompatibility(true);
+    void ensurePiNativeCompatibility(true);
   };
   probeNativeCompatibility();
   onCleanup(subscribeToFlagChanges(probeNativeCompatibility));

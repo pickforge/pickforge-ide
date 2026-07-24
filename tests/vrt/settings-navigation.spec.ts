@@ -7,7 +7,6 @@ const ALL_SETTINGS_FLAGS = {
 const CONNECTOR_SETTINGS_FLAGS = {
   ...ALL_SETTINGS_FLAGS,
   ompAgents: true,
-  piAgents: true,
 };
 
 async function openSettings(

@@ -59,14 +59,12 @@ function load(): QuickLaunchItem[] {
 }
 
 const [items, setItems] = createSignal<QuickLaunchItem[]>(load());
-/** Raw persisted items for sync; rollout-gated items remain stored while hidden. */
+/** Raw persisted items for sync; OMP items remain stored while rollout-gated. */
 export const allQuickLaunchItems = items;
 /** Items currently exposed to chips, hotkeys, Ask AI, and Settings. */
-export const quickLaunchItems = () => items().filter((item) => {
-  if (item.agentId === "omp") return flagEnabled("ompAgents");
-  if (item.agentId === "pi") return flagEnabled("piAgents");
-  return true;
-});
+export const quickLaunchItems = () => items().filter((item) =>
+  item.agentId !== "omp" || flagEnabled("ompAgents")
+);
 
 function persist(next: QuickLaunchItem[]) {
   setItems(next);
@@ -95,23 +93,23 @@ export function resetQuickLaunchItems() {
   noteSettingsEdit("keybindings");
 }
 
-/** Optional rollout-gated agent chips not inserted into existing or default
- * layouts. Settings offers only choices that have not already been added. */
-function optionalAgentFlagEnabled(agentId: OptionalAgentId): boolean {
-  return agentId === "omp" ? flagEnabled("ompAgents") : flagEnabled("piAgents");
+/** Optional agent chips not inserted into existing or default layouts.
+ * Settings offers only choices that have not already been added. */
+function optionalAgentEnabled(agentId: OptionalAgentId): boolean {
+  return agentId === "pi" || flagEnabled("ompAgents");
 }
 
 export function optionalQuickLaunchChoices(): OptionalQuickLaunchItem[] {
   const existing = new Set(items().map((item) => item.agentId));
   return clone(
     OPTIONAL_OMP_PI_QUICK_LAUNCH.filter(
-      (item) => optionalAgentFlagEnabled(item.agentId) && !existing.has(item.agentId),
+      (item) => optionalAgentEnabled(item.agentId) && !existing.has(item.agentId),
     ),
   );
 }
 
 export function addOptionalQuickLaunch(agentId: OptionalAgentId) {
-  if (!optionalAgentFlagEnabled(agentId) || items().some((item) => item.agentId === agentId)) return;
+  if (!optionalAgentEnabled(agentId) || items().some((item) => item.agentId === agentId)) return;
   const choice = OPTIONAL_OMP_PI_QUICK_LAUNCH.find((item) => item.agentId === agentId);
   if (choice) persist([...items(), { ...choice }]);
 }

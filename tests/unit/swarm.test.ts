@@ -104,7 +104,7 @@ vi.mock("../../src/lib/agentModels", () => ({
   piNativeChatAvailable: vi.fn(() => true),
 }));
 vi.mock("../../src/stores/flags", () => ({
-  flagEnabled: (key: string) => key === "ompAgents" || key === "piAgents",
+  flagEnabled: (key: string) => key === "ompAgents",
   subscribeToFlagChanges: vi.fn(() => () => undefined),
 }));
 vi.mock("../../src/lib/chatDefaults", () => ({ loadAgentEngine: deps.loadAgentEngine }));

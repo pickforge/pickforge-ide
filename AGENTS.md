@@ -100,6 +100,11 @@ keep new UI consistent with it.
   macOS-only validation passes over such code shipped a bug straight to CI
   or production (PR #257 graphics tests; PR #259 twice: an inverted
   liveness hint and an unmatched tmux "never created" phrasing).
+- Connector capability gating (native chat ready, etc.) must derive only
+  from errors of capability-relevant probe steps. Optional/advisory steps
+  (model catalog, extension detection) report through their own advisory
+  path and never withhold the capability — adding a probe step to the
+  shared error list silently disables the connector (#285 review).
 
 Canonical brand assets live in `assets/branding/`.
 

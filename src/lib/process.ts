@@ -31,3 +31,24 @@ export interface PiKitDetection {
 export function probePiKit(): Promise<PiKitDetection> {
   return invoke<PiKitDetection>("probe_pi_kit");
 }
+
+export type AuthPresenceState = "authenticated" | "notAuthenticated" | "unknown";
+export type AuthPresenceUnknownReason =
+  | "notInstalled"
+  | "commandFailed"
+  | "timeout"
+  | "unrecognizedOutput";
+
+export interface AgentAuthProbe {
+  state: AuthPresenceState;
+  unknownReason?: AuthPresenceUnknownReason;
+}
+
+/** Probe-only sign-in presence for an allowlisted CLI, via its own status
+ * command (`codex login status`, `claude auth status --json`). The native
+ * command never reads credential files, keychain entries, tokens, or
+ * cookies, and never returns raw command stdout — only the derived
+ * authenticated/not-authenticated/unknown state crosses IPC. */
+export function probeAgentAuth(agentId: "codex" | "claudeCode"): Promise<AgentAuthProbe> {
+  return invoke<AgentAuthProbe>("probe_agent_auth", { agentId });
+}

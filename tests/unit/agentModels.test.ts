@@ -590,5 +590,94 @@ describe("retired model migration", () => {
     );
     const { models } = await loadModules();
     expect(models.loadAgentModels().claudeCode).toBe("claude-opus-5");
+describe("Codex/Claude auth-presence diagnostics mapping", () => {
+  it("reports loading and probe-failure states before any probe result exists", async () => {
+    const { models } = await loadModules();
+
+    expect(models.agentAuthFact("codex", true, undefined, undefined)).toMatchObject({
+      label: "Checking…",
+      intent: "neutral",
+    });
+    expect(
+      models.agentAuthFact("codex", false, "spawn failed: ENOENT", undefined),
+    ).toMatchObject({
+      label: "Auth status unavailable",
+      intent: "error",
+      reason: "The local probe failed: spawn failed: ENOENT",
+    });
+    expect(models.agentAuthFact("claudeCode", false, undefined, undefined)).toMatchObject({
+      label: "Not checked",
+      intent: "neutral",
+    });
+  });
+
+  it("surfaces an authenticated probe as connected, never leaking probe internals", async () => {
+    const { models } = await loadModules();
+
+    expect(
+      models.agentAuthFact("codex", false, undefined, { state: "authenticated" }),
+    ).toMatchObject({ label: "Authenticated", intent: "connected" });
+    expect(
+      models.agentAuthFact("claudeCode", false, undefined, { state: "authenticated" }),
+    ).toMatchObject({ label: "Authenticated", intent: "connected" });
+  });
+
+  it("gives each CLI its own login hint when not authenticated", async () => {
+    const { models } = await loadModules();
+
+    expect(
+      models.agentAuthFact("codex", false, undefined, { state: "notAuthenticated" }),
+    ).toMatchObject({
+      label: "Not authenticated",
+      intent: "warning",
+      reason: "Run `codex login` to authenticate.",
+    });
+    expect(
+      models.agentAuthFact("claudeCode", false, undefined, { state: "notAuthenticated" }),
+    ).toMatchObject({
+      label: "Not authenticated",
+      intent: "warning",
+      reason: "Run `claude auth login` to authenticate.",
+    });
+  });
+
+  it("explains every unknown-reason honestly instead of guessing a state", async () => {
+    const { models } = await loadModules();
+
+    expect(
+      models.agentAuthFact("codex", false, undefined, {
+        state: "unknown",
+        unknownReason: "notInstalled",
+      }),
+    ).toMatchObject({
+      label: "Unknown",
+      intent: "neutral",
+      reason: "Sign-in status is unknown: the CLI is not installed on PATH.",
+    });
+    expect(
+      models.agentAuthFact("codex", false, undefined, {
+        state: "unknown",
+        unknownReason: "commandFailed",
+      }),
+    ).toMatchObject({ reason: "Sign-in status is unknown: the status command failed to run." });
+    expect(
+      models.agentAuthFact("codex", false, undefined, {
+        state: "unknown",
+        unknownReason: "timeout",
+      }),
+    ).toMatchObject({ reason: "Sign-in status is unknown: the status command timed out." });
+    expect(
+      models.agentAuthFact("codex", false, undefined, {
+        state: "unknown",
+        unknownReason: "unrecognizedOutput",
+      }),
+    ).toMatchObject({
+      reason: "Sign-in status is unknown: the status command returned an unrecognized result.",
+    });
+    expect(models.agentAuthFact("codex", false, undefined, { state: "unknown" })).toMatchObject({
+      label: "Unknown",
+      intent: "neutral",
+      reason: "Sign-in status is unknown: sign-in status could not be determined.",
+    });
   });
 });

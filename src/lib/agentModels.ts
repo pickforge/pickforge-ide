@@ -4,7 +4,12 @@ import { createSignal } from "solid-js";
 // localStorage (global, like the Flutter SharedPreferences store).
 import { flagEnabled } from "../stores/flags";
 import { errorText } from "./errors";
-import { probeAgentCli, type AgentCliProbe } from "./process";
+import {
+  probeAgentCli,
+  type AgentAuthProbe,
+  type AgentCliProbe,
+  type AuthPresenceUnknownReason,
+} from "./process";
 import {
   AGENT_BACKENDS,
   isCompatiblePiRpcVersion,
@@ -479,6 +484,85 @@ export async function discoverAgentCli(
   const diagnostic = diagnosticFromProbe(agentId, await probe(agentId));
   recordAgentCliDiagnostic(diagnostic);
   return diagnostic;
+}
+
+/** Intent subset actually used by auth-presence facts, kept independent of
+ * the UI's `StatusIntent` so this module stays IPC/UI-agnostic. Every value
+ * here is also a valid `StatusIntent`. */
+export type AgentAuthIntent = "neutral" | "connected" | "warning" | "error";
+
+export interface AgentAuthFact {
+  label: string;
+  intent: AgentAuthIntent;
+  reason: string;
+}
+
+const AGENT_AUTH_LOGIN_HINTS: Record<"codex" | "claudeCode", string> = {
+  codex: "Run `codex login` to authenticate.",
+  claudeCode: "Run `claude auth login` to authenticate.",
+};
+
+const AGENT_AUTH_UNKNOWN_REASONS: Record<AuthPresenceUnknownReason, string> = {
+  notInstalled: "the CLI is not installed on PATH",
+  commandFailed: "the status command failed to run",
+  timeout: "the status command timed out",
+  unrecognizedOutput: "the status command returned an unrecognized result",
+};
+
+/** Maps a raw auth-presence probe (or its absence/failure) to a UI-safe
+ * label/intent/reason, honest-degrade style like `piKitFactLabel`: an
+ * inconclusive probe reports "Unknown" and why, never a guessed
+ * authenticated/not-authenticated state. Pure so it is unit-testable without
+ * IPC or a mounted Settings screen. */
+export function agentAuthFact(
+  agentId: "codex" | "claudeCode",
+  loading: boolean,
+  failure: string | undefined,
+  probe: AgentAuthProbe | undefined,
+): AgentAuthFact {
+  if (loading) {
+    return {
+      label: "Checking…",
+      intent: "neutral",
+      reason: "Checking sign-in status via the CLI's own status command.",
+    };
+  }
+  if (failure) {
+    return {
+      label: "Auth status unavailable",
+      intent: "error",
+      reason: `The local probe failed: ${failure}`,
+    };
+  }
+  if (!probe) {
+    return {
+      label: "Not checked",
+      intent: "neutral",
+      reason: "Refresh connector status to check sign-in.",
+    };
+  }
+  if (probe.state === "authenticated") {
+    return {
+      label: "Authenticated",
+      intent: "connected",
+      reason: "Signed in, per the CLI's own status command. PickForge never reads credential files.",
+    };
+  }
+  if (probe.state === "notAuthenticated") {
+    return {
+      label: "Not authenticated",
+      intent: "warning",
+      reason: AGENT_AUTH_LOGIN_HINTS[agentId],
+    };
+  }
+  const why = probe.unknownReason
+    ? AGENT_AUTH_UNKNOWN_REASONS[probe.unknownReason]
+    : "sign-in status could not be determined";
+  return {
+    label: "Unknown",
+    intent: "neutral",
+    reason: `Sign-in status is unknown: ${why}.`,
+  };
 }
 
 const STORE_KEY = "pickforge.agentModels";

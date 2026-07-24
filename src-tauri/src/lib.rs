@@ -278,6 +278,7 @@ pub fn run() {
             process_commands::detect_binaries,
             process_commands::probe_agent_cli,
             process_commands::probe_pi_kit,
+            process_commands::probe_agent_auth,
             remote_commands::remote_host_status,
             remote_commands::remote_host_start,
             remote_commands::remote_host_stop,

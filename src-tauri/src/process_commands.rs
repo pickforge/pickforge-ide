@@ -4,13 +4,18 @@
 
 use std::time::Duration;
 
-use pickforge_core::agents::{detect_pi_kit, PiKitDetection};
-use pickforge_core::{is_on_user_path, run_timeout_capped};
+use pickforge_core::agents::{
+    claude_auth_status_authenticated, codex_login_status_authenticated, detect_pi_kit,
+    AuthPresenceProbe, AuthPresenceUnknownReason, PiKitDetection,
+};
+use pickforge_core::process::RunError;
+use pickforge_core::{is_on_user_path, run_timeout_capped, CommandOutcome, OutputTruncation};
 use serde::Serialize;
 
 use crate::project_roots::user_home_dir;
 
 const PROBE_CAPTURE_LIMIT_BYTES: usize = 64 * 1024;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tauri::command]
 pub async fn detect_binaries(names: Vec<String>) -> Result<Vec<bool>, String> {
@@ -70,7 +75,7 @@ fn run_probe_step(
         args,
         None,
         None,
-        Duration::from_secs(10),
+        PROBE_TIMEOUT,
         PROBE_CAPTURE_LIMIT_BYTES,
     ) {
         Ok((outcome, truncation)) => {
@@ -165,9 +170,176 @@ pub async fn probe_pi_kit() -> Result<PiKitDetection, String> {
     .map_err(|error| error.to_string())
 }
 
+struct AuthProbeSpec {
+    binary: &'static str,
+    args: &'static [&'static str],
+}
+
+fn auth_probe_spec(agent_id: &str) -> Option<AuthProbeSpec> {
+    match agent_id {
+        // Verified on a real install (codex-cli 0.144.6): exit 0 + "Logged
+        // in using ChatGPT" when authenticated; exit 1 + "Not logged in"
+        // otherwise. See `codex_login_status_authenticated`.
+        "codex" => Some(AuthProbeSpec {
+            binary: "codex",
+            args: &["login", "status"],
+        }),
+        // `--json` keeps the shape stable for parsing, but that JSON also
+        // carries email/org identifiers on a real install — only the
+        // `loggedIn` boolean may ever be read out of it (see
+        // `claude_auth_status_authenticated`), and raw stdout must never be
+        // returned from this command.
+        "claudeCode" => Some(AuthProbeSpec {
+            binary: "claude",
+            args: &["auth", "status", "--json"],
+        }),
+        _ => None,
+    }
+}
+
+/// Probe-only auth-presence for the Codex and claude CLIs: runs each CLI's
+/// own status command with fixed, read-only argv (never accepts config,
+/// tokens, or arbitrary commands from the frontend) and reduces its output to
+/// a tri-state signal. Never reads credential files, keychain entries,
+/// tokens, or cookies, and never returns raw command stdout/stderr — only the
+/// derived [`AuthPresenceProbe`] crosses the IPC boundary. This is an
+/// advisory, best-effort signal: its failures must never feed
+/// `probe_agent_cli`'s capability-gating error list (see AGENTS.md on
+/// capability-relevant probe errors) since Codex/Claude Code have no
+/// capability gate to withhold in the first place.
+#[tauri::command]
+pub async fn probe_agent_auth(agent_id: String) -> Result<AuthPresenceProbe, String> {
+    let spec = auth_probe_spec(&agent_id).ok_or_else(|| "unsupported agent probe".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if !is_on_user_path(spec.binary) {
+            return AuthPresenceProbe::unknown(AuthPresenceUnknownReason::NotInstalled);
+        }
+        let result = run_timeout_capped(
+            spec.binary,
+            spec.args,
+            None,
+            None,
+            PROBE_TIMEOUT,
+            PROBE_CAPTURE_LIMIT_BYTES,
+        );
+        classify_auth_probe_result(spec.binary, result)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// Reduce a completed (or failed) status-command run to a tri-state signal.
+/// Split out from [`probe_agent_auth`] as a pure function so the "logged in"
+/// / "logged out" / "command missing" / "timeout" shapes are unit-testable
+/// without spawning a real process.
+fn classify_auth_probe_result(
+    binary: &str,
+    result: Result<(CommandOutcome, OutputTruncation), RunError>,
+) -> AuthPresenceProbe {
+    match result {
+        Ok((outcome, _truncation)) => {
+            let stdout = outcome.stdout_utf8();
+            let stderr = String::from_utf8_lossy(&outcome.stderr);
+            let authenticated = if binary == "claude" {
+                claude_auth_status_authenticated(&stdout)
+            } else {
+                codex_login_status_authenticated(outcome.code, &stdout, &stderr)
+            };
+            match authenticated {
+                Some(true) => AuthPresenceProbe::authenticated(),
+                Some(false) => AuthPresenceProbe::not_authenticated(),
+                None => AuthPresenceProbe::unknown(AuthPresenceUnknownReason::UnrecognizedOutput),
+            }
+        }
+        Err(RunError::Timeout(_)) => AuthPresenceProbe::unknown(AuthPresenceUnknownReason::Timeout),
+        Err(RunError::Io(_)) => AuthPresenceProbe::unknown(AuthPresenceUnknownReason::CommandFailed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{probe_spec, run_probe_step, PROBE_CAPTURE_LIMIT_BYTES};
+    use std::io;
+    use std::time::Duration;
+
+    use pickforge_core::agents::{AuthPresenceProbe, AuthPresenceUnknownReason};
+    use pickforge_core::process::RunError;
+    use pickforge_core::{CommandOutcome, OutputTruncation};
+
+    use super::{
+        auth_probe_spec, classify_auth_probe_result, probe_spec, run_probe_step,
+        PROBE_CAPTURE_LIMIT_BYTES,
+    };
+
+    fn outcome(code: Option<i32>, stdout: &str, stderr: &str) -> (CommandOutcome, OutputTruncation) {
+        (
+            CommandOutcome {
+                code,
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: stderr.as_bytes().to_vec(),
+            },
+            OutputTruncation::default(),
+        )
+    }
+
+    #[test]
+    fn classifies_codex_login_status_shapes() {
+        assert_eq!(
+            classify_auth_probe_result(
+                "codex",
+                Ok(outcome(Some(0), "Logged in using ChatGPT\n", "")),
+            ),
+            AuthPresenceProbe::authenticated(),
+        );
+        assert_eq!(
+            classify_auth_probe_result("codex", Ok(outcome(Some(1), "Not logged in\n", ""))),
+            AuthPresenceProbe::not_authenticated(),
+        );
+        assert_eq!(
+            classify_auth_probe_result("codex", Ok(outcome(Some(2), "", ""))),
+            AuthPresenceProbe::unknown(AuthPresenceUnknownReason::UnrecognizedOutput),
+        );
+    }
+
+    #[test]
+    fn classifies_claude_auth_status_json_shapes() {
+        assert_eq!(
+            classify_auth_probe_result(
+                "claude",
+                Ok(outcome(
+                    Some(0),
+                    r#"{"loggedIn":true,"email":"user@example.com"}"#,
+                    "",
+                )),
+            ),
+            AuthPresenceProbe::authenticated(),
+        );
+        assert_eq!(
+            classify_auth_probe_result("claude", Ok(outcome(Some(0), r#"{"loggedIn":false}"#, ""))),
+            AuthPresenceProbe::not_authenticated(),
+        );
+        assert_eq!(
+            classify_auth_probe_result("claude", Ok(outcome(Some(0), "not json", ""))),
+            AuthPresenceProbe::unknown(AuthPresenceUnknownReason::UnrecognizedOutput),
+        );
+    }
+
+    #[test]
+    fn classifies_a_missing_command_as_command_failed() {
+        let error = RunError::Io(io::Error::new(io::ErrorKind::NotFound, "no such file"));
+        assert_eq!(
+            classify_auth_probe_result("codex", Err(error)),
+            AuthPresenceProbe::unknown(AuthPresenceUnknownReason::CommandFailed),
+        );
+    }
+
+    #[test]
+    fn classifies_a_timeout() {
+        let error = RunError::Timeout(Duration::from_secs(10));
+        assert_eq!(
+            classify_auth_probe_result("claude", Err(error)),
+            AuthPresenceProbe::unknown(AuthPresenceUnknownReason::Timeout),
+        );
+    }
 
     #[test]
     fn agent_probe_is_strictly_allowlisted() {
@@ -189,6 +361,22 @@ mod tests {
 
         assert!(probe_spec("sh").is_none());
         assert!(probe_spec("../omp").is_none());
+    }
+
+    #[test]
+    fn auth_probe_is_strictly_allowlisted() {
+        let codex = auth_probe_spec("codex").expect("codex auth probe");
+        assert_eq!(codex.binary, "codex");
+        assert_eq!(codex.args, ["login", "status"]);
+
+        let claude = auth_probe_spec("claudeCode").expect("claude auth probe");
+        assert_eq!(claude.binary, "claude");
+        assert_eq!(claude.args, ["auth", "status", "--json"]);
+
+        assert!(auth_probe_spec("sh").is_none());
+        assert!(auth_probe_spec("../codex").is_none());
+        assert!(auth_probe_spec("omp").is_none());
+        assert!(auth_probe_spec("pi").is_none());
     }
 
     #[cfg(unix)]

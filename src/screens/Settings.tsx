@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, type JSX } from "solid-js";
 import {
+  agentAuthFact,
   agentProfiles,
   discoverAgentCli,
   loadAgentModels,
@@ -14,7 +15,7 @@ import {
   isCompatiblePiRpcVersion,
   type AgentEngine,
 } from "../lib/agentBackends";
-import { probePiKit, type PiKitDetection } from "../lib/process";
+import { probeAgentAuth, probePiKit, type AgentAuthProbe, type PiKitDetection } from "../lib/process";
 import {
   addQuickLaunchItem,
   addOptionalQuickLaunch,
@@ -351,6 +352,10 @@ function isConnectorProfile(agent: AgentProfile): boolean {
   return agent.id === "omp" || agent.id === "pi";
 }
 const AGENT_DIAGNOSTIC_IDS = ["omp", "pi"] as const;
+/** Codex and Claude Code are always-available native agents (no rollout
+ * flag), so their auth-presence probe runs unconditionally alongside the
+ * flag-gated omp/pi connector diagnostics. */
+const AGENT_AUTH_DIAGNOSTIC_IDS = ["codex", "claudeCode"] as const;
 const AGENT_BRAND_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Object.freeze({
   claudeCode: () => <IconClaude size={14} />,
   codex: () => <IconOpenAI size={14} />,
@@ -407,6 +412,10 @@ export function SettingsScreen() {
   const [agentDiagnosticsLoading, setAgentDiagnosticsLoading] = createSignal(false);
   const [piKitDetection, setPiKitDetection] = createSignal<PiKitDetection | null>(null);
   const [piKitError, setPiKitError] = createSignal<string | null>(null);
+  const [agentAuthProbes, setAgentAuthProbes] =
+    createSignal<Record<string, AgentAuthProbe>>({});
+  const [agentAuthErrors, setAgentAuthErrors] =
+    createSignal<Record<string, string>>({});
   const [exporting, setExporting] = createSignal(false);
   const [exportStatus, setExportStatus] = createSignal<
     { kind: "ok" | "error"; text: string } | null
@@ -701,9 +710,13 @@ export function SettingsScreen() {
     setAgentDiagnosticErrors(() => ({}));
     setPiKitDetection(null);
     setPiKitError(null);
+    setAgentAuthProbes(() => ({}));
+    setAgentAuthErrors(() => ({}));
     setAgentDiagnosticsLoading(true);
     const next: Record<string, AgentCliDiagnostic> = {};
     const failures: Record<string, string> = {};
+    const authNext: Record<string, AgentAuthProbe> = {};
+    const authFailures: Record<string, string> = {};
     await Promise.all([
       ...ids.map(async (agentId) => {
         try {
@@ -715,9 +728,20 @@ export function SettingsScreen() {
       ...(ids.includes("pi")
         ? [probePiKit().then(setPiKitDetection).catch((error) => setPiKitError(errorText(error)))]
         : []),
+      // Codex/Claude Code have no rollout flag, so their auth-presence probe
+      // always runs alongside the flag-gated omp/pi connector diagnostics.
+      ...AGENT_AUTH_DIAGNOSTIC_IDS.map(async (agentId) => {
+        try {
+          authNext[agentId] = await probeAgentAuth(agentId);
+        } catch (error) {
+          authFailures[agentId] = errorText(error);
+        }
+      }),
     ]);
     setAgentDiagnostics(() => next);
     setAgentDiagnosticErrors(() => failures);
+    setAgentAuthProbes(() => authNext);
+    setAgentAuthErrors(() => authFailures);
     setAgentDiagnosticsLoading(false);
   };
   onMount(() => {
@@ -1303,6 +1327,49 @@ export function SettingsScreen() {
                           </>
                         )}
                       </Show>
+                    </section>
+                  );
+                }}
+              </For>
+            </div>
+
+            <div class="pf-agent-diagnostics-head">
+              <div class="pf-agent-diagnostics-copy">
+                <MonoEyebrow text="CLI authentication" />
+                <span class="pf-settings-muted">
+                  Probe-only, via each CLI's own status command; PickForge never reads
+                  credential files, tokens, or keychain entries.
+                </span>
+              </div>
+            </div>
+
+            <div class="pf-agent-connector-list">
+              <For each={AGENT_AUTH_DIAGNOSTIC_IDS}>
+                {(agentId) => {
+                  const probe = () => agentAuthProbes()[agentId];
+                  const failure = () => agentAuthErrors()[agentId];
+                  const fact = createMemo(() =>
+                    agentAuthFact(agentId, agentDiagnosticsLoading(), failure(), probe()),
+                  );
+                  return (
+                    <section
+                      class="pf-agent-connector"
+                      data-agent-auth-connector={agentId}
+                      aria-labelledby={`pf-agent-auth-${agentId}`}
+                      aria-busy={agentDiagnosticsLoading()}
+                    >
+                      <div class="pf-agent-connector-head">
+                        <div class="pf-agent-connector-identity">
+                          <span class="pf-settings-brand">
+                            {AGENT_BRAND_ICON[agentId]?.()}
+                          </span>
+                          <strong id={`pf-agent-auth-${agentId}`}>{agentLabel(agentId)}</strong>
+                        </div>
+                        <div role="status" aria-live="polite" aria-atomic="true">
+                          <StatusPill label={fact().label} intent={fact().intent} />
+                        </div>
+                      </div>
+                      <p class="pf-agent-connector-reason">{fact().reason}</p>
                     </section>
                   );
                 }}

@@ -2868,7 +2868,7 @@ mod tests {
     fn agent_prompt_rollback_removes_only_the_named_seqs() {
         let db = Database::open_in_memory().unwrap();
         seed_agent_chat(&db, "/p-rb", "c-rb");
-        seed_agent_session_with_model(&db, "s-rb", "c-rb", "claudeCode", Some("claude-opus-4-8"));
+        seed_agent_session_with_model(&db, "s-rb", "c-rb", "claudeCode", Some("claude-opus-5"));
 
         let kept = db.agent_message_append("s-rb", "c-rb", "user", "earlier").unwrap();
         let msg = db.agent_message_append("s-rb", "c-rb", "user", "rolled back").unwrap();

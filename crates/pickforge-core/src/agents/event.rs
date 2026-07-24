@@ -152,7 +152,18 @@ pub struct FileChangeEntry {
 #[serde(rename_all = "camelCase")]
 pub struct PlanItem {
     pub text: String,
-    pub completed: bool,
+    pub status: PlanItemStatus,
+}
+
+/// A provider's last reported plan-step status — not proof that a process is
+/// currently running. Providers never guarantee a single active step, so
+/// preserve every valid `InProgress` item as reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlanItemStatus {
+    Pending,
+    InProgress,
+    Completed,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -256,10 +267,20 @@ mod tests {
                 detail: Some("read src/lib.rs".to_string()),
             },
             AgentEvent::PlanUpdate {
-                items: vec![PlanItem {
-                    text: "step".to_string(),
-                    completed: true,
-                }],
+                items: vec![
+                    PlanItem {
+                        text: "step".to_string(),
+                        status: PlanItemStatus::Completed,
+                    },
+                    PlanItem {
+                        text: "next step".to_string(),
+                        status: PlanItemStatus::InProgress,
+                    },
+                    PlanItem {
+                        text: "later step".to_string(),
+                        status: PlanItemStatus::Pending,
+                    },
+                ],
             },
             AgentEvent::ApprovalRequest {
                 approval_id: "approval-1".to_string(),
@@ -381,5 +402,57 @@ mod tests {
             .unwrap(),
             r#"{"kind":"noise","line":"raw line"}"#
         );
+
+        assert_eq!(
+            serde_json::to_string(&AgentEvent::PlanUpdate {
+                items: vec![
+                    PlanItem {
+                        text: "pending step".to_string(),
+                        status: PlanItemStatus::Pending,
+                    },
+                    PlanItem {
+                        text: "active step".to_string(),
+                        status: PlanItemStatus::InProgress,
+                    },
+                    PlanItem {
+                        text: "done step".to_string(),
+                        status: PlanItemStatus::Completed,
+                    },
+                ],
+            })
+            .unwrap(),
+            r#"{"kind":"planUpdate","items":[{"text":"pending step","status":"pending"},{"text":"active step","status":"inProgress"},{"text":"done step","status":"completed"}]}"#
+        );
+    }
+
+    #[test]
+    fn plan_update_serializes_empty_items() {
+        assert_eq!(
+            serde_json::to_string(&AgentEvent::PlanUpdate { items: Vec::new() }).unwrap(),
+            r#"{"kind":"planUpdate","items":[]}"#
+        );
+    }
+
+    #[test]
+    fn preserves_every_valid_in_progress_item_no_single_active_invariant() {
+        let event = AgentEvent::PlanUpdate {
+            items: vec![
+                PlanItem {
+                    text: "first active".to_string(),
+                    status: PlanItemStatus::InProgress,
+                },
+                PlanItem {
+                    text: "second active".to_string(),
+                    status: PlanItemStatus::InProgress,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let decoded: AgentEvent = serde_json::from_str(&json).unwrap();
+        let AgentEvent::PlanUpdate { items } = decoded else {
+            panic!("expected PlanUpdate");
+        };
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|item| item.status == PlanItemStatus::InProgress));
     }
 }

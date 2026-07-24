@@ -84,6 +84,10 @@ keep new UI consistent with it.
 
 ## Testing
 
+- When renaming or retiring an agent model id, grep for the version digits in
+  free text too (`"opus 4.8"`, alias term arrays, swarm command parsing) — the
+  exact-id grep misses natural-language sites — and migrate persisted
+  selections (`RETIRED_MODELS` in `src/lib/agentModels.ts`).
 - Rust: unit tests live beside their modules in `crates/pickforge-core/`;
   integration tests in `crates/pickforge-core/tests/`.
 - Frontend: Playwright VRT specs and baselines live under `tests/vrt/`.

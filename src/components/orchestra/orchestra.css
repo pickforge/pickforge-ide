@@ -182,6 +182,14 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   color: var(--pf-text-low);
   text-decoration: line-through;
 }
+.pf-orch-pin-item--active .pf-orch-pin-step {
+  color: var(--pf-ember);
+  font-weight: 600;
+}
+.pf-orch-pin-item--active .pf-orch-pin-text {
+  color: var(--pf-text-hi);
+  font-weight: 600;
+}
 
 /* ---- Tasks ---- */
 .pf-orch-tasks {

@@ -24,6 +24,15 @@ export interface AgentSkill {
   description: string;
 }
 
+/** A provider's last reported plan-step status — not proof that a process is
+ *  currently running, and never inferred from turnDone/interruption/failure. */
+export type PlanItemStatus = "pending" | "inProgress" | "completed";
+
+export interface PlanItem {
+  text: string;
+  status: PlanItemStatus;
+}
+
 export type AgentEvent =
   | { kind: "sessionStarted"; providerSessionId: string }
   | {
@@ -78,7 +87,7 @@ export type AgentEvent =
       status: "inProgress" | "completed" | "failed";
       detail: string | null;
     }
-  | { kind: "planUpdate"; items: { text: string; completed: boolean }[] }
+  | { kind: "planUpdate"; items: PlanItem[] }
   | {
       kind: "usage";
       inputTokens: number;
@@ -154,6 +163,43 @@ export interface AgentChatSendOptions {
   effort?: string | null;
   model?: string | null;
   images?: string[];
+}
+
+const PLAN_ITEM_STATUSES: readonly PlanItemStatus[] = ["pending", "inProgress", "completed"];
+
+function isPlanItemStatus(value: unknown): value is PlanItemStatus {
+  return (
+    typeof value === "string" &&
+    (PLAN_ITEM_STATUSES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Normalizes a raw plan-items array (live wire payload or a persisted
+ * history row) into the current `PlanItem` contract. This is the one decode
+ * boundary both the live Channel path and history replay funnel through, so
+ * legacy rows and malformed siblings degrade the same deterministic way:
+ * - A valid `status` always wins over a conflicting legacy `completed` flag.
+ * - Legacy `completed: true` maps to completed; false/missing maps to pending.
+ * - Missing or unrecognized status degrades to pending, never completed.
+ * - Items with no usable text are dropped rather than becoming blank rows.
+ */
+export function normalizePlanItems(raw: unknown): PlanItem[] {
+  if (!Array.isArray(raw)) return [];
+  const items: PlanItem[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const text = typeof record.text === "string" ? record.text : "";
+    if (text.trim().length === 0) continue;
+    const status = isPlanItemStatus(record.status)
+      ? record.status
+      : record.completed === true
+        ? "completed"
+        : "pending";
+    items.push({ text, status });
+  }
+  return items;
 }
 
 function pickforgeMcpGrant(projectRoot: string): AgentMcpServer | null {

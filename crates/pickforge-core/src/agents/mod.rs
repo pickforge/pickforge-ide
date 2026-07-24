@@ -1,3 +1,4 @@
+pub mod auth_presence;
 pub mod claude_bridge;
 pub mod claude_stream;
 pub mod codex_app;
@@ -10,6 +11,10 @@ pub mod pi_rpc;
 pub mod remote_exec;
 pub mod skills;
 
+pub use auth_presence::{
+    claude_auth_status_authenticated, codex_login_status_authenticated, AuthPresenceProbe,
+    AuthPresenceState, AuthPresenceUnknownReason,
+};
 pub use event::*;
 pub use manager::{AgentChatError, AgentChatManager, AgentProvider, AgentStartOverrides, Engine};
 pub use omp_acp::{

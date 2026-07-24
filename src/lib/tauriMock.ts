@@ -479,6 +479,10 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
       errors: [],
     };
   },
+  probe_agent_auth: (args) =>
+    args.agentId === "codex"
+      ? { state: "authenticated" }
+      : { state: "notAuthenticated" },
   agent_chat_history: (a) => a.chatId === AGENT_CHAT_FIXTURE.chatId ? AGENT_CHAT_HISTORY : [],
   agent_chat_start: (a) => `vrt-session-${a.chatId}`,
   agent_chat_send: () => null,

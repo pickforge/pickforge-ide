@@ -2933,7 +2933,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
     *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-manager-session","modes":{"availableModes":[{"id":"default"},{"id":"plan"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'
@@ -3119,7 +3119,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
     *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-identity-session"}}'
@@ -3277,7 +3277,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
     *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-dead-session"}}'
@@ -3396,7 +3396,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
     *'"method":"session/resume"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"session expired"}}'
@@ -3461,7 +3461,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
     *'"method":"session/resume"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"configOptions":[{"id":"model","options":[{"value":"openai/available"}]}]}}'
@@ -5324,7 +5324,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$log"
   case "$line" in
     *'"method":"initialize"'*)
-      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"16.4.8"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"oh-my-pi","version":"17.1.1"},"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"resume":{},"close":{}}}}}'
       ;;
     *'"method":"session/new"'*)
       printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"omp-shutdown-session","modes":{"availableModes":[{"id":"default"}]},"configOptions":[{"id":"model","options":[{"value":"openai/gpt-test"}]}]}}'

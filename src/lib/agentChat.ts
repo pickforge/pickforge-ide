@@ -201,7 +201,7 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
   ) {
     throw new Error(
       provider === "omp" && !ompNativeChatAvailable()
-        ? "OMP native chat requires the ompAgents flag and compatible OMP 16.4.8 probe"
+        ? "OMP native chat requires the ompAgents flag and compatible OMP >=17.1.1 and <18.0.0 probe"
         : provider === "pi" && !piNativeChatAvailable()
           ? "Pi native chat requires the piAgents flag and compatible Pi >=0.79.10 and <0.82.0 probe"
           : (nativeChatUnavailableReason(provider ?? opts.provider, engine)

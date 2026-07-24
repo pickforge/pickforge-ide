@@ -10,8 +10,8 @@ reset this file.
   on). Evidence gate: Pi 0.81 RPC re-certification plus the in-app dogfood on
   macOS hardware — streamed turn, mid-stream cancel, and history-preserving
   resume across an app restart (pickforge#270 Phase 0). Dev builds can opt out
-  from Settings → Feature Flags; OMP remains default-off pending its 16.5.0
-  ACP contract work.
+  from Settings → Feature Flags; OMP remains default-off pending its 17.1.1
+  ACP re-certification and authenticated dogfood.
 - PickForge no longer silently creates its database in the launch directory
   when the home directory cannot be resolved: startup now fails fast with an
   actionable error, and the `PICKFORGE_HOME` override keeps working (#237).
@@ -84,8 +84,9 @@ reset this file.
   migration. Pi's RPC wire protocol was empirically certified today as a
   compatible superset from 0.79.10 (the original adapter contract) through
   0.81, so `isCompatiblePiRpcVersion`/`compatible_version_output` now accept
-  `>=0.79.10` and `<0.82.0` (previously `<0.80.0`). OMP stays pinned to its
-  own 16.4.8 ACP version gate, untouched.
+  `>=0.79.10` and `<0.82.0` (previously `<0.80.0`). OMP ACP was re-certified
+  against 17.1.1 and now accepts `>=17.1.1` and `<18.0.0`; `ompAgents` remains
+  default-off pending authenticated dogfood (#212).
 - CI now blocks complexity regressions, severe dependency advisories, and
   committed secrets; frontend coverage floors were ratcheted to current results.
 - Integrated the published `@pickforge/tauri-updater` shared dialog/controller

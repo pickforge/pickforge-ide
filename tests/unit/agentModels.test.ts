@@ -375,6 +375,42 @@ describe("OMP/Pi discovery parsing and failures", () => {
     });
   });
 
+  it("distinguishes OMP 17.1.1 root help from launch-subcommand help", async () => {
+    const { flags, models } = await loadModules();
+    flags.setFlagOverride("ompAgents", true);
+    const rootHelp = [
+      "Usage: omp [options] [command] [prompt...]",
+      "      --no-extensions                 Disable extension discovery",
+      "  acp           Run Oh My Pi as an ACP (Agent Client Protocol) server over stdio",
+    ].join("\n");
+    const launchHelp = [
+      "Usage: omp [options] [prompt...]",
+      "      --no-extensions                 Disable extension discovery",
+    ].join("\n");
+
+    const compatible = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: rootHelp,
+      modelsOutput: "",
+      errors: [],
+    });
+    const launchOnly = models.diagnosticFromProbe("omp", {
+      installed: true,
+      versionOutput: "omp 17.1.1",
+      helpOutput: launchHelp,
+      modelsOutput: "",
+      errors: [],
+    });
+
+    expect(compatible.capabilities.nativeChat).toBe(true);
+    expect(launchOnly.capabilities.nativeChat).toBe(false);
+    models.recordAgentCliDiagnostic(launchOnly);
+    expect(models.ompNativeChatUnavailableReason()).toBe(
+      `OMP native chat requires an installed OMP ${models.OMP_ACP_VERSION_RANGE}`,
+    );
+  });
+
   it("reports OMP models unavailable without parsing an online-capable catalog", async () => {
     const { models } = await loadModules();
     const diagnostic = models.diagnosticFromProbe("omp", {

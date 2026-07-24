@@ -43,7 +43,7 @@ fn probe_spec(agent_id: &str) -> Option<ProbeSpec> {
         "omp" => Some(ProbeSpec {
             binary: "omp",
             version_args: &["--version"],
-            help_args: &["--no-extensions", "--help"],
+            help_args: &["--help"],
             // OMP has no documented switch that enforces offline/cache-only
             // model listing, so PR1 deliberately does not probe its catalog.
             models_args: None,
@@ -172,7 +172,7 @@ mod tests {
     fn agent_probe_is_strictly_allowlisted() {
         let omp = probe_spec("omp").expect("OMP probe");
         assert_eq!(omp.binary, "omp");
-        assert_eq!(omp.help_args, ["--no-extensions", "--help"]);
+        assert_eq!(omp.help_args, ["--help"]);
         assert!(omp.models_args.is_none());
 
         let pi = probe_spec("pi").expect("Pi probe");

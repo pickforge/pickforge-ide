@@ -57,7 +57,7 @@ vi.mock("../../src/lib/agentModels", () => ({
     const state = modelMocks.ompCompatibility();
     if (state === "compatible") return null;
     if (state === "incompatible") return "OMP native chat is incompatible";
-    return "Checking for compatible OMP 16.4.8";
+    return "Checking for compatible OMP >=17.1.1 and <18.0.0";
   },
   piNativeChatUnavailableReason: () => {
     const state = modelMocks.piCompatibility();

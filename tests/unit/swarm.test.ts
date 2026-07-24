@@ -301,7 +301,7 @@ describe("swarm dispatch", () => {
       runId: completed.runId,
       synthesisStatus: "failed",
       synthesisError: expect.stringContaining(
-        "requires the ompAgents flag and compatible OMP 16.4.8 probe",
+        "requires the ompAgents flag and compatible OMP >=17.1.1 and <18.0.0 probe",
       ),
     });
   });

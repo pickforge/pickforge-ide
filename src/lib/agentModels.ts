@@ -171,7 +171,7 @@ export interface AgentCliDiagnostic {
   errors: string[];
 }
 
-export const SUPPORTED_OMP_ACP_VERSION = "16.4.8";
+export const OMP_ACP_VERSION_RANGE = ">=17.1.1 and <18.0.0";
 export const OMP_MODEL_CATALOG_ADVISORY =
   "OMP models unavailable: no enforced offline/cache-only catalog probe";
 export type OmpNativeCompatibility = "unprobed" | "probing" | "compatible" | "incompatible";
@@ -181,10 +181,20 @@ export type PiNativeCompatibility = "unprobed" | "probing" | "compatible" | "inc
 const [piNativeCompatibility, setPiNativeCompatibility] =
   createSignal<PiNativeCompatibility>("unprobed");
 
+export function isCompatibleOmpAcpVersion(version: string | null | undefined): boolean {
+  if (!version) return false;
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  return major === 17 && (minor > 1 || (minor === 1 && patch >= 1));
+}
+
 export function isCompatibleOmpAcpProbe(probe: AgentCliDiagnostic): boolean {
   return probe.agentId === "omp"
     && probe.installed
-    && probe.version === SUPPORTED_OMP_ACP_VERSION
+    && isCompatibleOmpAcpVersion(probe.version)
     && probe.capabilities.nativeChat;
 }
 
@@ -223,10 +233,10 @@ export function ompNativeChatUnavailableReason(): string | null {
     case "compatible":
       return null;
     case "incompatible":
-      return `OMP native chat requires an installed, compatible OMP ${SUPPORTED_OMP_ACP_VERSION}`;
+      return `OMP native chat requires an installed OMP ${OMP_ACP_VERSION_RANGE}`;
     case "unprobed":
     case "probing":
-      return `Checking for compatible OMP ${SUPPORTED_OMP_ACP_VERSION}`;
+      return `Checking for compatible OMP ${OMP_ACP_VERSION_RANGE}`;
   }
 }
 
@@ -366,7 +376,7 @@ export function parsePiModelCatalog(raw: string): AgentModelOption[] {
 }
 
 function versionFromOutput(raw: string): string | null {
-  return raw.match(/\bv?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
+  return raw.match(/\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
 }
 
 /** Convert the native probe into UI-safe diagnostics. Exported as the pure test
@@ -409,7 +419,7 @@ export function diagnosticFromProbe(
         && probe.errors.length === 0
         && (
           (agentId === "omp"
-            && version === SUPPORTED_OMP_ACP_VERSION
+            && isCompatibleOmpAcpVersion(version)
             && /\bacp\b/.test(help)
             && /--no-extensions(?:\s|$|,)/.test(help))
           || (agentId === "pi" && isCompatiblePiRpcVersion(version))

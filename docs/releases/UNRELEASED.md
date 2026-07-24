@@ -84,8 +84,9 @@ reset this file.
   migration. Pi's RPC wire protocol was empirically certified today as a
   compatible superset from 0.79.10 (the original adapter contract) through
   0.81, so `isCompatiblePiRpcVersion`/`compatible_version_output` now accept
-  `>=0.79.10` and `<0.82.0` (previously `<0.80.0`). OMP stays pinned to its
-  own 16.4.8 ACP version gate, untouched.
+  `>=0.79.10` and `<0.82.0` (previously `<0.80.0`). OMP ACP was re-certified
+  against 17.1.1 and now accepts `>=17.1.1` and `<18.0.0`; `ompAgents` remains
+  default-off pending authenticated dogfood (#212).
 - CI now blocks complexity regressions, severe dependency advisories, and
   committed secrets; frontend coverage floors were ratcheted to current results.
 - Integrated the published `@pickforge/tauri-updater` shared dialog/controller

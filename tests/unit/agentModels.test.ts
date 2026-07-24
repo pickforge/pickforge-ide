@@ -79,12 +79,12 @@ describe("OMP/Pi rollout gating and commands", () => {
     );
   });
 
-  it("selects OMP native chat only after the exact compatible probe", async () => {
+  it("selects OMP native chat only after a compatible bounded-range probe", async () => {
     const { flags, models } = await loadModules();
     flags.setFlagOverride("ompAgents", true);
 
     expect(models.ompNativeChatUnavailableReason()).toBe(
-      `Checking for compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      `Checking for compatible OMP ${models.OMP_ACP_VERSION_RANGE}`,
     );
     expect(models.isOmpNativeCompatibilityPending()).toBe(true);
     expect(models.defaultNativeAgentProvider("omp")).toBe("claudeCode");
@@ -97,7 +97,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
     const incompatible = models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: "omp 16.4.9",
+      versionOutput: "omp 17.1.0",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],
@@ -105,7 +105,7 @@ describe("OMP/Pi rollout gating and commands", () => {
     models.recordAgentCliDiagnostic(incompatible);
     expect(models.nativeAgentProfiles().some((profile) => profile.id === "omp")).toBe(false);
     expect(models.ompNativeChatUnavailableReason()).toBe(
-      `OMP native chat requires an installed, compatible OMP ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      `OMP native chat requires an installed OMP ${models.OMP_ACP_VERSION_RANGE}`,
     );
     expect(models.isOmpNativeCompatibilityPending()).toBe(false);
     models.recordAgentCliDiagnostic({
@@ -116,7 +116,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
     const compatible = models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: `omp ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      versionOutput: "omp 17.1.1",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],
@@ -158,7 +158,7 @@ describe("OMP/Pi rollout gating and commands", () => {
 
     models.recordAgentCliDiagnostic(models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: `omp ${models.SUPPORTED_OMP_ACP_VERSION}`,
+      versionOutput: "omp 17.1.1",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],
@@ -177,6 +177,17 @@ describe("OMP/Pi rollout gating and commands", () => {
     expect(
       models.defaultNativeAgentProvider(chatDefaults.loadLastAgentProvider()),
     ).toBe("claudeCode");
+  });
+
+  it("accepts only the certified OMP ACP version range", async () => {
+    const { models } = await loadModules();
+
+    for (const version of ["17.1.1", "17.999.999", "17.2.0-rc.1+build"]) {
+      expect(models.isCompatibleOmpAcpVersion(version), version).toBe(true);
+    }
+    for (const version of ["17.1.0", "18.0.0", "18.0.0-rc.1", "16.4.8"]) {
+      expect(models.isCompatibleOmpAcpVersion(version), version).toBe(false);
+    }
   });
 
   it("offers optional chips without changing defaults or duplicating an agent", async () => {
@@ -368,13 +379,13 @@ describe("OMP/Pi discovery parsing and failures", () => {
     const { models } = await loadModules();
     const diagnostic = models.diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: "omp v16.4.8",
+      versionOutput: "omp v17.2.0-rc.1+build",
       helpOutput: "--no-extensions  Disable extensions\n--provider=<value>  --profile=<value>\n  acp  Run ACP server",
       modelsOutput: "",
       errors: [],
     });
 
-    expect(diagnostic.version).toBe("16.4.8");
+    expect(diagnostic.version).toBe("17.2.0-rc.1+build");
     expect(diagnostic.models).toEqual([]);
     expect(diagnostic.capabilities).toMatchObject({
       terminal: true,

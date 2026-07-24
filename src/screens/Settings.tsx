@@ -3,9 +3,10 @@ import {
   agentProfiles,
   discoverAgentCli,
   loadAgentModels,
+  isCompatibleOmpAcpVersion,
+  OMP_ACP_VERSION_RANGE,
   OMP_MODEL_CATALOG_ADVISORY,
   setAgentModel,
-  SUPPORTED_OMP_ACP_VERSION,
   type AgentCliDiagnostic,
   type AgentProfile,
 } from "../lib/agentModels";
@@ -292,11 +293,11 @@ function connectorNativeState(
     return {
       label: "Native chat unavailable",
       intent: "warning",
-      reason: diagnostic.version !== SUPPORTED_OMP_ACP_VERSION
-        ? `Native chat requires OMP ${SUPPORTED_OMP_ACP_VERSION}; found ${diagnostic.version ?? "an unknown version"}. Terminal launch remains available.`
+      reason: !isCompatibleOmpAcpVersion(diagnostic.version)
+        ? `Native chat requires OMP ${OMP_ACP_VERSION_RANGE}; found ${diagnostic.version ?? "an unknown version"}. Terminal launch remains available.`
         : capabilityErrors.length > 0
           ? `OMP compatibility probe did not qualify: ${capabilityErrors.join("; ")}. Terminal launch remains available.`
-          : `OMP ${SUPPORTED_OMP_ACP_VERSION} did not report the required ACP and no-extensions support. Terminal launch remains available.`,
+          : `OMP ${OMP_ACP_VERSION_RANGE} did not report the required ACP and no-extensions support. Terminal launch remains available.`,
     };
   }
   return {

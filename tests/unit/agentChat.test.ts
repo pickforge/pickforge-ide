@@ -138,7 +138,6 @@ import {
 import {
   diagnosticFromProbe,
   recordAgentCliDiagnostic,
-  SUPPORTED_OMP_ACP_VERSION,
 } from "../../src/lib/agentModels";
 import { markChatTitleManual } from "../../src/lib/chatAutoName";
 import { setAgentEngine } from "../../src/lib/chatDefaults";
@@ -310,7 +309,7 @@ describe("agentChat IPC wrappers", () => {
     flags.ompAgents = true;
     recordAgentCliDiagnostic(diagnosticFromProbe("omp", {
       installed: true,
-      versionOutput: `omp ${SUPPORTED_OMP_ACP_VERSION}`,
+      versionOutput: "omp 17.1.1",
       helpOutput: "acp --no-extensions",
       modelsOutput: "",
       errors: [],

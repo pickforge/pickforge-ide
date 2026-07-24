@@ -424,7 +424,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     if (args.agentId === "omp") {
       return {
         installed: true,
-        versionOutput: "omp 16.4.8",
+        versionOutput: "omp 17.1.1",
         helpOutput: "omp [--profile <name>] [--provider <id>] acp --no-extensions",
         modelsOutput: "",
         errors: [],

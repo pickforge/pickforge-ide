@@ -22,7 +22,55 @@ export interface TerminalSelection {
   y: number;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+/** Caps the embedded selection so a huge scrollback grab can't exceed the OS
+ * per-argument limit (Linux MAX_ARG_STRLEN ~128 KB) and fail the launch. */
+function buildAskAiCommand(agentCommand: string, instruction: string, selectionText: string): string {
+  const MAX_SEL = 16000;
+  const clipped =
+    selectionText.length > MAX_SEL
+      ? `${selectionText.slice(0, MAX_SEL)}\n…[selection truncated]`
+      : selectionText;
+  const ask =
+    `${instruction.trim()}\n\nSelected from the PickForge run console:\n\n` +
+    "```\n" +
+    clipped +
+    "\n```";
+  return `${agentCommand} ${shquote(ask)}`;
+}
+
+function AskAiCustomPrompt(props: {
+  prompt: () => string;
+  onInput: (value: string) => void;
+  onSend: () => void;
+}) {
+  return (
+    <div class="pf-askai-custom">
+      <textarea
+        class="pf-askai-input"
+        placeholder="Ask about the selection…"
+        rows={2}
+        autofocus
+        value={props.prompt()}
+        onInput={(e) => props.onInput(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            props.onSend();
+          }
+        }}
+      />
+      <button
+        type="button"
+        class="pf-askai-send"
+        disabled={!props.prompt().trim()}
+        onClick={props.onSend}
+      >
+        Send
+      </button>
+    </div>
+  );
+}
+
 export function AskAiMenu(props: {
   selection: TerminalSelection;
   onClose: () => void;
@@ -46,18 +94,10 @@ export function AskAiMenu(props: {
       setError("Open a chat first so the agent has a terminal.");
       return;
     }
-    // Cap the embedded selection so a huge scrollback grab can't exceed the OS
-    // per-argument limit (Linux MAX_ARG_STRLEN ~128 KB) and fail the launch.
-    const MAX_SEL = 16000;
-    const raw = props.selection.text;
-    const clipped =
-      raw.length > MAX_SEL ? `${raw.slice(0, MAX_SEL)}\n…[selection truncated]` : raw;
-    const ask =
-      `${instruction.trim()}\n\nSelected from the PickForge run console:\n\n` +
-      "```\n" +
-      clipped +
-      "\n```";
-    launchAgentInSplit(chatId, `${commandForItem(a)} ${shquote(ask)}`);
+    launchAgentInSplit(
+      chatId,
+      buildAskAiCommand(commandForItem(a), instruction, props.selection.text),
+    );
     props.onClose();
   };
 
@@ -103,30 +143,7 @@ export function AskAiMenu(props: {
               </div>
             }
           >
-            <div class="pf-askai-custom">
-              <textarea
-                class="pf-askai-input"
-                placeholder="Ask about the selection…"
-                rows={2}
-                autofocus
-                value={prompt()}
-                onInput={(e) => setPrompt(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    launch(prompt());
-                  }
-                }}
-              />
-              <button
-                type="button"
-                class="pf-askai-send"
-                disabled={!prompt().trim()}
-                onClick={() => launch(prompt())}
-              >
-                Send
-              </button>
-            </div>
+            <AskAiCustomPrompt prompt={prompt} onInput={setPrompt} onSend={() => launch(prompt())} />
           </Show>
         </Show>
         <Show when={error()}>

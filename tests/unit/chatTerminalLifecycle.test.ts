@@ -63,16 +63,37 @@ import {
   setWindowFocusForActivity,
 } from "../../src/stores/chatActivity";
 
+// Node 22+ ships a built-in (experimental) global `localStorage` that is a
+// non-functional stub unless `--localstorage-file` is passed. jsdom's window
+// has its own real implementation, but vitest's jsdom environment only copies
+// window properties onto the global scope when the key isn't already present
+// there — so on a host Node with the built-in global, the bare `localStorage`
+// chatAutoName.ts reads resolves to Node's broken stub instead of jsdom's real
+// one. Stand up a real, spec-equivalent Storage so the module's actual
+// persistence code path (getItem/setItem/removeItem) runs for real, the same
+// way it does under jsdom on hosts without the built-in global.
+const storageValues = new Map<string, string>();
+
 beforeEach(() => {
   vi.useFakeTimers();
   archived.ids.clear();
   db.setChatSessionId.mockClear();
   setWindowFocusForActivity(true);
   setActiveChatForActivity(null);
+  storageValues.clear();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => storageValues.get(key) ?? null,
+    setItem: (key: string, value: string) => void storageValues.set(key, value),
+    removeItem: (key: string) => void storageValues.delete(key),
+    clear: () => storageValues.clear(),
+    key: () => null,
+    length: 0,
+  } satisfies Storage);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 let chatCounter = 0;

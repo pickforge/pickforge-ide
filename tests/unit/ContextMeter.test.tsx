@@ -1,0 +1,100 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { render } from "solid-js/web";
+import { ContextMeter } from "../../src/components/chat/ContextMeter";
+import type { AgentChatTotals } from "../../src/stores/agentChat";
+
+let root: HTMLDivElement;
+let dispose: (() => void) | undefined;
+
+beforeEach(() => {
+  root = document.createElement("div");
+  document.body.appendChild(root);
+});
+
+afterEach(() => {
+  dispose?.();
+  dispose = undefined;
+  root.remove();
+});
+
+function emptyTotals(): AgentChatTotals {
+  return { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costUsd: 0, estimated: false };
+}
+
+function mount(props: {
+  contextUsed: number | null;
+  contextWindow: number | null;
+  totals?: AgentChatTotals;
+}) {
+  dispose = render(
+    () => (
+      <ContextMeter
+        contextUsed={props.contextUsed}
+        contextWindow={props.contextWindow}
+        totals={props.totals ?? emptyTotals()}
+      />
+    ),
+    root,
+  );
+  return root;
+}
+
+describe("ContextMeter", () => {
+  it("renders the compact used/window label and a bar sized to the fraction", () => {
+    mount({ contextUsed: 12_000, contextWindow: 200_000 });
+
+    expect(root.querySelector(".pf-chat-context-frac")?.textContent).toBe("12k / 200k");
+    const fill = root.querySelector<HTMLElement>(".pf-chat-context-fill");
+    expect(fill?.style.width).toBe("6%");
+    expect(root.querySelector(".pf-chat-context")?.classList.contains("pf-chat-context--warn"))
+      .toBe(false);
+  });
+
+  it("clamps the bar to 100% width when used exceeds the window", () => {
+    mount({ contextUsed: 230_000, contextWindow: 200_000 });
+
+    const fill = root.querySelector<HTMLElement>(".pf-chat-context-fill");
+    expect(fill?.style.width).toBe("100%");
+  });
+
+  it("clamps the label too, but flags a surfaced warning instead of hiding the overflow", () => {
+    mount({ contextUsed: 230_000, contextWindow: 200_000 });
+
+    // The label never prints raw digits above the window (no "230k / 200k")...
+    expect(root.querySelector(".pf-chat-context-frac")?.textContent).toBe("200k / 200k");
+    // ...but the inconsistency is surfaced, not silently hidden: a distinct
+    // warning class plus a title carrying the raw values.
+    const container = root.querySelector(".pf-chat-context");
+    expect(container?.classList.contains("pf-chat-context--warn")).toBe(true);
+    const label = root.querySelector(".pf-chat-context-frac");
+    expect(label?.getAttribute("title")).toContain("230,000");
+    expect(label?.getAttribute("title")).toContain("200,000");
+  });
+
+  it("does not warn when used is within the window", () => {
+    mount({ contextUsed: 199_999, contextWindow: 200_000 });
+
+    const container = root.querySelector(".pf-chat-context");
+    expect(container?.classList.contains("pf-chat-context--warn")).toBe(false);
+    expect(root.querySelector(".pf-chat-context-frac")?.getAttribute("title")).toBeNull();
+  });
+
+  it("hides the context block entirely when no window is known, even with cost", () => {
+    mount({
+      contextUsed: null,
+      contextWindow: null,
+      totals: { ...emptyTotals(), costUsd: 0.05 },
+    });
+
+    expect(root.querySelector(".pf-chat-context-frac")).toBeNull();
+    expect(root.querySelector(".pf-chat-context-track")).toBeNull();
+    expect(root.querySelector(".pf-chat-context-cost")?.textContent).toBe("$0.0500");
+  });
+
+  it("stays hidden entirely when there is neither context nor cost", () => {
+    mount({ contextUsed: null, contextWindow: null });
+
+    expect(root.querySelector(".pf-chat-context")).toBeNull();
+  });
+});

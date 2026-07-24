@@ -413,9 +413,56 @@ function versionFromOutput(raw: string): string | null {
   return raw.match(/\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
 }
 
+/** Parses the model catalog for an installed CLI, pushing an advisory (OMP)
+ * or the raw error text (Pi) into `errors` on failure/empty output instead
+ * of throwing. */
+function parseAgentModelCatalog(
+  agentId: "omp" | "pi",
+  probe: AgentCliProbe,
+  errors: string[],
+): AgentModelOption[] {
+  if (!probe.installed) return [];
+  if (agentId === "omp") {
+    if (!probe.modelsOutput.trim()) {
+      errors.push(OMP_MODEL_CATALOG_ADVISORY);
+      return [];
+    }
+    try {
+      return parseOmpModelCatalog(probe.modelsOutput);
+    } catch {
+      errors.push(OMP_MODEL_CATALOG_ADVISORY);
+      return [];
+    }
+  }
+  if (!probe.modelsOutput.trim()) return [];
+  try {
+    return parsePiModelCatalog(probe.modelsOutput);
+  } catch (error) {
+    errors.push(errorText(error));
+    return [];
+  }
+}
+
+function nativeChatCapable(
+  agentId: "omp" | "pi",
+  installed: boolean,
+  nativeChatErrorCount: number,
+  version: string | null,
+  help: string,
+): boolean {
+  if (!installed || nativeChatErrorCount !== 0) return false;
+  if (agentId === "omp") {
+    return (
+      isCompatibleOmpAcpVersion(version) &&
+      /\bacp\b/.test(help) &&
+      /--no-extensions(?:\s|$|,)/.test(help)
+    );
+  }
+  return isCompatiblePiRpcVersion(version);
+}
+
 /** Convert the native probe into UI-safe diagnostics. Exported as the pure test
  * seam for malformed output and partial-command failures. */
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function diagnosticFromProbe(
   agentId: "omp" | "pi",
   probe: AgentCliProbe,
@@ -432,24 +479,7 @@ export function diagnosticFromProbe(
     errors.push("Version output was not recognized");
   }
 
-  let models: AgentModelOption[] = [];
-  if (agentId === "omp" && probe.installed) {
-    if (probe.modelsOutput.trim()) {
-      try {
-        models = parseOmpModelCatalog(probe.modelsOutput);
-      } catch {
-        errors.push(OMP_MODEL_CATALOG_ADVISORY);
-      }
-    } else {
-      errors.push(OMP_MODEL_CATALOG_ADVISORY);
-    }
-  } else if (probe.installed && probe.modelsOutput.trim()) {
-    try {
-      models = parsePiModelCatalog(probe.modelsOutput);
-    } catch (error) {
-      errors.push(errorText(error));
-    }
-  }
+  const models = parseAgentModelCatalog(agentId, probe, errors);
 
   const help = probe.helpOutput;
   const installed = probe.installed;
@@ -463,15 +493,7 @@ export function diagnosticFromProbe(
       dynamicModels: installed && models.length > 0,
       profiles: installed && /--profile(?:=|\s|<)/.test(help),
       providerSelection: installed && /--provider(?:=|\s|<)/.test(help),
-      nativeChat: installed
-        && nativeChatErrorCount === 0
-        && (
-          (agentId === "omp"
-            && isCompatibleOmpAcpVersion(version)
-            && /\bacp\b/.test(help)
-            && /--no-extensions(?:\s|$|,)/.test(help))
-          || (agentId === "pi" && isCompatiblePiRpcVersion(version))
-        ),
+      nativeChat: nativeChatCapable(agentId, installed, nativeChatErrorCount, version, help),
     },
     errors,
   };

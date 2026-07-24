@@ -227,7 +227,30 @@ async function ompMcpServers(opts: AgentChatStartOptions): Promise<AgentMcpServe
 }
 
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+/** Throws with a specific reason if native chat isn't available for
+ * `provider`. Pure/synchronous — deliberately called right after the
+ * compatibility-probe awaits, not wrapping them, so extracting this doesn't
+ * add a microtask tick to the awaited chain (tests flush a fixed number of
+ * ticks). */
+function assertNativeChatAvailable(
+  provider: AgentProvider | null,
+  rawProvider: string,
+  engine: AgentEngine,
+): void {
+  if (provider === "omp" && !ompNativeChatAvailable()) {
+    throw new Error(
+      "OMP native chat requires the ompAgents flag and compatible OMP >=17.1.1 and <18.0.0 probe",
+    );
+  }
+  if (provider === "pi" && !piNativeChatAvailable()) {
+    throw new Error("Pi native chat requires compatible Pi >=0.79.10 and <0.82.0");
+  }
+  const reason = nativeChatUnavailableReason(provider ?? rawProvider, engine);
+  if (!provider || reason) {
+    throw new Error(reason ?? "Agent backend does not support native chat");
+  }
+}
+
 export async function agentChatStart(opts: AgentChatStartOptions): Promise<string> {
   const provider = normalizeAgentProvider(opts.provider);
   const engine = opts.engine ?? "v2";
@@ -236,21 +259,7 @@ export async function agentChatStart(opts: AgentChatStartOptions): Promise<strin
   } else if (provider === "pi") {
     await ensurePiNativeCompatibility();
   }
-  if (
-    !provider
-    || (provider === "omp" && !ompNativeChatAvailable())
-    || (provider === "pi" && !piNativeChatAvailable())
-    || nativeChatUnavailableReason(provider ?? opts.provider, engine)
-  ) {
-    throw new Error(
-      provider === "omp" && !ompNativeChatAvailable()
-        ? "OMP native chat requires the ompAgents flag and compatible OMP >=17.1.1 and <18.0.0 probe"
-        : provider === "pi" && !piNativeChatAvailable()
-          ? "Pi native chat requires compatible Pi >=0.79.10 and <0.82.0"
-          : (nativeChatUnavailableReason(provider ?? opts.provider, engine)
-              ?? "Agent backend does not support native chat"),
-    );
-  }
+  assertNativeChatAvailable(provider, opts.provider, engine);
   const mcpServers = provider === "omp" ? await ompMcpServers(opts) : (opts.mcpServers ?? []);
   const onEvent = new Channel<AgentEvent>();
   onEvent.onmessage = opts.onEvent;

@@ -808,15 +808,24 @@ body.pf-resizing .pf-dock-panel {
 @media (prefers-reduced-motion: reduce) {
   .pf-chat-title--typing::after { animation: none; }
 }
+/* Brand mark (or "AI" text fallback for an unrecognized agent id). Dimming is
+ * opacity-based, not color-based: a fixed-fill/gradient brand mark (Claude,
+ * OMP) ignores `color`, so opacity is the one lever that reaches every mark —
+ * currentColor ones (Codex, Pi) still pick up the color shift too. */
 .pf-chat-agent-mark {
+  display: inline-flex;
+  align-items: center;
   flex: none;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
   letter-spacing: var(--pf-tracking-eyebrow);
   color: var(--pf-text-low);
+  opacity: 0.65;
+  transition: opacity var(--pf-dur-fast) var(--pf-ease-forge);
 }
 .pf-chat-row.active .pf-chat-agent-mark {
   color: var(--pf-text-med);
+  opacity: 1;
 }
 .pf-chat-row .pf-rail-row-action {
   opacity: 0;

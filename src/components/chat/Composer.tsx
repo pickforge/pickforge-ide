@@ -77,9 +77,10 @@ import {
   IconClose,
   IconForgeFlame,
   IconIngot,
+  IconOmp,
   IconOpenAI,
+  IconPi,
   IconShield,
-  IconTerminal,
 } from "../icons";
 import { Spinner } from "../ui";
 import { openLightbox } from "./ImageLightbox";
@@ -88,8 +89,8 @@ import "./chat.css";
 const PROVIDER_ICON: Record<AgentProvider, () => JSX.Element> = {
   claudeCode: () => <IconClaude size={13} />,
   codex: () => <IconOpenAI size={13} />,
-  omp: () => <IconIngot size={13} />,
-  pi: () => <IconTerminal size={13} />,
+  omp: () => <IconOmp size={13} />,
+  pi: () => <IconPi size={13} />,
 };
 
 const EFFORT_LABELS: Record<string, string> = {

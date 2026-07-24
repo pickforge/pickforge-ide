@@ -6,6 +6,9 @@ reset this file.
 
 ## User-facing changes
 
+- OMP (Oh My Pi) native chat is now enabled by default: model catalog in the
+  composer picker, honest cancel with persisted interrupted turns, and
+  connector diagnostics. The `ompAgents` flag remains as an off-switch.
 - Claude Opus 5 replaces Opus 4.8 in the agent model picker, swarm model
   aliases, and cost estimates (same $5/$25 pricing; default effort high).
 - Swarm commands no longer misread model version digits as lane counts

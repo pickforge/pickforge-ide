@@ -17,9 +17,13 @@ import { ForgeEmptyState, MonoEyebrow } from "../ui";
 import {
   IconChevronDown,
   IconChevronRight,
+  IconClaude,
   IconClose,
   IconGrid,
   IconMore,
+  IconOmp,
+  IconOpenAI,
+  IconPi,
   IconPin,
   IconPlus,
   IconRefresh,
@@ -35,7 +39,7 @@ import {
   nativeAgentProfile,
   nativeAgentProfiles,
 } from "../../lib/agentModels";
-import { normalizeAgentProvider } from "../../lib/agentBackends";
+import { agentBackendDescriptor, normalizeAgentProvider } from "../../lib/agentBackends";
 import { loadAgentModes } from "../../lib/agentModes";
 import { isPrimaryChat } from "../../lib/chatLabels";
 import { DEFAULT_CHAT_TITLE } from "../../lib/chatAutoName";
@@ -100,7 +104,15 @@ import { errorText } from "../../lib/errors";
 import { swarmRuns } from "../../stores/swarm";
 import "./orchestra.css";
 
-const PROVIDER_MARK: Record<string, string> = { claudeCode: "CC", codex: "CX", omp: "OM", pi: "PI" };
+// Brand mark per harness, replacing the old two-letter CC/CX/OM/PI badges
+// (issue #300).
+const PROVIDER_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Object.freeze({
+  claudeCode: () => <IconClaude size={11} />,
+  codex: () => <IconOpenAI size={11} />,
+  omp: () => <IconOmp size={11} />,
+  pi: () => <IconPi size={11} />,
+});
+const providerLabel = (provider: string): string => agentBackendDescriptor(provider)?.label ?? "AI";
 
 const STATUS_ORDER: OrchestraTaskStatus[] = [
   "planned",
@@ -751,7 +763,15 @@ export function OrchestraView(props: {
             }}
           />
         </Show>
-        <span class="pf-orch-lane-mark">{PROVIDER_MARK[provider()] ?? "AI"}</span>
+        <span
+          class="pf-orch-lane-mark"
+          title={providerLabel(provider())}
+          aria-label={providerLabel(provider())}
+        >
+          <Show when={PROVIDER_ICON[provider()]} fallback="AI">
+            {(icon) => icon()()}
+          </Show>
+        </span>
         <Show when={modelLabel(provider())}>
           <span class="pf-orch-lane-model">{modelLabel(provider())}</span>
         </Show>
@@ -957,8 +977,16 @@ export function OrchestraView(props: {
                 <div class="pf-orch-swarm-lanes">
                   <For each={run.lanes}>
                     {(lane) => (
-                      <span class="pf-orch-swarm-lane">
-                        {PROVIDER_MARK[lane.provider] ?? "AI"} · {lane.status}
+                      <span
+                        class="pf-orch-swarm-lane"
+                        title={providerLabel(lane.provider)}
+                        aria-label={`${providerLabel(lane.provider)} · ${lane.status}`}
+                      >
+                        <Show when={PROVIDER_ICON[lane.provider]} fallback="AI">
+                          {(icon) => icon()()}
+                        </Show>
+                        {" · "}
+                        {lane.status}
                       </span>
                     )}
                   </For>
@@ -997,8 +1025,14 @@ export function OrchestraView(props: {
                   {(pin) => (
                     <div class="pf-orch-pin">
                       <div class="pf-orch-pin-head">
-                        <span class="pf-orch-pin-mark">
-                          {PROVIDER_MARK[pin.provider] ?? "AI"}
+                        <span
+                          class="pf-orch-pin-mark"
+                          title={providerLabel(pin.provider)}
+                          aria-label={providerLabel(pin.provider)}
+                        >
+                          <Show when={PROVIDER_ICON[pin.provider]} fallback="AI">
+                            {(icon) => icon()()}
+                          </Show>
                         </span>
                         <span class="pf-orch-pin-title">{pin.title}</span>
                         <button

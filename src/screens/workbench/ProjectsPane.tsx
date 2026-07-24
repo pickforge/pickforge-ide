@@ -3,17 +3,31 @@
 // collapsible groups, three-dots + right-click menus, inline rename, and DnD
 // into a group; chats keep rename / archive / delete / drag-reorder. A toolbar
 // control collapses or expands every project's chats at once.
-import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
+import {
+  type JSX,
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  Show,
+  Switch,
+} from "solid-js";
 import { FloatingMenu } from "../../components/FloatingMenu";
 import { Collapse } from "../../components/ui";
 import {
   IconChevronDown,
   IconChevronRight,
+  IconClaude,
   IconCollapseAll,
   IconFolderPlus,
   IconGrid,
   IconList,
   IconMore,
+  IconOmp,
+  IconOpenAI,
+  IconPi,
   IconPlus,
 } from "../../components/icons";
 import {
@@ -54,7 +68,7 @@ import {
   selectProject,
   workspace,
 } from "../../stores/workspace";
-import { normalizeAgentProvider } from "../../lib/agentBackends";
+import { agentBackendDescriptor, normalizeAgentProvider } from "../../lib/agentBackends";
 import {
   defaultNativeAgentProvider,
   nativeAgentProfile,
@@ -96,14 +110,18 @@ import {
 
 const PROJECT_MIME = "application/x-pf-project";
 
-const AGENT_CHAT_MARKS: Record<string, string> = {
-  claudeCode: "CC",
-  codex: "CX",
-  omp: "OM",
-  pi: "PI",
-};
-const agentChatMark = (agentId: string): string =>
-  AGENT_CHAT_MARKS[normalizeAgentProvider(agentId) ?? agentId] ?? "AI";
+// Brand mark per harness, replacing the old two-letter CC/CX/OM/PI badges
+// (issue #300). Falls back to no icon (plain "AI" text) for an agent id the
+// app doesn't recognize.
+const AGENT_CHAT_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Object.freeze({
+  claudeCode: () => <IconClaude size={11} />,
+  codex: () => <IconOpenAI size={11} />,
+  omp: () => <IconOmp size={11} />,
+  pi: () => <IconPi size={11} />,
+});
+const agentChatProvider = (agentId: string): string => normalizeAgentProvider(agentId) ?? agentId;
+const agentChatLabel = (agentId: string): string =>
+  agentBackendDescriptor(agentChatProvider(agentId))?.label ?? "Agent";
 
 function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
@@ -786,7 +804,15 @@ export function ProjectsPane() {
           }} />
         </Show>
         <Show when={p.chat.kind === "agent"}>
-          <span class="pf-chat-agent-mark" title="Agent chat">{agentChatMark(p.chat.agentId)}</span>
+          <span
+            class="pf-chat-agent-mark"
+            title={`Agent chat · ${agentChatLabel(p.chat.agentId)}`}
+            aria-label={`Agent chat · ${agentChatLabel(p.chat.agentId)}`}
+          >
+            <Show when={AGENT_CHAT_ICON[agentChatProvider(p.chat.agentId)]} fallback="AI">
+              {(icon) => icon()()}
+            </Show>
+          </span>
         </Show>
         <Show
           when={!p.archived}

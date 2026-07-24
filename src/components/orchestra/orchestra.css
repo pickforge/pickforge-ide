@@ -126,6 +126,8 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   gap: var(--pf-space-sm);
 }
 .pf-orch-pin-mark {
+  display: inline-flex;
+  align-items: center;
   flex: none;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
@@ -327,6 +329,9 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   gap: var(--pf-space-xs);
 }
 .pf-orch-swarm-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px var(--pf-space-xs);
   border-radius: var(--pf-radius-sm);
   border: var(--pf-hairline-width) solid var(--pf-hairline);
@@ -604,6 +609,8 @@ body.pf-orch-moving .pf-orch-lane-body {
   outline: none;
 }
 .pf-orch-lane-mark {
+  display: inline-flex;
+  align-items: center;
   flex: none;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);

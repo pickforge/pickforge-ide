@@ -43,7 +43,7 @@ const localStorageStore: FlagOverrideStore = {
 
 const definitions = {
   operator: { description: "Operator command layer (epic #118)" },
-  ompAgents: { description: "OMP native chat and terminal profiles (#212)" },
+  ompAgents: { description: "OMP native chat and terminal profiles (#212)", default: true },
   remoteProjects: { description: "Per-project remote hosts (epic #144)" },
   remoteProcessLeases: { description: "Exact remote process cleanup leases (#208)" },
   accounts: { description: "Accounts and Pro entitlements (#132)" },

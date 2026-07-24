@@ -158,13 +158,55 @@ export async function loadWorkspace() {
 }
 
 let refreshing = false;
+
+/** Reconciles one already-loaded project root's chat bucket against the DB:
+ * if the project itself is gone in another instance, kills every chat's pane
+ * and destroys its recovery session (the row is gone, so detaching would
+ * strand it) and drops the bucket; otherwise refreshes the bucket and gives
+ * the same destructive teardown to any chat that disappeared from it. */
+async function reconcileProjectChats(root: string, liveRoots: Set<string>) {
+  const before = state.chatsByRoot[root] ?? [];
+  if (!liveRoots.has(root)) {
+    for (const c of before) await destroyExternallyDeletedChat(c.chatId, c.sessionId);
+    setState("chatsByRoot", produce((m) => { delete m[root]; }));
+    return;
+  }
+  const after = await db.chatsList(root);
+  setState("chatsByRoot", root, after);
+  const afterIds = new Set(after.map((c) => c.chatId));
+  for (const c of before) {
+    if (!afterIds.has(c.chatId)) await destroyExternallyDeletedChat(c.chatId, c.sessionId);
+  }
+}
+
+/** Falls the active project/chat back to a live one if either vanished in
+ * another instance. */
+async function reconcileActiveSelection(projects: db.Project[], liveRoots: Set<string>) {
+  if (state.activeRoot != null && !liveRoots.has(state.activeRoot)) {
+    const nextRoot = projects[0]?.projectRoot ?? null;
+    setState("activeRoot", nextRoot);
+    // Load the fallback project's chats before picking one — its bucket may
+    // never have been opened in this window, and reading an empty bucket would
+    // strand the UI on "no chat open".
+    const chats = nextRoot ? state.chatsByRoot[nextRoot] ?? (await fetchChats(nextRoot)) : [];
+    setState("activeChatId", nextRoot ? firstVisibleChat(chats) : null);
+    return;
+  }
+  if (!state.activeRoot) return;
+  const chats = chatsFor(state.activeRoot);
+  const keep =
+    state.activeChatId != null &&
+    chats.some((c) => c.chatId === state.activeChatId) &&
+    !isChatArchived(state.activeChatId);
+  if (!keep) setState("activeChatId", firstVisibleChat(chats));
+}
+
 /** Re-read everything that lives in the shared DB (`~/.pickforge/pickforge.db`):
  *  the project list and every already-loaded project's chats. Lets a second
  *  running instance's writes (e.g. dev alongside release) surface here instead of
  *  going stale. Fires the chat-deletion notifiers for chats another instance
  *  removed so their terminal hosts are torn down, and reconciles the active
  *  project/chat if they vanished. Idempotent; wired to window focus. */
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export async function refreshFromDb() {
   if (!state.loaded || refreshing) return;
   refreshing = true;
@@ -174,41 +216,10 @@ export async function refreshFromDb() {
     const liveRoots = new Set(projects.map((p) => p.projectRoot));
 
     for (const root of Object.keys(state.chatsByRoot)) {
-      const before = state.chatsByRoot[root] ?? [];
-      if (!liveRoots.has(root)) {
-        // Project gone in another instance: KILL each chat's pane + destroy its
-        // recovery session (the row is gone, so detaching would strand it).
-        for (const c of before) await destroyExternallyDeletedChat(c.chatId, c.sessionId);
-        setState("chatsByRoot", produce((m) => { delete m[root]; }));
-        continue;
-      }
-      const after = await db.chatsList(root);
-      setState("chatsByRoot", root, after);
-      const afterIds = new Set(after.map((c) => c.chatId));
-      for (const c of before) {
-        // Chat removed in another instance: same destructive teardown.
-        if (!afterIds.has(c.chatId)) await destroyExternallyDeletedChat(c.chatId, c.sessionId);
-      }
+      await reconcileProjectChats(root, liveRoots);
     }
 
-    if (state.activeRoot != null && !liveRoots.has(state.activeRoot)) {
-      const nextRoot = projects[0]?.projectRoot ?? null;
-      setState("activeRoot", nextRoot);
-      // Load the fallback project's chats before picking one — its bucket may
-      // never have been opened in this window, and reading an empty bucket would
-      // strand the UI on "no chat open".
-      const chats = nextRoot
-        ? state.chatsByRoot[nextRoot] ?? (await fetchChats(nextRoot))
-        : [];
-      setState("activeChatId", nextRoot ? firstVisibleChat(chats) : null);
-    } else if (state.activeRoot) {
-      const chats = chatsFor(state.activeRoot);
-      const keep =
-        state.activeChatId != null &&
-        chats.some((c) => c.chatId === state.activeChatId) &&
-        !isChatArchived(state.activeChatId);
-      if (!keep) setState("activeChatId", firstVisibleChat(chats));
-    }
+    await reconcileActiveSelection(projects, liveRoots);
   } finally {
     refreshing = false;
   }

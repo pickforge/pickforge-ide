@@ -24,6 +24,7 @@ import { swarmWorkerLabels } from "../lib/chatLabels";
 import { SWARM_SYNTHESIS_PROMPT_PREFIX } from "../lib/swarmSynthesis";
 import { ensureAgentChat, agentChat, sendAgentMessage } from "./agentChat";
 import { addChat, ensureChatsLoaded, findChat, workspace } from "./workspace";
+import type { Chat } from "../lib/db";
 import { loadAgentEngine } from "../lib/chatDefaults";
 import { modeOverrides } from "../lib/agentModes";
 import { errorText } from "../lib/errors";
@@ -138,7 +139,18 @@ function laneFocus(mode: SwarmRequest["mode"], index: number): [string, string] 
   return list[index % list.length] as [string, string];
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+function mentionsClaudeModelKeyword(text: string): boolean {
+  return (
+    (text.includes("opus") && text.includes("5")) ||
+    (text.includes("sonnet") && text.includes("5")) ||
+    text.includes("haiku")
+  );
+}
+
+function mentionsCodexModelKeyword(text: string): boolean {
+  return text.includes("gpt-5.5") || text.includes("gpt-5.4") || text.includes("spark");
+}
+
 function providerForRequestedModel(requested: string | null): AgentProvider | null {
   const text = requested?.trim().toLowerCase() ?? "";
   if (!text || isTerminalOnlyModelRequest(requested)) return null;
@@ -146,20 +158,8 @@ function providerForRequestedModel(requested: string | null): AgentProvider | nu
   if (claudeOption && !claudeOption.terminalOnly) return "claudeCode";
   const codexOption = modelOption("codex", requested);
   if (codexOption && !codexOption.terminalOnly) return "codex";
-  if (
-    (text.includes("opus") && text.includes("5")) ||
-    (text.includes("sonnet") && text.includes("5")) ||
-    text.includes("haiku")
-  ) {
-    return "claudeCode";
-  }
-  if (
-    text.includes("gpt-5.5") ||
-    text.includes("gpt-5.4") ||
-    text.includes("spark")
-  ) {
-    return "codex";
-  }
+  if (mentionsClaudeModelKeyword(text)) return "claudeCode";
+  if (mentionsCodexModelKeyword(text)) return "codex";
   return null;
 }
 
@@ -468,18 +468,26 @@ function synthesisPrompt(run: SwarmRunSnapshot): string {
   ].join("\n");
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-export async function dispatchSynthesis(run: SwarmRunSnapshot) {
-  if (!shouldSynthesize(run) || synthesizing.has(run.runId)) return;
+type SynthesisPreconditions =
+  | { ok: true; originChatId: string; origin: Chat; provider: AgentProvider }
+  | { ok: false };
+
+/** Validates a run is eligible to synthesize and its origin chat can run a
+ * native provider turn, marking the run failed (with a reason) and
+ * returning `{ ok: false }` for any check that fails. Pure/synchronous —
+ * safe to call from `dispatchSynthesis`'s tracked prefix (before its first
+ * await) without changing what the caller's effect depends on. */
+function checkSynthesisPreconditions(run: SwarmRunSnapshot): SynthesisPreconditions {
+  if (!shouldSynthesize(run) || synthesizing.has(run.runId)) return { ok: false };
   const originChatId = run.originChatId;
-  if (!originChatId) return;
+  if (!originChatId) return { ok: false };
   const origin = findChat(originChatId);
   if (!origin || origin.kind !== "agent") {
     updateRun(run.runId, {
       synthesisStatus: "failed",
       synthesisError: "Origin chat is not an active structured agent chat.",
     });
-    return;
+    return { ok: false };
   }
   const provider = normalizeAgentProvider(origin.agentId);
   if (!provider) {
@@ -488,14 +496,14 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
       synthesisError:
         nativeChatUnavailableReason(origin.agentId) ?? "Origin backend cannot run native chat.",
     });
-    return;
+    return { ok: false };
   }
   if (provider === "omp" && !ompNativeChatAvailable()) {
     updateRun(run.runId, {
       synthesisStatus: "failed",
       synthesisError: "OMP native chat requires the ompAgents flag and compatible OMP >=17.1.1 and <18.0.0 probe.",
     });
-    return;
+    return { ok: false };
   }
   if (provider === "pi" && !piNativeChatAvailable()) {
     updateRun(run.runId, {
@@ -503,8 +511,15 @@ export async function dispatchSynthesis(run: SwarmRunSnapshot) {
       synthesisError:
         "Pi native chat requires compatible Pi >=0.79.10 and <0.82.0.",
     });
-    return;
+    return { ok: false };
   }
+  return { ok: true, originChatId, origin, provider };
+}
+
+export async function dispatchSynthesis(run: SwarmRunSnapshot) {
+  const preconditions = checkSynthesisPreconditions(run);
+  if (!preconditions.ok) return;
+  const { originChatId, origin, provider } = preconditions;
   const current = agentChat(originChatId);
   if (current?.turnActive) {
     if (run.synthesisStatus !== "pending") {

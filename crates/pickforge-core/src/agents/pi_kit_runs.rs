@@ -301,17 +301,34 @@ pub fn abandon_pi_kit_lane(
     Ok(PiKitAbandonOutcome { requested: true, consumed })
 }
 
-/// pi-kit run/lane ids are ASCII alphanumerics and `-` only (`run-`
-/// compact-timestamp-`-`hex, `lane-1`, or a caller-chosen lane name of the
-/// same shape). `run` is joined straight into a filesystem path below, and
-/// it can arrive here from IPC or a parsed status file rather than a value
-/// this process minted itself — so anything outside that allowlist
-/// (separators, `.` for `..`-style traversal, anything non-ASCII) is
-/// rejected before any path is built. `lane` never touches a path but is
-/// checked the same way as defense in depth, since it's written verbatim
-/// into the request file body.
-fn is_valid_pi_kit_id(id: &str) -> bool {
+/// pi-kit run ids look like `run-`compact-timestamp-`-`hex (ASCII
+/// alphanumerics and `-` only). `run` is joined straight into a filesystem
+/// path below, and it can arrive here from IPC or a parsed status file
+/// rather than a value this process minted itself — so anything outside
+/// that strict allowlist (separators, `.` for `..`-style traversal, anything
+/// non-ASCII) is rejected before any path is built. This is deliberately
+/// stricter than pi-kit's own lane-id shape (see
+/// `is_valid_pi_kit_lane_name`): only the run id ever touches a path here.
+fn is_valid_pi_kit_run_id(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// pi-kit's own lane-id shape (`table.ts`'s `LANE_ID_PATTERN`:
+/// `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`) — first character ASCII
+/// alphanumeric, then up to 63 more ASCII alphanumerics, `.`, `_`, or `-`.
+/// `lane` never touches a filesystem path (it's written verbatim into the
+/// abandon-request body), so it's checked against pi-kit's real allowlist
+/// rather than the stricter path-safe one `run` needs — a caller-chosen name
+/// like `"my_lane"` or `"scout.v2"` is valid pi-kit input and must not be
+/// rejected here.
+fn is_valid_pi_kit_lane_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else { return false };
+    if !first.is_ascii_alphanumeric() {
+        return false;
+    }
+    let rest: Vec<char> = chars.collect();
+    rest.len() <= 63 && rest.iter().all(|&c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 fn invalid_id_error(kind: &str, id: &str) -> std::io::Error {
@@ -324,11 +341,11 @@ fn write_abandon_request(
     lane: Option<&str>,
     reason: Option<&str>,
 ) -> std::io::Result<()> {
-    if !is_valid_pi_kit_id(run) {
+    if !is_valid_pi_kit_run_id(run) {
         return Err(invalid_id_error("run id", run));
     }
     if let Some(name) = lane {
-        if !is_valid_pi_kit_id(name) {
+        if !is_valid_pi_kit_lane_name(name) {
             return Err(invalid_id_error("lane name", name));
         }
     }
@@ -627,19 +644,54 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_pi_kit_id_allows_pi_kit_shaped_ids_and_rejects_everything_else() {
-        assert!(is_valid_pi_kit_id("run-20260101000000-ab12"));
-        assert!(is_valid_pi_kit_id("lane-1"));
-        assert!(is_valid_pi_kit_id("RUN123"));
+    fn is_valid_pi_kit_run_id_allows_pi_kit_shaped_run_ids_and_rejects_everything_else() {
+        assert!(is_valid_pi_kit_run_id("run-20260101000000-ab12"));
+        assert!(is_valid_pi_kit_run_id("lane-1"));
+        assert!(is_valid_pi_kit_run_id("RUN123"));
 
-        assert!(!is_valid_pi_kit_id(""));
-        assert!(!is_valid_pi_kit_id(".."));
-        assert!(!is_valid_pi_kit_id("../evil"));
-        assert!(!is_valid_pi_kit_id("a/b"));
-        assert!(!is_valid_pi_kit_id("a\\b"));
-        assert!(!is_valid_pi_kit_id("a.b"));
-        assert!(!is_valid_pi_kit_id("a b"));
-        assert!(!is_valid_pi_kit_id("a$b"));
+        assert!(!is_valid_pi_kit_run_id(""));
+        assert!(!is_valid_pi_kit_run_id(".."));
+        assert!(!is_valid_pi_kit_run_id("../evil"));
+        assert!(!is_valid_pi_kit_run_id("a/b"));
+        assert!(!is_valid_pi_kit_run_id("a\\b"));
+        assert!(!is_valid_pi_kit_run_id("a.b"));
+        assert!(!is_valid_pi_kit_run_id("a b"));
+        assert!(!is_valid_pi_kit_run_id("a$b"));
+        // The run id stays on the strict path-safe allowlist even though
+        // pi-kit's own lane pattern would accept these.
+        assert!(!is_valid_pi_kit_run_id("my_run"));
+        assert!(!is_valid_pi_kit_run_id("run.v2"));
+    }
+
+    #[test]
+    fn is_valid_pi_kit_lane_name_accepts_pi_kits_own_lane_id_shapes() {
+        // pi-kit's table.ts LANE_ID_PATTERN: ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$
+        assert!(is_valid_pi_kit_lane_name("lane-1"));
+        assert!(is_valid_pi_kit_lane_name("my_lane"));
+        assert!(is_valid_pi_kit_lane_name("scout.v2"));
+        assert!(is_valid_pi_kit_lane_name("A1"));
+        assert!(is_valid_pi_kit_lane_name(&"a".repeat(64)));
+    }
+
+    #[test]
+    fn is_valid_pi_kit_lane_name_rejects_shapes_pi_kit_itself_would_reject() {
+        assert!(!is_valid_pi_kit_lane_name(""));
+        assert!(!is_valid_pi_kit_lane_name("_lane"));
+        assert!(!is_valid_pi_kit_lane_name(".lane"));
+        assert!(!is_valid_pi_kit_lane_name("-lane"));
+        assert!(!is_valid_pi_kit_lane_name(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn is_valid_pi_kit_lane_name_rejects_path_traversal_and_separators() {
+        // Lane names never touch a path, but the request body is still no
+        // place for these.
+        assert!(!is_valid_pi_kit_lane_name(".."));
+        assert!(!is_valid_pi_kit_lane_name("../evil"));
+        assert!(!is_valid_pi_kit_lane_name("a/b"));
+        assert!(!is_valid_pi_kit_lane_name("a\\b"));
+        assert!(!is_valid_pi_kit_lane_name("a b"));
+        assert!(!is_valid_pi_kit_lane_name("a$b"));
     }
 
     #[test]
@@ -662,6 +714,30 @@ mod tests {
         let result = write_abandon_request(&root.path, "run-1", Some("../evil"), None);
 
         assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn write_abandon_request_accepts_pi_kit_shaped_lane_names_with_dot_and_underscore() {
+        let root = TempDir::new("abandon-lane-shapes");
+
+        write_abandon_request(&root.path, "run-1", Some("my_lane"), None).unwrap();
+        write_abandon_request(&root.path, "run-1", Some("scout.v2"), None).unwrap();
+
+        let written = std::fs::read_to_string(root.path.join("run-1.abandon.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(parsed["lane"], "scout.v2");
+    }
+
+    #[test]
+    fn write_abandon_request_still_rejects_a_pi_kit_shaped_lane_name_as_a_run_id() {
+        let root = TempDir::new("abandon-run-shape-mismatch");
+
+        let underscore = write_abandon_request(&root.path, "my_run", None, None);
+        let dotted = write_abandon_request(&root.path, "run.v2", None, None);
+
+        assert!(underscore.is_err());
+        assert!(dotted.is_err());
         assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
     }
 

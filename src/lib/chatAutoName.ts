@@ -607,68 +607,179 @@ function commit(chatId: string, message: string) {
   });
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-function shellWords(line: string): string[] {
-  const words: string[] = [];
-  let word = "";
-  let quote: "'" | "\"" | null = null;
-  let escaped = false;
-  let started = false;
+interface ShellWordsState {
+  words: string[];
+  word: string;
+  quote: "'" | "\"" | null;
+  escaped: boolean;
+  started: boolean;
+}
 
-  const finish = () => {
-    if (started) words.push(word);
-    word = "";
-    started = false;
-  };
+function finishShellWord(state: ShellWordsState): void {
+  if (state.started) state.words.push(state.word);
+  state.word = "";
+  state.started = false;
+}
 
-  for (const char of line) {
-    if (escaped) {
-      word += char;
-      escaped = false;
-      started = true;
-    } else if (quote) {
-      if (char === quote) quote = null;
-      else if (quote === "\"" && char === "\\") escaped = true;
-      else word += char;
-      started = true;
-    } else if (char === "'" || char === "\"") {
-      quote = char;
-      started = true;
-    } else if (char === "\\") {
-      escaped = true;
-      started = true;
-    } else if (char === "\n" || char === "\r") {
-      finish();
-      break;
-    } else if (char === "#" && !started) {
-      break;
-    } else if (char === "<" || char === ">") {
-      // An adjacent decimal prefix is the shell's IO number (`2>`, `10<`),
-      // not prompt text.
-      if (/^\d+$/.test(word)) {
-        word = "";
-        started = false;
-      }
-      finish();
-      break;
-    } else if (";&|()".includes(char)) {
-      finish();
-      break;
-    } else if (/\s/.test(char)) {
-      finish();
-    } else {
-      word += char;
-      started = true;
-    }
+/** Handles a character while inside an escape (`\x`) or a quoted run.
+ * Returns whether it consumed the character (always `true` — every char is
+ * consumed in these two states, unlike the unquoted branches which can
+ * terminate the line). */
+function stepEscapedOrQuotedShellChar(char: string, state: ShellWordsState): boolean {
+  if (state.escaped) {
+    state.word += char;
+    state.escaped = false;
+    state.started = true;
+    return true;
   }
-  if (escaped) word += "\\";
-  finish();
-  return words;
+  if (state.quote) {
+    if (char === state.quote) state.quote = null;
+    else if (state.quote === "\"" && char === "\\") state.escaped = true;
+    else state.word += char;
+    state.started = true;
+    return true;
+  }
+  return false;
+}
+
+/** Handles a character that terminates the rest of the line as prompt text
+ * (a line break, a comment start, redirection, or a control operator).
+ * Returns whether it did. */
+function stepTerminatingShellChar(char: string, state: ShellWordsState): boolean {
+  if (char === "\n" || char === "\r") {
+    finishShellWord(state);
+    return true;
+  }
+  if (char === "#" && !state.started) {
+    return true;
+  }
+  if (char === "<" || char === ">") {
+    // An adjacent decimal prefix is the shell's IO number (`2>`, `10<`),
+    // not prompt text.
+    if (/^\d+$/.test(state.word)) {
+      state.word = "";
+      state.started = false;
+    }
+    finishShellWord(state);
+    return true;
+  }
+  if (";&|()".includes(char)) {
+    finishShellWord(state);
+    return true;
+  }
+  return false;
+}
+
+/** Advances the tokenizer by one character. Returns `"break"` when the shell
+ * grammar says the rest of the line is no longer prompt text. */
+function stepShellWord(char: string, state: ShellWordsState): "continue" | "break" {
+  if (stepEscapedOrQuotedShellChar(char, state)) return "continue";
+  if (char === "'" || char === "\"") {
+    state.quote = char;
+    state.started = true;
+    return "continue";
+  }
+  if (char === "\\") {
+    state.escaped = true;
+    state.started = true;
+    return "continue";
+  }
+  if (stepTerminatingShellChar(char, state)) return "break";
+  if (/\s/.test(char)) {
+    finishShellWord(state);
+    return "continue";
+  }
+  state.word += char;
+  state.started = true;
+  return "continue";
+}
+
+function shellWords(line: string): string[] {
+  const state: ShellWordsState = {
+    words: [],
+    word: "",
+    quote: null,
+    escaped: false,
+    started: false,
+  };
+  for (const char of line) {
+    if (stepShellWord(char, state) === "break") break;
+  }
+  if (state.escaped) state.word += "\\";
+  finishShellWord(state);
+  return state.words;
 }
 
 /** If `line` starts with a known agent binary, return the prompt text after the
  *  command and its flags (empty string = bare launch). null if not an agent. */
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
+interface AgentFlagTables {
+  isTerminalAgent: boolean;
+  valueFlags: Record<string, true> | null;
+  optionalValueFlags: Record<string, true> | null;
+  booleanFlags: Record<string, true> | null;
+  nonPromptFlags: Record<string, true> | null;
+  utilitySubcommands: Record<string, true> | null;
+}
+
+/** The per-agent flag/subcommand tables `matchAgentLaunch` consults to tell
+ * a value-taking flag, a boolean flag, a subcommand, and a prompt token
+ * apart. `null` tables (non-omp/pi agents) fall back to the generic
+ * `VALUE_FLAGS` regex heuristic. */
+function agentFlagTables(base: string): AgentFlagTables {
+  return {
+    isTerminalAgent: base === "omp" || base === "pi",
+    valueFlags: base === "omp" ? OMP_VALUE_FLAGS : base === "pi" ? PI_VALUE_FLAGS : null,
+    optionalValueFlags: base === "omp" ? OMP_OPTIONAL_VALUE_FLAGS : null,
+    booleanFlags: base === "omp" ? OMP_BOOLEAN_FLAGS : base === "pi" ? PI_BOOLEAN_FLAGS : null,
+    nonPromptFlags: base === "omp" ? OMP_NON_PROMPT_FLAGS : base === "pi" ? PI_NON_PROMPT_FLAGS : null,
+    utilitySubcommands:
+      base === "omp" ? OMP_UTILITY_SUBCOMMANDS : base === "pi" ? PI_UTILITY_SUBCOMMANDS : null,
+  };
+}
+
+/** Handles one `-`/`--` flag token. Returns `null` if the flag disqualifies
+ * the line as prompt text (an explicit non-prompt flag); otherwise how many
+ * extra tokens (0 or 1) the flag consumes as its value, to advance the
+ * caller's loop index past. */
+/** A `--long-flag` with no entry in any of the agent's known flag tables —
+ * its arity is unknown, so a following non-flag token is heuristically
+ * treated as its value rather than a prompt word. Only meaningful for a
+ * terminal agent (omp/pi), whose tables are exhaustive enough to trust. */
+function isUnknownLongFlag(flag: string, tables: AgentFlagTables): boolean {
+  const { isTerminalAgent, valueFlags, optionalValueFlags, booleanFlags } = tables;
+  return isTerminalAgent
+    && flag.startsWith("--")
+    && valueFlags?.[flag] === undefined
+    && optionalValueFlags?.[flag] === undefined
+    && booleanFlags?.[flag] === undefined;
+}
+
+function handleAgentFlagToken(
+  token: string,
+  nextToken: string | undefined,
+  tables: AgentFlagTables,
+): { consumed: number } | null {
+  const { valueFlags, optionalValueFlags, nonPromptFlags } = tables;
+  const equals = token.indexOf("=");
+  const flag = equals === -1 ? token : token.slice(0, equals);
+  if (nonPromptFlags?.[flag]) return null;
+  const consumesValue = valueFlags ? (valueFlags[flag] ?? false) : VALUE_FLAGS.test(flag);
+  const nextIsValue = nextToken !== undefined && !nextToken.startsWith("-");
+  if (equals === -1 && (consumesValue || (isUnknownLongFlag(flag, tables) && nextIsValue))) {
+    return { consumed: 1 };
+  }
+  if (equals === -1 && optionalValueFlags?.[flag] && nextIsValue) {
+    return { consumed: 1 };
+  }
+  return { consumed: 0 };
+}
+
+/** Positionals after a `--` terminator: everything but a terminal agent's
+ * `@file` mention markers. */
+function positionalsAfterDoubleDash(tokens: string[], isTerminalAgent: boolean): string[] {
+  return tokens.filter((positional) => !(isTerminalAgent && positional.startsWith("@")));
+}
+
 function matchAgentLaunch(line: string): { prompt: string } | null {
   const tokens = shellWords(line);
   const first = tokens[0];
@@ -677,73 +788,18 @@ function matchAgentLaunch(line: string): { prompt: string } | null {
   if (!isAgentBinary(base)) return null;
 
   const rest: string[] = [];
-  const isTerminalAgent = base === "omp" || base === "pi";
-  const valueFlags =
-    base === "omp"
-      ? OMP_VALUE_FLAGS
-      : base === "pi"
-        ? PI_VALUE_FLAGS
-        : null;
-  const optionalValueFlags = base === "omp" ? OMP_OPTIONAL_VALUE_FLAGS : null;
-  const booleanFlags =
-    base === "omp"
-      ? OMP_BOOLEAN_FLAGS
-      : base === "pi"
-        ? PI_BOOLEAN_FLAGS
-        : null;
-  const nonPromptFlags =
-    base === "omp"
-      ? OMP_NON_PROMPT_FLAGS
-      : base === "pi"
-        ? PI_NON_PROMPT_FLAGS
-        : null;
-  const utilitySubcommands =
-    base === "omp"
-      ? OMP_UTILITY_SUBCOMMANDS
-      : base === "pi"
-        ? PI_UTILITY_SUBCOMMANDS
-        : null;
+  const tables = agentFlagTables(base);
+  const { isTerminalAgent, utilitySubcommands } = tables;
   for (let i = 1; i < tokens.length; i++) {
     const token = tokens[i];
     if (token === "--") {
-      for (const positional of tokens.slice(i + 1)) {
-        if (isTerminalAgent && positional.startsWith("@")) continue;
-        rest.push(positional);
-      }
+      rest.push(...positionalsAfterDoubleDash(tokens.slice(i + 1), isTerminalAgent));
       break;
     }
     if (token.startsWith("-")) {
-      const equals = token.indexOf("=");
-      const flag = equals === -1 ? token : token.slice(0, equals);
-      if (nonPromptFlags?.[flag]) return null;
-      const isUnknownLongFlag = isTerminalAgent
-        && flag.startsWith("--")
-        && valueFlags?.[flag] === undefined
-        && optionalValueFlags?.[flag] === undefined
-        && booleanFlags?.[flag] === undefined;
-      const consumesValue = valueFlags
-        ? (valueFlags[flag] ?? false)
-        : VALUE_FLAGS.test(flag);
-      if (
-        equals === -1
-        && (
-          consumesValue
-          || (
-            isUnknownLongFlag
-            && tokens[i + 1] !== undefined
-            && !tokens[i + 1].startsWith("-")
-          )
-        )
-      ) {
-        i++;
-      } else if (
-        equals === -1
-        && optionalValueFlags?.[flag]
-        && tokens[i + 1] !== undefined
-        && !tokens[i + 1].startsWith("-")
-      ) {
-        i++;
-      }
+      const result = handleAgentFlagToken(token, tokens[i + 1], tables);
+      if (!result) return null;
+      i += result.consumed;
       continue;
     }
     if (isTerminalAgent && token.startsWith("@")) continue;

@@ -247,38 +247,87 @@ export function iosRunCommand(base: string, udid: string): string {
   ].join(" && ");
 }
 
+interface JsoncScanState {
+  i: number;
+  inStr: boolean;
+  pendingComma: number; // index in `out` of a comma awaiting a closer
+}
+
+/** Advances one step while inside a quoted string: copies the char through
+ * (and its escaped pair verbatim), exiting the string on an unescaped `"`. */
+function stepJsoncInString(src: string, out: string[], state: JsoncScanState): void {
+  const ch = src[state.i];
+  out.push(ch);
+  if (ch === "\\") {
+    if (state.i + 1 < src.length) out.push(src[state.i + 1]);
+    state.i += 2;
+    return;
+  }
+  if (ch === '"') state.inStr = false;
+  state.i += 1;
+}
+
+/** Skips a `//line` or `/* block *​/` comment starting at `state.i`, if
+ * there is one there. Returns whether it consumed one. */
+function trySkipJsoncComment(src: string, state: JsoncScanState): boolean {
+  const n = src.length;
+  const ch = src[state.i];
+  if (ch === "/" && src[state.i + 1] === "/") {
+    state.i += 2;
+    while (state.i < n && src[state.i] !== "\n") state.i++;
+    return true;
+  }
+  if (ch === "/" && src[state.i + 1] === "*") {
+    state.i += 2;
+    while (state.i < n && !(src[state.i] === "*" && src[state.i + 1] === "/")) state.i++;
+    state.i += 2;
+    return true;
+  }
+  return false;
+}
+
+/** Advances one step outside a string: enters a string on `"`, skips `//`
+ * and `/* *​/` comments, tracks the most recent top-level comma so a
+ * following `}`/`]` can drop it (trailing comma), and copies everything else
+ * through. */
+function stepJsoncOutsideString(src: string, out: string[], state: JsoncScanState): void {
+  const ch = src[state.i];
+  if (ch === '"') {
+    state.inStr = true;
+    state.pendingComma = -1;
+    out.push(ch);
+    state.i += 1;
+    return;
+  }
+  if (ch === "/" && trySkipJsoncComment(src, state)) return;
+  if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+    out.push(ch);
+    state.i += 1;
+    return;
+  }
+  if (ch === ",") {
+    out.push(ch);
+    state.pendingComma = out.length - 1;
+    state.i += 1;
+    return;
+  }
+  if ((ch === "}" || ch === "]") && state.pendingComma >= 0) {
+    out.splice(state.pendingComma, 1);
+  }
+  state.pendingComma = -1;
+  out.push(ch);
+  state.i += 1;
+}
+
 /** Convert JSONC (launch.json) to JSON: strip // and /* *​/ comments and
  *  trailing commas, which VS Code accepts. String-aware so commas/slashes
  *  inside quoted values (e.g. URLs, "a,]") are left untouched. */
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
 export function stripJsonc(src: string): string {
   const out: string[] = [];
-  let i = 0;
-  const n = src.length;
-  let inStr = false;
-  let pendingComma = -1; // index in `out` of a comma awaiting a closer
-  while (i < n) {
-    const ch = src[i];
-    if (inStr) {
-      out.push(ch);
-      if (ch === "\\") {
-        if (i + 1 < n) out.push(src[i + 1]);
-        i += 2;
-        continue;
-      }
-      if (ch === '"') inStr = false;
-      i++;
-      continue;
-    }
-    if (ch === '"') { inStr = true; pendingComma = -1; out.push(ch); i++; continue; }
-    if (ch === "/" && src[i + 1] === "/") { i += 2; while (i < n && src[i] !== "\n") i++; continue; }
-    if (ch === "/" && src[i + 1] === "*") { i += 2; while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++; i += 2; continue; }
-    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") { out.push(ch); i++; continue; }
-    if (ch === ",") { out.push(ch); pendingComma = out.length - 1; i++; continue; }
-    if ((ch === "}" || ch === "]") && pendingComma >= 0) { out.splice(pendingComma, 1); }
-    pendingComma = -1;
-    out.push(ch);
-    i++;
+  const state: JsoncScanState = { i: 0, inStr: false, pendingComma: -1 };
+  while (state.i < src.length) {
+    if (state.inStr) stepJsoncInString(src, out, state);
+    else stepJsoncOutsideString(src, out, state);
   }
   return out.join("");
 }
@@ -350,77 +399,81 @@ export function shquote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-// eslint-disable-next-line complexity -- TODO(#263): reduce legacy function complexity.
-export async function fromLaunchConfig(
+/** Builds the `flutter test`/`flutter run` command parts for a Flutter/Dart
+ * launch config, deriving the run dir from the program's nearest
+ * pubspec.yaml (Dart-Code's rule) when no explicit `cwd` was given — so
+ * monorepos whose app lives in a subdir don't fail with "No pubspec.yaml
+ * file found.". */
+async function buildFlutterCommandParts(
   c: LaunchConfig,
-  i: number,
   root: string,
-): Promise<RunTarget | null> {
-  if (c.request && c.request !== "launch") return null;
-  const type = (c.type ?? "").toLowerCase();
-  const isFlutter = type === "dart" || type === "flutter";
-  const parts: string[] = [];
-  // The dir to run in: explicit `cwd` wins; for Flutter without one, derive it
-  // from the program's nearest pubspec.yaml (Dart-Code's rule) so monorepos
-  // whose app lives in a subdir don't fail with "No pubspec.yaml file found.".
-  let cwd: string | undefined = c.cwd ? resolveCwd(c.cwd, root) : undefined;
-  const program = c.program ? expandVars(c.program, root) : undefined;
-  const isTest = isFlutter && !!program && isTestProgram(program);
-
-  if (isFlutter) {
-    // Derive the run dir from the program's nearest pubspec.yaml (Dart-Code's
-    // rule) so monorepos whose app lives in a subdir don't fail with "No
-    // pubspec.yaml file found.".
-    if (!cwd && program) {
-      const dir = await findNearestPubspec(toAbsolute(program, root), root).catch(() => null);
-      if (dir) cwd = dir;
-    }
-    const relProgram = () =>
-      cwd && program ? relativePath(cwd, toAbsolute(program, root)) : program;
-    if (isTest) {
-      // A test config runs `flutter test [<path>]` from the project dir — never
-      // `flutter run`, which would silently launch the whole app instead.
-      parts.push("flutter test");
-      const rel = relProgram();
-      if (rel && rel !== ".") parts.push(shquote(rel));
-    } else {
-      parts.push("flutter run");
-      if (c.flutterMode) parts.push(`--${c.flutterMode}`);
-      if (program && !isDirProgram(program)) {
-        // -t relative to the run dir, matching how VS Code passes it. Skip when
-        // the program IS the run dir (e.g. program "app" → rel "."): flutter
-        // run rejects a directory target.
-        const t = relProgram();
-        if (t && t !== ".") parts.push(`-t ${shquote(t)}`);
-      }
-      if (c.deviceId) parts.push(`-d ${shquote(c.deviceId)}`);
-    }
-  } else if (program) {
-    parts.push(shquote(program));
-  } else {
-    return null;
+  cwd: string | undefined,
+  program: string | undefined,
+  isTest: boolean,
+): Promise<{ parts: string[]; cwd: string | undefined }> {
+  if (!cwd && program) {
+    const dir = await findNearestPubspec(toAbsolute(program, root), root).catch(() => null);
+    if (dir) cwd = dir;
   }
-  // Each configured arg is one VS Code argument; quote so spaces / shell
-  // metacharacters in a single arg don't split into multiple shell words.
-  // Args (e.g. --dart-define-from-file=.env) resolve against the run dir.
-  if (c.args?.length) parts.push(c.args.map((a) => shquote(expandVars(a, root))).join(" "));
-  // Flutter mode gates which live affordances exist: only debug builds run the
-  // Dart VM service, so hot reload / inspect / source-map are debug-only.
-  // Profile keeps hot restart (no reload, no VM-service inspect); release is a
-  // bare launch/stop. (Flutter: release & profile disable debugging + service
-  // extensions; release also disables hot reload, profile disables hot reload.)
-  const flutterMode = (c.flutterMode ?? "").toLowerCase();
-  // Only debug builds run the Dart VM service (absent/empty mode defaults to
-  // debug); release and profile disable it.
-  const flutterDebug = flutterMode === "" || flutterMode === "debug";
-  const flutterCaps =
-    flutterMode === "release"
-      ? ["launch", "stop"]
-      : flutterMode === "profile"
-        ? ["launch", "hotRestart", "stop"]
-        : ["launch", "hotReload", "hotRestart", "stop", "inspectSelection", "mapSelectionToSource"];
-  const capabilities = isTest ? ["test", "stop"] : isFlutter ? flutterCaps : ["launch", "stop"];
-  const flutterRun = isFlutter && !isTest;
+  const relProgram = () =>
+    cwd && program ? relativePath(cwd, toAbsolute(program, root)) : program;
+  const parts: string[] = [];
+  if (isTest) {
+    // A test config runs `flutter test [<path>]` from the project dir — never
+    // `flutter run`, which would silently launch the whole app instead.
+    parts.push("flutter test");
+    const rel = relProgram();
+    if (rel && rel !== ".") parts.push(shquote(rel));
+  } else {
+    parts.push("flutter run");
+    if (c.flutterMode) parts.push(`--${c.flutterMode}`);
+    if (program && !isDirProgram(program)) {
+      // -t relative to the run dir, matching how VS Code passes it. Skip when
+      // the program IS the run dir (e.g. program "app" → rel "."): flutter
+      // run rejects a directory target.
+      const t = relProgram();
+      if (t && t !== ".") parts.push(`-t ${shquote(t)}`);
+    }
+    if (c.deviceId) parts.push(`-d ${shquote(c.deviceId)}`);
+  }
+  return { parts, cwd };
+}
+
+/** Flutter mode gates which live affordances exist: only debug builds run the
+ * Dart VM service, so hot reload / inspect / source-map are debug-only.
+ * Profile keeps hot restart (no reload, no VM-service inspect); release is a
+ * bare launch/stop. (Flutter: release & profile disable debugging + service
+ * extensions; release also disables hot reload, profile disables hot reload.) */
+function flutterCapabilitiesForMode(flutterMode: string): string[] {
+  if (flutterMode === "release") return ["launch", "stop"];
+  if (flutterMode === "profile") return ["launch", "hotRestart", "stop"];
+  return ["launch", "hotReload", "hotRestart", "stop", "inspectSelection", "mapSelectionToSource"];
+}
+
+function isFlutterTestProgram(isFlutter: boolean, program: string | undefined): boolean {
+  if (!isFlutter || !program) return false;
+  return isTestProgram(program);
+}
+
+function launchConfigCapabilities(
+  isTest: boolean,
+  isFlutter: boolean,
+  flutterMode: string,
+): string[] {
+  if (isTest) return ["test", "stop"];
+  if (isFlutter) return flutterCapabilitiesForMode(flutterMode);
+  return ["launch", "stop"];
+}
+
+function buildLaunchRunTarget(
+  i: number,
+  c: LaunchConfig,
+  parts: string[],
+  cwd: string | undefined,
+  capabilities: string[],
+  flutterRun: boolean,
+  flutterDebug: boolean,
+): RunTarget {
   return {
     id: `vscode-${i}`,
     label: c.name ?? `Config ${i + 1}`,
@@ -441,6 +494,44 @@ export async function fromLaunchConfig(
     logSource: "pty",
     source: "vscode",
   };
+}
+
+export async function fromLaunchConfig(
+  c: LaunchConfig,
+  i: number,
+  root: string,
+): Promise<RunTarget | null> {
+  if (c.request && c.request !== "launch") return null;
+  const type = (c.type ?? "").toLowerCase();
+  const isFlutter = type === "dart" || type === "flutter";
+  // The dir to run in: explicit `cwd` wins; for Flutter without one, derive it
+  // from the program's nearest pubspec.yaml (Dart-Code's rule) so monorepos
+  // whose app lives in a subdir don't fail with "No pubspec.yaml file found.".
+  let cwd: string | undefined = c.cwd ? resolveCwd(c.cwd, root) : undefined;
+  const program = c.program ? expandVars(c.program, root) : undefined;
+  const isTest = isFlutterTestProgram(isFlutter, program);
+
+  let parts: string[];
+  if (isFlutter) {
+    const built = await buildFlutterCommandParts(c, root, cwd, program, isTest);
+    parts = built.parts;
+    cwd = built.cwd;
+  } else if (program) {
+    parts = [shquote(program)];
+  } else {
+    return null;
+  }
+  // Each configured arg is one VS Code argument; quote so spaces / shell
+  // metacharacters in a single arg don't split into multiple shell words.
+  // Args (e.g. --dart-define-from-file=.env) resolve against the run dir.
+  if (c.args?.length) parts.push(c.args.map((a) => shquote(expandVars(a, root))).join(" "));
+  const flutterMode = (c.flutterMode ?? "").toLowerCase();
+  // Only debug builds run the Dart VM service (absent/empty mode defaults to
+  // debug); release and profile disable it.
+  const flutterDebug = flutterMode === "" || flutterMode === "debug";
+  const capabilities = launchConfigCapabilities(isTest, isFlutter, flutterMode);
+  const flutterRun = isFlutter && !isTest;
+  return buildLaunchRunTarget(i, c, parts, cwd, capabilities, flutterRun, flutterDebug);
 }
 
 async function readLaunchJson(root: string): Promise<RunTarget[]> {

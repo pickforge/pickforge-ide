@@ -105,6 +105,7 @@ export const AGENTS: AgentProfile[] = [
       },
       { id: "gpt-5.4", label: "GPT-5.4", efforts: CODEX_EFFORTS, defaultEffort: "medium" },
       { id: "gpt-5.5", label: "GPT-5.5", efforts: CODEX_EFFORTS, defaultEffort: "medium" },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", efforts: CODEX_EFFORTS, defaultEffort: "medium" },
       {
         id: "glm-5.2:cloud",
         label: "GLM-5.2 Cloud (Ollama)",

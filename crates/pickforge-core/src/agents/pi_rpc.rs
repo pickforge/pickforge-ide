@@ -1965,10 +1965,18 @@ session_id = "fake-session"
 descendant = None
 if mode == "env_auth" and "OPENAI_API_KEY" not in os.environ:
     raise SystemExit("documented credential name missing")
+def record_child_pid(pid):
+    # Write-then-rename so a test polling `is_file()` can never observe a
+    # created-but-empty pid file (ParseIntError { kind: Empty } flakes).
+    target = os.environ["PF_PI_CHILD_PID"]
+    staged = target + ".tmp"
+    with open(staged, "w", encoding="utf-8") as handle:
+        handle.write(str(pid))
+    os.replace(staged, target)
+
 if mode == "hang":
     descendant = subprocess.Popen(["sleep", "60"])
-    with open(os.environ["PF_PI_CHILD_PID"], "w", encoding="utf-8") as handle:
-        handle.write(str(descendant.pid))
+    record_child_pid(descendant.pid)
 
 def emit(value, fragmented=False, crlf=False):
     ending = b"\r\n" if crlf else b"\n"
@@ -2007,8 +2015,7 @@ for raw in sys.stdin.buffer:
         })
         if mode == "closed_stdin":
             descendant = subprocess.Popen(["sleep", "60"], stdin=subprocess.DEVNULL)
-            with open(os.environ["PF_PI_CHILD_PID"], "w", encoding="utf-8") as handle:
-                handle.write(str(descendant.pid))
+            record_child_pid(descendant.pid)
             os.close(0)
             time.sleep(60)
     elif kind == "prompt":

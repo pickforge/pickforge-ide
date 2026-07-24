@@ -891,6 +891,38 @@ describe("agentChat store reducer", () => {
     expect(agentChat(chatId)?.contextWindow).toBe(200_000);
   });
 
+  it("keeps the last known context reading when a usage event reports explicit null", async () => {
+    // The Rust backend serializes `Option<u64>::None` as JSON `null`, not an
+    // omitted key (no #[serde(skip_serializing_if)]) — e.g. OMP emits a
+    // per-turn usage row with contextUsed/contextWindow explicitly null right
+    // after every turn (crates/pickforge-core/src/agents/omp_acp.rs
+    // emit_prompt_usage). The reducer must treat that the same as
+    // "unreported" and keep the prior reading instead of blanking the meter.
+    const { chatId, emit } = await startChat();
+
+    emit({
+      kind: "usage",
+      inputTokens: 100,
+      cachedInputTokens: 0,
+      outputTokens: 20,
+      costUsd: null,
+      contextUsed: 12_000,
+      contextWindow: 200_000,
+    });
+    emit({
+      kind: "usage",
+      inputTokens: 50,
+      cachedInputTokens: 0,
+      outputTokens: 10,
+      costUsd: null,
+      contextUsed: null,
+      contextWindow: null,
+    });
+
+    expect(agentChat(chatId)?.contextUsed).toBe(12_000);
+    expect(agentChat(chatId)?.contextWindow).toBe(200_000);
+  });
+
   it("stores rate limit payloads", async () => {
     const { chatId, emit } = await startChat();
 
@@ -2318,6 +2350,47 @@ describe("switchAgentChatProvider", () => {
       { type: "userMessage", seq: 1, text: "before" },
       { type: "assistantText", seq: 2, text: "after" },
     ]);
+  });
+
+  it("resets the context meter but keeps the whole-conversation cost total across a provider switch", async () => {
+    // contextUsed/contextWindow describe the NEW provider's occupancy, so they
+    // must reset — but totals.costUsd tracks spend across the whole chat, so a
+    // provider switch must not silently drop everything spent before it.
+    const chatId = nextChatId();
+    workspace.chats.set(chatId, workspace.makeChat(chatId, { agentId: "codex", kind: "agent" }));
+    const history: AgentTimelineEntry[] = [
+      { entryType: "message", seq: 1, role: "user", content: "before", createdAt: 1 },
+      {
+        entryType: "item",
+        seq: 2,
+        kind: "usage",
+        payload: JSON.stringify({
+          kind: "usage",
+          inputTokens: 1_000,
+          cachedInputTokens: 0,
+          outputTokens: 200,
+          costUsd: 0.05,
+          contextUsed: 9_000,
+          contextWindow: 100_000,
+        }),
+        createdAt: 2,
+      },
+    ];
+    mockInvoke(history);
+    setAgentEngine("v1");
+    await ensureAgentChat(chatId, "/project", "codex", "gpt-old");
+    expect(agentChat(chatId)?.contextUsed).toBe(9_000);
+    expect(agentChat(chatId)?.contextWindow).toBe(100_000);
+    expect(agentChat(chatId)?.totals.costUsd).toBeCloseTo(0.05);
+    setAgentEngine("v2");
+
+    await expect(switchAgentChatProvider(chatId, "claudeCode", "claude-new")).resolves.toBe(true);
+
+    // Context describes the new provider's (not-yet-reported) occupancy.
+    expect(agentChat(chatId)?.contextUsed).toBeNull();
+    expect(agentChat(chatId)?.contextWindow).toBeNull();
+    // Cost is a whole-conversation total; it must survive the switch.
+    expect(agentChat(chatId)?.totals.costUsd).toBeCloseTo(0.05);
   });
 
   it("rejects provider switching while a turn is active", async () => {

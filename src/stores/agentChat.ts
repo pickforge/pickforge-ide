@@ -614,9 +614,14 @@ function reduceUsageEvent(
         })
       : null;
   const costUsd = event.costUsd ?? estimatedCostUsd ?? 0;
-  const contextUsed = event.contextUsed === undefined ? chat.contextUsed : event.contextUsed;
-  const contextWindow =
-    event.contextWindow === undefined ? chat.contextWindow : event.contextWindow;
+  // The backend sends an explicit `null` (not an omitted field) whenever a
+  // turn's usage payload carries no context data (e.g. a subagent-only turn,
+  // or a provider's own per-turn usage row that only ever reports deltas —
+  // see OMP's prompt-response usage event). Treat that the same as
+  // "unreported": keep the last known reading rather than blanking the meter
+  // every time a usage event without context data arrives.
+  const contextUsed = event.contextUsed == null ? chat.contextUsed : event.contextUsed;
+  const contextWindow = event.contextWindow == null ? chat.contextWindow : event.contextWindow;
   const cumulative = event.contextUsed != null;
   let totals: AgentChatTotals;
   let cumulativeUsage = chat.cumulativeUsage;

@@ -51,6 +51,7 @@ const definitions = {
   studioUpdateDialog: {
     description: "Shared @pickforge/tauri-updater dialog/controller (pickforge/pickforge-platform#36)",
   },
+  pikitLanes: { description: "Pi-kit lanes visibility in Settings (#274 slice 3, #288)" },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

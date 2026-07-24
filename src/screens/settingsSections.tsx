@@ -23,6 +23,7 @@ export const OperatorRouterSettingsSection = createSettingsSection("operatorRout
 export const DictationSettingsSection = createSettingsSection("dictation");
 export const ChatsSettingsSection = createSettingsSection("chats");
 export const PickLabSettingsSection = createSettingsSection("pickLab");
+export const PiKitLanesSettingsSection = createSettingsSection("pikitLanes");
 export const RemoteHostSettingsSection = createSettingsSection("remoteHost");
 export const QuickLaunchSettingsSection = createSettingsSection("quickLaunch");
 export const AppearanceSettingsSection = createSettingsSection("appearance");

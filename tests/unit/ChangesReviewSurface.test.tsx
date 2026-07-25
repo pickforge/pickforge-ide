@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { ChangeSet, ChangedFile, WorkingTreeChanges } from "../../src/lib/changes";
 
-const testEnv = vi.hoisted(() => ({ invoke: vi.fn(), workspaceMock: { activeRoot: null as string | null } }));
+const testEnv = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  workspaceMock: { activeRoot: null as string | null, activeChatId: null as string | null },
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: testEnv.invoke }));
 vi.mock("../../src/stores/workspace", () => ({ workspace: testEnv.workspaceMock }));
 
@@ -22,6 +25,26 @@ function file(overrides: Partial<ChangedFile> = {}): ChangedFile {
     binary: false,
     truncated: false,
     diffAvailable: true,
+    kind: "regular",
+    ...overrides,
+  };
+}
+
+function diffFixture(overrides: Partial<{
+  diff: string | null;
+  binary: boolean;
+  truncated: boolean;
+  available: boolean;
+  sizeBytes: number | null;
+  invalidUtf8: boolean;
+}> = {}) {
+  return {
+    diff: null,
+    binary: false,
+    truncated: false,
+    available: false,
+    sizeBytes: null,
+    invalidUtf8: false,
     ...overrides,
   };
 }
@@ -83,8 +106,9 @@ async function loadSurface() {
   // rather than an unconfigured mock returning `undefined` and crashing
   // `loadChangeDiff`'s `.catch` on a non-Promise. `mockResolvedValueOnce`
   // calls layered on top of this in individual tests still take priority.
-  testEnv.invoke.mockResolvedValue({ diff: null, binary: false, truncated: false, available: false });
+  testEnv.invoke.mockResolvedValue(diffFixture());
   testEnv.workspaceMock.activeRoot = null;
+  testEnv.workspaceMock.activeChatId = null;
   const changesStore = await import("../../src/stores/changes");
   const { ChangesReviewSurface } = await import("../../src/screens/workbench/ChangesReviewSurface");
   return { changesStore, ChangesReviewSurface };
@@ -156,6 +180,20 @@ describe("ChangesReviewSurface — header honesty states", () => {
     mount(() => <ChangesReviewSurface branch="main" />);
     expect(root.querySelector(".pf-crs-branch")).toBeNull();
   });
+
+  it("shows a refresh error in the freshness pill instead of silently claiming up to date", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file()])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    expect(root.querySelector(".pf-crs-freshness .pf-pill")?.textContent).toBe("Up to date");
+
+    testEnv.invoke.mockRejectedValueOnce(new Error("git status timed out"));
+    await changesStore.refreshChangesReview();
+    expect(root.querySelector(".pf-crs-freshness .pf-pill")?.textContent).toBe("git status timed out");
+  });
 });
 
 describe("ChangesReviewSurface — file navigator + diff pane", () => {
@@ -169,12 +207,7 @@ describe("ChangesReviewSurface — file navigator + diff pane", () => {
     ]);
     changesStore.setThisTurnTarget("chat-1", "/project", 1);
     await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
-    testEnv.invoke.mockResolvedValue({
-      diff: "@@ -1,1 +1,1 @@\n-old\n+new\n",
-      binary: false,
-      truncated: false,
-      available: true,
-    });
+    testEnv.invoke.mockResolvedValue(diffFixture({ diff: "@@ -1,1 +1,1 @@\n-old\n+new\n", available: true }));
     mount(() => <ChangesReviewSurface branch={null} />);
     return { changesStore };
   }
@@ -245,11 +278,203 @@ describe("ChangesReviewSurface — file navigator + diff pane", () => {
     testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file({ path: "logo.png", binary: true, additions: null, deletions: null })])]);
     changesStore.setThisTurnTarget("chat-1", "/project", 1);
     await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
-    testEnv.invoke.mockResolvedValueOnce({ diff: null, binary: true, truncated: false, available: true });
+    testEnv.invoke.mockResolvedValueOnce(diffFixture({ binary: true, available: true }));
 
     mount(() => <ChangesReviewSurface branch={null} />);
     await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
-    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toContain("binary");
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toContain("Binary file");
+  });
+
+  it("shows a known byte size for a binary file instead of guessing", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file({ path: "logo.png", binary: true, additions: null, deletions: null })])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+    testEnv.invoke.mockResolvedValueOnce(diffFixture({ binary: true, available: true, sizeBytes: 2048 }));
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toBe("Binary file — 2,048 bytes.");
+  });
+});
+
+// #231 PR5's hard-state matrix: a submodule/symlink/mode-only KIND or a
+// conflict STATUS gets an honest, non-fetching placeholder — never a raw
+// diff round trip, never a crash, never a blank pane.
+describe("ChangesReviewSurface — hard states", () => {
+  async function mountWorkingTreeWithFile(overrides: Partial<ChangedFile>) {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce(
+      workingTreeReady([file({ path: "x", staged: false, unstaged: true, additions: null, deletions: null, ...overrides })]),
+    );
+    testEnv.workspaceMock.activeRoot = "/project";
+    changesStore.setChangesReviewScope("workingTree");
+    mount(() => <ChangesReviewSurface branch={null} />);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+    return { changesStore };
+  }
+
+  it("renders a submodule's honest placeholder without ever fetching a diff", async () => {
+    await mountWorkingTreeWithFile({ kind: "submodule" });
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toContain("Submodule");
+    expect(testEnv.invoke).not.toHaveBeenCalledWith("changes_working_tree_file_diff", expect.anything());
+  });
+
+  it("renders a symlink's honest placeholder without ever fetching a diff", async () => {
+    await mountWorkingTreeWithFile({ kind: "symlink" });
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toContain("Symlink");
+    expect(testEnv.invoke).not.toHaveBeenCalledWith("changes_working_tree_file_diff", expect.anything());
+  });
+
+  it("renders a mode-only change's honest placeholder without ever fetching a diff", async () => {
+    await mountWorkingTreeWithFile({ kind: "modeOnly", additions: 0, deletions: 0 });
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toContain("mode changed only");
+    expect(testEnv.invoke).not.toHaveBeenCalledWith("changes_working_tree_file_diff", expect.anything());
+  });
+
+  it("renders a conflict's honest placeholder without ever fetching a diff, even though its kind defaults regular", async () => {
+    await mountWorkingTreeWithFile({ status: "conflict", staged: false, unstaged: false, kind: "regular" });
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toContain("Merge conflict");
+    expect(testEnv.invoke).not.toHaveBeenCalledWith("changes_working_tree_file_diff", expect.anything());
+  });
+
+  it("shows the kind badge in the navigator row for a non-regular kind", async () => {
+    await mountWorkingTreeWithFile({ kind: "submodule" });
+    const badges = [...root.querySelectorAll(".pf-crs-navrow .pf-crs-badge")].map((b) => b.textContent);
+    expect(badges).toContain("submodule");
+  });
+
+  it("keeps fetching normally for an unrelated regular file (unknown-stays-unknown baseline)", async () => {
+    await mountWorkingTreeWithFile({ kind: "regular" });
+    testEnv.invoke.mockResolvedValue(diffFixture());
+    await vi.waitFor(() =>
+      expect(testEnv.invoke).toHaveBeenCalledWith(
+        "changes_working_tree_file_diff",
+        expect.objectContaining({ path: "x" }),
+      ),
+    );
+  });
+
+  // #231 PR5 review finding P3: a rename that's ALSO mode-only must not
+  // silently drop the rename fact behind a generic mode-only message.
+  it("mentions the rename source when a mode-only change is also a rename", async () => {
+    await mountWorkingTreeWithFile({ kind: "modeOnly", status: "rename", oldPath: "old-name.sh", additions: 0, deletions: 0 });
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffmessage")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffmessage")?.textContent).toBe(
+      "Renamed from old-name.sh — mode changed only (e.g. permissions), no content to diff.",
+    );
+  });
+
+  it("renders the honest invalid-UTF-8 notice alongside the lossily-decoded diff", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file({ path: "a.rs" })])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+    testEnv.invoke.mockResolvedValueOnce(
+      diffFixture({ diff: "@@ -1,1 +1,1 @@\n-old\n+new �\n", available: true, invalidUtf8: true }),
+    );
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffline")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffnotice")?.textContent).toContain("invalid UTF-8");
+  });
+});
+
+// #231 PR5's explicit "load more" affordance for a truncated diff — never
+// silent truncation.
+describe("ChangesReviewSurface — truncated diff load-more", () => {
+  it("fetches the next bounded chunk at the right line offset and appends it", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file({ path: "big.rs" })])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+    testEnv.invoke.mockResolvedValueOnce(
+      diffFixture({ diff: "@@ -1,1 +1,1 @@\n-old\n", available: true, truncated: true }),
+    );
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffaction")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffnotice--actions")?.textContent).toContain("truncated");
+
+    testEnv.invoke.mockResolvedValueOnce(diffFixture({ diff: "+new\n", available: true, truncated: false }));
+    const loadMoreBtn = [...root.querySelectorAll<HTMLButtonElement>(".pf-crs-diffaction")].find(
+      (b) => b.textContent === "Load more",
+    );
+    loadMoreBtn?.click();
+
+    // The base diff ("@@ -1,1 +1,1 @@\n-old\n") is 2 lines — load-more must
+    // ask for exactly the next chunk, not re-fetch from the start.
+    await vi.waitFor(() =>
+      expect(testEnv.invoke).toHaveBeenCalledWith(
+        "changes_turn_file_diff",
+        expect.objectContaining({ skipLines: 2 }),
+      ),
+    );
+    // The appended text renders as one more diff line, and the truncated
+    // notice/action disappears once the latest chunk reports not-truncated.
+    await vi.waitFor(() => expect(root.querySelectorAll(".pf-crs-diffline")).toHaveLength(2));
+    expect(root.querySelector(".pf-crs-diffnotice--actions")).toBeNull();
+  });
+
+  it("surfaces a load-more failure without losing the already-rendered diff", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file({ path: "big.rs" })])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+    testEnv.invoke.mockResolvedValueOnce(
+      diffFixture({ diff: "@@ -1,1 +1,1 @@\n-old\n", available: true, truncated: true }),
+    );
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffaction")).not.toBeNull());
+
+    testEnv.invoke.mockRejectedValueOnce(new Error("git diff timed out"));
+    const loadMoreBtn = [...root.querySelectorAll<HTMLButtonElement>(".pf-crs-diffaction")].find(
+      (b) => b.textContent === "Load more",
+    );
+    loadMoreBtn?.click();
+
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffnotice--error")).not.toBeNull());
+    expect(root.querySelector(".pf-crs-diffnotice--error")?.textContent).toContain("git diff timed out");
+    // The original (bounded) diff line is still visible — a failed load-more
+    // never blanks out what was already successfully rendered.
+    expect(root.querySelectorAll(".pf-crs-diffline")).toHaveLength(1);
+  });
+});
+
+// #231 PR5's "open externally" affordance — workingTree scope only (a
+// historical turn's file may no longer exist on disk).
+describe("ChangesReviewSurface — open file externally", () => {
+  it("offers Open file for a truncated diff in workingTree scope but not thisTurn scope", async () => {
+    const { changesStore, ChangesReviewSurface } = await loadSurface();
+    testEnv.invoke.mockResolvedValueOnce([turnChangeSet([file({ path: "big.rs" })])]);
+    changesStore.setThisTurnTarget("chat-1", "/project", 1);
+    await vi.waitFor(() => expect(changesStore.changesReviewLoading()).toBe(false));
+
+    // activeRoot is set BEFORE mount so the surface's own mount lifecycle
+    // (`useChangesReviewSurfaceLifecycle`) seeds the working-tree slice —
+    // same precondition `describe("ChangesReviewSurface — scope switch")`'s
+    // test relies on.
+    testEnv.invoke.mockResolvedValueOnce(
+      workingTreeReady([file({ path: "wt.rs", staged: false, unstaged: true, truncated: false })]),
+    );
+    testEnv.workspaceMock.activeRoot = "/project";
+    testEnv.invoke.mockResolvedValue(diffFixture({ diff: "+a\n", available: true, truncated: true }));
+
+    mount(() => <ChangesReviewSurface branch={null} />);
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-diffaction")).not.toBeNull());
+    let actions = [...root.querySelectorAll<HTMLButtonElement>(".pf-crs-diffaction")].map((b) => b.textContent);
+    expect(actions).not.toContain("Open file");
+
+    changesStore.setChangesReviewScope("workingTree");
+    await vi.waitFor(() => expect(root.querySelector(".pf-crs-navrow")).not.toBeNull());
+
+    actions = [...root.querySelectorAll<HTMLButtonElement>(".pf-crs-diffaction")].map((b) => b.textContent);
+    expect(actions).toContain("Open file");
   });
 });
 

@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 use pickforge_core::changes::{
-    decode_timeline_events, finish_change_diff, group_turn_change_sets, turn_file_diff,
+    decode_timeline_events, finish_change_diff_from, group_turn_change_sets, turn_file_diff,
     ChangeDiff, ChangeSet, TimelineTurnEvent,
 };
 use pickforge_core::db::Database;
@@ -65,12 +65,19 @@ pub async fn changes_list_turn_change_sets(
 }
 
 /// Lazily-fetched turn-snapshot diff text for one file within one turn
-/// (#231 PR2's turn-snapshot source of the lazy per-file diff fetch).
-/// Re-reads and re-decodes the chat's timeline scoped to `turn_seq` + `path`
-/// rather than caching anything server-side — turn snapshots are small and
-/// immutable, so re-deriving stays cheap and always agrees with the listing
-/// call. `available: false` (not an error) when that turn has no diff-bearing
-/// `FileChange` event for `path` at all.
+/// (#231 PR2's turn-snapshot source of the lazy per-file diff fetch, extended
+/// #231 PR5). Re-reads and re-decodes the chat's timeline scoped to
+/// `turn_seq` + `path` rather than caching anything server-side — turn
+/// snapshots are small and immutable, so re-deriving stays cheap and always
+/// agrees with the listing call. `available: false` (not an error) when that
+/// turn has no diff-bearing `FileChange` event for `path` at all.
+///
+/// `skip_lines` is the "load more" affordance for a `truncated: true` result
+/// (#231 PR5): `0` for the initial fetch, otherwise the number of diff lines
+/// the caller already has, to get the next bounded chunk. Turn-snapshot text
+/// is always a valid Rust `String` (decoded from persisted JSON), so unlike
+/// the working-tree side there is no raw-byte invalid-UTF-8 signal to
+/// compute here — `ChangeDiff::invalid_utf8` stays `false` by construction.
 #[tauri::command]
 pub async fn changes_turn_file_diff(
     db: State<'_, Arc<Database>>,
@@ -79,6 +86,7 @@ pub async fn changes_turn_file_diff(
     project_root: String,
     turn_seq: i64,
     path: String,
+    skip_lines: u32,
 ) -> Result<ChangeDiff, String> {
     approved_canonical(&project_root, &roots)?;
     let db = db.inner().clone();
@@ -87,20 +95,27 @@ pub async fn changes_turn_file_diff(
             .agent_timeline_for_chat(&chat_id)
             .map_err(|err| err.to_string())?;
         let events = decode_timeline_events(&entries);
-        Ok(resolve_turn_file_diff(&events, turn_seq, &path))
+        Ok(resolve_turn_file_diff(&events, turn_seq, &path, skip_lines))
     })
     .await
     .map_err(|err| err.to_string())?
 }
 
-fn resolve_turn_file_diff(events: &[TimelineTurnEvent], turn_seq: i64, path: &str) -> ChangeDiff {
+fn resolve_turn_file_diff(
+    events: &[TimelineTurnEvent],
+    turn_seq: i64,
+    path: &str,
+    skip_lines: u32,
+) -> ChangeDiff {
     match turn_file_diff(events, turn_seq, path) {
-        Some(diff) => finish_change_diff(diff, false),
+        Some(diff) => finish_change_diff_from(diff, false, skip_lines as usize),
         None => ChangeDiff {
             diff: None,
             binary: false,
             truncated: false,
             available: false,
+            size_bytes: None,
+            invalid_utf8: false,
         },
     }
 }
@@ -145,7 +160,9 @@ pub async fn changes_working_tree(
 }
 
 /// The live unified diff for one repo-relative file in the working tree
-/// (#231 PR2's git-live source of the lazy per-file diff fetch), staged or
+/// (#231 PR2's git-live source of the lazy per-file diff fetch, extended
+/// #231 PR5's `skip_lines` "load more" affordance — see
+/// `pickforge_core::git::working_tree::file_diff`'s doc comment), staged or
 /// unstaged.
 #[tauri::command]
 pub async fn changes_working_tree_file_diff(
@@ -154,6 +171,7 @@ pub async fn changes_working_tree_file_diff(
     project_root: String,
     path: String,
     staged: bool,
+    skip_lines: u32,
 ) -> Result<ChangeDiff, String> {
     if is_remote_bound(db.inner(), &project_root)? {
         return Err("remote projects do not support live diff review yet".to_string());
@@ -162,7 +180,7 @@ pub async fn changes_working_tree_file_diff(
         .to_string_lossy()
         .into_owned();
     tauri::async_runtime::spawn_blocking(move || {
-        working_tree::file_diff(&canonical_root, &path, staged)
+        working_tree::file_diff(&canonical_root, &path, staged, skip_lines)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -187,7 +205,7 @@ mod tests {
 
     #[test]
     fn resolve_turn_file_diff_reports_unavailable_when_no_diff_body_exists() {
-        let result = resolve_turn_file_diff(&[], 1, "a.rs");
+        let result = resolve_turn_file_diff(&[], 1, "a.rs", 0);
         assert!(!result.available);
         assert!(result.diff.is_none());
     }
@@ -215,10 +233,37 @@ mod tests {
                 },
             },
         ];
-        let result = resolve_turn_file_diff(&events, 1, "a.rs");
+        let result = resolve_turn_file_diff(&events, 1, "a.rs", 0);
         assert!(result.available);
         assert!(!result.binary);
         assert_eq!(result.diff.as_deref(), Some("+one\n-two\n"));
+    }
+
+    #[test]
+    fn resolve_turn_file_diff_load_more_skips_already_seen_lines() {
+        use pickforge_core::agents::{AgentEvent, FileChangeEntry, FileChangeKind};
+
+        let events = vec![
+            TimelineTurnEvent {
+                seq: 1,
+                captured_at: 100,
+                event: AgentEvent::TurnStarted,
+            },
+            TimelineTurnEvent {
+                seq: 2,
+                captured_at: 110,
+                event: AgentEvent::FileChange {
+                    item_id: "item-1".to_string(),
+                    changes: vec![FileChangeEntry {
+                        path: "a.rs".to_string(),
+                        kind: FileChangeKind::Modify,
+                        diff: Some("+one\n+two\n+three\n".to_string()),
+                    }],
+                },
+            },
+        ];
+        let result = resolve_turn_file_diff(&events, 1, "a.rs", 1);
+        assert_eq!(result.diff.as_deref(), Some("+two\n+three\n"));
     }
 
     #[test]

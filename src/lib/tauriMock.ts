@@ -120,6 +120,7 @@ const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
       binary: false,
       truncated: false,
       diffAvailable: false,
+      kind: "regular",
     },
     {
       path: "tests/vrt/agent-chat.spec.ts",
@@ -132,6 +133,7 @@ const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
       binary: false,
       truncated: false,
       diffAvailable: false,
+      kind: "regular",
     },
   ],
   totals: { files: 2, additions: 0, deletions: 0 },
@@ -153,6 +155,112 @@ function changesReviewSurfaceFixtureEnabled(): boolean {
   }
 }
 
+// #231 PR5's hard-state VRT scenario: submodule/symlink/mode-only/conflict/
+// binary-with-size/truncated-with-load-more, on top of the mixed fixture
+// every other Changes VRT spec already relies on. Gated behind its own key
+// for the same reason `changesReviewSurfaceFixtureEnabled` is — specs that
+// don't set it keep rendering exactly the fixture they were pinned against.
+const VRT_CHANGES_HARD_STATES_FIXTURE_KEY = "pickforge.vrt.changesHardStatesFixture";
+function changesHardStatesFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_CHANGES_HARD_STATES_FIXTURE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+const HARD_STATE_SUBMODULE_PATH = "vendor/lib";
+const HARD_STATE_SYMLINK_PATH = "config/link.txt";
+const HARD_STATE_MODE_ONLY_PATH = "scripts/run.sh";
+const HARD_STATE_CONFLICT_PATH = "src/conflict.rs";
+const HARD_STATE_BINARY_PATH = "assets/logo.png";
+const HARD_STATE_BINARY_SIZE = 2048;
+const HARD_STATE_TRUNCATED_PATH = "src/huge_generated.rs";
+
+/** The extra rows the hard-states VRT fixture appends (#231 PR5) — split out
+ *  of `CHANGES_WORKING_TREE_FIXTURE` purely to keep that function short. */
+function hardStateFixtureFiles(): ChangedFile[] {
+  return [
+    {
+      path: HARD_STATE_SUBMODULE_PATH,
+      oldPath: null,
+      status: "modify",
+      staged: false,
+      unstaged: true,
+      additions: null,
+      deletions: null,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+      kind: "submodule",
+    },
+    {
+      path: HARD_STATE_SYMLINK_PATH,
+      oldPath: null,
+      status: "modify",
+      staged: false,
+      unstaged: true,
+      additions: null,
+      deletions: null,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+      kind: "symlink",
+    },
+    {
+      path: HARD_STATE_MODE_ONLY_PATH,
+      oldPath: null,
+      status: "modify",
+      staged: false,
+      unstaged: true,
+      additions: 0,
+      deletions: 0,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+      kind: "modeOnly",
+    },
+    {
+      path: HARD_STATE_CONFLICT_PATH,
+      oldPath: null,
+      status: "conflict",
+      staged: false,
+      unstaged: false,
+      additions: null,
+      deletions: null,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+      kind: "regular",
+    },
+    {
+      path: HARD_STATE_BINARY_PATH,
+      oldPath: null,
+      status: "modify",
+      staged: false,
+      unstaged: true,
+      additions: null,
+      deletions: null,
+      binary: true,
+      truncated: false,
+      diffAvailable: true,
+      kind: "regular",
+    },
+    {
+      path: HARD_STATE_TRUNCATED_PATH,
+      oldPath: null,
+      status: "modify",
+      staged: false,
+      unstaged: true,
+      additions: 50_000,
+      deletions: 10,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+      kind: "regular",
+    },
+  ];
+}
+
 const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges => {
   const files: ChangedFile[] = [
     {
@@ -167,6 +275,7 @@ const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges =
       binary: false,
       truncated: false,
       diffAvailable: true,
+      kind: "regular",
     },
     {
       path: "lib/new_widget.dart",
@@ -179,6 +288,7 @@ const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges =
       binary: false,
       truncated: false,
       diffAvailable: true,
+      kind: "regular",
     },
     {
       path: "README.md",
@@ -191,6 +301,7 @@ const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges =
       binary: false,
       truncated: false,
       diffAvailable: true,
+      kind: "regular",
     },
   ];
   if (changesReviewSurfaceFixtureEnabled()) {
@@ -205,7 +316,11 @@ const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges =
       binary: false,
       truncated: false,
       diffAvailable: true,
+      kind: "regular",
     });
+  }
+  if (changesHardStatesFixtureEnabled()) {
+    files.push(...hardStateFixtureFiles());
   }
   const additions = files.reduce((n, f) => n + (f.additions ?? 0), 0);
   const deletions = files.reduce((n, f) => n + (f.deletions ?? 0), 0);
@@ -232,7 +347,34 @@ const CHANGES_DIFF_FIXTURE = {
   binary: false,
   truncated: false,
   available: true,
+  sizeBytes: null,
+  invalidUtf8: false,
 };
+
+/** Path-aware diff fetch for the hard-states VRT fixture: everything else
+ *  keeps returning the shared `CHANGES_DIFF_FIXTURE` (unchanged for every
+ *  other spec). The truncated file's `skipLines` argument is recorded so the
+ *  VRT spec can assert the "load more" click asked for the next chunk, not
+ *  merely that SOME request fired again. */
+function changesHardStateFileDiff(args: Record<string, unknown>) {
+  if (!changesHardStatesFixtureEnabled()) return CHANGES_DIFF_FIXTURE;
+  if (args.path === HARD_STATE_BINARY_PATH) {
+    return { diff: null, binary: true, truncated: false, available: true, sizeBytes: HARD_STATE_BINARY_SIZE, invalidUtf8: false };
+  }
+  if (args.path === HARD_STATE_TRUNCATED_PATH) {
+    const globals = window as unknown as Record<string, unknown>;
+    const skipLines = args.skipLines as number;
+    globals.__PICKFORGE_VRT_LAST_DIFF_SKIP_LINES__ = skipLines;
+    // First chunk (skipLines=0) is 2 lines ("@@ ...@@" + "-old") and reports
+    // truncated; the load-more chunk (skipLines=2, exactly past those two
+    // lines) is the hunk's remaining "+new" line and reports NOT truncated —
+    // the concatenation of the two is one well-formed hunk.
+    return skipLines === 0
+      ? { diff: "@@ -1,2 +1,2 @@\n-old\n", binary: false, truncated: true, available: true, sizeBytes: null, invalidUtf8: false }
+      : { diff: "+new\n", binary: false, truncated: false, available: true, sizeBytes: null, invalidUtf8: false };
+  }
+  return CHANGES_DIFF_FIXTURE;
+}
 
 const SAMPLE_PROJECTS = [
   { projectRoot: "/home/dev/acme-app", displayName: "acme-app", createdAt: now, lastOpenedAt: now, sortOrder: 0, archivedAt: null, remoteHost: null, remoteRoot: null },
@@ -804,9 +946,9 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
       ((globals.__PICKFORGE_VRT_CHANGES_LIST_CALLS__ as number) ?? 0) + 1;
     return a.chatId === AGENT_CHAT_FIXTURE.chatId ? [CHANGES_TURN_FIXTURE(a.projectRoot as string)] : [];
   },
-  changes_turn_file_diff: () => CHANGES_DIFF_FIXTURE,
+  changes_turn_file_diff: (a) => changesHardStateFileDiff(a),
   changes_working_tree: (a) => CHANGES_WORKING_TREE_FIXTURE(a.projectRoot as string),
-  changes_working_tree_file_diff: () => CHANGES_DIFF_FIXTURE,
+  changes_working_tree_file_diff: (a) => changesHardStateFileDiff(a),
 };
 
 export function installTauriMock() {

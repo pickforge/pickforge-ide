@@ -1,7 +1,8 @@
 // Render chat message text as GitHub-flavored markdown, sanitized before it is
 // ever injected via innerHTML. Never return HTML that hasn't passed DOMPurify.
-import { marked } from "marked";
+import { marked, type Tokens } from "marked";
 import createDOMPurify from "dompurify";
+import { classifyChatLink } from "./chatLinkTarget";
 
 const ALLOWED_TAGS = [
   "p",
@@ -31,11 +32,52 @@ const ALLOWED_TAGS = [
   "td",
   "img",
 ];
-const ALLOWED_ATTR = ["href", "src", "alt", "title", "data-pf-image-index"];
+const ALLOWED_ATTR = ["href", "src", "alt", "title", "data-pf-image-index", "data-pf-chat-link"];
 const MARKDOWN_CACHE_LIMIT = 256;
 
 let purifier: ReturnType<typeof createDOMPurify> | undefined;
 const markdownCache = new Map<string, string>();
+
+function escapeHtmlAttr(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// A custom link renderer that classifies each href with the SAME pure
+// classifier (#234) the click handler reclassifies at click time, and
+// rewrites everything except an approved `https://` URL to an inert `#`
+// href carrying the raw original value only as an opaque `data-pf-chat-link`
+// attribute. Two things this buys, together:
+//
+// - DOMPurify's default URI policy (untouched — no scheme allowlist change
+//   here) only inspects `href`/`src`. A citation-shaped href like `a.ts:12`
+//   would otherwise look like an unrecognized URI scheme ("a.ts:") to that
+//   policy and get silently stripped; routing it through a data attribute
+//   instead means DOMPurify never has an opinion on it.
+// - The DOM-visible `href` is always either a real https URL or the inert
+//   "#" fragment — never a value that could itself navigate the webview if
+//   `preventDefault()` were somehow skipped (a defense-in-depth backstop for
+//   the click handler's own responsibility, not a replacement for it).
+//
+// The click path re-classifies from this same attribute; nothing here
+// decides what happens on click, only what's safe to put in the DOM.
+marked.use({
+  renderer: {
+    link(this: { parser: { parseInline: (tokens: Tokens.Link["tokens"]) => string } }, token) {
+      const { href, title, tokens } = token as Tokens.Link;
+      const text = this.parser.parseInline(tokens);
+      const titleAttr = title ? ` title="${escapeHtmlAttr(title)}"` : "";
+      const target = classifyChatLink(href ?? "");
+      if (target.kind === "externalHttps") {
+        return `<a href="${escapeHtmlAttr(target.url)}"${titleAttr}>${text}</a>`;
+      }
+      return `<a href="#" data-pf-chat-link="${escapeHtmlAttr(href ?? "")}"${titleAttr}>${text}</a>`;
+    },
+  },
+});
 
 function sanitize(html: string): string {
   if (typeof window === "undefined") return "";

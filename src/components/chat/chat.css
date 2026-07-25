@@ -287,6 +287,14 @@
   }
 }
 
+/* Concise feedback for a blocked/unsupported chat-link click (#234) — never
+ * shows the rejected path, just auto-clears after a few seconds. */
+.pf-chat-link-notice {
+  margin-top: var(--pf-space-xs);
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+}
+
 /* ---- Thinking ---- */
 .pf-chat-thinking {
   display: flex;

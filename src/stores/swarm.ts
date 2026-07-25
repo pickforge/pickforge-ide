@@ -188,7 +188,11 @@ const READ_ONLY_MODE: Readonly<Record<AgentProvider, string>> = Object.freeze({
   pi: "",
 });
 
-function providersFor(
+// Exported for the Operator preview (#195): resolving what will actually run for a
+// startSwarm proposal (provider/model label + fanout cost estimate) needs the exact
+// same provider-per-lane assignment `dispatchSwarm` uses, not a re-derived guess that
+// could drift from it.
+export function providersFor(
   pref: SwarmRequest["providerPreference"],
   count: number,
   requestedModel: string | null,
@@ -203,11 +207,14 @@ function providersFor(
   );
 }
 
-type ModelResolution =
+export type ModelResolution =
   | { ok: true; model: string | null }
   | { ok: false; error: string };
 
-function resolveModel(provider: AgentProvider, requested: string | null): ModelResolution {
+// Exported for the Operator preview (#195); see providersFor's export comment above —
+// same reasoning, this time for the per-worker model (falls back to the persisted
+// per-provider selection exactly like an unrequested-model swarm dispatch does).
+export function resolveModel(provider: AgentProvider, requested: string | null): ModelResolution {
   const text = requested?.trim().toLowerCase() ?? "";
   if (!text) {
     const selected = loadAgentModels()[provider] ?? null;

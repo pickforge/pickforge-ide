@@ -106,6 +106,52 @@ describe("hostedRoute", () => {
     });
   });
 
+  it("reports exactly the allowlisted keys this request actually sent, not a hardcoded list", async () => {
+    env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 2 }, error: null });
+    env.project = { displayName: "Billing" };
+    env.root = "/root";
+    env.chats = [{ chatId: "c1", title: "ci logs" }];
+    const { hostedRoute } = await loadHosted();
+
+    const withContext = await hostedRoute("open Billing");
+    expect(withContext).toMatchObject({ egressKeys: ["prompt", "project name", "chat titles"] });
+
+    // No active project or open chats this time — the same request now sends less,
+    // and the reported egress follows, rather than repeating the prior claim.
+    env.project = null;
+    env.chats = [];
+    const withoutContext = await hostedRoute("open Billing");
+    expect(withoutContext).toMatchObject({ egressKeys: ["prompt"] });
+  });
+
+  // Pins the drift-resistance property itself, not a snapshot of today's three
+  // fields: egressKeysFor must enumerate whatever keys are actually present on the
+  // context object, so this would fail if egressKeysFor regressed to a hand-checked
+  // field-by-field list that silently drops a field nobody remembered to add.
+  it("surfaces a field the egress checklist doesn't know about yet, instead of dropping it", async () => {
+    const { egressKeysFor } = await loadHosted();
+
+    const futureContext = {
+      projectName: "Billing",
+      // Not (yet) a declared HostedRoutingContext field or a known EGRESS_LABELS
+      // key — simulating a boundary change egressKeysFor hasn't been taught about.
+      activeFilePath: "src/App.tsx",
+    } as unknown as Parameters<typeof egressKeysFor>[0];
+
+    expect(egressKeysFor(futureContext)).toEqual(["prompt", "project name", "activeFilePath"]);
+  });
+
+  it("omits a present-but-empty field, same as the known fields", async () => {
+    const { egressKeysFor } = await loadHosted();
+
+    const context = {
+      projectName: "Billing",
+      chatNames: [],
+    } as unknown as Parameters<typeof egressKeysFor>[0];
+
+    expect(egressKeysFor(context)).toEqual(["prompt", "project name"]);
+  });
+
   it("generates a fresh idempotency key per attempt", async () => {
     env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
     const { hostedRoute } = await loadHosted();
@@ -185,6 +231,9 @@ describe("hostedRoute", () => {
       kind: "unclear",
       reason: "too vague",
       costCents: 1,
+      // No active project/chats in this test's env, so only the always-sent prompt
+      // itself is a real egress key here.
+      egressKeys: ["prompt"],
     });
   });
 

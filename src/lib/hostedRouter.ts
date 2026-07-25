@@ -83,6 +83,38 @@ export function buildHostedRoutingContext(
   return Object.keys(context).length ? context : undefined;
 }
 
+// Friendly labels for the context keys we know about today. Deliberately NOT the
+// source of truth for what egressKeysFor reports — see below.
+const EGRESS_LABELS: Partial<Record<string, string>> = {
+  projectName: "project name",
+  chatNames: "chat titles",
+  widgetLabels: "widget labels",
+};
+
+function isPresentValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.length > 0;
+  return value !== undefined && value !== null;
+}
+
+// What the preview's egress indicator (#195) is allowed to claim left the device.
+// Enumerates the ACTUAL keys present on the context object that gets serialized into
+// the request body — never a hand-maintained parallel checklist of "the fields we
+// remember to check." A new HostedRoutingContext field that starts shipping data
+// therefore surfaces automatically (its friendly label if EGRESS_LABELS knows it,
+// else its own raw key name) instead of silently going unmentioned — under-reporting
+// is the dangerous direction for a privacy indicator, so an unmapped-but-present key
+// still shows, just less prettily. commandText/"prompt" is unconditional — routing
+// has no purpose without it, so it isn't gated on this same presence check.
+export function egressKeysFor(context: HostedRoutingContext | undefined): string[] {
+  const keys: string[] = ["prompt"];
+  if (!context) return keys;
+  for (const [key, value] of Object.entries(context)) {
+    if (isPresentValue(value)) keys.push(EGRESS_LABELS[key] ?? key);
+  }
+  return keys;
+}
+
 function currentRoutingContext(): HostedRoutingContext | undefined {
   const root = workspace.activeRoot;
   const chatTitles = root
@@ -111,16 +143,27 @@ function proposalToResult(
   latencyMs: number,
   costCents: number,
   provenance: OperatorProvenance,
+  egressKeys: string[],
 ): HostedRouteResult {
   if ("unclear" in proposal) {
     // The model still ran and billed, so an unclear answer carries its cost too.
-    return { kind: "unclear", reason: proposal.reason ?? "hosted router could not map this command", costCents };
+    return {
+      kind: "unclear",
+      reason: proposal.reason ?? "hosted router could not map this command",
+      costCents,
+      egressKeys,
+    };
   }
   // Defense in depth: widget selection has no hosted transport, so never accept a
   // selectWidget proposal even if the model returns one. It was billed, so treat
   // it as unclear-with-cost rather than dispatching it.
   if ((proposal.action as { action?: unknown }).action === "selectWidget") {
-    return { kind: "unclear", reason: "hosted routing does not support widget selection", costCents };
+    return {
+      kind: "unclear",
+      reason: "hosted routing does not support widget selection",
+      costCents,
+      egressKeys,
+    };
   }
   return {
     kind: "proposal",
@@ -128,6 +171,7 @@ function proposalToResult(
     confidence: proposal.confidence,
     latencyMs,
     costCents,
+    egressKeys,
   };
 }
 
@@ -189,6 +233,7 @@ function interpretRecord(
   record: Record<string, unknown> | null,
   latencyMs: number,
   provenance: OperatorProvenance,
+  egressKeys: string[],
 ): HostedRouteResult {
   if (!record) return { kind: "error", message: "hosted router returned no data" };
 
@@ -222,11 +267,16 @@ function interpretRecord(
   try {
     value = JSON.parse(record.proposalJson);
   } catch (error) {
-    return { kind: "error", message: `hosted router returned invalid JSON: ${errorMessage(error)}`, costCents };
+    return {
+      kind: "error",
+      message: `hosted router returned invalid JSON: ${errorMessage(error)}`,
+      costCents,
+      egressKeys,
+    };
   }
   const parsed = routerProposalSchema.safeParse(value);
-  if (!parsed.success) return { kind: "error", message: parsed.error.message, costCents };
-  return proposalToResult(parsed.data, latencyMs, costCents, provenance);
+  if (!parsed.success) return { kind: "error", message: parsed.error.message, costCents, egressKeys };
+  return proposalToResult(parsed.data, latencyMs, costCents, provenance, egressKeys);
 }
 
 export async function hostedRoute(
@@ -238,12 +288,13 @@ export async function hostedRoute(
   const body: HostedRouteRequestBody = { commandText };
   const context = currentRoutingContext();
   if (context) body.context = context;
+  const egressKeys = egressKeysFor(context);
 
   const start = Date.now();
   try {
     const call = await callHostedRouter(body, crypto.randomUUID());
     if (call.transportError) return { kind: "error", message: call.transportError };
-    return interpretRecord(call.record, Date.now() - start, provenance);
+    return interpretRecord(call.record, Date.now() - start, provenance, egressKeys);
   } catch (error) {
     if (error instanceof HostedTimeoutError) {
       return { kind: "error", message: "routing timed out — try again" };

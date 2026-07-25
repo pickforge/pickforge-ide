@@ -12,7 +12,6 @@ import { type AgentTimelineItem } from "../../stores/agentChat";
 import {
   DEFAULT_VIRTUAL_GAP_PX,
   DEFAULT_VIRTUAL_PADDING_PX,
-  MIN_ROW_HEIGHT_PX,
   buildTimelineLayout,
   buildTimelineRows,
   estimateTimelineRowHeight,
@@ -363,7 +362,12 @@ export function ChatTimeline(props: {
 
     for (const [key, height] of updates) {
       if (!Number.isFinite(height) || height < 1) continue;
-      const next = Math.max(MIN_ROW_HEIGHT_PX, Math.ceil(height));
+      // The measurement is the height. A 48px floor used to sit here, which
+      // gave every collapsed log row (a 29px command, a 17px thinking header, a
+      // 16px usage badge) a 48px slot and left the dead space that made the
+      // timeline read as an airy card list instead of a machine log. The
+      // `< 1` guard above already covers a degenerate measurement.
+      const next = Math.ceil(height);
       const index = currentLayout.keyToIndex.get(key);
       if (index === undefined) continue;
       const row = currentLayout.rows[index];

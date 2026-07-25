@@ -17,8 +17,9 @@ export type TimelineVirtualLayout = {
 };
 
 export const DEFAULT_VIRTUAL_PADDING_PX = 16;
-export const DEFAULT_VIRTUAL_GAP_PX = 12;
-export const MIN_ROW_HEIGHT_PX = 48;
+// Fallbacks mirroring the CSS custom properties on `.pf-chat-timeline`
+// (--pf-space-lg / --pf-space-xs); used until getComputedStyle can read them.
+export const DEFAULT_VIRTUAL_GAP_PX = 4;
 export const OVERSCAN_PX = 1_800;
 
 const CHARS_PER_LINE = 82;
@@ -58,8 +59,32 @@ export function timelineVirtualRowKey(row: TimelineVirtualRow): string {
   return row.kind === "working" ? "working" : `${row.item.type}:${row.item.seq}`;
 }
 
+// Row heights measured in the rendered app (#352), rounded up: an estimate only
+// governs the frame before a row mounts, and one that is wildly off shows up as
+// a gap that snaps shut. Bias slightly high — undercounting can drop a row's
+// lower portion from the visible set until it mounts, overcounting only mounts
+// a harmless extra offscreen row.
+//
+// The four `.pf-chat-line` rows (command / tool / mcp / web) are single-line by
+// construction: their name and detail spans are `nowrap` + ellipsis, so no text
+// model applies while collapsed, which is how they all render by default. A row
+// the reader expanded remeasures on mount.
+const COMPACT_COMMAND_PX = 32; // measured 29 — taller for its status mark
+const COMPACT_LINE_PX = 28; // measured 24 — tool / mcp / web
+const COLLAPSED_THINKING_PX = 20; // measured 17
+const WORKING_ROW_PX = 28; // measured 24
+const USAGE_ROW_PX = 20; // measured 16
+const PLAN_BASE_PX = 60; // measured 56 fixed …
+const PLAN_ITEM_PX = 25; // … + 23 per item
+// Bubble chrome around the text model's own `LINE_HEIGHT_PX` per line: a
+// one-line bubble measures 41, i.e. ~18 of padding and border.
+const BUBBLE_BASE_PX = 24;
+// The image variant keeps its original allowance for the thumbnail block on top
+// of the (now measured) text chrome; only the text case has evidence behind it.
+const BUBBLE_IMAGE_EXTRA_PX = 106;
+
 function userMessageBaseHeight(hasImages: boolean): number {
-  return hasImages ? 190 : 84;
+  return hasImages ? BUBBLE_BASE_PX + BUBBLE_IMAGE_EXTRA_PX : BUBBLE_BASE_PX;
 }
 
 /** A completed turn renders the compact, collapsed-by-default receipt (#231
@@ -73,27 +98,31 @@ function estimateFileChangeRowHeight(item: Extract<AgentTimelineItem, { type: "f
 }
 
 export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
-  if (row.kind === "working") return 40;
+  if (row.kind === "working") return WORKING_ROW_PX;
   const item = row.item;
   switch (item.type) {
     case "userMessage":
       return estimateTextHeight(item.text, userMessageBaseHeight(!!item.images?.length));
     case "assistantText":
+      return estimateTextHeight(item.text, BUBBLE_BASE_PX);
+    // A thinking row renders collapsed to its one-line header, so its text
+    // says nothing about its height until the reader opens it.
     case "thinking":
-      return estimateTextHeight(item.text, 96);
+      return COLLAPSED_THINKING_PX;
+    // Collapsed with or without a tail is the same single line; the tail only
+    // shows once expanded.
     case "command":
-      return item.outputTail ? 116 : 96;
+      return COMPACT_COMMAND_PX;
     case "fileChange":
       return estimateFileChangeRowHeight(item);
     case "toolUse":
-      return estimateTextHeight(item.detail ?? item.name, 72);
     case "mcpToolCall":
     case "webSearch":
-      return 68;
+      return COMPACT_LINE_PX;
     case "plan":
-      return 64 + item.items.length * 30;
+      return PLAN_BASE_PX + item.items.length * PLAN_ITEM_PX;
     case "usage":
-      return 40;
+      return USAGE_ROW_PX;
   }
 }
 

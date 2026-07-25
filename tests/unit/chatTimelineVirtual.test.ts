@@ -185,7 +185,11 @@ describe("chat timeline virtualization helpers", () => {
     expect(estimateTimelineRowHeight(huge)).toBeGreaterThan(1_800);
   });
 
-  it("accounts for command output tails", () => {
+  it("estimates a collapsed command row the same with or without a tail", () => {
+    // Measured in the app (#352): both render as one truncated line — the tail
+    // only appears once the reader expands the row, and an expanded row
+    // remeasures on mount. The old estimate charged a tail premium (116 vs 96)
+    // against rows that are both 29px.
     const base: TimelineVirtualRow = {
       kind: "item",
       item: {
@@ -211,9 +215,8 @@ describe("chat timeline virtualization helpers", () => {
       },
     };
 
-    expect(estimateTimelineRowHeight(withOutput)).toBeGreaterThan(
-      estimateTimelineRowHeight(base),
-    );
+    expect(estimateTimelineRowHeight(withOutput)).toBe(estimateTimelineRowHeight(base));
+    expect(estimateTimelineRowHeight(base)).toBeLessThan(48);
   });
 
   it("estimates the non-message timeline row variants", () => {
@@ -264,7 +267,31 @@ describe("chat timeline virtualization helpers", () => {
       }),
     ];
 
-    expect(estimates.every((height) => height >= 40)).toBe(true);
+    // Big enough to be a row at all…
+    expect(estimates.every((height) => height >= 16)).toBe(true);
+    // …and the ones that render as a single compact line or a small badge stay
+    // well under the 48px slot they were all forced into before (#352). Only
+    // the file-change and plan cards grow with their content.
+    const compact = [
+      estimateTimelineRowHeight({ kind: "working" }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "thinking", seq: 1, text: "reasoning".repeat(200), streaming: true },
+      }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "toolUse", seq: 3, itemId: "tool", name: "read", detail: null },
+      }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "mcpToolCall", seq: 4, itemId: "mcp", server: "github", tool: "list" },
+      }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "webSearch", seq: 5, itemId: "search", query: "pickforge" },
+      }),
+    ];
+    expect(compact.every((height) => height <= 48)).toBe(true);
   });
 
   it("uses taller estimates for image messages and scales file batches", () => {

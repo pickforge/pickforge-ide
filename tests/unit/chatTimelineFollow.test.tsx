@@ -48,6 +48,9 @@ const VIEWPORT_HEIGHT = 300;
 // the long text below — the gap between the two is the bug's whole mechanism.
 const MEASURED_ROW_HEIGHT = 120;
 
+// Overridable per test: a collapsed log row measures far smaller than this.
+let measuredRowHeight = MEASURED_ROW_HEIGHT;
+
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 let originalRAF: typeof requestAnimationFrame;
@@ -109,6 +112,7 @@ beforeEach(() => {
   document.body.appendChild(root);
   scrollTopValues = new WeakMap();
   rafQueue = [];
+  measuredRowHeight = MEASURED_ROW_HEIGHT;
 
   originalRAF = globalThis.requestAnimationFrame;
   originalCAF = globalThis.cancelAnimationFrame;
@@ -149,7 +153,7 @@ beforeEach(() => {
   Object.defineProperty(Element.prototype, "getBoundingClientRect", {
     configurable: true,
     value(this: Element) {
-      const height = this.classList.contains("pf-chat-virtual-row") ? MEASURED_ROW_HEIGHT : 0;
+      const height = this.classList.contains("pf-chat-virtual-row") ? measuredRowHeight : 0;
       return { top: 0, left: 0, right: 0, bottom: height, width: 0, height, x: 0, y: 0 } as DOMRect;
     },
   });
@@ -183,8 +187,8 @@ function turn(streaming: boolean): AgentTimelineItem[] {
 }
 
 /** What the virtual layout should come to for `rows` rows of measured height. */
-function expectedHeight(rows: number): number {
-  return 16 * 2 + MEASURED_ROW_HEIGHT * rows + 12 * (rows - 1);
+function expectedHeight(rows: number, height = MEASURED_ROW_HEIGHT, gap = 4): number {
+  return 16 * 2 + height * rows + gap * (rows - 1);
 }
 
 function usage(seq: number): AgentTimelineItem {
@@ -209,6 +213,24 @@ describe("ChatTimeline end-of-turn follow (#352)", () => {
     // the estimate is still reserving space the content does not use — the wall
     // of empty black below the stream.
     expect(innerHeight()).toBe(expectedHeight(4));
+  });
+
+  it("gives a collapsed log row its measured height, with no floor (#352)", () => {
+    // A 48px floor used to sit under every measurement, so a 24px collapsed
+    // command/thinking/usage row still occupied a 48px slot. The dead space
+    // that produced is what made the timeline read as an airy card list.
+    measuredRowHeight = 24;
+    const [items] = createSignal<AgentTimelineItem[]>(turn(false));
+    dispose = render(() => <ChatTimeline items={items()} working={false} />, root);
+    flushFrames();
+
+    // Below the viewport floor, so assert on the layout rather than the
+    // inner div's `max(totalHeight, viewportHeight)` clamp.
+    const rowTops = Array.from(
+      root.querySelectorAll<HTMLDivElement>(".pf-chat-virtual-row"),
+      (el) => Number.parseFloat(/translate3d\(0, ([-\d.]+)px/.exec(el.style.transform)?.[1] ?? "0"),
+    );
+    expect(rowTops).toEqual([16, 16 + 24 + 4, 16 + (24 + 4) * 2]);
   });
 
   it("pins the usage row that lands after the turn's content shrinks", () => {

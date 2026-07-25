@@ -42,7 +42,10 @@
 /* ---- Timeline ---- */
 .pf-chat-timeline {
   --pf-chat-virtual-padding: var(--pf-space-lg);
-  --pf-chat-virtual-gap: var(--pf-space-md);
+  /* Log density: compact rows (cmd/tool/mcp/web/thinking) should read as a
+   * machine log, nearly touching. Bubbles keep their own internal padding, so
+   * one tight gap serves both voices. */
+  --pf-chat-virtual-gap: var(--pf-space-xs);
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;

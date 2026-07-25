@@ -206,6 +206,35 @@ describe("chatTerminalHostBinding — deletion clears registry/session/title/act
   });
 });
 
+describe("chatTerminalHostBinding — pty needs-you resolves only on a real user submit (#331 review)", () => {
+  it("bell raises attention; opening the chat leaves it needs-you; a real submit clears it", () => {
+    const chatId = freshChatId();
+    const binding = chatTerminalHostBinding(chatId);
+    const paneId = "pane-primary";
+    armChatAutoName(chatId, paneId);
+    setActiveChatForActivity(null);
+
+    binding.onBell(paneId);
+    expect(chatAttention(chatId)).toBe(true);
+
+    // Opening the chat is just looking — pty chats have no turn-start event
+    // to hook the way structured agent chats do, so this must not silently
+    // resolve the standing needs-you either (#331).
+    setActiveChatForActivity(chatId);
+    expect(chatAttention(chatId)).toBe(true);
+
+    // A blank submit (stray Enter) is not the user acting — maybeAutoNameChat
+    // already ignores it for auto-naming, and it must not resolve attention.
+    binding.onUserSubmit("", paneId);
+    expect(chatAttention(chatId)).toBe(true);
+
+    // A real, non-blank submission IS the user acting — the pty analogue of
+    // agentTurnStarted's "sent a message" — and resolves it.
+    binding.onUserSubmit("y", paneId);
+    expect(chatAttention(chatId)).toBe(false);
+  });
+});
+
 describe("TerminalHost primary promotion — claim transfer before old-pane cleanup", () => {
   let container: HTMLDivElement;
   let dispose: (() => void) | undefined;

@@ -3107,12 +3107,24 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-flat-row.active .pf-flat-dot {
   background: var(--pf-text-hi);
 }
+/* Renders as a real <button> (primary click/keyboard target, #331 review)
+   except while renaming, where it's a plain <div> wrapping the RenameField
+   input — a real <input> can't nest inside a real <button>. The reset
+   properties below are no-ops on the div variant. */
 .pf-flat-row-lines {
   display: flex;
   flex-direction: column;
   gap: 3px;
   flex: 1;
   min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .pf-flat-title {
   min-width: 0;
@@ -3139,7 +3151,12 @@ body.pf-resizing .pf-dc-resizer-grip {
   opacity: 1;
 }
 .pf-flat-meta {
-  flex: none;
+  /* Shrinkable (not `flex: none`) so its own ellipsis actually applies inside
+     .pf-flat-row-meta-line — a long project name otherwise overflowed the
+     row and pushed the options button off in narrow sidebars (#331 review,
+     finding 3). The mark stays flex:none/fixed-size next to it. */
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
   color: var(--pf-text-low);
@@ -3205,6 +3222,27 @@ body.pf-resizing .pf-dc-resizer-grip {
 }
 .pf-work-card:hover {
   border-color: var(--pf-hairline-strong);
+}
+/* Renders as a real <button> (primary click/keyboard target, #331 review)
+   except while renaming, where it's a plain <div> wrapping the RenameField
+   input — a real <input> can't nest inside a real <button>. The reset
+   properties below are no-ops on the div variant; layout (top/l1/brief/
+   footer stacked with the card's own 2px gap) is unchanged from before this
+   was pulled out of .pf-work-card directly. */
+.pf-work-card-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .pf-work-card.active {
   background: var(--pf-surface-3);
@@ -3277,6 +3315,10 @@ body.pf-resizing .pf-dc-resizer-grip {
   display: flex;
   align-items: center;
   gap: var(--pf-space-xs);
+  /* Reserves room for .pf-work-card-options, which sits outside the flow
+     (absolutely positioned, a sibling of the button — #331 review, finding
+     4) so it isn't a nested button inside .pf-work-card-primary. */
+  padding-right: var(--pf-space-lg);
 }
 .pf-work-card-mark {
   display: inline-flex;
@@ -3302,11 +3344,16 @@ body.pf-resizing .pf-dc-resizer-grip {
   color: var(--pf-text-low);
   flex: none;
 }
-.pf-work-card-top .pf-rail-row-action {
-  opacity: 0;
-}
 .pf-work-card:hover .pf-rail-row-action {
   opacity: 1;
+}
+/* A sibling of .pf-work-card-primary, not nested inside it (#331 review,
+   finding 4 — a real button can't contain another real button); positioned
+   to read as part of the top row same as before. */
+.pf-work-card-options {
+  position: absolute;
+  top: var(--pf-space-sm);
+  right: var(--pf-space-md);
 }
 
 .pf-work-card-l1 {

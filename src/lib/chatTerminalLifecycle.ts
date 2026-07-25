@@ -10,7 +10,7 @@ import type { TerminalHostHandle } from "../components/TerminalHost";
 import { setChatSessionId } from "../stores/workspace";
 import { isChatArchived } from "../stores/chatArchive";
 import { deleteTerminalHost, setTerminalHost } from "../stores/terminalHosts";
-import { REATTACH_REPLAY_GRACE_MS, clearChatActivity, graceChatUnseen, handlePaneClosed, recordChatAttention, recordChatOutput } from "../stores/chatActivity";
+import { REATTACH_REPLAY_GRACE_MS, clearChatActivity, graceChatUnseen, handlePaneClosed, recordChatAttention, recordChatOutput, recordChatUserSubmit } from "../stores/chatActivity";
 import {
   armChatAutoName,
   chatHadAgentSession,
@@ -104,7 +104,14 @@ function createChatTerminalHostBinding(chatId: string): ChatTerminalHostBinding 
       revokeAgentPane(chatId, paneId);
       handlePaneClosed(chatId, paneId);
     },
-    onUserSubmit: (line, paneId) => maybeAutoNameChat(chatId, line, paneId),
+    // A non-blank submit is the user acting (#331 review, finding 1): pty
+    // chats have no turn-start event to hook the way structured agent chats
+    // do (see chatActivity.ts's agentTurnStarted), so this is what resolves
+    // a standing needs-you for them — a stray blank Enter does not.
+    onUserSubmit: (line, paneId) => {
+      maybeAutoNameChat(chatId, line, paneId);
+      if (line.trim() && !isChatArchived(chatId)) recordChatUserSubmit(chatId);
+    },
     onTitle: (title, paneId) => handleOscTitle(chatId, paneId, title),
 
     dispose: () => {

@@ -156,6 +156,17 @@ function resolveChatAttention(chatId: string) {
   if (states.get(chatId)?.attention) write(chatId, { attention: false });
 }
 
+/** A non-blank line the user submitted into this chat's terminal — the pty
+ *  chat's analogue of `agentTurnStarted`'s "sent a message" (#331 review):
+ *  pty chats have no discrete turn-start event of their own (there are no
+ *  turns, just a shell), so a real submission is the closest signal that
+ *  the user acted on a standing needs-you. Caller (chatTerminalLifecycle's
+ *  onUserSubmit) is expected to skip blank submits, same as
+ *  maybeAutoNameChat already does for auto-naming. */
+export function recordChatUserSubmit(chatId: string) {
+  resolveChatAttention(chatId);
+}
+
 export function chatBusy(chatId: string): boolean {
   return activity()[chatId]?.busy ?? false;
 }

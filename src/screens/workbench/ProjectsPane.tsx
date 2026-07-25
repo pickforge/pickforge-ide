@@ -144,6 +144,13 @@ const AGENT_CHAT_ICON: Readonly<Partial<Record<string, () => JSX.Element>>> = Ob
 const agentChatProvider = (agentId: string): string => normalizeAgentProvider(agentId) ?? agentId;
 const agentChatLabel = (agentId: string): string =>
   agentBackendDescriptor(agentChatProvider(agentId))?.label ?? "Agent";
+// A structured agent-kind chat always shows its mark (with the "AI" fallback
+// for a legacy/unrecognized provider id); a terminal-kind chat shows one too
+// when its agentId resolves to a recognized harness (#331 review, finding 2
+// — newTerminalChat always sets a real provider id, so terminal rows were
+// wrongly showing no mark at all in the flat list's two-line quiet rows).
+const showAgentChatMark = (chat: Chat): boolean =>
+  chat.kind === "agent" || AGENT_CHAT_ICON[agentChatProvider(chat.agentId)] !== undefined;
 
 function basename(path: string): string {
   return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || path;
@@ -1283,49 +1290,61 @@ const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat }) => {
   const id = props.chat.chatId;
   const project = () => workspace.projects.find((p) => p.projectRoot === props.chat.projectRoot);
   const staged = () => isChatStaged(id);
+  const renaming = () => ctrl.renaming() === id;
+  // Shared between the button (normal) and plain-div (renaming) variants
+  // below — a real <input> (RenameField) can't nest inside a real <button>.
+  const metaLine = () => (
+    <span class="pf-flat-row-meta-line">
+      <Show when={showAgentChatMark(props.chat)}>
+        <span
+          class="pf-flat-mark"
+          title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+          aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+        >
+          <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
+            {(icon) => icon()()}
+          </Show>
+        </span>
+      </Show>
+      <span class="pf-flat-meta">
+        {project()?.displayName ?? "—"} · {shortRelTime(chatActivityMs(props.chat))}
+      </span>
+    </span>
+  );
   return (
     <div
       class="pf-flat-row"
       classList={{ active: workspace.activeChatId === id || staged() }}
-      onClick={() => selectChat(id)}
       onContextMenu={(e) => ctrl.openFromContext("chat", id, e)}
     >
       <span class="pf-flat-dot" />
-      <div class="pf-flat-row-lines">
-        <Show
-          when={ctrl.renaming() === id}
-          fallback={
-            <span class="pf-flat-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
-              {chatTitleOverride(id) ?? props.chat.title}
-            </span>
-          }
-        >
-          <RenameField
-            ctrl={ctrl}
-            value={props.chat.title}
-            commit={(v) => {
-              if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
-              void renameChat(id, v);
-            }}
-          />
-        </Show>
-        <span class="pf-flat-row-meta-line">
-          <Show when={props.chat.kind === "agent"}>
-            <span
-              class="pf-flat-mark"
-              title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
-              aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
-            >
-              <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
-                {(icon) => icon()()}
-              </Show>
-            </span>
-          </Show>
-          <span class="pf-flat-meta">
-            {project()?.displayName ?? "—"} · {shortRelTime(chatActivityMs(props.chat))}
+      {/* #331 review (finding 4): a real <button> as the row's primary
+          interactive element — proper tab stop, accessible name, and native
+          Enter/Space activation, instead of a plain clickable <div>. Only
+          while not renaming (a text input can't nest inside a button). */}
+      <Show
+        when={!renaming()}
+        fallback={
+          <div class="pf-flat-row-lines">
+            <RenameField
+              ctrl={ctrl}
+              value={props.chat.title}
+              commit={(v) => {
+                if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
+                void renameChat(id, v);
+              }}
+            />
+            {metaLine()}
+          </div>
+        }
+      >
+        <button type="button" class="pf-flat-row-lines" onClick={() => selectChat(id)}>
+          <span class="pf-flat-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
+            {chatTitleOverride(id) ?? props.chat.title}
           </span>
-        </span>
-      </div>
+          {metaLine()}
+        </button>
+      </Show>
       <button class="pf-rail-row-action" title="Chat options" onClick={(e) => ctrl.openFromButton("chat", id, e)}>
         <IconMore size={14} />
       </button>
@@ -1449,23 +1468,15 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
   const cost = () => cardCost(id, agentChat);
   const brief = () => cardBrief(props.chat);
   const edge = () => (props.state === "justFinished" ? null : cardContextEdge(id, props.state, agentChat));
-  return (
-    <div
-      class="pf-work-card"
-      classList={{
-        active: workspace.activeChatId === id || staged(),
-        "pf-work-card--working": props.state === "working",
-        "pf-work-card--needsyou": showBracket(),
-        "pf-work-card--finishing": props.state === "justFinished",
-      }}
-      onClick={() => selectChat(id)}
-      onContextMenu={(e) => ctrl.openFromContext("chat", id, e)}
-    >
-      <Show when={showBracket()}>
-        <WorkCardCorners />
-      </Show>
+  const renaming = () => ctrl.renaming() === id;
+  // Shared between the button (normal) and plain-div (renaming) variants
+  // below — a real <input> (RenameField) can't nest inside a real <button>,
+  // and the options button below is a SIBLING of this, never nested inside
+  // it, for the same reason (#331 review, finding 4).
+  const cardBody = () => (
+    <>
       <div class="pf-work-card-top">
-        <Show when={props.chat.kind === "agent"}>
+        <Show when={showAgentChatMark(props.chat)}>
           <span
             class="pf-work-card-mark"
             title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
@@ -1478,27 +1489,24 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
         </Show>
         <span class="pf-work-card-project">{project()?.displayName ?? "—"}</span>
         <span class="pf-work-card-when">{shortRelTime(chatActivityMs(props.chat))}</span>
-        <button class="pf-rail-row-action" title="Chat options" onClick={(e) => ctrl.openFromButton("chat", id, e)}>
-          <IconMore size={14} />
-        </button>
       </div>
       <div class="pf-work-card-l1">
         <Show
-          when={ctrl.renaming() === id}
+          when={!renaming()}
           fallback={
-            <span class="pf-work-card-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
-              {chatTitleOverride(id) ?? props.chat.title}
-            </span>
+            <RenameField
+              ctrl={ctrl}
+              value={props.chat.title}
+              commit={(v) => {
+                if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
+                void renameChat(id, v);
+              }}
+            />
           }
         >
-          <RenameField
-            ctrl={ctrl}
-            value={props.chat.title}
-            commit={(v) => {
-              if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
-              void renameChat(id, v);
-            }}
-          />
+          <span class="pf-work-card-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
+            {chatTitleOverride(id) ?? props.chat.title}
+          </span>
         </Show>
         <span class="pf-work-card-status" classList={{ "pf-work-card-status--needsyou": showBracket() }}>
           {CARD_STATUS_TEXT[props.state]}
@@ -1506,6 +1514,39 @@ const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: 
       </div>
       <Show when={brief()}>{(text) => <div class="pf-work-card-brief">{text()}</div>}</Show>
       <WorkCardFooter branch={branch} plan={plan} lanes={lanes} cost={cost} />
+    </>
+  );
+  return (
+    <div
+      class="pf-work-card"
+      classList={{
+        active: workspace.activeChatId === id || staged(),
+        "pf-work-card--working": props.state === "working",
+        "pf-work-card--needsyou": showBracket(),
+        "pf-work-card--finishing": props.state === "justFinished",
+      }}
+      onContextMenu={(e) => ctrl.openFromContext("chat", id, e)}
+    >
+      <Show when={showBracket()}>
+        <WorkCardCorners />
+      </Show>
+      {/* #331 review (finding 4): a real <button> as the card's primary
+          interactive element, not a plain clickable <div> — proper tab stop,
+          accessible name, native Enter/Space activation. Only while not
+          renaming (see cardBody's comment above). The options button below
+          stays a sibling, never nested inside this one. */}
+      <Show when={!renaming()} fallback={<div class="pf-work-card-primary">{cardBody()}</div>}>
+        <button type="button" class="pf-work-card-primary" onClick={() => selectChat(id)}>
+          {cardBody()}
+        </button>
+      </Show>
+      <button
+        class="pf-rail-row-action pf-work-card-options"
+        title="Chat options"
+        onClick={(e) => ctrl.openFromButton("chat", id, e)}
+      >
+        <IconMore size={14} />
+      </button>
       <WorkCardEdge edge={edge} />
     </div>
   );

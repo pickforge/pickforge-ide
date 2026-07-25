@@ -3,8 +3,11 @@
 // but only for output the user did NOT watch happen. "Unseen" means the chat
 // wasn't active/staged, or the window wasn't focused; output that streamed
 // while the user was looking (including the echo of their own keystrokes) never alerts.
-// Attention persists across later output and clears only when the user comes
-// back to the chat (activation, staging, or window refocus on visible chats).
+// Attention persists across later output and across the user merely opening,
+// staging, or refocusing onto the chat (#331 — viewing a needs-you chat must
+// never silently demote it back to quiet mid-glance). It clears only when the
+// user actually acts: sending a message or answering a permission prompt,
+// both of which start a fresh turn — see agentTurnStarted/resolveChatAttention.
 import { createSignal } from "solid-js";
 import { hasAgentPane, isAgentPane } from "../lib/chatAutoName";
 import { playAttentionSound } from "../lib/attentionSound";
@@ -136,12 +139,32 @@ function finishBusyCycle(chatId: string) {
 }
 
 /** The user just caught up with this chat (opened it / refocused the window):
- *  drop its attention flag and forget what already streamed — only output from
- *  here on counts toward a new alert. */
+ *  forget what already streamed — only output from here on counts toward a
+ *  new alert. Does NOT clear a standing `attention` flag (#331): merely
+ *  looking at a needs-you chat must never auto-demote it back to quiet mid-
+ *  glance — see `resolveChatAttention` for what actually clears it. */
 function markChatSeen(chatId: string) {
-  if (states.get(chatId)?.attention) write(chatId, { attention: false });
   const cycle = cycles.get(chatId);
   if (cycle) cycle.unseenChars = 0;
+}
+
+/** The user did something that resolves a standing needs-you: sent a message
+ *  or (for structured agent chats) answered a permission prompt that resumes
+ *  the turn — both surface as a fresh `agentTurnStarted` (#331). Opening or
+ *  refocusing onto the chat (`markChatSeen`) never calls this. */
+function resolveChatAttention(chatId: string) {
+  if (states.get(chatId)?.attention) write(chatId, { attention: false });
+}
+
+/** A non-blank line the user submitted into this chat's terminal — the pty
+ *  chat's analogue of `agentTurnStarted`'s "sent a message" (#331 review):
+ *  pty chats have no discrete turn-start event of their own (there are no
+ *  turns, just a shell), so a real submission is the closest signal that
+ *  the user acted on a standing needs-you. Caller (chatTerminalLifecycle's
+ *  onUserSubmit) is expected to skip blank submits, same as
+ *  maybeAutoNameChat already does for auto-naming. */
+export function recordChatUserSubmit(chatId: string) {
+  resolveChatAttention(chatId);
 }
 
 export function chatBusy(chatId: string): boolean {
@@ -342,6 +365,12 @@ export function recordChatAttention(chatId: string, paneId: string) {
 // a turn finishing raises attention (chime + marker) only when the user did not
 // watch it happen. Same UI treatment as the pty path, reusing write/setAttention.
 export function agentTurnStarted(chatId: string) {
+  // Starting a new turn is the user acting — sending a message, or answering
+  // a permission prompt that resumes the turn — the one thing that resolves
+  // a standing needs-you (#331). Merely opening/refocusing the chat does not
+  // (see markChatSeen); this is the ONLY place `attention` clears itself
+  // outside a fresh unseen alert overwriting it.
+  resolveChatAttention(chatId);
   write(chatId, { busy: true });
 }
 

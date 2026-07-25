@@ -3063,12 +3063,24 @@ body.pf-resizing .pf-dc-resizer-grip {
   height: var(--pf-hairline-width);
   background: var(--pf-hairline);
 }
+/* Quiet rows sit further apart than the tight 2px used between a live card
+   and the divider — OWNER DEVIATION two-line rows (below) read cramped at
+   the list's default rhythm, so the quiet tail gets its own, roomier gap. */
+.pf-flat-quiet-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pf-space-xs);
+}
 
+/* Two-line quiet row (#331 OWNER DEVIATION from the approved sample's single
+   line): title on its own line, harness mark · project · relative time as a
+   quieter second line below it. Taller and more vertically spaced than the
+   sample's one-liner on purpose — see pf-flat-quiet-list above. */
 .pf-flat-row {
   display: flex;
   align-items: center;
   gap: var(--pf-space-sm);
-  padding: var(--pf-space-xs) var(--pf-space-sm);
+  padding: var(--pf-space-sm);
   border-radius: var(--pf-radius-sm);
   font-size: var(--pf-size-body-sm);
   color: var(--pf-text-med);
@@ -3085,25 +3097,6 @@ body.pf-resizing .pf-dc-resizer-grip {
   color: var(--pf-text-hi);
   box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
 }
-.pf-flat-row--busy:not(.active) {
-  background: color-mix(in srgb, var(--pf-ember) 8%, transparent);
-  box-shadow: inset var(--pf-bracket-width) 0 0 color-mix(in srgb, var(--pf-ember) 58%, transparent);
-}
-.pf-flat-row--busy:not(.active):hover {
-  background: color-mix(in srgb, var(--pf-ember) 12%, var(--pf-item-fill));
-}
-.pf-flat-row--attention {
-  background: color-mix(in srgb, var(--pf-warning) 16%, var(--pf-surface-1));
-  color: var(--pf-text-hi);
-  box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-warning);
-  animation: pf-chat-attention var(--pf-dur-pulse) var(--pf-ease-forge) infinite;
-}
-.pf-flat-row--attention:hover {
-  background: color-mix(in srgb, var(--pf-warning) 22%, var(--pf-surface-2));
-}
-@media (prefers-reduced-motion: reduce) {
-  .pf-flat-row--attention { animation: none; }
-}
 .pf-flat-dot {
   width: 5px;
   height: 5px;
@@ -3114,20 +3107,36 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-flat-row.active .pf-flat-dot {
   background: var(--pf-text-hi);
 }
-.pf-flat-row--busy .pf-flat-dot {
-  background: var(--pf-ember);
-  box-shadow: var(--pf-glow-ember-soft);
-}
-.pf-flat-row--attention .pf-flat-dot {
-  background: var(--pf-warning);
-  box-shadow: 0 0 var(--pf-space-md) color-mix(in srgb, var(--pf-warning) 70%, transparent);
+/* Renders as a real <button> (primary click/keyboard target, #331 review)
+   except while renaming, where it's a plain <div> wrapping the RenameField
+   input — a real <input> can't nest inside a real <button>. The reset
+   properties below are no-ops on the div variant. */
+.pf-flat-row-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .pf-flat-title {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.pf-flat-row-meta-line {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  min-width: 0;
 }
 .pf-flat-mark {
   display: inline-flex;
@@ -3142,11 +3151,18 @@ body.pf-resizing .pf-dc-resizer-grip {
   opacity: 1;
 }
 .pf-flat-meta {
-  flex: none;
+  /* Shrinkable (not `flex: none`) so its own ellipsis actually applies inside
+     .pf-flat-row-meta-line — a long project name otherwise overflowed the
+     row and pushed the options button off in narrow sidebars (#331 review,
+     finding 3). The mark stays flex:none/fixed-size next to it. */
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
   color: var(--pf-text-low);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pf-flat-row .pf-rail-row-action {
   opacity: 0;
@@ -3207,6 +3223,27 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-work-card:hover {
   border-color: var(--pf-hairline-strong);
 }
+/* Renders as a real <button> (primary click/keyboard target, #331 review)
+   except while renaming, where it's a plain <div> wrapping the RenameField
+   input — a real <input> can't nest inside a real <button>. The reset
+   properties below are no-ops on the div variant; layout (top/l1/brief/
+   footer stacked with the card's own 2px gap) is unchanged from before this
+   was pulled out of .pf-work-card directly. */
+.pf-work-card-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .pf-work-card.active {
   background: var(--pf-surface-3);
   box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
@@ -3218,9 +3255,14 @@ body.pf-resizing .pf-dc-resizer-grip {
   border-color: color-mix(in srgb, var(--pf-ember) 55%, transparent);
 }
 /* needs-you drops the border in favor of the bracket corners below — the
-   card frame is either a hairline/ember border OR brackets, never both. */
+   card frame is either a hairline/ember border OR brackets, never both. The
+   sample's bracket-framed cards also draw a tighter radius than the plain
+   hairline/ember card (4px vs. 10px) so the corners read as a distinct
+   frame, not a rounded card with marks stuck on; --pf-radius-sm (6px) is the
+   closest token to that intent. */
 .pf-work-card--needsyou {
   border-color: transparent;
+  border-radius: var(--pf-radius-sm);
   background: color-mix(in srgb, var(--pf-warning) 9%, var(--pf-surface-2));
 }
 /* Linger (#306 PR2 design latitude): a just-finished card is neither working
@@ -3273,6 +3315,10 @@ body.pf-resizing .pf-dc-resizer-grip {
   display: flex;
   align-items: center;
   gap: var(--pf-space-xs);
+  /* Reserves room for .pf-work-card-options, which sits outside the flow
+     (absolutely positioned, a sibling of the button — #331 review, finding
+     4) so it isn't a nested button inside .pf-work-card-primary. */
+  padding-right: var(--pf-space-lg);
 }
 .pf-work-card-mark {
   display: inline-flex;
@@ -3298,11 +3344,16 @@ body.pf-resizing .pf-dc-resizer-grip {
   color: var(--pf-text-low);
   flex: none;
 }
-.pf-work-card-top .pf-rail-row-action {
-  opacity: 0;
-}
 .pf-work-card:hover .pf-rail-row-action {
   opacity: 1;
+}
+/* A sibling of .pf-work-card-primary, not nested inside it (#331 review,
+   finding 4 — a real button can't contain another real button); positioned
+   to read as part of the top row same as before. */
+.pf-work-card-options {
+  position: absolute;
+  top: var(--pf-space-sm);
+  right: var(--pf-space-md);
 }
 
 .pf-work-card-l1 {

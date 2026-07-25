@@ -60,6 +60,25 @@ test("flatChatList on sorts needs-you above working above quiet, quiet by activi
   await expect(page.locator(".pf-work-card--working")).toHaveCount(1);
 });
 
+// #331 review (finding 2): the harness mark was previously gated to
+// `chat.kind === "agent"`, so every quiet row here — all four are
+// terminal-kind chats with a recognized agentId (Login screen/claudeCode,
+// Settings polish/codex, Slider refactor/claudeCode, Local usage analytics
+// plan/pi) — silently rendered with NO mark at all, leaving only
+// "project · time" instead of the spec'd "mark · project · time".
+test("flatChatList: quiet terminal-kind rows still show their harness mark (#331 review)", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  const quietRows = page.locator(".pf-flat-row");
+  await expect(quietRows).toHaveCount(4);
+  await expect(quietRows.locator(".pf-flat-mark")).toHaveCount(4);
+});
+
 // #306 PR1 review (P2-3, design decision): the project filter narrows
 // working + quiet chats, but a needs-you chat stays visible from EVERY
 // project — the flat list's whole point is "everything that needs me across
@@ -172,11 +191,12 @@ test("flatChatList: bracket L-corners appear only on the needs-you card", async 
 // #306 PR2 review (P2): showBracket previously also depended on
 // active/staged, so a needs-you chat you'd just opened (or staged onto the
 // orchestra board) silently lost its L-corners — a needs-you card must
-// ALWAYS get the bracket, focus/stage never suppress it. Blurring the
-// window first keeps the fixture's chat genuinely needsYou (attention only
-// clears via markChatSeen while the window is focused — see
-// chatActivity.ts), so "active" here is a real reachable state, not a
-// contradiction.
+// ALWAYS get the bracket, focus/stage never suppress it. The blur here is
+// belt-and-suspenders, not load-bearing: since #331, merely opening/staging
+// a needs-you chat never clears its attention at all (only sending a
+// message / answering a permission prompt does — see chatActivity.ts), so
+// "active" is a real reachable state regardless; blurring first just also
+// covers the pre-#331 window-focus path for good measure.
 test("flatChatList: bracket L-corners survive on an ACTIVE needs-you card (P2 fix)", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
@@ -229,6 +249,33 @@ test("flatChatList: a working card shows no bracket markup even when active", as
   await expect(activeWorking).toHaveCount(1);
   await expect(activeWorking.locator(".pf-work-card-corner")).toHaveCount(0);
   await expect(activeWorking.locator(".pf-work-card-status--needsyou")).toHaveCount(0);
+});
+
+// #331 review (finding 4): a work card and a quiet row were plain clickable
+// <div>s — no tab stop, no accessible name, no Enter/Space activation. Both
+// now expose a real <button> as their primary interactive element (the
+// "..." options button stays a separate sibling button). Proves the
+// keyboard path end to end: focus the button directly, press Enter, the
+// chat becomes active — the same outcome a click already produced above.
+test("flatChatList: work card and quiet row are keyboard-activatable via a real button (#331 review)", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  const workCardButton = page.locator(".pf-work-card--working button.pf-work-card-primary");
+  await expect(workCardButton).toHaveCount(1);
+  await workCardButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".pf-work-card--working.active")).toHaveCount(1);
+
+  const quietRowButton = page.locator("button.pf-flat-row-lines").first();
+  await expect(quietRowButton).toHaveCount(1);
+  await quietRowButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(quietRowButton.locator("xpath=..")).toHaveClass(/active/); // parent .pf-flat-row
 });
 
 // #306 PR2/PR3 — footer principle: every footer item is conditional on real

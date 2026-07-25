@@ -124,6 +124,34 @@ describe("hostedRoute", () => {
     expect(withoutContext).toMatchObject({ egressKeys: ["prompt"] });
   });
 
+  // Pins the drift-resistance property itself, not a snapshot of today's three
+  // fields: egressKeysFor must enumerate whatever keys are actually present on the
+  // context object, so this would fail if egressKeysFor regressed to a hand-checked
+  // field-by-field list that silently drops a field nobody remembered to add.
+  it("surfaces a field the egress checklist doesn't know about yet, instead of dropping it", async () => {
+    const { egressKeysFor } = await loadHosted();
+
+    const futureContext = {
+      projectName: "Billing",
+      // Not (yet) a declared HostedRoutingContext field or a known EGRESS_LABELS
+      // key — simulating a boundary change egressKeysFor hasn't been taught about.
+      activeFilePath: "src/App.tsx",
+    } as unknown as Parameters<typeof egressKeysFor>[0];
+
+    expect(egressKeysFor(futureContext)).toEqual(["prompt", "project name", "activeFilePath"]);
+  });
+
+  it("omits a present-but-empty field, same as the known fields", async () => {
+    const { egressKeysFor } = await loadHosted();
+
+    const context = {
+      projectName: "Billing",
+      chatNames: [],
+    } as unknown as Parameters<typeof egressKeysFor>[0];
+
+    expect(egressKeysFor(context)).toEqual(["prompt", "project name"]);
+  });
+
   it("generates a fresh idempotency key per attempt", async () => {
     env.invoke.mockResolvedValue({ data: { proposalJson: PROPOSAL, costCents: 1 }, error: null });
     const { hostedRoute } = await loadHosted();

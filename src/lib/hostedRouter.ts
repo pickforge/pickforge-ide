@@ -83,21 +83,35 @@ export function buildHostedRoutingContext(
   return Object.keys(context).length ? context : undefined;
 }
 
-// What the preview's egress indicator (#195) is allowed to claim left the device: read
-// straight off the context object that actually gets serialized into the request body,
-// never a hardcoded list, so a boundary change here is automatically reflected there.
-// commandText itself is unconditional — routing has no purpose without it.
-const EGRESS_LABELS = {
+// Friendly labels for the context keys we know about today. Deliberately NOT the
+// source of truth for what egressKeysFor reports — see below.
+const EGRESS_LABELS: Partial<Record<string, string>> = {
   projectName: "project name",
   chatNames: "chat titles",
   widgetLabels: "widget labels",
-} as const;
+};
 
-function egressKeysFor(context: HostedRoutingContext | undefined): string[] {
+function isPresentValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.length > 0;
+  return value !== undefined && value !== null;
+}
+
+// What the preview's egress indicator (#195) is allowed to claim left the device.
+// Enumerates the ACTUAL keys present on the context object that gets serialized into
+// the request body — never a hand-maintained parallel checklist of "the fields we
+// remember to check." A new HostedRoutingContext field that starts shipping data
+// therefore surfaces automatically (its friendly label if EGRESS_LABELS knows it,
+// else its own raw key name) instead of silently going unmentioned — under-reporting
+// is the dangerous direction for a privacy indicator, so an unmapped-but-present key
+// still shows, just less prettily. commandText/"prompt" is unconditional — routing
+// has no purpose without it, so it isn't gated on this same presence check.
+export function egressKeysFor(context: HostedRoutingContext | undefined): string[] {
   const keys: string[] = ["prompt"];
-  if (context?.projectName) keys.push(EGRESS_LABELS.projectName);
-  if (context?.chatNames?.length) keys.push(EGRESS_LABELS.chatNames);
-  if (context?.widgetLabels?.length) keys.push(EGRESS_LABELS.widgetLabels);
+  if (!context) return keys;
+  for (const [key, value] of Object.entries(context)) {
+    if (isPresentValue(value)) keys.push(EGRESS_LABELS[key] ?? key);
+  }
   return keys;
 }
 

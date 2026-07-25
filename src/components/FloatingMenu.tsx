@@ -24,12 +24,16 @@ export function FloatingMenu(props: {
   const place = () => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const r = el.getBoundingClientRect();
-    let x = props.anchor.align === "end" ? props.anchor.x - r.width : props.anchor.x;
+    // offsetWidth/offsetHeight report the untransformed border box. The menu's
+    // entry animation scales its visual bounds, so getBoundingClientRect() can
+    // otherwise place a tall menu from its smaller first animation frame.
+    const width = el.offsetWidth;
+    const height = el.offsetHeight;
+    let x = props.anchor.align === "end" ? props.anchor.x - width : props.anchor.x;
     let y = props.anchor.y;
-    if (x + r.width > vw - GAP) x = vw - r.width - GAP;
+    if (x + width > vw - GAP) x = vw - width - GAP;
     if (x < GAP) x = GAP;
-    if (y + r.height > vh - GAP) y = Math.max(GAP, props.anchor.y - r.height);
+    if (y + height > vh - GAP) y = Math.max(GAP, props.anchor.y - height);
     if (y < GAP) y = GAP;
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;

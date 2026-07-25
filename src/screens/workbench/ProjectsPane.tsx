@@ -94,6 +94,7 @@ import {
   chatLifecycleState,
   shortRelTime,
   sortFlatChats,
+  visibleFlatChats,
 } from "../../stores/flatChatSort";
 import { removeChatFromOrchestra } from "../../stores/orchestra";
 import { isChatStaged } from "../../stores/orchestraStage";
@@ -374,16 +375,17 @@ function createFlatChatListState(
 ) {
   // Single-select project filter (null = All projects) for the pane bar chips.
   const [filterRoot, setFilterRoot] = createSignal<string | null>(null);
+  // Needs-you chats stay globally visible regardless of the filter — see
+  // visibleFlatChats. Only working/quiet chats are actually narrowed.
   const flatChats = createMemo(() => {
-    const filter = filterRoot();
-    const roots = filter ? [filter] : workspace.projects.map((p) => p.projectRoot);
-    const chats: Chat[] = [];
-    for (const root of roots) {
-      for (const c of chatsFor(root)) {
-        if (!isChatArchived(c.chatId) && isPrimaryChat(c)) chats.push(c);
-      }
+    const chatsByRoot = new Map<string, Chat[]>();
+    for (const p of workspace.projects) {
+      chatsByRoot.set(
+        p.projectRoot,
+        chatsFor(p.projectRoot).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)),
+      );
     }
-    return chats;
+    return visibleFlatChats(chatsByRoot, filterRoot());
   });
   const flatSorted = createMemo(() => sortFlatChats(flatChats()));
   // Split once here so both the row component and the QUIET · N divider share
@@ -405,7 +407,36 @@ function createFlatChatListState(
     menuState.closeMenu();
   };
 
-  return { filterRoot, setFilterRoot, flatLive, flatQuiet, newChatFromProjectPicker };
+  // Eager cross-project load (see ProjectsPane's effect): tracked per-root so
+  // one project's failed fetch surfaces its own retry instead of silently
+  // rendering "no chats" or throwing an unhandled rejection. ensureChatsLoaded
+  // never marks a failed root as loaded, so calling it again is a real retry.
+  const [loadErrorRoots, setLoadErrorRoots] = createSignal<Set<string>>(new Set());
+  const loadProjectChats = (root: string) => {
+    ensureChatsLoaded(root)
+      .then(() =>
+        setLoadErrorRoots((s) => {
+          if (!s.has(root)) return s;
+          const next = new Set(s);
+          next.delete(root);
+          return next;
+        }),
+      )
+      .catch((error) => {
+        console.error("[pickforge] flat chat list: failed to load chats for project", root, error);
+        setLoadErrorRoots((s) => (s.has(root) ? s : new Set(s).add(root)));
+      });
+  };
+
+  return {
+    filterRoot,
+    setFilterRoot,
+    flatLive,
+    flatQuiet,
+    newChatFromProjectPicker,
+    loadErrorRoots,
+    loadProjectChats,
+  };
 }
 
 /** Owns every signal and handler shared across the pane's tree/menu/drag
@@ -1281,12 +1312,34 @@ const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat; state: C
   );
 };
 
+// A project's chats failed to load eagerly (#306 PR1's cross-project fetch,
+// see createFlatChatListState.loadProjectChats): named per-project rather
+// than a blanket error, with its own retry — the other, successfully-loaded
+// projects still render normally alongside this.
+const FlatLoadErrors = (props: { ctrl: ProjectsPaneController }) => (
+  <Show when={props.ctrl.loadErrorRoots().size > 0}>
+    <div class="pf-flat-load-error">
+      <For each={[...props.ctrl.loadErrorRoots()]}>
+        {(root) => (
+          <div class="pf-flat-load-error-row">
+            <span>{workspace.projects.find((p) => p.projectRoot === root)?.displayName ?? root} failed to load</span>
+            <button type="button" class="pf-menu-item" onClick={() => props.ctrl.loadProjectChats(root)}>
+              Retry
+            </button>
+          </div>
+        )}
+      </For>
+    </div>
+  </Show>
+);
+
 const FlatChatList = (props: { ctrl: ProjectsPaneController }) => {
   const ctrl = props.ctrl;
   const live = ctrl.flatLive;
   const quiet = ctrl.flatQuiet;
   return (
     <div class="pf-flat-list">
+      <FlatLoadErrors ctrl={ctrl} />
       <Show when={live().length > 0 || quiet().length > 0} fallback={<div class="pf-rail-empty">No chats yet</div>}>
         <For each={live()}>
           {(chat) => <FlatChatRow ctrl={ctrl} chat={chat} state={chatLifecycleState(chat.chatId)} />}
@@ -1386,10 +1439,12 @@ export function ProjectsPane() {
   // Flag on: the flat list needs every project's chats, not just the active
   // one's — load them all eagerly instead of the tree's per-project lazy
   // fetch on expand. Re-runs (cheaply, via ensureChatsLoaded's own cache)
-  // whenever a project is added.
+  // whenever a project is added. Each load is caught individually
+  // (ctrl.loadProjectChats) so one project's rejection can't blank the whole
+  // list or escape as an unhandled rejection.
   createEffect(() => {
     if (!flat()) return;
-    for (const p of workspace.projects) void ensureChatsLoaded(p.projectRoot);
+    for (const p of workspace.projects) ctrl.loadProjectChats(p.projectRoot);
   });
 
   return (

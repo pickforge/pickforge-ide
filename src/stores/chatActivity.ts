@@ -28,6 +28,13 @@ interface BusyCycle {
 const states = new Map<string, ChatActivityState>();
 const [activity, setActivity] = createSignal<Record<string, ChatActivityState>>({});
 const cycles = new Map<string, BusyCycle>();
+// Live "last activity" timestamps (#306's flat chat list sorts the quiet
+// bucket by this) — a plain Map, not a signal: the flat list re-derives it
+// from a memo that already tracks `activity()`, so a second reactive source
+// here would be redundant. Session-only (in-memory), not persisted to the
+// `chats.last_activity_at` DB column — a DB write per turn is heavier than
+// PR1 should carry; see flatChatSort.ts.
+const lastActivityMs = new Map<string, number>();
 let activeChatId: string | null = null;
 let stagedChatIds: ReadonlySet<string> = new Set();
 let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
@@ -44,6 +51,13 @@ function write(chatId: string, patch: Partial<ChatActivityState>) {
     return;
   }
   states.set(chatId, next);
+  // A busy transition (either direction) or a fresh chime is real chat-driven
+  // activity; clearing attention because the user looked (markChatSeen) is
+  // not — so it's excluded, or opening a chat would wrongly bump it to the
+  // top of the quiet sort.
+  if (patch.busy !== undefined || patch.attention === true) {
+    lastActivityMs.set(chatId, Date.now());
+  }
   setActivity((snapshot) => ({ ...snapshot, [chatId]: next }));
 }
 
@@ -91,6 +105,13 @@ export function chatBusy(chatId: string): boolean {
 
 export function chatAttention(chatId: string): boolean {
   return activity()[chatId]?.attention ?? false;
+}
+
+/** This session's live last-activity time for a chat, or undefined if it
+ *  hasn't had a busy/attention transition since the app started — callers
+ *  fall back to the chat's persisted `lastActivityAt` in that case. */
+export function chatLastActivityMs(chatId: string): number | undefined {
+  return lastActivityMs.get(chatId);
 }
 
 export function setActiveChatForActivity(chatId: string | null) {
@@ -295,6 +316,7 @@ export function handlePaneClosed(chatId: string, paneId: string) {
 export function clearChatActivity(chatId: string) {
   clearCycle(chatId);
   unseenGraceUntil.delete(chatId);
+  lastActivityMs.delete(chatId);
   const prefix = `${chatId}\u0000`;
   for (const key of scanStates.keys()) {
     if (key.startsWith(prefix)) scanStates.delete(key);

@@ -18,6 +18,10 @@ const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
 // installFlatChatListFixture, src/lib/flatChatListFixture.ts) plus an older
 // quiet chat, spread across both sample projects.
 const VRT_FLAT_CHAT_LIST_FIXTURE_KEY = "pickforge.vrt.flatChatListFixture";
+// Set to a projectRoot to make chats_list reject for just that project — the
+// flat list's eager cross-project load must survive one project failing
+// (#306 PR1 review finding P2-2).
+const VRT_FLAT_CHAT_LIST_LOAD_ERROR_KEY = "pickforge.vrt.flatChatListLoadErrorRoot";
 
 // A trimmed, representative slice of `omp models --json --no-extensions`
 // output (captured from a real omp 17.1.1 install, truncated to a handful of
@@ -240,7 +244,18 @@ function flatChatListFixtureEnabled(): boolean {
   }
 }
 
+function flatChatListLoadErrorRoot(): string | null {
+  try {
+    return localStorage.getItem(VRT_FLAT_CHAT_LIST_LOAD_ERROR_KEY);
+  } catch {
+    return null;
+  }
+}
+
 function chatsForProject(projectRoot: unknown) {
+  if (flatChatListLoadErrorRoot() === projectRoot) {
+    throw new Error(`mock chats_list failure for ${String(projectRoot)}`);
+  }
   let chats = SAMPLE_CHATS.filter((c) => c.projectRoot === projectRoot);
   if (flatChatListFixtureEnabled()) {
     chats = [...chats, ...FLAT_CHAT_LIST_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];

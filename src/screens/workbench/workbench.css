@@ -2779,3 +2779,29 @@ body.pf-resizing .pf-dc-resizer-grip {
 .pf-flat-row:hover .pf-rail-row-action {
   opacity: 1;
 }
+
+/* One project's eager load failed (see loadProjectChats) — a named, quiet
+   error row with its own retry, not a blanket banner: the other projects'
+   chats keep rendering next to it. */
+.pf-flat-load-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--pf-space-xs);
+}
+.pf-flat-load-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-sm);
+  padding: var(--pf-space-xs) var(--pf-space-sm);
+  border-radius: var(--pf-radius-sm);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-error);
+}
+.pf-flat-load-error-row .pf-menu-item {
+  flex: none;
+  padding: 2px var(--pf-space-sm);
+  color: var(--pf-text-med);
+}

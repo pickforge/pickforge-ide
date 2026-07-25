@@ -37,6 +37,7 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- update-vrt-baselines now re-dispatches ci on the branch after committing regenerated PNGs (GITHUB_TOKEN pushes trigger no workflows), so PRs no longer strand at "no checks reported"; ci is manually dispatchable and its token is pinned read-only.
 - The v2 SDK bridge now grants the skip-permissions capability at every spawn
   because its long-lived CLI process cannot gain that capability later;
   permissions are still bypassed only when the user explicitly selects bypass

@@ -439,6 +439,36 @@ test("flatChatList: reduced motion collapses the linger fade instantly (no trans
   expect(durations.every((d) => d === 0)).toBe(true);
 });
 
+// #341: `.pf-flat-list` is a flex column and a card's own overflow:hidden
+// zeroes its automatic flex min-height, so a short pane squashed every card
+// into a clipped one-line pill instead of scrolling the list. Squash is
+// directly observable as vertical clipping (scrollHeight > clientHeight), so
+// this pins the fix without a screenshot: force a short viewport with the
+// heavy fixture (4 cards + quiet tail can never fit), then require every
+// card to be unclipped and the list itself to be the thing that scrolls.
+test("flatChatList: a short pane scrolls the list instead of squashing cards (#341)", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 420 });
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+    localStorage.setItem("pickforge.vrt.flatChatListHeavyFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Whisper batch tuning").waitFor();
+
+  const clipped = await page.locator(".pf-flat-list .pf-work-card").evaluateAll((cards) =>
+    cards
+      .filter((el) => el.scrollHeight > el.clientHeight + 1)
+      .map((el) => `${el.querySelector(".pf-work-card-title")?.textContent}: ${el.clientHeight}/${el.scrollHeight}`),
+  );
+  expect(clipped).toEqual([]);
+
+  const listScrolls = await page
+    .locator(".pf-flat-list")
+    .evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+  expect(listScrolls).toBe(true);
+});
+
 test("flatChatList calm pane (visual) — no live chats, just the quiet tail", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));

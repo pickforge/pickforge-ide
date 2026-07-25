@@ -3071,6 +3071,15 @@ body.pf-resizing .pf-dc-resizer-grip {
   scrollbar-gutter: stable;
   padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
 }
+/* A work card's own overflow:hidden zeroes its automatic flex min-height, so
+   without this a short pane (e.g. FILES expanded below) squashes every card
+   into a clipped one-line pill instead of letting the list scroll (#341).
+   Applies to all children: rows, dividers, and error blocks must hold their
+   intrinsic height too, or the redistribution shifts rows under the cursor
+   mid-click. */
+.pf-flat-list > * {
+  flex-shrink: 0;
+}
 .pf-flat-quiet-divider {
   display: flex;
   align-items: center;

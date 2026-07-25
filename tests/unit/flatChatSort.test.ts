@@ -26,6 +26,7 @@ vi.mock("../../src/lib/attentionSound", () => ({
 import type { Chat } from "../../src/lib/db";
 import {
   type ChatLifecycleState,
+  chatCardVisualState,
   chatLifecycleState,
   shortRelTime,
   sortFlatChats,
@@ -35,6 +36,7 @@ import {
   agentTurnCleared,
   agentTurnDone,
   agentTurnStarted,
+  CARD_LINGER_MS,
   chatAttention,
   chatBusy,
   clearChatActivity,
@@ -224,6 +226,51 @@ describe("visibleFlatChats — filter narrows working/quiet, never needs-you (P2
     const visible = visibleFlatChats(chatsByRoot, null, () => "quiet");
 
     expect(visible.map((c) => c.chatId).sort()).toEqual(["quiet-a", "quiet-b"]);
+  });
+});
+
+// #306 PR2: chatCardVisualState folds the work-card linger into the
+// lifecycle state — this is what decides FlatWorkCard vs. the quiet
+// one-liner (card-vs-one-liner selection by state).
+describe("chatCardVisualState — lifecycle state plus the work-card linger (#306 PR2)", () => {
+  const id = "card-visual-chat";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    clearChatActivity(id);
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("reads working while a turn is in flight", () => {
+    agentTurnStarted(id);
+    expect(chatCardVisualState(id)).toBe("working");
+  });
+
+  it("reads needsYou once an unseen turn finishes", () => {
+    agentTurnStarted(id);
+    agentTurnDone(id);
+    expect(chatCardVisualState(id)).toBe("needsYou");
+  });
+
+  it("reads quiet for a chat that never had any activity", () => {
+    expect(chatCardVisualState(id)).toBe("quiet");
+  });
+
+  it("reads justFinished right after a live chat settles quiet, then quiet again after the linger", () => {
+    agentTurnStarted(id);
+    agentTurnCleared(id); // settles quiet without raising attention
+
+    expect(chatCardVisualState(id)).toBe("justFinished");
+
+    vi.advanceTimersByTime(CARD_LINGER_MS - 1);
+    expect(chatCardVisualState(id)).toBe("justFinished");
+
+    vi.advanceTimersByTime(1);
+    expect(chatCardVisualState(id)).toBe("quiet");
   });
 });
 

@@ -35,9 +35,11 @@ import {
   agentTurnCleared,
   agentTurnDone,
   agentTurnStarted,
+  CARD_LINGER_MS,
   CHAT_BUSY_QUIET_MS,
   chatAttention,
   chatBusy,
+  chatJustFinished,
   clearChatActivity,
   graceChatUnseen,
   handlePaneClosed,
@@ -540,5 +542,115 @@ describe("chatActivity — pane close and archive cleanup", () => {
     expect(chatBusy(id)).toBe(false);
     expect(chatAttention(id)).toBe(false);
     expect(sound.playAttentionSound).not.toHaveBeenCalled();
+  });
+});
+
+// #306 PR2: the sidebar work card lingers for CARD_LINGER_MS after a live
+// (busy/needs-you) chat settles quiet, instead of collapsing to the
+// one-liner immediately — see chatCardVisualState in flatChatSort.ts.
+describe("chatActivity — justFinished linger (#306 PR2)", () => {
+  it("lingers after a turn interrupts quietly (no attention), then collapses", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnCleared(id);
+
+    expect(chatBusy(id)).toBe(false);
+    expect(chatAttention(id)).toBe(false);
+    expect(chatJustFinished(id)).toBe(true);
+
+    vi.advanceTimersByTime(CARD_LINGER_MS - 1);
+    expect(chatJustFinished(id)).toBe(true);
+
+    vi.advanceTimersByTime(1);
+    expect(chatJustFinished(id)).toBe(false);
+  });
+
+  it("does not start a linger just from the user opening a needs-you chat", () => {
+    // Mirrors the existing lastActivityMs exclusion exactly: clearing
+    // attention because the user looked (markChatSeen) is not real
+    // chat-driven activity, so it must not start a card linger any more than
+    // it should bump the sort timestamp — the user is already looking at it,
+    // there's nothing to catch on a glance.
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+    expect(chatAttention(id)).toBe(true);
+    expect(chatJustFinished(id)).toBe(false); // still live (needs-you), not finished yet
+
+    setActiveChatForActivity(id); // the user opens it, clearing attention
+
+    expect(chatAttention(id)).toBe(false);
+    expect(chatJustFinished(id)).toBe(false);
+  });
+
+  it("still lingers when a turn finishes on the active, focused chat", () => {
+    // The busy->false transition is real chat-driven activity regardless of
+    // who's watching (same busy/attention distinction lastActivityMs already
+    // draws) — the sidebar card briefly shows "done" even for the chat
+    // you're currently in, then settles, same as any other card.
+    const id = seed(null);
+    setActiveChatForActivity(id);
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(false);
+    expect(chatJustFinished(id)).toBe(true);
+
+    vi.advanceTimersByTime(CARD_LINGER_MS);
+    expect(chatJustFinished(id)).toBe(false);
+  });
+
+  it("re-entering a live state cancels the pending collapse", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnCleared(id);
+    expect(chatJustFinished(id)).toBe(true);
+
+    vi.advanceTimersByTime(CARD_LINGER_MS / 2);
+    agentTurnStarted(id); // busy again before the linger expired
+
+    expect(chatBusy(id)).toBe(true);
+    expect(chatJustFinished(id)).toBe(false);
+
+    // The cancelled timer must not fire later and wrongly clear anything.
+    vi.advanceTimersByTime(CARD_LINGER_MS);
+    expect(chatJustFinished(id)).toBe(false);
+    expect(chatBusy(id)).toBe(true);
+  });
+
+  it("agentTurnDone straight to needs-you never flashes justFinished", () => {
+    // agentTurnDone writes busy:false then attention:true in the same call —
+    // the intermediate quiet moment must not leave a stuck justFinished flag
+    // once attention lands.
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnDone(id);
+
+    expect(chatAttention(id)).toBe(true);
+    expect(chatJustFinished(id)).toBe(false);
+  });
+
+  it("clearChatActivity cancels a pending linger timer", () => {
+    const id = seed(null);
+    setActiveChatForActivity("other-chat");
+
+    agentTurnStarted(id);
+    agentTurnCleared(id);
+    expect(chatJustFinished(id)).toBe(true);
+
+    clearChatActivity(id);
+
+    // No leaked timer firing a write on a cleared chat.
+    vi.advanceTimersByTime(CARD_LINGER_MS);
+    expect(chatJustFinished(id)).toBe(false);
   });
 });

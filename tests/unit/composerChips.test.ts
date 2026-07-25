@@ -243,6 +243,28 @@ describe("line filler after a trailing newline (#352)", () => {
     expect(deleteTargetsFillerTail(root)).toBe(false);
   });
 
+  it("lets a Delete through when the filler only ends a nested block", () => {
+    // A browser edit can wrap content in a block. "Last inside my container" is
+    // then not the end of the message, and blocking Delete there would eat a
+    // real forward-delete.
+    root.replaceChildren();
+    const block = document.createElement("div");
+    block.append(document.createTextNode("abc"), document.createElement("br"));
+    const filler = document.createElement("br");
+    filler.setAttribute("data-pf-line-filler", "");
+    block.appendChild(filler);
+    root.append(block, document.createTextNode("still here"));
+
+    const range = document.createRange();
+    range.setStart(block, 2);
+    range.collapse(true);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(deleteTargetsFillerTail(root)).toBe(false);
+  });
+
   it("puts the end-of-text caret on the new empty line, before the filler", () => {
     renderComposer(root, "abc\n", [], buildChip);
     setCaretAtOffset(root, "abc\n".length, []);

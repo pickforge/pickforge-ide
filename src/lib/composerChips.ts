@@ -357,6 +357,19 @@ export function setCaretAtOffset(
  *  default then: eating the filler would put WebKit back on the element-boundary
  *  caret the filler exists to avoid, and a Delete at the end of the message is a
  *  no-op anyway. */
+/** True when nothing follows `node` anywhere up to `root` — a node that ends the
+ *  editor, not merely its own parent. The editor is normally flat, but a browser
+ *  edit can wrap content in a block, and "last inside my container" would then
+ *  wrongly claim the end of the message. */
+function endsTheEditor(node: Node, root: HTMLElement): boolean {
+  let current: Node | null = node;
+  while (current && current !== root) {
+    if (current.nextSibling) return false;
+    current = current.parentNode;
+  }
+  return true;
+}
+
 export function deleteTargetsFillerTail(root: HTMLElement): boolean {
   const sel = activeSelection(root);
   if (!sel || !sel.isCollapsed) return false;
@@ -369,17 +382,13 @@ export function deleteTargetsFillerTail(root: HTMLElement): boolean {
   // invisible to it) would never rebuild the editor to bring it back.
   if (container.nodeType === 1) {
     const next = container.childNodes[range.startOffset];
-    return !!next && next.nodeType === 1 && isLineFiller(next as Element) && !next.nextSibling;
+    if (!next || next.nodeType !== 1 || !isLineFiller(next as Element)) return false;
+    return endsTheEditor(next, root);
   }
   if (container.nodeType !== 3) return false;
   const text = container as Text;
   if (!isFillerOnly(text.data.slice(range.startOffset))) return false;
-  let node: Node | null = text;
-  while (node && node !== root) {
-    if (node.nextSibling) return false;
-    node = node.parentNode;
-  }
-  return true;
+  return endsTheEditor(text, root);
 }
 
 /** Attachment id of the chip immediately adjacent to the collapsed caret in the

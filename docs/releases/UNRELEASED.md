@@ -33,9 +33,11 @@ reset this file.
   the box's bottom edge doubling as the usage bar. It no longer floats loose
   beside the agent/model pickers or stack into three lines in a narrow pane, and
   the wider bar makes a small fraction of a large context window visible.
+- Fixed flat-list work cards collapsing into clipped one-line pills when the sidebar pane is short (e.g. Files section expanded); the list now scrolls, which also stops rows shifting under the cursor and eating clicks.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- update-vrt-baselines now re-dispatches ci on the branch after committing regenerated PNGs (GITHUB_TOKEN pushes trigger no workflows), so PRs no longer strand at "no checks reported"; ci is manually dispatchable and its token is pinned read-only.
 - The v2 SDK bridge now grants the skip-permissions capability at every spawn
   because its long-lived CLI process cannot gain that capability later;
   permissions are still bypassed only when the user explicitly selects bypass

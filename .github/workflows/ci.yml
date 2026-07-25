@@ -8,6 +8,23 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Dispatched by update-vrt-baselines after it pushes regenerated PNGs: a
+  # push made with the default GITHUB_TOKEN never triggers pull_request/push
+  # workflows (GitHub's recursion guard), so that workflow re-runs the gate
+  # explicitly. The guard exempts workflow_dispatch, so no PAT is needed.
+  # Note: a dispatched run tests the branch head directly, not the PR merge
+  # ref. The merge-gate guard here is main's branch protection (required
+  # status checks with strict "branch must be up to date"): a branch behind
+  # main can't merge on these checks alone, and bringing it up to date is a
+  # normal-token push that triggers a fresh pull_request run on the merge
+  # result. (#349 review)
+  workflow_dispatch:
+
+# Explicit read-only token: ci needs no write scopes, and pinning it here
+# keeps a future repo-default flip to "write" from silently widening a
+# workflow that is now also manually dispatchable (#349 review).
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}

@@ -3358,6 +3358,25 @@ body.pf-resizing .pf-dc-resizer-grip {
   color: var(--pf-text-low);
   margin-top: 2px;
 }
+/* Branch/worktree name (#306 PR3) — present only when the project root
+   resolves to a git branch (see cardBranch). Truncated, never wraps or
+   pushes the rest of the footer around; same idiom as SourceControl's
+   .pf-sc-section-branch. */
+.pf-work-card-branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Plan progress M/N (#306 PR3) — present only with an active plan (see
+   cardPlanProgress). Fixed-width digits so the footer doesn't jitter as the
+   count changes. */
+.pf-work-card-plan {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
 /* Swarm lane ticks: one per lane, unlit until it starts — present only on a
    card whose chat dispatched a swarm (see cardSwarmRun/cardLanes). */
 .pf-work-card-lanes {

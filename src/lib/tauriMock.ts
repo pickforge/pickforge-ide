@@ -426,11 +426,13 @@ const FLAT_CHAT_LIST_HEAVY_EXTRA_CHATS: Chat[] = [
   { chatId: FLAT_CHAT_LIST_NEEDS_YOU_ID_2, projectRoot: "/home/dev/acme-app", title: "ADB session recovery", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "pi", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Wants to run: adb kill-server", createdAt: now, lastActivityAt: now, sortOrder: 7 },
   { chatId: FLAT_CHAT_LIST_WORKING_ID_2, projectRoot: "/home/dev/widgets", title: "Whisper batch tuning", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "omp", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Cut transcription latency below 800ms", createdAt: now, lastActivityAt: now, sortOrder: 8 },
 ];
-// #306 PR2's flat work-card VRT scenario: usage history for the working
-// chat (installFlatChatListFixture calls ensureAgentChat with this id,
-// headlessly — the chat is never opened) so its context edge + footer cost
-// have real, nonzero data to render, same replay mechanism AGENT_CHAT_FIXTURE
-// already uses for ContextMeter's own VRT.
+// #306 PR2's flat work-card VRT scenario: usage + plan history for the
+// working chat (installFlatChatListFixture calls ensureAgentChat with this
+// id, headlessly — the chat is never opened) so its context edge, footer
+// cost, and (#306 PR3) footer plan M/N have real, nonzero data to render,
+// same replay mechanism AGENT_CHAT_FIXTURE already uses for ContextMeter's
+// own VRT. The plan tally (2/5) matches the locked mockup's own worked
+// example for this exact card (sidebar-work-card-merge.html).
 const FLAT_CHAT_LIST_WORKING_HISTORY: AgentTimelineEntry[] = [
   {
     entryType: "message",
@@ -461,6 +463,16 @@ const FLAT_CHAT_LIST_WORKING_HISTORY: AgentTimelineEntry[] = [
     }),
     createdAt: now,
   },
+  item(4, {
+    kind: "planUpdate",
+    items: [
+      { text: "Survey existing waiting-state precedent", status: "completed" },
+      { text: "Add the waiting status to the sidebar row", status: "completed" },
+      { text: "Wire the swarm survey lanes into the footer", status: "inProgress" },
+      { text: "VRT coverage for the waiting state", status: "pending" },
+      { text: "Update the issue checklist", status: "pending" },
+    ],
+  }),
 ];
 // One lane done, two still running — the mixed state the merged mockup's
 // "normal" moment shows for this same chat.

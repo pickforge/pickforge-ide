@@ -142,6 +142,10 @@ function parseFragmentLocation(fragment: string): ChatCitationLocation | null {
     const endLine = parsePosition(m[2]);
     if (line === null || endLine === null) return null;
     if (endLine < line) return null; // invalid range
+    // A zero-width range (`#L12-L12`) carries no more information than a
+    // single line — normalize it away so callers only ever see `endLine` for
+    // an ACTUAL multi-line range, never an incidental self-range.
+    if (endLine === line) return { line };
     return { line, endLine };
   }
   m = LINE_RE.exec(fragment);

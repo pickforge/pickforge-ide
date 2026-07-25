@@ -185,6 +185,28 @@ describe("classifyChatLink: percent-encoding", () => {
   it("blocks a percent-encoded control character in the decoded path", () => {
     expect(classifyChatLink("src/a%07.ts")).toEqual({ kind: "blocked" });
   });
+
+  it("decodes exactly once — a double-encoded %252F stays literal, never becomes '/'", () => {
+    // A single decode of "%252F" yields the literal text "%2F" (the "%25"
+    // decodes to '%'; "2F" is untouched). A regression that decoded twice
+    // would instead produce "src/a.ts", silently reinterpreting the path
+    // shape after validation already ran on the raw string.
+    const result = classifyChatLink("src%252Fa.ts");
+    expect(result).toEqual(citation("src%2Fa.ts"));
+    expect(result).not.toEqual(citation("src/a.ts"));
+  });
+});
+
+describe("classifyChatLink: port-like / line-suffix boundary", () => {
+  it("resolves a host:port-shaped href per the compat delimiter rule, not as a URL authority", () => {
+    // No scheme, so this is citation syntax: "host" is the path and the
+    // trailing ":8080" is a valid single-line location — exactly the
+    // `:line[:column]` compatibility form, applied here to something that
+    // could be misread as a hostname:port pair. Pinned explicitly since the
+    // classifier never gives a bare `host:port` string any URL-authority
+    // meaning — only the citation-delimiter reading exists.
+    expect(classifyChatLink("host:8080")).toEqual(citation("host", { line: 8080 }));
+  });
 });
 
 describe("classifyChatLink: local-link queries are rejected", () => {
@@ -229,10 +251,16 @@ describe("classifyChatLink: invalid ranges", () => {
     expect(classifyChatLink("src/a.ts#L18-L12")).toEqual({ kind: "blocked" });
   });
 
-  it("accepts a single-line range", () => {
-    expect(classifyChatLink("src/a.ts#L12-L12")).toEqual(
-      citation("src/a.ts", { line: 12, endLine: 12 }),
-    );
+  it("normalizes a zero-width range (L12-L12) to a plain single-line citation", () => {
+    expect(classifyChatLink("src/a.ts#L12-L12")).toEqual(citation("src/a.ts", { line: 12 }));
+    // Must be indistinguishable from the plain #L12 form, not merely "not
+    // rejected" — a regression that stopped dropping endLine would still
+    // pass a looser `toMatchObject({ line: 12 })` assertion.
+    expect(classifyChatLink("src/a.ts#L12-L12")).toEqual(classifyChatLink("src/a.ts#L12"));
+  });
+
+  it("still rejects a reversed range even at the boundary", () => {
+    expect(classifyChatLink("src/a.ts#L18-L12")).toEqual({ kind: "blocked" });
   });
 
   it("blocks unrecognized fragment location syntax", () => {

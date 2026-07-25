@@ -25,6 +25,7 @@ reset this file.
 - Fixed OMP 17.1.1 native chat being incorrectly reported as unavailable.
 - Stopped OMP turns now retain the user prompt, partial response, and interrupted status in chat history.
 - Fixed macOS window rubber-banding and popover menus selecting a neighboring row near the bottom of the window.
+- Fixed bypass-permissions mode breaking agent SDK sessions and leaving later sends stuck as working.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
@@ -42,6 +43,7 @@ reset this file.
 - `bun run lint`
 - `bun run build`
 - `bunx playwright test tests/vrt/dropdown.spec.ts` (against an isolated VRT dev server)
+- `cargo test -p pickforge-core`
 
 ### Not tested yet — release gates
 

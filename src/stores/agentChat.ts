@@ -1987,7 +1987,18 @@ export async function sendAgentMessage(
     }
 
     const target = await resolveSendTarget(chatId, sessionId, stale);
-    if (!target) return;
+    if (!target) {
+      const current = chats[chatId];
+      if (current) {
+        rollbackFailedSend(
+          chatId,
+          current,
+          optimisticSeq,
+          new Error("Agent chat session ended before send"),
+        );
+      }
+      return;
+    }
     // ensureAgentChat can force a remote session onto v1 after the first
     // capability check. Gate the live state that will actually dispatch.
     assertImageInputSupported(target.chat, imageList);

@@ -2662,6 +2662,51 @@ describe("sendAgentMessage", () => {
     );
   });
 
+  it("rolls back a send when its session disappears while a mode change is pending", async () => {
+    flags.ompAgents = true;
+    const chatId = nextChatId();
+    const setMode = deferred<void>();
+    const dispose = deferred<void>();
+    let startCount = 0;
+    let emit: ((event: AgentEvent) => void) | undefined;
+    tauri.invoke.mockImplementation((cmd: string, args?: {
+      onEvent?: { onmessage?: (event: AgentEvent) => void };
+    }) => {
+      if (cmd === "agent_chat_history") return Promise.resolve([]);
+      if (cmd === "agent_chat_start") {
+        startCount += 1;
+        emit = args?.onEvent?.onmessage;
+        return Promise.resolve(`session-${startCount}`);
+      }
+      if (cmd === "agent_chat_set_mode") return setMode.promise;
+      if (cmd === "agent_chat_dispose") return dispose.promise;
+      return Promise.resolve(null);
+    });
+
+    await ensureAgentChat(chatId, "/project", "omp", null, { engine: "v2" });
+    setAgentChatMode(chatId, "default");
+    await flushPromises();
+
+    const sending = sendAgentMessage(chatId, "hello");
+    await flushPromises();
+    expect(agentChat(chatId)?.turnActive).toBe(true);
+    expect(timeline(chatId)).toEqual([
+      { type: "userMessage", seq: 1, text: "hello", optimistic: true },
+    ]);
+
+    emit?.({ kind: "turnFailed", error: "session dropped" });
+    const retrying = retryAgentChatConnection(chatId);
+    setMode.resolve(undefined);
+    await sending;
+
+    expect(agentChat(chatId)?.turnActive).toBe(false);
+    expect(agentChat(chatId)?.error).toBe("Agent chat session ended before send");
+    expect(timeline(chatId)).toEqual([]);
+
+    dispose.resolve(undefined);
+    await retrying;
+  });
+
   it("retries a failed start when sending and delivers the message", async () => {
     const chatId = nextChatId();
     let startCount = 0;

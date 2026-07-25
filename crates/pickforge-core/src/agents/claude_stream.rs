@@ -568,6 +568,9 @@ fn turn_command(opts: &ClaudeTurnOptions) -> Result<TurnCommand, AgentSpawnError
             .clone()
             .unwrap_or_else(|| DEFAULT_ALLOWED_TOOLS.to_string()),
     ];
+    if opts.permission_mode.as_deref() == Some("bypassPermissions") {
+        args.push("--dangerously-skip-permissions".to_string());
+    }
     if let Some(model) = opts.model.as_deref().filter(|value| !value.trim().is_empty()) {
         args.push("--model".to_string());
         args.push(model.to_string());
@@ -1111,6 +1114,25 @@ mod tests {
             binary: Some(binary.to_string_lossy().to_string()),
             remote: None,
         }
+    }
+
+    #[test]
+    fn bypass_permissions_turn_opts_in_at_spawn() {
+        let options = ClaudeTurnOptions {
+            permission_mode: Some("bypassPermissions".to_string()),
+            ..runner_opts(PathBuf::from("claude"))
+        };
+
+        let command = turn_command(&options).unwrap();
+
+        assert!(command
+            .args
+            .windows(2)
+            .any(|args| args == ["--permission-mode", "bypassPermissions"]));
+        assert!(command
+            .args
+            .iter()
+            .any(|arg| arg == "--dangerously-skip-permissions"));
     }
 
     #[test]

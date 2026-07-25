@@ -2683,6 +2683,8 @@ describe("agent message queue", () => {
 
     expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_follow_up")).toBe(false);
     expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["nothing running"]);
+  });
+
   it("marks the entry being dispatched and clears the mark once it lands", async () => {
     const { chatId, emit } = await startChat();
     emit({ kind: "turnStarted" });
@@ -2739,6 +2741,45 @@ describe("agent message queue", () => {
       "agent_chat_send",
       expect.objectContaining({ text: "queued while on" }),
     );
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("still removes an entry queued before the flag was turned off", async () => {
+    // The whole point of ungating remove: a visible Remove control that no-ops
+    // is the bug class this slice exists to kill.
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    const id = enqueueAgentMessage(chatId, "remove me later");
+
+    flags.messageQueue = false;
+    removeQueuedMessage(chatId, id);
+
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("refuses to remove or discard the entry already being dispatched", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    const firstId = enqueueAgentMessage(chatId, "already going");
+    enqueueAgentMessage(chatId, "still cancellable");
+
+    const send = deferred<null>();
+    tauri.invoke.mockImplementation((cmd: string) =>
+      cmd === "agent_chat_send" ? send.promise : Promise.resolve(null),
+    );
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    expect(agentChat(chatId)?.drainingId).toBe(firstId);
+
+    removeQueuedMessage(chatId, firstId);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.id)).toContain(firstId);
+
+    // A discard sweeps the rest but cannot un-send what is already in flight.
+    clearAgentQueue(chatId);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["already going"]);
+
+    send.resolve(null);
+    await flushPromises();
     expect(agentChat(chatId)?.queue).toEqual([]);
   });
 

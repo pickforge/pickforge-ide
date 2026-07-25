@@ -124,7 +124,10 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
     const before = index > 0 ? props.messages[index - 1] : undefined;
     const target = after ?? before;
     const button = target ? removeButtons.get(target.id) : undefined;
-    if (button) button.focus();
+    // The dispatching entry keeps its place in the queue but loses its Remove
+    // control, so the map can still hold that detached node. Focusing it is a
+    // silent no-op that would drop focus to <body>.
+    if (button?.isConnected) button.focus();
     else props.onFallbackFocus?.();
   };
 

@@ -272,9 +272,12 @@ export function enqueueAgentMessage(
 }
 
 export function removeQueuedMessage(chatId: string, id: string): void {
-  const queue = chats[chatId]?.queue;
-  if (!queue?.some((entry) => entry.id === id)) return;
-  setChats(chatId, { queue: queue.filter((entry) => entry.id !== id) });
+  const chat = chats[chatId];
+  // The dispatching entry is past cancelling — its send has already left, so
+  // dropping it here would only hide a message that still arrives.
+  if (!chat || id === chat.drainingId) return;
+  if (!chat.queue.some((entry) => entry.id === id)) return;
+  setChats(chatId, { queue: chat.queue.filter((entry) => entry.id !== id) });
 }
 
 /** No production caller yet — this is the store half of the held-queue
@@ -282,7 +285,9 @@ export function removeQueuedMessage(chatId: string, id: string): void {
 export function clearAgentQueue(chatId: string): void {
   const chat = chats[chatId];
   if (!chat || chat.queue.length === 0) return;
-  setChats(chatId, { queue: [] });
+  // Same reason as `removeQueuedMessage`: a discard must not pretend to cancel
+  // a send that is already in flight.
+  setChats(chatId, { queue: chat.queue.filter((entry) => entry.id === chat.drainingId) });
 }
 
 export function latestPlanForChat(

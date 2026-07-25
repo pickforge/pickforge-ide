@@ -15,7 +15,7 @@ import { workspace } from "../../stores/workspace";
 import { isScmCollapsed, toggleScmCollapsed } from "../../stores/scmCollapsed";
 import { changesReviewFocusEpoch } from "../../stores/workbenchLayout";
 import { flagEnabled } from "../../stores/flags";
-import { notifyChangesReviewProjectChanged, onProjectTurnCompleted } from "../../stores/changes";
+import { notifyChangesReviewProjectChanged, onProjectTurnCompleted, refreshChangesReview } from "../../stores/changes";
 
 function baseName(p: string): string {
   return p.replace(/[/\\]+$/, "").split(/[/\\]/).pop() || p;
@@ -459,7 +459,13 @@ export function SourceControl() {
         onViewChange={setView}
         total={total}
         canRefresh={() => !!workspace.activeRoot}
-        onRefresh={() => void refresh()}
+        // The pane's ONE refresh button (#340): kicks the repo scanner AND the
+        // Changes review store — refreshChangesReview no-ops without a target,
+        // so no flag/mount check is needed here.
+        onRefresh={() => {
+          void refresh();
+          void refreshChangesReview();
+        }}
       />
 
       <Show when={view() === "graph"}>

@@ -10,7 +10,7 @@
 // chat lives in this pane (see `Workbench.tsx`'s center column), so nothing
 // here can remount it.
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { IconChevronDown, IconChevronRight, IconRefresh } from "../../components/icons";
+import { IconChevronDown, IconChevronRight } from "../../components/icons";
 import { StatusPill, type StatusIntent } from "../../components/ui";
 import type { ChangeDiff, ChangedFile, ChangeFileStatus, ChangeSet } from "../../lib/changes";
 import { resolveDiffViewMode, SPLIT_VIEW_MIN_WIDTH, type DiffViewMode } from "../../lib/diffViewMode";
@@ -34,7 +34,6 @@ import {
   changesReviewWorkingTreeState,
   loadChangeDiff,
   loadChangeDiffChunk,
-  refreshChangesReview,
   setChangesReviewScope,
   setWorkingTreeTarget,
   startChangesReviewFocusRefresh,
@@ -657,7 +656,6 @@ function SummaryHeader(props: {
   stale: boolean;
   capturedAt: number | null;
   onScopeChange: (s: ChangesReviewScope) => void;
-  onRefresh: () => void;
 }) {
   const totals = () => props.changeSet?.totals ?? null;
   const hasUnknownStats = createMemo(() =>
@@ -698,15 +696,16 @@ function SummaryHeader(props: {
             </>
           )}
         </Show>
+        {/* No refresh button here (#340): the Source Control toolbar's single
+            refresh kicks this store too, and every auto-refresh trigger
+            (fs watch, turn completion, project switch, refocus) already keeps
+            it fresh — this header only reports freshness. */}
         <span class="pf-crs-freshness">
           <StatusPill
             label={props.error ?? (props.loading ? "Refreshing…" : props.stale ? "Stale" : "Up to date")}
             intent={freshnessIntent(props.stale, !!props.error)}
           />
         </span>
-        <button type="button" class="pf-icon-btn" title="Refresh" disabled={props.loading} onClick={props.onRefresh}>
-          <IconRefresh size={14} />
-        </button>
       </div>
     </div>
   );
@@ -888,7 +887,6 @@ export function ChangesReviewSurface(props: { branch: string | null }) {
         stale={changesReviewStale()}
         capturedAt={changesReviewCapturedAt()}
         onScopeChange={setChangesReviewScope}
-        onRefresh={() => void refreshChangesReview()}
       />
       <div class="pf-crs-body">
         <Show

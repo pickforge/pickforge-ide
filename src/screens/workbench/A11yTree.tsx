@@ -54,32 +54,185 @@ function findPath(root: A11yNode, id: string, acc: A11yNode[] = []): A11yNode[] 
   return null;
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
-export function A11yTree(props: {
+type A11ySource = "uiAutomator" | "iosAccessibility";
+
+/** The device-level screenshot fetch (not per-node): captures into the
+ *  inspect dir, reads it back as a data URL, and keeps the accepted bytes
+ *  (used by `send`) so a stale in-flight dump can't overwrite what's shown.
+ *  A factory (not a composable — no signals of its own). */
+function createA11yThumbLoader(
+  source: () => A11ySource,
+  serialMatches: (serial: string, mine: number) => boolean,
+  setThumb: (v: string | null) => void,
+  setShotB64: (v: string | null) => void,
+) {
+  return async (serial: string, mine: number) => {
+    const root = workspace.activeRoot;
+    if (!root) return;
+    try {
+      const dir = await inspectDir(captureInRepo(root), root);
+      const path =
+        source() === "iosAccessibility"
+          ? await iosScreenshot(serial, dir, "a11y-screenshot.png")
+          : await adbScreenshot(serial, dir, "a11y-screenshot.png");
+      const url = path ? await readImageDataUrl(path) : null;
+      if (serialMatches(serial, mine)) {
+        setThumb(url);
+        // Keep the accepted bytes so the forge can't re-read a file a stale
+        // in-flight dump may have overwritten. Strip the data-URL prefix once.
+        setShotB64(url ? url.replace(/^data:image\/png;base64,/, "") : null);
+      }
+    } catch {
+      if (serialMatches(serial, mine)) {
+        setThumb(null);
+        setShotB64(null);
+      }
+    }
+  };
+}
+
+/** Captures the selected node (reusing the dump's device screenshot) into
+ *  its own capture folder, then launches the agent in a new pane with a
+ *  prompt that points at the markdown. Mirrors WidgetTree's `send`, minus
+ *  any source file:line. A factory (not a composable — no signals of its
+ *  own) so `createA11yInspectorState` can keep this flow out of its own
+ *  body. */
+function createA11yCaptureSend(deps: {
+  busy: () => boolean;
+  composerFor: () => QuickLaunchItem | null;
+  selectedNode: () => A11yNode | null;
+  tree: () => A11yNode | null;
+  prompt: () => string;
+  shotB64: () => string | null;
+  source: () => A11ySource;
+  handles: () => { id: string; list: string; search: string };
+  setError: (v: string | null) => void;
+  setBusy: (v: boolean) => void;
+  setComposerFor: (v: QuickLaunchItem | null) => void;
+}): () => Promise<void> {
+  return async () => {
+    if (deps.busy()) return;
+    const item = deps.composerFor();
+    const node = deps.selectedNode();
+    const root = workspace.activeRoot;
+    if (!item || !node || !root) return;
+    // Snapshot reactive state before any await — a refresh/device switch or an
+    // edit mid-send must not let findPath, the saved markdown, or the armed chat
+    // drift from what the user launched.
+    const t = deps.tree();
+    const instruction = deps.prompt();
+    const chatId = workspace.activeChatId;
+    if (!chatId || !hasTerminalHost(chatId)) {
+      deps.setError("Open a chat first so the agent has a terminal.");
+      return;
+    }
+    deps.setBusy(true);
+    try {
+      // Ship the ACCEPTED screenshot bytes (the base64 that passed the epoch check
+      // and is shown as the thumbnail) so the capture folder always matches the
+      // displayed thumbnail — never a re-read of a11y-screenshot.png that a stale
+      // in-flight dump may have overwritten.
+      const png = deps.shotB64();
+      const base = a11yBaseName(node);
+      const dir = await inspectDir(captureInRepo(root), root);
+      const sep = dir.includes("\\") ? "\\" : "/";
+      const predictedPng = png ? `${dir}${sep}${base}${sep}screenshot.png` : null;
+      const path = (t ? findPath(t, node.nodeId) : null) ?? [node];
+      const ancestors = path.slice(0, -1).map((n) => nodeName(n)).slice(-5);
+      const children = node.children.map((c) => nodeName(c)).slice(0, 12);
+      const md = buildA11yMarkdown({
+        node,
+        ancestors,
+        children,
+        pngPath: predictedPng,
+        instruction,
+        source: deps.source(),
+      });
+      const paths = await inspectSave(dir, base, md, png);
+      const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by ${deps.handles().search}). ${instruction}`;
+      const command = `${commandForItem(item)} ${shquote(ask)}`;
+      const paneId = launchAgentInSplit(chatId, command, { forceLocal: true });
+      if (paneId) {
+        // Persist the dispatch (pick + agent run) for the forge audit. Best
+        // effort — a write failure must not affect the launched agent. A11y
+        // nodes carry no source file:line (search by resource-id / text / class).
+        void recordForgeDispatch(
+          {
+            id: 0,
+            projectRoot: root,
+            widgetClass: node.className,
+            creationFile: null,
+            creationLine: null,
+            skillId: "",
+            agentId: item.agentId ?? item.id,
+            terminalId: paneId,
+            chatId,
+            pickedAt: Date.now(),
+            widgetContextJson: md,
+          },
+          command,
+        );
+      }
+      deps.setComposerFor(null);
+    } catch (e) {
+      deps.setError(String(e));
+    } finally {
+      deps.setBusy(false);
+    }
+  };
+}
+
+/** Switching devices must not show the previous device's tree/screenshot, and
+ *  a slow in-flight call must not latch on later — clears everything and
+ *  bumps the epoch (invalidating outstanding requests) whenever the serial
+ *  (or online state) changes. A composable, called synchronously from
+ *  `createA11yInspectorState`'s own setup so its `createEffect` runs under
+ *  the same reactive owner as if written inline. */
+function useA11yResetOnDeviceChange(
+  serial: () => string | null,
+  online: () => boolean,
+  bumpEpoch: () => void,
+  reset: {
+    setTree: (v: A11yNode | null) => void;
+    setSelected: (v: A11yNode | null) => void;
+    setThumb: (v: string | null) => void;
+    setShotB64: (v: string | null) => void;
+    setComposerFor: (v: QuickLaunchItem | null) => void;
+    setError: (v: string | null) => void;
+    setDumped: (v: boolean) => void;
+    setLoading: (v: boolean) => void;
+  },
+): void {
+  createEffect(
+    on(
+      () => [serial(), online()] as const,
+      () => {
+        bumpEpoch();
+        reset.setTree(null);
+        reset.setSelected(null);
+        reset.setThumb(null);
+        reset.setShotB64(null);
+        reset.setComposerFor(null);
+        reset.setError(null);
+        reset.setDumped(false);
+        reset.setLoading(false);
+      },
+      { defer: true },
+    ),
+  );
+}
+
+/** Owns every signal and handler for the inspector: tree/selection/dump
+ *  state, the epoch-guarded refresh + thumbnail load, and the
+ *  capture-and-send flow. A composable, called synchronously from
+ *  `A11yTree`'s own setup so its `createEffect`/`onCleanup` calls run
+ *  under the same reactive owner as if written inline. */
+function createA11yInspectorState(props: {
   serial: string | null;
   online: boolean;
-  // Which dump/screenshot backend the `serial` targets: adb UIAutomator
-  // (RN / native-Android) or `idb` on an iOS simulator (native iOS, where
-  // `serial` carries the udid). Both return the same A11yNode shape / PNG path,
-  // so the rest of the component is source-agnostic.
-  source?: "uiAutomator" | "iosAccessibility";
-  // Capability gates from the active target (adapters.rs). When inspect is
-  // absent the dump/forge is muted (not dead); when source mapping is absent the
-  // forge carries a "no exact source" certainty note (mirrors buildA11yMarkdown).
-  canInspect?: boolean;
-  canMapSource?: boolean;
+  source: () => A11ySource;
+  handles: () => { id: string; list: string; search: string };
 }) {
-  const source = () => props.source ?? "uiAutomator";
-  // Search-handle vocabulary for the active source — iOS (idb) nodes carry
-  // identifier / label / role; adb UIAutomator nodes carry resource-id / text /
-  // class. Keeps the node-detail label, the forge disclaimer and the agent prompt
-  // consistent with the capture markdown (buildA11yMarkdown).
-  const handles = () =>
-    source() === "iosAccessibility"
-      ? { id: "identifier", list: "accessibility id, label, role", search: "accessibility id / label / role" }
-      : { id: "resource-id", list: "resource-id, text, class", search: "resource-id / text / class" };
-  const canInspect = () => props.canInspect ?? true;
-  const canMapSource = () => props.canMapSource ?? false;
   const [tree, setTree] = createSignal<A11yNode | null>(null);
   const [selected, setSelected] = createSignal<A11yNode | null>(null);
   const [thumb, setThumb] = createSignal<string | null>(null);
@@ -110,25 +263,20 @@ export function A11yTree(props: {
   // can never paint the previous device's tree over the new view.
   let epoch = 0;
 
-  // Switching devices must not show the previous device's tree/screenshot, and a
-  // slow in-flight call must not latch on later — clear everything and invalidate
-  // outstanding requests whenever the serial (or online state) changes.
-  createEffect(
-    on(
-      () => [props.serial, props.online] as const,
-      () => {
-        epoch++;
-        setTree(null);
-        setSelected(null);
-        setThumb(null);
-        setShotB64(null);
-        setComposerFor(null);
-        setError(null);
-        setDumped(false);
-        setLoading(false);
-      },
-      { defer: true },
-    ),
+  useA11yResetOnDeviceChange(
+    () => props.serial,
+    () => props.online,
+    () => {
+      epoch++;
+    },
+    { setTree, setSelected, setThumb, setShotB64, setComposerFor, setError, setDumped, setLoading },
+  );
+
+  const loadThumb = createA11yThumbLoader(
+    props.source,
+    (serial, mine) => mine === epoch && serial === props.serial,
+    setThumb,
+    setShotB64,
   );
 
   const refresh = async () => {
@@ -139,7 +287,7 @@ export function A11yTree(props: {
     setLoading(true);
     try {
       const root =
-        source() === "iosAccessibility"
+        props.source() === "iosAccessibility"
           ? await iosDumpAccessibility(serial)
           : await adbDumpUiautomator(serial);
       if (mine !== epoch || serial !== props.serial) return; // superseded
@@ -158,40 +306,10 @@ export function A11yTree(props: {
     }
   };
 
-  // A device-level screenshot (not per-node) — the inspector's visual reference.
-  // Captured into the inspect dir, then read back as a data URL for inline <img>.
-  // Tagged with the dump's epoch so a stale screenshot can't overwrite a newer
-  // view (or the next device's).
-  const loadThumb = async (serial: string, mine: number) => {
-    const root = workspace.activeRoot;
-    if (!root) return;
-    try {
-      const dir = await inspectDir(captureInRepo(root), root);
-      const path =
-        source() === "iosAccessibility"
-          ? await iosScreenshot(serial, dir, "a11y-screenshot.png")
-          : await adbScreenshot(serial, dir, "a11y-screenshot.png");
-      const url = path ? await readImageDataUrl(path) : null;
-      if (mine === epoch && serial === props.serial) {
-        setThumb(url);
-        // Keep the accepted bytes so the forge can't re-read a file a stale
-        // in-flight dump may have overwritten. Strip the data-URL prefix once.
-        setShotB64(url ? url.replace(/^data:image\/png;base64,/, "") : null);
-      }
-    } catch {
-      if (mine === epoch && serial === props.serial) {
-        setThumb(null);
-        setShotB64(null);
-      }
-    }
-  };
-
   const selectNode = (n: A11yNode) => {
     setSelected(n);
     setComposerFor(null);
   };
-
-  const agentChips = () => quickLaunchItems().filter(isAskAiItem);
 
   const openComposer = (item: QuickLaunchItem) => {
     const n = selectedNode();
@@ -199,120 +317,91 @@ export function A11yTree(props: {
     setComposerFor(item);
   };
 
-  // Capture the selected node (reusing the dump's device screenshot) into its own
-  // capture folder, then launch the agent in a new pane with a prompt that points
-  // at the markdown. Mirrors WidgetTree.send, minus any source file:line.
-  const send = async () => {
-    if (busy()) return;
-    const item = composerFor();
-    const node = selectedNode();
-    const root = workspace.activeRoot;
-    if (!item || !node || !root) return;
-    // Snapshot reactive state before any await — a refresh/device switch or an
-    // edit mid-send must not let findPath, the saved markdown, or the armed chat
-    // drift from what the user launched.
-    const t = tree();
-    const instruction = prompt();
-    const chatId = workspace.activeChatId;
-    if (!chatId || !hasTerminalHost(chatId)) {
-      setError("Open a chat first so the agent has a terminal.");
-      return;
-    }
-    setBusy(true);
-    try {
-      // Ship the ACCEPTED screenshot bytes (the base64 that passed the epoch check
-      // and is shown as the thumbnail) so the capture folder always matches the
-      // displayed thumbnail — never a re-read of a11y-screenshot.png that a stale
-      // in-flight dump may have overwritten.
-      const png = shotB64();
-      const base = a11yBaseName(node);
-      const dir = await inspectDir(captureInRepo(root), root);
-      const sep = dir.includes("\\") ? "\\" : "/";
-      const predictedPng = png ? `${dir}${sep}${base}${sep}screenshot.png` : null;
-      const path = (t ? findPath(t, node.nodeId) : null) ?? [node];
-      const ancestors = path.slice(0, -1).map((n) => nodeName(n)).slice(-5);
-      const children = node.children.map((c) => nodeName(c)).slice(0, 12);
-      const md = buildA11yMarkdown({
-        node,
-        ancestors,
-        children,
-        pngPath: predictedPng,
-        instruction,
-        source: source(),
-      });
-      const paths = await inspectSave(dir, base, md, png);
-      const ask = `Read ${paths.mdPath} (PickForge UI capture: screenshot path + runtime accessibility info, NO source file:line — search by ${handles().search}). ${instruction}`;
-      const command = `${commandForItem(item)} ${shquote(ask)}`;
-      const paneId = launchAgentInSplit(chatId, command, { forceLocal: true });
-      if (paneId) {
-        // Persist the dispatch (pick + agent run) for the forge audit. Best
-        // effort — a write failure must not affect the launched agent. A11y
-        // nodes carry no source file:line (search by resource-id / text / class).
-        void recordForgeDispatch(
-          {
-            id: 0,
-            projectRoot: root,
-            widgetClass: node.className,
-            creationFile: null,
-            creationLine: null,
-            skillId: "",
-            agentId: item.agentId ?? item.id,
-            terminalId: paneId,
-            chatId,
-            pickedAt: Date.now(),
-            widgetContextJson: md,
-          },
-          command,
-        );
-      }
-      setComposerFor(null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
+  const send = createA11yCaptureSend({
+    busy,
+    composerFor,
+    selectedNode,
+    tree,
+    prompt,
+    shotB64,
+    source: props.source,
+    handles: props.handles,
+    setError,
+    setBusy,
+    setComposerFor,
+  });
+
+  return {
+    tree,
+    selectedNode,
+    thumb,
+    loading,
+    error,
+    dumped,
+    composerFor,
+    prompt,
+    busy,
+    refresh,
+    selectNode,
+    openComposer,
+    setComposerFor,
+    setPrompt,
+    send,
   };
+}
 
+/** The tree section: header (dump button) + collapsible node tree, gated on
+ *  inspect capability and device online state. A presentational child
+ *  component. */
+function A11yTreeSection(props: {
+  serial: string | null;
+  online: boolean;
+  canInspect: () => boolean;
+  loading: () => boolean;
+  onRefresh: () => void;
+  tree: () => A11yNode | null;
+  error: () => string | null;
+  dumped: () => boolean;
+  selectedId: () => string | null;
+  onSelect: (n: A11yNode) => void;
+}) {
   return (
-    <>
-      <div class="pf-inspector-section">
-        <div class="pf-rail-head">
-          <MonoEyebrow text="Accessibility tree" />
-          <div class="pf-wt-actions">
-            <button
-              class="pf-icon-btn"
-              title={
-                canInspect()
-                  ? "Dump accessibility tree"
-                  : "This target can't be inspected (no inspect-selection capability)"
-              }
-              disabled={!props.serial || loading() || !canInspect()}
-              onClick={() => void refresh()}
-            >
-              <IconRefresh size={14} />
-            </button>
-          </div>
+    <div class="pf-inspector-section">
+      <div class="pf-rail-head">
+        <MonoEyebrow text="Accessibility tree" />
+        <div class="pf-wt-actions">
+          <button
+            class="pf-icon-btn"
+            title={
+              props.canInspect()
+                ? "Dump accessibility tree"
+                : "This target can't be inspected (no inspect-selection capability)"
+            }
+            disabled={!props.serial || props.loading() || !props.canInspect()}
+            onClick={props.onRefresh}
+          >
+            <IconRefresh size={14} />
+          </button>
         </div>
+      </div>
 
-        <Show
-          when={canInspect()}
-          fallback={
-            <div class="pf-rail-empty">This target can't be inspected on the device.</div>
-          }
-        >
+      <Show
+        when={props.canInspect()}
+        fallback={<div class="pf-rail-empty">This target can't be inspected on the device.</div>}
+      >
         <Show
           when={props.online && props.serial}
           fallback={<div class="pf-rail-empty">Connect or boot a device to inspect</div>}
         >
           <Show
-            when={tree()}
+            when={props.tree()}
             fallback={
               <div class="pf-rail-empty">
-                {loading()
+                {props.loading()
                   ? "Dumping…"
-                  : error()
-                    ? error()
-                    : dumped()
+                  : props.error()
+                    ? props.error()
+                    : props.dumped()
                       ? "No accessibility tree (is the app foregrounded?)"
                       : "Dump the accessibility tree to inspect"}
               </div>
@@ -320,141 +409,257 @@ export function A11yTree(props: {
           >
             <div class="pf-wt-tree">
               <A11yTreeNode
-                node={tree()!}
+                node={props.tree()!}
                 depth={0}
-                selectedId={() => selectedNode()?.nodeId ?? null}
-                onSelect={selectNode}
+                selectedId={props.selectedId}
+                onSelect={props.onSelect}
               />
             </div>
           </Show>
         </Show>
-        </Show>
+      </Show>
+    </div>
+  );
+}
+
+/** The "Ask AI" chip row, or (once a chip is picked) its capture-prompt
+ *  composer. A presentational child component. */
+function A11yAskAiPanel(props: {
+  canMapSource: () => boolean;
+  handles: () => { id: string; list: string; search: string };
+  agentChips: () => QuickLaunchItem[];
+  composerFor: () => QuickLaunchItem | null;
+  onOpenComposer: (item: QuickLaunchItem) => void;
+  onCloseComposer: () => void;
+  prompt: () => string;
+  onPromptChange: (v: string) => void;
+  onSend: () => void;
+  busy: () => boolean;
+  captureInRepo: () => boolean;
+  onToggleCaptureInRepo: () => void;
+}) {
+  return (
+    <Show
+      when={props.composerFor()}
+      fallback={
+        <div class="pf-wd-ai">
+          <MonoEyebrow text="Ask AI" tick />
+          <Show when={!props.canMapSource()}>
+            <p class="pf-wd-disclaimer" title="No exact source mapping for this target">
+              No exact source mapping — the forge ships runtime handles
+              ({props.handles().list}) for the agent to search by.
+            </p>
+          </Show>
+          <div class="pf-wd-ai-chips">
+            <For each={props.agentChips()}>
+              {(item) => (
+                <button
+                  class="pf-wd-chip"
+                  title={`Send this element to ${item.label}`}
+                  onClick={() => props.onOpenComposer(item)}
+                >
+                  {item.label}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      }
+    >
+      <div class="pf-wd-composer">
+        <MonoEyebrow text={`Ask ${props.composerFor()!.label}`} />
+        <textarea
+          class="pf-wd-prompt"
+          value={props.prompt()}
+          ref={(el) => setTimeout(() => el.focus(), 0)}
+          onInput={(e) => props.onPromptChange(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!props.busy()) props.onSend();
+            } else if (e.key === "Escape") {
+              props.onCloseComposer();
+            }
+          }}
+        />
+        <div class="pf-wd-composer-actions">
+          <button
+            class="pf-wd-loc"
+            title="Where the capture (md + screenshot) is saved"
+            onClick={props.onToggleCaptureInRepo}
+          >
+            {props.captureInRepo() ? "saved in repo" : "saved in ~/.pickforge"}
+          </button>
+          <span class="pf-wd-composer-spacer" />
+          <button class="pf-text-btn" disabled={props.busy()} onClick={props.onCloseComposer}>
+            Cancel
+          </button>
+          <EmberButton label={props.busy() ? "Sending…" : "Send"} disabled={props.busy()} onClick={props.onSend} />
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+/** The selected node's details: thumbnail, "Ask AI" chips/composer, and its
+ *  role/text/resource-id/bounds/flags. A presentational child component. */
+function A11yDetailsPanel(props: {
+  node: () => A11yNode;
+  thumb: () => string | null;
+  handles: () => { id: string; list: string; search: string };
+  canMapSource: () => boolean;
+  agentChips: () => QuickLaunchItem[];
+  composerFor: () => QuickLaunchItem | null;
+  onOpenComposer: (item: QuickLaunchItem) => void;
+  onCloseComposer: () => void;
+  prompt: () => string;
+  onPromptChange: (v: string) => void;
+  onSend: () => void;
+  busy: () => boolean;
+  error: () => string | null;
+}) {
+  const node = props.node;
+  return (
+    <div class="pf-inspector-section pf-wd">
+      <MonoEyebrow text="Node" tick />
+      <div class="pf-wd-head">
+        <div class="pf-wd-thumb">
+          <Show when={props.thumb()} fallback={<span class="pf-wd-thumb-empty">—</span>}>
+            <img src={props.thumb()!} alt={node().className} />
+          </Show>
+        </div>
+        <div class="pf-wd-meta">
+          <span class="pf-wd-type">{nodeName(node())}</span>
+          <span class="pf-wd-src pf-wd-src--none">{node().className}</span>
+        </div>
       </div>
 
-      <Show when={selectedNode()}>
-        {/* eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity. */}
-        {(node) => (
-          <div class="pf-inspector-section pf-wd">
-            <MonoEyebrow text="Node" tick />
-            <div class="pf-wd-head">
-              <div class="pf-wd-thumb">
-                <Show when={thumb()} fallback={<span class="pf-wd-thumb-empty">—</span>}>
-                  <img src={thumb()!} alt={node().className} />
-                </Show>
-              </div>
-              <div class="pf-wd-meta">
-                <span class="pf-wd-type">{nodeName(node())}</span>
-                <span class="pf-wd-src pf-wd-src--none">{node().className}</span>
-              </div>
-            </div>
+      <A11yAskAiPanel
+        canMapSource={props.canMapSource}
+        handles={props.handles}
+        agentChips={props.agentChips}
+        composerFor={props.composerFor}
+        onOpenComposer={props.onOpenComposer}
+        onCloseComposer={props.onCloseComposer}
+        prompt={props.prompt}
+        onPromptChange={props.onPromptChange}
+        onSend={props.onSend}
+        busy={props.busy}
+        captureInRepo={() => captureInRepo(workspace.activeRoot)}
+        onToggleCaptureInRepo={() =>
+          workspace.activeRoot &&
+          setCaptureInRepo(workspace.activeRoot, !captureInRepo(workspace.activeRoot))
+        }
+      />
 
-            <Show
-              when={composerFor()}
-              fallback={
-                <div class="pf-wd-ai">
-                  <MonoEyebrow text="Ask AI" tick />
-                  <Show when={!canMapSource()}>
-                    <p class="pf-wd-disclaimer" title="No exact source mapping for this target">
-                      No exact source mapping — the forge ships runtime handles
-                      ({handles().list}) for the agent to search by.
-                    </p>
-                  </Show>
-                  <div class="pf-wd-ai-chips">
-                    <For each={agentChips()}>
-                      {(item) => (
-                        <button
-                          class="pf-wd-chip"
-                          title={`Send this element to ${item.label}`}
-                          onClick={() => openComposer(item)}
-                        >
-                          {item.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </div>
-              }
-            >
-              <div class="pf-wd-composer">
-                <MonoEyebrow text={`Ask ${composerFor()!.label}`} />
-                <textarea
-                  class="pf-wd-prompt"
-                  value={prompt()}
-                  ref={(el) => setTimeout(() => el.focus(), 0)}
-                  onInput={(e) => setPrompt(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      if (!busy()) void send();
-                    } else if (e.key === "Escape") {
-                      setComposerFor(null);
-                    }
-                  }}
-                />
-                <div class="pf-wd-composer-actions">
-                  <button
-                    class="pf-wd-loc"
-                    title="Where the capture (md + screenshot) is saved"
-                    onClick={() =>
-                      workspace.activeRoot &&
-                      setCaptureInRepo(workspace.activeRoot, !captureInRepo(workspace.activeRoot))
-                    }
-                  >
-                    {captureInRepo(workspace.activeRoot) ? "saved in repo" : "saved in ~/.pickforge"}
-                  </button>
-                  <span class="pf-wd-composer-spacer" />
-                  <button class="pf-text-btn" disabled={busy()} onClick={() => setComposerFor(null)}>
-                    Cancel
-                  </button>
-                  <EmberButton label={busy() ? "Sending…" : "Send"} disabled={busy()} onClick={() => void send()} />
-                </div>
-              </div>
-            </Show>
-
-            <div class="pf-wd-props">
-              <div class="pf-wd-prop">
-                <span class="pf-wd-prop-name">role</span>
-                <span class="pf-wd-prop-val">{node().role}</span>
-              </div>
-              <Show when={node().text}>
-                <div class="pf-wd-prop">
-                  <span class="pf-wd-prop-name">text</span>
-                  <span class="pf-wd-prop-val">{node().text}</span>
-                </div>
-              </Show>
-              <Show when={node().contentDescription}>
-                <div class="pf-wd-prop">
-                  <span class="pf-wd-prop-name">content-desc</span>
-                  <span class="pf-wd-prop-val">{node().contentDescription}</span>
-                </div>
-              </Show>
-              <Show when={node().resourceId}>
-                <div class="pf-wd-prop">
-                  <span class="pf-wd-prop-name">{handles().id}</span>
-                  <span class="pf-wd-prop-val">{node().resourceId}</span>
-                </div>
-              </Show>
-              <div class="pf-wd-prop">
-                <span class="pf-wd-prop-name">bounds</span>
-                <span class="pf-wd-prop-val">{boundsLabel(node().bounds)}</span>
-              </div>
-              <div class="pf-wd-prop">
-                <span class="pf-wd-prop-name">flags</span>
-                <span class="pf-wd-prop-val">
-                  {[
-                    node().enabled ? "enabled" : "disabled",
-                    node().clickable ? "clickable" : null,
-                    node().selected ? "selected" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              </div>
-            </div>
-            <Show when={error()}>
-              <div class="pf-vm-error">{error()}</div>
-            </Show>
+      <div class="pf-wd-props">
+        <div class="pf-wd-prop">
+          <span class="pf-wd-prop-name">role</span>
+          <span class="pf-wd-prop-val">{node().role}</span>
+        </div>
+        <Show when={node().text}>
+          <div class="pf-wd-prop">
+            <span class="pf-wd-prop-name">text</span>
+            <span class="pf-wd-prop-val">{node().text}</span>
           </div>
+        </Show>
+        <Show when={node().contentDescription}>
+          <div class="pf-wd-prop">
+            <span class="pf-wd-prop-name">content-desc</span>
+            <span class="pf-wd-prop-val">{node().contentDescription}</span>
+          </div>
+        </Show>
+        <Show when={node().resourceId}>
+          <div class="pf-wd-prop">
+            <span class="pf-wd-prop-name">{props.handles().id}</span>
+            <span class="pf-wd-prop-val">{node().resourceId}</span>
+          </div>
+        </Show>
+        <div class="pf-wd-prop">
+          <span class="pf-wd-prop-name">bounds</span>
+          <span class="pf-wd-prop-val">{boundsLabel(node().bounds)}</span>
+        </div>
+        <div class="pf-wd-prop">
+          <span class="pf-wd-prop-name">flags</span>
+          <span class="pf-wd-prop-val">
+            {[
+              node().enabled ? "enabled" : "disabled",
+              node().clickable ? "clickable" : null,
+              node().selected ? "selected" : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        </div>
+      </div>
+      <Show when={props.error()}>
+        <div class="pf-vm-error">{props.error()}</div>
+      </Show>
+    </div>
+  );
+}
+
+export function A11yTree(props: {
+  serial: string | null;
+  online: boolean;
+  // Which dump/screenshot backend the `serial` targets: adb UIAutomator
+  // (RN / native-Android) or `idb` on an iOS simulator (native iOS, where
+  // `serial` carries the udid). Both return the same A11yNode shape / PNG path,
+  // so the rest of the component is source-agnostic.
+  source?: A11ySource;
+  // Capability gates from the active target (adapters.rs). When inspect is
+  // absent the dump/forge is muted (not dead); when source mapping is absent the
+  // forge carries a "no exact source" certainty note (mirrors buildA11yMarkdown).
+  canInspect?: boolean;
+  canMapSource?: boolean;
+}) {
+  const source = () => props.source ?? "uiAutomator";
+  // Search-handle vocabulary for the active source — iOS (idb) nodes carry
+  // identifier / label / role; adb UIAutomator nodes carry resource-id / text /
+  // class. Keeps the node-detail label, the forge disclaimer and the agent prompt
+  // consistent with the capture markdown (buildA11yMarkdown).
+  const handles = () =>
+    source() === "iosAccessibility"
+      ? { id: "identifier", list: "accessibility id, label, role", search: "accessibility id / label / role" }
+      : { id: "resource-id", list: "resource-id, text, class", search: "resource-id / text / class" };
+  const canInspect = () => props.canInspect ?? true;
+  const canMapSource = () => props.canMapSource ?? false;
+  const agentChips = () => quickLaunchItems().filter(isAskAiItem);
+
+  const s = createA11yInspectorState({ serial: props.serial, online: props.online, source, handles });
+
+  return (
+    <>
+      <A11yTreeSection
+        serial={props.serial}
+        online={props.online}
+        canInspect={canInspect}
+        loading={s.loading}
+        onRefresh={() => void s.refresh()}
+        tree={s.tree}
+        error={s.error}
+        dumped={s.dumped}
+        selectedId={() => s.selectedNode()?.nodeId ?? null}
+        onSelect={s.selectNode}
+      />
+
+      <Show when={s.selectedNode()}>
+        {(node) => (
+          <A11yDetailsPanel
+            node={node}
+            thumb={s.thumb}
+            handles={handles}
+            canMapSource={canMapSource}
+            agentChips={agentChips}
+            composerFor={s.composerFor}
+            onOpenComposer={s.openComposer}
+            onCloseComposer={() => s.setComposerFor(null)}
+            prompt={s.prompt}
+            onPromptChange={s.setPrompt}
+            onSend={() => void s.send()}
+            busy={s.busy}
+            error={s.error}
+          />
         )}
       </Show>
     </>

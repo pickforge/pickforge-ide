@@ -153,6 +153,10 @@ export interface AgentChatState {
    *  the send lands (so a failure holds it), but it is past the point of
    *  cancellation — the dock must stop offering to remove it (#369). */
   drainingId: string | null;
+  /** The queue was deliberately not auto-drained — the user interrupted the
+   *  turn, or the connection was retried — so it waits for an explicit Send
+   *  or Discard instead of firing into a moment the user just stopped. */
+  queueHeld: boolean;
   approvals: AgentApproval[];
   contextUsed: number | null;
   contextWindow: number | null;
@@ -280,14 +284,23 @@ export function removeQueuedMessage(chatId: string, id: string): void {
   setChats(chatId, { queue: chat.queue.filter((entry) => entry.id !== id) });
 }
 
-/** No production caller yet — this is the store half of the held-queue
- *  DISCARD action landing in #357 PR 2. Delete it if that slice changes shape. */
 export function clearAgentQueue(chatId: string): void {
   const chat = chats[chatId];
   if (!chat || chat.queue.length === 0) return;
   // Same reason as `removeQueuedMessage`: a discard must not pretend to cancel
   // a send that is already in flight.
-  setChats(chatId, { queue: chat.queue.filter((entry) => entry.id === chat.drainingId) });
+  setChats(chatId, {
+    queue: chat.queue.filter((entry) => entry.id === chat.drainingId),
+    queueHeld: false,
+  });
+}
+
+/** Releases a held queue: the user chose to send it after all. */
+export function sendHeldAgentQueue(chatId: string): void {
+  const chat = chats[chatId];
+  if (!chat || !chat.queueHeld) return;
+  setChats(chatId, { queueHeld: false });
+  void drainAgentQueue(chatId);
 }
 
 export function latestPlanForChat(
@@ -333,6 +346,7 @@ function emptyState(
     timeline: [],
     queue: [],
     drainingId: null,
+    queueHeld: false,
     approvals: [],
     contextUsed: null,
     contextWindow: null,
@@ -1191,6 +1205,23 @@ function receiveAgentEvent(chatId: string, event: AgentEvent) {
   trackPendingProviderTitle(chatId, event, activeTitleTurn);
   const wasInterrupted = trackTurnLifecycle(chatId, event, activeTitleTurn);
   if (shouldAutoDrainAgentQueue(chatId, event, wasInterrupted)) void drainAgentQueue(chatId);
+  else markQueueHeld(chatId, event, wasInterrupted);
+}
+
+/** A turn the user stopped leaves its backlog waiting for an explicit choice.
+ *  A turn that started clears the hold: sending by hand is that choice. */
+function markQueueHeld(chatId: string, event: AgentEvent, wasInterrupted: boolean): void {
+  const chat = chats[chatId];
+  if (!chat) return;
+  if (event.kind === "turnStarted") {
+    if (chat.queueHeld) setChats(chatId, { queueHeld: false });
+    return;
+  }
+  const closed = event.kind === "turnDone" || event.kind === "turnFailed";
+  const stopped = wasInterrupted || (event.kind === "turnDone" && event.status === "interrupted");
+  if (closed && stopped && chat.queue.length > 0 && !chat.queueHeld) {
+    setChats(chatId, { queueHeld: true });
+  }
 }
 
 // `previousModel` is the last model the backend session is known to be
@@ -2074,7 +2105,7 @@ function rollbackFailedSend(
  *  a drainable state (gone, mid-turn, or empty). */
 function nextDrainEntry(chatId: string): QueuedMessage | null {
   const chat = chats[chatId];
-  if (!chat || chat.turnActive || chat.queue.length === 0) {
+  if (!chat || chat.turnActive || chat.queueHeld || chat.queue.length === 0) {
     return null;
   }
   return chat.queue[0];
@@ -2369,6 +2400,9 @@ export async function retryAgentChatConnection(chatId: string): Promise<void> {
   setChats(chatId, {
     sessionId: null,
     turnActive: false,
+    // The dead turn's outcome is unknown, so its backlog waits for an explicit
+    // choice rather than firing into a session that just came back (#369).
+    queueHeld: chat.queue.length > 0,
     approvals: [],
   });
 

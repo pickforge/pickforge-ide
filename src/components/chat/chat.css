@@ -1251,12 +1251,28 @@
   white-space: nowrap;
 }
 .pf-chat-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pf-space-md);
   margin-bottom: var(--pf-space-sm);
   color: var(--pf-text-med);
   font-family: var(--pf-font-mono);
   font-size: var(--pf-size-eyebrow);
   letter-spacing: var(--pf-tracking-eyebrow);
   text-transform: uppercase;
+}
+/* Held state. The bracket is the indicator — no fill, no chip, no dot — and
+   it is the only thing that takes the warning colour; the words stay neutral
+   so the row reads as status, not alarm. */
+.pf-chat-queue-bracket {
+  color: var(--pf-warning);
+  margin-right: var(--pf-space-xs);
+}
+.pf-chat-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
 }
 .pf-chat-queue-list {
   display: flex;

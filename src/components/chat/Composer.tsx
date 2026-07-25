@@ -560,7 +560,7 @@ export function Composer(props: {
       : event.ctrlKey && !event.metaKey;
   };
   const canSend = () => {
-    if (queueing()) return text().trim().length > 0;
+    if (queueing()) return text().trim().length > 0 || attachments().length > 0;
     if (props.turnActive) return steering() && text().trim().length > 0;
     return text().trim().length > 0 || attachments().length > 0;
   };
@@ -865,7 +865,7 @@ export function Composer(props: {
 
   const attachNativeClipboardImage = (generation: number, anchor: MarkerAnchor) => {
     if (generation !== pasteGeneration || preparing()) return;
-    if (props.turnActive) {
+    if (props.turnActive && !queueing()) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
@@ -990,7 +990,7 @@ export function Composer(props: {
       return;
     }
     event.preventDefault();
-    if (props.turnActive) {
+    if (props.turnActive && !queueing()) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
@@ -1014,7 +1014,7 @@ export function Composer(props: {
     // the generation and anchor already pinned by onPaste.
     const markerAnchor = anchor ?? pinMarkerAnchor();
     if (preparing()) return;
-    if (props.turnActive) {
+    if (props.turnActive && !queueing()) {
       showPasteError("Images can't be attached while a turn is running", 4000);
       return;
     }
@@ -1083,7 +1083,7 @@ export function Composer(props: {
     if (hasPendingAttachments(savedAttachments)) return;
     if (props.turnActive) {
       if (queueing()) {
-        if (!props.onQueue || !value) return;
+        if (!props.onQueue || (!value && savedImages.length === 0)) return;
         pasteGeneration += 1;
         droppedPasteGeneration = null;
         clearDispatchedDraft(
@@ -1133,7 +1133,7 @@ export function Composer(props: {
 
   const submit = () => {
     if (preparing()) return;
-    if (!props.turnActive && hasPendingAttachments(attachments())) {
+    if ((!props.turnActive || queueing()) && hasPendingAttachments(attachments())) {
       // The message dispatches when the stash resolves; freeze the composer
       // (non-editable field, ingress guards) so what was submitted is what
       // sends — edits made meanwhile must not leak into this message.

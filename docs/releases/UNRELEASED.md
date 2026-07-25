@@ -48,6 +48,11 @@ reset this file.
 
 ## Internal/release changes (dark: no default-on behavior change)
 
+- Interrupting a turn with messages queued now says so: the dock re-voices as
+  `[ HELD · n` with explicit Send and Discard, and the composer yields its
+  accent to that decision (#357 PR 2). Retrying a dead connection holds the
+  queue the same way, instead of leaving it to sit until some later turn
+  happened to close (#369). Queued messages can now carry image attachments.
 - On Pi, a message typed while a turn is running is now handed to that turn
   through the native follow-up RPC instead of waiting in the queue, so the
   agent can act on it inside the same run (#357 PR 2). Backends whose protocol

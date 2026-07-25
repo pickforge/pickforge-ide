@@ -64,6 +64,45 @@ describe("QueueDock", () => {
     expect(onRemove).toHaveBeenCalledWith("queued-1");
   });
 
+  it("re-voices the header as held and offers the one decision owed", () => {
+    const onSendHeld = vi.fn();
+    const onDiscard = vi.fn();
+    dispose = render(
+      () => (
+        <QueueDock
+          messages={[queued("queued-1", "first"), queued("queued-2", "second")]}
+          held
+          onSendHeld={onSendHeld}
+          onDiscard={onDiscard}
+          onRemove={() => {}}
+        />
+      ),
+      root,
+    );
+
+    const head = root.querySelector(".pf-chat-queue-head");
+    expect(head?.textContent).toContain("HELD · 2");
+    expect(head?.textContent).not.toContain("QUEUED");
+    // The bracket is the indicator; there is no filled chip or dot.
+    expect(root.querySelector(".pf-chat-queue-bracket")?.textContent).toBe("[");
+
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".pf-approval-btn")];
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(["Send 2", "Discard"]);
+    // The demanded decision borrows the composition's one ember.
+    expect(buttons[0].className).toContain("pf-approval-btn--primary");
+
+    buttons[0].click();
+    buttons[1].click();
+    expect(onSendHeld).toHaveBeenCalledTimes(1);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+
+    // Entries stay individually removable while held.
+    expect(root.querySelector('[aria-label="Remove queued message 1"]')).not.toBeNull();
+    expect(root.querySelector('[role="status"]')?.textContent).toBe(
+      "Queue held, 2 waiting. Choose send or discard.",
+    );
+  });
+
   it("drops the remove control on the entry being dispatched", () => {
     // Removing it would be a silent no-op: the send is already in flight, so
     // the message lands in the timeline regardless (#369).

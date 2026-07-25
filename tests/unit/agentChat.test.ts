@@ -150,6 +150,7 @@ import {
   removeQueuedMessage,
   retryAgentChatConnection,
   sendAgentMessage,
+  sendHeldAgentQueue,
   setAgentChatEffort,
   setAgentChatMode,
   setAgentChatModel,
@@ -2781,6 +2782,90 @@ describe("agent message queue", () => {
     send.resolve(null);
     await flushPromises();
     expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("marks the queue held when the user interrupts, and keeps it held", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "hold me");
+
+    await interruptAgentChat(chatId);
+    emit({ kind: "turnFailed", error: "interrupted" });
+    await flushPromises();
+
+    expect(agentChat(chatId)?.queueHeld).toBe(true);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
+
+    // A later close must not quietly release the hold.
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    expect(agentChat(chatId)?.queueHeld).toBe(true);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["hold me"]);
+  });
+
+  it("sends a held queue only when the user asks", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "now please");
+    await interruptAgentChat(chatId);
+    emit({ kind: "turnDone", status: "interrupted" });
+    await flushPromises();
+    expect(agentChat(chatId)?.queueHeld).toBe(true);
+
+    sendHeldAgentQueue(chatId);
+    await flushPromises();
+
+    expect(agentChat(chatId)?.queueHeld).toBe(false);
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_send",
+      expect.objectContaining({ text: "now please" }),
+    );
+  });
+
+  it("discards a held queue without sending any of it", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "never mind");
+    enqueueAgentMessage(chatId, "these either");
+    await interruptAgentChat(chatId);
+    emit({ kind: "turnDone", status: "interrupted" });
+    await flushPromises();
+
+    clearAgentQueue(chatId);
+
+    expect(agentChat(chatId)?.queue).toEqual([]);
+    expect(agentChat(chatId)?.queueHeld).toBe(false);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
+  });
+
+  it("releases the hold when the user starts a turn by hand", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "still waiting");
+    await interruptAgentChat(chatId);
+    emit({ kind: "turnDone", status: "interrupted" });
+    await flushPromises();
+    expect(agentChat(chatId)?.queueHeld).toBe(true);
+
+    emit({ kind: "turnStarted" });
+
+    expect(agentChat(chatId)?.queueHeld).toBe(false);
+  });
+
+  it("holds the queue when a dead connection is retried", async () => {
+    // The dead turn's outcome is unknown, so the backlog waits for a choice
+    // rather than firing into a session that just came back.
+    const { chatId, emit } = await startChat([], "test/model", "pi");
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "survive the reconnect");
+
+    await retryAgentChatConnection(chatId);
+
+    expect(agentChat(chatId)?.queueHeld).toBe(true);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual([
+      "survive the reconnect",
+    ]);
+    expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_send")).toBe(false);
   });
 
   it("does not replay a missed turn close after a failed drain", async () => {

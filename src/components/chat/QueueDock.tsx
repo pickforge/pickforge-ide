@@ -82,12 +82,54 @@ function QueueEntry(props: {
   );
 }
 
+/** Resting, the header is a plain mono count. Held, it re-voices as
+ *  bracket-cornered status and takes on the one decision the user owes. */
+function QueueHeader(props: {
+  count: number;
+  held: boolean;
+  onSendHeld: () => void;
+  onDiscard: () => void;
+}): JSX.Element {
+  return (
+    <div class="pf-chat-queue-head">
+      <Show when={props.held} fallback={<span>QUEUED · {props.count}</span>}>
+        {/* The bracket is the indicator — never a filled chip, never a dot —
+            and it alone carries the warning colour; the words stay neutral. */}
+        <span>
+          <span class="pf-chat-queue-bracket" aria-hidden="true">[</span>
+          HELD · {props.count}
+        </span>
+        <span class="pf-chat-queue-actions">
+          <button
+            type="button"
+            class="pf-approval-btn pf-approval-btn--primary"
+            onClick={() => props.onSendHeld()}
+          >
+            Send {props.count}
+          </button>
+          <button
+            type="button"
+            class="pf-approval-btn pf-approval-btn--quiet"
+            onClick={() => props.onDiscard()}
+          >
+            Discard
+          </button>
+        </span>
+      </Show>
+    </div>
+  );
+}
+
 interface QueueDockProps {
   messages: readonly QueuedMessage[];
   onRemove: (id: string) => void;
   onFallbackFocus?: () => void;
   /** The entry currently being dispatched — past the point of cancellation. */
   drainingId?: string | null;
+  /** Held after an interrupt or a reconnect: nothing sends without a choice. */
+  held?: boolean;
+  onSendHeld?: () => void;
+  onDiscard?: () => void;
 }
 
 export function QueueDock(props: QueueDockProps): JSX.Element {
@@ -102,6 +144,11 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       if (!ids.includes(id)) removeButtons.delete(id);
     }
     if (previousIds.length === 0 && ids.length === 0) {
+      previousIds = ids;
+      return;
+    }
+    if (props.held) {
+      setAnnouncement(`Queue held, ${ids.length} waiting. Choose send or discard.`);
       previousIds = ids;
       return;
     }
@@ -153,7 +200,12 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       </span>
       <Show when={props.messages.length > 0}>
         <section class="pf-chat-queue" role="region" aria-label="Message queue">
-          <div class="pf-chat-queue-head">QUEUED · {props.messages.length}</div>
+          <QueueHeader
+            count={props.messages.length}
+            held={props.held === true}
+            onSendHeld={() => props.onSendHeld?.()}
+            onDiscard={() => props.onDiscard?.()}
+          />
           <ol class="pf-chat-queue-list">
             <For each={props.messages}>
               {(message, index) => (

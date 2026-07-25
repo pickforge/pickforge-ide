@@ -58,3 +58,13 @@ golden tests, which set `disableAnimations: true`, deterministic).
 - ✅ `curve: PickforgeMotion.forge`  ❌ `curve: Curves.easeIn`
 - ✅ `ReduceMotion.duration(context, PickforgeMotion.fast)`  ❌ raw `Duration(milliseconds: 200)`
 - ✅ gate `.animate()` on reduced motion  ❌ unconditional entrance animations
+
+## The one carve-out
+
+Infinite loops — the ember sweep, the spinner, the caret blink — use the bare
+`linear` keyword or `steps()`, not the forge curve, because an eased loop pumps
+its speed on every cycle. That is the only legal raw easing. The `linear()`
+*function* is an arbitrary custom curve and is not covered by this exemption.
+
+`npm run lint` enforces this: `scripts/check-design-tokens.mjs` fails on any
+other raw easing in `src/**/*.css`. Reach for a `--pf-ease-*` token instead.

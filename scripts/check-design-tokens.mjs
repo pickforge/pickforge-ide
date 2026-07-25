@@ -1,15 +1,18 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SRC = join(ROOT, "src");
 
 // The design system defines one easing, exposed as --pf-ease-* tokens. Raw curves
-// bypass it. `linear` and `steps()` stay legal: continuous loops (sweeps, spinners)
-// are documented carve-outs that a curve would visibly wrong.
-const DECLARATION = /(?:transition|animation)(?:-timing-function)?\s*:\s*([^;{}]*)/g;
-const VAR_REFERENCE = /var\(\s*--[a-zA-Z0-9-]+\s*(?:,[^()]*)?\)/g;
-const RAW_EASING = /\b(?:cubic-bezier|ease-in-out|ease-in|ease-out|ease)\b/;
+// bypass it. The `linear` and `steps()` keywords stay legal: continuous loops (the
+// ember sweep, the spinner, the caret blink) need constant velocity, and the forge
+// curve would visibly pump their speed. The `linear()` function is an arbitrary
+// custom curve, so it is caught rather than carved out.
+const DECLARATION = /(?:transition|animation)(?:-timing-function)?\s*:\s*([^;{}]*)/gi;
+const VAR_REFERENCE = /var\(\s*--[a-zA-Z0-9-]+\s*(?:,[^()]*)?\)/gi;
+const RAW_EASING = /\b(?:cubic-bezier|ease-in-out|ease-in|ease-out|ease\b|linear(?=\s*\())/i;
 
 function cssFiles(dir) {
   return readdirSync(dir).flatMap((entry) => {
@@ -19,7 +22,13 @@ function cssFiles(dir) {
   });
 }
 
-const violations = cssFiles(SRC).flatMap((path) => {
+const files = cssFiles(SRC);
+if (files.length === 0) {
+  console.error(`check-design-tokens: found no CSS under ${relative(ROOT, SRC)} — refusing to pass vacuously`);
+  process.exit(1);
+}
+
+const violations = files.flatMap((path) => {
   const source = readFileSync(path, "utf8");
   return [...source.matchAll(DECLARATION)].flatMap((match) => {
     if (!RAW_EASING.test(match[1].replace(VAR_REFERENCE, ""))) return [];
@@ -43,4 +52,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`check-design-tokens: no raw easing in ${cssFiles(SRC).length} CSS files`);
+console.log(`check-design-tokens: no raw easing in ${files.length} CSS files`);

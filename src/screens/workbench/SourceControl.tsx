@@ -5,9 +5,12 @@ import { Portal } from "solid-js/web";
 import { IconChevronDown, IconClose, IconRefresh } from "../../components/icons";
 import { gitDiff, gitDiscoverRepos, gitStatus, type GitFileStatus, type GitStatus } from "../../lib/git";
 import { GitGraph } from "./GitGraph";
+import { ChangesReviewSurface } from "./ChangesReviewSurface";
 import { Dropdown } from "../../components/Dropdown";
 import { workspace } from "../../stores/workspace";
 import { isScmCollapsed, toggleScmCollapsed } from "../../stores/scmCollapsed";
+import { changesReviewFocusEpoch } from "../../stores/workbenchLayout";
+import { flagEnabled } from "../../stores/flags";
 
 function letter(f: GitFileStatus): string {
   if (f.untracked) return "U";
@@ -260,6 +263,20 @@ export function SourceControl() {
     if (sel && repos().some((r) => r.path === sel)) return sel;
     return repos()[0]?.path ?? workspace.activeRoot ?? "";
   };
+  // #231 PR4 retarget seam: `focusChangesReviewSurface` reveals this pane AND
+  // bumps this epoch, so a receipt's "Review changes" click lands on the
+  // Changes review surface even if this pane was last left on "Graph".
+  createEffect(() => {
+    changesReviewFocusEpoch();
+    setView("changes");
+  });
+  // The active project's branch, already fetched by `createRepoScanner` for
+  // the legacy toolbar — the Changes review surface (PR4) reuses it for its
+  // header rather than issuing a second `git_status` call.
+  const activeBranch = () =>
+    repos().find((r) => r.path === (workspace.activeRoot ?? ""))?.status.branch
+    ?? repos()[0]?.status.branch
+    ?? null;
 
   const openDiff = async (repo: string, file: GitFileStatus, staged: boolean) => {
     try {
@@ -311,14 +328,21 @@ export function SourceControl() {
       </Show>
 
       <Show when={view() === "changes"}>
-        <ChangesList
-          repos={repos}
-          total={total}
-          flat={flat}
-          loading={loading}
-          repoName={repoName}
-          onOpenDiff={(repo, f, staged) => void openDiff(repo, f, staged)}
-        />
+        <Show
+          when={flagEnabled("changesReview")}
+          fallback={
+            <ChangesList
+              repos={repos}
+              total={total}
+              flat={flat}
+              loading={loading}
+              repoName={repoName}
+              onOpenDiff={(repo, f, staged) => void openDiff(repo, f, staged)}
+            />
+          }
+        >
+          <ChangesReviewSurface branch={activeBranch()} />
+        </Show>
       </Show>
 
       <DiffModal

@@ -57,4 +57,18 @@ describe("revealPane / focusChangesReviewSurface (#231 PR3)", () => {
 
     expect(layout().rightVisible).toBe(true);
   });
+
+  // #231 PR4 retarget: SourceControl's local "changes"/"graph" toggle watches
+  // this epoch to force itself back onto the Changes review surface — a
+  // receipt's "Review changes" click must win even if the pane was last left
+  // showing the commit graph.
+  it("focusChangesReviewSurface bumps changesReviewFocusEpoch on every call", async () => {
+    const { focusChangesReviewSurface, changesReviewFocusEpoch } = await loadStore();
+
+    const before = changesReviewFocusEpoch();
+    focusChangesReviewSurface();
+    expect(changesReviewFocusEpoch()).toBe(before + 1);
+    focusChangesReviewSurface();
+    expect(changesReviewFocusEpoch()).toBe(before + 2);
+  });
 });

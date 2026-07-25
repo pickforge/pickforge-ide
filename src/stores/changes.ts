@@ -51,6 +51,14 @@ const [turnError, setTurnError] = createSignal<string | null>(null);
 const [turnCapturedAt, setTurnCapturedAt] = createSignal<number | null>(null);
 const [turnStale, setTurnStale] = createSignal(false);
 let turnDiffCache = new Map<string, Promise<ChangeDiff>>();
+// Bumped at the START of every `refreshThisTurn` call (a target switch or a
+// refresh trigger both go through it) — same pattern as `stores/agentChat.ts`'s
+// `ensureGenerations`. A completion only commits its result if this still
+// matches the generation it captured; an older, slower request finishing
+// after a newer one has already landed is a no-op instead of clobbering the
+// newer result (and, worse, resetting `turnLoading` back to false under a
+// still-in-flight newer fetch).
+let turnGeneration = 0;
 
 // ---- "working tree" slice ----
 
@@ -62,6 +70,8 @@ const [workingTreeError, setWorkingTreeError] = createSignal<string | null>(null
 const [workingTreeCapturedAt, setWorkingTreeCapturedAt] = createSignal<number | null>(null);
 const [workingTreeStale, setWorkingTreeStale] = createSignal(false);
 let workingTreeDiffCache = new Map<string, Promise<ChangeDiff>>();
+// See `turnGeneration` above — same guard, working-tree slice.
+let workingTreeGeneration = 0;
 
 // ---- scope-derived public signals (mirror whichever slice is active) ----
 
@@ -121,27 +131,32 @@ export function setWorkingTreeTarget(projectRoot: string): void {
 async function refreshThisTurn(): Promise<void> {
   const target = turnTarget();
   if (!target) return;
+  const generation = ++turnGeneration;
   setTurnLoading(true);
   try {
     const sets = await changesListTurnChangeSets(target.chatId, target.projectRoot);
+    if (generation !== turnGeneration) return; // superseded by a newer request — never commit
     setTurnChangeSet(sets.find((cs) => cs.turnSeq === target.turnSeq) ?? null);
     setTurnError(null);
     setTurnCapturedAt(Date.now());
     setTurnStale(false);
     turnDiffCache = new Map(); // a refetch invalidates any lazily-cached diffs
   } catch (err) {
+    if (generation !== turnGeneration) return;
     setTurnError(errorText(err));
   } finally {
-    setTurnLoading(false);
+    if (generation === turnGeneration) setTurnLoading(false);
   }
 }
 
 async function refreshWorkingTree(): Promise<void> {
   const target = workingTreeTarget();
   if (!target) return;
+  const generation = ++workingTreeGeneration;
   setWorkingTreeLoading(true);
   try {
     const result = await changesWorkingTree(target.projectRoot);
+    if (generation !== workingTreeGeneration) return; // superseded by a newer request — never commit
     setWorkingTreeState(result.state);
     setWorkingTreeChangeSet(result.state === "ready" ? result.changeSet : null);
     setWorkingTreeError(null);
@@ -149,9 +164,10 @@ async function refreshWorkingTree(): Promise<void> {
     setWorkingTreeStale(false);
     workingTreeDiffCache = new Map();
   } catch (err) {
+    if (generation !== workingTreeGeneration) return;
     setWorkingTreeError(errorText(err));
   } finally {
-    setWorkingTreeLoading(false);
+    if (generation === workingTreeGeneration) setWorkingTreeLoading(false);
   }
 }
 
@@ -171,16 +187,27 @@ export function refreshChangesReview(): Promise<void> {
  *  instead of racing duplicate fetches; a rejected fetch is evicted so a
  *  transient error doesn't permanently wedge later attempts. The cache is
  *  cleared on every successful refresh (a stale diff must never outlive the
- *  listing it was fetched against) and whenever the target changes. */
+ *  listing it was fetched against) and whenever the target changes.
+ *
+ *  The eviction closure below captures the SPECIFIC map instance (`cache`) a
+ *  promise was stored in, never the mutable `turnDiffCache`/`workingTreeDiffCache`
+ *  module binding directly — `refreshThisTurn`/`refreshWorkingTree` reassign
+ *  that binding to a fresh Map on every target switch or successful refresh.
+ *  A promise from an OLD (superseded) target that later rejects must only
+ *  ever evict itself from the map it actually belongs to; reading the
+ *  binding fresh inside the closure would instead reach into whatever map is
+ *  CURRENTLY assigned and delete a same-named key that may by then belong to
+ *  the new target's own in-flight or cached fetch. */
 export function loadChangeDiff(path: string, staged = false): Promise<ChangeDiff> {
   if (scope() === "thisTurn") {
     const target = turnTarget();
     if (!target) return Promise.reject(new Error("no active this-turn changes-review target"));
-    const cached = turnDiffCache.get(path);
+    const cache = turnDiffCache;
+    const cached = cache.get(path);
     if (cached) return cached;
     const promise = changesTurnFileDiff(target.chatId, target.projectRoot, target.turnSeq, path);
-    turnDiffCache.set(path, promise);
-    void promise.catch(() => turnDiffCache.delete(path));
+    cache.set(path, promise);
+    void promise.catch(() => cache.delete(path));
     return promise;
   }
   const target = workingTreeTarget();
@@ -191,11 +218,12 @@ export function loadChangeDiff(path: string, staged = false): Promise<ChangeDiff
   // runtime string, but keeps this a plain-text source file instead of one
   // git/editors detect as binary.
   const key = `${staged ? "staged" : "unstaged"}\u0000${path}`;
-  const cached = workingTreeDiffCache.get(key);
+  const cache = workingTreeDiffCache;
+  const cached = cache.get(key);
   if (cached) return cached;
   const promise = changesWorkingTreeFileDiff(target.projectRoot, path, staged);
-  workingTreeDiffCache.set(key, promise);
-  void promise.catch(() => workingTreeDiffCache.delete(key));
+  cache.set(key, promise);
+  void promise.catch(() => cache.delete(key));
   return promise;
 }
 

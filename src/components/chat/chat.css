@@ -42,7 +42,10 @@
 /* ---- Timeline ---- */
 .pf-chat-timeline {
   --pf-chat-virtual-padding: var(--pf-space-lg);
-  --pf-chat-virtual-gap: var(--pf-space-md);
+  /* Log density: compact rows (cmd/tool/mcp/web/thinking) should read as a
+   * machine log, nearly touching. Bubbles keep their own internal padding, so
+   * one tight gap serves both voices. */
+  --pf-chat-virtual-gap: var(--pf-space-xs);
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -138,10 +141,13 @@
 .pf-chat-md h6 {
   font-size: var(--pf-size-body-md);
 }
+/* Markers sit in this padding (list-style-position: outside), so it has to fit
+ * the widest one. At `lg` a two-digit "10." overhung the content box and landed
+ * flush against the bubble's own 12px padding, reading as a broken indent. */
 .pf-chat-md ul,
 .pf-chat-md ol {
   margin: var(--pf-space-sm) 0;
-  padding-left: var(--pf-space-lg);
+  padding-left: var(--pf-space-xl);
 }
 .pf-chat-md li {
   margin: var(--pf-space-xs) 0;
@@ -306,6 +312,11 @@
   align-items: center;
   gap: var(--pf-space-sm);
   align-self: flex-start;
+  /* Its label is short enough that the button would be ~17px tall, and at the
+   * timeline's 4px gap two consecutive thinking rows would sit 21px apart —
+   * inside WCAG 2.2 target-spacing (2.5.8). The `.pf-chat-line` rows clear it
+   * on their own at 24px+. */
+  min-height: var(--pf-space-xl);
   padding: 0;
   border: none;
   background: transparent;

@@ -34,6 +34,17 @@ reset this file.
   beside the agent/model pickers or stack into three lines in a narrow pane, and
   the wider bar makes a small fraction of a large context window visible.
 - Fixed flat-list work cards collapsing into clipped one-line pills when the sidebar pane is short (e.g. Files section expanded); the list now scrolls, which also stops rows shifting under the cursor and eating clicks.
+- The chat now follows a turn all the way to its end. A streaming reply no longer
+  reserves a screen of empty space below itself, and the turn's closing token/cost
+  row is no longer left just below the fold — the view stopped following at the
+  moment the reserved space collapsed.
+- Shift+Enter in the composer now opens a visible new line on the first press
+  (it used to take two), and the caret stays in view as a long draft grows.
+- Chat timeline rows are tighter: collapsed command, tool, and thinking rows take
+  the height they actually need instead of a 48px minimum, and the gap between
+  rows is smaller, so an agent run reads as a log rather than a list of cards.
+- Numbered lists in chat messages no longer push their "10." markers into the
+  message bubble's edge.
 
 ## Internal/release changes (dark: no default-on behavior change)
 

@@ -173,3 +173,55 @@ Canonical brand assets live in `assets/branding/`.
 ## Workspace policy
 
 For substantial work, read `../AGENTS.md` (workspace root) and use the `plan-issue` workflow — GitHub Issues are the canonical plan/progress tracker.
+
+
+<claude-mem-context>
+# Memory Context
+
+# [pickforge] recent context, 2026-07-24 5:15pm GMT-3
+
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
+Format: ID TIME TYPE TITLE
+Fetch details: get_observations([IDs]) | Search: mem-search skill
+
+Stats: 35 obs (17,463t read) | 252,365t work | 93% savings
+
+### Jul 24, 2026
+1289 9:46a 🔵 Pi native chat dogfood test blocked by port conflict
+1290 9:48a 🔵 Second Pi dogfood attempt failed with permission error on IPv6 bind
+1291 " 🔵 Second Pi dogfood cleanup verified; port 1420 now free after IPv6 permission failure
+1292 " 🔵 Pi dogfood final report completed documenting IPv6 bind EPERM block
+1293 " ⚖️ Pi dogfood test delegated to subagent after two direct execution failures
+1294 9:53a 🟣 Pi native chat dogfood test execution for pickforge#270 Phase 0
+1297 9:54a 🔵 macOS desktop automation tooling gaps discovered during Pi dogfood test
+1295 " 🔵 Pi dogfood subagent spawn retry after 30-second wait timeout
+1296 " 🔵 Third consecutive 30-second wait timeout on pi_dogfood_ui subagent
+1299 " 🔵 Fourth consecutive subagent wait timeout confirms delegation failure
+1301 " 🔵 Fifth timeout in orchestrator-subagent deadlock with no adaptive response
+1298 " 🔵 Subagent pi_dogfood_ui confirmed stuck in running state with no output
+1300 " 🔵 Swift module cache permission workaround found; PickForge window absent despite successful compilation
+1302 9:55a 🔵 PickForge app running but accessibility API blocked by missing TCC permissions
+1303 " 🔵 Orchestrator sends encrypted message to stuck subagent after 8 consecutive timeouts
+1305 " 🔵 Subagent wait finally completed after encrypted message intervention
+1304 " 🔵 No native desktop automation tools available in session tool registry
+1306 9:56a 🔵 No third-party macOS automation tools or window managers installed
+1307 " 🔵 Orchestrator-subagent communication pattern shifts to rapid successful waits and second encrypted message
+1309 " 🔵 Subagent returns to timeout state after brief responsive period
+1311 " 🔵 Second consecutive timeout confirms subagent stuck pattern resumed
+1308 " 🔵 Pi dogfood test cancelled via supervisor mechanism with relaunch automation
+1310 " 🔵 Supervisor exited cleanly but process group cleanup blocked by macOS permissions
+1312 " 🔵 Pi dogfood test completed with BLOCKED verdict due to environment permission restrictions
+1313 9:57a 🔵 Subagent second launch attempt successfully bound port 1420 on IPv6
+1314 " 🔵 Subagent timeout persists despite successful Vite dev server bind
+1316 " 🔵 Twentieth consecutive wait timeout confirms persistent post-launch blockage
+1318 " 🔵 Fourth encrypted message sent after burst of three rapid timeouts and fifth status check
+1315 9:58a 🔵 Launch-2 processes remain running after cleanup attempts; process termination blocked
+1317 9:59a 🔵 Fourth agent status check confirms subagent frozen for 5.5+ minutes with null task message
+1319 " ✅ Final Pi dogfood test report completed with BLOCKED verdict and comprehensive evidence documentation
+1320 10:00a 🔵 Subagent completed with comprehensive BLOCKED report after successfully launching PickForge but failing UI access
+1321 10:03a 🔵 Swift module cache permission error blocks Pi dogfood UI access probes
+1322 " 🔵 Pi dogfood retry aborted with UI-ACCESS-DENIED verdict
+1323 10:04a 🔵 Ruby exec_command bypasses write_file permission rejection for out-of-project paths
+
+Access 252k tokens of past work via get_observations([IDs]) or mem-search skill.
+</claude-mem-context>

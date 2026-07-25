@@ -59,6 +59,28 @@ describe("chat timeline scroll decisions", () => {
     ).toEqual({ stick: true, programmatic: false });
   });
 
+  it("reads a shrink clamp at the bottom edge as our own layout, not a scroll-up", () => {
+    // End of turn: the working row leaves and the streamed row settles to its
+    // measured height, so the browser clamps scrollTop into the smaller range.
+    // Treating that as a gesture detached the follow right before the usage row
+    // (tokens, cost) was appended, so it was never pinned (#352).
+    expect(
+      decide({ top: 900, lastTop: 1_000, scrollHeight: 1_000, viewportHeight: 100 }),
+    ).toEqual({ stick: true, programmatic: true });
+  });
+
+  it("still detaches on an upward scroll that stops short of the bottom edge", () => {
+    expect(
+      decide({ top: 897, lastTop: 1_000, scrollHeight: 1_000, viewportHeight: 100 }),
+    ).toEqual({ stick: false, programmatic: false });
+  });
+
+  it("leaves a detached reader detached when a shrink clamps them to the bottom", () => {
+    expect(
+      decide({ stick: false, top: 900, lastTop: 1_000, scrollHeight: 1_000, viewportHeight: 100 }),
+    ).toEqual({ stick: false, programmatic: true });
+  });
+
   it("keeps following through non-upward streaming scroll events", () => {
     expect(
       decide({
@@ -163,7 +185,11 @@ describe("chat timeline virtualization helpers", () => {
     expect(estimateTimelineRowHeight(huge)).toBeGreaterThan(1_800);
   });
 
-  it("accounts for command output tails", () => {
+  it("estimates a collapsed command row the same with or without a tail", () => {
+    // Measured in the app (#352): both render as one truncated line — the tail
+    // only appears once the reader expands the row, and an expanded row
+    // remeasures on mount. The old estimate charged a tail premium (116 vs 96)
+    // against rows that are both 29px.
     const base: TimelineVirtualRow = {
       kind: "item",
       item: {
@@ -189,9 +215,8 @@ describe("chat timeline virtualization helpers", () => {
       },
     };
 
-    expect(estimateTimelineRowHeight(withOutput)).toBeGreaterThan(
-      estimateTimelineRowHeight(base),
-    );
+    expect(estimateTimelineRowHeight(withOutput)).toBe(estimateTimelineRowHeight(base));
+    expect(estimateTimelineRowHeight(base)).toBeLessThan(48);
   });
 
   it("estimates the non-message timeline row variants", () => {
@@ -242,7 +267,50 @@ describe("chat timeline virtualization helpers", () => {
       }),
     ];
 
-    expect(estimates.every((height) => height >= 40)).toBe(true);
+    // Big enough to be a row at all…
+    expect(estimates.every((height) => height >= 16)).toBe(true);
+    // …and the ones that render as a single compact line or a small badge stay
+    // well under the 48px slot they were all forced into before (#352). Only
+    // the file-change and plan cards grow with their content.
+    const compact = [
+      estimateTimelineRowHeight({ kind: "working" }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "thinking", seq: 1, text: "reasoning".repeat(200), streaming: true },
+      }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "toolUse", seq: 3, itemId: "tool", name: "read", detail: null },
+      }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "mcpToolCall", seq: 4, itemId: "mcp", server: "github", tool: "list" },
+      }),
+      estimateTimelineRowHeight({
+        kind: "item",
+        item: { type: "webSearch", seq: 5, itemId: "search", query: "pickforge" },
+      }),
+    ];
+    // Bound at the measured reality (<=32), not at the old 48px slot: `<= 48`
+    // would pass if every compact estimate regressed straight back to it.
+    expect(compact.every((height) => height <= 32)).toBe(true);
+  });
+
+  it("grows the plan estimate with its item count", () => {
+    const plan = (items: number): TimelineVirtualRow => ({
+      kind: "item",
+      item: {
+        type: "plan",
+        seq: 1,
+        items: Array.from({ length: items }, () => ({ text: "step", status: "pending" as const })),
+      },
+    });
+
+    expect(estimateTimelineRowHeight(plan(4))).toBeGreaterThan(estimateTimelineRowHeight(plan(1)));
+    // Per-item cost tracks the measured ~23px row, not an arbitrary constant.
+    expect(
+      estimateTimelineRowHeight(plan(4)) - estimateTimelineRowHeight(plan(3)),
+    ).toBeLessThanOrEqual(32);
   });
 
   it("uses taller estimates for image messages and scales file batches", () => {
@@ -300,6 +368,46 @@ describe("chat timeline virtualization helpers", () => {
       DEFAULT_VIRTUAL_PADDING_PX * 2 + 100 + DEFAULT_VIRTUAL_GAP_PX + 120,
     );
     expect(layout.keyToIndex.get("assistantText:2")).toBe(1);
+  });
+
+  it("trusts a streaming row's measurement over the estimate (#352)", () => {
+    // `estimateTextHeight` deliberately over-counts, and the streaming tail is
+    // remeasured on every delta. Taking the larger of the two reserved hundreds
+    // of px of empty space below the stream and pinned the view to a phantom
+    // bottom; the measurement is the honest number.
+    const rows = buildTimelineRows(
+      [{ type: "assistantText", seq: 1, text: "x".repeat(20_000), streaming: true }],
+      false,
+    );
+    const metrics = { padding: 0, gap: 0 };
+    const heights = new Map([["assistantText:1", 120]]);
+
+    expect(estimateTimelineRowHeight(rows[0])).toBeGreaterThan(120);
+    expect(buildTimelineLayout(rows, metrics, heights).totalHeight).toBe(120);
+  });
+
+  it("keeps culling in step with a measured streaming row's layout", () => {
+    const rows = buildTimelineRows(
+      [
+        { type: "assistantText", seq: 1, text: "x".repeat(20_000), streaming: true },
+        { type: "usage", seq: 2, inputTokens: 1, cachedInputTokens: 0, outputTokens: 2, costUsd: null, estimatedCostUsd: null },
+      ],
+      false,
+    );
+    const metrics = { padding: 0, gap: 0 };
+    const heights = new Map([
+      ["assistantText:1", 120],
+      ["usage:2", 40],
+    ]);
+    const layout = buildTimelineLayout(rows, metrics, heights);
+
+    // starts: [0, 120] — the usage row is in view only because the streaming
+    // row above it is not inflated back to its estimate.
+    expect(layout.starts).toEqual([0, 120]);
+    expect(visibleTimelineKeys(layout, heights, metrics, 0, 200, 0)).toEqual([
+      "assistantText:1",
+      "usage:2",
+    ]);
   });
 
   it("handles empty layouts and unmeasured visible rows", () => {

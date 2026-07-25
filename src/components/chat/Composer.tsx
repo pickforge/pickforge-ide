@@ -69,6 +69,7 @@ import {
   serializeComposer,
   setCaretAtOffset,
 } from "../../lib/composerChips";
+import { scrollCaretIntoView } from "../../lib/composerCaretScroll";
 import { type PromptTemplate, matchTemplates } from "../../lib/promptTemplates";
 import { filePathsFromUriList, registerPathDropTarget } from "../../lib/terminalDrop";
 import { Dropdown, type DropdownOption } from "../Dropdown";
@@ -442,6 +443,10 @@ export function Composer(props: {
   const placeCaret = (offset: number) => {
     if (document.activeElement === field) {
       setCaretAtOffset(field, offset, attachmentModels());
+      // A scripted selection change does not scroll the caret into view the way
+      // typing does, and the editor is capped at 200px — without this, a draft
+      // past the cap keeps growing below the fold (#352).
+      scrollCaretIntoView(field);
     }
   };
 

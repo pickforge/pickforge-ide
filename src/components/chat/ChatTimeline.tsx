@@ -12,7 +12,6 @@ import { type AgentTimelineItem } from "../../stores/agentChat";
 import {
   DEFAULT_VIRTUAL_GAP_PX,
   DEFAULT_VIRTUAL_PADDING_PX,
-  MIN_ROW_HEIGHT_PX,
   buildTimelineLayout,
   buildTimelineRows,
   estimateTimelineRowHeight,
@@ -35,7 +34,7 @@ import { isPlanPinned, togglePlanPinned } from "../../stores/pinnedAgentPlans";
 import { reviewTurnChanges } from "../../lib/changesReceiptActions";
 import type { ChangeSet } from "../../lib/changes";
 import { flagEnabled } from "../../stores/flags";
-import { decideTimelineScroll } from "../../lib/chatTimelineScroll";
+import { decideTimelineScroll, timelineScrollNeedsGeometry } from "../../lib/chatTimelineScroll";
 import "./chat.css";
 
 /** Resolves a chat receipt's turn ordinal to its backend `ChangeSet` (#231
@@ -363,7 +362,12 @@ export function ChatTimeline(props: {
 
     for (const [key, height] of updates) {
       if (!Number.isFinite(height) || height < 1) continue;
-      const next = Math.max(MIN_ROW_HEIGHT_PX, Math.ceil(height));
+      // The measurement is the height. A 48px floor used to sit here, which
+      // gave every collapsed log row (a 29px command, a 17px thinking header, a
+      // 16px usage badge) a 48px slot and left the dead space that made the
+      // timeline read as an airy card list instead of a machine log. The
+      // `< 1` guard above already covers a degenerate measurement.
+      const next = Math.ceil(height);
       const index = currentLayout.keyToIndex.get(key);
       if (index === undefined) continue;
       const row = currentLayout.rows[index];
@@ -433,15 +437,18 @@ export function ChatTimeline(props: {
   const onScroll = () => {
     const top = scroller.scrollTop;
     scheduleScrollTop(top);
-    // Live DOM geometry is needed only while detached, when a downward scroll
-    // may re-arm follow. Cached virtual height can lag markdown reflow bursts.
+    // Live DOM geometry is needed while detached, when a downward scroll may
+    // re-arm follow, and on any upward event, which may be a shrink clamp
+    // rather than a gesture. Cached virtual height can lag markdown reflow
+    // bursts, so both cases read the real scroller.
+    const needsGeometry = !stick || timelineScrollNeedsGeometry(top, lastTop);
     const decision = decideTimelineScroll({
       stick,
       top,
       lastTop,
       programmaticTarget,
-      scrollHeight: stick ? Number.POSITIVE_INFINITY : scroller.scrollHeight,
-      viewportHeight: stick ? 0 : scroller.clientHeight,
+      scrollHeight: needsGeometry ? scroller.scrollHeight : Number.POSITIVE_INFINITY,
+      viewportHeight: needsGeometry ? scroller.clientHeight : 0,
     });
     programmaticTarget = null;
     stick = decision.stick;

@@ -34,6 +34,7 @@ import {
   voiceDockError,
   voiceDockPhase,
   voiceDockPreview,
+  voiceDockSpeaking,
 } from "../../stores/voiceDock";
 import { voiceDictationSettings } from "../../stores/voiceSettings";
 import { hotkeyMatches } from "../../stores/quickLaunch";
@@ -146,7 +147,14 @@ function OperatorVoiceStatus() {
         </div>
       </Show>
 
-      <Show when={!voiceDockActive() && voiceDockError()}>
+      <Show when={voiceDockSpeaking()}>
+        <div class="pf-op-note pf-op-note--voice">
+          <span class="pf-op-note-key">ember</span>
+          <span class="pf-op-note-body">speaking… (say anything to interrupt)</span>
+        </div>
+      </Show>
+
+      <Show when={!voiceDockActive() && !voiceDockSpeaking() && voiceDockError()}>
         {(message) => (
           <div class="pf-op-note pf-op-note--voice">
             <span class="pf-op-note-key">voice</span>

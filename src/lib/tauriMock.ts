@@ -2,7 +2,7 @@
 // window.__TAURI_INTERNALS__ so the app renders with sample data in a plain
 // browser (Playwright), with no Tauri runtime.
 import type { AgentEvent, AgentTimelineEntry } from "./agentChat";
-import type { ChangeSet, WorkingTreeChanges } from "./changes";
+import type { ChangedFile, ChangeSet, WorkingTreeChanges } from "./changes";
 import type { Chat } from "./db";
 
 const now = 1_750_000_000_000;
@@ -128,60 +128,95 @@ const CHANGES_TURN_FIXTURE = (projectRoot: string): ChangeSet => ({
   totals: { files: 2, additions: 0, deletions: 0 },
 });
 
-const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges => ({
-  state: "ready",
-  changeSet: {
-    id: `workingTree:${projectRoot}`,
-    scope: "workingTree",
-    source: "gitLive",
-    chatId: null,
-    turnSeq: null,
-    repoRoot: projectRoot,
-    capturedAt: now,
-    stale: false,
-    truncated: false,
-    files: [
-      {
-        path: "lib/login.dart",
-        oldPath: null,
-        status: "modify",
-        // Git-live source: staged/unstaged is always known, never null.
-        staged: false,
-        unstaged: true,
-        additions: 4,
-        deletions: 1,
-        binary: false,
-        truncated: false,
-        diffAvailable: true,
-      },
-      {
-        path: "lib/new_widget.dart",
-        oldPath: null,
-        status: "add",
-        staged: false,
-        unstaged: true,
-        additions: null,
-        deletions: null,
-        binary: false,
-        truncated: false,
-        diffAvailable: true,
-      },
-      {
-        path: "README.md",
-        oldPath: null,
-        status: "add",
-        staged: true,
-        unstaged: false,
-        additions: 12,
-        deletions: 0,
-        binary: false,
-        truncated: false,
-        diffAvailable: true,
-      },
-    ],
-    totals: { files: 3, additions: 16, deletions: 1 },
-  },
-});
+// #231 PR4's Workbench Changes review surface VRT scenario opts into one
+// extra rename row on top of the fixture every other VRT spec already relies
+// on (`lib/new_widget.dart`'s unknown stats and the staged/unstaged split
+// already exercise the rest of the "mixed change-set" surface). Gated behind
+// its own key rather than always appending the row, so specs that don't set
+// it (the already-pinned `workbench`/`agent-chat` goldens) keep rendering
+// exactly the fixture they were pinned against.
+const VRT_CHANGES_REVIEW_SURFACE_FIXTURE_KEY = "pickforge.vrt.changesReviewSurfaceFixture";
+function changesReviewSurfaceFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_CHANGES_REVIEW_SURFACE_FIXTURE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const CHANGES_WORKING_TREE_FIXTURE = (projectRoot: string): WorkingTreeChanges => {
+  const files: ChangedFile[] = [
+    {
+      path: "lib/login.dart",
+      oldPath: null,
+      status: "modify",
+      // Git-live source: staged/unstaged is always known, never null.
+      staged: false,
+      unstaged: true,
+      additions: 4,
+      deletions: 1,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+    },
+    {
+      path: "lib/new_widget.dart",
+      oldPath: null,
+      status: "add",
+      staged: false,
+      unstaged: true,
+      additions: null,
+      deletions: null,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+    },
+    {
+      path: "README.md",
+      oldPath: null,
+      status: "add",
+      staged: true,
+      unstaged: false,
+      additions: 12,
+      deletions: 0,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+    },
+  ];
+  if (changesReviewSurfaceFixtureEnabled()) {
+    files.push({
+      path: "lib/widgets/new_button.dart",
+      oldPath: "lib/widgets/old_button.dart",
+      status: "rename",
+      staged: false,
+      unstaged: true,
+      additions: 2,
+      deletions: 1,
+      binary: false,
+      truncated: false,
+      diffAvailable: true,
+    });
+  }
+  const additions = files.reduce((n, f) => n + (f.additions ?? 0), 0);
+  const deletions = files.reduce((n, f) => n + (f.deletions ?? 0), 0);
+  return {
+    state: "ready",
+    changeSet: {
+      id: `workingTree:${projectRoot}`,
+      scope: "workingTree",
+      source: "gitLive",
+      chatId: null,
+      turnSeq: null,
+      repoRoot: projectRoot,
+      capturedAt: now,
+      stale: false,
+      truncated: false,
+      files,
+      totals: { files: files.length, additions, deletions },
+    },
+  };
+};
 
 const CHANGES_DIFF_FIXTURE = {
   diff: "diff --git a/lib/login.dart b/lib/login.dart\n@@ -1,3 +1,3 @@\n-old line\n+new line\n context\n",

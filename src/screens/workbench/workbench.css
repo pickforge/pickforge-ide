@@ -3026,39 +3026,13 @@ body.pf-resizing .pf-dc-resizer-grip {
    rich work-card visuals for busy/needs-you chats are PR2 — PR1 reuses the
    tree's plain-row busy/attention treatment (background tint + inset edge)
    for every state. */
-.pf-flat-bar {
-  flex-wrap: wrap;
-  row-gap: var(--pf-space-xs);
-}
-.pf-flat-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--pf-space-xs);
-  min-width: 0;
+/* One dropdown, one row — no wrapping (#371). The chip row this replaced was
+   `flex-wrap: wrap` and grew a row per few projects, spending pane height the
+   chat list needed. The trigger takes the leftover width beside the pane's
+   two icon buttons and truncates rather than pushing them out. */
+.pf-flat-project-filter {
   flex: 1 1 auto;
-}
-.pf-flat-chip {
-  border: var(--pf-hairline-width) solid var(--pf-hairline);
-  background: transparent;
-  color: var(--pf-text-med);
-  font-family: var(--pf-font-mono);
-  font-size: var(--pf-size-eyebrow);
-  letter-spacing: var(--pf-tracking-eyebrow);
-  text-transform: uppercase;
-  border-radius: var(--pf-radius-pill);
-  padding: 2px var(--pf-space-sm);
-  cursor: pointer;
-  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge),
-    color var(--pf-dur-fast) var(--pf-ease-forge);
-}
-.pf-flat-chip:hover {
-  color: var(--pf-text-hi);
-  border-color: var(--pf-hairline-strong);
-}
-.pf-flat-chip--on {
-  border-color: var(--pf-hairline-strong);
-  color: var(--pf-text-hi);
+  min-width: 0;
 }
 
 .pf-flat-list {

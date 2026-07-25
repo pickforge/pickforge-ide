@@ -175,10 +175,18 @@ impl SpeechBackend for OsTtsBackend {
             .ok_or(VoiceError::MissingTtsBinary)?;
 
         // Argv-style, never a shell: `text` is passed as one argument, never
-        // interpolated into a command string.
+        // interpolated into a command string. `--` (end-of-options) goes
+        // before it: `say`/`spd-say`/`espeak-ng` all still parse leading
+        // dashes as flags in an unquoted-shell sense (they read raw argv),
+        // so spoken text that happens to start with e.g. `-o` would
+        // otherwise be consumed as a flag (verified empirically for `say`:
+        // `-o <path>` redirects output to a file instead of speaking).
+        // `--` is the standard getopt/getopt_long end-of-options marker all
+        // three backends' argument parsers honor, forcing `text` to be
+        // treated as an operand no matter what it starts with.
         let mut command = Command::new(program);
         command
-            .arg(text)
+            .args(["--", text])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -260,7 +268,27 @@ impl RunningSpeech for OsTtsJob {
         if self.killed.swap(true, Ordering::SeqCst) {
             return;
         }
+        // `wait()` takes the child out of the mutex as soon as it reaps it
+        // (success, failure, or timeout), before returning — so once that's
+        // happened there is definitely nothing left to signal. Skipping the
+        // killpg + 300ms grace sleep in that case matters because
+        // `OsTtsJob::drop` below calls `kill()` unconditionally on every
+        // drop, including the ordinary already-finished-normally path.
+        if self.child.lock().expect("tts child poisoned").is_none() {
+            return;
+        }
         kill_process_group(self.pid);
+    }
+}
+
+/// Belt-and-suspenders alongside `SpeechSessionManager`'s own `Drop`: if a
+/// job handle is ever dropped by some path other than the manager's
+/// registry (or the registry itself is bypassed in a future refactor), the
+/// child still gets killed rather than orphaned. `kill()` is idempotent, so
+/// this never double-signals a session the manager already killed.
+impl Drop for OsTtsJob {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
@@ -406,6 +434,28 @@ impl<B: SpeechBackend> SpeechSessionManager<B> {
             {
                 return id;
             }
+        }
+    }
+}
+
+/// Mirrors `VoiceSessionManager`'s `Drop`: on graceful app exit the manager
+/// itself is dropped, and without this an in-flight `say`/`spd-say`/
+/// `espeak-ng` child would keep running detached in its own process group
+/// until it finished on its own — an orphaned process outliving the app.
+/// Draining and killing here is a bounded, synchronous best-effort: each
+/// `kill()` blocks up to ~300ms (SIGTERM grace) per still-running session,
+/// and push-to-talk means there is realistically at most one.
+impl<B: SpeechBackend> Drop for SpeechSessionManager<B> {
+    fn drop(&mut self) {
+        let handles: Vec<Arc<dyn RunningSpeech>> = self
+            .sessions
+            .lock()
+            .expect("speak registry poisoned")
+            .drain()
+            .map(|(_, handle)| handle)
+            .collect();
+        for handle in handles {
+            handle.kill();
         }
     }
 }
@@ -562,6 +612,84 @@ mod tests {
         manager
             .cancel("session-that-never-existed")
             .expect("cancelling an unknown session is a no-op");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Spoken text is assistant-controlled (route reasons, summaries, error
+    /// messages) and reaches the TTS binary's raw argv unshelled — a reply
+    /// that happens to start with a flag the binary recognizes (e.g. macOS
+    /// `say`'s `-o <path>`) must never be parsed as an option instead of
+    /// spoken text. The fix is the `--` end-of-options marker passed ahead
+    /// of `text`; this asserts the binary actually receives it that way.
+    #[cfg(unix)]
+    #[test]
+    fn a_leading_dash_in_spoken_text_never_reaches_the_backend_as_a_flag() {
+        let dir = fake_bin_dir("argv-capture");
+        let capture_path = dir.join("captured-argv.txt");
+        write_script(
+            &dir,
+            backend_name(),
+            &format!(
+                "printf '%s\\n' \"$1\" \"$2\" > '{}'\nexit 0",
+                capture_path.display()
+            ),
+        );
+        let backend = OsTtsBackend::with_env(env_with_path(&dir));
+        let manager = SpeechSessionManager::with_backend(backend);
+
+        let (tx, rx) = mpsc::channel();
+        manager
+            .speak(
+                "-o /tmp/pf-speak-test-evil-output.aiff hello",
+                move |event: SpeakEvent| {
+                    let _ = tx.send(event);
+                },
+            )
+            .expect("speak should start");
+
+        let events = drain(&rx, Duration::from_secs(5));
+        assert_eq!(events.last().map(|event| event.kind), Some(SpeakEventKind::Finished));
+
+        let captured = std::fs::read_to_string(&capture_path).expect("script should have run");
+        let mut lines = captured.lines();
+        assert_eq!(lines.next(), Some("--"), "the binary must see -- before the text");
+        assert_eq!(
+            lines.next(),
+            Some("-o /tmp/pf-speak-test-evil-output.aiff hello"),
+            "the leading -o must arrive as a single text operand, not a flag",
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kill-on-drop: nothing else calls `cancel()` when the app exits mid-
+    /// utterance, so `SpeechSessionManager`'s own `Drop` is what stops the
+    /// child from orphaning past the app's own lifetime.
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_manager_kills_an_in_flight_utterance() {
+        let dir = fake_bin_dir("drop-kill");
+        write_script(&dir, backend_name(), "sleep 30");
+        let backend = OsTtsBackend::with_env(env_with_path(&dir));
+        let manager = SpeechSessionManager::with_backend(backend);
+
+        let (tx, rx) = mpsc::channel();
+        manager
+            .speak("a long reply", move |event: SpeakEvent| {
+                let _ = tx.send(event);
+            })
+            .expect("speak should start");
+
+        let started = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(started.kind, SpeakEventKind::Started);
+
+        drop(manager);
+
+        // Without kill-on-drop this would block ~30s (the fake binary's
+        // sleep) or time out here; Drop kills it immediately instead.
+        let finished = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(finished.kind, SpeakEventKind::Finished);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

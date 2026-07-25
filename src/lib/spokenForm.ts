@@ -3,8 +3,10 @@
 // yet — these strings are deliberately plain and swappable once that lands.
 //
 // The safe-action gate lives here too: a `dispatch` outcome only speaks when
-// its action's risk tier is 0 (safe/read-only, per operatorIntent's existing
-// `riskTier` classification — never reimplemented). Tier-1 actions (spend,
+// its action's risk tier is 0 (no confirmation needed, per operatorIntent's
+// existing `riskTier` classification — never reimplemented; tier 0 also
+// covers non-destructive actions like launchRun/stopRun/hotRestart, not
+// only strictly read-only ones). Tier-1 actions (spend,
 // file-write, run, git, PR, delete) and anything still needing on-screen
 // confirmation return null — screen-gate only, by construction, regardless
 // of who calls this.

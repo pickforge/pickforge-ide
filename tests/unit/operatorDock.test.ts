@@ -1056,6 +1056,36 @@ describe("operatorDock store — Ember talk-back gating", () => {
     expect(deps.speakReply).not.toHaveBeenCalled();
   });
 
+  it("never speaks after confirming a tier-1 preview, even mic-originated with talk-back on", async () => {
+    // Defends the exact scary regression: a voice-originated write/spend
+    // action must never get spoken confirmation after the user explicitly
+    // confirms it on-screen — confirmation is a click/tap, not a fresh mic
+    // command, so it must stay outside the speak path entirely.
+    const sendPrompt = intent({ action: "sendPrompt", prompt: "hi", chat: null }, "voice");
+    deps.parseCommand.mockReturnValue({ kind: "intent", intent: sendPrompt });
+    deps.dispatchIntent
+      .mockResolvedValueOnce({
+        status: "needsConfirmation",
+        summary: "Send prompt to active chat",
+        auditId: "audit-1",
+      } as DispatchResult)
+      .mockResolvedValueOnce({ status: "done", summary: "Sent prompt to Chat" } as DispatchResult);
+    const s = await loadStore();
+
+    s.setOperatorInputFromVoice("send hi");
+    await s.submitOperatorCommand();
+    expect(s.operatorView().kind).toBe("preview");
+    expect(deps.speakReply).not.toHaveBeenCalled();
+
+    await s.confirmOperatorPreview();
+
+    expect(s.operatorView()).toEqual({
+      kind: "result",
+      result: { status: "done", summary: "Sent prompt to Chat" },
+    });
+    expect(deps.speakReply).not.toHaveBeenCalled();
+  });
+
   it("never speaks a needsConfirmation preview, tier-0 or not, mic-originated or not", async () => {
     const selectWidget = intent({ action: "selectWidget", description: "the login button" }, "voice");
     deps.parseCommand.mockReturnValue({ kind: "intent", intent: selectWidget });

@@ -7,9 +7,10 @@ export interface VoiceDictationSettings {
   micEnabled: boolean;
   pushToCommand: boolean;
   modelPath: string;
-  /** Ember talk-back, off by default: "local" speaks safe/read-only command
-   *  outcomes back via OS TTS, push-to-talk (voice-in -> voice-out only —
-   *  typed commands never trigger speech regardless of this setting). */
+  /** Ember talk-back, off by default: "local" speaks safe (no-confirmation,
+   *  tier-0) command outcomes back via OS TTS, push-to-talk (voice-in ->
+   *  voice-out only — typed commands never trigger speech regardless of
+   *  this setting). */
   voiceOutput: VoiceOutputMode;
 }
 

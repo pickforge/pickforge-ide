@@ -1782,7 +1782,7 @@ const DictationContent = (props: { voice: VoiceSettingsState }) => {
         <span class="pf-settings-label">
           Ember talk-back
           <span class="pf-settings-hint-inline">
-            speak safe/read-only command replies back via local OS TTS — only for commands said aloud, never typed ones
+            speak safe (no-confirmation) command replies back via local OS TTS — only for commands said aloud, never typed ones
           </span>
         </span>
         <div class="pf-seg">

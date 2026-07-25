@@ -176,6 +176,35 @@ describe("QueueDock", () => {
     );
   });
 
+  it("does not attribute a later send to a removal that happened while held", () => {
+    // The held branch used to return before consuming the cause flags, so the
+    // removal below stayed "pending" and stole the attribution from the send.
+    const [messages, setMessages] = createSignal([
+      queued("queued-1", "first"),
+      queued("queued-2", "second"),
+    ]);
+    const [held, setHeld] = createSignal(true);
+    dispose = render(
+      () => (
+        <QueueDock
+          messages={messages()}
+          held={held()}
+          onRemove={(id) => setMessages((c) => c.filter((m) => m.id !== id))}
+        />
+      ),
+      root,
+    );
+
+    root.querySelector<HTMLButtonElement>('[aria-label="Remove queued message 1"]')?.click();
+    // The user then sends the rest, and the store drains the last entry.
+    setHeld(false);
+    setMessages([]);
+
+    expect(root.querySelector('[role="status"]')?.textContent).toBe(
+      "Message sent, none remaining",
+    );
+  });
+
   it("announces a drained message distinctly from a manual removal", () => {
     const [messages, setMessages] = createSignal([
       queued("queued-1", "first"),

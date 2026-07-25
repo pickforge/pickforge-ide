@@ -150,19 +150,19 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
     }
     if (props.held && ids.length > 0) {
       setAnnouncement(`Queue held, ${ids.length} waiting. Choose send or discard.`);
-      previousIds = ids;
-      return;
-    }
-    if (ids.length > previousIds.length) {
+    } else if (ids.length > previousIds.length) {
       setAnnouncement(`${ids.length} ${ids.length === 1 ? "message" : "messages"} queued`);
     } else if (ids.length < previousIds.length) {
       const byHand = manuallyRemovedId !== null && !ids.includes(manuallyRemovedId);
       if (discardedAll) setAnnouncement(`Queue discarded, ${remaining(ids.length)}`);
       else if (byHand) setAnnouncement(`Queued message removed, ${remaining(ids.length)}`);
       else setAnnouncement(`Message sent, ${remaining(ids.length)}`);
-      manuallyRemovedId = null;
-      discardedAll = false;
     }
+    // Consumed unconditionally: a run that took the held branch used to leave
+    // these set, so the next shrink was attributed to whatever happened before
+    // the hold rather than to what actually just changed.
+    manuallyRemovedId = null;
+    discardedAll = false;
     previousIds = ids;
   });
 

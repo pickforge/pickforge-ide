@@ -55,6 +55,7 @@ const definitions = {
   pikitContext: { description: "PickForge context surfaced in Pi sessions (#299 slice 4)" },
   changesReview: { description: "In-chat changes receipt and Review-changes action (#231)" },
   flatChatList: { description: "Flat chat-first sidebar sorted by state (#306 PR1)" },
+  orchestraBoard: { description: "Orchestra column-per-status board scaffold (#319, #196 PR1)" },
 } as const;
 
 export type FlagKey = keyof typeof definitions;

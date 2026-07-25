@@ -163,6 +163,15 @@
   }
 }
 
+/* MonoEyebrow rendered as a heading (`as="h2"`/`"h3"`): strip the browser's
+ * default heading margin/font so it stays pixel-identical to the span form —
+ * `.pf-eyebrow-row` already sets its own layout and `.pf-eyebrow` its own
+ * type, this only neutralizes the <h2>/<h3> UA-stylesheet margin. */
+.pf-eyebrow-row--heading {
+  margin: 0;
+  font: inherit;
+}
+
 /* ---- ForgeEmptyState: bracket-framed glyph + eyebrow + title + hint ---- */
 .pf-empty {
   display: flex;

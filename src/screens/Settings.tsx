@@ -185,6 +185,8 @@ import { SettingsNavigation } from "./SettingsNavigation";
 import {
   availableSettingsCategories,
   firstSettingsSectionForCategory,
+  loadRememberedSettingsCategory,
+  rememberSettingsCategory,
   resolveSettingsCategory,
   settingsCategoryForSection,
   type SettingsCategoryKey,
@@ -229,7 +231,6 @@ const LINUX_GRAPHICS_MODE_DESCRIPTIONS: Record<LinuxGraphicsMode, string> = {
   "native-wayland": "Opt into native Wayland; keep the WebKitGTK DMA-BUF renderer on.",
 };
 
-const SETTINGS_CATEGORY_STORAGE_KEY = "pickforge.settings.category";
 const SETTINGS_SCROLL_SETTLE_MS = 2_000;
 const SETTINGS_SCROLL_KEYS: Record<string, true> = {
   ArrowDown: true,
@@ -240,22 +241,6 @@ const SETTINGS_SCROLL_KEYS: Record<string, true> = {
   PageUp: true,
   " ": true,
 };
-
-function loadRememberedSettingsCategory(): string | null {
-  try {
-    return localStorage.getItem(SETTINGS_CATEGORY_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function rememberSettingsCategory(category: SettingsCategoryKey): void {
-  try {
-    localStorage.setItem(SETTINGS_CATEGORY_STORAGE_KEY, category);
-  } catch {
-    // Settings navigation remains usable when storage is unavailable.
-  }
-}
 
 type AgentConnectorState = {
   label: string;
@@ -1644,7 +1629,7 @@ const AgentModelsContent = (props: { diagnostics: AgentDiagnosticsState }) => {
 
       <div class="pf-agent-diagnostics-head" data-agent-diagnostics-head="connectors">
         <div class="pf-agent-diagnostics-copy">
-          <MonoEyebrow text="Connector diagnostics" />
+          <MonoEyebrow text="Connector diagnostics" as="h3" />
           <span
             class="pf-settings-muted"
             role="status"
@@ -1674,7 +1659,7 @@ const AgentModelsContent = (props: { diagnostics: AgentDiagnosticsState }) => {
 
       <div class="pf-agent-diagnostics-head" data-agent-diagnostics-head="auth">
         <div class="pf-agent-diagnostics-copy">
-          <MonoEyebrow text="CLI authentication" />
+          <MonoEyebrow text="CLI authentication" as="h3" />
           <span class="pf-settings-muted">
             Probe-only, via each CLI's own status command; PickForge never reads
             credential files, tokens, or keychain entries.
@@ -2652,7 +2637,7 @@ const AccountDataAndSignOutSection = (props: { lifecycle: AccountLifecycleState 
   return (
     <>
       <div class="pf-account-tools">
-        <MonoEyebrow text="Your data" />
+        <MonoEyebrow text="Your data" as="h3" />
         <span class="pf-settings-muted">
           A portable copy of your PickForge account data — profile, entitlements, credit ledger, and synced settings.
         </span>
@@ -2693,7 +2678,7 @@ const AccountDeleteDialog = (props: {
   return (
     <>
       <div class="pf-danger-zone">
-        <MonoEyebrow text="Danger zone" />
+        <MonoEyebrow text="Danger zone" as="h3" />
         <div class="pf-settings-row">
           <span class="pf-settings-label">
             Delete account

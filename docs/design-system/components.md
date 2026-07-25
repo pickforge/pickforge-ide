@@ -37,13 +37,15 @@ EmberButton(
 For routine actions use the themed `FilledButton` / `OutlinedButton` /
 `TextButton` instead (the theme already styles them).
 
-## StatusPill + EmberDot
+## StatusPill
 
-Semantic status chip with a leading dot; the dot can pulse for "live" states.
+Semantic status tag: mono uppercase text behind a leading `[` bracket in the
+intent color. Never a filled chip, and never a round dot — the bracket *is* the
+indicator. It can pulse for "live" states.
 
-```dart
-StatusPill(label: 'Running', intent: StatusIntent.live, pulsing: true)
-EmberDot(color: StatusIntent.connected.color, pulsing: false)
+```tsx
+<StatusPill label="running" intent="live" pulsing />
+<StatusPill label="shell · live" intent="connected" compact />
 ```
 `StatusIntent`: neutral · live (ember) · connected (green) · warning (amber) ·
 error (red) · info (blue). Note: `StatusPill` **uppercases** its label.

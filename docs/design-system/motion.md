@@ -39,7 +39,7 @@ if (ReduceMotion.of(context)) { /* jump to end state */ }
 ```
 
 The signature components already honor this internally (`EmberButton`,
-`EmberDot`, `SelectionBracket`). `flutter_animate` entrances must be gated by
+`StatusPill`, `SelectionBracket`). `flutter_animate` entrances must be gated by
 hand — only apply `.animate()` when `!ReduceMotion.of(context)` (this also keeps
 golden tests, which set `disableAnimations: true`, deterministic).
 
@@ -50,10 +50,21 @@ golden tests, which set `disableAnimations: true`, deterministic).
 - **Selection/hover**: `AnimatedContainer(duration: ReduceMotion.duration(
   context, PickforgeMotion.fast), curve: PickforgeMotion.forge)` for background
   / marker changes on the active row.
-- **Live pulse**: `EmberDot(pulsing: true)` for running/connected status.
+- **Live pulse**: `<StatusPill pulsing />` for running/connected status — the
+  bracket indicator pulses, not a dot.
 
 ## Do / don't
 
 - ✅ `curve: PickforgeMotion.forge`  ❌ `curve: Curves.easeIn`
 - ✅ `ReduceMotion.duration(context, PickforgeMotion.fast)`  ❌ raw `Duration(milliseconds: 200)`
 - ✅ gate `.animate()` on reduced motion  ❌ unconditional entrance animations
+
+## The one carve-out
+
+Infinite loops — the ember sweep, the spinner, the caret blink — use the bare
+`linear` keyword or `steps()`, not the forge curve, because an eased loop pumps
+its speed on every cycle. That is the only legal raw easing. The `linear()`
+*function* is an arbitrary custom curve and is not covered by this exemption.
+
+`npm run lint` enforces this: `scripts/check-design-tokens.mjs` fails on any
+other raw easing in `src/**/*.css`. Reach for a `--pf-ease-*` token instead.

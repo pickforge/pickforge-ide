@@ -29,7 +29,7 @@ canonical "why"; read this for the "how" in code.
    `ReduceMotion.duration` (`lib/shared/motion/reduce_motion.dart`).
 8. **Compose with the signature components** in `lib/shared/components/`
    (`MonoEyebrow`, `StatusPill`, `EmberButton`, `SelectionBracket`,
-   `HairlinePanel`, `BlueprintGrid`, `EmberDot`) before hand-rolling UI.
+   `HairlinePanel`, `BlueprintGrid`) before hand-rolling UI.
 9. **Section labels are mono eyebrows** (`MonoEyebrow`) — uppercase, wide
    tracking, optional ember tick.
 10. **Restraint is the brand.** It's a dense developer tool. Quiet by default;

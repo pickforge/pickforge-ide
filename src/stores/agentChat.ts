@@ -281,7 +281,11 @@ export function removeQueuedMessage(chatId: string, id: string): void {
   // dropping it here would only hide a message that still arrives.
   if (!chat || id === chat.drainingId) return;
   if (!chat.queue.some((entry) => entry.id === id)) return;
-  setChats(chatId, { queue: chat.queue.filter((entry) => entry.id !== id) });
+  const queue = chat.queue.filter((entry) => entry.id !== id);
+  // Removing the last entry resolves the hold by itself. Leaving the flag set
+  // would strand it: the dock unmounts, so nothing can clear it, and the next
+  // message queued would arrive already held and never drain.
+  setChats(chatId, { queue, queueHeld: queue.length > 0 && chat.queueHeld });
 }
 
 export function clearAgentQueue(chatId: string): void {

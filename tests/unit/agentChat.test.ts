@@ -2803,6 +2803,30 @@ describe("agent message queue", () => {
     expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["hold me"]);
   });
 
+  it("resolves the hold when the last held entry is removed by hand", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    const id = enqueueAgentMessage(chatId, "the only one");
+    await interruptAgentChat(chatId);
+    emit({ kind: "turnDone", status: "interrupted" });
+    await flushPromises();
+    expect(agentChat(chatId)?.queueHeld).toBe(true);
+
+    removeQueuedMessage(chatId, id);
+
+    // Left set, the flag would be unreachable — the dock unmounts with the
+    // last row — and the next queued message would arrive already held.
+    expect(agentChat(chatId)?.queueHeld).toBe(false);
+
+    enqueueAgentMessage(chatId, "a fresh one");
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_send",
+      expect.objectContaining({ text: "a fresh one" }),
+    );
+  });
+
   it("sends a held queue only when the user asks", async () => {
     const { chatId, emit } = await startChat();
     emit({ kind: "turnStarted" });

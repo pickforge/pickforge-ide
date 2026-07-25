@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type AgentTimelineItem } from "../../src/stores/agentChat";
+import { decideTimelineScroll } from "../../src/lib/chatTimelineScroll";
 
 import {
   DEFAULT_VIRTUAL_GAP_PX,
@@ -11,6 +12,64 @@ import {
   visibleTimelineKeys,
   type TimelineVirtualRow,
 } from "../../src/lib/chatTimelineVirtual";
+
+describe("chat timeline scroll decisions", () => {
+  const decide = (
+    overrides: Partial<Parameters<typeof decideTimelineScroll>[0]> = {},
+  ) =>
+    decideTimelineScroll({
+      stick: true,
+      top: 900,
+      lastTop: 900,
+      programmaticTarget: null,
+      scrollHeight: 1_000,
+      viewportHeight: 100,
+      ...overrides,
+    });
+
+  it("keeps following when its programmatic pin settles", () => {
+    expect(decide({ top: 901, programmaticTarget: 900 })).toEqual({
+      stick: true,
+      programmatic: true,
+    });
+  });
+
+  it("does not swallow an interleaved upward user scroll near a pin target", () => {
+    expect(
+      decide({ top: 898.5, lastTop: 900, programmaticTarget: 900 }),
+    ).toEqual({ stick: false, programmatic: false });
+  });
+
+  it("detaches when the user scrolls up", () => {
+    expect(decide({ top: 700, lastTop: 900 })).toEqual({
+      stick: false,
+      programmatic: false,
+    });
+  });
+
+  it("re-arms from live scroll geometry when the user returns near the bottom", () => {
+    expect(
+      decide({
+        stick: false,
+        top: 1_805,
+        lastTop: 1_700,
+        scrollHeight: 2_000,
+        viewportHeight: 100,
+      }),
+    ).toEqual({ stick: true, programmatic: false });
+  });
+
+  it("keeps following through non-upward streaming scroll events", () => {
+    expect(
+      decide({
+        top: 950,
+        lastTop: 900,
+        scrollHeight: 1_200,
+        viewportHeight: 100,
+      }),
+    ).toEqual({ stick: true, programmatic: false });
+  });
+});
 
 describe("chat timeline virtualization helpers", () => {
   it("uses stable row keys from item type and sequence", () => {

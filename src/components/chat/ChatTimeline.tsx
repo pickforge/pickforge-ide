@@ -35,6 +35,7 @@ import { isPlanPinned, togglePlanPinned } from "../../stores/pinnedAgentPlans";
 import { reviewTurnChanges } from "../../lib/changesReceiptActions";
 import type { ChangeSet } from "../../lib/changes";
 import { flagEnabled } from "../../stores/flags";
+import { decideTimelineScroll } from "../../lib/chatTimelineScroll";
 import "./chat.css";
 
 /** Resolves a chat receipt's turn ordinal to its backend `ChangeSet` (#231
@@ -241,12 +242,10 @@ export function ChatTimeline(props: {
   changesReceipts?: ChangesReceiptSource;
 }): JSX.Element {
   let scroller!: HTMLDivElement;
-  // Follow the streaming tail, but detach the instant the user scrolls up (any
-  // amount) and re-attach only once they return to the bottom. A distance-only
-  // check let small scroll-ups stay "near bottom" while content kept growing, so
-  // the next resize tick yanked the view back down — hence the "scroll fast to
-  // escape" stickiness. `programmaticTarget` marks our own pin so only matching
-  // scroll events are ignored.
+  // Follow the streaming tail, but detach the instant the user scrolls up and
+  // re-attach only once they return to the bottom. `programmaticTarget` marks
+  // our own pin; upward movement still wins if user input interleaves with its
+  // pending scroll event.
   let stick = true;
   let lastTop = 0;
   let programmaticTarget: number | null = null;
@@ -260,7 +259,6 @@ export function ChatTimeline(props: {
   // every cached height stale. Track the scroller's content width and drop the
   // cache when it changes so rows remeasure at the new width.
   let lastContentWidth = 0;
-  const THRESHOLD = 96;
   const SCROLL_IDLE_MS = 120;
   const rowHeights = new Map<string, number>();
   const queuedRowHeights = new Map<string, number>();
@@ -299,12 +297,6 @@ export function ChatTimeline(props: {
     return buildTimelineLayout(rows(), metrics(), rowHeights);
   });
 
-  // Reads only cached signals (no scrollHeight/clientHeight) so the scroll
-  // handler never forces a layout flush — that flush per scroll event is the
-  // main scroll-jank cost on WebKitGTK (macOS WKWebView absorbs it).
-  const atBottom = (top: number) =>
-    layout().totalHeight - top - viewportHeight() < THRESHOLD;
-
   // The row spanning `top` and how far `top` sits into it, in the current layout.
   // Used to keep a detached reader anchored across a height invalidation.
   const anchorRowAt = (top: number): { key: string; offset: number } | null => {
@@ -339,10 +331,13 @@ export function ChatTimeline(props: {
   };
 
   const applyProgrammaticScroll = (target: number) => {
-    programmaticTarget = target;
     scroller.scrollTop = target;
-    commitScrollTop(target);
-    lastTop = target;
+    // The browser may clamp a requested target to the current DOM extent. Track
+    // the applied position so that settling event cannot look like user input.
+    const appliedTop = scroller.scrollTop;
+    programmaticTarget = appliedTop;
+    commitScrollTop(appliedTop);
+    lastTop = appliedTop;
   };
 
   const pin = (force = false) => {
@@ -438,16 +433,21 @@ export function ChatTimeline(props: {
   const onScroll = () => {
     const top = scroller.scrollTop;
     scheduleScrollTop(top);
-    if (programmaticTarget !== null && Math.abs(top - programmaticTarget) < 2) {
-      programmaticTarget = null; // our own pin settling; record its resting position
-      lastTop = top;
-      return;
-    }
+    // Live DOM geometry is needed only while detached, when a downward scroll
+    // may re-arm follow. Cached virtual height can lag markdown reflow bursts.
+    const decision = decideTimelineScroll({
+      stick,
+      top,
+      lastTop,
+      programmaticTarget,
+      scrollHeight: stick ? Number.POSITIVE_INFINITY : scroller.scrollHeight,
+      viewportHeight: stick ? 0 : scroller.clientHeight,
+    });
     programmaticTarget = null;
-    markUserScrolling();
-    if (top < lastTop - 1) stick = false; // user scrolled up → detach
-    else if (atBottom(top)) stick = true; // user returned to the bottom → follow again
+    stick = decision.stick;
     lastTop = top;
+    if (decision.programmatic) return;
+    markUserScrolling();
   };
 
   // A wheel-up gesture should detach the streaming follow even when it can't move

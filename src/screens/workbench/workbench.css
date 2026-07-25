@@ -3069,6 +3069,20 @@ body.pf-resizing .pf-dc-resizer-grip {
   gap: 2px;
   overflow-y: auto;
   scrollbar-gutter: stable;
+  /* This list re-sorts mid-turn: a chat promoted out of the quiet tail becomes
+     a live work card ABOVE the reader's offset. Scroll anchoring answers that
+     content growth by silently moving scrollTop — measured at +122px for a
+     120px promotion. In a state-sorted list an offset into the previous order
+     is not a position worth preserving, so opt out, as the chat timeline has
+     since #108.
+
+     Scope: this only does anything on Chromium-based engines. WebKit shipped
+     scroll anchoring in Safari 27 / STP 238, so on today's WKWebView and
+     WebKitGTK the declaration is an inert no-op AND the drift cannot occur —
+     the guard is here so it stays that way when those engines catch up. #356
+     was reported on a macOS build, which means that report is NOT this
+     mechanism and remains unexplained; do not treat this rule as its fix. */
+  overflow-anchor: none;
   padding: var(--pf-space-xs) var(--pf-space-sm) var(--pf-space-sm);
 }
 /* A work card's own overflow:hidden zeroes its automatic flex min-height, so

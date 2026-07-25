@@ -1116,6 +1116,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn bypass_permissions_turn_opts_in_at_spawn() {
         let options = ClaudeTurnOptions {
@@ -1135,6 +1136,7 @@ mod tests {
             .any(|arg| arg == "--dangerously-skip-permissions"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn safer_permission_modes_do_not_skip_permissions() {
         for permission_mode in [None, Some("acceptEdits"), Some("plan")] {

@@ -1288,6 +1288,14 @@
 .pf-chat-queue-item:focus-within {
   border-color: var(--pf-hairline-strong);
 }
+/* Being dispatched: the ghost earns the fill and bright text of the bubble it
+   is about to become, so the commitment is visible rather than the row sitting
+   there still claiming it "sends when the turn ends" (#369). */
+.pf-chat-queue-row--sending .pf-chat-queue-item {
+  background: var(--pf-surface-2);
+  color: var(--pf-text-hi);
+  border-color: var(--pf-hairline-strong);
+}
 .pf-chat-queue-thumbs {
   display: flex;
   align-items: center;

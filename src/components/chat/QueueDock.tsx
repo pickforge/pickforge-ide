@@ -1,7 +1,6 @@
 import { For, Show, createEffect, createSignal, type JSX } from "solid-js";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { type QueuedMessage } from "../../stores/agentChat";
-import { flagEnabled } from "../../stores/flags";
 import "./chat.css";
 
 const MAX_THUMBNAILS = 4;
@@ -12,12 +11,18 @@ function messageSummary(message: QueuedMessage): string {
   return summary || "Image-only message";
 }
 
-function queuedMessageLabel(message: QueuedMessage, index: number, total: number): string {
-  const next = index === 0 ? " Sends next." : "";
+function queuedMessageLabel(
+  message: QueuedMessage,
+  index: number,
+  total: number,
+  sending: boolean,
+): string {
   const count = message.images.length;
   // The thumbnail strip is decorative, so attachments are invisible to a
   // screen reader unless the label says so.
   const images = count > 0 ? ` ${count} image${count === 1 ? "" : "s"} attached.` : "";
+  if (sending) return `Sending message: ${messageSummary(message)}.${images}`;
+  const next = index === 0 ? " Sends next." : "";
   return `Queued message ${index + 1} of ${total}: ${messageSummary(message)}.${images} Sends when the turn ends.${next}`;
 }
 
@@ -29,13 +34,15 @@ function QueueEntry(props: {
   message: QueuedMessage;
   index: number;
   total: number;
+  sending: boolean;
   registerRemove: (id: string, element: HTMLButtonElement) => void;
   onRemove: (id: string) => void;
 }): JSX.Element {
   return (
     <li
       class="pf-chat-queue-row"
-      aria-label={queuedMessageLabel(props.message, props.index, props.total)}
+      classList={{ "pf-chat-queue-row--sending": props.sending }}
+      aria-label={queuedMessageLabel(props.message, props.index, props.total, props.sending)}
     >
       <div class="pf-chat-queue-item">
         <Show when={props.message.images.length > 0}>
@@ -56,17 +63,19 @@ function QueueEntry(props: {
           <Show when={props.message.text.trim().length > 0}>
             <span class="pf-chat-queue-text">{props.message.text}</span>
           </Show>
-          <button
-            ref={(element) => {
-              props.registerRemove(props.message.id, element);
-            }}
-            type="button"
-            class="pf-chat-queue-remove"
-            aria-label={`Remove queued message ${props.index + 1}`}
-            onClick={() => props.onRemove(props.message.id)}
-          >
-            ✕
-          </button>
+          <Show when={!props.sending}>
+            <button
+              ref={(element) => {
+                props.registerRemove(props.message.id, element);
+              }}
+              type="button"
+              class="pf-chat-queue-remove"
+              aria-label={`Remove queued message ${props.index + 1}`}
+              onClick={() => props.onRemove(props.message.id)}
+            >
+              ✕
+            </button>
+          </Show>
         </div>
       </div>
     </li>
@@ -77,6 +86,8 @@ interface QueueDockProps {
   messages: readonly QueuedMessage[];
   onRemove: (id: string) => void;
   onFallbackFocus?: () => void;
+  /** The entry currently being dispatched — past the point of cancellation. */
+  drainingId?: string | null;
 }
 
 export function QueueDock(props: QueueDockProps): JSX.Element {
@@ -86,10 +97,6 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
   let manuallyRemovedId: string | null = null;
 
   createEffect(() => {
-    if (!flagEnabled("messageQueue")) {
-      previousIds = [];
-      return;
-    }
     const ids = props.messages.map((message) => message.id);
     for (const id of removeButtons.keys()) {
       if (!ids.includes(id)) removeButtons.delete(id);
@@ -117,11 +124,15 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
     const before = index > 0 ? props.messages[index - 1] : undefined;
     const target = after ?? before;
     const button = target ? removeButtons.get(target.id) : undefined;
-    if (button) button.focus();
+    // The dispatching entry keeps its place in the queue but loses its Remove
+    // control, so the map can still hold that detached node. Focusing it is a
+    // silent no-op that would drop focus to <body>.
+    if (button?.isConnected) button.focus();
     else props.onFallbackFocus?.();
   };
 
   const remove = (id: string) => {
+    if (id === props.drainingId) return;
     const index = props.messages.findIndex((message) => message.id === id);
     if (index < 0) return;
     manuallyRemovedId = id;
@@ -140,7 +151,7 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
       <span class="pf-chat-queue-live" role="status" aria-live="polite" aria-atomic="true">
         {announcement()}
       </span>
-      <Show when={flagEnabled("messageQueue") && props.messages.length > 0}>
+      <Show when={props.messages.length > 0}>
         <section class="pf-chat-queue" role="region" aria-label="Message queue">
           <div class="pf-chat-queue-head">QUEUED · {props.messages.length}</div>
           <ol class="pf-chat-queue-list">
@@ -150,6 +161,7 @@ export function QueueDock(props: QueueDockProps): JSX.Element {
                   message={message}
                   index={index()}
                   total={props.messages.length}
+                  sending={message.id === props.drainingId}
                   registerRemove={(id, element) => removeButtons.set(id, element)}
                   onRemove={remove}
                 />

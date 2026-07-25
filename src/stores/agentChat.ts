@@ -149,6 +149,10 @@ export interface AgentChatState {
   error: string | null;
   timeline: AgentTimelineItem[];
   queue: QueuedMessage[];
+  /** The queued entry currently being dispatched. It stays in `queue` until
+   *  the send lands (so a failure holds it), but it is past the point of
+   *  cancellation — the dock must stop offering to remove it (#369). */
+  drainingId: string | null;
   approvals: AgentApproval[];
   contextUsed: number | null;
   contextWindow: number | null;
@@ -247,6 +251,10 @@ export function agentChat(chatId: string): AgentChatState | undefined {
   return chats[chatId];
 }
 
+/** The flag gates only this entry point. Everything that acts on an entry
+ *  already in the queue — remove, clear, drain — runs regardless, because
+ *  those entries are text the user typed and never got to send: gating them
+ *  too strands the queue invisibly the moment the flag flips off (#369). */
 export function enqueueAgentMessage(
   chatId: string,
   text: string,
@@ -264,17 +272,22 @@ export function enqueueAgentMessage(
 }
 
 export function removeQueuedMessage(chatId: string, id: string): void {
-  const queue = chats[chatId]?.queue;
-  if (!flagEnabled("messageQueue") || !queue?.some((entry) => entry.id === id)) return;
-  setChats(chatId, { queue: queue.filter((entry) => entry.id !== id) });
+  const chat = chats[chatId];
+  // The dispatching entry is past cancelling — its send has already left, so
+  // dropping it here would only hide a message that still arrives.
+  if (!chat || id === chat.drainingId) return;
+  if (!chat.queue.some((entry) => entry.id === id)) return;
+  setChats(chatId, { queue: chat.queue.filter((entry) => entry.id !== id) });
 }
 
 /** No production caller yet — this is the store half of the held-queue
  *  DISCARD action landing in #357 PR 2. Delete it if that slice changes shape. */
 export function clearAgentQueue(chatId: string): void {
   const chat = chats[chatId];
-  if (!flagEnabled("messageQueue") || !chat || chat.queue.length === 0) return;
-  setChats(chatId, { queue: [] });
+  if (!chat || chat.queue.length === 0) return;
+  // Same reason as `removeQueuedMessage`: a discard must not pretend to cancel
+  // a send that is already in flight.
+  setChats(chatId, { queue: chat.queue.filter((entry) => entry.id === chat.drainingId) });
 }
 
 export function latestPlanForChat(
@@ -319,6 +332,7 @@ function emptyState(
     error: null,
     timeline: [],
     queue: [],
+    drainingId: null,
     approvals: [],
     contextUsed: null,
     contextWindow: null,
@@ -1157,7 +1171,7 @@ function shouldAutoDrainAgentQueue(
   event: AgentEvent,
   wasInterrupted: boolean,
 ): boolean {
-  if (!flagEnabled("messageQueue") || !chats[chatId]?.queue.length) return false;
+  if (!chats[chatId]?.queue.length) return false;
   if (event.kind === "turnDone" && event.status === "interrupted") return false;
   if (event.kind !== "turnDone" && event.kind !== "turnFailed") return false;
   return !wasInterrupted;
@@ -2057,10 +2071,10 @@ function rollbackFailedSend(
 }
 
 /** The entry a drain should send right now, or `null` when the chat is not in
- *  a drainable state (flag off, gone, mid-turn, or empty). */
+ *  a drainable state (gone, mid-turn, or empty). */
 function nextDrainEntry(chatId: string): QueuedMessage | null {
   const chat = chats[chatId];
-  if (!flagEnabled("messageQueue") || !chat || chat.turnActive || chat.queue.length === 0) {
+  if (!chat || chat.turnActive || chat.queue.length === 0) {
     return null;
   }
   return chat.queue[0];
@@ -2072,6 +2086,7 @@ function nextDrainEntry(chatId: string): QueuedMessage | null {
 function releaseAgentQueueDrain(chatId: string, token: symbol, drained: boolean): void {
   if (activeQueueDrainByChat.get(chatId) !== token) return;
   activeQueueDrainByChat.delete(chatId);
+  if (chats[chatId]) setChats(chatId, { drainingId: null });
   const missed = pendingQueueDrainByChat.delete(chatId);
   if (missed && drained && !chats[chatId]?.turnActive) void drainAgentQueue(chatId);
 }
@@ -2090,6 +2105,7 @@ export async function drainAgentQueue(chatId: string): Promise<void> {
   const token = Symbol(chatId);
   const generation = ensureGenerations.get(chatId) ?? 0;
   activeQueueDrainByChat.set(chatId, token);
+  setChats(chatId, { drainingId: entry.id });
   let drained = false;
   try {
     // Only a dispatched send retires the entry. `sendAgentMessage` also

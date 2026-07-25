@@ -2563,7 +2563,9 @@ describe("agent message queue", () => {
     expect(agentChat(second.chatId)?.queue.map((entry) => entry.text)).toEqual(["second chat"]);
   });
 
-  it("keeps queue APIs and automatic draining inert while the flag is off", async () => {
+  it("cannot queue while the flag is off and leaves normal sends unchanged", async () => {
+    // The flag gates enqueue only. remove/clear/drain are reachable but have
+    // nothing to act on, because nothing could be queued in the first place.
     flags.messageQueue = false;
     const { chatId, emit } = await startChat();
 
@@ -2681,6 +2683,104 @@ describe("agent message queue", () => {
 
     expect(tauri.invoke.mock.calls.some((call) => call[0] === "agent_chat_follow_up")).toBe(false);
     expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["nothing running"]);
+  });
+
+  it("marks the entry being dispatched and clears the mark once it lands", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    const firstId = enqueueAgentMessage(chatId, "first");
+    enqueueAgentMessage(chatId, "second");
+
+    const send = deferred<null>();
+    tauri.invoke.mockImplementation((cmd: string) =>
+      cmd === "agent_chat_send" ? send.promise : Promise.resolve(null),
+    );
+
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    // In flight: still queued so a failure can hold it, but past cancelling.
+    expect(agentChat(chatId)?.drainingId).toBe(firstId);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.id)).toContain(firstId);
+
+    send.resolve(null);
+    await flushPromises();
+
+    expect(agentChat(chatId)?.drainingId).toBeNull();
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["second"]);
+  });
+
+  it("clears the dispatch mark when the drained send fails", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "will fail");
+    tauri.invoke.mockImplementation((cmd: string) =>
+      cmd === "agent_chat_send"
+        ? Promise.reject(new Error("nope"))
+        : Promise.resolve(null),
+    );
+
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    expect(agentChat(chatId)?.drainingId).toBeNull();
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["will fail"]);
+  });
+
+  it("still drains entries queued before the flag was turned off", async () => {
+    // Turning the gate off stops new queuing; it must not strand text the
+    // user already typed and cannot see or remove any more.
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    enqueueAgentMessage(chatId, "queued while on");
+
+    flags.messageQueue = false;
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+
+    expect(tauri.invoke).toHaveBeenCalledWith(
+      "agent_chat_send",
+      expect.objectContaining({ text: "queued while on" }),
+    );
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("still removes an entry queued before the flag was turned off", async () => {
+    // The whole point of ungating remove: a visible Remove control that no-ops
+    // is the bug class this slice exists to kill.
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    const id = enqueueAgentMessage(chatId, "remove me later");
+
+    flags.messageQueue = false;
+    removeQueuedMessage(chatId, id);
+
+    expect(agentChat(chatId)?.queue).toEqual([]);
+  });
+
+  it("refuses to remove or discard the entry already being dispatched", async () => {
+    const { chatId, emit } = await startChat();
+    emit({ kind: "turnStarted" });
+    const firstId = enqueueAgentMessage(chatId, "already going");
+    enqueueAgentMessage(chatId, "still cancellable");
+
+    const send = deferred<null>();
+    tauri.invoke.mockImplementation((cmd: string) =>
+      cmd === "agent_chat_send" ? send.promise : Promise.resolve(null),
+    );
+    emit({ kind: "turnDone", status: "completed" });
+    await flushPromises();
+    expect(agentChat(chatId)?.drainingId).toBe(firstId);
+
+    removeQueuedMessage(chatId, firstId);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.id)).toContain(firstId);
+
+    // A discard sweeps the rest but cannot un-send what is already in flight.
+    clearAgentQueue(chatId);
+    expect(agentChat(chatId)?.queue.map((entry) => entry.text)).toEqual(["already going"]);
+
+    send.resolve(null);
+    await flushPromises();
+    expect(agentChat(chatId)?.queue).toEqual([]);
   });
 
   it("does not replay a missed turn close after a failed drain", async () => {

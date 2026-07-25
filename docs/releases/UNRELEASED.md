@@ -53,6 +53,12 @@ reset this file.
   agent can act on it inside the same run (#357 PR 2). Backends whose protocol
   has no equivalent still queue. A message carrying images, or a follow-up the
   RPC rejects, falls back to the queue rather than being lost.
+- Message queue edge cases (behind the default-off `messageQueue` flag, #369):
+  the entry currently being dispatched no longer offers a Remove control that
+  silently does nothing — it takes the fill and bright text of the message it
+  is about to become. Turning the flag off now stops new queuing without
+  stranding entries already queued: they stay visible, removable, and still
+  drain.
 - Message queuing while an agent turn is running (behind the default-off
   `messageQueue` flag, #357 PR 1): typing and pressing Enter mid-turn now
   queues the message instead of being refused, on every native backend —

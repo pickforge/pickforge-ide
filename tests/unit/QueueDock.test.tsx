@@ -46,15 +46,43 @@ describe("QueueDock", () => {
     expect(root.textContent).toBe("");
   });
 
-  it("renders nothing while the messageQueue flag is off", () => {
+  it("still shows entries queued before the flag was turned off", () => {
+    // The dock follows the data, not the flag. Entries are text the user typed
+    // and never got to send, so hiding them on a flag flip strands them
+    // invisibly with no way to remove or drain them (#369).
     flags.messageQueue = false;
+    const onRemove = vi.fn();
     dispose = render(
-      () => <QueueDock messages={[queued("queued-1", "hidden")]} onRemove={() => {}} />,
+      () => <QueueDock messages={[queued("queued-1", "still here")]} onRemove={onRemove} />,
       root,
     );
 
-    expect(root.querySelector(".pf-chat-queue")).toBeNull();
-    expect(root.textContent).toBe("");
+    expect(root.querySelector(".pf-chat-queue")).not.toBeNull();
+    expect(root.textContent).toContain("still here");
+
+    root.querySelector<HTMLButtonElement>('[aria-label="Remove queued message 1"]')?.click();
+    expect(onRemove).toHaveBeenCalledWith("queued-1");
+  });
+
+  it("drops the remove control on the entry being dispatched", () => {
+    // Removing it would be a silent no-op: the send is already in flight, so
+    // the message lands in the timeline regardless (#369).
+    const onRemove = vi.fn();
+    dispose = render(
+      () => (
+        <QueueDock
+          messages={[queued("queued-1", "going now"), queued("queued-2", "waiting")]}
+          drainingId="queued-1"
+          onRemove={onRemove}
+        />
+      ),
+      root,
+    );
+
+    expect(root.querySelector('[aria-label="Remove queued message 1"]')).toBeNull();
+    expect(root.querySelector('[aria-label="Remove queued message 2"]')).not.toBeNull();
+    const sending = root.querySelector(".pf-chat-queue-row--sending");
+    expect(sending?.getAttribute("aria-label")).toBe("Sending message: going now.");
   });
 
   it("announces the queue emptying after the last entry leaves", () => {

@@ -5,9 +5,15 @@
 // internals, and so PR2's card renderer can reuse the same classification the
 // sort already computed instead of re-deriving it per row.
 import type { Chat } from "../lib/db";
-import { chatAttention, chatBusy, chatLastActivityMs } from "./chatActivity";
+import { chatAttention, chatBusy, chatJustFinished, chatLastActivityMs } from "./chatActivity";
 
 export type ChatLifecycleState = "needsYou" | "working" | "quiet";
+
+/** The states the PR2 work-card renderer draws: the two live lifecycle
+ *  states, plus `justFinished` — a chat that just left one of them and is
+ *  lingering (see CARD_LINGER_MS in chatActivity.ts) before its card
+ *  collapses to the quiet one-liner. */
+export type CardVisualState = "needsYou" | "working" | "justFinished";
 
 const STATE_RANK: Record<ChatLifecycleState, number> = {
   needsYou: 0,
@@ -21,6 +27,17 @@ export function chatLifecycleState(chatId: string): ChatLifecycleState {
   if (chatAttention(chatId)) return "needsYou";
   if (chatBusy(chatId)) return "working";
   return "quiet";
+}
+
+/** `chatLifecycleState` with the work-card linger folded in (#306 PR2): a
+ *  chat that's genuinely quiet but still lingering (chatJustFinished) reads
+ *  as `justFinished` here instead of `quiet`, so the flat list keeps it in
+ *  the live/card bucket for the linger window. Drives both which renderer a
+ *  chat gets (FlatWorkCard vs. the one-liner) and the live/quiet split. */
+export function chatCardVisualState(chatId: string): CardVisualState | "quiet" {
+  const state = chatLifecycleState(chatId);
+  if (state !== "quiet") return state;
+  return chatJustFinished(chatId) ? "justFinished" : "quiet";
 }
 
 /** A chat's most-recent-activity timestamp for sort purposes: the session's

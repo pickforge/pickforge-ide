@@ -12,9 +12,17 @@ import { playAttentionSound } from "../lib/attentionSound";
 export const CHAT_BUSY_QUIET_MS = 3500;
 export const ATTENTION_MIN_UNSEEN_CHARS = 12;
 
+// Sidebar work-card linger (#306 PR2): a chat that WAS a live card (busy or
+// needing attention) and just settled fully quiet keeps reading as
+// `justFinished` for this long before the flat list collapses its card down
+// to the quiet one-liner — see chatCardVisualState in flatChatSort.ts. Long
+// enough to catch on a glance, short enough not to clutter the live section.
+export const CARD_LINGER_MS = 4000;
+
 interface ChatActivityState {
   busy: boolean;
   attention: boolean;
+  justFinished: boolean;
 }
 
 interface BusyCycle {
@@ -35,6 +43,9 @@ const cycles = new Map<string, BusyCycle>();
 // `chats.last_activity_at` DB column — a DB write per turn is heavier than
 // PR1 should carry; see flatChatSort.ts.
 const lastActivityMs = new Map<string, number>();
+// Pending "collapse the lingering card" timers, one per chat currently in the
+// justFinished window — see write()'s linger transition below.
+const lingerTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let activeChatId: string | null = null;
 let stagedChatIds: ReadonlySet<string> = new Set();
 let windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
@@ -44,21 +55,55 @@ if (typeof window !== "undefined") {
   window.addEventListener("blur", () => setWindowFocusForActivity(false));
 }
 
+function clearLingerTimer(chatId: string) {
+  const timer = lingerTimers.get(chatId);
+  if (timer === undefined) return false;
+  clearTimeout(timer);
+  lingerTimers.delete(chatId);
+  return true;
+}
+
 function write(chatId: string, patch: Partial<ChatActivityState>) {
-  const current = states.get(chatId) ?? { busy: false, attention: false };
+  const current = states.get(chatId) ?? { busy: false, attention: false, justFinished: false };
+  const wasLive = current.busy || current.attention;
   const next = { ...current, ...patch };
-  if (states.has(chatId) && next.busy === current.busy && next.attention === current.attention) {
+  if (
+    states.has(chatId) &&
+    next.busy === current.busy &&
+    next.attention === current.attention &&
+    next.justFinished === current.justFinished
+  ) {
     return;
   }
   states.set(chatId, next);
   // A busy transition (either direction) or a fresh chime is real chat-driven
   // activity; clearing attention because the user looked (markChatSeen) is
   // not — so it's excluded, or opening a chat would wrongly bump it to the
-  // top of the quiet sort.
-  if (patch.busy !== undefined || patch.attention === true) {
-    lastActivityMs.set(chatId, Date.now());
-  }
+  // top of the quiet sort AND (below) start a card linger just from opening
+  // a needs-you chat you're already looking at.
+  const realActivity = patch.busy !== undefined || patch.attention === true;
+  if (realActivity) lastActivityMs.set(chatId, Date.now());
   setActivity((snapshot) => ({ ...snapshot, [chatId]: next }));
+
+  // Sidebar work-card linger (#306 PR2): re-entering a live state cancels any
+  // pending collapse; leaving one (via real activity, not just the user
+  // looking away) starts the linger window. Recurses once, at most — the
+  // nested `write` only patches `justFinished`, which never re-triggers this
+  // block (busy/attention are unchanged), so it can't loop.
+  const isLive = next.busy || next.attention;
+  if (isLive) {
+    if (clearLingerTimer(chatId)) write(chatId, { justFinished: false });
+  } else if (wasLive && realActivity) {
+    clearLingerTimer(chatId);
+    write(chatId, { justFinished: true });
+    lingerTimers.set(
+      chatId,
+      setTimeout(() => {
+        lingerTimers.delete(chatId);
+        write(chatId, { justFinished: false });
+      }, CARD_LINGER_MS),
+    );
+  }
 }
 
 /** The user is not looking at this chat right now: it isn't the active chat,
@@ -105,6 +150,13 @@ export function chatBusy(chatId: string): boolean {
 
 export function chatAttention(chatId: string): boolean {
   return activity()[chatId]?.attention ?? false;
+}
+
+/** True for CARD_LINGER_MS after a live (busy/attention) chat settles fully
+ *  quiet via real activity — the sidebar work card's "just finished, still
+ *  holding" window (#306 PR2). See chatCardVisualState in flatChatSort.ts. */
+export function chatJustFinished(chatId: string): boolean {
+  return activity()[chatId]?.justFinished ?? false;
 }
 
 /** This session's live last-activity time for a chat, or undefined if it
@@ -315,6 +367,7 @@ export function handlePaneClosed(chatId: string, paneId: string) {
 
 export function clearChatActivity(chatId: string) {
   clearCycle(chatId);
+  clearLingerTimer(chatId);
   unseenGraceUntil.delete(chatId);
   lastActivityMs.delete(chatId);
   const prefix = `${chatId}\u0000`;

@@ -90,12 +90,23 @@ import {
 } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
 import {
-  type ChatLifecycleState,
-  chatLifecycleState,
+  type CardVisualState,
+  chatCardVisualState,
   shortRelTime,
   sortFlatChats,
   visibleFlatChats,
 } from "../../stores/flatChatSort";
+import {
+  cardBrief,
+  cardContextEdge,
+  cardCost,
+  cardLanes,
+  cardSwarmRun,
+  laneTickTone,
+} from "../../stores/flatWorkCard";
+import { formatCost } from "../../components/chat/ContextMeter";
+import { agentChat } from "../../stores/agentChat";
+import { swarmRuns } from "../../stores/swarm";
 import { removeChatFromOrchestra } from "../../stores/orchestra";
 import { isChatStaged } from "../../stores/orchestraStage";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
@@ -389,9 +400,12 @@ function createFlatChatListState(
   });
   const flatSorted = createMemo(() => sortFlatChats(flatChats()));
   // Split once here so both the row component and the QUIET · N divider share
-  // the same classification pass instead of each re-deriving it.
-  const flatLive = createMemo(() => flatSorted().filter((c) => chatLifecycleState(c.chatId) !== "quiet"));
-  const flatQuiet = createMemo(() => flatSorted().filter((c) => chatLifecycleState(c.chatId) === "quiet"));
+  // the same classification pass instead of each re-deriving it. Uses the
+  // card-visual state (#306 PR2), not the raw lifecycle state — a chat that
+  // just went quiet keeps its FlatWorkCard through the linger window, so it
+  // stays in the live bucket (as "justFinished") until that collapses it.
+  const flatLive = createMemo(() => flatSorted().filter((c) => chatCardVisualState(c.chatId) !== "quiet"));
+  const flatQuiet = createMemo(() => flatSorted().filter((c) => chatCardVisualState(c.chatId) === "quiet"));
 
   // "New chat" project picker: the flat list has no single current project, so
   // the plus button lists every project first, then falls into the same
@@ -1252,11 +1266,10 @@ const NewChatProjectMenu = (props: { ctrl: ProjectsPaneController }) => (
   </>
 );
 
-// One-liner row shared by every state in PR1 (live and quiet alike — the rich
-// work-card visuals for busy/needs-you are PR2). Takes the precomputed state
-// instead of deriving it, so PR2 can swap in a different renderer per state
-// without touching how the list is built.
-const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat; state: ChatLifecycleState }) => {
+// One-liner row for quiet chats (#306 PR1). PR2 moved the rich work-card
+// visuals for busy/needs-you/just-finished to FlatWorkCard below, so every
+// chat reaching this renderer is quiet — no state prop to branch on anymore.
+const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat }) => {
   const ctrl = props.ctrl;
   const id = props.chat.chatId;
   const project = () => workspace.projects.find((p) => p.projectRoot === props.chat.projectRoot);
@@ -1264,12 +1277,7 @@ const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat; state: C
   return (
     <div
       class="pf-flat-row"
-      classList={{
-        active: workspace.activeChatId === id || staged(),
-        "pf-flat-row--busy": props.state === "working",
-        "pf-flat-row--attention":
-          props.state === "needsYou" && workspace.activeChatId !== id && !staged(),
-      }}
+      classList={{ active: workspace.activeChatId === id || staged() }}
       onClick={() => selectChat(id)}
       onContextMenu={(e) => ctrl.openFromContext("chat", id, e)}
     >
@@ -1312,6 +1320,156 @@ const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat; state: C
   );
 };
 
+// The mono eyebrow text shown on every live card's status label. "needs you"
+// stays literal per the issue's locked bracket rule ("bracketed text only on
+// the NEEDS YOU label") rather than branching into mockup-illustrated
+// sub-labels like "approval" — chatLifecycleState has one attention bit, not
+// a reason, so a single canonical label is the honest one.
+const CARD_STATUS_TEXT: Record<CardVisualState, string> = {
+  needsYou: "needs you",
+  working: "working",
+  justFinished: "done",
+};
+
+// Live work card (#306 PR2): busy/needs-you/just-finished chats render here
+// instead of the one-liner. Bracket L-corners are the ONLY place any card
+// gets a frame, and only when `needsYou` — a working card is plain
+// hairline/ember border + mono ember-soft text, and a justFinished (linger)
+// card is plain muted text, matching the locked bracket rule exactly.
+// The four L-corner marks — rendered ONLY when the card is showing the
+// needs-you bracket treatment (see FlatWorkCard's showBracket).
+const WorkCardCorners = () => (
+  <>
+    <span class="pf-work-card-corner pf-work-card-corner--tl" aria-hidden="true" />
+    <span class="pf-work-card-corner pf-work-card-corner--tr" aria-hidden="true" />
+    <span class="pf-work-card-corner pf-work-card-corner--bl" aria-hidden="true" />
+    <span class="pf-work-card-corner pf-work-card-corner--br" aria-hidden="true" />
+  </>
+);
+
+// Footer: lane ticks (only when this chat dispatched a swarm) and cost (only
+// when nonzero) — every item conditional on real data, per the locked footer
+// principle. Branch and plan M/N stay absent until #306 PR3.
+const WorkCardFooter = (props: { lanes: () => CardLanesResult; cost: () => CardCostResult }) => (
+  <Show when={props.lanes() || props.cost()}>
+    <div class="pf-work-card-foot">
+      <Show when={props.lanes()}>
+        {(l) => (
+          <span class="pf-work-card-lanes" title="Swarm lanes">
+            <For each={l().lanes}>
+              {(lane) => {
+                const tone = laneTickTone(lane.status);
+                return (
+                  <i class="pf-work-card-lane" classList={{ [`pf-work-card-lane--${tone}`]: tone !== null }} />
+                );
+              }}
+            </For>
+            <span class="pf-work-card-lane-count">
+              {l().doneCount}/{l().total}
+            </span>
+          </span>
+        )}
+      </Show>
+      <Show when={props.cost()}>
+        {(c) => <span class="pf-work-card-cost">{formatCost(c().amount, c().estimated)}</span>}
+      </Show>
+    </div>
+  </Show>
+);
+
+// The 5C context meter as the card's bottom 2px edge — ember while working,
+// amber while waiting. Absent for `justFinished` (see FlatWorkCard's edge()).
+const WorkCardEdge = (props: { edge: () => CardEdgeResult }) => (
+  <Show when={props.edge()}>
+    {(e) => (
+      <div class="pf-work-card-edge" classList={{ [`pf-work-card-edge--${e().color}`]: true }}>
+        <i style={{ width: `${e().fraction * 100}%` }} />
+      </div>
+    )}
+  </Show>
+);
+
+type CardLanesResult = ReturnType<typeof cardLanes>;
+type CardCostResult = ReturnType<typeof cardCost>;
+type CardEdgeResult = ReturnType<typeof cardContextEdge> | null;
+
+const FlatWorkCard = (props: { ctrl: ProjectsPaneController; chat: Chat; state: CardVisualState }) => {
+  const ctrl = props.ctrl;
+  const id = props.chat.chatId;
+  const root = props.chat.projectRoot;
+  const project = () => workspace.projects.find((p) => p.projectRoot === root);
+  const staged = () => isChatStaged(id);
+  // LOCKED bracket rule: the four L-corners frame EVERY needs-you card, full
+  // stop — active/staged/focus never suppress it (P2 fix, review of #306
+  // PR2: this must not mirror FlatChatRow's active-chat attention
+  // suppression, which is a different, unrelated convention).
+  const showBracket = () => props.state === "needsYou";
+  const lanes = () => cardLanes(cardSwarmRun(id, root, swarmRuns));
+  const cost = () => cardCost(id, agentChat);
+  const brief = () => cardBrief(props.chat);
+  const edge = () => (props.state === "justFinished" ? null : cardContextEdge(id, props.state, agentChat));
+  return (
+    <div
+      class="pf-work-card"
+      classList={{
+        active: workspace.activeChatId === id || staged(),
+        "pf-work-card--working": props.state === "working",
+        "pf-work-card--needsyou": showBracket(),
+        "pf-work-card--finishing": props.state === "justFinished",
+      }}
+      onClick={() => selectChat(id)}
+      onContextMenu={(e) => ctrl.openFromContext("chat", id, e)}
+    >
+      <Show when={showBracket()}>
+        <WorkCardCorners />
+      </Show>
+      <div class="pf-work-card-top">
+        <Show when={props.chat.kind === "agent"}>
+          <span
+            class="pf-work-card-mark"
+            title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+            aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+          >
+            <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
+              {(icon) => icon()()}
+            </Show>
+          </span>
+        </Show>
+        <span class="pf-work-card-project">{project()?.displayName ?? "—"}</span>
+        <span class="pf-work-card-when">{shortRelTime(props.chat.lastActivityAt)}</span>
+        <button class="pf-rail-row-action" title="Chat options" onClick={(e) => ctrl.openFromButton("chat", id, e)}>
+          <IconMore size={14} />
+        </button>
+      </div>
+      <div class="pf-work-card-l1">
+        <Show
+          when={ctrl.renaming() === id}
+          fallback={
+            <span class="pf-work-card-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
+              {chatTitleOverride(id) ?? props.chat.title}
+            </span>
+          }
+        >
+          <RenameField
+            ctrl={ctrl}
+            value={props.chat.title}
+            commit={(v) => {
+              if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
+              void renameChat(id, v);
+            }}
+          />
+        </Show>
+        <span class="pf-work-card-status" classList={{ "pf-work-card-status--needsyou": showBracket() }}>
+          {CARD_STATUS_TEXT[props.state]}
+        </span>
+      </div>
+      <Show when={brief()}>{(text) => <div class="pf-work-card-brief">{text()}</div>}</Show>
+      <WorkCardFooter lanes={lanes} cost={cost} />
+      <WorkCardEdge edge={edge} />
+    </div>
+  );
+};
+
 // A project's chats failed to load eagerly (#306 PR1's cross-project fetch,
 // see createFlatChatListState.loadProjectChats): named per-project rather
 // than a blanket error, with its own retry — the other, successfully-loaded
@@ -1342,13 +1500,13 @@ const FlatChatList = (props: { ctrl: ProjectsPaneController }) => {
       <FlatLoadErrors ctrl={ctrl} />
       <Show when={live().length > 0 || quiet().length > 0} fallback={<div class="pf-rail-empty">No chats yet</div>}>
         <For each={live()}>
-          {(chat) => <FlatChatRow ctrl={ctrl} chat={chat} state={chatLifecycleState(chat.chatId)} />}
+          {(chat) => <FlatWorkCard ctrl={ctrl} chat={chat} state={chatCardVisualState(chat.chatId) as CardVisualState} />}
         </For>
         <Show when={quiet().length > 0}>
           <div class="pf-flat-quiet-divider">
             <span>quiet · {quiet().length}</span>
           </div>
-          <For each={quiet()}>{(chat) => <FlatChatRow ctrl={ctrl} chat={chat} state="quiet" />}</For>
+          <For each={quiet()}>{(chat) => <FlatChatRow ctrl={ctrl} chat={chat} />}</For>
         </Show>
       </Show>
     </div>

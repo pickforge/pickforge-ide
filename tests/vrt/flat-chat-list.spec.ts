@@ -7,9 +7,14 @@ import { expect, test } from "@playwright/test";
 // Fixture (src/lib/tauriMock.ts + src/lib/flatChatListFixture.ts), two
 // projects (acme-app, widgets):
 //   acme-app: "Login screen" (quiet, now), "Settings polish" (quiet, now),
-//             "Sidebar waiting state" (working)
+//             "Sidebar waiting state" (working, real context+cost+3 swarm
+//             lanes — see FLAT_CHAT_LIST_WORKING_HISTORY/_SWARM_RUN)
 //   widgets:  "Slider refactor" (quiet, now), "PR monitoring agent flow"
-//             (needs-you), "Local usage analytics plan" (quiet, 2d old)
+//             (needs-you, no swarm/usage data), "Local usage analytics
+//             plan" (quiet, 2d old)
+// The "heavy" fixture (pickforge.vrt.flatChatListHeavyFixture) stacks two
+// more live chats on top: "ADB session recovery" (needs-you, acme-app) and
+// "Whisper batch tuning" (working, widgets).
 
 test("flatChatList off renders the legacy project tree, not the flat list", async ({ page }) => {
   await page.goto("/#/workbench");
@@ -31,7 +36,11 @@ test("flatChatList on sorts needs-you above working above quiet, quiet by activi
   // Old tree is gone entirely when the flag is on.
   await expect(page.locator(".pf-tree-row")).toHaveCount(0);
 
-  const titles = await page.locator(".pf-flat-row .pf-flat-title").allTextContents();
+  // Live chats render as work cards (#306 PR2), quiet chats stay one-liners
+  // — both title spots, in the same top-to-bottom document order.
+  const titles = await page
+    .locator(".pf-flat-list .pf-work-card-title, .pf-flat-list .pf-flat-title")
+    .allTextContents();
   expect(titles).toEqual([
     "PR monitoring agent flow", // needs-you
     "Sidebar waiting state", // working
@@ -42,8 +51,8 @@ test("flatChatList on sorts needs-you above working above quiet, quiet by activi
   ]);
 
   await expect(page.locator(".pf-flat-quiet-divider")).toHaveText("quiet · 4");
-  await expect(page.locator(".pf-flat-row--attention")).toHaveCount(1);
-  await expect(page.locator(".pf-flat-row--busy")).toHaveCount(1);
+  await expect(page.locator(".pf-work-card--needsyou")).toHaveCount(1);
+  await expect(page.locator(".pf-work-card--working")).toHaveCount(1);
 });
 
 // #306 PR1 review (P2-3, design decision): the project filter narrows
@@ -69,7 +78,9 @@ test("flatChatList project chips single-select filter working/quiet, never hide 
   await chips.filter({ hasText: "acme-app" }).click();
   await expect(chips.filter({ hasText: "acme-app" })).toHaveClass(/pf-flat-chip--on/);
 
-  const titles = await page.locator(".pf-flat-row .pf-flat-title").allTextContents();
+  const titles = await page
+    .locator(".pf-flat-list .pf-work-card-title, .pf-flat-list .pf-flat-title")
+    .allTextContents();
   expect(titles).toEqual([
     "PR monitoring agent flow", // needs-you, widgets — stays visible despite the acme-app filter
     "Sidebar waiting state", // working, acme-app
@@ -95,7 +106,9 @@ test("flatChatList: a failed project load surfaces retry, other projects still r
   // acme-app's load succeeds and renders even though widgets' fails.
   await page.getByText("Sidebar waiting state").waitFor();
   await expect(page.locator(".pf-flat-load-error-row")).toHaveText(/widgets failed to load/);
-  await expect(page.locator(".pf-flat-row")).toHaveCount(3); // acme-app's 3 chats only
+  // acme-app's 3 chats: 1 live card + 2 quiet one-liners.
+  await expect(page.locator(".pf-work-card")).toHaveCount(1);
+  await expect(page.locator(".pf-flat-row")).toHaveCount(2);
 
   // Clearing the mock failure and retrying recovers widgets' chats.
   await page.evaluate(() => localStorage.removeItem("pickforge.vrt.flatChatListLoadErrorRoot"));
@@ -106,7 +119,239 @@ test("flatChatList: a failed project load surfaces retry, other projects still r
   expect(pageErrors).toEqual([]);
 });
 
-test("flatChatList mixed-state pane (visual)", async ({ page }) => {
+// #306 PR2 — card-vs-one-liner selection by state: quiet chats render the
+// PR1 one-liner, busy/needs-you chats render the rich work card.
+test("flatChatList: live chats render as work cards, quiet chats stay one-liners", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  await expect(page.locator(".pf-work-card")).toHaveCount(2); // needs-you + working
+  await expect(page.locator(".pf-flat-row")).toHaveCount(4); // the quiet tail
+
+  // A quiet row never carries a card's own markup.
+  await expect(page.locator(".pf-flat-row .pf-work-card-status")).toHaveCount(0);
+});
+
+// #306 PR2 — LOCKED bracket rule: the four L-corners frame ONLY needs-you
+// cards, and bracketed text lives ONLY on the needs-you status label. Pins
+// both directions: a working card carries NO bracket markup at all, and the
+// needs-you card carries exactly the corner set + the bracketed label class.
+test("flatChatList: bracket L-corners appear only on the needs-you card", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  const workingCard = page.locator(".pf-work-card--working");
+  await expect(workingCard).toHaveCount(1);
+  await expect(workingCard.locator(".pf-work-card-corner")).toHaveCount(0);
+  await expect(workingCard.locator(".pf-work-card-status--needsyou")).toHaveCount(0);
+  await expect(workingCard.locator(".pf-work-card-status")).toHaveText("working");
+
+  const needsYouCard = page.locator(".pf-work-card--needsyou");
+  await expect(needsYouCard).toHaveCount(1);
+  await expect(needsYouCard.locator(".pf-work-card-corner")).toHaveCount(4);
+  await expect(needsYouCard.locator(".pf-work-card-status--needsyou")).toHaveCount(1);
+  await expect(needsYouCard.locator(".pf-work-card-status")).toHaveText("needs you");
+
+  // No filled pill chips anywhere in the flat list — the locked rule again.
+  await expect(page.locator(".pf-flat-list .pf-pill")).toHaveCount(0);
+});
+
+// #306 PR2 review (P2): showBracket previously also depended on
+// active/staged, so a needs-you chat you'd just opened (or staged onto the
+// orchestra board) silently lost its L-corners — a needs-you card must
+// ALWAYS get the bracket, focus/stage never suppress it. Blurring the
+// window first keeps the fixture's chat genuinely needsYou (attention only
+// clears via markChatSeen while the window is focused — see
+// chatActivity.ts), so "active" here is a real reachable state, not a
+// contradiction.
+test("flatChatList: bracket L-corners survive on an ACTIVE needs-you card (P2 fix)", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.locator(".pf-work-card--needsyou").click();
+
+  const activeNeedsYou = page.locator(".pf-work-card.active.pf-work-card--needsyou");
+  await expect(activeNeedsYou).toHaveCount(1);
+  await expect(activeNeedsYou.locator(".pf-work-card-corner")).toHaveCount(4);
+  await expect(activeNeedsYou.locator(".pf-work-card-status--needsyou")).toHaveCount(1);
+  await expect(activeNeedsYou.locator(".pf-work-card-status")).toHaveText("needs you");
+});
+
+test("flatChatList: bracket L-corners survive on a STAGED needs-you card (P2 fix)", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.evaluate(() => {
+    (window as unknown as { __PICKFORGE_VRT_STAGE_NEEDS_YOU__: () => void })
+      .__PICKFORGE_VRT_STAGE_NEEDS_YOU__();
+  });
+
+  const stagedNeedsYou = page.locator(".pf-work-card.active.pf-work-card--needsyou");
+  await expect(stagedNeedsYou).toHaveCount(1);
+  await expect(stagedNeedsYou.locator(".pf-work-card-corner")).toHaveCount(4);
+  await expect(stagedNeedsYou.locator(".pf-work-card-status--needsyou")).toHaveCount(1);
+});
+
+test("flatChatList: a working card shows no bracket markup even when active", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Sidebar waiting state").waitFor();
+
+  await page.locator(".pf-work-card--working").click();
+
+  const activeWorking = page.locator(".pf-work-card.active.pf-work-card--working");
+  await expect(activeWorking).toHaveCount(1);
+  await expect(activeWorking.locator(".pf-work-card-corner")).toHaveCount(0);
+  await expect(activeWorking.locator(".pf-work-card-status--needsyou")).toHaveCount(0);
+});
+
+// #306 PR2 — footer principle: every footer item is conditional on real
+// data. The working chat has real swarm lanes + cost (fixture-seeded);
+// the needs-you chat has neither, and branch/plan stay absent everywhere
+// in PR2 (that plumbing is PR3) — no placeholders, no zeros-as-present.
+test("flatChatList: footer items render only with real data", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  const workingCard = page.locator(".pf-work-card--working");
+  await expect(workingCard.locator(".pf-work-card-foot")).toHaveCount(1);
+  await expect(workingCard.locator(".pf-work-card-lane")).toHaveCount(3);
+  await expect(workingCard.locator(".pf-work-card-lane-count")).toHaveText("1/3");
+  await expect(workingCard.locator(".pf-work-card-cost")).toHaveText("$0.4100");
+
+  // No swarm dispatched, no usage data warmed for this chat — the footer
+  // itself is absent, not present-with-zeros.
+  const needsYouCard = page.locator(".pf-work-card--needsyou");
+  await expect(needsYouCard.locator(".pf-work-card-foot")).toHaveCount(0);
+
+  // Branch and plan M/N stay absent everywhere in PR2 (new plumbing, #306
+  // PR3) — assert the slots don't exist at all, not merely empty.
+  await expect(page.locator(".pf-work-card-branch")).toHaveCount(0);
+  await expect(page.locator(".pf-work-card-plan")).toHaveCount(0);
+});
+
+// #306 PR2 — context edge: ember while working, amber while waiting. The
+// edge track itself is structural (part of the card anatomy), not a footer
+// item, so it renders even for the needs-you card that has no usage data —
+// empty (0%), not absent.
+test("flatChatList: context edge color follows state", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("PR monitoring agent flow").waitFor();
+
+  const workingEdge = page.locator(".pf-work-card--working .pf-work-card-edge");
+  await expect(workingEdge).toHaveClass(/pf-work-card-edge--ember/);
+  const workingFillWidth = await workingEdge.locator("i").evaluate((el) => el.style.width);
+  expect(workingFillWidth).toBe("38%"); // 380,000 / 1,000,000 from the fixture usage event
+
+  const needsYouEdge = page.locator(".pf-work-card--needsyou .pf-work-card-edge");
+  await expect(needsYouEdge).toHaveClass(/pf-work-card-edge--amber/);
+  const needsYouFillWidth = await needsYouEdge.locator("i").evaluate((el) => el.style.width);
+  expect(needsYouFillWidth).toBe("0%"); // no usage data warmed for this chat
+});
+
+// #306 PR2 — linger-then-collapse: a just-finished card keeps its work-card
+// rendering for CARD_LINGER_MS before collapsing to the quiet one-liner, so
+// it doesn't vanish mid-glance. Drives the transition via the VRT-only hook
+// (flatChatListFixture.ts) since a static fixture can't produce a real
+// browser-timer transition at install time.
+test("flatChatList: a just-finished card lingers, then collapses to the quiet one-liner", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Sidebar waiting state").waitFor();
+
+  const workingCard = page.locator(".pf-work-card--working");
+  await expect(workingCard).toHaveCount(1);
+
+  await page.evaluate(() => {
+    (window as unknown as { __PICKFORGE_VRT_FINISH_WORKING_TURN__: () => void })
+      .__PICKFORGE_VRT_FINISH_WORKING_TURN__();
+  });
+
+  // Immediately: still a card, now "finishing" (justFinished), not yet a
+  // one-liner — this is the whole point of the linger.
+  const cardTitles = page.locator(".pf-work-card-title");
+  await expect(cardTitles.filter({ hasText: "Sidebar waiting state" })).toHaveCount(1);
+  const lingeringCard = page.locator(".pf-work-card--finishing");
+  await expect(lingeringCard).toHaveCount(1);
+  await expect(lingeringCard.locator(".pf-work-card-status")).toHaveText("done");
+  await expect(lingeringCard.locator(".pf-work-card-edge")).toHaveCount(0); // no edge while finishing
+
+  // CARD_LINGER_MS (4000ms) later: collapsed into the quiet one-liner.
+  await expect(page.locator(".pf-work-card--finishing")).toHaveCount(0, { timeout: 6000 });
+  const oneLinerTitles = page.locator(".pf-flat-title");
+  await expect(oneLinerTitles.filter({ hasText: "Sidebar waiting state" })).toHaveCount(1);
+});
+
+test("flatChatList: reduced motion collapses the linger fade instantly (no transition duration)", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Sidebar waiting state").waitFor();
+
+  await page.evaluate(() => {
+    (window as unknown as { __PICKFORGE_VRT_FINISH_WORKING_TURN__: () => void })
+      .__PICKFORGE_VRT_FINISH_WORKING_TURN__();
+  });
+
+  const lingeringCard = page.locator(".pf-work-card--finishing");
+  await expect(lingeringCard).toHaveCount(1);
+  const durations = await lingeringCard.evaluate((el) =>
+    getComputedStyle(el).transitionDuration.split(",").map((d) => Number.parseFloat(d)),
+  );
+  expect(durations.every((d) => d === 0)).toBe(true);
+});
+
+test("flatChatList calm pane (visual) — no live chats, just the quiet tail", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Login screen").waitFor();
+  await page.waitForTimeout(300);
+
+  await expect(page.locator(".pf-work-card")).toHaveCount(0);
+  await expect(page.locator(".pf-pane-scroll").first()).toHaveScreenshot("flat-chat-list-calm.png", {
+    maxDiffPixelRatio: 0.025,
+    animations: "disabled",
+  });
+});
+
+test("flatChatList normal pane (visual) — one working, one needs-you card above the quiet tail", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
     localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
@@ -115,8 +360,46 @@ test("flatChatList mixed-state pane (visual)", async ({ page }) => {
   await page.getByText("PR monitoring agent flow").waitFor();
   await page.waitForTimeout(600);
 
-  await expect(page.locator(".pf-pane-scroll").first()).toHaveScreenshot("flat-chat-list-mixed.png", {
+  await expect(page.locator(".pf-pane-scroll").first()).toHaveScreenshot("flat-chat-list-normal.png", {
     maxDiffPixelRatio: 0.025,
     animations: "disabled",
   });
+});
+
+test("flatChatList heavy pane (visual) — four live cards above the quiet tail", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+    localStorage.setItem("pickforge.vrt.flatChatListHeavyFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Whisper batch tuning").waitFor();
+  await page.waitForTimeout(600);
+
+  await expect(page.locator(".pf-work-card")).toHaveCount(4);
+  await expect(page.locator(".pf-pane-scroll").first()).toHaveScreenshot("flat-chat-list-heavy.png", {
+    maxDiffPixelRatio: 0.025,
+    animations: "disabled",
+  });
+});
+
+test("flatChatList reduced-motion pane (visual) — a lingering card mid-collapse", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.addInitScript(() => {
+    localStorage.setItem("pickforge.flags", JSON.stringify({ flatChatList: true }));
+    localStorage.setItem("pickforge.vrt.flatChatListFixture", "1");
+  });
+  await page.goto("/#/workbench");
+  await page.getByText("Sidebar waiting state").waitFor();
+
+  await page.evaluate(() => {
+    (window as unknown as { __PICKFORGE_VRT_FINISH_WORKING_TURN__: () => void })
+      .__PICKFORGE_VRT_FINISH_WORKING_TURN__();
+  });
+  await expect(page.locator(".pf-work-card--finishing")).toHaveCount(1);
+
+  await expect(page.locator(".pf-pane-scroll").first()).toHaveScreenshot(
+    "flat-chat-list-reduced-motion.png",
+    { maxDiffPixelRatio: 0.025, animations: "disabled" },
+  );
 });

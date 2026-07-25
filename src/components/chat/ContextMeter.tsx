@@ -10,7 +10,10 @@ function compact(n: number): string {
   return String(Math.round(n));
 }
 
-function formatCost(cost: number, estimated: boolean): string {
+/** Shared cost format ("~" prefix for an estimated figure, 4dp) — also used
+ *  by the sidebar work card's footer cost item (#306 PR2) so the two never
+ *  drift apart. */
+export function formatCost(cost: number, estimated: boolean): string {
   return `${estimated ? "~" : ""}$${cost.toFixed(4)}`;
 }
 

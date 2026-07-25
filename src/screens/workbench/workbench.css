@@ -3180,3 +3180,234 @@ body.pf-resizing .pf-dc-resizer-grip {
   padding: 2px var(--pf-space-sm);
   color: var(--pf-text-med);
 }
+
+/* ---- live work cards (#306 PR2, behind `flatChatList`) ----
+   Busy/needs-you/just-finished chats render as a card; quiet chats stay
+   PR1's one-liner. LOCKED bracket rule: the four L-corners frame ONLY
+   needs-you cards and mean "action wanted" — nothing else gets them, and
+   bracketed text lives only on the needs-you status label. A working card is
+   plain hairline/ember border + mono ember-soft text; no filled pill chips
+   anywhere. Footer items (lanes, cost) are each conditional on real data —
+   branch and plan M/N stay absent until #306 PR3 wires that plumbing. */
+.pf-work-card {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--pf-space-sm) var(--pf-space-md) 10px;
+  border-radius: var(--pf-radius-md);
+  border: var(--pf-hairline-width) solid var(--pf-hairline);
+  background: var(--pf-surface-2);
+  font-size: var(--pf-size-body-sm);
+  color: var(--pf-text-med);
+  cursor: pointer;
+  transition: border-color var(--pf-dur-fast) var(--pf-ease-forge);
+}
+.pf-work-card:hover {
+  border-color: var(--pf-hairline-strong);
+}
+.pf-work-card.active {
+  background: var(--pf-surface-3);
+  box-shadow: inset 2px 0 0 var(--pf-hairline-strong);
+}
+.pf-work-card--working {
+  border-color: color-mix(in srgb, var(--pf-ember) 35%, transparent);
+}
+.pf-work-card--working:hover {
+  border-color: color-mix(in srgb, var(--pf-ember) 55%, transparent);
+}
+/* needs-you drops the border in favor of the bracket corners below — the
+   card frame is either a hairline/ember border OR brackets, never both. */
+.pf-work-card--needsyou {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--pf-warning) 9%, var(--pf-surface-2));
+}
+/* Linger (#306 PR2 design latitude): a just-finished card is neither working
+   nor waiting, so it mutes to plain text and fades slightly rather than
+   keeping either accent color — see FlatWorkCard's CARD_STATUS_TEXT. Uses the
+   duration TOKEN (not a literal ms value) so prefers-reduced-motion, which
+   zeroes --pf-dur-slow globally, collapses this to an instant, motion-free
+   change — no separate reduced-motion override needed here. */
+.pf-work-card--finishing {
+  color: var(--pf-text-low);
+  opacity: 0.72;
+  transition: opacity var(--pf-dur-slow) var(--pf-ease-forge);
+}
+
+.pf-work-card-corner {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  color: color-mix(in srgb, var(--pf-warning) 65%, transparent);
+}
+.pf-work-card-corner--tl {
+  left: 0;
+  top: 0;
+  border-left: var(--pf-bracket-width) solid currentColor;
+  border-top: var(--pf-bracket-width) solid currentColor;
+}
+/* The system's one-ember-focal-point signature: the top-right corner stays
+   ember even on an amber (needs-you) card, matching the approved mockup. */
+.pf-work-card-corner--tr {
+  right: 0;
+  top: 0;
+  border-right: var(--pf-bracket-width) solid currentColor;
+  border-top: var(--pf-bracket-width) solid currentColor;
+  color: var(--pf-ember);
+}
+.pf-work-card-corner--bl {
+  left: 0;
+  bottom: 0;
+  border-left: var(--pf-bracket-width) solid currentColor;
+  border-bottom: var(--pf-bracket-width) solid currentColor;
+}
+.pf-work-card-corner--br {
+  right: 0;
+  bottom: 0;
+  border-right: var(--pf-bracket-width) solid currentColor;
+  border-bottom: var(--pf-bracket-width) solid currentColor;
+}
+
+.pf-work-card-top {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+}
+.pf-work-card-mark {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--pf-text-med);
+}
+.pf-work-card-project {
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  letter-spacing: 0.4px;
+  color: var(--pf-text-low);
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+.pf-work-card-when {
+  margin-left: auto;
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  flex: none;
+}
+.pf-work-card-top .pf-rail-row-action {
+  opacity: 0;
+}
+.pf-work-card:hover .pf-rail-row-action {
+  opacity: 1;
+}
+
+.pf-work-card-l1 {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-xs);
+  margin-top: 2px;
+}
+.pf-work-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--pf-weight-medium);
+  color: var(--pf-text-hi);
+  font-size: var(--pf-size-body-sm);
+}
+/* Plain mono eyebrow text — no filled pill, per the locked rule. */
+.pf-work-card-status {
+  flex: none;
+  font-family: var(--pf-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--pf-ember-soft);
+}
+.pf-work-card--finishing .pf-work-card-status {
+  color: var(--pf-text-low);
+}
+.pf-work-card-status--needsyou {
+  color: var(--pf-warning);
+}
+
+.pf-work-card-brief {
+  font-size: var(--pf-size-label-sm);
+  color: var(--pf-text-low);
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-work-card:hover .pf-work-card-brief {
+  color: var(--pf-text-med);
+}
+
+.pf-work-card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--pf-space-sm);
+  font-family: var(--pf-font-mono);
+  font-size: var(--pf-size-eyebrow);
+  color: var(--pf-text-low);
+  margin-top: 2px;
+}
+/* Swarm lane ticks: one per lane, unlit until it starts — present only on a
+   card whose chat dispatched a swarm (see cardSwarmRun/cardLanes). */
+.pf-work-card-lanes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5px;
+}
+.pf-work-card-lane {
+  width: 3px;
+  height: 9px;
+  border-radius: 1px;
+  background: var(--pf-item-fill);
+}
+.pf-work-card-lane--run {
+  background: var(--pf-ember-deep);
+}
+.pf-work-card-lane--done {
+  background: var(--pf-connected);
+}
+.pf-work-card-lane--fail {
+  background: var(--pf-error);
+}
+.pf-work-card-lane-count {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.pf-work-card-cost {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 5C context edge: the card's bottom 2px, ember while working, amber while
+   waiting on you. No edge while justFinished — the card is settling, and
+   neither color would be honest (see FlatWorkCard's `edge()`). */
+.pf-work-card-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--pf-item-fill);
+}
+.pf-work-card-edge i {
+  display: block;
+  height: 100%;
+  transition: width var(--pf-dur-standard) var(--pf-ease-forge);
+}
+.pf-work-card-edge--ember i {
+  background: var(--pf-ember-deep);
+}
+.pf-work-card-edge--amber i {
+  background: var(--pf-warning);
+}

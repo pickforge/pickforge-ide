@@ -4,6 +4,7 @@
 import type { AgentEvent, AgentTimelineEntry } from "./agentChat";
 import type { ChangedFile, ChangeSet, WorkingTreeChanges } from "./changes";
 import type { Chat } from "./db";
+import type { SwarmRunSnapshot } from "./mcp";
 
 const now = 1_750_000_000_000;
 const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
@@ -22,6 +23,10 @@ const VRT_FLAT_CHAT_LIST_FIXTURE_KEY = "pickforge.vrt.flatChatListFixture";
 // flat list's eager cross-project load must survive one project failing
 // (#306 PR1 review finding P2-2).
 const VRT_FLAT_CHAT_LIST_LOAD_ERROR_KEY = "pickforge.vrt.flatChatListLoadErrorRoot";
+// #306 PR2's "heavy" VRT moment: two more live chats on top of the normal
+// fixture (a second needs-you and a second working chat), matching the
+// approved mockup's calm/normal/heavy density comparison.
+const VRT_FLAT_CHAT_LIST_HEAVY_FIXTURE_KEY = "pickforge.vrt.flatChatListHeavyFixture";
 
 // A trimmed, representative slice of `omp models --json --no-extensions`
 // output (captured from a real omp 17.1.1 install, truncated to a handful of
@@ -404,11 +409,84 @@ const SAMPLE_CHATS: Chat[] = [
 // seeding must match these exactly.
 export const FLAT_CHAT_LIST_NEEDS_YOU_ID = "chat-flat-needsyou";
 export const FLAT_CHAT_LIST_WORKING_ID = "chat-flat-working";
+// #306 PR2: a swarm run dispatched FROM the working chat, exercising the
+// footer's lane ticks (present only for a chat that dispatched a swarm) —
+// see mcp_swarm_status below and cardSwarmRun in flatWorkCard.ts.
+export const FLAT_CHAT_LIST_SWARM_RUN_ID = "swarm-flat-fixture";
 const FLAT_CHAT_LIST_EXTRA_CHATS: Chat[] = [
-  { chatId: FLAT_CHAT_LIST_NEEDS_YOU_ID, projectRoot: "/home/dev/widgets", title: "PR monitoring agent flow", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 5 },
-  { chatId: FLAT_CHAT_LIST_WORKING_ID, projectRoot: "/home/dev/acme-app", title: "Sidebar waiting state", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 5 },
+  { chatId: FLAT_CHAT_LIST_NEEDS_YOU_ID, projectRoot: "/home/dev/widgets", title: "PR monitoring agent flow", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Wants to run: gh pr checks --watch", createdAt: now, lastActivityAt: now, sortOrder: 5 },
+  { chatId: FLAT_CHAT_LIST_WORKING_ID, projectRoot: "/home/dev/acme-app", title: "Sidebar waiting state", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Add a waiting status to sidebar chat rows", createdAt: now, lastActivityAt: now, sortOrder: 5 },
   { chatId: "chat-flat-quiet-old", projectRoot: "/home/dev/widgets", title: "Local usage analytics plan", titleSource: "user", titleUpdatedAt: now, kind: "terminal", agentId: "pi", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now - 2 * 86_400_000, sortOrder: 6 },
 ];
+// #306 PR2's "heavy" VRT moment (VRT_FLAT_CHAT_LIST_HEAVY_FIXTURE_KEY): two
+// more live chats stacked on top of the normal fixture.
+export const FLAT_CHAT_LIST_NEEDS_YOU_ID_2 = "chat-flat-needsyou-2";
+export const FLAT_CHAT_LIST_WORKING_ID_2 = "chat-flat-working-2";
+const FLAT_CHAT_LIST_HEAVY_EXTRA_CHATS: Chat[] = [
+  { chatId: FLAT_CHAT_LIST_NEEDS_YOU_ID_2, projectRoot: "/home/dev/acme-app", title: "ADB session recovery", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "pi", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Wants to run: adb kill-server", createdAt: now, lastActivityAt: now, sortOrder: 7 },
+  { chatId: FLAT_CHAT_LIST_WORKING_ID_2, projectRoot: "/home/dev/widgets", title: "Whisper batch tuning", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "omp", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: "Cut transcription latency below 800ms", createdAt: now, lastActivityAt: now, sortOrder: 8 },
+];
+// #306 PR2's flat work-card VRT scenario: usage history for the working
+// chat (installFlatChatListFixture calls ensureAgentChat with this id,
+// headlessly — the chat is never opened) so its context edge + footer cost
+// have real, nonzero data to render, same replay mechanism AGENT_CHAT_FIXTURE
+// already uses for ContextMeter's own VRT.
+const FLAT_CHAT_LIST_WORKING_HISTORY: AgentTimelineEntry[] = [
+  {
+    entryType: "message",
+    seq: 1,
+    role: "user",
+    content: "Add a waiting status to sidebar chat rows.",
+    createdAt: now,
+  },
+  {
+    entryType: "item",
+    seq: 2,
+    kind: "turnStarted",
+    payload: JSON.stringify({ kind: "turnStarted" }),
+    createdAt: now,
+  },
+  {
+    entryType: "item",
+    seq: 3,
+    kind: "usage",
+    payload: JSON.stringify({
+      kind: "usage",
+      inputTokens: 6200,
+      cachedInputTokens: 1024,
+      outputTokens: 890,
+      costUsd: 0.41,
+      contextUsed: 380_000,
+      contextWindow: 1_000_000,
+    }),
+    createdAt: now,
+  },
+];
+// One lane done, two still running — the mixed state the merged mockup's
+// "normal" moment shows for this same chat.
+const FLAT_CHAT_LIST_SWARM_RUN: SwarmRunSnapshot = {
+  runId: FLAT_CHAT_LIST_SWARM_RUN_ID,
+  projectRoot: "/home/dev/acme-app",
+  goal: "Survey sidebar waiting-state precedent",
+  requestedCount: 3,
+  model: null,
+  providerPreference: "mixed",
+  mode: "scout",
+  source: "pickforge",
+  originChatId: FLAT_CHAT_LIST_WORKING_ID,
+  status: "running",
+  synthesisStatus: "idle",
+  synthesisError: null,
+  synthesizedAt: null,
+  lanes: [
+    { id: `${FLAT_CHAT_LIST_SWARM_RUN_ID}-lane-1`, chatId: "chat-flat-lane-1", provider: "claudeCode", model: null, title: "Code map", status: "completed", summary: "Found the existing pattern.", error: null, updatedAt: now },
+    { id: `${FLAT_CHAT_LIST_SWARM_RUN_ID}-lane-2`, chatId: "chat-flat-lane-2", provider: "codex", model: null, title: "Implementation path", status: "running", summary: null, error: null, updatedAt: now },
+    { id: `${FLAT_CHAT_LIST_SWARM_RUN_ID}-lane-3`, chatId: "chat-flat-lane-3", provider: "claudeCode", model: null, title: "Risk pass", status: "running", summary: null, error: null, updatedAt: now },
+  ],
+  error: null,
+  createdAt: now,
+  updatedAt: now,
+};
 const SAMPLE_PICKS = [
   { id: 1, projectRoot: "/home/dev/acme-app", widgetClass: "LoginButton", creationFile: "lib/login.dart", creationLine: 42, skillId: "s", agentId: "claudeCode", terminalId: "t", chatId: null, pickedAt: now, widgetContextJson: "{}" },
 ];
@@ -462,6 +540,14 @@ function flatChatListLoadErrorRoot(): string | null {
   }
 }
 
+function flatChatListHeavyFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_FLAT_CHAT_LIST_HEAVY_FIXTURE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function chatsForProject(projectRoot: unknown) {
   if (flatChatListLoadErrorRoot() === projectRoot) {
     throw new Error(`mock chats_list failure for ${String(projectRoot)}`);
@@ -469,6 +555,9 @@ function chatsForProject(projectRoot: unknown) {
   let chats = SAMPLE_CHATS.filter((c) => c.projectRoot === projectRoot);
   if (flatChatListFixtureEnabled()) {
     chats = [...chats, ...FLAT_CHAT_LIST_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
+  }
+  if (flatChatListHeavyFixtureEnabled()) {
+    chats = [...chats, ...FLAT_CHAT_LIST_HEAVY_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
   }
   if (orchestraBoardFixtureEnabled()) {
     chats = [...chats, ...ORCHESTRA_BOARD_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
@@ -862,7 +951,10 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   mcp_run_started: () => null,
   mcp_take_swarm_requests: () => [],
   mcp_update_swarm_run: () => null,
-  mcp_swarm_status: () => ({ runs: [] }),
+  mcp_swarm_status: (a) =>
+    flatChatListFixtureEnabled() && a.projectRoot === FLAT_CHAT_LIST_SWARM_RUN.projectRoot
+      ? { runs: [FLAT_CHAT_LIST_SWARM_RUN] }
+      : { runs: [] },
   mcp_stop: () => null,
   list_pi_kit_runs: () => [],
   abandon_pi_kit_lane: () => ({ requested: true, consumed: false }),
@@ -917,8 +1009,13 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     args.agentId === "codex"
       ? { state: "authenticated" }
       : { state: "notAuthenticated" },
-  agent_chat_history: (a) =>
-    a.chatId === AGENT_CHAT_FIXTURE.chatId ? agentChatHistoryForFixture() : [],
+  agent_chat_history: (a) => {
+    if (a.chatId === AGENT_CHAT_FIXTURE.chatId) return agentChatHistoryForFixture();
+    if (a.chatId === FLAT_CHAT_LIST_WORKING_ID && flatChatListFixtureEnabled()) {
+      return FLAT_CHAT_LIST_WORKING_HISTORY;
+    }
+    return [];
+  },
   agent_chat_start: (a) => `vrt-session-${a.chatId}`,
   agent_chat_send: () => null,
   agent_chat_interrupt: () => null,

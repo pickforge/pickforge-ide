@@ -22,6 +22,11 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+
+html {
+  overscroll-behavior: none;
 }
 
 /* Tell the engine our chrome is dark so native controls (select popups,

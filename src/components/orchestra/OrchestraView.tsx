@@ -1093,29 +1093,66 @@ const TaskListBody = (props: { ctrl: OrchestraController }) => (
   </div>
 );
 
-// A board card resolves its builder/reviewer chat's title and provider only
-// from `linkedChats` (the locked-subset-rule filter's output), never from the
-// unrestricted global chat store — so a task that has no chat assigned reads
-// as unassigned rather than silently leaking an unrelated chat's identity.
+// One linked-chat mark (builder or reviewer) on a board card. Resolves title/
+// provider only from `linkedChats` (the locked-subset-rule filter's output),
+// never the unrestricted global chat store. Rendered once per role that's
+// actually set, so a task with BOTH a builder and reviewer shows both —
+// neither role's identity or live state is dropped in favor of the other
+// (P2-1).
+const BoardCardMark = (props: { chatId: string; role: "build" | "review"; linkedChats: Chat[] }) => {
+  const chat = () => props.linkedChats.find((c) => c.chatId === props.chatId);
+  // No linked-chat record yet (project chats still loading, or the chat is
+  // gone) reads as an honest "unknown provider" mark rather than guessing —
+  // never render a specific harness icon we can't back with real data.
+  const provider = (): AgentProvider | null => {
+    const c = chat();
+    return c ? normalizeAgentProvider(c.agentId) ?? "claudeCode" : null;
+  };
+  const busy = () => chatBusy(props.chatId);
+  const attention = () => chatAttention(props.chatId);
+  const roleLabel = () => (props.role === "build" ? "Builder" : "Reviewer");
+  const label = () => `${roleLabel()}${chat() ? ` · ${chat()!.title}` : ""}`;
+  return (
+    <span
+      class="pf-board-card-mark"
+      classList={{ "pf-board-card-mark--busy": busy() && !attention(), "pf-board-card-mark--attention": attention() }}
+      title={label()}
+      aria-label={label()}
+    >
+      <Show when={provider() ? PROVIDER_ICON[provider()!] : undefined} fallback="AI">
+        {(icon) => icon()()}
+      </Show>
+    </span>
+  );
+};
+
 const BoardCard = (props: { ctrl: OrchestraController; task: OrchestraTask; linkedChats: Chat[] }) => {
   const ctrl = props.ctrl;
   const task = () => props.task;
-  const chatId = () => task().builderChatId ?? task().reviewerChatId;
-  const linkedChat = () => {
-    const id = chatId();
-    return id ? props.linkedChats.find((c) => c.chatId === id) : undefined;
-  };
-  const provider = (): AgentProvider | null => {
-    const chat = linkedChat();
-    return chat ? normalizeAgentProvider(chat.agentId) ?? "claudeCode" : null;
-  };
-  const busy = () => { const id = chatId(); return id ? chatBusy(id) : false; };
-  const attention = () => { const id = chatId(); return id ? chatAttention(id) : false; };
+  // Card-level busy/attention and click-to-focus consider BOTH links, not
+  // just one collapsed via `??` — a task with both a builder and reviewer
+  // chat must never have the second one's state silently dropped (P2-1).
+  const linkedIds = () => [task().builderChatId, task().reviewerChatId].filter((id): id is string => !!id);
+  const busy = () => linkedIds().some((id) => chatBusy(id) && !chatAttention(id));
+  const attention = () => linkedIds().some((id) => chatAttention(id));
+  // Task→chat links persist in SQLite, but lane selection (which chats are
+  // mounted as lanes) is local/session state — a persisted link can outlive
+  // its lane (cleared storage, fresh machine, removed lane). Only focus a
+  // chat id that's actually live; degrade to a no-op otherwise instead of
+  // calling focusLane on a lane that was never mounted (P2-2). Builder is
+  // preferred when both links are live.
+  const liveChatId = () => linkedIds().find((id) => ctrl.liveLanes().includes(id)) ?? null;
+  const linkedChatFor = (id: string | null) => (id ? props.linkedChats.find((c) => c.chatId === id) : undefined);
+  const metaChat = () => linkedChatFor(task().builderChatId) ?? linkedChatFor(task().reviewerChatId);
   return (
     <div
       class="pf-board-card"
-      classList={{ "pf-board-card--busy": busy() && !attention(), "pf-board-card--attention": attention() }}
-      onClick={() => { const id = chatId(); if (id) ctrl.focusLane(id); }}
+      classList={{
+        "pf-board-card--busy": busy() && !attention(),
+        "pf-board-card--attention": attention(),
+        "pf-board-card--unfocusable": !liveChatId(),
+      }}
+      onClick={() => { const id = liveChatId(); if (id) ctrl.focusLane(id); }}
     >
       <div class="pf-board-card-top">
         <button
@@ -1126,22 +1163,21 @@ const BoardCard = (props: { ctrl: OrchestraController; task: OrchestraTask; link
           <span class="pf-orch-status-dot" />
           {task().status}
         </button>
-        <Show when={provider()}>
-          {(p) => (
-            <span class="pf-board-card-mark" title={providerLabel(p())} aria-label={providerLabel(p())}>
-              <Show when={PROVIDER_ICON[p()]} fallback="AI">
-                {(icon) => icon()()}
-              </Show>
-            </span>
-          )}
-        </Show>
+        <div class="pf-board-card-marks">
+          <Show when={task().builderChatId}>
+            {(id) => <BoardCardMark chatId={id()} role="build" linkedChats={props.linkedChats} />}
+          </Show>
+          <Show when={task().reviewerChatId}>
+            {(id) => <BoardCardMark chatId={id()} role="review" linkedChats={props.linkedChats} />}
+          </Show>
+        </div>
       </div>
       <div class="pf-board-card-title">{task().title}</div>
       <Show when={task().note}>
         {(note) => <div class="pf-board-card-note">{note()}</div>}
       </Show>
       <div class="pf-board-card-meta">
-        <span>{linkedChat()?.title ?? "unassigned"}</span>
+        <span>{metaChat()?.title ?? "unassigned"}</span>
         <span>{shortRelTime(task().updatedAt)}</span>
       </div>
     </div>

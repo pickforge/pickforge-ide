@@ -293,6 +293,9 @@ function chatsForProject(projectRoot: unknown) {
   if (flatChatListFixtureEnabled()) {
     chats = [...chats, ...FLAT_CHAT_LIST_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
   }
+  if (orchestraBoardFixtureEnabled()) {
+    chats = [...chats, ...ORCHESTRA_BOARD_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
+  }
   if (!agentChatFixtureEnabled() || projectRoot !== AGENT_CHAT_FIXTURE.projectRoot) {
     return chats;
   }
@@ -378,17 +381,25 @@ const MOCK_ORCHESTRA_TASKS: { id: string; projectRoot: string }[] = [];
 
 // #319 (#196 PR1) orchestra board VRT scenario, gated by
 // `pickforge.vrt.orchestraBoardFixture`: one task per status on acme-app (the
-// default active project), reusing its own sample chats (chat-1, chat-2) as
-// builder chats so the board's harness mark + busy/attention dot render off
-// real fixture data — installOrchestraBoardFixture (orchestraBoardFixture.ts)
-// seeds chat-1 busy and chat-2 needs-you to match.
+// default active project). "building"/chat-1 and "fixing"/chat-2 reuse
+// acme-app's own sample chats so the board's harness mark + busy/attention
+// dot render off real fixture data (installOrchestraBoardFixture seeds
+// chat-1 busy, chat-2 needs-you). "reviewing" carries BOTH a builder AND a
+// reviewer link (P2-1 regression coverage) via two dedicated chats below,
+// deliberately left quiet so they don't inherit chat-1/chat-2's busy/
+// attention state. None of these chats are ever added as a live lane in this
+// fixture, so every card also exercises the P2-2 stale-link guard.
 const VRT_ORCHESTRA_BOARD_FIXTURE_KEY = "pickforge.vrt.orchestraBoardFixture";
 const ORCHESTRA_BOARD_FIXTURE_TASKS = [
   { id: "board-task-planned", projectRoot: "/home/dev/acme-app", title: "Wire up settings sync", status: "planned", builderChatId: null, reviewerChatId: null, note: null, sortOrder: 0, createdAt: now, updatedAt: now },
   { id: "board-task-building", projectRoot: "/home/dev/acme-app", title: "Sidebar waiting state polish", status: "building", builderChatId: "chat-1", reviewerChatId: null, note: null, sortOrder: 1, createdAt: now, updatedAt: now },
-  { id: "board-task-reviewing", projectRoot: "/home/dev/acme-app", title: "Login screen review", status: "reviewing", builderChatId: null, reviewerChatId: null, note: "Waiting on a reviewer lane", sortOrder: 2, createdAt: now, updatedAt: now - 3_600_000 },
+  { id: "board-task-reviewing", projectRoot: "/home/dev/acme-app", title: "Login screen review", status: "reviewing", builderChatId: "chat-board-builder", reviewerChatId: "chat-board-reviewer", note: null, sortOrder: 2, createdAt: now, updatedAt: now - 3_600_000 },
   { id: "board-task-fixing", projectRoot: "/home/dev/acme-app", title: "Settings polish follow-up", status: "fixing", builderChatId: "chat-2", reviewerChatId: null, note: null, sortOrder: 3, createdAt: now, updatedAt: now - 7_200_000 },
-  { id: "board-task-done", projectRoot: "/home/dev/acme-app", title: "Onboarding copy pass", status: "done", builderChatId: null, reviewerChatId: null, note: null, sortOrder: 4, createdAt: now, updatedAt: now - 86_400_000 },
+  { id: "board-task-done", projectRoot: "/home/dev/acme-app", title: "Onboarding copy pass", status: "done", builderChatId: null, reviewerChatId: null, note: "Ready to close out", sortOrder: 4, createdAt: now, updatedAt: now - 86_400_000 },
+];
+const ORCHESTRA_BOARD_EXTRA_CHATS: Chat[] = [
+  { chatId: "chat-board-builder", projectRoot: "/home/dev/acme-app", title: "Review pass — build side", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 7 },
+  { chatId: "chat-board-reviewer", projectRoot: "/home/dev/acme-app", title: "Review pass — review side", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "pi", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 8 },
 ];
 
 function orchestraBoardFixtureEnabled(): boolean {

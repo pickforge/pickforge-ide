@@ -24,12 +24,24 @@ export interface BoardColumn {
 /** Buckets tasks into their status column, in STATUS_ORDER. Each task's
  *  relative order within its column is preserved from the input — callers
  *  pass the already-sorted task list (see orchestra.ts's sortedTasks), so a
- *  column's card order matches the flat list's task order. */
+ *  column's card order matches the flat list's task order.
+ *
+ *  The Rust side stores `status` as an unrestricted string — the TS union is
+ *  a compile-time hint, not a runtime guarantee. A persisted value outside
+ *  STATUS_ORDER (a future status, manual DB edit, etc.) folds into the
+ *  earliest column (`planned`) rather than vanishing from every column: the
+ *  task must always land somewhere. The card still renders its literal
+ *  status text, so an unrecognized value stays visible/debuggable instead of
+ *  being silently relabeled. */
 export function groupTasksByStatus(tasks: readonly OrchestraTask[]): BoardColumn[] {
-  return STATUS_ORDER.map((status) => ({
-    status,
-    tasks: tasks.filter((task) => task.status === status),
-  }));
+  const known = new Set<string>(STATUS_ORDER);
+  const buckets = new Map<OrchestraTaskStatus, OrchestraTask[]>(STATUS_ORDER.map((s) => [s, []]));
+  const fallback = STATUS_ORDER[0];
+  for (const task of tasks) {
+    const bucket = known.has(task.status) ? task.status : fallback;
+    buckets.get(bucket)!.push(task);
+  }
+  return STATUS_ORDER.map((status) => ({ status, tasks: buckets.get(status)! }));
 }
 
 /** Chat ids referenced as a task's builder or reviewer — the board's only

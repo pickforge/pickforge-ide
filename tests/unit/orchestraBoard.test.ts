@@ -69,6 +69,21 @@ describe("groupTasksByStatus", () => {
     const planned = columns.find((col) => col.status === "planned")!;
     expect(planned.tasks).toEqual([]);
   });
+
+  // P2-3: the Rust side stores `status` as an unrestricted string — the TS
+  // union isn't a runtime guarantee. A persisted status outside STATUS_ORDER
+  // must not vanish from every column.
+  it("folds an unrecognized persisted status into the fallback (planned) column instead of vanishing", () => {
+    const stray = task({ id: "stray", status: "archived" as OrchestraTaskStatus });
+    const normal = task({ id: "normal", status: "building" });
+
+    const columns = groupTasksByStatus([stray, normal]);
+
+    const planned = columns.find((col) => col.status === "planned")!;
+    expect(planned.tasks.map((t) => t.id)).toEqual(["stray"]);
+    const total = columns.reduce((n, col) => n + col.tasks.length, 0);
+    expect(total).toBe(2); // neither task is dropped
+  });
 });
 
 describe("taskLinkedChatIds / filterTaskLinkedChats — the locked subset rule", () => {
@@ -107,5 +122,24 @@ describe("taskLinkedChatIds / filterTaskLinkedChats — the locked subset rule",
   it("returns nothing when no task links any chat", () => {
     const filtered = filterTaskLinkedChats([{ chatId: "chat-adhoc" }], [task()]);
     expect(filtered).toEqual([]);
+  });
+
+  // P2-1: a task with BOTH a builder and a reviewer chat must keep both ids
+  // task-linked — neither may leak into "untracked" because the other role
+  // is also set.
+  it("a task with both a builder and reviewer link keeps both ids task-linked, and the task still lands on the board", () => {
+    const both = task({ id: "both-links", builderChatId: "chat-builder", reviewerChatId: "chat-reviewer", status: "reviewing" });
+    const chats = [{ chatId: "chat-builder" }, { chatId: "chat-reviewer" }, { chatId: "chat-adhoc" }];
+
+    const ids = taskLinkedChatIds([both]);
+    expect(ids.has("chat-builder")).toBe(true);
+    expect(ids.has("chat-reviewer")).toBe(true);
+
+    const filtered = filterTaskLinkedChats(chats, [both]);
+    expect(filtered.map((c) => c.chatId).sort()).toEqual(["chat-builder", "chat-reviewer"]);
+
+    const columns = groupTasksByStatus([both]);
+    const reviewing = columns.find((col) => col.status === "reviewing")!;
+    expect(reviewing.tasks.map((t) => t.id)).toEqual(["both-links"]);
   });
 });

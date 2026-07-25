@@ -461,10 +461,21 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   background: color-mix(in srgb, var(--pf-warning) 16%, var(--pf-surface-2));
   box-shadow: inset var(--pf-bracket-width) 0 0 var(--pf-warning);
 }
+/* A persisted builder/reviewer link whose lane isn't mounted this session
+   (P2-2) — the card stays readable but doesn't offer a click affordance it
+   can't honor. */
+.pf-board-card--unfocusable {
+  cursor: default;
+}
 .pf-board-card-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--pf-space-xs);
+}
+.pf-board-card-marks {
+  display: flex;
+  align-items: center;
   gap: var(--pf-space-xs);
 }
 .pf-board-card-mark {
@@ -472,6 +483,12 @@ body.pf-resizing .pf-orch-ledger-resizer-grip {
   align-items: center;
   flex: none;
   color: var(--pf-text-low);
+}
+.pf-board-card-mark--busy {
+  color: var(--pf-ember);
+}
+.pf-board-card-mark--attention {
+  color: var(--pf-warning);
 }
 .pf-board-card-title {
   font-size: var(--pf-size-body-sm);

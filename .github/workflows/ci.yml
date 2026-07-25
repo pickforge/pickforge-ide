@@ -8,6 +8,14 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Dispatched by update-vrt-baselines after it pushes regenerated PNGs: a
+  # push made with the default GITHUB_TOKEN never triggers pull_request/push
+  # workflows (GitHub's recursion guard), so that workflow re-runs the gate
+  # explicitly. The guard exempts workflow_dispatch, so no PAT is needed.
+  # Note: a dispatched run tests the branch head directly, not the PR merge
+  # ref — acceptable for the baseline-regen case, where the branch was just
+  # rebased/synced by the same flow that dispatches this. (#349)
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

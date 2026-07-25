@@ -44,6 +44,7 @@ vi.mock("../../src/lib/agentModels", () => ({
 }));
 
 import { Composer } from "../../src/components/chat/Composer";
+import { caretOffset, setCaretAtOffset } from "../../src/lib/composerChips";
 
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
@@ -82,8 +83,8 @@ function mount(meter?: () => import("solid-js").JSX.Element) {
   return { field, editor };
 }
 
-function mousedown(target: HTMLElement): MouseEvent {
-  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+function mousedown(target: HTMLElement, button = 0): MouseEvent {
+  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button });
   target.dispatchEvent(event);
   return event;
 }
@@ -101,10 +102,11 @@ describe("composer field frame", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  // jsdom does not implement the browser's focus-steal on mousedown, so this
-  // cannot reproduce the native blur itself; it pins the handler's own outcome —
-  // a readout click must leave focus on the editor, never move it elsewhere.
-  it("keeps the editor focused when the meter readout is clicked", () => {
+  // jsdom does not implement the browser's focus-steal on mousedown, so the
+  // native blur cannot be reproduced here. What is asserted is the mechanism
+  // that prevents it — the suppressed default — plus the outcome: focus stays on
+  // the editor and the caret is left alone rather than collapsed to the end.
+  it("suppresses the default on a readout click so a focused editor keeps its caret", () => {
     const { editor } = mount(() => (
       <div class="pf-chat-context">
         <span class="pf-chat-context-frac">27k / 1M</span>
@@ -115,8 +117,9 @@ describe("composer field frame", () => {
 
     const frac = root.querySelector<HTMLElement>(".pf-chat-context-frac");
     expect(frac).not.toBeNull();
-    mousedown(frac!);
+    const event = mousedown(frac!);
 
+    expect(event.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(editor);
   });
 
@@ -127,5 +130,34 @@ describe("composer field frame", () => {
 
     // Native caret placement must survive — the handler only covers the frame.
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("does not collapse the caret of an already-focused editor", () => {
+    const { field, editor } = mount();
+    // Drive real content through the editor's own input path so the component's
+    // serialized text() matches the DOM, then park the caret mid-draft.
+    editor.focus();
+    editor.textContent = "hello world";
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    setCaretAtOffset(editor, 5, []);
+    expect(caretOffset(editor, [])).toBe(5);
+
+    mousedown(field);
+
+    // Clicking the frame while editing must leave the caret where it was, not
+    // jump it to the end of the draft.
+    expect(caretOffset(editor, [])).toBe(5);
+  });
+
+  it("ignores non-primary buttons so the context menu and middle-click paste work", () => {
+    const { field, editor } = mount();
+
+    const right = mousedown(field, 2);
+    expect(right.defaultPrevented).toBe(false);
+    expect(document.activeElement).not.toBe(editor);
+
+    const middle = mousedown(field, 1);
+    expect(middle.defaultPrevented).toBe(false);
+    expect(document.activeElement).not.toBe(editor);
   });
 });

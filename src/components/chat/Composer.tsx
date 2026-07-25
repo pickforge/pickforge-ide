@@ -1397,9 +1397,15 @@ export function Composer(props: {
             // gutter), and a text field you can click without getting a caret
             // reads as broken. Route clicks that land on the frame itself — the
             // gutter, the readout, the padding — into the editor instead of
-            // letting them blur it.
+            // letting them blur it. Non-primary buttons are left alone so the
+            // context menu and X11 middle-click paste keep their defaults.
+            if (event.button !== 0) return;
             if (preparing() || field.contains(event.target as Node)) return;
             event.preventDefault();
+            // Suppressing the default already preserved focus and any existing
+            // selection, so only an unfocused editor needs placing — otherwise a
+            // click on the readout mid-draft would collapse the caret to the end.
+            if (document.activeElement === field) return;
             field.focus();
             placeCaret(text().length);
           }}

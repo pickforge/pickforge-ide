@@ -95,7 +95,82 @@ function LocalRunDeviceControl(props: {
   );
 }
 
-// eslint-disable-next-line max-lines-per-function -- TODO(#263): reduce legacy function complexity.
+/** The remote-project "Run device" header + picker (a binding is present, the
+ *  active root is known). A presentational child component. */
+function RemoteRunDeviceControl(props: {
+  root: string;
+  binding: NonNullable<ReturnType<typeof remotePtyFor>>;
+  showVm: boolean;
+  vmConnected: boolean;
+  disconnectVm: () => void;
+}) {
+  return (
+    <>
+      <div class="pf-rail-head">
+        <MonoEyebrow text="Run device" />
+        <div class="pf-wt-actions">
+          <Show when={props.showVm && props.vmConnected}>
+            <button class="pf-vm-chip" title="VM connected — click to disconnect" onClick={props.disconnectVm}>
+              <span class="pf-vm-dot" />
+              VM
+            </button>
+          </Show>
+          <button
+            class="pf-icon-btn"
+            title="Refresh remote devices"
+            onClick={() => void refreshRemoteDevices(props.root, props.binding)}
+          >
+            <IconRefresh size={14} />
+          </button>
+        </div>
+      </div>
+      <RemoteDevicePicker
+        projectRoot={props.root}
+        remote={props.binding}
+        disabled={runConsole.status() === "running"}
+      />
+    </>
+  );
+}
+
+/** The default (Flutter VM-service) inspector: a manual connect box until a
+ *  VM is attached, then the widget tree. A presentational child component. */
+function VmServiceInspector(props: {
+  vmConnected: () => boolean;
+  vmUrl: () => string;
+  vmError: () => string | null;
+}) {
+  return (
+    <>
+      {/* Manual VM connect — only when not already auto-connected. Once
+          connected, status + disconnect live in the Run device header. */}
+      <Show when={!props.vmConnected()}>
+        <div class="pf-inspector-section">
+          <MonoEyebrow text="VM service" />
+          <input
+            class="pf-vm-input"
+            value={props.vmUrl()}
+            onInput={(e) => setVmUrl(e.currentTarget.value)}
+            placeholder="ws://127.0.0.1:PORT/ws"
+          />
+          <EmberButton label="Connect" onClick={() => void connectVm()} />
+          <Show when={props.vmError()}>
+            <div class="pf-vm-error">{props.vmError()}</div>
+          </Show>
+          <p class="pf-inspector-hint">
+            Run a Flutter app and it connects automatically — or paste a VM
+            service URL to inspect its widget tree.
+          </p>
+        </div>
+      </Show>
+
+      <Show when={props.vmConnected()}>
+        <WidgetTree />
+      </Show>
+    </>
+  );
+}
+
 export function InspectorPanel() {
   // Which inspector the rail shows, branched on the active target's capability:
   // a LIVE run wins (it's what's on the device), else the selected launcher
@@ -152,31 +227,13 @@ export function InspectorPanel() {
             {(binding) => (
               <Show when={workspace.activeRoot} keyed>
                 {(root) => (
-                  <>
-                    <div class="pf-rail-head">
-                      <MonoEyebrow text="Run device" />
-                      <div class="pf-wt-actions">
-                        <Show when={showVm() && vmConnected()}>
-                          <button class="pf-vm-chip" title="VM connected — click to disconnect" onClick={disconnectVm}>
-                            <span class="pf-vm-dot" />
-                            VM
-                          </button>
-                        </Show>
-                        <button
-                          class="pf-icon-btn"
-                          title="Refresh remote devices"
-                          onClick={() => void refreshRemoteDevices(root, binding)}
-                        >
-                          <IconRefresh size={14} />
-                        </button>
-                      </div>
-                    </div>
-                    <RemoteDevicePicker
-                      projectRoot={root}
-                      remote={binding}
-                      disabled={runConsole.status() === "running"}
-                    />
-                  </>
+                  <RemoteRunDeviceControl
+                    root={root}
+                    binding={binding}
+                    showVm={showVm()}
+                    vmConnected={vmConnected()}
+                    disconnectVm={disconnectVm}
+                  />
                 )}
               </Show>
             )}
@@ -189,35 +246,7 @@ export function InspectorPanel() {
             UIAutomator accessibility tree; web (cdp) / unknown (none) get an
             honest empty state — never the VM-service copy. */}
         <Switch
-          fallback={
-            <>
-              {/* Manual VM connect — only when not already auto-connected. Once
-                  connected, status + disconnect live in the Run device header. */}
-              <Show when={!vmConnected()}>
-                <div class="pf-inspector-section">
-                  <MonoEyebrow text="VM service" />
-                  <input
-                    class="pf-vm-input"
-                    value={vmUrl()}
-                    onInput={(e) => setVmUrl(e.currentTarget.value)}
-                    placeholder="ws://127.0.0.1:PORT/ws"
-                  />
-                  <EmberButton label="Connect" onClick={() => void connectVm()} />
-                  <Show when={vmError()}>
-                    <div class="pf-vm-error">{vmError()}</div>
-                  </Show>
-                  <p class="pf-inspector-hint">
-                    Run a Flutter app and it connects automatically — or paste a VM
-                    service URL to inspect its widget tree.
-                  </p>
-                </div>
-              </Show>
-
-              <Show when={vmConnected()}>
-                <WidgetTree />
-              </Show>
-            </>
-          }
+          fallback={<VmServiceInspector vmConnected={vmConnected} vmUrl={vmUrl} vmError={vmError} />}
         >
           <Match when={inspectorKind() === "uiAutomator"}>
             <A11yTree

@@ -38,6 +38,14 @@ beforeEach(() => {
 const imageModels = (ids: number[]): ComposerChipModel[] =>
   ids.map((id) => ({ id, kind: "image" }));
 
+/** Editor content up to a caret, as the composer measures selection offsets. */
+const rangeBefore = (range: Range): DocumentFragment => {
+  const before = document.createRange();
+  before.selectNodeContents(root);
+  before.setEnd(range.startContainer, range.startOffset);
+  return before.cloneContents();
+};
+
 const roundTrip = (text: string, ids: number[]): string => {
   const models = imageModels(ids);
   renderComposer(root, text, models, buildChip);
@@ -196,6 +204,41 @@ describe("caret filler after a trailing chip", () => {
     renderComposer(root, "hi [Image #1] tail", imageModels([10]), buildChip);
     setCaretAtOffset(root, "hi [Image #1]".length, imageModels([10]));
     expect(deleteTargetsFillerTail(root)).toBe(false);
+  });
+});
+
+describe("line filler after a trailing newline (#352)", () => {
+  // A <br> ending a block box creates no line box, so the empty final line a
+  // Shift+Enter just opened was invisible until a second one was pressed.
+  it("adds a marked second <br> so the empty final line renders", () => {
+    renderComposer(root, "abc\n", [], buildChip);
+
+    const breaks = root.querySelectorAll("br");
+    expect(breaks.length).toBe(2);
+    expect(breaks[0].hasAttribute("data-pf-line-filler")).toBe(false);
+    expect(breaks[1].hasAttribute("data-pf-line-filler")).toBe(true);
+  });
+
+  it("keeps the filler out of the string model", () => {
+    expect(roundTrip("abc\n", [])).toBe("abc\n");
+    expect(roundTrip("a\nb\n\n", [])).toBe("a\nb\n\n");
+    expect(roundTrip("\n", [])).toBe("\n");
+  });
+
+  it("adds no filler when the text does not end in a newline", () => {
+    renderComposer(root, "a\nb", [], buildChip);
+    expect(root.querySelectorAll("[data-pf-line-filler]").length).toBe(0);
+  });
+
+  it("puts the end-of-text caret on the new empty line, before the filler", () => {
+    renderComposer(root, "abc\n", [], buildChip);
+    setCaretAtOffset(root, "abc\n".length, []);
+
+    const range = document.getSelection()!.getRangeAt(0);
+    expect(range.startContainer).toBe(root);
+    // Between the real <br> and the filler: children are [text, br, filler].
+    expect(range.startOffset).toBe(2);
+    expect(serializeComposer(rangeBefore(range), [])).toBe("abc\n");
   });
 });
 

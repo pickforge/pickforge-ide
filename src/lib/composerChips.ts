@@ -32,6 +32,18 @@ const MARKER_LABEL: Record<ComposerChipKind, string> = {
 const CARET_FILLER = "\u200B";
 const FILLER_RE = /\u200B/g;
 
+// A `<br>` that ends a block box creates no line box, so a draft ending in a
+// newline renders no visible empty line and the caret stays painted on the
+// previous one \u2014 Shift+Enter looked like it did nothing until pressed a second
+// time (#352). A second, marked `<br>` gives that final line a box. It is
+// skipped by every serialization and by the caret walker, so the string model
+// and its offsets never see it.
+const LINE_FILLER_ATTR = "data-pf-line-filler";
+
+function isLineFiller(el: Element): boolean {
+  return el.tagName === "BR" && el.hasAttribute(LINE_FILLER_ATTR);
+}
+
 function isFillerOnly(segment: string): boolean {
   return segment.replace(FILLER_RE, "") === "";
 }
@@ -79,7 +91,7 @@ export function serializeComposer(
         continue;
       }
       if (el.tagName === "BR") {
-        out += "\n";
+        if (!isLineFiller(el)) out += "\n";
         continue;
       }
       if (BLOCK_TAGS.has(el.tagName) && out.length > 0 && !out.endsWith("\n")) {
@@ -145,6 +157,10 @@ export function renderComposer(
   const tail = frag.lastChild;
   if (tail && tail.nodeType === 1 && (tail as Element).hasAttribute(CHIP_ATTR)) {
     frag.appendChild(doc.createTextNode(CARET_FILLER));
+  } else if (tail && tail.nodeType === 1 && (tail as Element).tagName === "BR") {
+    const filler = doc.createElement("br");
+    filler.setAttribute(LINE_FILLER_ATTR, "");
+    frag.appendChild(filler);
   }
   root.replaceChildren(frag);
 }
@@ -289,6 +305,16 @@ function walkLocate(
       continue;
     }
     if (el.tagName === "BR") {
+      // The trailing line filler carries no newline of its own, so it must not
+      // consume a character — but a caret targeting the end of the text belongs
+      // *before* it, on the empty final line it exists to create.
+      if (isLineFiller(el)) {
+        if (state.remaining <= 0) {
+          state.found = { node, offset: i };
+          return true;
+        }
+        continue;
+      }
       if (locateAtBreak(node, i, state)) return true;
       continue;
     }

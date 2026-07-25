@@ -35,7 +35,7 @@ import { isPlanPinned, togglePlanPinned } from "../../stores/pinnedAgentPlans";
 import { reviewTurnChanges } from "../../lib/changesReceiptActions";
 import type { ChangeSet } from "../../lib/changes";
 import { flagEnabled } from "../../stores/flags";
-import { decideTimelineScroll } from "../../lib/chatTimelineScroll";
+import { decideTimelineScroll, timelineScrollNeedsGeometry } from "../../lib/chatTimelineScroll";
 import "./chat.css";
 
 /** Resolves a chat receipt's turn ordinal to its backend `ChangeSet` (#231
@@ -433,15 +433,18 @@ export function ChatTimeline(props: {
   const onScroll = () => {
     const top = scroller.scrollTop;
     scheduleScrollTop(top);
-    // Live DOM geometry is needed only while detached, when a downward scroll
-    // may re-arm follow. Cached virtual height can lag markdown reflow bursts.
+    // Live DOM geometry is needed while detached, when a downward scroll may
+    // re-arm follow, and on any upward event, which may be a shrink clamp
+    // rather than a gesture. Cached virtual height can lag markdown reflow
+    // bursts, so both cases read the real scroller.
+    const needsGeometry = !stick || timelineScrollNeedsGeometry(top, lastTop);
     const decision = decideTimelineScroll({
       stick,
       top,
       lastTop,
       programmaticTarget,
-      scrollHeight: stick ? Number.POSITIVE_INFINITY : scroller.scrollHeight,
-      viewportHeight: stick ? 0 : scroller.clientHeight,
+      scrollHeight: needsGeometry ? scroller.scrollHeight : Number.POSITIVE_INFINITY,
+      viewportHeight: needsGeometry ? scroller.clientHeight : 0,
     });
     programmaticTarget = null;
     stick = decision.stick;

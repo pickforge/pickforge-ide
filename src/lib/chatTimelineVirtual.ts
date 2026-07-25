@@ -97,30 +97,26 @@ export function estimateTimelineRowHeight(row: TimelineVirtualRow): number {
   }
 }
 
-/** True while a row's content can still grow without a mounted observer to
- *  remeasure it — a streaming assistant/thinking row scrolled out of the virtual
- *  window. Its cached height would otherwise stay stuck at the last measured
- *  value while text keeps arriving. */
-function isStreamingRow(row: TimelineVirtualRow): boolean {
-  return (
-    row.kind === "item" &&
-    (row.item.type === "assistantText" || row.item.type === "thinking") &&
-    row.item.streaming === true
-  );
-}
-
-/** Resolve a row's layout height. For a streaming row, the cached measurement
- *  can lag the still-growing content while it's unmounted, so track the larger
- *  of the cache and the live estimate; otherwise trust the measurement. */
+/** Resolve a row's layout height: the measurement when there is one, the
+ *  estimate until then.
+ *
+ *  A streaming row used to take the larger of the two, to cover its cache going
+ *  stale while unmounted and text kept arriving. That cost far more than it
+ *  bought: `estimateTextHeight` intentionally over-counts (a fixed 82
+ *  chars/line against a much wider real column), so the streaming tail — which
+ *  is mounted and remeasured on every delta whenever the reader is at the
+ *  bottom — reserved hundreds of pixels it did not use. The timeline pinned to
+ *  that phantom bottom, leaving a wall of empty space below the stream, and the
+ *  reserved height collapsing at end of turn clamped the scroll position hard
+ *  enough to detach the follow (#352). An unmounted streaming row is by
+ *  definition one the reader has scrolled away from; its height self-corrects
+ *  when they come back and it remounts. */
 function rowHeight(
   row: TimelineVirtualRow,
   key: string,
   rowHeights: ReadonlyMap<string, number>,
 ): number {
-  const cached = rowHeights.get(key);
-  const estimate = estimateTimelineRowHeight(row);
-  if (cached === undefined) return estimate;
-  return isStreamingRow(row) ? Math.max(cached, estimate) : cached;
+  return rowHeights.get(key) ?? estimateTimelineRowHeight(row);
 }
 
 export function buildTimelineLayout(
@@ -182,7 +178,7 @@ export function visibleTimelineKeys(
     const prev = i - 1;
     const prevKey = timelineVirtualRowKey(rows[prev]);
     // Same height resolution as buildTimelineLayout so culling agrees with the
-    // `starts` it was computed from (streaming rows included).
+    // `starts` it was computed from.
     const prevHeight = rowHeight(rows[prev], prevKey, rowHeights);
     if (starts[prev] + prevHeight <= top) break;
     i = prev;

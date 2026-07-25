@@ -328,6 +328,9 @@ function chatsForProject(projectRoot: unknown) {
   if (flatChatListFixtureEnabled()) {
     chats = [...chats, ...FLAT_CHAT_LIST_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
   }
+  if (orchestraBoardFixtureEnabled()) {
+    chats = [...chats, ...ORCHESTRA_BOARD_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
+  }
   if (!agentChatFixtureEnabled() || projectRoot !== AGENT_CHAT_FIXTURE.projectRoot) {
     return chats;
   }
@@ -411,6 +414,37 @@ const AGENT_CHAT_HISTORY: AgentTimelineEntry[] = [
 
 const MOCK_ORCHESTRA_TASKS: { id: string; projectRoot: string }[] = [];
 
+// #319 (#196 PR1) orchestra board VRT scenario, gated by
+// `pickforge.vrt.orchestraBoardFixture`: one task per status on acme-app (the
+// default active project). "building"/chat-1 and "fixing"/chat-2 reuse
+// acme-app's own sample chats so the board's harness mark + busy/attention
+// dot render off real fixture data (installOrchestraBoardFixture seeds
+// chat-1 busy, chat-2 needs-you). "reviewing" carries BOTH a builder AND a
+// reviewer link (P2-1 regression coverage) via two dedicated chats below,
+// deliberately left quiet so they don't inherit chat-1/chat-2's busy/
+// attention state. None of these chats are ever added as a live lane in this
+// fixture, so every card also exercises the P2-2 stale-link guard.
+const VRT_ORCHESTRA_BOARD_FIXTURE_KEY = "pickforge.vrt.orchestraBoardFixture";
+const ORCHESTRA_BOARD_FIXTURE_TASKS = [
+  { id: "board-task-planned", projectRoot: "/home/dev/acme-app", title: "Wire up settings sync", status: "planned", builderChatId: null, reviewerChatId: null, note: null, sortOrder: 0, createdAt: now, updatedAt: now },
+  { id: "board-task-building", projectRoot: "/home/dev/acme-app", title: "Sidebar waiting state polish", status: "building", builderChatId: "chat-1", reviewerChatId: null, note: null, sortOrder: 1, createdAt: now, updatedAt: now },
+  { id: "board-task-reviewing", projectRoot: "/home/dev/acme-app", title: "Login screen review", status: "reviewing", builderChatId: "chat-board-builder", reviewerChatId: "chat-board-reviewer", note: null, sortOrder: 2, createdAt: now, updatedAt: now - 3_600_000 },
+  { id: "board-task-fixing", projectRoot: "/home/dev/acme-app", title: "Settings polish follow-up", status: "fixing", builderChatId: "chat-2", reviewerChatId: null, note: null, sortOrder: 3, createdAt: now, updatedAt: now - 7_200_000 },
+  { id: "board-task-done", projectRoot: "/home/dev/acme-app", title: "Onboarding copy pass", status: "done", builderChatId: null, reviewerChatId: null, note: "Ready to close out", sortOrder: 4, createdAt: now, updatedAt: now - 86_400_000 },
+];
+const ORCHESTRA_BOARD_EXTRA_CHATS: Chat[] = [
+  { chatId: "chat-board-builder", projectRoot: "/home/dev/acme-app", title: "Review pass — build side", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 7 },
+  { chatId: "chat-board-reviewer", projectRoot: "/home/dev/acme-app", title: "Review pass — review side", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "pi", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 8 },
+];
+
+function orchestraBoardFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_ORCHESTRA_BOARD_FIXTURE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 const MOCK_USAGE_SUMMARY = [
   { provider: "claudeCode", model: "claude-haiku-4-5", chats: 2, turns: 14, inputTokens: 48210, cachedInputTokens: 21050, outputTokens: 9640, costUsd: 0.31 },
   { provider: "codex", model: "gpt-5.3-codex-spark", chats: 1, turns: null, inputTokens: 22400, cachedInputTokens: 8000, outputTokens: 4120, costUsd: 0 },
@@ -483,8 +517,12 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     if (index >= 0) MOCK_ORCHESTRA_TASKS.splice(index, 1);
     return null;
   },
-  orchestra_tasks_list: (a) =>
-    MOCK_ORCHESTRA_TASKS.filter((t) => t.projectRoot === a.projectRoot),
+  orchestra_tasks_list: (a) => {
+    const fixture = orchestraBoardFixtureEnabled()
+      ? ORCHESTRA_BOARD_FIXTURE_TASKS.filter((t) => t.projectRoot === a.projectRoot)
+      : [];
+    return [...MOCK_ORCHESTRA_TASKS.filter((t) => t.projectRoot === a.projectRoot), ...fixture];
+  },
   agent_usage_summary: () => MOCK_USAGE_SUMMARY,
   projects_list: () => projectsForFixture(),
   chats_list: (a) => chatsForProject(a.projectRoot),

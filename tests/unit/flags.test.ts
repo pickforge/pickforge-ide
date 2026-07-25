@@ -41,6 +41,7 @@ describe("flags", () => {
       "pikitContext",
       "changesReview",
       "flatChatList",
+      "orchestraBoard",
     ]);
     for (const state of states) {
       const expected = state.key === "ompAgents";
@@ -58,6 +59,7 @@ describe("flags", () => {
     expect(store.flagEnabled("pikitContext")).toBe(false);
     expect(store.flagEnabled("changesReview")).toBe(false);
     expect(store.flagEnabled("flatChatList")).toBe(false);
+    expect(store.flagEnabled("orchestraBoard")).toBe(false);
   });
 
   it("describes the shared updater flag with its tracking issue", async () => {

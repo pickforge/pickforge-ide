@@ -368,6 +368,7 @@ function ComposerFooter(props: {
     <div class="pf-chat-footer">
       <QueueDock
         messages={props.state()?.queue ?? []}
+        drainingId={props.state()?.drainingId ?? null}
         onRemove={(id) => removeQueuedMessage(props.chatId, id)}
         onFallbackFocus={() => composerField?.focus()}
       />

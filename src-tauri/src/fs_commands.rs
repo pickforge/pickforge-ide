@@ -1,7 +1,7 @@
 //! Filesystem commands for the project file explorer + file preview.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use pickforge_core::pickforge_home;
@@ -409,8 +409,87 @@ pub async fn open_path(roots: State<'_, ApprovedRoots>, path: String) -> Result<
     .map_err(|e| e.to_string())?
 }
 
+/// One generic rejection message for every [`resolve_chat_citation`] failure
+/// (unapproved root, missing candidate, escape, wrong type) — so a caller can
+/// never distinguish "outside the project" from "doesn't exist" and probe
+/// off-root existence a citation-shaped path at a time.
+const CHAT_CITATION_REJECTED: &str = "citation path is not an existing file in this chat's project";
+
+/// Resolve a chat workspace-citation `candidate` (#234) against the chat's
+/// OWN `project_root` — not the general approved-roots registry every other
+/// `fs_commands` read goes through. That distinction is the whole point: two
+/// sibling directories can both be approved active PickForge projects, but a
+/// citation typed in project A's chat must never resolve into project B's
+/// tree just because both happen to be approved roots. Scoping containment
+/// to the exact caller-supplied root (itself required to already BE an
+/// approved root, so a compromised renderer can't invent one) is narrower
+/// than [`approved_canonical`]'s "any approved root" check on purpose.
+///
+/// Only an existing REGULAR file is ever returned (the issue's V1 rule — no
+/// directories, no "create it" affordance); canonicalizing both root and
+/// candidate resolves symlinks and collapses `..`, so neither traversal nor a
+/// symlinked escape can leave `project_root`. A relative `candidate` joins
+/// the root; an absolute one is used as-is and must still canonicalize
+/// inside the root.
+fn resolve_chat_citation_path(
+    roots: &ApprovedRoots,
+    project_root: &str,
+    candidate: &str,
+) -> Result<PathBuf, String> {
+    let canon_root = std::fs::canonicalize(project_root)
+        .map_err(|_| CHAT_CITATION_REJECTED.to_string())?;
+    if !roots.is_approved_root(&canon_root) {
+        return Err(CHAT_CITATION_REJECTED.to_string());
+    }
+
+    if candidate.is_empty() || candidate.as_bytes().iter().any(|b| *b < 0x20 || *b == 0x7f) {
+        return Err(CHAT_CITATION_REJECTED.to_string());
+    }
+    let candidate_path = Path::new(candidate);
+    let joined = if candidate_path.is_absolute() {
+        candidate_path.to_path_buf()
+    } else {
+        canon_root.join(candidate_path)
+    };
+
+    let canon_candidate =
+        std::fs::canonicalize(&joined).map_err(|_| CHAT_CITATION_REJECTED.to_string())?;
+    if !canon_candidate.starts_with(&canon_root) {
+        return Err(CHAT_CITATION_REJECTED.to_string());
+    }
+    let metadata =
+        std::fs::metadata(&canon_candidate).map_err(|_| CHAT_CITATION_REJECTED.to_string())?;
+    if !metadata.is_file() {
+        return Err(CHAT_CITATION_REJECTED.to_string());
+    }
+    Ok(canon_candidate)
+}
+
+/// Tauri command wrapper for [`resolve_chat_citation_path`]: returns the
+/// resolved file's display-normalized canonical path, or the one generic
+/// rejection message. The frontend classifier (`src/lib/chatLinkTarget.ts`)
+/// has already validated `path`'s syntax before this is ever called — this
+/// is the trust boundary that turns "syntactically plausible citation" into
+/// "an existing file this chat is actually allowed to open".
+#[tauri::command]
+pub fn resolve_chat_citation(
+    roots: State<'_, ApprovedRoots>,
+    project_root: String,
+    path: String,
+) -> Result<String, String> {
+    resolve_chat_citation_path(&roots, &project_root, &path).map(|p| display_path(&p))
+}
+
 fn validate_external_url(url: &str) -> Result<String, String> {
     const HOSTLESS_HTTPS_PREFIX: &str = "https:///";
+    // Reject raw control characters (including NUL) up front — the `url`
+    // crate's WHATWG parser silently strips ASCII tab/newline rather than
+    // rejecting them, and percent-encodes other C0 controls into the parsed
+    // URL instead of erroring, so "malformed/control-character input" needs
+    // this explicit gate rather than relying on `Url::parse` to fail closed.
+    if url.chars().any(|c| c.is_control()) {
+        return Err("https URL must not contain control characters".into());
+    }
     let trimmed = url.trim_start();
     if matches!(
         trimmed.get(..HOSTLESS_HTTPS_PREFIX.len()),
@@ -424,6 +503,9 @@ fn validate_external_url(url: &str) -> Result<String, String> {
     }
     if parsed.cannot_be_a_base() || parsed.host_str().map(str::is_empty).unwrap_or(true) {
         return Err("https URL must include a host".into());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("https URL must not carry embedded credentials".into());
     }
     Ok(parsed.as_str().to_string())
 }
@@ -500,6 +582,23 @@ mod open_external_url_tests {
         ] {
             assert!(validate_external_url(url).is_err(), "{url} should be rejected");
         }
+    }
+
+    #[test]
+    fn rejects_embedded_credentials() {
+        for url in [
+            "https://user:pass@example.com/",
+            "https://user@example.com/",
+            "https://:pass@example.com/",
+        ] {
+            assert!(validate_external_url(url).is_err(), "{url} should be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_control_characters() {
+        assert!(validate_external_url("https://example.com/\u{0001}x").is_err());
+        assert!(validate_external_url("https://example.com/\0x").is_err());
     }
 
     #[test]
@@ -599,5 +698,185 @@ mod display_path_tests {
         }
         let plain = make_dir("display");
         assert_eq!(display_path(&plain), plain.to_string_lossy());
+    }
+}
+
+#[cfg(test)]
+mod resolve_chat_citation_tests {
+    use super::*;
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pf-citation-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    fn approved(root: &Path) -> ApprovedRoots {
+        let roots = ApprovedRoots::default();
+        roots.insert(root);
+        roots
+    }
+
+    #[test]
+    fn resolves_an_existing_relative_file_under_the_project_root() {
+        let root = temp_root("relative");
+        std::fs::write(root.join("a.ts"), "x").unwrap();
+        let roots = approved(&root);
+
+        let resolved = resolve_chat_citation_path(&roots, &root.to_string_lossy(), "a.ts").unwrap();
+        assert_eq!(resolved, root.join("a.ts"));
+    }
+
+    #[test]
+    fn resolves_an_existing_absolute_file_inside_the_project_root() {
+        let root = temp_root("absolute");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let file = root.join("src").join("a.ts");
+        std::fs::write(&file, "x").unwrap();
+        let roots = approved(&root);
+
+        let resolved =
+            resolve_chat_citation_path(&roots, &root.to_string_lossy(), &file.to_string_lossy())
+                .unwrap();
+        assert_eq!(resolved, file);
+    }
+
+    #[test]
+    fn rejects_a_project_root_that_is_not_itself_approved() {
+        let root = temp_root("unapproved");
+        std::fs::write(root.join("a.ts"), "x").unwrap();
+        let roots = ApprovedRoots::default(); // never registered
+
+        assert!(resolve_chat_citation_path(&roots, &root.to_string_lossy(), "a.ts").is_err());
+    }
+
+    #[test]
+    fn rejects_dotdot_traversal_out_of_the_project_root() {
+        let root = temp_root("traversal");
+        let secret = std::env::temp_dir()
+            .join(format!("pf-citation-secret-{}.txt", std::process::id()));
+        std::fs::write(&secret, "top secret").unwrap();
+        let roots = approved(&root);
+
+        let candidate = format!("../{}", secret.file_name().unwrap().to_string_lossy());
+        let err = resolve_chat_citation_path(&roots, &root.to_string_lossy(), &candidate)
+            .unwrap_err();
+        assert!(err.contains("not an existing file"));
+        let _ = std::fs::remove_file(&secret);
+    }
+
+    #[test]
+    fn rejects_a_sibling_approved_project_even_though_both_are_registered() {
+        let a = temp_root("sibling-a");
+        let b = temp_root("sibling-b");
+        std::fs::write(b.join("secret.ts"), "shh").unwrap();
+        let roots = ApprovedRoots::default();
+        roots.insert(&a);
+        roots.insert(&b); // b is approved too, but NOT the chat's own root
+
+        // An absolute path into b, resolved against a's project root: b is a
+        // legitimate approved root, but not THIS chat's root, so it must be
+        // rejected — the general `approved_canonical` check would wrongly
+        // allow this since it only asks "is this under ANY approved root".
+        let err = resolve_chat_citation_path(
+            &roots,
+            &a.to_string_lossy(),
+            &b.join("secret.ts").to_string_lossy(),
+        )
+        .unwrap_err();
+        assert!(err.contains("not an existing file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_symlink_escaping_the_project_root() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("symlink-out");
+        let outside = temp_root("symlink-out-target");
+        std::fs::write(outside.join("secret.ts"), "shh").unwrap();
+        let link = root.join("escape");
+        let _ = std::fs::remove_file(&link);
+        symlink(&outside, &link).unwrap();
+        let roots = approved(&root);
+
+        let err = resolve_chat_citation_path(&roots, &root.to_string_lossy(), "escape/secret.ts")
+            .unwrap_err();
+        assert!(err.contains("not an existing file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn allows_a_symlink_resolving_inside_the_project_root() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("symlink-in");
+        std::fs::write(root.join("real.ts"), "x").unwrap();
+        let link = root.join("alias.ts");
+        let _ = std::fs::remove_file(&link);
+        symlink(root.join("real.ts"), &link).unwrap();
+        let roots = approved(&root);
+
+        let resolved =
+            resolve_chat_citation_path(&roots, &root.to_string_lossy(), "alias.ts").unwrap();
+        assert_eq!(resolved, root.join("real.ts"));
+    }
+
+    #[test]
+    fn rejects_a_directory() {
+        let root = temp_root("directory");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let roots = approved(&root);
+
+        let err = resolve_chat_citation_path(&roots, &root.to_string_lossy(), "src").unwrap_err();
+        assert!(err.contains("not an existing file"));
+    }
+
+    #[test]
+    fn rejects_a_missing_file_without_disclosing_off_root_existence() {
+        let root = temp_root("missing");
+        let roots = approved(&root);
+
+        let missing_err =
+            resolve_chat_citation_path(&roots, &root.to_string_lossy(), "nope.ts").unwrap_err();
+        let outside = temp_root("missing-outside");
+        std::fs::write(outside.join("secret.ts"), "shh").unwrap();
+        let escape_err = resolve_chat_citation_path(
+            &roots,
+            &root.to_string_lossy(),
+            &outside.join("secret.ts").to_string_lossy(),
+        )
+        .unwrap_err();
+
+        // The same generic message either way — a caller can't tell "doesn't
+        // exist anywhere" from "exists, but outside my project".
+        assert_eq!(missing_err, escape_err);
+    }
+
+    #[test]
+    fn rejects_a_nul_byte_in_the_candidate() {
+        let root = temp_root("nul-byte");
+        std::fs::write(root.join("a.ts"), "x").unwrap();
+        let roots = approved(&root);
+
+        assert!(
+            resolve_chat_citation_path(&roots, &root.to_string_lossy(), "a.ts\0../../etc/passwd")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_stale_resolved_path_revalidates_rather_than_trusting_a_cached_result() {
+        // Calling the resolver twice after the file is removed between calls
+        // must fail closed the second time, not return a stale canonical path
+        // from some cache — there is no cache here, but this pins that
+        // property against a future one being added carelessly.
+        let root = temp_root("revalidate");
+        let file = root.join("a.ts");
+        std::fs::write(&file, "x").unwrap();
+        let roots = approved(&root);
+
+        assert!(resolve_chat_citation_path(&roots, &root.to_string_lossy(), "a.ts").is_ok());
+        std::fs::remove_file(&file).unwrap();
+        assert!(resolve_chat_citation_path(&roots, &root.to_string_lossy(), "a.ts").is_err());
     }
 }

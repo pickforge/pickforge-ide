@@ -13,6 +13,15 @@ const VRT_AGENT_CHAT_FIXTURE_KEY = "pickforge.vrt.agentChatFixture";
 const VRT_AGENT_CHAT_CONTEXT_OVERFLOW_KEY = "pickforge.vrt.agentChatContextOverflow";
 const VRT_REMOTE_DEVICE_FIXTURE_KEY = "pickforge.vrt.remoteDeviceFixture";
 const VRT_REMOTE_HOST = "acorns-macbook.tailnet.ts.net";
+// #306 PR1's flat chat list (flag `flatChatList`) VRT scenario: adds a
+// needs-you and a working chat (their busy/attention state is seeded by
+// installFlatChatListFixture, src/lib/flatChatListFixture.ts) plus an older
+// quiet chat, spread across both sample projects.
+const VRT_FLAT_CHAT_LIST_FIXTURE_KEY = "pickforge.vrt.flatChatListFixture";
+// Set to a projectRoot to make chats_list reject for just that project — the
+// flat list's eager cross-project load must survive one project failing
+// (#306 PR1 review finding P2-2).
+const VRT_FLAT_CHAT_LIST_LOAD_ERROR_KEY = "pickforge.vrt.flatChatListLoadErrorRoot";
 
 // A trimmed, representative slice of `omp models --json --no-extensions`
 // output (captured from a real omp 17.1.1 install, truncated to a handful of
@@ -249,6 +258,15 @@ const SAMPLE_CHATS: Chat[] = [
   { chatId: "chat-2", projectRoot: "/home/dev/acme-app", title: "Settings polish", titleSource: "user", titleUpdatedAt: now, kind: "terminal", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 1 },
   { chatId: "chat-3", projectRoot: "/home/dev/widgets", title: "Slider refactor", titleSource: "user", titleUpdatedAt: now, kind: "terminal", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 0 },
 ];
+// Chat ids referenced by installFlatChatListFixture — its busy/attention
+// seeding must match these exactly.
+export const FLAT_CHAT_LIST_NEEDS_YOU_ID = "chat-flat-needsyou";
+export const FLAT_CHAT_LIST_WORKING_ID = "chat-flat-working";
+const FLAT_CHAT_LIST_EXTRA_CHATS: Chat[] = [
+  { chatId: FLAT_CHAT_LIST_NEEDS_YOU_ID, projectRoot: "/home/dev/widgets", title: "PR monitoring agent flow", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "codex", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 5 },
+  { chatId: FLAT_CHAT_LIST_WORKING_ID, projectRoot: "/home/dev/acme-app", title: "Sidebar waiting state", titleSource: "user", titleUpdatedAt: now, kind: "agent", agentId: "claudeCode", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now, sortOrder: 5 },
+  { chatId: "chat-flat-quiet-old", projectRoot: "/home/dev/widgets", title: "Local usage analytics plan", titleSource: "user", titleUpdatedAt: now, kind: "terminal", agentId: "pi", skillId: null, sessionId: null, labelsJson: null, status: null, taskBriefText: null, createdAt: now, lastActivityAt: now - 2 * 86_400_000, sortOrder: 6 },
+];
 const SAMPLE_PICKS = [
   { id: 1, projectRoot: "/home/dev/acme-app", widgetClass: "LoginButton", creationFile: "lib/login.dart", creationLine: 42, skillId: "s", agentId: "claudeCode", terminalId: "t", chatId: null, pickedAt: now, widgetContextJson: "{}" },
 ];
@@ -286,8 +304,30 @@ function agentChatHistoryForFixture(): AgentTimelineEntry[] {
   });
 }
 
+function flatChatListFixtureEnabled(): boolean {
+  try {
+    return localStorage.getItem(VRT_FLAT_CHAT_LIST_FIXTURE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function flatChatListLoadErrorRoot(): string | null {
+  try {
+    return localStorage.getItem(VRT_FLAT_CHAT_LIST_LOAD_ERROR_KEY);
+  } catch {
+    return null;
+  }
+}
+
 function chatsForProject(projectRoot: unknown) {
-  const chats = SAMPLE_CHATS.filter((c) => c.projectRoot === projectRoot);
+  if (flatChatListLoadErrorRoot() === projectRoot) {
+    throw new Error(`mock chats_list failure for ${String(projectRoot)}`);
+  }
+  let chats = SAMPLE_CHATS.filter((c) => c.projectRoot === projectRoot);
+  if (flatChatListFixtureEnabled()) {
+    chats = [...chats, ...FLAT_CHAT_LIST_EXTRA_CHATS.filter((c) => c.projectRoot === projectRoot)];
+  }
   if (!agentChatFixtureEnabled() || projectRoot !== AGENT_CHAT_FIXTURE.projectRoot) {
     return chats;
   }

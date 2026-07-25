@@ -40,6 +40,7 @@ describe("flags", () => {
       "pikitLanes",
       "pikitContext",
       "changesReview",
+      "flatChatList",
     ]);
     for (const state of states) {
       const expected = state.key === "ompAgents";
@@ -56,6 +57,7 @@ describe("flags", () => {
     expect(store.flagEnabled("pikitLanes")).toBe(false);
     expect(store.flagEnabled("pikitContext")).toBe(false);
     expect(store.flagEnabled("changesReview")).toBe(false);
+    expect(store.flagEnabled("flatChatList")).toBe(false);
   });
 
   it("describes the shared updater flag with its tracking issue", async () => {

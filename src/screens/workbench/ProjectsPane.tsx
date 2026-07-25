@@ -89,6 +89,13 @@ import {
   resumeChatTitleAuto,
 } from "../../lib/chatAutoName";
 import { chatAttention, chatBusy, clearChatActivity } from "../../stores/chatActivity";
+import {
+  type ChatLifecycleState,
+  chatLifecycleState,
+  shortRelTime,
+  sortFlatChats,
+  visibleFlatChats,
+} from "../../stores/flatChatSort";
 import { removeChatFromOrchestra } from "../../stores/orchestra";
 import { isChatStaged } from "../../stores/orchestraStage";
 import { beforeIdForDrop, dropEdgeForRect, dropEdgeForRectX, type DropEdge } from "../../lib/dndReorder";
@@ -134,7 +141,7 @@ function openProject(root: string): void {
   void selectProject(root);
 }
 
-type MenuKind = "project" | "group" | "chat" | "newchat" | "confirm" | "remote";
+type MenuKind = "project" | "group" | "chat" | "newchat" | "confirm" | "remote" | "flatNewChat";
 interface MenuState { kind: MenuKind; id: string; x: number; y: number; align: "start" | "end" }
 
 interface PendingConfirm {
@@ -355,6 +362,83 @@ function createChatDragState() {
   return { chatRowEls, chatDrag, chatDragEdge, startChatDrag, isChatClickSuppressed: () => suppressChatClick };
 }
 
+/** Flat list filter + sort state (#306 PR1, behind `flatChatList`) and its
+ *  "new chat" project-picker flow. A composable, called synchronously from
+ *  `createProjectsPaneController`'s own setup so its memos live under the
+ *  same reactive owner as if written inline. Takes the tree's own
+ *  newTerminalChat/newAgentChat rather than duplicating their default-kind
+ *  chat-creation logic. */
+function createFlatChatListState(
+  menuState: ReturnType<typeof createProjectsMenuState>,
+  newTerminalChat: (root: string, title?: string) => void,
+  newAgentChat: (root: string, provider: string, title?: string) => void,
+) {
+  // Single-select project filter (null = All projects) for the pane bar chips.
+  const [filterRoot, setFilterRoot] = createSignal<string | null>(null);
+  // Needs-you chats stay globally visible regardless of the filter — see
+  // visibleFlatChats. Only working/quiet chats are actually narrowed.
+  const flatChats = createMemo(() => {
+    const chatsByRoot = new Map<string, Chat[]>();
+    for (const p of workspace.projects) {
+      chatsByRoot.set(
+        p.projectRoot,
+        chatsFor(p.projectRoot).filter((c) => !isChatArchived(c.chatId) && isPrimaryChat(c)),
+      );
+    }
+    return visibleFlatChats(chatsByRoot, filterRoot());
+  });
+  const flatSorted = createMemo(() => sortFlatChats(flatChats()));
+  // Split once here so both the row component and the QUIET · N divider share
+  // the same classification pass instead of each re-deriving it.
+  const flatLive = createMemo(() => flatSorted().filter((c) => chatLifecycleState(c.chatId) !== "quiet"));
+  const flatQuiet = createMemo(() => flatSorted().filter((c) => chatLifecycleState(c.chatId) === "quiet"));
+
+  // "New chat" project picker: the flat list has no single current project, so
+  // the plus button lists every project first, then falls into the same
+  // default-kind-or-ask branch `newChatFromButton` uses for a project row.
+  const newChatFromProjectPicker = (root: string) => {
+    const kind = loadDefaultChatKind();
+    if (kind === "ask" || loadAskChatTitle()) {
+      menuState.setMenu((m) => (m ? { ...m, kind: "newchat", id: root } : m));
+      return;
+    }
+    if (kind === "terminal") newTerminalChat(root);
+    else newAgentChat(root, defaultNativeAgentProvider(loadLastAgentProvider()));
+    menuState.closeMenu();
+  };
+
+  // Eager cross-project load (see ProjectsPane's effect): tracked per-root so
+  // one project's failed fetch surfaces its own retry instead of silently
+  // rendering "no chats" or throwing an unhandled rejection. ensureChatsLoaded
+  // never marks a failed root as loaded, so calling it again is a real retry.
+  const [loadErrorRoots, setLoadErrorRoots] = createSignal<Set<string>>(new Set());
+  const loadProjectChats = (root: string) => {
+    ensureChatsLoaded(root)
+      .then(() =>
+        setLoadErrorRoots((s) => {
+          if (!s.has(root)) return s;
+          const next = new Set(s);
+          next.delete(root);
+          return next;
+        }),
+      )
+      .catch((error) => {
+        console.error("[pickforge] flat chat list: failed to load chats for project", root, error);
+        setLoadErrorRoots((s) => (s.has(root) ? s : new Set(s).add(root)));
+      });
+  };
+
+  return {
+    filterRoot,
+    setFilterRoot,
+    flatLive,
+    flatQuiet,
+    newChatFromProjectPicker,
+    loadErrorRoots,
+    loadProjectChats,
+  };
+}
+
 /** Owns every signal and handler shared across the pane's tree/menu/drag
  *  surfaces (RenameField, the per-kind menus, chat/project rows and cards,
  *  group headers). A composable, called synchronously from `ProjectsPane`'s
@@ -453,6 +537,7 @@ function createProjectsPaneController() {
     ...menuState,
     ...dragState,
     ...chatDragState,
+    ...createFlatChatListState(menuState, newTerminalChat, newAgentChat),
     showArchived,
     hasGroups,
     grid,
@@ -1103,14 +1188,180 @@ const GroupHeader = (props: { ctrl: ProjectsPaneController; group: ProjectGroup;
   );
 };
 
-export function ProjectsPane() {
-  // Owns the shared remote-health poller for its lifetime (no-op until a project
-  // is bound to a host and the remoteProjects flag is on).
-  useRemoteHealth();
-  const ctrl = createProjectsPaneController();
-
+// ---- flat chat list (#306 PR1, behind `flatChatList`) ----
+// Projects become single-select filter chips; project affordances (remote
+// badge, archive, rename) move behind the chip's own context menu instead of
+// living inline — right-click reopens the same ProjectMenu the tree used.
+const FlatFilterBar = (props: { ctrl: ProjectsPaneController }) => {
+  const ctrl = props.ctrl;
   return (
-    <div class="pf-pane-scroll" data-tour="projects">
+    <div class="pf-pane-toolbar pf-flat-bar">
+      <div class="pf-flat-filters">
+        <button
+          type="button"
+          class="pf-flat-chip"
+          classList={{ "pf-flat-chip--on": ctrl.filterRoot() === null }}
+          onClick={() => ctrl.setFilterRoot(null)}
+        >
+          All projects
+        </button>
+        <For each={workspace.projects}>
+          {(p) => (
+            <button
+              type="button"
+              class="pf-flat-chip"
+              classList={{ "pf-flat-chip--on": ctrl.filterRoot() === p.projectRoot }}
+              onClick={() => ctrl.setFilterRoot(p.projectRoot)}
+              onContextMenu={(e) => ctrl.openFromContext("project", p.projectRoot, e)}
+              title={`${p.displayName} — right-click for project options`}
+            >
+              {p.displayName}
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="pf-pane-toolbar-actions">
+        <button
+          class="pf-icon-btn"
+          title="New chat"
+          disabled={workspace.projects.length === 0}
+          onClick={(e) => ctrl.openFromButton("flatNewChat", "__flat", e)}
+        >
+          <IconPlus size={14} />
+        </button>
+        <button class="pf-icon-btn" title="Add project" onClick={pickProject}>
+          <IconFolderPlus size={14} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// "New chat" project picker: the smallest honest affordance for a chat that
+// otherwise has no single current project to attach to.
+const NewChatProjectMenu = (props: { ctrl: ProjectsPaneController }) => (
+  <>
+    <div class="pf-menu-label">New chat in…</div>
+    <For each={workspace.projects} fallback={<div class="pf-menu-label">No projects yet</div>}>
+      {(p) => (
+        <button class="pf-menu-item" onClick={() => props.ctrl.newChatFromProjectPicker(p.projectRoot)}>
+          {p.displayName}
+        </button>
+      )}
+    </For>
+  </>
+);
+
+// One-liner row shared by every state in PR1 (live and quiet alike — the rich
+// work-card visuals for busy/needs-you are PR2). Takes the precomputed state
+// instead of deriving it, so PR2 can swap in a different renderer per state
+// without touching how the list is built.
+const FlatChatRow = (props: { ctrl: ProjectsPaneController; chat: Chat; state: ChatLifecycleState }) => {
+  const ctrl = props.ctrl;
+  const id = props.chat.chatId;
+  const project = () => workspace.projects.find((p) => p.projectRoot === props.chat.projectRoot);
+  const staged = () => isChatStaged(id);
+  return (
+    <div
+      class="pf-flat-row"
+      classList={{
+        active: workspace.activeChatId === id || staged(),
+        "pf-flat-row--busy": props.state === "working",
+        "pf-flat-row--attention":
+          props.state === "needsYou" && workspace.activeChatId !== id && !staged(),
+      }}
+      onClick={() => selectChat(id)}
+      onContextMenu={(e) => ctrl.openFromContext("chat", id, e)}
+    >
+      <span class="pf-flat-dot" />
+      <Show
+        when={ctrl.renaming() === id}
+        fallback={
+          <span class="pf-flat-title" classList={{ "pf-chat-title--typing": chatTitleOverride(id) !== undefined }}>
+            {chatTitleOverride(id) ?? props.chat.title}
+          </span>
+        }
+      >
+        <RenameField
+          ctrl={ctrl}
+          value={props.chat.title}
+          commit={(v) => {
+            if (v.trim() && v.trim() !== props.chat.title) markChatTitleManual(id);
+            void renameChat(id, v);
+          }}
+        />
+      </Show>
+      <Show when={props.chat.kind === "agent"}>
+        <span
+          class="pf-flat-mark"
+          title={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+          aria-label={`Agent chat · ${agentChatLabel(props.chat.agentId)}`}
+        >
+          <Show when={AGENT_CHAT_ICON[agentChatProvider(props.chat.agentId)]} fallback="AI">
+            {(icon) => icon()()}
+          </Show>
+        </span>
+      </Show>
+      <span class="pf-flat-meta">
+        {project()?.displayName ?? "—"} · {shortRelTime(props.chat.lastActivityAt)}
+      </span>
+      <button class="pf-rail-row-action" title="Chat options" onClick={(e) => ctrl.openFromButton("chat", id, e)}>
+        <IconMore size={14} />
+      </button>
+    </div>
+  );
+};
+
+// A project's chats failed to load eagerly (#306 PR1's cross-project fetch,
+// see createFlatChatListState.loadProjectChats): named per-project rather
+// than a blanket error, with its own retry — the other, successfully-loaded
+// projects still render normally alongside this.
+const FlatLoadErrors = (props: { ctrl: ProjectsPaneController }) => (
+  <Show when={props.ctrl.loadErrorRoots().size > 0}>
+    <div class="pf-flat-load-error">
+      <For each={[...props.ctrl.loadErrorRoots()]}>
+        {(root) => (
+          <div class="pf-flat-load-error-row">
+            <span>{workspace.projects.find((p) => p.projectRoot === root)?.displayName ?? root} failed to load</span>
+            <button type="button" class="pf-menu-item" onClick={() => props.ctrl.loadProjectChats(root)}>
+              Retry
+            </button>
+          </div>
+        )}
+      </For>
+    </div>
+  </Show>
+);
+
+const FlatChatList = (props: { ctrl: ProjectsPaneController }) => {
+  const ctrl = props.ctrl;
+  const live = ctrl.flatLive;
+  const quiet = ctrl.flatQuiet;
+  return (
+    <div class="pf-flat-list">
+      <FlatLoadErrors ctrl={ctrl} />
+      <Show when={live().length > 0 || quiet().length > 0} fallback={<div class="pf-rail-empty">No chats yet</div>}>
+        <For each={live()}>
+          {(chat) => <FlatChatRow ctrl={ctrl} chat={chat} state={chatLifecycleState(chat.chatId)} />}
+        </For>
+        <Show when={quiet().length > 0}>
+          <div class="pf-flat-quiet-divider">
+            <span>quiet · {quiet().length}</span>
+          </div>
+          <For each={quiet()}>{(chat) => <FlatChatRow ctrl={ctrl} chat={chat} state="quiet" />}</For>
+        </Show>
+      </Show>
+    </div>
+  );
+};
+
+// The pre-#306 tree toolbar + rail list (view toggle, groups, DnD reorder),
+// unchanged byte-for-byte from before the flag — this is the `flatChatList`
+// flag-off fallback, and stays the retirement target once the flag ships.
+const ProjectsTree = (props: { ctrl: ProjectsPaneController }) => {
+  const ctrl = props.ctrl;
+  return (
+    <>
       <div class="pf-pane-toolbar">
         <button
           class="pf-icon-btn"
@@ -1174,6 +1425,37 @@ export function ProjectsPane() {
           </Show>
         </Show>
       </div>
+    </>
+  );
+};
+
+export function ProjectsPane() {
+  // Owns the shared remote-health poller for its lifetime (no-op until a project
+  // is bound to a host and the remoteProjects flag is on).
+  useRemoteHealth();
+  const ctrl = createProjectsPaneController();
+  const flat = () => flagEnabled("flatChatList");
+
+  // Flag on: the flat list needs every project's chats, not just the active
+  // one's — load them all eagerly instead of the tree's per-project lazy
+  // fetch on expand. Re-runs (cheaply, via ensureChatsLoaded's own cache)
+  // whenever a project is added. Each load is caught individually
+  // (ctrl.loadProjectChats) so one project's rejection can't blank the whole
+  // list or escape as an unhandled rejection.
+  createEffect(() => {
+    if (!flat()) return;
+    for (const p of workspace.projects) ctrl.loadProjectChats(p.projectRoot);
+  });
+
+  return (
+    <div class="pf-pane-scroll" data-tour="projects">
+      <Show
+        when={flat()}
+        fallback={<ProjectsTree ctrl={ctrl} />}
+      >
+        <FlatFilterBar ctrl={ctrl} />
+        <FlatChatList ctrl={ctrl} />
+      </Show>
 
       <Show when={ctrl.chatDrag()}>
         {(d) => (
@@ -1194,6 +1476,7 @@ export function ProjectsPane() {
               <Match when={m().kind === "group"}><GroupMenu ctrl={ctrl} id={m().id} /></Match>
               <Match when={m().kind === "chat"}><ChatMenu ctrl={ctrl} id={m().id} /></Match>
               <Match when={m().kind === "newchat"}><NewChatMenu ctrl={ctrl} root={m().id} /></Match>
+              <Match when={m().kind === "flatNewChat"}><NewChatProjectMenu ctrl={ctrl} /></Match>
               <Match when={m().kind === "remote"}><RemotePanel root={m().id} /></Match>
               <Match when={m().kind === "confirm"}><ConfirmMenu ctrl={ctrl} /></Match>
             </Switch>
